@@ -81,11 +81,28 @@ describe('runner work', () => {
     ).toBe('agent-lcars#7');
   });
 
-  it('leaves a run that cannot be read naming its run id', async () => {
+  it('shares a read in flight between callers', async () => {
+    mocks.readRun.mockResolvedValue({ task: 'task-1' });
+    mocks.readTask.mockResolvedValue({ task: {} });
+    mocks.project.mockReturnValue({ repo, pipeline: 'claude', issueNumber: 7 });
+    expect(
+      await Promise.all([
+        resolveRunnerWork(status('run-3')),
+        resolveRunnerWork(status('run-3')),
+      ]),
+    ).toEqual([true, true]);
+    expect(mocks.readRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a run that cannot be read naming its run id, retrying after a minute', async () => {
+    const now = Date.parse('2026-10-14T07:00:00Z');
     mocks.readRun.mockRejectedValue(new Error('offline'));
-    expect(await resolveRunnerWork(status('run-2'))).toBe(false);
+    expect(await resolveRunnerWork(status('run-2'), now)).toBe(false);
+    expect(await resolveRunnerWork(status('run-2'), now + 1_000)).toBe(false);
+    expect(mocks.readRun).toHaveBeenCalledTimes(1);
     mocks.readRun.mockResolvedValue(undefined);
-    expect(await resolveRunnerWork(status('run-2'))).toBe(false);
+    expect(await resolveRunnerWork(status('run-2'), now + 60_000)).toBe(false);
+    expect(mocks.readRun).toHaveBeenCalledTimes(2);
     expect(
       withRunnerWork(status('run-2')).hostInventory?.runners?.[0]?.work,
     ).toBeUndefined();

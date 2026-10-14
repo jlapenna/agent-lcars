@@ -269,7 +269,11 @@ func runHostStatusPublisher(ctx context.Context, publisher hostStatusPublisher, 
 			}
 		}
 		if readJobs != nil && inventory.Runners != nil {
-			jobs, err := readJobs(readCtx)
+			// Its own budget: a slow node or pod list must not time this
+			// read out and flip every ARC runner to online and back.
+			jobsCtx, cancelJobs := context.WithTimeout(ctx, consoleStatusTimeout)
+			jobs, err := readJobs(jobsCtx)
+			cancelJobs()
 			if err == nil {
 				lastJobsErr = ""
 				applyRunnerJobs(inventory, jobs)

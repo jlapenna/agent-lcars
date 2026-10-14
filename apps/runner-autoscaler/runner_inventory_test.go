@@ -34,6 +34,8 @@ func TestHostInventoryListsEveryRunnerPodWithItsState(t *testing.T) {
 	direct.Annotations = map[string]string{queueRunAnnotation: "run-1"}
 	terminating := runnerPod("arc-stopping", "spark", core.PodRunning, true, arc)
 	terminating.DeletionTimestamp = &meta.Time{Time: runnerStart}
+	finished := runnerPod("arc-finished", "spark", core.PodRunning, false, arc)
+	finished.Status.ContainerStatuses = []core.ContainerStatus{{Name: "runner", State: core.ContainerState{Terminated: &core.ContainerStateTerminated{ExitCode: 0}}}}
 	client := fake.NewClientset(
 		hostNode("spark", true, false, "20", "128Gi"),
 		hostNode("picard", true, true, "16", "64Gi"),
@@ -46,6 +48,7 @@ func TestHostInventoryListsEveryRunnerPodWithItsState(t *testing.T) {
 		runnerPod("arc-done", "spark", core.PodSucceeded, false, arc),
 		runnerPod("listener", "spark", core.PodRunning, true, listener),
 		terminating,
+		finished,
 		direct,
 	)
 	inventory, err := hostInventory(context.Background(), client)
@@ -63,6 +66,7 @@ func TestHostInventoryListsEveryRunnerPodWithItsState(t *testing.T) {
 		row("arc-unscheduled", runnerKindARC, "lcars-ci", "", runnerStarting),
 		row("arc-cordoned", runnerKindARC, "lcars-ci", "picard", runnerDraining),
 		row("arc-booting", runnerKindARC, "lcars-ci", "spark", runnerStarting),
+		row("arc-finished", runnerKindARC, "lcars-ci", "spark", runnerDraining),
 		row("arc-stopping", runnerKindARC, "lcars-ci", "spark", runnerDraining),
 		row("arc-up", runnerKindARC, "lcars-ci", "spark", runnerOnline),
 		directRow,

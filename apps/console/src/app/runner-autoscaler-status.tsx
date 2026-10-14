@@ -454,7 +454,7 @@ export function RunnerAutoscalerStatus({
           ) : (
             <OpsPanel
               title="Runners"
-              count={`${onlineRunnerCount(runners)}/${runners.length} online`}
+              count={`${onlineRunnerCount(shownRunners ?? [])}/${shownRunners?.length ?? 0} online`}
               meta={
                 runnerFitMeta(runners, live.hostInventory?.hosts) ??
                 'host capacity unavailable'

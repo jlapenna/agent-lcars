@@ -472,8 +472,11 @@ describe('RunnerAutoscalerStatus', () => {
         />
       </MantineProvider>,
     );
-    // The live island keeps its first snapshot; filters narrow it.
+    // The live island keeps its first snapshot; filters narrow it, count too.
     expect(screen.queryByTestId('runner-lcars-run-1')).toBeNull();
+    expect(screen.getByTestId('shuttlebay-runners')).toHaveTextContent(
+      '2/2 online',
+    );
     expect(screen.getByTestId('runner-lcars-ci-x1')).toBeInTheDocument();
   });
 

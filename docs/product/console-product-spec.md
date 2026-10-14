@@ -432,7 +432,8 @@ the work that has stopped, and the work in flight.
   executor may list `actions.github.com` EphemeralRunners; otherwise it reads
   "online", and the panel says job assignments are unavailable. A direct
   runner names the work item its run belongs to. A NotReady host's runners
-  are offline and a cordoned host's or terminating pod's are draining. The
+  are offline; a cordoned host's, a terminating pod, or a runner whose
+  container exited is draining. Filters narrow the rows and the count. The
   meta checks, rather than asserts, that every request fits one ready host's
   allocatable (already net of reserves), and counts the requests that do not.
   An executor that predates the rows, or a fleet past 128 runners, keeps the

@@ -103,7 +103,11 @@ describe('runnerMatches', () => {
     expect(runnerMatches(busy, lanes, { repo: 'jlapenna/homelab' })).toBe(true);
     expect(runnerMatches(direct, lanes, repo)).toBe(false);
     expect(runnerMatches(unresolved, lanes, repo)).toBe(true);
-    expect(runnerMatches({ ...idle, lane: 'gone' }, lanes, repo)).toBe(false);
+    // A lane not reporting might be the one asked for.
+    expect(runnerMatches({ ...idle, lane: 'stale' }, lanes, repo)).toBe(true);
+    expect(
+      runnerMatches(idle, lanes, { repo: 'supersprinklesracing/sprinkles' }),
+    ).toBe(false);
   });
 
   it('narrows only direct runners by agent', () => {

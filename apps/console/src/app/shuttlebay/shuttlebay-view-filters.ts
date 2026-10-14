@@ -75,7 +75,8 @@ export function executorMatches(filters: ShuttlebayFilters): boolean {
 /** A runner row matches the repository it is working for, or, while an ARC
  * runner waits for a job, the repositories its lane serves. The agent filter
  * narrows direct runners, the only ones running agents. A direct runner
- * whose run has not resolved yet stays: it may be the one asked for. */
+ * whose run has not resolved yet, or an ARC runner whose lane is not
+ * reporting, stays: it may be the one asked for. */
 export function runnerMatches(
   runner: Pick<
     FleetRunner,
@@ -90,8 +91,10 @@ export function runnerMatches(
     if (working !== undefined) {
       if (working.toLowerCase() !== repo) return false;
     } else if (runner.kind === 'arc') {
+      // A lane missing from a stale or incomplete inventory might be the
+      // one asked for, so its runners stay.
       const lane = lanes.find((value) => value.lane === runner.lane);
-      if (!lane || !laneServesRepo(lane.registrationUrl, filters.repo))
+      if (lane && !laneServesRepo(lane.registrationUrl, filters.repo))
         return false;
     }
   }

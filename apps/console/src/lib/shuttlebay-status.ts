@@ -46,7 +46,10 @@ function readTelemetry(): Promise<AutoscalerStatusResult> {
   return read;
 }
 
-async function withinDeadline<T>(read: Promise<T>): Promise<T> {
+async function withinDeadline<T>(
+  read: Promise<T>,
+  deadlineMs = READ_DEADLINE_MS,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -54,7 +57,7 @@ async function withinDeadline<T>(read: Promise<T>): Promise<T> {
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error('Shuttlebay evidence read timed out')),
-          READ_DEADLINE_MS,
+          Math.max(0, deadlineMs),
         );
       }),
     ]);
@@ -95,21 +98,26 @@ async function boundedTelemetry(): Promise<AutoscalerStatusResult> {
   }
 }
 
-/** A slow or failed run read leaves direct runners naming their run ids. */
-async function boundedRunnerWork(
-  result: AutoscalerStatusResult,
-): Promise<AutoscalerStatusResult> {
+/** Run resolution spends what is left of the telemetry read's deadline, so
+ * the page waits no longer than before. A slow or failed run read leaves
+ * direct runners naming their run ids; the stream resolves them later. */
+async function boundedTelemetryWithRunnerWork(): Promise<AutoscalerStatusResult> {
+  const started = Date.now();
+  const telemetry = await boundedTelemetry();
   try {
-    await withinDeadline(resolveRunnerWork(result));
+    await withinDeadline(
+      resolveRunnerWork(telemetry),
+      READ_DEADLINE_MS - (Date.now() - started),
+    );
   } catch (error) {
     logger.error('agent-lcars: runner work unavailable:', error);
   }
-  return withRunnerWork(result);
+  return withRunnerWork(telemetry);
 }
 
 export async function getShuttlebayStatus(): Promise<AutoscalerStatusResult> {
   const [telemetry, provider] = await Promise.all([
-    boundedTelemetry().then(boundedRunnerWork),
+    boundedTelemetryWithRunnerWork(),
     withProviderAdmission({ warnings: [] }),
   ]);
   return {

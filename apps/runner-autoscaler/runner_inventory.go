@@ -84,7 +84,9 @@ func runnerFromPod(pod *core.Pod, hosts map[string]*consoleHost) (consoleRunner,
 	switch {
 	case host != nil && !host.Ready:
 		runner.State = runnerOffline
-	case pod.DeletionTimestamp != nil || host != nil && host.Unschedulable:
+	// A runner whose container exited has finished its job; until ARC or
+	// the Job controller removes the pod it is on its way out, not starting.
+	case pod.DeletionTimestamp != nil || host != nil && host.Unschedulable || containerExited(pod):
 		runner.State = runnerDraining
 	case pod.Status.Phase != core.PodRunning || !podReady(pod):
 		runner.State = runnerStarting
@@ -94,6 +96,15 @@ func runnerFromPod(pod *core.Pod, hosts map[string]*consoleHost) (consoleRunner,
 		runner.State = runnerOnline
 	}
 	return runner, true
+}
+
+func containerExited(pod *core.Pod) bool {
+	for _, c := range pod.Status.ContainerStatuses {
+		if c.State.Terminated != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func podReady(pod *core.Pod) bool {

@@ -40,37 +40,69 @@ async function readRunnerWork(runId: string): Promise<RunnerWork | undefined> {
   return projected === undefined ? undefined : runnerWorkFor(projected);
 }
 
+/** Reads in flight, shared by every stream and page asking for the run. */
+const pending = new Map<string, Promise<boolean>>();
+/** A run that could not be resolved is not read again for a minute, so a
+ * missing run or a Firestore outage does not cost two reads per snapshot
+ * per connected client. */
+const unresolvedUntil = new Map<string, number>();
+const RETRY_UNRESOLVED_MS = 60_000;
+
+function remember(runId: string, work: RunnerWork): void {
+  if (resolved.size >= RESOLVED_LIMIT) {
+    const oldest = resolved.keys().next().value;
+    if (oldest !== undefined) resolved.delete(oldest);
+  }
+  resolved.set(runId, work);
+  unresolvedUntil.delete(runId);
+}
+
+function readOnce(runId: string, now: number): Promise<boolean> {
+  const inFlight = pending.get(runId);
+  if (inFlight !== undefined) return inFlight;
+  const read = readRunnerWork(runId)
+    .then(
+      (work) => {
+        if (work !== undefined) remember(runId, work);
+        return work !== undefined;
+      },
+      (error: unknown) => {
+        logger.error('agent-lcars: runner work unavailable:', error);
+        return false;
+      },
+    )
+    .then((found) => {
+      if (!found) {
+        if (unresolvedUntil.size >= RESOLVED_LIMIT) unresolvedUntil.clear();
+        unresolvedUntil.set(runId, now + RETRY_UNRESOLVED_MS);
+      }
+      pending.delete(runId);
+      return found;
+    });
+  pending.set(runId, read);
+  return read;
+}
+
 /** Reads the work item of every direct runner not yet resolved. True when
- * anything new resolved, so a live stream knows to emit again. A failed read
- * leaves that row naming its run id. */
+ * anything resolved, so a live stream knows to emit again. A run that cannot
+ * be read leaves its row naming its run id. */
 export async function resolveRunnerWork(
   result: AutoscalerStatusResult,
+  now = Date.now(),
 ): Promise<boolean> {
   const runIds = new Set(
     (result.hostInventory?.runners ?? []).flatMap((runner) =>
-      runner.runId !== undefined && !resolved.has(runner.runId)
+      runner.runId !== undefined &&
+      !resolved.has(runner.runId) &&
+      (unresolvedUntil.get(runner.runId) ?? 0) <= now
         ? [runner.runId]
         : [],
     ),
   );
-  let changed = false;
-  await Promise.all(
-    [...runIds].map(async (runId) => {
-      try {
-        const work = await readRunnerWork(runId);
-        if (work === undefined) return;
-        if (resolved.size >= RESOLVED_LIMIT) {
-          const oldest = resolved.keys().next().value;
-          if (oldest !== undefined) resolved.delete(oldest);
-        }
-        resolved.set(runId, work);
-        changed = true;
-      } catch (error) {
-        logger.error('agent-lcars: runner work unavailable:', error);
-      }
-    }),
+  const found = await Promise.all(
+    [...runIds].map((runId) => readOnce(runId, now)),
   );
-  return changed;
+  return found.some(Boolean);
 }
 
 /** Attaches each direct runner's resolved work item. */
@@ -95,4 +127,6 @@ export function withRunnerWork(
 /** Test seam: forget every resolved run. */
 export function resetRunnerWork(): void {
   resolved.clear();
+  pending.clear();
+  unresolvedUntil.clear();
 }
