@@ -2,7 +2,11 @@ import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
 
 import { BridgePaneLink } from './bridge-pane-link';
-import { bridgeSelectionHref, parkedWorkKey } from './bridge-selection';
+import {
+  bridgeSelectionHref,
+  type BridgeView,
+  parkedWorkKey,
+} from './bridge-selection';
 import { formatRelativeTime } from './format';
 import { type WorkAction, WorkActions } from './work/work-actions';
 
@@ -46,6 +50,7 @@ export function ParkedWorkPanel({
   redispatch,
   repoFilterKey,
   stoppedCursor,
+  view,
 }: {
   items: WorkSummary[];
   hasMoreTasks: boolean;
@@ -59,6 +64,7 @@ export function ParkedWorkPanel({
    *  selectable row (`IdleItemsSection`, the operational rows). */
   repoFilterKey?: string;
   stoppedCursor?: string;
+  view?: BridgeView;
 }) {
   const parked = items
     .filter((item) => item.state === 'parked' || item.state === 'failed')
@@ -101,6 +107,7 @@ export function ParkedWorkPanel({
                       parkedWorkKey(item),
                       repoFilterKey,
                       stoppedCursor,
+                      view,
                     )}
                     size="sm"
                     fw={600}

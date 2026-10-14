@@ -1,5 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
+import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor } from '@mantine/core';
 import { redirect } from 'next/navigation';
@@ -30,6 +31,7 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../lib/github-client';
+import { mergedLastDay } from '../lib/merged-pulls';
 import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
@@ -49,6 +51,14 @@ import {
   RECENT_OUTCOMES_LIMIT,
   type RunItemRef,
 } from './agent-activity-panel';
+import {
+  AGENTS_WINDOWS,
+  type AgentsViewFilters,
+  matchesAgentsRun,
+  matchesAgentsSession,
+  matchesFind,
+  parseAgentsViewFilters,
+} from './agents/agents-view-filters';
 import { BridgeDetail } from './bridge-detail';
 import { bridgeReadouts, fleetReadoutInput } from './bridge-readouts';
 import { resolveBridgeDetail } from './bridge-rows';
@@ -61,12 +71,19 @@ import {
 import { DataWarnings } from './console-header';
 import { repoScopedConsoleHrefs } from './console-hrefs';
 import { ConsoleReadouts } from './console-readouts';
+import {
+  ConsoleToolbar,
+  ToolbarApply,
+  ToolbarSearch,
+  ToolbarSelect,
+  ToolbarWindow,
+} from './console-toolbar';
 import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
-import { inboxCardMetadata } from './inbox-card';
+import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
 import {
   ActiveDispatchesPanel,
@@ -147,9 +164,25 @@ async function getParkedWork(
   }
 }
 
+/** All outcomes on Agents, in the Bridge's repository scope and view. */
+function agentsScopedHref(
+  repo: string | undefined,
+  view: AgentsViewFilters,
+): string {
+  const query = new URLSearchParams();
+  if (repo) query.set('repo', repo);
+  if (view.agent) query.set('agent', view.agent);
+  if (view.window) query.set('window', view.window);
+  if (view.q) query.set('q', view.q);
+  return query.size ? `/agents?${query}` : '/agents';
+}
+
 interface PageProps {
   searchParams: Promise<{
     repo?: string;
+    agent?: string;
+    window?: string;
+    q?: string;
     sel?: string;
     stoppedCursor?: string;
   }>;
@@ -158,12 +191,17 @@ interface PageProps {
 async function IndexBody({
   repoFilter,
   repoFilterKey,
+  view,
+  watchedRepos,
   selectedKey,
   stoppedCursor,
   multiRepo,
 }: {
   repoFilter: WatchedRepo | undefined;
   repoFilterKey?: string;
+  /** The toolbar's agent, window and find, as on Agents. */
+  view: AgentsViewFilters;
+  watchedRepos: WatchedRepo[];
   selectedKey?: string;
   stoppedCursor?: string;
   multiRepo: boolean;
@@ -186,6 +224,7 @@ async function IndexBody({
     autoscaler,
     spendArchive,
     tokenRateSnapshot,
+    merged,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
@@ -207,6 +246,7 @@ async function IndexBody({
       return undefined;
     }),
     getTokenRateSnapshot(),
+    mergedLastDay(repoFilterKey),
   ]);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
@@ -250,27 +290,51 @@ async function IndexBody({
   // unfiltered data - a repo filter should narrow what's *displayed*, never
   // which items can see each other's runs/sessions. The repository selector
   // and scoped navigation share this same `?repo=` state.
+  // The toolbar's agent, window and find narrow the same rows after it, as
+  // on Agents; find also narrows the item lists by title and reference.
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
-  const filteredActivity = repoFilter
-    ? {
-        ...activity,
-        liveRuns: activity.liveRuns.filter((run) => matchesFilter(run.repo)),
-        recentRuns: activity.recentRuns.filter((run) =>
-          matchesFilter(run.repo),
-        ),
-      }
-    : activity;
-  const filteredCliSessions = filterSessionsForRepo(cliSessions, repoFilter);
+  const now = Date.now();
+  const filteredActivity = {
+    ...activity,
+    liveRuns: activity.liveRuns.filter(
+      (run) =>
+        matchesFilter(run.repo) &&
+        matchesAgentsRun(run, view, {
+          finished: false,
+          now,
+          shownTitle: itemsByRunId[run.id]?.title,
+        }),
+    ),
+    recentRuns: activity.recentRuns.filter(
+      (run) =>
+        matchesFilter(run.repo) &&
+        matchesAgentsRun(run, view, { finished: true, now }),
+    ),
+  };
+  const filteredCliSessions = filterSessionsForRepo(
+    cliSessions,
+    repoFilter,
+  ).filter((session) => matchesAgentsSession(session, view));
+  const matchesItem = (item: {
+    repo: { owner: string; name: string };
+    number: number;
+    title: string;
+  }) =>
+    matchesFilter(item.repo) &&
+    matchesFind([item.title, `${repoKey(item.repo)}#${item.number}`], view.q);
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
   const deployCards = queueView.waitingOnDeploy
-    .filter((i) => matchesFilter(i.repo))
+    .filter(matchesItem)
     .map((item) => toCard(item));
   const blockedCards = queueView.blocked
-    .filter((i) => matchesFilter(i.repo))
+    .filter(matchesItem)
     .map((item) => toCard(item));
+  const stoppedItems = parkedWorkItems.filter((item) =>
+    matchesFind([item.spec.title, item.id, item.spec.target.repo], view.q),
+  );
 
   // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
   // `?sel=` key against the *same* records the left column actually renders -
@@ -285,7 +349,7 @@ async function IndexBody({
     cliSessions: filteredCliSessions.filter(isActiveCliSession),
     waitingOnDeploy: deployCards,
     blocked: blockedCards,
-    parkedWork: parkedWorkItems,
+    parkedWork: stoppedItems,
     itemsByRunId,
     sessionsByRunId,
     multiRepo,
@@ -296,13 +360,15 @@ async function IndexBody({
   const hasSelection = detail.kind !== 'none';
 
   const decisionCards = [
-    ...queueView.yourQueue
-      .filter((item) => matchesFilter(item.repo))
-      .map((item) => toCard(item)),
-    ...nativeInbox.cards.filter((card) =>
-      matchesFilter(inboxCardMetadata(card).repo),
-    ),
-  ];
+    ...queueView.yourQueue.filter(matchesItem).map((item) => toCard(item)),
+    ...nativeInbox.cards.filter((card) => {
+      const { repo } = inboxCardMetadata(card);
+      return (
+        matchesFilter(repo) &&
+        matchesFind([card.work.spec.title, card.work.id, repoKey(repo)], view.q)
+      );
+    }),
+  ].filter((card) => !view.agent || inboxCardAgent(card) === view.agent);
   const decisionCount = decisionCards.length;
   const readouts = bridgeReadouts(
     fleetReadoutInput({
@@ -314,10 +380,8 @@ async function IndexBody({
     }),
   );
   const selectRun = (run: AgentRun) =>
-    bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor);
-  const outcomesHref = repoFilterKey
-    ? `/agents?${new URLSearchParams({ repo: repoFilterKey })}`
-    : '/agents';
+    bridgeSelectionHref(runKey(run), repoFilterKey, stoppedCursor, view);
+  const outcomesHref = agentsScopedHref(repoFilterKey, view);
 
   return (
     <ConsoleWorkspace
@@ -325,9 +389,66 @@ async function IndexBody({
       className="bridge-frame"
       warnings={<DataWarnings warnings={warnings} />}
       toolbar={
-        <>
+        <ConsoleToolbar
+          action="/"
+          preserve={{ sel: selectedKey }}
+          primary={
+            <DeckInboxSummary
+              count={decisionCount}
+              nativeAvailable={nativeInbox.available}
+              inboxHref={
+                repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'
+              }
+            />
+          }
+        >
+          <ToolbarSelect
+            name="repo"
+            label="Repository"
+            value={repoFilterKey ?? ''}
+            options={[
+              { value: '', label: `All repositories (${watchedRepos.length})` },
+              ...watchedRepos.map((repo) => ({
+                value: repoKey(repo),
+                label: repoKey(repo),
+              })),
+            ]}
+          />
+          <ToolbarSelect
+            name="agent"
+            label="Agent"
+            value={view.agent ?? ''}
+            options={[
+              { value: '', label: 'All agents' },
+              ...PIPELINES.map((pipeline) => ({
+                value: pipeline,
+                label: pipeline,
+              })),
+            ]}
+          />
+          <ToolbarWindow
+            name="window"
+            label="Window"
+            value={view.window ?? ''}
+            options={[
+              ...AGENTS_WINDOWS.map((window) => ({
+                value: window,
+                label: window,
+              })),
+              { value: '', label: 'all' },
+            ]}
+          />
+          <ToolbarSearch
+            name="q"
+            label="Find"
+            placeholder="issue, PR, session id"
+            value={view.q}
+          />
           {repoFilterKey && (
-            <Anchor href="/" size="sm">
+            <Anchor
+              href={bridgeSelectionHref(undefined, undefined, undefined, view)}
+              size="sm"
+            >
               Clear repository
             </Anchor>
           )}
@@ -335,12 +456,10 @@ async function IndexBody({
             fetchedAt={dataAsOf}
             initialLabel={formatRelativeTime(dataAsOf)}
           />
-          <DeckInboxSummary
-            count={decisionCount}
-            nativeAvailable={nativeInbox.available}
-            inboxHref={repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'}
-          />
-        </>
+          {/* Selects and the window submit on change; Apply shows only
+              until they hydrate. */}
+          <ToolbarApply label="Apply" />
+        </ConsoleToolbar>
       }
     >
       <ConsoleReadouts label="Bridge readouts" readouts={readouts} />
@@ -359,6 +478,7 @@ async function IndexBody({
             />
             <RecentCompletionsPanel
               runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
+              merged={merged}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
               footer={
@@ -372,29 +492,31 @@ async function IndexBody({
               }
             />
             <ParkedWorkPanel
-              items={parkedWorkItems}
+              items={stoppedItems}
               hasMoreTasks={hasMoreParkedTasks}
               error={stoppedError}
               nextPageHref={
                 stoppedNextCursor
-                  ? stoppedWorkHref(repoFilterKey, stoppedNextCursor)
+                  ? stoppedWorkHref(repoFilterKey, stoppedNextCursor, view)
                   : undefined
               }
               firstPageHref={
                 stoppedCursor || stoppedError
-                  ? stoppedWorkHref(repoFilterKey)
+                  ? stoppedWorkHref(repoFilterKey, undefined, view)
                   : undefined
               }
               cancel={cancelItem}
               redispatch={redispatchItem}
               repoFilterKey={repoFilterKey}
               stoppedCursor={stoppedCursor}
+              view={view}
             />
             <BridgeSections
               waitingOnDeploy={deployCards}
               blocked={blockedCards}
               repoFilterKey={repoFilterKey}
               stoppedCursor={stoppedCursor}
+              view={view}
             />
           </div>
           <div className="bridge-stack">
@@ -419,6 +541,7 @@ async function IndexBody({
                   sessionKey(session),
                   repoFilterKey,
                   stoppedCursor,
+                  view,
                 )
               }
             />
@@ -431,6 +554,7 @@ async function IndexBody({
               detail={detail}
               repoFilterKey={repoFilterKey}
               stoppedCursor={stoppedCursor}
+              view={view}
               cancel={cancelItem}
               redispatch={redispatchItem}
             />
@@ -453,6 +577,7 @@ interface IndexViewProps {
   watchedRepos: ReturnType<typeof getWatchedRepos>;
   repoFilter: ReturnType<typeof parseRepoFilterParam>;
   repoFilterKey?: string;
+  view: AgentsViewFilters;
   selectedKey?: string;
   stoppedCursor?: string;
   multiRepo: boolean;
@@ -460,8 +585,10 @@ interface IndexViewProps {
 }
 
 function IndexViewContent({
+  watchedRepos,
   repoFilter,
   repoFilterKey,
+  view,
   selectedKey,
   stoppedCursor,
   multiRepo,
@@ -470,12 +597,14 @@ function IndexViewContent({
     <>
       <LiveDashboard />
       <Suspense
-        key={`${repoFilterKey ?? ''}:${stoppedCursor ?? ''}`}
+        key={`${repoFilterKey ?? ''}:${view.agent ?? ''}:${view.window ?? ''}:${view.q ?? ''}:${stoppedCursor ?? ''}`}
         fallback={<PageLoading rows={6} header={false} />}
       >
         <IndexBody
           repoFilter={repoFilter}
           repoFilterKey={repoFilterKey}
+          view={view}
+          watchedRepos={watchedRepos}
           selectedKey={selectedKey}
           stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}
@@ -538,6 +667,7 @@ async function IndexShell({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam(params.repo);
   const repoFilterKey = repoFilter ? repoKey(repoFilter) : undefined;
   const selectedKey = parseBridgeSelection(params.sel);
+  const view = parseAgentsViewFilters(params);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -551,6 +681,7 @@ async function IndexShell({ searchParams }: PageProps) {
       watchedRepos={watchedRepos}
       repoFilter={repoFilter}
       repoFilterKey={repoFilterKey}
+      view={view}
       selectedKey={selectedKey}
       stoppedCursor={params.stoppedCursor}
       multiRepo={watchedRepos.length > 1}

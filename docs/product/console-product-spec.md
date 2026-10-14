@@ -221,7 +221,9 @@ product requirements.
 the work that has stopped, and the work in flight.
 
 - **FE-BR-1 [Shipped]** `DeckInboxSummary` shows "No decisions waiting" or
-  "Open N decisions" and links to `/inbox`.
+  "Review N decisions" and links to `/inbox`. It is the toolbar's primary
+  action, after the repository, agent, window and find controls that narrow
+  the Bridge's runs, sessions and items as they do on Agents.
 - **FE-BR-2 [Shipped]** `ParkedWorkPanel`, titled "Stopped work (N)", lists
   native and GitHub-anchored tasks whose latest run is parked or failed.
   Native rows offer **Cancel** and **Redispatch**. GitHub-anchored rows link
@@ -506,9 +508,9 @@ GitHub issues, and manage recurring work.
   read 5 pages. It then says how far it searched and offers "Search older
   work" from where it stopped. Unfiltered, each page shows up to 200 tasks.
   Bridge stopped work pages over the authoritative all-anchor task feed with
-  the same explicit 200-task bound. Inbox and Agents provide a repository
-  selector and clear action. Bridge accepts repository scope from navigation
-  and exposes a clear action when scoped, without a repository selector.
+  the same explicit 200-task bound. Bridge, Inbox and Agents provide a
+  repository selector and clear action. Selection applies on change; the
+  Apply button shows only until the page hydrates.
   Scope is preserved across navigation between these pages.
   Schedules support revision-checked editing/deletion in the UI and API,
   with UTC evaluation and labeled local display. `PUT` remains an idempotent

@@ -7,7 +7,7 @@ import {
   LiveRunRow,
 } from './agent-activity-panel';
 import type { BridgeDetail as BridgeDetailDescriptor } from './bridge-rows';
-import { bridgeSelectionHref } from './bridge-selection';
+import { bridgeSelectionHref, type BridgeView } from './bridge-selection';
 import { ParkedWorkDetail } from './parked-work-detail';
 import type { WorkAction } from './work/work-actions';
 
@@ -28,6 +28,7 @@ export function BridgeDetail({
   detail,
   repoFilterKey,
   stoppedCursor,
+  view,
   backHref: suppliedBackHref,
   cancel = async () => [null, undefined] as const,
   redispatch = async () => [null, undefined] as const,
@@ -35,6 +36,7 @@ export function BridgeDetail({
   detail: BridgeDetailDescriptor;
   repoFilterKey?: string;
   stoppedCursor?: string;
+  view?: BridgeView;
   /** The owning surface can clear its selection without leaving that page. */
   backHref?: string;
   /** Only ever invoked for the `parkedWork` kind; every other kind renders
@@ -59,7 +61,7 @@ export function BridgeDetail({
 
   const backHref =
     suppliedBackHref ??
-    bridgeSelectionHref(undefined, repoFilterKey, stoppedCursor);
+    bridgeSelectionHref(undefined, repoFilterKey, stoppedCursor, view);
   const eyebrow =
     detail.kind === 'item'
       ? 'Waiting on deploy'

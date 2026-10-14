@@ -65,7 +65,7 @@ export function DeckInboxSummary({
           ? 'Review queue'
           : count === 0
             ? 'Review queue'
-            : `Open ${count} decision${count === 1 ? '' : 's'}`}
+            : `Review ${count} decision${count === 1 ? '' : 's'}`}
       </Anchor>
     </Group>
   );

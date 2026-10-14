@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRun } from '../lib/agent-activity';
-import { ActiveDispatchesPanel } from './ops-panels';
+import { ActiveDispatchesPanel, RecentCompletionsPanel } from './ops-panels';
 
 const now = Date.parse('2026-10-14T08:00:00Z');
 
@@ -50,5 +50,46 @@ describe('ActiveDispatchesPanel', () => {
     const head = screen.getByTestId('current-work');
     expect(head).toHaveTextContent('updated 4m ago');
     expect(head).not.toHaveTextContent('· updated');
+  });
+});
+
+describe('RecentCompletionsPanel', () => {
+  it("heads the panel with the mockup's merged count when one is given", () => {
+    render(
+      <MantineProvider>
+        <RecentCompletionsPanel
+          runs={[{ ...run('a', 'claude'), status: 'completed' }]}
+          merged={{ count: 14, partial: false }}
+        />
+      </MantineProvider>,
+    );
+    const head = screen.getByTestId('latest-outcomes');
+    expect(head).toHaveTextContent('14 merged · 24h');
+    expect(head).toHaveTextContent('last 1');
+  });
+
+  it('marks a partial merged count as a lower bound', () => {
+    render(
+      <MantineProvider>
+        <RecentCompletionsPanel
+          runs={[]}
+          merged={{ count: 3, partial: true }}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('latest-outcomes')).toHaveTextContent(
+      '3+ merged · 24h',
+    );
+  });
+
+  it('counts the listed runs when no merged count is given', () => {
+    render(
+      <MantineProvider>
+        <RecentCompletionsPanel runs={[]} />
+      </MantineProvider>,
+    );
+    expect(screen.getByTestId('latest-outcomes')).toHaveTextContent(
+      '0 succeeded · last 0',
+    );
   });
 });
