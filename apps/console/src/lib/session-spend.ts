@@ -112,15 +112,35 @@ export function sessionPRReferences(
     // Shared credentials and overlapping windows cannot identify the creating
     // session on their own. Require a positive exact session binding in GitHub's
     // own PR body, never a transcript assertion or an incidental quoted URL.
-    const links = [
-      ...record.body.matchAll(
-        /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/gmu,
-      ),
-    ];
+    const links: string[] = [];
+    let fence: { character: string; length: number } | undefined;
+    // Comments and fenced examples are not attribution metadata. Unclosed
+    // comments/fences consume the rest of the body, conservatively.
+    const body = record.body.replace(/<!--[\s\S]*?(?:-->|$)/gu, '');
+    for (const line of body.split('\n')) {
+      const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+      if (delimiter) {
+        if (!fence)
+          fence = { character: delimiter[1][0], length: delimiter[1].length };
+        else if (
+          delimiter[1][0] === fence.character &&
+          delimiter[1].length >= fence.length &&
+          !delimiter[2].trim()
+        )
+          fence = undefined;
+        continue;
+      }
+      if (fence) continue;
+      const link =
+        /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/u.exec(
+          line,
+        );
+      if (link) links.push(link[1]);
+    }
     return (
       doc.agent === 'claude-code' &&
       links.length > 0 &&
-      links.every((link) => link[1] === doc.sessionId)
+      links.every((sessionId) => sessionId === doc.sessionId)
     );
   });
 }

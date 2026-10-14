@@ -49,12 +49,12 @@ only when the stored GitHub projection agrees with all of:
 - the hook-observed authenticated GitHub actor (`githubActor`),
 - a creation timestamp inside the session's inclusive start/last-activity window,
 - the hook-observed exact head branch (`doc.branch`), and
-- the session's repository as the head repository (forks stay unsupported).
+- the session's repository as the head repository (no repository guessing).
 
 An exact `Claude-Session: https://claude.ai/code/<sessionId>` line in GitHub's
 PR body is additionally required, and every such line must match the session.
 Actor/window/head facts alone are ambiguous when another session uses the same
-credential and branch. Missing, quoted, incidental or conflicting session links
+credential and branch. Missing, blockquoted, fenced, commented, incidental or conflicting session links
 fail closed. This currently supports Claude CLI sessions whose stored ID equals
 the PR attribution ID; Codex/OpenCode and CLI/cloud ID mismatches retain only
 the existing literal-publication path. The hook resolves the actor through `gh api --hostname

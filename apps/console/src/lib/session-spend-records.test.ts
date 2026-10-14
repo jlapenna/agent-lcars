@@ -222,6 +222,22 @@ describe('GitHub-record spend attribution (#2730)', () => {
   ])('requires an exact GitHub session attribution line: %s', (body) => {
     expect(spend(session(), record({ body })).mergedPRs).toBe(0);
   });
+  it.each([
+    '```text\nClaude-Session: https://claude.ai/code/session_test\n```',
+    '~~~\nClaude-Session: https://claude.ai/code/session_test\n~~~',
+    '````text\n```\nClaude-Session: https://claude.ai/code/session_test\n````',
+    '```text\nClaude-Session: https://claude.ai/code/session_test',
+    '<!--\nClaude-Session: https://claude.ai/code/session_test\n-->',
+    '<!--\nClaude-Session: https://claude.ai/code/session_test',
+  ])('does not accept an attribution example or HTML comment: %s', (body) => {
+    expect(spend(session(), record({ body })).mergedPRs).toBe(0);
+  });
+  it('allows a real attribution footer after a closed code sample and attempt comment', () => {
+    const body =
+      '```text\nClaude-Session: https://claude.ai/code/session_other\n```\n<!-- attempt-claim:test -->\nClaude-Session: https://claude.ai/code/session_test';
+    expect(spend(session(), record({ body })).mergedPRs).toBe(1);
+  });
+
   it('cannot attribute inert create text from another same-actor same-branch session', () => {
     const doc = session(
       "printf '%s\\n' 'gh pr create' 'https://github.com/jlapenna/agent-lcars/pull/42'",
