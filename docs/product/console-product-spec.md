@@ -464,9 +464,12 @@ GitHub issues, and manage recurring work.
     `work-schedules.spec.ts` covers create, enable, disable, edit, and
     confirmed delete in the browser.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
-  (Work API inputs), agent, window (1h/24h/7d) and find (applied within the
-  examined page), and cursor-based next-page navigation in the URL. Each page examines up to
-  200 native tasks; an empty filtered page can still lead to older matches.
+  (Work API inputs), agent, window (1h/24h/7d) and find, and cursor-based
+  next-page navigation in the URL. The Work API filters each 200-task store
+  page after reading it, so with any filter active the page keeps reading
+  older store pages until it has 50 matches, reaches the oldest task, or has
+  read 5 pages. It then says how far it searched and offers "Search older
+  work" from where it stopped. Unfiltered, each page shows up to 200 tasks.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Inbox and Agents provide a repository
   selector and clear action. Bridge accepts repository scope from navigation

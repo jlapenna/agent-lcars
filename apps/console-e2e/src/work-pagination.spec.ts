@@ -54,8 +54,12 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     .getByTestId('work-cards')
     .getByRole('link', { name: /^Pagination fixture / });
   await expect(links).toHaveCount(199); // the existing native fixture occupies one raw slot
+  // A full screenful of matches stops the scan at the first store page.
+  await expect(page.getByTestId('work-scan-extent')).toHaveText(
+    'Searched up to 200 native tasks; older work continues on the next page.',
+  );
   const first = await links.allTextContents();
-  await page.getByRole('link', { name: 'Next work page' }).click();
+  await page.getByRole('link', { name: 'Search older work' }).click();
   await expect(page).toHaveURL(/cursor=/);
   await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
   await expect(page.getByLabel('Principal', { exact: true })).toHaveValue(
@@ -75,14 +79,15 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   await moreFilters.click();
   await page.getByLabel('State', { exact: true }).selectOption('parked');
   await expect(page).not.toHaveURL(/cursor=/);
-  await expect(
-    page.getByText('No matching work items on this page.'),
-  ).toBeVisible();
-  await page.getByRole('link', { name: 'Next work page' }).click();
+  // The newest store page holds no parked fixture; the view reads on to the
+  // older page that does instead of showing an empty page (#1546).
   await expect(links).toHaveText(['Pagination fixture 1']);
-  await expect(page.getByRole('link', { name: 'Next work page' })).toHaveCount(
-    0,
+  await expect(page.getByTestId('work-scan-extent')).toHaveText(
+    'Searched 2 pages of up to 200 native tasks, through the oldest.',
   );
+  await expect(
+    page.getByRole('link', { name: 'Search older work' }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
