@@ -1,4 +1,9 @@
-import { isLive, type OutboxEntry, type Run } from './model';
+import {
+  deliveryBindingSchema,
+  isLive,
+  type OutboxEntry,
+  type Run,
+} from './model';
 
 /** Each query reads at most limit+1 documents; overflow fails closed. */
 export const LIFECYCLE_METRICS_READ_LIMIT = 1_000;
@@ -51,6 +56,8 @@ const HELP = {
     'Rolling-hour latency candidates with missing, invalid, reversed or future clocks.',
   reported_outcome_window:
     'Finished rolling-hour run identities by worker-reported outcome, not verified usefulness.',
+  completed_pr_delivery_window:
+    'Finished rolling-hour run identities with trusted completed PR delivery, not all useful outcomes or delivery-observation events.',
   measurement_unknown_window:
     'Rolling-hour run identities whose named measurement is unavailable.',
   outbox_entries: 'Outstanding durable outbox entries by kind and state.',
@@ -62,6 +69,48 @@ const HELP = {
 
 function terminalAt(run: Run): string | undefined {
   return [...run.events].reverse().find((event) => event.to === run.state)?.at;
+}
+
+/** DeliveryBinding is written by the exact-attempt server verifier and trusted
+ * delivery observations. Worker summaries and PR-shaped refs supply no credit. */
+function completedPullRequestDelivery(run: Run, now: number): boolean {
+  const parsed = deliveryBindingSchema.safeParse(run.delivery);
+  if (
+    !parsed.success ||
+    run.state !== 'finished' ||
+    !run.result?.ok ||
+    ['park', 'no-op', 'review'].includes(run.result.summary ?? '') ||
+    run.params?.mode === 'review'
+  )
+    return false;
+  const binding = parsed.data;
+  const admission = Date.parse(run.createdAt);
+  const settlement = Date.parse(terminalAt(run) ?? '');
+  const observation = Date.parse(binding.observedAt);
+  const updated = Date.parse(run.updatedAt);
+  if (
+    binding.runId !== run.runId ||
+    binding.state !== 'complete' ||
+    binding.mergeCommit === undefined ||
+    !Number.isFinite(admission) ||
+    !Number.isFinite(settlement) ||
+    !Number.isFinite(observation) ||
+    !Number.isFinite(updated) ||
+    settlement < admission ||
+    settlement > updated ||
+    observation < admission ||
+    observation > updated ||
+    observation > now
+  )
+    return false;
+  if (binding.runtimeGate === 'none')
+    return binding.runtimeEvidence === undefined;
+  // advanceDelivery records both clocks from the same authorized observation.
+  return (
+    binding.runtimeEvidence !== undefined &&
+    Number.isFinite(Date.parse(binding.runtimeEvidence.observedAt)) &&
+    Date.parse(binding.runtimeEvidence.observedAt) === observation
+  );
 }
 
 export interface LifecycleMetricRecords {
@@ -303,6 +352,12 @@ export function lifecycleMetricSnapshot(
         });
       }
       const finished = terminal.filter((run) => run.state === 'finished');
+      const completedDeliveries = finished.filter((run) =>
+        completedPullRequestDelivery(run, now),
+      );
+      gauge('completed_pr_delivery_window', completedDeliveries.length, {
+        pipeline,
+      });
       for (const outcome of OUTCOMES) {
         gauge(
           'reported_outcome_window',
@@ -319,13 +374,15 @@ export function lifecycleMetricSnapshot(
       }
       // Only the authenticated server spawn clock proves provider start.
       // Claims/heartbeats/result.ok are not spawn, evidence, merge or cost.
+      // Only this finished cohort's trusted completed PR bindings remove
+      // useful-outcome unknowns; unsupported deliverable kinds stay unknown.
       for (const [measurement, count] of [
         [
           'provider_start',
           providerStartCandidates.filter((run) => !providerStarted(run)).length,
         ],
         ['verified_evidence', finished.length],
-        ['useful_outcome', finished.length],
+        ['useful_outcome', finished.length - completedDeliveries.length],
         ['human_touch', terminal.length],
         ['cost', finished.length],
       ] as const)
