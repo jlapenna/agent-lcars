@@ -317,12 +317,14 @@ async function expectNoBridgeRepositoryForm(page: Page) {
 }
 
 async function expectSelectedRepositoryForm(page: Page) {
+  await openToolbarFilters(page);
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toHaveValue(E2E_FIXTURE_REPOSITORY);
 }
 
 async function expectClearedRepositoryForm(page: Page) {
+  await openToolbarFilters(page);
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toHaveValue('');
