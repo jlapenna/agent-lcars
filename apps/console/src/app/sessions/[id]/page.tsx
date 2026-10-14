@@ -51,11 +51,13 @@ export function ArchivedSessionTranscript({
       available: 'Transcript unavailable (archive reference missing).',
     };
     return (
-      <Text size="sm" c="dimmed" data-testid="cli-transcript-state">
-        {status
-          ? messages[status]
-          : 'Transcript archival not enabled for this CLI session.'}
-      </Text>
+      <OpsPanel title="Transcript">
+        <Text size="sm" c="dimmed" data-testid="cli-transcript-state">
+          {status
+            ? messages[status]
+            : 'Transcript archival not enabled for this CLI session.'}
+        </Text>
+      </OpsPanel>
     );
   }
 
