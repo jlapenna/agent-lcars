@@ -10,6 +10,9 @@ import { countMergedPullsSince } from './merged-pulls';
 import { getSessionArchive } from './session-archive';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
+ * count must cost only its own figure, not every readout. */
+const MERGES_DEADLINE_MS = 5_000;
 
 /**
  * The figures the console frame shows on every page: the rail readouts, the
@@ -85,6 +88,20 @@ async function readCachedRecentMerges(): Promise<RecentMerges> {
   return readRecentMerges();
 }
 
+async function withinDeadline<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Read timed out')), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function initialsOf(login: string): string {
   const [first = '', second = ''] = login.split(/[^a-z0-9]+/i).filter(Boolean);
   const letters = second ? `${first.charAt(0)}${second.charAt(0)}` : login;
@@ -123,9 +140,10 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
     (isE2eTesting() ? readRecentTokens() : readCachedRecentTokens()).catch(
       () => ({}) as RecentTokens,
     ),
-    (isE2eTesting() ? readRecentMerges() : readCachedRecentMerges()).catch(
-      () => ({}) as RecentMerges,
-    ),
+    withinDeadline(
+      isE2eTesting() ? readRecentMerges() : readCachedRecentMerges(),
+      MERGES_DEADLINE_MS,
+    ).catch(() => ({}) as RecentMerges),
   ]);
   const queue = activity?.data.queue;
   const fleet = activity?.data.fleet;
