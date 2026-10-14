@@ -469,6 +469,14 @@ export async function observeGithubDelivery(
       return { kind: 'waiting', head: binding.head };
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
   }
+  // Late same-head feedback remains actionable while delivery is waiting,
+  // even if checks allowed the artifact to merge before review arrived.
+  if (review.changesRequested || review.unresolved)
+    return {
+      kind: 'correction',
+      head: binding.head,
+      reason: 'Review feedback requires correction',
+    };
   if (pr.merged && pr.merge_commit_sha !== null) {
     if (!hasIndependentReview(review, pr.user.login))
       return { kind: 'waiting', head: binding.head };
@@ -536,12 +544,6 @@ export async function observeGithubDelivery(
       mergeCommit: pr.merge_commit_sha,
     };
   }
-  if (review.changesRequested || review.unresolved)
-    return {
-      kind: 'correction',
-      head: binding.head,
-      reason: 'Review feedback requires correction',
-    };
   const required = await protectedChecks(deps, binding.repo, pr.base.ref);
   const checkRuns = await currentCheckRuns(deps, binding);
   const candidateFailures = checkRuns.filter(

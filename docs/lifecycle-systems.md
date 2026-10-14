@@ -311,7 +311,9 @@ target policy and squash arming. Pending independent review transfers to the
 existing durable monitor; it does not retain the implementation executor or
 declare delivery complete. Already merged artifacts and final logical landing
 still require independent current-head review, resolved threads and exact
-protected-merge evidence. Normal Run settlement, credential cleanup and positive physical
+protected-merge evidence. Actionable same-head feedback remains a bounded correction
+even when it arrives after merge, while delivery is still waiting. Normal Run
+settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
 ownership; Run.delivery exposes waiting, runtime-required or complete separately
 from physical Run execution. The durable monitor-delivery outbox is consumed by

@@ -244,6 +244,55 @@ describe('authenticated ready delivery evidence', () => {
     });
   });
 
+  it.each([
+    {
+      name: 'changes requested',
+      review: {
+        reviews: {
+          pageInfo: { hasPreviousPage: false },
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: { login: 'reviewer' },
+              commit: { oid: HEAD },
+            },
+          ],
+        },
+      },
+    },
+    {
+      name: 'unresolved thread',
+      review: {
+        reviewThreads: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ isResolved: false }],
+        },
+      },
+    },
+  ])(
+    'corrects late $name on an already merged waiting artifact',
+    async ({ review }) => {
+      expect(
+        await observeGithubDelivery(
+          fixture({
+            pr: {
+              state: 'closed',
+              merged: true,
+              merge_commit_sha: MERGE,
+              auto_merge: null,
+            },
+            review,
+          }),
+          BINDING,
+        ),
+      ).toEqual({
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Review feedback requires correction',
+      });
+    },
+  );
+
   it('keeps a pending-review handoff waiting after merge until independent review qualifies landing', async () => {
     const review = {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
@@ -2131,7 +2180,7 @@ describe('same-head review feedback before unavailable check evidence', () => {
       ),
     ).toEqual({ kind: 'waiting', head: HEAD });
   });
-  it('retains merged independent-review fence instead of scheduling feedback correction', async () => {
+  it('retains merged same-head review feedback as correction before unavailable checks', async () => {
     expect(
       await observeGithubDelivery(
         unavailableEvidence('refused checks', changesRequested, {
@@ -2140,7 +2189,11 @@ describe('same-head review feedback before unavailable check evidence', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'waiting', head: HEAD });
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
   });
   it.each([{ draft: true }, { state: 'closed' }, { auto_merge: null }])(
     'retains withdrawn PR waiting before review feedback: %j',
@@ -2219,9 +2272,19 @@ describe('nullable historical review identities', () => {
       ),
     ).toEqual({ kind: 'waiting', head: HEAD });
   });
-  it.each(['DISMISSED', 'CHANGES_REQUESTED'])(
-    'retains valid reviewer %s authority beside nullable history',
-    async (state) => {
+  it.each([
+    { state: 'DISMISSED', expected: { kind: 'waiting', head: HEAD } },
+    {
+      state: 'CHANGES_REQUESTED',
+      expected: {
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Review feedback requires correction',
+      },
+    },
+  ])(
+    'retains valid reviewer $state authority beside nullable history',
+    async ({ state, expected }) => {
       const nodes = [valid, ...history, { ...valid, state }];
       await expect(
         readyDeliveryBinding(
@@ -2251,7 +2314,7 @@ describe('nullable historical review identities', () => {
           }),
           BINDING,
         ),
-      ).toEqual({ kind: 'waiting', head: HEAD });
+      ).toEqual(expected);
     },
   );
   it('keeps unresolved threads actionable beside nullable history', async () => {
