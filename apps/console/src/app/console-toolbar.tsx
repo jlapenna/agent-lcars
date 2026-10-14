@@ -161,12 +161,20 @@ export function ToolbarWindow({
   );
 }
 
+/** The form's filters as one comparable string. */
+function formState(form: HTMLFormElement): string {
+  return new URLSearchParams(
+    [...new FormData(form)].map(([key, value]) => [key, String(value)]),
+  ).toString();
+}
+
 /** Applies when its value is committed - Enter, the clear button, or focus
- * leaving the form - so FIND behaves like the selects and window beside it
- * rather than waiting for a separate Apply. Not per keystroke: each
- * application is a navigation. Moving to another control in the same form
- * (Work's principal field behind More filters) does not apply yet; that
- * control's own submission, or Enter, carries both values. */
+ * leaving the filters for no other control - so FIND behaves like the
+ * selects and window beside it rather than waiting for a separate Apply. Not
+ * per keystroke: each application is a navigation. Moving among the form's
+ * own fields (Work's principal behind More filters) waits, and leaving to
+ * another action (New work, a link) lets that action run instead of racing it
+ * with a reload; Enter still applies. */
 export function ToolbarSearch({
   name,
   label,
@@ -183,24 +191,23 @@ export function ToolbarSearch({
     const input = ref.current;
     const form = input?.form;
     if (!input || !form) return;
-    let applied = input.value;
+    let applied = formState(form);
     const onSubmit = () => {
-      applied = input.value;
+      applied = formState(form);
     };
     const commit = () => {
-      if (input.value !== applied) form.requestSubmit();
+      if (formState(form) !== applied) form.requestSubmit();
     };
     const onFocusOut = (event: FocusEvent) => {
-      const next = event.relatedTarget;
-      if (next instanceof Node && form.contains(next)) return;
-      commit();
+      // Null: focus went to the page itself, not to another control.
+      if (event.relatedTarget === null) commit();
     };
     form.addEventListener('submit', onSubmit);
-    input.addEventListener('focusout', onFocusOut);
+    form.addEventListener('focusout', onFocusOut);
     input.addEventListener('search', commit);
     return () => {
       form.removeEventListener('submit', onSubmit);
-      input.removeEventListener('focusout', onFocusOut);
+      form.removeEventListener('focusout', onFocusOut);
       input.removeEventListener('search', commit);
     };
   }, [ref]);
