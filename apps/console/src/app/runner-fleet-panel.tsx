@@ -12,7 +12,7 @@ import {
   type HistogramWindow,
   summarizeWindows,
 } from '../lib/histogram-window';
-import { fleetCapacity } from '../lib/runner-status-contract';
+import { arcRunnerCount, fleetCapacity } from '../lib/runner-status-contract';
 import {
   TOKEN_RATE_AVERAGE_MINUTES,
   TOKEN_RATE_MINUTES,
@@ -97,8 +97,15 @@ export function RunnerFleetPanel({
   const known =
     filteredOut ||
     (lanes !== undefined && lanes.length > 0 && !lanesIncomplete);
-  const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
-  const max = lanes && fleetCapacity(lanes);
+  // The inventory's ARC pods on the lanes shown, as the rail counts them;
+  // without it, the lanes' registered runners and configured maximum.
+  const pods =
+    lanes && !lanesIncomplete
+      ? arcRunnerCount(hostInventory?.runners, lanes)
+      : undefined;
+  const online =
+    pods?.online ?? lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
+  const max = pods?.total ?? (lanes && fleetCapacity(lanes));
   const ciWait = lanes && fleetCiWait(lanes);
   return (
     <OpsPanel

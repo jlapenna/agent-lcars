@@ -2,7 +2,6 @@ import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
 import { runCountHistory } from '../lib/run-history';
 import { fleetRunnerHistory } from '../lib/runner-history';
-import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import { repoKey } from '../lib/watched-repo';
 import type { ConsoleReadout } from './console-readouts';
@@ -71,16 +70,13 @@ export function fleetReadoutInput({
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
-  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
   const repoSpend = spendArchive?.spendByRepository;
   return {
     fleet: {
       online: activity.fleet?.online,
       busy: activity.fleet?.busy,
-      capacity:
-        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
-          ? undefined
-          : capacity,
+      // Set only with complete lanes; the same figure the rail shows.
+      capacity: activity.fleet?.capacity,
     },
     liveRuns,
     liveRunsAvailable: activity.queue !== undefined,

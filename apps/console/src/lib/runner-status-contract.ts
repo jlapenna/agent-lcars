@@ -33,3 +33,30 @@ export function fleetCapacity(
   }
   return total;
 }
+
+/** A runner pod that is up: everything but one still starting or gone. */
+export function isRunnerOnline(state: string): boolean {
+  return state !== 'offline' && state !== 'starting';
+}
+
+/**
+ * The fleet's runners online and in all (the mockup's "11/12"), counted from
+ * the host inventory's per-pod rows. Only ARC runners count: a direct agent
+ * Job is not a GitHub Actions runner. `lanes` narrows the count to the lanes
+ * a page shows. Undefined when the inventory carries no runner rows, so a
+ * caller never invents a denominator.
+ */
+export function arcRunnerCount(
+  runners: readonly { kind: string; lane: string; state: string }[] | undefined,
+  lanes?: readonly { lane: string }[],
+): { online: number; total: number } | undefined {
+  if (runners === undefined) return undefined;
+  const shown = lanes && new Set(lanes.map((lane) => lane.lane));
+  const arc = runners.filter(
+    (runner) => runner.kind === 'arc' && (!shown || shown.has(runner.lane)),
+  );
+  return {
+    online: arc.filter((runner) => isRunnerOnline(runner.state)).length,
+    total: arc.length,
+  };
+}

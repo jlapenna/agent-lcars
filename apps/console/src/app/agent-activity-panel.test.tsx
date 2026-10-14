@@ -1039,7 +1039,7 @@ describe('AgentActivityPanel fleet chip', () => {
       },
     });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '2 GitHub runners registered (1 running) · Direct executor status unavailable',
+      '2 GitHub runners online (1 running) · Direct executor status unavailable',
     );
   });
 
@@ -1053,7 +1053,7 @@ describe('AgentActivityPanel fleet chip', () => {
       },
     });
     expect(screen.getByTestId('fleet-chip').textContent).toBe(
-      '1 GitHub runner registered (0 running) · Direct executor status unavailable',
+      '1 GitHub runner online (0 running) · Direct executor status unavailable',
     );
   });
 
@@ -1067,7 +1067,7 @@ describe('AgentActivityPanel fleet chip', () => {
       },
     });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-      '0 GitHub runners registered (0 running)',
+      '0 GitHub runners online (0 running)',
     );
   });
 

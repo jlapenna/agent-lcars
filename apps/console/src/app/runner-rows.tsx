@@ -5,6 +5,7 @@ import type {
   FleetRunner,
   FleetRunnerState,
 } from '../lib/autoscaler-status';
+import { isRunnerOnline } from '../lib/runner-status-contract';
 import { StateMark, UNAVAILABLE } from './ops-primitives';
 import { RelativeTime } from './relative-time';
 
@@ -33,9 +34,7 @@ export function formatRunnerRequest(runner: FleetRunner): string {
 
 /** Runners that are up: everything but starting and offline pods. */
 export function onlineRunnerCount(runners: readonly FleetRunner[]): number {
-  return runners.filter(
-    (runner) => runner.state !== 'offline' && runner.state !== 'starting',
-  ).length;
+  return runners.filter((runner) => isRunnerOnline(runner.state)).length;
 }
 
 /**
