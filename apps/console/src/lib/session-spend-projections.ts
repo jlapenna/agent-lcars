@@ -1,7 +1,7 @@
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 
-import { sessionPRReferences, spendPRKey } from './session-spend';
+import { sessionPRCandidates, spendPRKey } from './session-spend';
 
 /** Stored evidence only. A single page has at most 200 point reads, eight
  * outstanding reads and a shared five-second deadline. Late reads cannot
@@ -22,7 +22,7 @@ export async function loadSpendProjections(
     ]),
   );
   for (const doc of docs)
-    for (const pr of sessionPRReferences(doc)) {
+    for (const pr of sessionPRCandidates(doc)) {
       const repo = `${pr.repo.owner}/${pr.repo.name}`;
       anchors.set(spendPRKey(pr.repo, pr.number), {
         repo: canonical.get(repo.toLowerCase()) ?? repo,

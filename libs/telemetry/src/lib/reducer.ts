@@ -40,6 +40,7 @@ interface SessionState {
   aiTitle?: string;
   firstUserPrompt?: string;
   qualifiedPRs: Map<string, QualifiedSessionPR>;
+  publicationCandidates: Map<string, QualifiedSessionPR>;
   prNumbers: Set<number>;
   commitShas: Set<string>;
   totalCostUsd?: number;
@@ -64,6 +65,7 @@ function createState(sessionId: string, host?: string): SessionState {
       cacheReadTokens: 0,
     },
     qualifiedPRs: new Map(),
+    publicationCandidates: new Map(),
     prNumbers: new Set(),
     commitShas: new Set(),
     pendingBashCommands: new Map(),
@@ -119,6 +121,12 @@ function applyMessage(
         if (toolUseId) state.pendingBashCommands.delete(toolUseId);
         if (command && isDeliverableCommand(command)) {
           const found = findDeliverables(record['content']);
+          if (record['is_error'] !== true)
+            for (const pr of findQualifiedPRs(record['content']))
+              state.publicationCandidates.set(
+                `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
+                pr,
+              );
           if (record['is_error'] !== true && isPRPublicationCommand(command))
             for (const pr of findQualifiedPRs(record['content']))
               state.qualifiedPRs.set(
@@ -292,6 +300,9 @@ function finalizeState(state: SessionState): SessionSummary {
       prNumbers: Array.from(state.prNumbers),
       ...(state.qualifiedPRs.size > 0 && {
         qualifiedPRs: [...state.qualifiedPRs.values()],
+      }),
+      ...(state.publicationCandidates.size > 0 && {
+        publicationCandidates: [...state.publicationCandidates.values()],
       }),
       commitShas: Array.from(state.commitShas),
     },

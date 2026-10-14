@@ -20,10 +20,14 @@ export function DeckInboxSummary({
   count,
   inboxHref,
   nativeAvailable = true,
+  compact = false,
 }: {
   count: number;
   inboxHref: string;
   nativeAvailable?: boolean;
+  /** The toolbar's primary action alone, as in the mockup: the count is in
+   * its label. Only a degraded native read keeps its note. */
+  compact?: boolean;
 }) {
   // The Bridge toolbar's primary action, so it wears the Bridge's accent like
   // the mockup's primary button (design/fleet-console.html `.btn-primary`),
@@ -37,16 +41,20 @@ export function DeckInboxSummary({
       data-testid="deck-inbox-summary"
       data-empty={count === 0 && nativeAvailable ? '' : undefined}
     >
-      <Text component="span" fw={700} className="deck-inbox-summary__count">
-        {count}
-      </Text>
-      <Text component="span" fw={600} className="deck-inbox-summary__label">
-        {!nativeAvailable
-          ? 'GitHub decisions waiting · native unavailable'
-          : count === 0
-            ? 'No decisions waiting'
-            : 'Decisions waiting'}
-      </Text>
+      {compact ? null : (
+        <Text component="span" fw={700} className="deck-inbox-summary__count">
+          {count}
+        </Text>
+      )}
+      {compact && nativeAvailable ? null : (
+        <Text component="span" fw={600} className="deck-inbox-summary__label">
+          {!nativeAvailable
+            ? 'GitHub decisions waiting · native unavailable'
+            : count === 0
+              ? 'No decisions waiting'
+              : 'Decisions waiting'}
+        </Text>
+      )}
       {/* Deliberately avoids the word "Inbox": Playwright role-name
           matching is substring-based, and the e2e suite addresses the nav
           pill with an unscoped getByRole('link', { name: 'Inbox' }) - a
@@ -62,7 +70,9 @@ export function DeckInboxSummary({
         {!nativeAvailable
           ? 'Review queue'
           : count === 0
-            ? 'Review queue'
+            ? compact
+              ? 'No decisions waiting'
+              : 'Review queue'
             : `Review ${count} decision${count === 1 ? '' : 's'}`}
       </Anchor>
     </Group>

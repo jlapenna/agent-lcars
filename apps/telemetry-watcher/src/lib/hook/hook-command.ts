@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -48,7 +48,7 @@ import { matchesRepoAllowlist } from './repo-allowlist';
 import { appendToSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
-export const HOOK_CLIENT_VERSION = '0.4.0';
+export const HOOK_CLIENT_VERSION = '0.5.0';
 
 export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
@@ -91,6 +91,8 @@ export interface HookCommandDependencies {
     watchedRepos: readonly string[],
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
+  /** Read from the hook credential, never the transcript. Failure is unknown. */
+  resolveGithubActor?: () => Promise<string | undefined>;
   /** Starts the flusher detached from the hook process. */
   spawnFlusher: () => void;
   /** Runs the flusher to completion (`lcars hook flush`, `--inline`). */
@@ -126,6 +128,23 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
+    resolveGithubActor: () =>
+      new Promise((resolve) => {
+        execFile(
+          'gh',
+          ['api', '--hostname', 'github.com', 'user', '--jq', '.login'],
+          { env, timeout: 2000, maxBuffer: 4096, encoding: 'utf8' },
+          (error, stdout) => {
+            const login = stdout?.trim();
+            resolve(
+              !error &&
+                /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(login)
+                ? login
+                : undefined,
+            );
+          },
+        );
+      }),
     // The flusher is its own bundle (lcars-hook-flush.cjs, installed next to
     // this one) so hook invocations never load the Firestore client: with it
     // bundled in, every hook paid ~600 ms of startup.
@@ -446,7 +465,14 @@ async function handleRuntimeHook(
       !isSafeIdentifier(payload.sessionId) ||
       payload.agentId === payload.sessionId
     ) {
-      log('skipped-subagent', `event=${payload.hookEventName}`);
+      // Name the identities (when safe to print) so a skipped event can be
+      // matched to a session instead of only to a timestamp.
+      const tag = (id: string | undefined) =>
+        id && isSafeIdentifier(id) ? id.slice(0, 8) : 'unsafe';
+      log(
+        'skipped-subagent',
+        `parent=${tag(payload.sessionId)} child=${tag(payload.agentId)} event=${payload.hookEventName}`,
+      );
       return { action: 'skipped-subagent' };
     }
     // Codex hook session_id identifies the parent. Use only the explicit child
@@ -547,17 +573,33 @@ async function handleRuntimeHook(
         sessionId: payload.sessionId,
         agent: profile.agent,
         host: config.host,
-        ...(base.cwd === undefined && payload.cwd && { cwd: payload.cwd }),
+        ...(payload.cwd && { cwd: payload.cwd }),
         ...(base.model === undefined &&
           payload.model && { model: payload.model }),
         repo,
       };
+      // Branch evidence must be observed from the hook checkout. Never keep a
+      // reducer-supplied branch when git resolution fails.
+      delete withHost.branch;
       const withGit = await applyGitContext(
         withHost,
         deps.resolveGitBranch,
         async () => repo,
       );
-      summary = applyAnnotationOverlays(stateDirectory, withGit);
+      // The reducer is deliberately unable to supply this identity. A missing
+      // token, failed API read or unsupported installation token stays unknown.
+      const githubActor =
+        !config.runner &&
+        profile.agent === 'claude-code' &&
+        payload.cwd &&
+        withGit.branch
+          ? await deps.resolveGithubActor?.().catch(() => undefined)
+          : undefined;
+      delete withGit.githubActor;
+      summary = applyAnnotationOverlays(stateDirectory, {
+        ...withGit,
+        ...(githubActor && { githubActor }),
+      });
     }
 
     const seq = (state?.seq ?? 0) + 1;

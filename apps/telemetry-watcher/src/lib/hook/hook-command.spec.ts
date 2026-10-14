@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 import {
   isNewerHookWrite,
+  parseSessionEventV1,
   type SessionEventV1,
   sessionWriteForEvent,
 } from '@agent-lcars/telemetry';
@@ -127,6 +128,63 @@ describe('lcars hook claude', () => {
     });
   });
 
+  it('carries authenticated GitHub actor through the real spool parser and session writer', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'), {
+      resolveGithubActor: async () => 'jlapenna',
+    });
+    await executeHookCommand(['claude'], d);
+    const parsed = parseSessionEventV1(spooledEvents(home)[0]);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const write = sessionWriteForEvent(
+      parsed.event,
+      undefined,
+      '2026-10-10T12:00:00.000Z',
+    );
+    expect(write?.doc).toMatchObject({
+      githubActor: 'jlapenna',
+      branch: 'feat/hooks',
+    });
+    expect(write?.clearFields).not.toContain('githubActor');
+  });
+
+  it.each([undefined, 'failure'])(
+    'leaves actor unknown when the authenticated read is unavailable: %s',
+    async (failure) => {
+      const home = tempHome();
+      const d = deps(home, payload('PostToolUse'), {
+        resolveGithubActor: async () => {
+          if (failure) throw new Error('offline');
+          return undefined;
+        },
+      });
+      await executeHookCommand(['claude'], d);
+      const parsed = parseSessionEventV1(spooledEvents(home)[0]);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      const write = sessionWriteForEvent(
+        parsed.event,
+        undefined,
+        '2026-10-10T12:00:00.000Z',
+      );
+      expect(write?.doc).not.toHaveProperty('githubActor');
+      expect(write?.clearFields).toContain('githubActor');
+    },
+  );
+
+  it('does not qualify a transcript branch when live git resolution fails', async () => {
+    const home = tempHome();
+    const resolveGithubActor = vi.fn(async () => 'jlapenna');
+    const d = deps(home, payload('PostToolUse'), {
+      resolveGitBranch: async () => undefined,
+      resolveGithubActor,
+    });
+    await executeHookCommand(['claude'], d);
+    expect(spooledEvents(home)[0].summary).not.toHaveProperty('branch');
+    expect(spooledEvents(home)[0].summary).not.toHaveProperty('githubActor');
+    expect(resolveGithubActor).not.toHaveBeenCalled();
+  });
+
   it('resolves the repository against the allowlist so it is stored canonically', async () => {
     const home = tempHome();
     const resolveGitRepo = vi.fn(async () => ({
@@ -165,6 +223,11 @@ describe('lcars hook claude', () => {
         )
       ).action,
     ).toBe('skipped-subagent');
+    expect(
+      fs.readFileSync(path.join(home, STATE_DIR, 'hook.log'), 'utf8'),
+    ).toContain(
+      'skipped-subagent parent=session- child=sub-1 event=PostToolUse',
+    );
     expect(
       (await executeHookCommand(['claude'], deps(home, payload('PreCompact'))))
         .action,

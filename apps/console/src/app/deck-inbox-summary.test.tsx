@@ -46,4 +46,16 @@ describe('DeckInboxSummary', () => {
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('region')).toBeNull();
   });
+
+  it('renders only the action in the toolbar', () => {
+    render(
+      <MantineProvider>
+        <DeckInboxSummary count={3} inboxHref="/inbox" compact />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByRole('link', { name: 'Review 3 decisions' }),
+    ).toBeTruthy();
+    expect(screen.queryByText('Decisions waiting')).toBeNull();
+  });
 });

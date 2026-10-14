@@ -48,6 +48,52 @@ const event = {
 };
 
 describe('parseSessionEventV1', () => {
+  it('preserves qualified and candidate PR identities through the spool whitelist', () => {
+    const ref = {
+      repo: { owner: 'jlapenna', name: 'agent-lcars' },
+      number: 42,
+    };
+    const result = parseSessionEventV1({
+      ...event,
+      summary: {
+        ...summary,
+        githubActor: 'jlapenna',
+        deliverables: {
+          ...summary.deliverables,
+          qualifiedPRs: [ref],
+          publicationCandidates: [ref],
+        },
+      },
+    });
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.event.summary).toMatchObject({
+      githubActor: 'jlapenna',
+      deliverables: {
+        qualifiedPRs: [ref],
+        publicationCandidates: [ref],
+      },
+    });
+  });
+  it.each(['qualifiedPRs', 'publicationCandidates'])(
+    'rejects malformed %s identities rather than dropping the evidence silently',
+    (field) => {
+      expect(
+        parseSessionEventV1({
+          ...event,
+          summary: {
+            ...summary,
+            deliverables: {
+              ...summary.deliverables,
+              [field]: [
+                { repo: { owner: 'evil/path', name: 'repo' }, number: 42 },
+              ],
+            },
+          },
+        }),
+      ).toEqual({ ok: false, reason: 'summary is malformed' });
+    },
+  );
+
   it('accepts a well-formed event and copies only known fields', () => {
     const result = parseSessionEventV1({
       ...event,

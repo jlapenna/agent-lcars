@@ -52,8 +52,19 @@ export interface SessionSpend {
 export const spendPRKey = (repo: { owner: string; name: string }, n: number) =>
   `${repo.owner.toLowerCase()}/${repo.name.toLowerCase()}#${n}`;
 
-export function sessionPRReferences(doc: SessionDoc): QualifiedSessionPR[] {
-  return (doc.deliverables.qualifiedPRs ?? []).filter(
+/** Successful correlated URLs are lookup hints only. They never establish creation. */
+export function sessionPRCandidates(doc: SessionDoc): QualifiedSessionPR[] {
+  const refs = [...(doc.deliverables.qualifiedPRs ?? [])];
+  if (
+    doc.source === 'cli' &&
+    doc.agent === 'claude-code' &&
+    doc.githubActor &&
+    doc.branch &&
+    doc.repo
+  ) {
+    refs.push(...(doc.deliverables.publicationCandidates ?? []));
+  }
+  return refs.filter(
     (pr) =>
       isCanonicalSessionRepository(pr.repo) &&
       Number.isSafeInteger(pr.number) &&
@@ -61,17 +72,100 @@ export function sessionPRReferences(doc: SessionDoc): QualifiedSessionPR[] {
   );
 }
 
-export function sessionPRKeys(doc: SessionDoc): string[] {
+/** The existing literal-publication boundary is unchanged. Additional evidence
+ * comes only from GitHub snapshots plus hook-observed actor/branch context.
+ * Missing/legacy/offline facts fail closed; no shell parser is involved. */
+export function sessionPRReferences(
+  doc: SessionDoc,
+  projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
+): QualifiedSessionPR[] {
+  const literal = new Set(
+    (doc.deliverables.qualifiedPRs ?? [])
+      .filter((pr) => isCanonicalSessionRepository(pr.repo))
+      .map((pr) => spendPRKey(pr.repo, pr.number)),
+  );
+  return sessionPRCandidates(doc).filter((pr) => {
+    const key = spendPRKey(pr.repo, pr.number);
+    if (literal.has(key)) return true;
+    if (doc.source !== 'cli' || !doc.githubActor || !doc.branch || !doc.repo)
+      return false;
+    const record = projections.get(key);
+    const start = Date.parse(doc.startedAt),
+      end = Date.parse(doc.lastActivityAt);
+    const created = Date.parse(record?.createdAt ?? '');
+    if (
+      !record ||
+      record.kind !== 'pr' ||
+      `${record.anchor.repo.toLowerCase()}#${record.anchor.issue}` !== key ||
+      record.author?.toLowerCase() !== doc.githubActor.toLowerCase() ||
+      record.headRefName !== doc.branch ||
+      record.headRepository?.toLowerCase() !==
+        `${doc.repo.owner}/${doc.repo.name}`.toLowerCase() ||
+      !Number.isFinite(start) ||
+      !Number.isFinite(end) ||
+      !Number.isFinite(created) ||
+      start > end ||
+      created < start ||
+      created > end
+    )
+      return false;
+    // Shared credentials and overlapping windows cannot identify the creating
+    // session on their own. Require a positive exact session binding in GitHub's
+    // own PR body, never a transcript assertion or an incidental quoted URL.
+    const links: string[] = [];
+    let fence: { character: string; length: number } | undefined;
+    // Comments and fenced examples are not attribution metadata. Unclosed
+    // comments/fences consume the rest of the body, conservatively.
+    const body = record.body.replace(/<!--[\s\S]*?(?:-->|$)/gu, (comment) =>
+      comment.replace(/[^\n]/gu, ' '),
+    );
+    for (const line of body.split('\n')) {
+      const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+      if (delimiter) {
+        if (!fence)
+          fence = { character: delimiter[1][0], length: delimiter[1].length };
+        else if (
+          delimiter[1][0] === fence.character &&
+          delimiter[1].length >= fence.length &&
+          !delimiter[2].trim()
+        )
+          fence = undefined;
+        continue;
+      }
+      if (fence) continue;
+      const link =
+        /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/u.exec(
+          line,
+        );
+      if (link) links.push(link[1]);
+    }
+    return (
+      doc.agent === 'claude-code' &&
+      links.length > 0 &&
+      links.every((sessionId) => sessionId === doc.sessionId)
+    );
+  });
+}
+
+export function sessionPRKeys(
+  doc: SessionDoc,
+  projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
+): string[] {
   return [
     ...new Set(
-      sessionPRReferences(doc).map((pr) => spendPRKey(pr.repo, pr.number)),
+      sessionPRReferences(doc, projections).map((pr) =>
+        spendPRKey(pr.repo, pr.number),
+      ),
     ),
   ];
 }
 
-function unqualifiedReferences(doc: SessionDoc): number {
+function unqualifiedReferences(
+  doc: SessionDoc,
+  projections: ReadonlyMap<string, GithubAnchorProjection>,
+): number {
   const qualifiedNumbers = new Set(
-    (doc.deliverables.qualifiedPRs ?? []).map((pr) => pr.number),
+    sessionPRReferences(doc, projections).map((pr) => pr.number),
   );
   return [...new Set(doc.deliverables.prNumbers)].filter(
     (n) => !qualifiedNumbers.has(n),
@@ -90,10 +184,14 @@ function emptyTotals(): SpendTotals {
   };
 }
 
-function addSession(totals: SpendTotals, doc: SessionDoc) {
+function addSession(
+  totals: SpendTotals,
+  doc: SessionDoc,
+  projections: ReadonlyMap<string, GithubAnchorProjection>,
+) {
   const cost = docCost(doc);
   totals.sessions++;
-  totals.unqualifiedPRReferences += unqualifiedReferences(doc);
+  totals.unqualifiedPRReferences += unqualifiedReferences(doc, projections);
   totals.turns += doc.turns;
   totals.tokens += totalTokens(doc.tokens);
   if (cost.costUsd === undefined) totals.unpricedSessions++;
@@ -134,9 +232,9 @@ export function aggregateSessionSpend(
   const deliverables = new Map<string, SpendDeliverable>();
 
   for (const doc of docs) {
-    addSession(totals, doc);
-    const keys = sessionPRKeys(doc);
-    if (keys.length === 0) addSession(withoutPR, doc);
+    addSession(totals, doc, projections);
+    const keys = sessionPRKeys(doc, projections);
+    if (keys.length === 0) addSession(withoutPR, doc, projections);
     const dimensions = [
       pipelineKey(doc),
       doc.model ?? 'unknown',
@@ -148,7 +246,7 @@ export function aggregateSessionSpend(
         ...emptyTotals(),
         prs: new Set<string>(),
       };
-      addSession(bucket, doc);
+      addSession(bucket, doc, projections);
       keys.forEach((pr) => bucket.prs.add(pr));
       map.set(key, bucket);
     });
