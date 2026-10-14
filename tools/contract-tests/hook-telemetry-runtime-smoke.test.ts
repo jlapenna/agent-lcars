@@ -110,9 +110,9 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       'apps/runner-autoscaler/runner-image/hook-telemetry.test.sh',
     );
     let fixtureHome = root;
-    if (refuseDrain) {
-      // Execute the actual outer wrapper with an owned build/CLI fixture. A
-      // refused inner drain must retain bundles while its writer is still live.
+    if (missingStop || refuseDrain) {
+      // Execute the actual wrapper: ordinary failures remove drained bundles,
+      // while a refused drain retains bundles with its writer still live.
       const project = join(root, 'project');
       fixtureHome = join(root, 'home');
       const sourceSdk = join(fixtureHome, '.config/opencode');
@@ -151,9 +151,10 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
         'apps/runner-autoscaler/runner-image/hook-telemetry.test.sh',
       ])
         writeFileSync(join(project, file), readFileSync(resolve(file)));
-      writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 1\n', {
-        mode: 0o755,
-      });
+      if (refuseDrain)
+        writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 1\n', {
+          mode: 0o755,
+        });
       smoke = join(project, 'tools/hook-telemetry-runtime-smoke.sh');
     }
     try {

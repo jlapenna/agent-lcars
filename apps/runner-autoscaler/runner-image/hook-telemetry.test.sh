@@ -124,6 +124,11 @@ PY_DRAIN
     return 1
   fi
   rm -rf "$tmp"
+  # The wrapper owns a writable private bundle directory; direct image tests
+  # keep the default library read-only and need no acknowledgement file.
+  if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
+  fi
 }
 trap cleanup EXIT
 
