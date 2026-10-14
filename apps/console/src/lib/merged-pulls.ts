@@ -1,8 +1,22 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
+import { isE2eTesting } from '@agent-lcars/util-server';
+import { cacheLife } from 'next/cache';
 
 import { getGithubClient, getWatchedRepos } from './github-client';
+import { repoKey } from './watched-repo';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
+ * count must cost only its own figure, not every readout. */
+const MERGES_DEADLINE_MS = 5_000;
+/** A day's merge count does not need the dashboard's 30s freshness. The
+ * dashboard's 60s expiry left each instance refilling cold, a fill that
+ * mints a token per repository and outlasts the deadline, so most page
+ * loads showed the figure unavailable. Refresh in the background every five
+ * minutes; refill cold only after an hour without readers. */
+const MERGES_CACHE_LIFE = { stale: 300, revalidate: 300, expire: 3600 };
 
 /** One page per repository. Merged PRs ordered by last update reach the
  * window's edge before the page ends unless a repository merged more than
@@ -87,4 +101,50 @@ export async function countMergedPullsSince(
   });
   if (read === 0) throw new Error('Merged pull requests unavailable');
   return { count, partial };
+}
+
+/** The last day's merges across the watched repositories, or the one
+ * `repo` (`owner/name`) a page is scoped to. */
+async function readMergedLastDay(repo?: string): Promise<MergedPullCount> {
+  const watched = getWatchedRepos();
+  return countMergedPullsSince(
+    Date.now() - DAY_MS,
+    getGithubClient(),
+    repo === undefined
+      ? watched
+      : watched.filter((candidate) => repoKey(candidate) === repo),
+  );
+}
+
+async function readCachedMergedLastDay(
+  repo?: string,
+): Promise<MergedPullCount> {
+  'use cache';
+  cacheLife(MERGES_CACHE_LIFE);
+  return readMergedLastDay(repo);
+}
+
+async function withinDeadline<T>(read: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      read,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Read timed out')), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The rail's and the Bridge's "merged · 24h". Undefined when it could not
+ * be read in time, which the console shows as unavailable, never as zero. */
+export async function mergedLastDay(
+  repo?: string,
+): Promise<MergedPullCount | undefined> {
+  return withinDeadline(
+    isE2eTesting() ? readMergedLastDay(repo) : readCachedMergedLastDay(repo),
+    MERGES_DEADLINE_MS,
+  ).catch(() => undefined);
 }

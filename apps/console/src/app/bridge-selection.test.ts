@@ -49,6 +49,16 @@ describe('bridgeSelectionHref', () => {
     );
   });
 
+  it('carries the toolbar view so a selection keeps the filters', () => {
+    expect(
+      bridgeSelectionHref('run:r1', undefined, undefined, {
+        agent: 'codex',
+        window: '24h',
+        q: 'heartbeat',
+      }),
+    ).toBe('/?agent=codex&window=24h&q=heartbeat&sel=run%3Ar1');
+  });
+
   it('clears the selection back to the scoped page when key is undefined', () => {
     expect(bridgeSelectionHref(undefined)).toBe('/');
     expect(bridgeSelectionHref(undefined, 'jlapenna/other')).toBe(

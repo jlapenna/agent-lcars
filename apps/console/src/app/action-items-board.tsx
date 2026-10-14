@@ -6,7 +6,11 @@ import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
 import { BridgePaneLink } from './bridge-pane-link';
-import { bridgeSelectionHref, itemKey } from './bridge-selection';
+import {
+  bridgeSelectionHref,
+  type BridgeView,
+  itemKey,
+} from './bridge-selection';
 import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
 import { SectionHeading } from './section-heading';
@@ -66,6 +70,7 @@ function IdleItemsSection({
   rowTestIdPrefix,
   repoFilterKey,
   stoppedCursor,
+  view,
 }: {
   cards: BoardCard[];
   title: string;
@@ -75,6 +80,7 @@ function IdleItemsSection({
   rowTestIdPrefix: string;
   repoFilterKey?: string;
   stoppedCursor?: string;
+  view?: BridgeView;
 }) {
   if (cards.length === 0) return null;
 
@@ -114,6 +120,7 @@ function IdleItemsSection({
                   itemKey(item),
                   repoFilterKey,
                   stoppedCursor,
+                  view,
                 )}
                 target="_blank"
                 rel="noreferrer"
@@ -133,6 +140,7 @@ function IdleItemsSection({
                 itemKey(item),
                 repoFilterKey,
                 stoppedCursor,
+                view,
               )}
               target="_blank"
               rel="noreferrer"
@@ -166,11 +174,13 @@ export function BridgeSections({
   blocked = [],
   repoFilterKey,
   stoppedCursor,
+  view,
 }: {
   waitingOnDeploy: BoardCard[];
   blocked?: BoardCard[];
   repoFilterKey?: string;
   stoppedCursor?: string;
+  view?: BridgeView;
 }) {
   return (
     <>
@@ -183,6 +193,7 @@ export function BridgeSections({
         rowTestIdPrefix="deploy-wait-item"
         repoFilterKey={repoFilterKey}
         stoppedCursor={stoppedCursor}
+        view={view}
       />
       <IdleItemsSection
         cards={blocked}
@@ -193,6 +204,7 @@ export function BridgeSections({
         rowTestIdPrefix="blocked-item"
         repoFilterKey={repoFilterKey}
         stoppedCursor={stoppedCursor}
+        view={view}
       />
     </>
   );

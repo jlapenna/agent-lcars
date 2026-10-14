@@ -6,19 +6,8 @@ import { auth } from '../auth';
 import { DASHBOARD_CACHE_LIFE, getCachedAgentActivity } from './dashboard-data';
 import { consoleUrl } from './deployment';
 import { loadInboxNotificationSnapshot } from './inbox-notifications-data';
-import { countMergedPullsSince } from './merged-pulls';
+import { mergedLastDay } from './merged-pulls';
 import { getSessionArchive } from './session-archive';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-/** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
- * count must cost only its own figure, not every readout. */
-const MERGES_DEADLINE_MS = 5_000;
-/** A day's merge count does not need the dashboard's 30s freshness. The
- * dashboard's 60s expiry left each instance refilling cold, a fill that
- * mints a token per repository and outlasts the deadline, so most page
- * loads showed the figure unavailable. Refresh in the background every five
- * minutes; refill cold only after an hour without readers. */
-const MERGES_CACHE_LIFE = { stale: 300, revalidate: 300, expire: 3600 };
 
 /**
  * The figures the console frame shows on every page: the rail readouts, the
@@ -74,38 +63,10 @@ async function readRecentTokens(): Promise<RecentTokens> {
   };
 }
 
-/** Counted from GitHub across the watched repositories, so merges no
- * recorded session referenced still count. Throws when nothing could be
- * read, so a failure is never cached as zero merges. */
-async function readRecentMerges(): Promise<RecentMerges> {
-  const { count, partial } = await countMergedPullsSince(Date.now() - DAY_MS);
-  return { merged24h: count, merged24hPartial: partial };
-}
-
 async function readCachedRecentTokens(): Promise<RecentTokens> {
   'use cache';
   cacheLife(DASHBOARD_CACHE_LIFE);
   return readRecentTokens();
-}
-
-async function readCachedRecentMerges(): Promise<RecentMerges> {
-  'use cache';
-  cacheLife(MERGES_CACHE_LIFE);
-  return readRecentMerges();
-}
-
-async function withinDeadline<T>(read: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      read,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Read timed out')), ms);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function initialsOf(login: string): string {
@@ -146,10 +107,13 @@ export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
     (isE2eTesting() ? readRecentTokens() : readCachedRecentTokens()).catch(
       () => ({}) as RecentTokens,
     ),
-    withinDeadline(
-      isE2eTesting() ? readRecentMerges() : readCachedRecentMerges(),
-      MERGES_DEADLINE_MS,
-    ).catch(() => ({}) as RecentMerges),
+    // Counted from GitHub across the watched repositories, so merges no
+    // recorded session referenced still count.
+    mergedLastDay().then((merged): RecentMerges =>
+      merged === undefined
+        ? {}
+        : { merged24h: merged.count, merged24hPartial: merged.partial },
+    ),
   ]);
   const queue = activity?.data.queue;
   const fleet = activity?.data.fleet;

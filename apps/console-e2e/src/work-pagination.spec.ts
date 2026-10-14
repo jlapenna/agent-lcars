@@ -304,15 +304,6 @@ async function clearRepository(
   }
 }
 
-async function expectNoBridgeRepositoryForm(page: Page) {
-  await expect(
-    page.getByRole('combobox', { name: 'Repository', exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole('button', { name: 'Apply repository', exact: true }),
-  ).toHaveCount(0);
-}
-
 async function expectSelectedRepositoryForm(page: Page) {
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
@@ -323,11 +314,6 @@ async function expectClearedRepositoryForm(page: Page) {
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toHaveValue('');
-}
-
-async function selectBridgeRepositoryLink(page: Page) {
-  await expectNoBridgeRepositoryForm(page);
-  await page.goto(`/?${new URLSearchParams({ repo: E2E_FIXTURE_REPOSITORY })}`);
 }
 
 async function selectRepositoryForm(page: Page) {
@@ -348,7 +334,7 @@ test('repository selection and clearing remain reachable on phones across Bridge
       route: '/',
       destination: 'Inbox',
       destinationPath: '/inbox',
-      select: selectBridgeRepositoryLink,
+      select: selectRepositoryForm,
       expectSelected: expectSelectedRepositoryForm,
       expectCleared: expectClearedRepositoryForm,
     },
@@ -365,8 +351,8 @@ test('repository selection and clearing remain reachable on phones across Bridge
       destination: 'Bridge',
       destinationPath: '/',
       select: selectRepositoryForm,
-      expectSelected: expectNoBridgeRepositoryForm,
-      expectCleared: expectNoBridgeRepositoryForm,
+      expectSelected: expectSelectedRepositoryForm,
+      expectCleared: expectClearedRepositoryForm,
     },
   ]) {
     const { route, destination, destinationPath } = journey;

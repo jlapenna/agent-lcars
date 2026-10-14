@@ -424,6 +424,7 @@ export function RecentCompletionsPanel({
   title = 'Recent completions',
   footer,
   mobileInitialCount,
+  merged,
 }: {
   runs: AgentRun[];
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
@@ -433,6 +434,9 @@ export function RecentCompletionsPanel({
   footer?: ReactNode;
   /** Phones show this many rows first, the rest behind a disclosure. */
   mobileInitialCount?: number;
+  /** The mockup's head count, "N merged · 24h", which the Bridge streams in
+   * from GitHub. Absent, the head counts the listed runs instead. */
+  merged?: ReactNode;
 }) {
   const classified = runs.map((run) => ({
     run,
@@ -549,11 +553,18 @@ export function RecentCompletionsPanel({
   return (
     <OpsPanel
       title={title}
-      count={`${succeeded} succeeded · last ${runs.length}`}
+      count={merged ?? `${succeeded} succeeded · last ${runs.length}`}
       meta={
-        cycle === undefined
-          ? undefined
-          : `median cycle ${formatDuration(cycle)} · ${failed} failed`
+        [
+          merged === undefined
+            ? undefined
+            : `${succeeded} succeeded · last ${runs.length}`,
+          cycle === undefined
+            ? undefined
+            : `median cycle ${formatDuration(cycle)} · ${failed} failed`,
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
       }
       data-testid={testId}
     >
