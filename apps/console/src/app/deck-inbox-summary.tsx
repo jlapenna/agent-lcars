@@ -25,10 +25,9 @@ export function DeckInboxSummary({
   inboxHref: string;
   nativeAvailable?: boolean;
 }) {
-  // The signpost is about the Inbox, so it wears the Inbox's accent rather
-  // than the Bridge's - the one block on the page that deliberately speaks
-  // for another destination. `lcars-panel` gives it that accent as a spine,
-  // the same device every other panel uses.
+  // The Bridge toolbar's primary action, so it wears the Bridge's accent like
+  // the mockup's primary button (design/fleet-console.html `.btn-primary`),
+  // not the Inbox's it links to (#1815).
   return (
     <Group
       gap="md"
@@ -36,7 +35,6 @@ export function DeckInboxSummary({
       wrap="wrap"
       className="deck-inbox-summary lcars-panel"
       data-testid="deck-inbox-summary"
-      data-accent="blue"
       data-empty={count === 0 && nativeAvailable ? '' : undefined}
     >
       <Text component="span" fw={700} className="deck-inbox-summary__count">
