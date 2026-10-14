@@ -587,44 +587,24 @@ Claude entries in 5.1 use the same stub at `~/.claude/hooks/lcars-hook.sh`.
 
 ### 5.3 OpenCode (`agents/opencode/lcars-telemetry.js`)
 
-```js
-export default async function lcarsTelemetry({ client }) {
-  return {
-    event: async ({ event }) => {
-      switch (event.type) {
-        case 'session.created':
-        case 'session.updated':
-          return ship('start', event.properties.info);
-        case 'message.updated':
-          return event.properties.info.role === 'assistant'
-            ? ship('tool', summaryFrom(event.properties.info))
-            : undefined;
-        case 'session.status':
-          return ship(
-            event.properties.status.type === 'busy' ? 'tool' : 'stop',
-            { sessionID: event.properties.sessionID },
-          );
-        case 'session.idle':
-          return ship('stop', { sessionID: event.properties.sessionID });
-        case 'permission.asked':
-          return ship('attention', {
-            sessionID: event.properties.sessionID,
-            attention: 'permission',
-          });
-        case 'session.error':
-          return ship('attention', {
-            sessionID: event.properties.sessionID,
-            attention: 'error',
-          });
-      }
-    },
-  };
-}
-```
+OpenCode has no command hooks, so the plugin maps its bus events onto the
+same hook names and hands each to a detached `lcars hook opencode`:
 
-`ship` applies the same privacy gate (session `directory` → repo), throttle,
-spool, and bearer logic as the CLI client, implemented once in a small
-shared module bundled into both artifacts.
+| OpenCode event                                   | Reported as        |
+| ------------------------------------------------ | ------------------ |
+| `session.created` (no `parentID`)                | `SessionStart`     |
+| `message.updated`, first sight of a user message | `UserPromptSubmit` |
+| `message.part.updated`, tool part `completed`    | `PostToolUse`      |
+| `session.idle`                                   | `Stop`             |
+| `session.deleted` (lifecycle-only, see the top)  | `SessionEnd`       |
+
+The plugin also returns a `dispose` hook. OpenCode (checked at v1.18.25,
+`src/plugin/index.ts`) calls event handlers as `void hook["event"](...)`
+and never awaits them, but it does await `dispose` at instance shutdown,
+so `dispose` is the only point where a final report can hold `opencode run`
+open. It waits up to 5 s (`DISPOSE_WAIT_MS`) for running reports. Without it
+a CPU-starved runner (`--cpus=1` plus busy loops) lost the `Stop` report in
+3 of 7 runs; with it, 16 of 16 recorded it.
 
 ## 6. Rollout
 
@@ -745,3 +725,49 @@ user configuration was modified and no transcript content was read.
 | Codex docs (learn.chatgpt.com/docs/hooks)                                          | `"async": true` on a command handler runs it in the background, eight concurrent per session. Managed hooks from system, MDM, cloud, or `requirements.toml` are trusted by policy; `allow_managed_hooks_only = true` exists.                                                                                                                                 |
 | herdr integration (installed)                                                      | `herdr integration install <runtime>` writes a versioned script (`HERDR_INTEGRATION_VERSION=10` for Claude, `8` for Codex) and a constant settings entry that launches it; the script copies stdin to `mktemp`, exits unless `HERDR_ENV=1`, skips subagents, and reports `SessionStart` identity over a Unix socket with a 0.5 s timeout.                    |
 | Antigravity                                                                        | Summary DB last modified: this workstation 2026-07-20, laforge (jlapenna) 2026-09-10, janeway none for `homelab` or `jlapenna`, pike unreachable. `agent-lcars-telemetry-watcher` was up and healthy on laforge and janeway.                                                                                                                                 |
+
+## 12. Live verification on runners (2026-10-14)
+
+Two checks cover different things:
+
+1. **Which lifecycle events arrive.** The runner image's build gate
+   (`apps/runner-autoscaler/runner-image/hook-telemetry.test.sh`) runs the
+   real `claude -p`, `codex exec`, and `opencode run` against a local fake
+   provider. It requires `start`, `stop`, and `end` from Claude Code and
+   Codex and `start` and `stop` from OpenCode, and checks that every spooled
+   event describes the dispatched session. Other kinds (prompt, tool, the
+   OpenCode `end`) are printed when present but not required, so a
+   regression in them passes the gate.
+2. **That hooks write real runner sessions.** A run on real work, read back
+   from the `sessions` collection.
+
+Firestore cannot show which lifecycle events landed. It keeps one doc per
+session with no per-event history, and the stored event kind survives only
+as `liveness`. Both a hook `end` and `runner finalize` write
+`liveness: ended`, and finalize leaves `observer` in place. So
+`observer.kind == "hook"` plus `liveness == "ended"` on a finished run
+proves that hooks reported during the run; it does not show whether the
+hook `SessionEnd` landed, nor that finalize ran. The runner keeps no hook
+log after the job, so there is no other live record.
+
+Real-work runs on the runner image built from `53b55ce1` (hook client
+`0.4.0`), all with `observer.kind == "hook"` and `liveness == "ended"`:
+
+| Runtime  | Run                            | `observer.seq` | `observer.occurredAt` (UTC) | `lastActivityAt` (UTC) |
+| -------- | ------------------------------ | -------------- | --------------------------- | ---------------------- |
+| Codex    | `jlapenna/agent-lcars#2399/r2` | 7              | 11:49:04.095                | 11:49:04.017           |
+| Claude   | `jlapenna/homelab#1389/r2`     | 6              | 11:54:52.884                | 11:54:52.758           |
+| OpenCode | `jlapenna/homelab#1329/r3`     | 15             | 12:01:56.846                | 12:01:56.764           |
+
+To repeat it:
+
+1. Pick a real issue per
+   [the real-work proof policy](testing-policy.md#development-proof-uses-real-work)
+   and start a run on it: apply an `agent:*` label (removing and re-adding
+   it on a finished task starts a fresh run), or post a tagged reply
+   (`@claude`, `/codex`, or `/oc`; triggers are in
+   `libs/dispatch-contracts/src/pipelines.ts`), which resumes the previous
+   session when one parked or finished.
+2. After the run ends, query `sessions` for its `runId`
+   (`<owner>/<repo>#<n>/r<k>`) with Firestore `runQuery`, and check
+   `observer.kind`, `observer.clientVersion`, and `observer.seq`.
