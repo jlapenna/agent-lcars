@@ -254,6 +254,12 @@ export async function POST(
         { status: 422 },
       );
     }
+    // The rail's merged-PR count: the fixture repository has no merges.
+    if (body.query.includes('pullRequests(states: MERGED')) {
+      return NextResponse.json({
+        data: { repository: { pullRequests: { nodes: [] } } },
+      });
+    }
     const aliases = Array.from(
       body.query.matchAll(
         /([A-Za-z_]\w*):\s*issueOrPullRequest\(number:\s*(\d+)\)/gu,
