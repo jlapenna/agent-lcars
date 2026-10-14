@@ -293,6 +293,134 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_completed_pr_delivery_window',
     );
   });
+  it('measures admission to trusted final delivery observation over the finished cohort', () => {
+    const text = snapshot([
+      delivered(),
+      {
+        ...delivered(),
+        runId: 'private/repo#42/r2',
+        delivery: {
+          ...delivered().delivery,
+          runId: 'private/repo#42/r2',
+          observedAt: createdAt,
+        },
+        requestSource: 'auto-retry',
+      },
+    ]);
+    expect(text).toContain(
+      'lcars_product_latency_window_observations{pipeline="claude",stage="admission_to_completed_pr_delivery"} 2\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="admission_to_completed_pr_delivery"} 600\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_samples{pipeline="claude",stage="admission_to_completed_pr_delivery",upper_bound_seconds="300"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_samples{pipeline="claude",stage="admission_to_completed_pr_delivery",upper_bound_seconds="900"} 2\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+  });
+  it('keeps unqualified members unknown rather than zero-latency or reported success', () => {
+    const bindingChanges: Partial<DeliveryBinding>[] = [
+      { state: 'waiting' },
+      { state: 'runtime-required', runtimeGate: 'required' },
+      { runId: 'wrong-run' },
+      { mergeCommit: undefined },
+      { observedAt: 'invalid' },
+      { observedAt: '2026-10-10T11:39:59.999Z' },
+      { observedAt: '2026-10-10T12:00:00.001Z' },
+      { observedAt: '2026-10-10T11:50:00.001Z' },
+    ];
+    const unqualified = bindingChanges.map((binding, i) => {
+      const original = delivered(binding);
+      return {
+        ...original,
+        runId: `private/repo#${100 + i}/r1`,
+        delivery: {
+          ...original.delivery,
+          runId: binding.runId ?? `private/repo#${100 + i}/r1`,
+        },
+      };
+    });
+    const park = {
+      ...delivered({ runId: 'park' }),
+      runId: 'park',
+      result: { ok: true, summary: 'park' },
+    };
+    const raw = { ...delivered(), runId: 'raw', delivery: undefined };
+    const text = snapshot([...unqualified, park, raw]);
+    expect(text).toContain(
+      'lcars_product_latency_window_observations{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 10\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+  });
+  it('uses authorized runtime completion time and newest revision once per attempt', () => {
+    const waiting = delivered({
+      state: 'runtime-required',
+      runtimeGate: 'required',
+    });
+    const decision = advanceDelivery({
+      now: '2026-10-10T11:55:00.000Z',
+      task: {
+        task: waiting.task,
+        delivery: waiting.delivery,
+        runCount: 1,
+        consecutiveLost: 0,
+        work: {},
+        updatedAt: deliveryAt,
+      },
+      run: waiting,
+      observation: {
+        kind: 'runtime-evidence',
+        head: waiting.delivery.head,
+        mergeCommit: 'b'.repeat(40),
+        principal: 'user:operator',
+        ref: 'https://example.test/runtime',
+      },
+      correctionAuthorized: true,
+    });
+    if (isRefusal(decision)) throw new Error(decision.reason);
+    const completed = decidedRun(decision);
+    const text = snapshot([waiting, completed, completed], {
+      liveRuns: [waiting],
+    });
+    expect(text).toContain(
+      'lcars_product_latency_window_observations{pipeline="claude",stage="admission_to_completed_pr_delivery"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="admission_to_completed_pr_delivery"} 900\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+  });
+  it('excludes old settlements with recent delivery and incomplete reads from delivery latency', () => {
+    const old: Run = {
+      ...delivered(),
+      createdAt: '2026-10-10T10:00:00.000Z',
+      events: [
+        { at: '2026-10-10T10:59:59.999Z', to: 'finished', by: 'report' },
+      ],
+    };
+    const text = snapshot([old]);
+    expect(text).toContain(
+      'lcars_product_latency_window_observations{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
+    );
+    expect(snapshot([delivered()], { complete: false })).not.toContain(
+      'admission_to_completed_pr_delivery',
+    );
+  });
   it('declares help and gauge types without reserved histogram names or labels', () => {
     for (const text of [snapshot([run()]), snapshot([], { complete: false })]) {
       const names = new Set(

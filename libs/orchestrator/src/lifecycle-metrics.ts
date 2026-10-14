@@ -277,10 +277,15 @@ export function lifecycleMetricSnapshot(
         ),
         { pipeline },
       );
+      const finished = terminal.filter((run) => run.state === 'finished');
+      const completedDeliveries = finished.filter((run) =>
+        completedPullRequestDelivery(run, now),
+      );
       for (const stage of [
         'admission_to_queue',
         'queue_to_claim',
         'claim_to_provider_start',
+        'admission_to_completed_pr_delivery',
       ] as const) {
         const candidates =
           stage === 'admission_to_queue'
@@ -297,14 +302,17 @@ export function lifecycleMetricSnapshot(
               })
             : stage === 'queue_to_claim'
               ? claimed
-              : providerStartCandidates;
+              : stage === 'claim_to_provider_start'
+                ? providerStartCandidates
+                : finished;
         const durations: number[] = [];
         for (const run of candidates) {
           const dispatched = run.events.find(
             (event) => event.by === 'dispatch',
           )?.at;
           const start =
-            stage === 'admission_to_queue'
+            stage === 'admission_to_queue' ||
+            stage === 'admission_to_completed_pr_delivery'
               ? run.createdAt
               : stage === 'queue_to_claim'
                 ? dispatched
@@ -314,7 +322,9 @@ export function lifecycleMetricSnapshot(
               ? dispatched
               : stage === 'queue_to_claim'
                 ? run.queue?.claimedAt
-                : run.queue?.providerProcessStartedAt;
+                : stage === 'claim_to_provider_start'
+                  ? run.queue?.providerProcessStartedAt
+                  : run.delivery?.observedAt;
           const seconds =
             start === undefined || end === undefined
               ? NaN
@@ -322,7 +332,9 @@ export function lifecycleMetricSnapshot(
           if (
             Number.isFinite(seconds) &&
             seconds >= 0 &&
-            (stage !== 'claim_to_provider_start' || providerStarted(run))
+            (stage !== 'claim_to_provider_start' || providerStarted(run)) &&
+            (stage !== 'admission_to_completed_pr_delivery' ||
+              completedPullRequestDelivery(run, now))
           )
             durations.push(seconds);
         }
@@ -351,10 +363,6 @@ export function lifecycleMetricSnapshot(
           stage,
         });
       }
-      const finished = terminal.filter((run) => run.state === 'finished');
-      const completedDeliveries = finished.filter((run) =>
-        completedPullRequestDelivery(run, now),
-      );
       gauge('completed_pr_delivery_window', completedDeliveries.length, {
         pipeline,
       });
