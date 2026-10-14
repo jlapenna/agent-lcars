@@ -89,6 +89,9 @@ export interface FleetSummary {
    * the lanes' registered runners. */
   online?: number;
   busy?: number;
+  /** The lanes' registered runners: the per-minute runner history's own
+   * measure, which `online` replaces once pods are listed. */
+  registered?: number;
   /** The denominator of `online`: every ARC runner pod in the inventory, or
    * without one the lanes' configured maximum; absent when neither is known
    * (a lane with no maximum). */
@@ -143,13 +146,16 @@ export function fleetFromAutoscalerStatuses(
   // it lists them, so the fraction never mixes two producers' counts.
   const pods = arcRunnerCount(inventory?.runners, lanes);
   const capacity = pods?.total ?? fleetCapacity(lanes);
+  const registered = lanes.reduce(
+    (count, lane) => count + lane.registeredRunners,
+    0,
+  );
   return {
     ...(lanes.length === 0 || status.lanesIncomplete
       ? {}
       : {
-          online:
-            pods?.online ??
-            lanes.reduce((count, lane) => count + lane.registeredRunners, 0),
+          online: pods?.online ?? registered,
+          registered,
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
           ...(capacity === undefined ? {} : { capacity }),
           // The earliest producer behind the figures sets their expiry.

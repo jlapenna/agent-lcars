@@ -147,12 +147,14 @@ describe('fleetReadoutInput', () => {
       { at: new Date(now - 5_000).toISOString(), registered: 3, running: 2 },
     ];
     const withHistory = fleetReadoutInput({
-      activity: { fleet: { online: 7, busy: 5 } },
+      // Pods online (8) differ from the lanes' registered runners (7).
+      activity: { fleet: { online: 8, registered: 7, busy: 5 } },
       liveRuns: [],
       autoscaler: { lanes: [lane(sample), lane(sample)] },
       now,
     });
-    // The lanes sampled 6/4 a minute ago; the newest bar is the figure.
+    // The lanes sampled 6/4 a minute ago; the newest bar is their current
+    // count, never the pod count from a different measure.
     expect(withHistory.runnerHistory?.online.slice(-2)).toEqual([undefined, 7]);
     expect(withHistory.runnerHistory?.busy.at(-1)).toBe(5);
     expect(

@@ -122,16 +122,18 @@ export function fleetReadoutInput({
   };
 }
 
-/** The newest bar is the figure beside it: the lane windows sample once a
- * minute, so their last entry can trail the current counts. */
+/** The newest bar is the lanes' current count: their windows sample once a
+ * minute, so the last entry can trail it. The series stays on the lanes'
+ * registered runners throughout, even where the headline counts runner pods,
+ * so a different measure never lands on its last bar. */
 function withCurrent(
   history: ReturnType<typeof fleetRunnerHistory>,
-  fleet: { online?: number; busy?: number } | undefined,
+  fleet: { registered?: number; busy?: number } | undefined,
 ): ReturnType<typeof fleetRunnerHistory> {
-  if (!history || fleet?.online === undefined || fleet.busy === undefined)
+  if (!history || fleet?.registered === undefined || fleet.busy === undefined)
     return history;
   return {
-    online: [...history.online.slice(0, -1), fleet.online],
+    online: [...history.online.slice(0, -1), fleet.registered],
     busy: [...history.busy.slice(0, -1), fleet.busy],
   };
 }

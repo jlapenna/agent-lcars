@@ -164,6 +164,7 @@ describe('getAgentActivity', () => {
     ]);
     expect(activity.fleet).toEqual({
       online: 2,
+      registered: 2,
       busy: 1,
       capacity: 2,
       githubExpiresAt: '2026-08-28T12:03:00.000Z',
@@ -331,6 +332,7 @@ describe('fleetFromAutoscalerStatuses', () => {
     ).toMatchObject({
       online: 3,
       capacity: 4,
+      registered: 4,
       busy: 2,
       // The older inventory snapshot expires the figures first.
       githubExpiresAt: '2026-08-28T10:02:00.000Z',
