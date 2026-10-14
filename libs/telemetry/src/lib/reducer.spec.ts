@@ -460,6 +460,12 @@ describe('Claude qualified PR publication invocation', () => {
     ['gh pr create --help', false],
     ['echo "gh pr create"', false],
     ['gh pr create --title "--dry-run"', true],
+    // An agent's usual shape: a worktree cd and a heredoc body (#2730).
+    [
+      `cd /work/example-wt && gh pr create --draft --title "fix: x" --body "$(cat <<'EOF'\n## Problem\nSee https://github.com/octo/other/pull/7\nEOF\n)"`,
+      true,
+    ],
+    ['gh pr create --fill 2>&1 | tail -1', false],
   ])('qualifies only actual creation: %s', (command, creating) => {
     const sessionId = 'publication-invocation';
     const transcript = [

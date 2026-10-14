@@ -64,3 +64,53 @@ describe('actual PR creation invocation', () => {
     expect(isPRPublicationCommand(command)).toBe(true),
   );
 });
+
+describe('chained PR creation (#2730)', () => {
+  const heredoc = (body: string, tag = "'EOF'") =>
+    `gh pr create --draft --title "fix: x" --body "$(cat <<${tag}\n${body}\n${tag.replace(/['"]/gu, '')}\n)"`;
+
+  it.each([
+    'cd /home/u/p/repo-wt && gh pr create --draft --title t --body b',
+    'cd /home/u/p/repo-wt; gh pr create --fill',
+    'set -euo pipefail\ncd repo && gh pr create --fill',
+    'export GH_PROMPT_DISABLED=1 && GIT_DIR=x gh pr create --fill',
+    'cd repo &&\n  gh pr create --fill',
+    `cd repo && ${heredoc('## Problem\nmentions https://github.com/a/b/pull/12 and $HOME, `x`, \\n')}`,
+    heredoc('plain body', 'EOF'),
+    `cd repo && gh pr create --body "$(cat <<-'EOF'\n\tindented\n\tEOF\n)" --fill`,
+  ])('qualifies a create that ends a silent setup chain: %s', (command) =>
+    expect(isPRPublicationCommand(command)).toBe(true),
+  );
+
+  it.each([
+    // The create is not last: a later segment can print another PR's URL.
+    'gh pr create --fill && gh pr view 42',
+    'cd repo && gh pr create --fill; echo done',
+    // Failure masking and output rewriting.
+    'gh pr create --fill | tail -1',
+    'gh pr create --fill 2>&1 | tail -1',
+    'gh pr create --fill || true',
+    'gh pr create --fill > /tmp/out',
+    'gh pr create --fill &',
+    // Setup that prints, or echoes the create's arguments.
+    'gh pr list && gh pr create --fill',
+    'echo https://github.com/a/b/pull/1 && gh pr create --fill',
+    'set -x && gh pr create --body "see https://github.com/a/b/pull/1"',
+    'cd a b && gh pr create --fill',
+    // Malformed chains.
+    'cd repo && && gh pr create --fill',
+    '; gh pr create --fill',
+    'cd repo && gh pr create --fill &&',
+    // Substitutions other than a literal heredoc body.
+    'cd repo && gh pr create --body "$(gh pr view 1)"',
+    'gh pr create --body "$(cat <<EOF\nruns $(gh pr view 1)\nEOF\n)"',
+    'gh pr create --body "$(cat <<\'EOF\'\nnever closed\n)"',
+    'gh pr create --body $(cat body.md)',
+    'gh pr create --body "`cat body.md`"',
+    // Non-creating create still rejected inside a chain.
+    'cd repo && gh pr create --dry-run',
+    `cd repo && gh pr create --body "$(cat <<'EOF'\nx\nEOF\n)" --help`,
+  ])('leaves unqualified: %s', (command) =>
+    expect(isPRPublicationCommand(command)).toBe(false),
+  );
+});

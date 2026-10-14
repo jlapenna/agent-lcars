@@ -88,9 +88,47 @@ export function findQualifiedPRs(line: unknown): QualifiedSessionPR[] {
   return [...refs.values()];
 }
 
+/**
+ * True when the command's own result is a `gh pr create` result. A chain of
+ * `&&` / `;` / newline segments qualifies only when every segment before the
+ * create is silent setup (see `isSilentSetup`) and the create is the last
+ * segment: its exit status is then the command's, and nothing after it can
+ * print another URL. Pipes, `||`, background jobs and redirections stay
+ * unqualified because they can turn a failed create into a success, e.g.
+ * `| tail -1` over gh's "already exists: <url>" names someone else's PR.
+ */
 export function isPRPublicationCommand(command: string): boolean {
-  const words = literalShellWords(command);
-  if (words === undefined) return false;
+  const segments = literalShellSegments(command);
+  if (segments === undefined || segments.length === 0) return false;
+  const create = segments.at(-1);
+  if (create === undefined) return false;
+  return (
+    segments.slice(0, -1).every(isSilentSetup) && isPRCreateWords([...create])
+  );
+}
+
+/** Setup that prints no PR URL: directory changes, assignments, exports and
+ * the fail-fast `set` options. `set -x`/`-v` would echo the create's own
+ * arguments (a body naming other PRs) and are excluded. */
+function isSilentSetup(words: readonly string[]): boolean {
+  const assignment = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+  if (words.every((word) => assignment.test(word))) return true;
+  const [name, ...args] = words;
+  if (name === 'cd' || name === 'pushd') return args.length <= 1;
+  if (name === 'export')
+    return args.every(
+      (word) => assignment.test(word) || /^[A-Za-z_][A-Za-z0-9_]*$/u.test(word),
+    );
+  if (name === 'set')
+    return args.every(
+      (word) =>
+        /^[-+][euo]+$/u.test(word) ||
+        ['pipefail', 'errexit', 'nounset'].includes(word),
+    );
+  return false;
+}
+
+function isPRCreateWords(words: string[]): boolean {
   while (/^[A-Za-z_][A-Za-z0-9_]*=/u.test(words[0] ?? '')) words.shift();
   if (words[0] === 'env') {
     words.shift();
@@ -166,15 +204,64 @@ export function isPRPublicationCommand(command: string): boolean {
   return true;
 }
 
-/** Parse one literal shell invocation without executing it. Financial
- * attribution leaves substitutions, scripts and compound output unqualified:
- * their aggregate stdout cannot be bound to a specific creating command. */
-function literalShellWords(command: string): string[] | undefined {
-  const words: string[] = [];
+/** A quoted body's `$(cat <<'EOF' … EOF)`: the heredoc's text, which a quoted
+ * delimiter keeps literal, and where the substitution ends. An unquoted
+ * delimiter expands its body, so it qualifies only without `$`, backticks or
+ * backslashes. Anything else is not a literal argument. */
+function heredocSubstitution(
+  command: string,
+  start: number,
+): { text: string; end: number } | undefined {
+  const head =
+    /^\$\(cat[ \t]+<<(-?)[ \t]*(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))[ \t]*\n/u.exec(
+      command.slice(start),
+    );
+  if (!head) return undefined;
+  const tag = head[2] ?? head[3] ?? head[4] ?? '';
+  const indent = head[1] === '-' ? '\t*' : '';
+  const bodyStart = start + head[0].length;
+  const tail = new RegExp(`^${indent}${tag}[ \t]*\n[ \t]*\\)`, 'u');
+  for (
+    let lineStart = bodyStart;
+    lineStart <= command.length;
+    lineStart = command.indexOf('\n', lineStart) + 1
+  ) {
+    const close = tail.exec(command.slice(lineStart));
+    if (close) {
+      const text = command.slice(bodyStart, Math.max(bodyStart, lineStart - 1));
+      if (head[4] !== undefined && /[$`\\]/u.test(text)) return undefined;
+      return { text, end: lineStart + close[0].length - 1 };
+    }
+    if (command.indexOf('\n', lineStart) === -1) break;
+  }
+  return undefined;
+}
+
+/** Parse literal shell without executing it, split at top-level `&&`, `;`
+ * and newlines. Financial attribution leaves other substitutions, scripts,
+ * pipes and redirections unparsed: their output cannot be bound to a
+ * specific creating command. */
+function literalShellSegments(command: string): string[][] | undefined {
+  const segments: string[][] = [];
+  let words: string[] = [];
   let word = '';
   let started = false;
   let quote: "'" | '"' | undefined;
-  let ended = false;
+  // After `&&` the chain needs another command.
+  let needOperand = false;
+  const endWord = () => {
+    if (started) words.push(word);
+    word = '';
+    started = false;
+  };
+  const endSegment = (required: boolean): boolean => {
+    endWord();
+    if (words.length === 0) return !required;
+    segments.push(words);
+    words = [];
+    needOperand = false;
+    return true;
+  };
   for (let index = 0; index < command.length; index++) {
     const char = command[index];
     if (quote === "'") {
@@ -193,7 +280,12 @@ function literalShellWords(command: string): string[] | undefined {
     }
     if (quote === '"') {
       if (char === quote) quote = undefined;
-      else if (char === '$' || char === '`') return undefined;
+      else if (char === '$') {
+        const substitution = heredocSubstitution(command, index);
+        if (substitution === undefined) return undefined;
+        word += substitution.text;
+        index = substitution.end;
+      } else if (char === '`') return undefined;
       else word += char;
       continue;
     }
@@ -201,21 +293,30 @@ function literalShellWords(command: string): string[] | undefined {
       while (index < command.length && command[index] !== '\n') index++;
       if (index === command.length) break;
     }
-    if (/\s/u.test(command[index])) {
-      if (started) {
-        words.push(word);
-        word = '';
-        started = false;
-      }
-      if (command[index] === '\n' && words.length > 0) ended = true;
+    const current = command[index];
+    if (current === '\n' || current === ';') {
+      // A separator with nothing before it (`;;`, a leading `;`) is not a
+      // simple chain.
+      if (!endSegment(current === ';')) return undefined;
       continue;
     }
-    if (ended || ';|&<>$`(){}'.includes(char)) return undefined;
+    if (/\s/u.test(current)) {
+      endWord();
+      continue;
+    }
+    if (current === '&') {
+      // `&&` only; a lone `&` backgrounds the command.
+      if (command[index + 1] !== '&' || !endSegment(true)) return undefined;
+      needOperand = true;
+      index++;
+      continue;
+    }
+    if ('|<>$`(){}'.includes(current)) return undefined;
     started = true;
-    if (char === "'" || char === '"') quote = char;
-    else word += char;
+    if (current === "'" || current === '"') quote = current;
+    else word += current;
   }
   if (quote !== undefined) return undefined;
-  if (started) words.push(word);
-  return words;
+  endSegment(false);
+  return needOperand ? undefined : segments;
 }
