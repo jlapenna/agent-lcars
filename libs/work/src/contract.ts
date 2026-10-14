@@ -954,6 +954,31 @@ export const schedulesContract = {
  * literal in sync without importing the storage-oriented orchestrator lib. */
 const runIdSchema = z.string().min(1).max(175);
 
+/** Authenticated identity only: no dispatch payload or credential material. */
+export const runIntrospectionSchema = z.strictObject({
+  version: z.literal(1),
+  runId: runIdSchema,
+  repository: workTargetSchema.shape.repo.max(140),
+  anchor: z.union([
+    z.strictObject({
+      repo: workTargetSchema.shape.repo.max(140),
+      issue: z.number().int().positive(),
+    }),
+    z.strictObject({ workId: workIdSchema }),
+  ]),
+  issueUrl: z.url().max(256).nullable(),
+  verifiedAt: z.iso.datetime(),
+  /** Effective existing authentication deadline, never a lease renewal. */
+  validUntil: z.iso.datetime(),
+  worker: z
+    .strictObject({
+      poolId: z.string().min(1).max(175),
+      podUid: z.string().min(1).max(175),
+      generation: z.number().int().positive(),
+    })
+    .nullable(),
+});
+
 export const runClaimResponseSchema = z.strictObject({
   placementAware: z.literal(true).optional(),
   runId: runIdSchema,
@@ -1119,6 +1144,22 @@ export const runsContract = {
     })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(runBriefSchema),
+  introspect: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/introspect',
+        operationId: 'introspectRun',
+        summary: 'Verify live run identity without renewing or changing it',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(runIntrospectionSchema),
   heartbeat: runBase
     .meta(
       openapi({

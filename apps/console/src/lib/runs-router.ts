@@ -717,6 +717,51 @@ export const runsRouter = os.router({
     };
   }),
 
+  introspect: os.introspect.handler(async ({ input, context }) => {
+    // Only this authentication pass may supply returned worker metadata.
+    delete context.workerPermit;
+    let run = await requireRunToken(context, input.runId);
+    const task = isWorkAnchor(run.task)
+      ? (await context.store.readTask(run.task))?.task
+      : undefined;
+    if (isWorkAnchor(run.task)) {
+      // Native lookup may await cancellation, reclaim or worker retirement.
+      // Authenticate again after it, then perform no further application IO.
+      delete context.workerPermit;
+      run = await requireRunToken(context, input.runId);
+    }
+    const target = anchorTarget(run, task);
+    const verifiedAt = context.now().toISOString();
+    const validUntil = runRecoveryDeadline(run) ?? run.leaseExpiresAt;
+    if (Date.parse(validUntil) <= Date.parse(verifiedAt)) {
+      throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
+    }
+    // Authentication mutates the context; TypeScript retains the earlier clear.
+    const permit = (context as RunsContext).workerPermit;
+    return {
+      version: 1 as const,
+      runId: run.runId,
+      repository: target.repo,
+      anchor: isWorkAnchor(run.task)
+        ? { workId: run.task.workId }
+        : { repo: run.task.repo, issue: run.task.issue },
+      issueUrl:
+        target.issue === undefined
+          ? null
+          : `https://github.com/${target.repo}/issues/${target.issue}`,
+      verifiedAt,
+      validUntil,
+      worker:
+        permit === undefined
+          ? null
+          : {
+              poolId: permit.poolId,
+              podUid: permit.podUid,
+              generation: permit.generation,
+            },
+    };
+  }),
+
   heartbeat: os.heartbeat.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
     // Preserve the token that authenticated this callback through the atomic
