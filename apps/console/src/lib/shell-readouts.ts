@@ -13,6 +13,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** GitHub reads may run 15s; the readouts route gives up at 8s. A slow merge
  * count must cost only its own figure, not every readout. */
 const MERGES_DEADLINE_MS = 5_000;
+/** A day's merge count does not need the dashboard's 30s freshness. The
+ * dashboard's 60s expiry left each instance refilling cold, a fill that
+ * mints a token per repository and outlasts the deadline, so most page
+ * loads showed the figure unavailable. Refresh in the background every five
+ * minutes; refill cold only after an hour without readers. */
+const MERGES_CACHE_LIFE = { stale: 300, revalidate: 300, expire: 3600 };
 
 /**
  * The figures the console frame shows on every page: the rail readouts, the
@@ -84,7 +90,7 @@ async function readCachedRecentTokens(): Promise<RecentTokens> {
 
 async function readCachedRecentMerges(): Promise<RecentMerges> {
   'use cache';
-  cacheLife(DASHBOARD_CACHE_LIFE);
+  cacheLife(MERGES_CACHE_LIFE);
   return readRecentMerges();
 }
 
