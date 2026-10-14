@@ -9,7 +9,14 @@ import { formatCost, formatDuration } from './format';
 
 export interface BridgeReadoutInput {
   /** Fresh ARC runner counts; undefined when any lane is missing or stale. */
-  fleet: { online?: number; busy?: number; capacity?: number };
+  fleet: {
+    online?: number;
+    busy?: number;
+    /** The lanes' registered runners: what `busy` (running jobs, also from
+     * the lanes) is out of. */
+    registered?: number;
+    capacity?: number;
+  };
   /** Live runs in scope; ignored when the authoritative read failed. */
   liveRuns: readonly {
     pipeline: string;
@@ -75,6 +82,7 @@ export function fleetReadoutInput({
     fleet: {
       online: activity.fleet?.online,
       busy: activity.fleet?.busy,
+      registered: activity.fleet?.registered,
       // Set only with complete lanes; the same figure the rail shows.
       capacity: activity.fleet?.capacity,
     },
@@ -140,6 +148,9 @@ function withCurrent(
 
 export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
   const { online, busy, capacity } = input.fleet;
+  // Busy and its denominator come from one producer, the lanes; `online`
+  // may count the inventory's pods, which can disagree with them.
+  const busyOf = input.fleet.registered ?? online;
   const runningRuns = input.liveRuns.filter((run) => run.status === 'running');
   const byPipeline = new Map<string, number>();
   for (const run of runningRuns) {
@@ -169,13 +180,13 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
       id: 'busy',
       label: 'Busy',
       value:
-        busy === undefined || online === undefined
+        busy === undefined || busyOf === undefined
           ? UNAVAILABLE
-          : `${busy} / ${online}`,
+          : `${busy} / ${busyOf}`,
       detail:
-        busy === undefined || online === undefined
+        busy === undefined || busyOf === undefined
           ? 'runner status unavailable'
-          : `${online === 0 ? 0 : Math.round((busy / online) * 100)}% utilisation · ${Math.max(0, online - busy)} idle`,
+          : `${busyOf === 0 ? 0 : Math.round((busy / busyOf) * 100)}% utilisation · ${Math.max(0, busyOf - busy)} idle`,
       spark: {
         label: 'Busy runners, last 30 minutes',
         values: input.runnerHistory?.busy,

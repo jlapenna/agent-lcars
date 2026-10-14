@@ -24,6 +24,20 @@ const byId = (input: BridgeReadoutInput) =>
   Object.fromEntries(bridgeReadouts(input).map((r) => [r.id, r]));
 
 describe('bridgeReadouts', () => {
+  it('divides busy runners by the lanes, not by pods from the inventory', () => {
+    // Pods online (3) can disagree with the lanes' registered runners (5),
+    // e.g. pods on a NotReady host; running jobs are a lane measure.
+    const r = byId({
+      ...healthy,
+      fleet: { online: 3, registered: 5, busy: 4, capacity: 3 },
+    });
+    expect(r['online']?.value).toBe('3 / 3');
+    expect(r['busy']).toMatchObject({
+      value: '4 / 5',
+      detail: '80% utilisation · 1 idle',
+    });
+  });
+
   it('reports the mockup readouts from healthy reads', () => {
     const r = byId(healthy);
     expect(r['online']?.value).toBe('11 / 12');

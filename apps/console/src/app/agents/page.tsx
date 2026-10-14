@@ -48,6 +48,7 @@ import {
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { LiveDashboard } from '../live-dashboard';
+import { MergedLastDay } from '../merged-last-day';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -381,6 +382,11 @@ async function AgentsPageBody({
           <RecentOutcomesSection
             recentRuns={filteredActivity.recentRuns}
             sessionsByRunId={sessionsByRunId}
+            merged={
+              <MergedLastDay
+                repo={repoFilter ? repoKey(repoFilter) : undefined}
+              />
+            }
           />
         ) : null
       }

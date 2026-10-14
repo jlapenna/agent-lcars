@@ -58,9 +58,9 @@ async function structuralSurfaces(page: Page): Promise<Record<string, string>> {
     record('workspace', document.querySelector('.console-workspace'));
     // A few panels deliberately carry an accent tint and are NOT structural
     // surfaces: the Agents panels say "active"/"claimed"/"recent" that way
-    // (hence the `--` modifier filter), and the Bridge's Inbox signpost wears
-    // the Inbox accent to say it speaks for another destination. Everything
-    // else is the plain ground.
+    // (hence the `--` modifier filter), and the Bridge's inbox signpost is
+    // the toolbar's primary action rather than a panel. Everything else is
+    // the plain ground.
     record(
       'panel',
       document.querySelector(

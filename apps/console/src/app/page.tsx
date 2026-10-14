@@ -31,7 +31,6 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../lib/github-client';
-import { mergedLastDay, type MergedPullCount } from '../lib/merged-pulls';
 import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
@@ -85,6 +84,7 @@ import { DeckInboxSummary } from './deck-inbox-summary';
 import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
+import { MergedLastDay } from './merged-last-day';
 import {
   ActiveDispatchesPanel,
   CliSessionsPanel,
@@ -92,7 +92,6 @@ import {
   RecentCompletionsPanel,
   RunnerFleetPanel,
 } from './ops-panels';
-import { UNAVAILABLE } from './ops-primitives';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
@@ -163,18 +162,6 @@ async function getParkedWork(
         'Could not load stopped work. Retry or reset the stopped-work page.',
     };
   }
-}
-
-/** Recent completions' head, streamed once GitHub's count arrives. */
-async function MergedLastDay({
-  merged,
-}: {
-  merged: Promise<MergedPullCount | undefined>;
-}) {
-  const count = await merged;
-  return count === undefined
-    ? `${UNAVAILABLE} merged · 24h`
-    : `${count.count}${count.partial ? '+' : ''} merged · 24h`;
 }
 
 /** All outcomes on Agents, in the Bridge's repository scope and view. */
@@ -259,9 +246,6 @@ async function IndexBody({
     }),
     getTokenRateSnapshot(),
   ]);
-  // Not awaited with the reads above: a cold GitHub count can take its full
-  // deadline, and only the Recent completions head shows it.
-  const merged = mergedLastDay(repoFilterKey);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
   const warnings = Array.from(
@@ -505,11 +489,7 @@ async function IndexBody({
             />
             <RecentCompletionsPanel
               runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
-              merged={
-                <Suspense fallback={`${UNAVAILABLE} merged · 24h`}>
-                  <MergedLastDay merged={merged} />
-                </Suspense>
-              }
+              merged={<MergedLastDay repo={repoFilterKey} />}
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
               footer={

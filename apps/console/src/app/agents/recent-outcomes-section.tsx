@@ -1,4 +1,5 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
+import type { ReactNode } from 'react';
 
 import type { AgentRun } from '../../lib/agent-activity';
 import { RecentCompletionsPanel } from '../ops-panels';
@@ -13,8 +14,11 @@ const MOBILE_INITIAL_OUTCOME_COUNT = 5;
 export function RecentOutcomesSection({
   recentRuns,
   sessionsByRunId = {},
+  merged,
 }: {
   recentRuns: AgentRun[];
+  /** The mockup's "N merged · 24h" head (see merged-last-day.tsx). */
+  merged?: ReactNode;
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByRunId` in run-classification.ts. */
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
@@ -29,6 +33,7 @@ export function RecentOutcomesSection({
       runs={recentRuns}
       sessionsByRunId={sessionsByRunId}
       testId="recent-outcomes"
+      merged={merged}
       mobileInitialCount={MOBILE_INITIAL_OUTCOME_COUNT}
     />
   );
