@@ -8,6 +8,7 @@ import {
 } from '@agent-lcars/telemetry/server';
 
 import { type HistogramWindow, parseHistogramWindow } from './histogram-window';
+import { parseRunnerWindow, type RunnerSample } from './runner-history';
 import {
   ARC_UNBOUNDED_MAX_RUNNERS,
   RUNNER_STATUS_STALENESS_MS,
@@ -92,6 +93,8 @@ export interface ArcLaneStatus {
   maxRunners?: number;
   /** The listener's last 30 minutes of job-startup latency, when known. */
   jobStartup?: HistogramWindow;
+  /** Registered and running counts a minute apart, last 30 minutes. */
+  runnerHistory?: RunnerSample[];
   updatedAt: string;
 }
 
@@ -122,6 +125,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
   )
     return undefined;
   const jobStartup = parseHistogramWindow(status['jobStartup']);
+  const runnerHistory = parseRunnerWindow(status['runnerHistory']);
   return {
     schemaVersion: 3,
     kind: 'arc-lane',
@@ -141,6 +145,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
       ? { maxRunners: status['maxRunners'] as number }
       : {}),
     ...(jobStartup === undefined ? {} : { jobStartup }),
+    ...(runnerHistory === undefined ? {} : { runnerHistory }),
     updatedAt: status['updatedAt'],
   };
 }

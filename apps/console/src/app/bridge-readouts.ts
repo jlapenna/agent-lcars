@@ -1,6 +1,7 @@
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
 import { runCountHistory } from '../lib/run-history';
+import { fleetRunnerHistory } from '../lib/runner-history';
 import { fleetCapacity } from '../lib/runner-status-contract';
 import type { SessionArchiveResult } from '../lib/session-archive';
 import { repoKey } from '../lib/watched-repo';
@@ -23,11 +24,19 @@ export interface BridgeReadoutInput {
   /** Per-minute queue depth and running agents for the last 30 minutes, in
    * the same scope; undefined when the run history is unavailable. */
   history?: { queued: number[]; running: number[] };
+  /** Fleet-wide runners online and busy per minute, last 30 minutes, from
+   * the lanes' own windows; undefined while any lane lacks one. */
+  runnerHistory?: {
+    online: (number | undefined)[];
+    busy: (number | undefined)[];
+  };
   /** Known spend of sessions active since 00:00 UTC, the same figure as the
    * cost ledger's "Spend by repository"; undefined when the archive read
    * failed. */
   spendToday?: {
     costUsd?: number;
+    /** `costUsd` split by the UTC hour of each session's last activity. */
+    byHourUsd?: number[];
     estimated: boolean;
     /** The archive hit its session limit: the total is a lower bound. */
     partial: boolean;
@@ -96,15 +105,38 @@ export function fleetReadoutInput({
             now,
           )
         : undefined,
+    // Runner counts are fleet-wide, like the figures beside them.
+    runnerHistory:
+      autoscaler.lanesIncomplete || !autoscaler.lanes
+        ? undefined
+        : withCurrent(
+            fleetRunnerHistory(autoscaler.lanes, now),
+            activity.fleet,
+          ),
     spendToday:
       spendArchive?.spend && repoSpend
         ? {
             costUsd: repoSpend.todayUsd,
+            byHourUsd: repoSpend.todayByHourUsd,
             // Only today's sessions: the archive also holds yesterday's.
             estimated: repoSpend.todayEstimated,
             partial: spendArchive.spend.coverageLimited,
           }
         : undefined,
+  };
+}
+
+/** The newest bar is the figure beside it: the lane windows sample once a
+ * minute, so their last entry can trail the current counts. */
+function withCurrent(
+  history: ReturnType<typeof fleetRunnerHistory>,
+  fleet: { online?: number; busy?: number } | undefined,
+): ReturnType<typeof fleetRunnerHistory> {
+  if (!history || fleet?.online === undefined || fleet.busy === undefined)
+    return history;
+  return {
+    online: [...history.online.slice(0, -1), fleet.online],
+    busy: [...history.busy.slice(0, -1), fleet.busy],
   };
 }
 
@@ -130,7 +162,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
             ? String(online)
             : `${online} / ${capacity}`,
       detail: online === undefined ? 'runner status unavailable' : 'ARC lanes',
-      spark: { label: 'Runners online, last 30 minutes' },
+      spark: {
+        label: 'Runners online, last 30 minutes',
+        values: input.runnerHistory?.online,
+      },
     },
     {
       id: 'busy',
@@ -143,7 +178,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
         busy === undefined || online === undefined
           ? 'runner status unavailable'
           : `${online === 0 ? 0 : Math.round((busy / online) * 100)}% utilisation · ${Math.max(0, online - busy)} idle`,
-      spark: { label: 'Busy runners, last 30 minutes' },
+      spark: {
+        label: 'Busy runners, last 30 minutes',
+        values: input.runnerHistory?.busy,
+      },
     },
     {
       id: 'queue',
@@ -188,7 +226,12 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
           : input.spendToday?.partial
             ? 'partial: session archive limit reached'
             : `since 00:00 UTC · no daily budget${input.spendToday?.estimated ? ' · est.' : ''}`,
-      spark: { label: 'Spend per hour today' },
+      spark: {
+        label: input.spendToday?.partial
+          ? 'Spend per hour today, by last activity (lower bound)'
+          : 'Spend per hour today, by last activity',
+        values: input.spendToday?.byHourUsd,
+      },
     },
   ];
 }

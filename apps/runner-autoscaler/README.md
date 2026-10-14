@@ -99,6 +99,11 @@ then reads "requested", and the executor logs the failure once, when it
 starts or changes. Load and usage changes ride the 60s heartbeat; a node
 joining, leaving, going NotReady or being cordoned writes at once.
 
+Each successful lane snapshot also carries `runnerHistory`: registered and
+running counts at most once a minute over the last 30 minutes, for the
+console's Runners online and Busy sparklines. A minute without a successful
+scrape has no sample.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no
