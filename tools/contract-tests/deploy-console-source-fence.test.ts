@@ -35,6 +35,7 @@ const BASE = '0'.repeat(40);
 const OLD = 'a'.repeat(40),
   NEW = 'b'.repeat(40);
 const guard = workflow.jobs.deploy.steps.find((step) => step.id === 'source');
+const SOURCE_DECISION_TIMEOUT = 5000;
 
 interface Rollout {
   source?: string;
@@ -224,7 +225,7 @@ _fixture_datetime.datetime = _FixtureDateTime
   try {
     const result = spawnSync('bash', ['-c', program], {
       encoding: 'utf8',
-      timeout: 5000,
+      timeout: SOURCE_DECISION_TIMEOUT,
       env: {
         ...process.env,
         PATH: `${dir}:${process.env.PATH}`,
@@ -567,18 +568,23 @@ describe('serialized automatic deployment source fence', () => {
     ).not.toBe(0);
   });
 
-  it('parses timestamps by instant and refuses a run timestamp older than its effect', () => {
-    expect(
-      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
-        { source: OLD, updated: '2026-10-13T03:00:00+02:00' },
-      ]),
-    ).toMatchObject({ status: 0, output: 'true' });
-    expect(
-      sourceDecision(OLD, NEW, 'workflow_run', false, '', [
-        { source: OLD, updated: '2026-10-13T00:59:59Z' },
-      ]).status,
-    ).not.toBe(0);
-  });
+  it(
+    'parses timestamps by instant and refuses a run timestamp older than its effect',
+    () => {
+      expect(
+        sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+          { source: OLD, updated: '2026-10-13T03:00:00+02:00' },
+        ]),
+      ).toMatchObject({ status: 0, output: 'true' });
+      expect(
+        sourceDecision(OLD, NEW, 'workflow_run', false, '', [
+          { source: OLD, updated: '2026-10-13T00:59:59Z' },
+        ]).status,
+      ).not.toBe(0);
+      // Two independently bounded subprocess decisions plus fixture teardown.
+    },
+    2 * SOURCE_DECISION_TIMEOUT + 1000,
+  );
 
   it.each(['', 'not-a-sha', 'c'.repeat(39)])(
     'fails closed for unreadable main %j',
