@@ -126,6 +126,7 @@ describe('lcars integration', () => {
       'SessionEnd',
       'SessionStart',
       'Stop',
+      'SubagentStop',
       'UserPromptSubmit',
     ]);
 

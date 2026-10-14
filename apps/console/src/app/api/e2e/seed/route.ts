@@ -316,6 +316,16 @@ async function seedRunnerStatus() {
       ready: true,
       draining: false,
       maxConcurrent: 3,
+      // The executor's own Work API calls, so the Bridge's Work API p95
+      // renders a value and a sparkline bar.
+      workApiLatency: {
+        bounds: [0.1, 0.3, 1],
+        startedAt: minutesAgo(30),
+        intervals: [
+          { endedAt: minutesAgo(1), counts: [0, 0, 0, 0] },
+          { endedAt: minutesAgo(0), counts: [18, 20, 20, 20] },
+        ],
+      },
       updatedAt: new Date().toISOString(),
     });
 }

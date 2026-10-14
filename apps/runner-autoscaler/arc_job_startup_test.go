@@ -32,7 +32,7 @@ func TestARCLaneStatusSumsJobStartupHistogramAcrossLabelSets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }))
 	defer server.Close()
 	lane := arcLaneConfig{Name: "test", RegistrationURL: "https://github.com/example/repo", MetricsURL: server.URL}
-	window := &jobStartupWindow{}
+	window := &histogramWindow{}
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	status, err := fetchARCLaneStatus(context.Background(), server.Client(), lane, start, window)
 	if err != nil {
@@ -46,10 +46,10 @@ func TestARCLaneStatusSumsJobStartupHistogramAcrossLabelSets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &consoleJobStartupWindow{
+	want := &consoleHistogramWindow{
 		Bounds:    []float64{1, 10},
 		StartedAt: "2026-10-13T12:00:00Z",
-		Intervals: []consoleJobStartupInterval{{EndedAt: "2026-10-13T12:01:00Z", Counts: []int64{1, 3, 6}}},
+		Intervals: []consoleHistogramInterval{{EndedAt: "2026-10-13T12:01:00Z", Counts: []int64{1, 3, 6}}},
 	}
 	if !reflect.DeepEqual(status.JobStartup, want) {
 		t.Fatalf("window = %#v, want %#v", status.JobStartup, want)
@@ -68,7 +68,7 @@ func TestARCLaneStatusKeepsCapacityWhenJobStartupHistogramIsMalformed(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, arcMetricsFixture+tc.startup) }))
 			defer server.Close()
-			window := &jobStartupWindow{}
+			window := &histogramWindow{}
 			window.observe(time.Now().Add(-time.Minute), nil)
 			status, err := fetchARCLaneStatus(context.Background(), server.Client(), arcLaneConfig{Name: "test", RegistrationURL: "https://github.com/example/repo", MetricsURL: server.URL}, time.Now(), window)
 			if err != nil {
@@ -81,14 +81,14 @@ func TestARCLaneStatusKeepsCapacityWhenJobStartupHistogramIsMalformed(t *testing
 	}
 }
 
-func hist(counts ...int64) *jobStartupHistogram {
-	return &jobStartupHistogram{bounds: []float64{1, 10}, counts: counts}
+func hist(counts ...int64) *cumulativeHistogram {
+	return &cumulativeHistogram{bounds: []float64{1, 10}, counts: counts}
 }
 
 func TestJobStartupWindowRecordsOneSnapshotPerMinuteAndKeepsThirtyMinutes(t *testing.T) {
-	window := &jobStartupWindow{}
+	window := &histogramWindow{}
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	var published *consoleJobStartupWindow
+	var published *consoleHistogramWindow
 	total := int64(0)
 	for tick := 0; tick <= 40*6; tick++ {
 		if tick%6 == 0 {
@@ -110,9 +110,9 @@ func TestJobStartupWindowRecordsOneSnapshotPerMinuteAndKeepsThirtyMinutes(t *tes
 }
 
 func TestJobStartupWindowChangesOncePerMinuteDespiteScrapeJitter(t *testing.T) {
-	window := &jobStartupWindow{}
+	window := &histogramWindow{}
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	var previous *consoleJobStartupWindow
+	var previous *consoleHistogramWindow
 	changes := 0
 	for tick := 0; tick <= 60*6; tick++ {
 		// Each scrape starts a little early or late on the 10s tick.
@@ -132,7 +132,7 @@ func TestJobStartupWindowChangesOncePerMinuteDespiteScrapeJitter(t *testing.T) {
 }
 
 func TestJobStartupWindowRestartsAfterAScrapeGap(t *testing.T) {
-	window := &jobStartupWindow{}
+	window := &histogramWindow{}
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	window.observe(start, hist(0, 1, 1))
 	if got := window.observe(start.Add(time.Minute), hist(0, 2, 2)); got == nil {
@@ -151,14 +151,14 @@ func TestJobStartupWindowRestartsOnCounterResetAndLayoutChange(t *testing.T) {
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name string
-		next *jobStartupHistogram
+		next *cumulativeHistogram
 	}{
 		{"decrease", hist(0, 1, 1)},
-		{"bounds", &jobStartupHistogram{bounds: []float64{1, 30}, counts: []int64{5, 9, 9}}},
+		{"bounds", &cumulativeHistogram{bounds: []float64{1, 30}, counts: []int64{5, 9, 9}}},
 		{"vanished", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			window := &jobStartupWindow{}
+			window := &histogramWindow{}
 			window.observe(start, hist(4, 8, 8))
 			if got := window.observe(start.Add(time.Minute), hist(5, 9, 9)); got == nil {
 				t.Fatal("no window before the reset")
@@ -171,7 +171,7 @@ func TestJobStartupWindowRestartsOnCounterResetAndLayoutChange(t *testing.T) {
 }
 
 func TestJobStartupWindowCountsFirstReportAfterNoneFromZero(t *testing.T) {
-	window := &jobStartupWindow{}
+	window := &histogramWindow{}
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	if got := window.observe(start, nil); got != nil {
 		t.Fatalf("published a window with no reported histogram: %#v", got)

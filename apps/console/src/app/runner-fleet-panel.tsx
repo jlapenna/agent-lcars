@@ -5,6 +5,11 @@ import type {
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
 import { CI_WAIT_MINUTES, fleetCiWait } from '../lib/ci-wait';
+import {
+  HISTOGRAM_WINDOW_MINUTES,
+  type HistogramWindow,
+  summarizeWindows,
+} from '../lib/histogram-window';
 import { fleetCapacity } from '../lib/runner-status-contract';
 import {
   TOKEN_RATE_AVERAGE_MINUTES,
@@ -62,6 +67,7 @@ export function RunnerFleetPanel({
   chip,
   filteredOut = false,
   tokenRate,
+  workApiLatency,
 }: {
   lanes?: ArcLaneStatus[];
   lanesIncomplete?: boolean;
@@ -73,6 +79,10 @@ export function RunnerFleetPanel({
   /** Tokens / min, or why it is unknown: the session store failed, or no
    * active session records per-minute tokens. */
   tokenRate?: TokenRate | { unavailable: string };
+  /** The queue executor's Work API response times. Passed apart from
+   * `executor` because a page filter can hide the executor's row without
+   * changing how the Work API is responding. */
+  workApiLatency?: HistogramWindow;
 }) {
   // No lane records is unknown capacity, not zero capacity - unless a filter
   // emptied a known fleet.
@@ -204,7 +214,7 @@ export function RunnerFleetPanel({
             </>
           )}
         </div>
-        <UnavailableTelemetry label="Work API p95" />
+        <WorkApiTelemetry window={workApiLatency} />
       </div>
     </OpsPanel>
   );
@@ -252,12 +262,38 @@ function TokenRateTelemetry({
   );
 }
 
-function UnavailableTelemetry({ label }: { label: string }) {
+/** Response times are milliseconds until they are not. */
+function formatLatency(seconds: number): string {
+  return seconds < 1
+    ? `${Math.round(seconds * 1000)} ms`
+    : `${seconds.toFixed(1)} s`;
+}
+
+function WorkApiTelemetry({ window }: { window?: HistogramWindow }) {
+  const latency = window && summarizeWindows([window], 0.95);
   return (
-    <div>
-      <div className="lcars-eyebrow">{label}</div>
-      <div className="ops-telemetry__value">{UNAVAILABLE}</div>
-      <div className="ops-unavailable">no metrics source</div>
+    <div data-testid="fleet-work-api">
+      <div className="lcars-eyebrow">Work API p95</div>
+      <div className="ops-telemetry__value">
+        {latency?.quantile === undefined
+          ? UNAVAILABLE
+          : formatLatency(latency.quantile)}
+      </div>
+      {latency === undefined ? (
+        <div className="ops-unavailable">no executor latency data</div>
+      ) : (
+        <>
+          <div className="ops-telemetry__detail">
+            {latency.count === 0
+              ? `no calls · ${latency.coveredMinutes}m`
+              : `${latency.count} ${latency.count === 1 ? 'call' : 'calls'} · ${latency.coveredMinutes}m`}
+          </div>
+          <Sparkline
+            values={latency.series}
+            label={`Work API p95 latency per minute, last ${HISTOGRAM_WINDOW_MINUTES} minutes`}
+          />
+        </>
+      )}
     </div>
   );
 }

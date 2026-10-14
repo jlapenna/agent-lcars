@@ -6,51 +6,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // The listener's own histogram of the time from a job being assigned to a
 // runner until that runner starts it. Homelab's "Runner fleet (ARC)"
 // dashboard reads the same series for its fleet-wide job-startup p50.
 const arcJobStartupBucketMetric = "gha_job_startup_duration_seconds_bucket"
-
-const (
-	// The console's CI wait readout covers the last 30 minutes.
-	jobStartupWindowSpan = 30 * time.Minute
-	// One recorded snapshot per minute bounds the published window to 30
-	// intervals however often the listener is scraped.
-	jobStartupSampleSpacing = time.Minute
-	// The console accepts at most this many intervals per lane.
-	jobStartupIntervals = 30
-)
-
-// jobStartupHistogram is one scrape's cumulative startup histogram, summed
-// over every label set the listener reports (one per repository and job).
-type jobStartupHistogram struct {
-	// Finite upper bounds in seconds, ascending.
-	bounds []float64
-	// Cumulative job counts per bound; the final entry is the +Inf bucket,
-	// so len(counts) == len(bounds)+1.
-	counts []int64
-}
-
-// consoleJobStartupWindow is the lane's job-startup histogram over the last
-// 30 minutes, one entry per recorded interval. The console sums lanes per
-// interval to draw the fleet's CI wait p50 and its sparkline.
-type consoleJobStartupWindow struct {
-	Bounds []float64 `firestore:"bounds"`
-	// When the oldest interval began. After a start or reset the window
-	// covers less than 30 minutes, and the console says so.
-	StartedAt string                      `firestore:"startedAt"`
-	Intervals []consoleJobStartupInterval `firestore:"intervals"`
-}
-
-type consoleJobStartupInterval struct {
-	EndedAt string `firestore:"endedAt"`
-	// Cumulative counts of jobs that started in this interval, as in
-	// jobStartupHistogram.counts.
-	Counts []int64 `firestore:"counts"`
-}
 
 // parseJobStartupSample folds one exposition line, already split into name
 // and value by splitPrometheusSample, into the per-bound sums. It reports
@@ -114,7 +75,7 @@ func prometheusLabel(labels, key string) (string, bool) {
 // jobStartupFromSums turns per-`le` sums into a histogram. No sample at all
 // is a nil histogram: the listener has not reported a job start since it
 // began. A partial or non-cumulative histogram is an error.
-func jobStartupFromSums(sums map[string]int64) (*jobStartupHistogram, error) {
+func jobStartupFromSums(sums map[string]int64) (*cumulativeHistogram, error) {
 	if len(sums) == 0 {
 		return nil, nil
 	}
@@ -152,97 +113,5 @@ func jobStartupFromSums(sums map[string]int64) (*jobStartupHistogram, error) {
 			return nil, fmt.Errorf("ARC job startup histogram is not cumulative")
 		}
 	}
-	return &jobStartupHistogram{bounds: bounds, counts: counts}, nil
-}
-
-type jobStartupSnapshot struct {
-	at time.Time
-	// nil: the listener reported no job start yet, which is zero jobs.
-	hist *jobStartupHistogram
-}
-
-// jobStartupWindow keeps one lane's recorded snapshots. Each lane's scrape
-// goroutine owns its own window, so it needs no lock.
-type jobStartupWindow struct {
-	snapshots []jobStartupSnapshot
-	last      *jobStartupHistogram
-	// Zero until the first successful scrape, and again after a reset.
-	lastAt time.Time
-}
-
-// reset forgets the window, for a scrape whose histogram cannot be used.
-func (w *jobStartupWindow) reset() {
-	*w = jobStartupWindow{}
-}
-
-// observe records a successful scrape and returns the lane's published
-// window, or nil while no interval is known or the listener has never
-// reported a start (absent and disabled metrics look the same).
-func (w *jobStartupWindow) observe(now time.Time, hist *jobStartupHistogram) *consoleJobStartupWindow {
-	// A listener restart zeroes its counters. Any decrease, or a change of
-	// bucket layout, starts the window again rather than inventing a delta.
-	// So does a gap in successful scrapes: an interval spanning it would
-	// count jobs from outside the window, and could hide a restart.
-	if !w.lastAt.IsZero() && (now.Sub(w.lastAt) > 2*jobStartupSampleSpacing || !jobStartupContinues(w.last, hist)) {
-		w.snapshots = nil
-	}
-	w.last, w.lastAt = hist, now
-	// Scrape times jitter around the 10s tick; without the slack every other
-	// minute would wait a seventh tick and leave a gap in the sparkline.
-	// Appending and trimming together changes the window once per minute.
-	if n := len(w.snapshots); n == 0 || now.Sub(w.snapshots[n-1].at) >= jobStartupSampleSpacing-consoleStatusInterval/2 {
-		w.snapshots = append(w.snapshots, jobStartupSnapshot{at: now, hist: hist})
-		cutoff := now.Add(-jobStartupWindowSpan)
-		for len(w.snapshots) > 1 && (!w.snapshots[1].at.After(cutoff) || len(w.snapshots) > jobStartupIntervals+1) {
-			w.snapshots = w.snapshots[1:]
-		}
-	}
-	latest := w.snapshots[len(w.snapshots)-1].hist
-	if latest == nil || len(w.snapshots) < 2 {
-		return nil
-	}
-	window := &consoleJobStartupWindow{
-		Bounds:    append([]float64(nil), latest.bounds...),
-		StartedAt: w.snapshots[0].at.UTC().Format(time.RFC3339Nano),
-	}
-	for i := 1; i < len(w.snapshots); i++ {
-		before, after := w.snapshots[i-1].hist, w.snapshots[i].hist
-		counts := make([]int64, len(latest.counts))
-		if after != nil {
-			for j := range counts {
-				counts[j] = after.counts[j]
-				if before != nil {
-					counts[j] -= before.counts[j]
-				}
-			}
-		}
-		window.Intervals = append(window.Intervals, consoleJobStartupInterval{
-			EndedAt: w.snapshots[i].at.UTC().Format(time.RFC3339Nano),
-			Counts:  counts,
-		})
-	}
-	return window
-}
-
-// jobStartupContinues reports whether next can follow prev on the same
-// counters: no bucket decreased and the bounds are unchanged. A first report
-// after none (nil prev) always continues, from zero.
-func jobStartupContinues(prev, next *jobStartupHistogram) bool {
-	if prev == nil {
-		return true
-	}
-	if next == nil || len(prev.bounds) != len(next.bounds) {
-		return false
-	}
-	for i, bound := range prev.bounds {
-		if next.bounds[i] != bound {
-			return false
-		}
-	}
-	for i, count := range prev.counts {
-		if next.counts[i] < count {
-			return false
-		}
-	}
-	return true
+	return &cumulativeHistogram{bounds: bounds, counts: counts}, nil
 }

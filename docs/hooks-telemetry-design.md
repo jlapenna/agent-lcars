@@ -393,8 +393,18 @@ them:
 - **Stdin to a temp file first.** The launcher copies stdin to `mktemp`
   before doing anything else and deletes it on exit, so a slow or failing
   client never leaves the runtime blocked on a pipe.
-- **Skip what is not a session.** Payloads with `agent_id` (subagents) are
-  ignored; the parent transcript already carries their sidechains. Payloads
+- **Skip what is not a session.** Claude and OpenCode payloads with
+  `agent_id` remain parent-owned. A Codex child is collected only when its
+  first rollout metadata matches `agent_id` and the hook's parent
+  `session_id`/fork relationship,
+  `agent_transcript_path` or an exact-ID rollout lookup supplies the child
+  transcript, and an explicit child-thread boundary excludes inherited history, and matching
+  thread usage is present. Its own suffix uses the normal publication guards;
+  copied parent counters never become child usage. Unverified children remain
+  uncollected, rather than emitting invented usage. The Codex integration also
+  registers `SubagentStop` so its documented child transcript can be collected
+  when the child stops. The common parent `transcript_path` is never a child
+  fallback. See the [Codex hook fields](https://learn.chatgpt.com/docs/hooks). Payloads
   from wrapped runtimes (herdr checks `CURSOR_VERSION`) are ignored the same
   way when a wrapper is detected.
 - **Identity from the hook, state derived elsewhere.** Herdr's hook reports

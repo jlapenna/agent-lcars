@@ -448,6 +448,7 @@ export function RunnerAutoscalerStatus({
             executor={result.queueExecutor}
             filteredOut={noMatch}
             tokenRate={expireTokenRate(tokenRate, clock, STALENESS_MS)}
+            workApiLatency={live.queueExecutor?.workApiLatency}
           />
         </div>
       </div>
