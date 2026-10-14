@@ -677,8 +677,9 @@ test.describe('responsive decision inbox', () => {
     ).toBeVisible();
     await expect(runningRow.locator('.ci-running-badge')).toHaveCount(0);
 
-    const search = workspace.getByRole('textbox', {
-      name: 'Search the Inbox',
+    // The FIND field (its label, input and refine controls) as one box.
+    const search = workspace.locator('.queue-search-input', {
+      has: page.getByRole('textbox', { name: 'Search the Inbox' }),
     });
     const searchBounds = await search.boundingBox();
     const workspaceBounds = await workspace.boundingBox();

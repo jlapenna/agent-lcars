@@ -1174,6 +1174,84 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   margin-left: auto;
 }
 
+/* Compact desktops (to 1440px): the toolbar band keeps the mockup's single
+   row. Native selects size to their widest option, so they are capped, and
+   segments and the find field tighten. (The Inbox's own search is narrowed
+   beside its base rule below.) */
+@media (min-width: 48em) and (max-width: 89.99em) {
+  .console-toolbar__select {
+    max-width: 12rem;
+  }
+
+  .console-toolbar__segmented label {
+    padding: 0 10px;
+  }
+
+  .console-toolbar__search {
+    width: 12rem;
+  }
+}
+
+/* An inline link inside a header subtitle (Work's "schedules"): keeps the
+   subtitle's single line and size. */
+.console-subtitle-link {
+  color: var(--lcars-accent-ink);
+  text-decoration: none;
+}
+
+.console-subtitle-link:hover,
+.console-subtitle-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* A route's filters beyond the mockup's four (Work: state, principal),
+   folded behind one control so the toolbar band stays a single row. Open,
+   it takes a row of its own in the band (in flow, so the workspace frame
+   never clips it). */
+.console-toolbar__more > summary {
+  color: var(--lcars-ink-dim);
+  cursor: pointer;
+  list-style: none;
+}
+
+.console-toolbar__more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.console-toolbar__more[open] {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.console-toolbar__more[open] > summary {
+  color: var(--lcars-ink);
+  background: var(--lcars-surface-raised);
+}
+
+.console-toolbar__more > summary:focus-visible {
+  outline: 2px solid var(--lcars-amber);
+  outline-offset: 2px;
+}
+
+.console-toolbar__more-panel {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Work's Schedules link: in the header subtitle on wide screens, where the
+   subtitle shows; in the toolbar band below that. */
+@media (min-width: 64em) {
+  .work-schedules-link--compact {
+    display: none;
+  }
+}
+
 /* The pre-hydration Apply (console-toolbar.tsx): a plain submit while the
    controls cannot yet submit on change. Once they can it is hidden but keeps
    its box, so hydrating reflows nothing a pointer may already be aimed at. */
@@ -1248,6 +1326,15 @@ form[data-hydrated] .console-toolbar__apply {
    Mantine's own `.m_849cf0da`, which comes earlier in the cascade. */
 .mantine-Anchor-root {
   color: var(--lcars-accent-ink);
+}
+
+/* The repository link owns the phone hit target; its child paints a compact
+   pill beside the status badges. */
+.repo-scope-link {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  text-decoration: none;
 }
 
 /* Badges in light mode (#1848).
@@ -1414,6 +1501,18 @@ form[data-hydrated] .console-toolbar__apply {
   background: var(--lcars-accent);
 }
 
+/* In the Sessions panel header, beside the meta it names: compact enough to
+   share the title row. */
+.sessions-panel__head .sessions-view-toggle {
+  flex: none;
+  align-self: center;
+}
+
+.sessions-panel__head .sessions-view-toggle__option {
+  min-height: 26px;
+  padding: 0 12px;
+}
+
 .sessions-workspace__content {
   min-width: 0;
 }
@@ -1458,6 +1557,12 @@ form[data-hydrated] .console-toolbar__apply {
 
 .sessions-issue-groups {
   padding: 4px 0;
+}
+
+/* Desktop by-issue view: each issue heading sits on the rows it names, so
+   the groups read as one dense table (design/fleet-console.html). */
+.sessions-issue-groups > .mantine-Stack-root > .mantine-Group-root:first-child {
+  padding: 12px 10px 2px;
 }
 
 /* By-issue view: the group tables share fixed column widths and one visual
@@ -1817,7 +1922,9 @@ td.work-table__num {
 .costs-repo-spend__repo {
   font-family: var(--font-mono), monospace;
   font-size: 0.8125rem;
-  overflow-wrap: anywhere;
+  /* Breaks after owner/ (a <wbr> in the markup), mid-word only as a last
+     resort. */
+  overflow-wrap: break-word;
 }
 
 .costs-repo-spend__num {
@@ -1842,6 +1949,25 @@ td.costs-repo-spend__num {
   font-family: var(--font-mono), monospace;
   font-size: 0.75rem;
   color: var(--lcars-ink-dim);
+}
+
+.costs-repo-spend__bar > span {
+  white-space: nowrap;
+}
+
+/* Below desktop the table has no room for the bar: keep its value. */
+@media (max-width: 63.99em) {
+  .costs-repo-spend__bar {
+    grid-template-columns: auto;
+  }
+
+  .costs-repo-spend__meter {
+    display: none;
+  }
+
+  .costs-repo-spend__week {
+    width: auto;
+  }
 }
 
 .costs-repo-spend__meter {
@@ -1923,6 +2049,22 @@ td.costs-repo-spend__num {
 .costs-ledger-table td {
   border: 0;
   border-bottom: 1px solid var(--lcars-hairline);
+}
+
+/* Stacked breakdowns: counts and money stay on one line, and the auto
+   table layout gives the identity column what is left. */
+.costs-ledger-grid--stacked .costs-ledger-table td + td,
+.costs-ledger-grid--stacked .costs-ledger-table th + th {
+  white-space: nowrap;
+}
+
+.costs-ledger-table__aside {
+  color: var(--lcars-ink-dim);
+  font-size: 0.75rem;
+}
+
+.costs-ledger-grid--stacked {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .costs-ledger-table tbody tr:hover {
@@ -3182,11 +3324,15 @@ td.costs-repo-spend__num {
     min-height: 56px;
   }
 
-  .sessions-view-toggle {
+  .sessions-panel__head {
+    flex-wrap: wrap;
+  }
+
+  .sessions-panel__head .sessions-view-toggle {
     width: 100%;
   }
 
-  .sessions-view-toggle__option {
+  .sessions-panel__head .sessions-view-toggle__option {
     min-height: 44px;
     flex: 1;
     justify-content: center;
@@ -3484,16 +3630,6 @@ td.costs-repo-spend__num {
     max-width: none;
   }
 
-  .queue-search-input .mantine-Input-wrapper {
-    --input-height: 44px !important;
-    --input-right-section-width: 44px !important;
-  }
-
-  .queue-search-input:has([aria-label='Clear search text'])
-    .mantine-Input-wrapper {
-    --input-right-section-width: 88px !important;
-  }
-
   .queue-search-input .queue-refine-control {
     min-width: 44px;
     min-height: 44px;
@@ -3779,6 +3915,11 @@ td.costs-repo-spend__num {
     min-height: 44px;
   }
 
+  .repo-scope-link {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   .operations-panel a,
   .operations-more-link,
   .takeover-command-button {
@@ -4032,7 +4173,8 @@ td.costs-repo-spend__num {
   font-size: 0.75rem;
 }
 
-.ops-unavailable {
+.ops-unavailable,
+.ops-telemetry__detail {
   color: var(--lcars-ink-dim);
   font-size: 0.6875rem;
 }
@@ -4275,6 +4417,23 @@ td.costs-repo-spend__num {
   font-weight: 500;
 }
 
+/* The mockup's bar sparkline, in the meters' quiet data colour with the
+   newest bar in the accent. */
+.ops-spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin-top: 6px;
+}
+
+.ops-spark rect {
+  fill: color-mix(in srgb, var(--lcars-ink-dim) 60%, var(--lcars-surface));
+}
+
+.ops-spark rect[data-now] {
+  fill: var(--lcars-accent);
+}
+
 .ops-rows > * + * {
   border-top: 1px solid var(--lcars-hairline);
 }
@@ -4426,6 +4585,14 @@ td.costs-repo-spend__num {
 .inbox-toolbar .queue-search-input {
   flex: 1 1 14rem;
   max-width: 18rem;
+}
+
+/* Compact desktops: a smaller basis keeps search, the data-age line and
+   Respond to oldest on the toolbar's one row. */
+@media (min-width: 48em) and (max-width: 89.99em) {
+  .inbox-toolbar .queue-search-input {
+    flex-basis: 10rem;
+  }
 }
 
 .inbox-agent-select {

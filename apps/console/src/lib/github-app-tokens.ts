@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createPrivateKey, type KeyObject } from 'node:crypto';
 
+import { logger } from '@agent-lcars/logging';
 import { SignJWT } from 'jose';
 
 /**
@@ -155,7 +156,20 @@ export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
   contents: 'write',
   pull_requests: 'write',
   issues: 'write',
+  // Lets a dispatched agent push `.github/workflows/*` changes its task
+  // calls for (homelab#2397 parked on "refusing to allow a GitHub App to
+  // create or update workflow without `workflows` permission"). The
+  // agent-protocol rule against editing workflows without owner permission
+  // still governs *whether* it should; this only removes the token as the
+  // obstacle. Optional: see OPTIONAL_PERMISSIONS.
+  workflows: 'write',
 };
+
+/** Permissions an installation may not have approved yet. GitHub rejects a
+ *  mint that requests any unapproved permission with a 422, so a mint that
+ *  fails that way is retried once without these rather than failing every
+ *  run on that installation. */
+const OPTIONAL_PERMISSIONS = ['workflows'] as const;
 
 export interface AppInstallationTokenProviderOptions {
   /** The GitHub App's client ID -- used as the JWT `iss` claim. */
@@ -181,6 +195,8 @@ export interface AppInstallationTokenProviderOptions {
 interface CachedInstallationToken {
   token: string;
   expiresAtMs: number;
+  /** The grant GitHub reports for this token, when the response carries it. */
+  permissions?: Record<string, string>;
 }
 
 /**
@@ -535,6 +551,80 @@ async function mintInstallationAccessToken(
   logLabel: string,
   permissions: Record<string, string>,
 ): Promise<CachedInstallationToken> {
+  const required = Object.fromEntries(
+    Object.entries(permissions).filter(
+      ([name]) => !(OPTIONAL_PERMISSIONS as readonly string[]).includes(name),
+    ),
+  );
+  if (Object.keys(required).length === Object.keys(permissions).length) {
+    return mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      permissions,
+    );
+  }
+  try {
+    const minted = await mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      permissions,
+    );
+    // GitHub can also succeed with a narrowed grant, omitting an optional
+    // permission the installation has not approved from the response
+    // (the case mint-agent-token's verify-workflows-grant.sh handles).
+    const missing = OPTIONAL_PERMISSIONS.filter(
+      (name) =>
+        name in permissions &&
+        minted.permissions !== undefined &&
+        minted.permissions[name] !== permissions[name],
+    );
+    if (missing.length > 0) {
+      logger.warn(
+        `GitHub App installation token for ${logLabel} minted without optional permissions (${missing.join(', ')}): installation has not approved them`,
+      );
+    }
+    return minted;
+  } catch (error) {
+    if (!(error instanceof MintStatusError) || error.status !== 422) {
+      throw error;
+    }
+    logger.warn(
+      `GitHub App installation token for ${logLabel} minted without optional permissions (${OPTIONAL_PERMISSIONS.join(', ')}): ${error.message}`,
+    );
+    return mintOnce(
+      fetchImpl,
+      jwt,
+      installationId,
+      repositories,
+      logLabel,
+      required,
+    );
+  }
+}
+
+class MintStatusError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function mintOnce(
+  fetchImpl: typeof fetch,
+  jwt: string,
+  installationId: number,
+  repositories: string[],
+  logLabel: string,
+  permissions: Record<string, string>,
+): Promise<CachedInstallationToken> {
   let response: Response;
   try {
     response = await fetchImpl(
@@ -556,14 +646,16 @@ async function mintInstallationAccessToken(
   }
   if (!response.ok) {
     const detail = await githubErrorDetail(response);
-    throw new Error(
+    throw new MintStatusError(
       `failed to mint GitHub App installation access token for ${logLabel}: GitHub returned ${response.status}${detail === '' ? '' : `: ${detail}`}`,
+      response.status,
     );
   }
 
   const body = (await response.json()) as {
     token?: unknown;
     expires_at?: unknown;
+    permissions?: unknown;
   };
   if (typeof body.token !== 'string' || typeof body.expires_at !== 'string') {
     throw new Error(
@@ -576,7 +668,11 @@ async function mintInstallationAccessToken(
       `GitHub App installation access token response for ${logLabel} has an unparseable expires_at`,
     );
   }
-  return { token: body.token, expiresAtMs };
+  const granted =
+    typeof body.permissions === 'object' && body.permissions !== null
+      ? (body.permissions as Record<string, string>)
+      : undefined;
+  return { token: body.token, expiresAtMs, permissions: granted };
 }
 
 function errorMessage(error: unknown): string {

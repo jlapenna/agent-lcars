@@ -224,10 +224,10 @@ const CostsPageView = withConsolePageShell(
     className: 'costs-page-shell',
     current: 'costs',
     archiveQuery: query,
-    title: 'Cost Ledger',
+    title: 'Costs',
     subtitle: (
       <>
-        {describeArchiveWindow(query)} ·{' '}
+        Cost ledger · {describeArchiveWindow(query)} ·{' '}
         <Suspense fallback="…">
           <SessionCount query={query} />
         </Suspense>
@@ -278,7 +278,7 @@ export default function CostsPage({ searchParams }: PageProps) {
       fallback={
         <NavPageLoading
           current="costs"
-          title="Cost Ledger"
+          title="Costs"
           className="costs-page-shell"
           rows={6}
         />

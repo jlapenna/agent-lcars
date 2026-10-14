@@ -33,20 +33,10 @@ export function RepoScopeBadge({
   const query = params.toString();
 
   return (
-    <Badge
-      component={Link}
+    <Link
+      className="repo-scope-link"
       href={query ? `${pathname}?${query}` : pathname}
-      variant={active ? 'filled' : 'outline'}
-      color="gray"
-      size="xs"
       style={{ flexShrink: 0, cursor: 'pointer', maxWidth: 112 }}
-      styles={{
-        label: {
-          minWidth: 0,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        },
-      }}
       data-testid="repo-badge"
       data-active={active ? '' : undefined}
       title={
@@ -55,7 +45,21 @@ export function RepoScopeBadge({
           : `Show only ${display}`
       }
     >
-      {display}
-    </Badge>
+      <Badge
+        variant={active ? 'filled' : 'outline'}
+        color="gray"
+        size="xs"
+        style={{ maxWidth: '100%', minWidth: 0 }}
+        styles={{
+          label: {
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          },
+        }}
+      >
+        {display}
+      </Badge>
+    </Link>
   );
 }

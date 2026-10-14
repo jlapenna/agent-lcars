@@ -1,5 +1,6 @@
 import { buildSessionWrite } from './session-doc';
 import { livenessForSessionEvent, type SessionEventV1 } from './session-event';
+import { nextTokenMinutes } from './token-minutes';
 import {
   type SessionDoc,
   type SessionObserver,
@@ -122,5 +123,14 @@ export function sessionWriteForEvent(
       clientVersion: event.runtime.clientVersion,
     }),
   };
-  return { doc: { ...write.doc, observer }, clearFields: write.clearFields };
+  const credited = nextTokenMinutes(
+    existing,
+    write.doc.tokens,
+    event.occurredAt,
+    now,
+  );
+  return {
+    doc: { ...write.doc, observer, ...credited },
+    clearFields: write.clearFields,
+  };
 }

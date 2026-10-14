@@ -54,7 +54,7 @@ deliberately not part of the production build contract.
 
 `workflow_dispatch` retains `build_mode: prebuilt` only as an explicit
 diagnostic option while the App Hosting prebuilt importer is repaired (#1128).
-That path runs the declared build command on the trusted `lcars-ci` runner,
+That path runs the declared build command on the trusted `agent-lcars-ci` runner,
 uploads only `outputFiles.serverApp.include`, and registers a `locallyBuilt`
 artifact. Its cache and exact-traffic guarantees do not describe the default
 managed production path.

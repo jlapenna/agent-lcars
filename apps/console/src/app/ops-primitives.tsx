@@ -94,3 +94,42 @@ export function Meter({
     </div>
   );
 }
+
+/** The mockup's bar sparkline: one bar per sample, scaled to the largest,
+ * the newest drawn in the accent. A missing sample leaves its slot empty
+ * rather than drawing a zero. */
+export function Sparkline({
+  values,
+  label,
+}: {
+  values: readonly (number | undefined)[];
+  label: string;
+}) {
+  const width = 4;
+  const height = 28;
+  const max = Math.max(0, ...values.filter((v) => v !== undefined));
+  return (
+    <svg
+      className="ops-spark"
+      viewBox={`0 0 ${values.length * width - 1} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={label}
+    >
+      {values.map((value, i) => {
+        if (value === undefined) return null;
+        const h = Math.max(1.5, max === 0 ? 0 : (value / max) * height);
+        return (
+          <rect
+            key={i}
+            data-now={i === values.length - 1 ? '' : undefined}
+            x={i * width}
+            y={height - h}
+            width={width - 1}
+            height={h}
+          />
+        );
+      })}
+    </svg>
+  );
+}

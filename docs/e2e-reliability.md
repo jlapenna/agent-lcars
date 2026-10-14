@@ -93,7 +93,7 @@ an optional journey run in that worker.
 
 The supported prepared environment is the published pinned
 [E2E sandbox](../tools/e2e/Dockerfile), with matching Chromium and its system
-libraries. The dedicated `lcars-e2e` runner derives from that sandbox; CI
+libraries. The dedicated `agent-lcars-e2e` runner derives from that sandbox; CI
 checks its installed browser by launching it and handles version drift in its
 own setup lane. On a separately prepared Docker host, use
 `E2E_GREP='@smoke' ./tools/e2e-docker.sh @agent-lcars/console-e2e` to consume
