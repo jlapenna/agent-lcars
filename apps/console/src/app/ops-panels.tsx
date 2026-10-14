@@ -434,9 +434,9 @@ export function RecentCompletionsPanel({
   footer?: ReactNode;
   /** Phones show this many rows first, the rest behind a disclosure. */
   mobileInitialCount?: number;
-  /** Pull requests merged in the last 24 hours, the mockup's head count.
-   * Absent, the head counts the listed runs instead. */
-  merged?: { count: number; partial: boolean };
+  /** The mockup's head count, "N merged · 24h", which the Bridge streams in
+   * from GitHub. Absent, the head counts the listed runs instead. */
+  merged?: ReactNode;
 }) {
   const classified = runs.map((run) => ({
     run,
@@ -553,11 +553,7 @@ export function RecentCompletionsPanel({
   return (
     <OpsPanel
       title={title}
-      count={
-        merged === undefined
-          ? `${succeeded} succeeded · last ${runs.length}`
-          : `${merged.count}${merged.partial ? '+' : ''} merged · 24h`
-      }
+      count={merged ?? `${succeeded} succeeded · last ${runs.length}`}
       meta={
         [
           merged === undefined

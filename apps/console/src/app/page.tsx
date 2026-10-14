@@ -31,7 +31,7 @@ import {
   repoKey,
   type WatchedRepo,
 } from '../lib/github-client';
-import { mergedLastDay } from '../lib/merged-pulls';
+import { mergedLastDay, type MergedPullCount } from '../lib/merged-pulls';
 import { getNativeInboxEvidence } from '../lib/native-inbox';
 import { derivePrimaryAction } from '../lib/primary-action';
 import { buildQueueView } from '../lib/queue-view';
@@ -56,6 +56,7 @@ import {
   type AgentsViewFilters,
   matchesAgentsRun,
   matchesAgentsSession,
+  matchesClaimedAgent,
   matchesFind,
   parseAgentsViewFilters,
 } from './agents/agents-view-filters';
@@ -69,7 +70,6 @@ import {
   sessionKey,
 } from './bridge-selection';
 import { DataWarnings } from './console-header';
-import { repoScopedConsoleHrefs } from './console-hrefs';
 import { ConsoleReadouts } from './console-readouts';
 import {
   ConsoleToolbar,
@@ -92,6 +92,7 @@ import {
   RecentCompletionsPanel,
   RunnerFleetPanel,
 } from './ops-panels';
+import { UNAVAILABLE } from './ops-primitives';
 import { NavPageLoading, PageLoading } from './page-loading';
 import { ParkedWorkPanel } from './parked-work-panel';
 import { QueueConsoleUtilities } from './queue-console-utilities';
@@ -164,6 +165,18 @@ async function getParkedWork(
   }
 }
 
+/** Recent completions' head, streamed once GitHub's count arrives. */
+async function MergedLastDay({
+  merged,
+}: {
+  merged: Promise<MergedPullCount | undefined>;
+}) {
+  const count = await merged;
+  return count === undefined
+    ? `${UNAVAILABLE} merged · 24h`
+    : `${count.count}${count.partial ? '+' : ''} merged · 24h`;
+}
+
 /** All outcomes on Agents, in the Bridge's repository scope and view. */
 function agentsScopedHref(
   repo: string | undefined,
@@ -224,7 +237,6 @@ async function IndexBody({
     autoscaler,
     spendArchive,
     tokenRateSnapshot,
-    merged,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
@@ -246,8 +258,10 @@ async function IndexBody({
       return undefined;
     }),
     getTokenRateSnapshot(),
-    mergedLastDay(repoFilterKey),
   ]);
+  // Not awaited with the reads above: a cold GitHub count can take its full
+  // deadline, and only the Recent completions head shows it.
+  const merged = mergedLastDay(repoFilterKey);
   // Deduped: independent authoritative reads can fail independently, and
   // each unique problem only needs saying once.
   const warnings = Array.from(
@@ -326,14 +340,20 @@ async function IndexBody({
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);
 
+  // Waiting items have no task record here, so their `agent:` label names
+  // the agent, as for Agents' unrecorded claimed work.
+  const matchesWaiting = (item: ActionItem) =>
+    matchesItem(item) && matchesClaimedAgent(item, undefined, view.agent);
   const deployCards = queueView.waitingOnDeploy
-    .filter(matchesItem)
+    .filter(matchesWaiting)
     .map((item) => toCard(item));
   const blockedCards = queueView.blocked
-    .filter(matchesItem)
+    .filter(matchesWaiting)
     .map((item) => toCard(item));
-  const stoppedItems = parkedWorkItems.filter((item) =>
-    matchesFind([item.spec.title, item.id, item.spec.target.repo], view.q),
+  const stoppedItems = parkedWorkItems.filter(
+    (item) =>
+      (!view.agent || item.spec.pipeline === view.agent) &&
+      matchesFind([item.spec.title, item.id, item.spec.target.repo], view.q),
   );
 
   // The right pane of the two-panel view (desktop ≥1024px). Resolved from the
@@ -359,16 +379,25 @@ async function IndexBody({
   // list visible (its empty state carries no back control to recover to).
   const hasSelection = detail.kind !== 'none';
 
+  // Agent and find narrow decisions exactly as the Inbox does, so the count
+  // matches what "Review N decisions" opens. The window is the Inbox's own.
   const decisionCards = [
-    ...queueView.yourQueue.filter(matchesItem).map((item) => toCard(item)),
-    ...nativeInbox.cards.filter((card) => {
-      const { repo } = inboxCardMetadata(card);
-      return (
-        matchesFilter(repo) &&
-        matchesFind([card.work.spec.title, card.work.id, repoKey(repo)], view.q)
-      );
-    }),
-  ].filter((card) => !view.agent || inboxCardAgent(card) === view.agent);
+    ...queueView.yourQueue
+      .filter((item) => matchesFilter(item.repo))
+      .map((item) => toCard(item)),
+    ...nativeInbox.cards.filter((card) =>
+      matchesFilter(inboxCardMetadata(card).repo),
+    ),
+  ].filter(
+    (card) =>
+      (!view.agent || inboxCardAgent(card) === view.agent) &&
+      matchesFind([inboxCardMetadata(card).search], view.q),
+  );
+  const inboxQuery = new URLSearchParams();
+  if (repoFilterKey) inboxQuery.set('repo', repoFilterKey);
+  if (view.agent) inboxQuery.set('agent', view.agent);
+  if (view.q) inboxQuery.set('q', view.q);
+  const inboxHref = inboxQuery.size ? `/inbox?${inboxQuery}` : '/inbox';
   const decisionCount = decisionCards.length;
   const readouts = bridgeReadouts(
     fleetReadoutInput({
@@ -396,9 +425,7 @@ async function IndexBody({
             <DeckInboxSummary
               count={decisionCount}
               nativeAvailable={nativeInbox.available}
-              inboxHref={
-                repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'
-              }
+              inboxHref={inboxHref}
             />
           }
         >
@@ -478,7 +505,11 @@ async function IndexBody({
             />
             <RecentCompletionsPanel
               runs={filteredActivity.recentRuns.slice(0, RECENT_OUTCOMES_LIMIT)}
-              merged={merged}
+              merged={
+                <Suspense fallback={`${UNAVAILABLE} merged · 24h`}>
+                  <MergedLastDay merged={merged} />
+                </Suspense>
+              }
               sessionsByRunId={sessionsByRunId}
               selectHrefFor={selectRun}
               footer={

@@ -59,27 +59,13 @@ describe('RecentCompletionsPanel', () => {
       <MantineProvider>
         <RecentCompletionsPanel
           runs={[{ ...run('a', 'claude'), status: 'completed' }]}
-          merged={{ count: 14, partial: false }}
+          merged="14 merged · 24h"
         />
       </MantineProvider>,
     );
     const head = screen.getByTestId('latest-outcomes');
     expect(head).toHaveTextContent('14 merged · 24h');
     expect(head).toHaveTextContent('last 1');
-  });
-
-  it('marks a partial merged count as a lower bound', () => {
-    render(
-      <MantineProvider>
-        <RecentCompletionsPanel
-          runs={[]}
-          merged={{ count: 3, partial: true }}
-        />
-      </MantineProvider>,
-    );
-    expect(screen.getByTestId('latest-outcomes')).toHaveTextContent(
-      '3+ merged · 24h',
-    );
   });
 
   it('counts the listed runs when no merged count is given', () => {
