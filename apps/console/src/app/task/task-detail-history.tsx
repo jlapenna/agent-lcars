@@ -62,7 +62,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
   }
   return (
     <TableScrollContainer minWidth={560} className="work-runs-table-scroll">
-      <Table className="ops-table" verticalSpacing="xs" fz="sm">
+      <Table verticalSpacing="xs" fz="sm">
         <TableThead>
           <TableTr>
             <TableTh>Run</TableTh>

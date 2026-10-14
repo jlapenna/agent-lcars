@@ -8,6 +8,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
+import { DataWarnings } from '../../console-header';
 import { DetailWorkspace } from '../../detail-workspace';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
@@ -54,9 +55,14 @@ export function WorkDetailViewContent({
 }: WorkDetailContentProps) {
   if (detail.status === 'error') {
     return (
-      <Text c="dimmed" size="sm">
-        {detail.message}
-      </Text>
+      <DetailWorkspace
+        ariaLabel="Work item"
+        warnings={<DataWarnings warnings={[detail.message]} />}
+      >
+        <Text c="dimmed" size="sm">
+          This work item could not be read.
+        </Text>
+      </DetailWorkspace>
     );
   }
 

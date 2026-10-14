@@ -1,4 +1,3 @@
-import { Text } from '@mantine/core';
 import { notFound } from 'next/navigation';
 import { Suspense } from 'react';
 
@@ -9,6 +8,7 @@ import { getWatchedRepos } from '../../../../../lib/github-client';
 import type { QuickTaskSourceIdentity } from '../../../../../lib/quick-task-evidence';
 import { getTaskDetail } from '../../../../../lib/task-detail';
 import { ConsoleCommandUtilities } from '../../../../console-command-utilities';
+import { DataWarnings } from '../../../../console-header';
 import { repoScopedConsoleHrefs } from '../../../../console-hrefs';
 import { DetailWorkspace } from '../../../../detail-workspace';
 import { NavPageLoading } from '../../../../page-loading';
@@ -44,13 +44,14 @@ function taskSourceIdentities(
 
 function TaskDetailViewContent({ detail }: TaskDetailViewProps) {
   return (
-    <DetailWorkspace ariaLabel="Task">
-      {detail.status === 'error' && (
-        <Text size="sm" c="orange" mb="md" data-testid="task-detail-error">
-          {detail.warning}
-        </Text>
-      )}
-
+    <DetailWorkspace
+      ariaLabel="Task"
+      warnings={
+        detail.status === 'error' ? (
+          <DataWarnings warnings={[detail.warning]} />
+        ) : undefined
+      }
+    >
       {detail.status === 'ok' && (
         <LogicalWorkCard
           work={detail.work}

@@ -123,10 +123,12 @@ export function ConsoleLiveStatus({ dataAt }: { dataAt?: string } = {}) {
   // A snapshot served from cached sources says how old its data is, not when
   // the page loaded. Formatted after mount: relative time differs between the
   // server render and hydration.
+  // The minute clock re-reads the age, as the rail's figures do.
+  const now = useMinuteClock();
   const [dataAge, setDataAge] = useState<string>();
   useEffect(() => {
-    if (dataAt) setDataAge(formatCompactRelativeTime(dataAt));
-  }, [dataAt]);
+    if (dataAt && now) setDataAge(formatCompactRelativeTime(dataAt));
+  }, [dataAt, now]);
   const mode = live?.mode;
   const tone =
     mode === 'live' || mode === 'updating'
