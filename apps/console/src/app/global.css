@@ -4333,6 +4333,11 @@ td.costs-repo-spend__num {
   font-size: 0.75rem;
 }
 
+/* A decision past DECISION_SLA_MS (decision-sla.ts): the mockup's warn ink. */
+.ops-inbox__late {
+  color: color-mix(in srgb, var(--lcars-warning) 70%, var(--lcars-ink));
+}
+
 .ops-row-action {
   display: inline-flex;
   min-height: 30px;

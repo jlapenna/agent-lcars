@@ -57,17 +57,17 @@ export function classifyAgentRun(
 export function deriveSilentErrorDiagnoses(
   recentRuns: AgentRun[],
   sessionsByRunId: Map<string, IssueAgentSessionDoc>,
-): Map<string, string> {
-  const diagnoses = new Map<string, string>();
+): Map<string, { diagnosis: string; at: string }> {
+  const diagnoses = new Map<string, { diagnosis: string; at: string }>();
   for (const run of recentRuns) {
     if (run.issueNumber === undefined) continue;
     const session = sessionsByRunId.get(String(run.id));
     const classification = classifyAgentRun(run, session);
     if (classification.status === 'silent-error' && classification.diagnosis) {
-      diagnoses.set(
-        repoItemKey(run.repo, run.issueNumber),
-        classification.diagnosis,
-      );
+      diagnoses.set(repoItemKey(run.repo, run.issueNumber), {
+        diagnosis: classification.diagnosis,
+        at: run.updatedAt,
+      });
     }
   }
   return diagnoses;

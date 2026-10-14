@@ -10,7 +10,7 @@ import {
 
 // Matches refresh-button.tsx's cadence for its "Updated Xm ago" label - one
 // shared rhythm keeps every visible age on the page moving together.
-const TICK_MS = 30_000;
+export const TICK_MS = 30_000;
 
 function formatFor(variant: 'compact' | 'full', iso: string): string {
   return variant === 'compact'

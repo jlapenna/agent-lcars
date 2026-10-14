@@ -397,8 +397,7 @@ async function IndexBody({
           </div>
           <div className="bridge-stack">
             <DecisionInboxPanel
-              rows={decisionRows(decisionCards, repoFilterKey).slice(0, 5)}
-              total={decisionCount}
+              rows={decisionRows(decisionCards, repoFilterKey)}
             />
             <RunnerFleetPanel
               lanes={autoscaler.lanes}
