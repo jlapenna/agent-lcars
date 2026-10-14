@@ -118,6 +118,19 @@ supported size; wait or split/resize actual work while retaining required
 reserves and truthful requests. Never understate demand, rely on overcommit,
 change host controls or stop another owner's workload to make the phase fit.
 
+Classify reclaimable memory separately from immutable resident demand. A
+`memory.current - inactive_file` working set still includes kernel caches:
+record `slab_reclaimable` and `slab_unreclaimable` for each independently owned
+cgroup. When assessing nonreclaimable demand, exclude only explicitly identified
+reclaimable cache, not total kernel memory, anonymous memory, shared memory or
+active file memory. Keep the full declared host/service reserve and count its
+covered workloads once; this classification does not authorize lowering a
+reserve, purging caches or understating a phase. Re-read the counters and host
+memory availability with the complete native/peer overlap before launching.
+The [kernel memory interface](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)
+defines these counters; [#2763](https://github.com/jlapenna/agent-lcars/issues/2763)
+records a refused phase caused by treating reclaimable slab as an extra reserve.
+
 ### Requalify colocated worker turnover
 
 Ordinary replacement of a colocated ARC Pod or process requires fresh
