@@ -1949,3 +1949,120 @@ describe('complete Actions provenance discovery', () => {
     },
   );
 });
+
+describe('same-head review feedback before unavailable check evidence', () => {
+  const cases = ['refused rules', 'refused checks', 'bounded checks'] as const;
+  const changesRequested = {
+    reviews: {
+      pageInfo: { hasPreviousPage: false },
+      nodes: [
+        {
+          state: 'CHANGES_REQUESTED',
+          author: { login: 'reviewer' },
+          commit: { oid: HEAD },
+        },
+      ],
+    },
+  };
+  const unresolved = {
+    reviewThreads: {
+      pageInfo: { hasNextPage: false },
+      nodes: [{ isResolved: false }],
+    },
+  };
+  function unavailableEvidence(
+    cause: (typeof cases)[number],
+    review?: object,
+    pr?: object,
+  ) {
+    const base = fixture({ review, pr });
+    const fetchImpl = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        const path = String(url);
+        if (cause === 'refused rules' && path.includes('/rules/branches/'))
+          return new Response('forbidden', { status: 403 });
+        if (path.includes('/check-runs')) {
+          if (cause === 'refused checks')
+            return new Response('forbidden', { status: 403 });
+          if (cause === 'bounded checks') {
+            const page = Number(new URL(path).searchParams.get('page'));
+            return Response.json({
+              total_count: 1001,
+              check_runs: Array.from({ length: 100 }, (_, i) => ({
+                id: (page - 1) * 100 + i + 1,
+                name: 'Verify',
+                head_sha: HEAD,
+                status: 'queued',
+                conclusion: null,
+              })),
+            });
+          }
+        }
+        return base.fetchImpl(url, init);
+      },
+    );
+    return { ...base, fetchImpl: fetchImpl as unknown as typeof fetch };
+  }
+  it.each(cases)('corrects change requests before %s', async (cause) => {
+    const deps = unavailableEvidence(cause, changesRequested);
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+    expect(deps.fetchImpl).toHaveBeenCalledTimes(2);
+  });
+  it.each(cases)('corrects unresolved review before %s', async (cause) => {
+    const deps = unavailableEvidence(cause, unresolved);
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+    expect(deps.fetchImpl).toHaveBeenCalledTimes(2);
+  });
+  it.each(cases)(
+    'keeps unavailable %s unknown without review feedback',
+    async (cause) => {
+      await expect(
+        observeGithubDelivery(unavailableEvidence(cause), BINDING),
+      ).rejects.toThrow();
+    },
+  );
+  it('retains changed-head independent-review fence before actionable old-head feedback', async () => {
+    expect(
+      await observeGithubDelivery(
+        unavailableEvidence(
+          'refused checks',
+          { ...changesRequested, headRefOid: MERGE },
+          {
+            head: { sha: MERGE },
+          },
+        ),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it('retains merged independent-review fence instead of scheduling feedback correction', async () => {
+    expect(
+      await observeGithubDelivery(
+        unavailableEvidence('refused checks', changesRequested, {
+          merged: true,
+          merge_commit_sha: MERGE,
+        }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'waiting', head: HEAD });
+  });
+  it.each([{ draft: true }, { state: 'closed' }, { auto_merge: null }])(
+    'retains withdrawn PR waiting before review feedback: %j',
+    async (pr) => {
+      const deps = unavailableEvidence('refused checks', unresolved, pr);
+      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+        kind: 'waiting',
+        head: HEAD,
+      });
+      expect(deps.fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+});

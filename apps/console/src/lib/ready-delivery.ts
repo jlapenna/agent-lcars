@@ -523,6 +523,12 @@ export async function observeGithubDelivery(
       mergeCommit: pr.merge_commit_sha,
     };
   }
+  if (review.changesRequested || review.unresolved)
+    return {
+      kind: 'correction',
+      head: binding.head,
+      reason: 'Review feedback requires correction',
+    };
   const required = await protectedChecks(deps, binding.repo, pr.base.ref);
   const checkRuns = await currentCheckRuns(deps, binding);
   const candidateFailures = checkRuns.filter(
@@ -558,13 +564,11 @@ export async function observeGithubDelivery(
   // The declared App can read Checks, not private-repository commit statuses.
   // Uncovered legacy required contexts remain unknown until protected landing;
   // available exact-head check failures and independent review stay actionable.
-  if (failed.length || review.changesRequested || review.unresolved)
+  if (failed.length)
     return {
       kind: 'correction',
       head: binding.head,
-      reason: failed.length
-        ? `Required checks failed: ${failed.map((check) => check.name).join(', ')}`
-        : 'Review feedback requires correction',
+      reason: `Required checks failed: ${failed.map((check) => check.name).join(', ')}`,
     };
   return { kind: 'waiting', head: binding.head };
 }
