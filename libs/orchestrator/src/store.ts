@@ -550,7 +550,7 @@ export interface RequestTransactionState {
   /** Read only for source-ordered label handoffs, inside the claim transaction. */
   readonly latestRun?: Run;
   readonly retainedClaims?: readonly Run[];
-  /** Active Task receipts read independently of claimed Run inventory. */
+  /** Active Task receipts and unbound lineage read independently of claimed Runs. */
   readonly capacityReceiptRunIds?: readonly string[];
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;

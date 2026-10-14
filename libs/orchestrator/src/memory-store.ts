@@ -252,7 +252,10 @@ export class MemoryStore implements OrchestratorStore {
                     this.#runs.get(`${key}/r${task.task.runCount}`),
                   ),
             capacityReceiptRunIds: this.#capacity.receipts
-              .filter((receipt) => receipt.taskKey === key)
+              .filter(
+                (receipt) =>
+                  receipt.taskKey === undefined || receipt.taskKey === key,
+              )
               .map((receipt) => receipt.runId),
             retainedClaims: structuredClone(
               (claimedCandidates ?? []).filter(

@@ -452,7 +452,11 @@ export class FirestoreStore implements OrchestratorStore {
               // not hide a later capacity or credential owner behind limit(1).
               // Capacity shares this transaction with admission and release.
               capacityReceiptRunIds: routingCapacity.receipts
-                .filter((receipt) => receipt.taskKey === taskKey(input.taskId))
+                .filter(
+                  (receipt) =>
+                    receipt.taskKey === undefined ||
+                    receipt.taskKey === taskKey(input.taskId),
+                )
                 .map((receipt) => receipt.runId),
               retainedClaims: routing[1].docs
                 .map((doc) => runSchema.parse(doc.data()))

@@ -569,6 +569,7 @@ export function runOrchestratorStoreContract(
         'none',
         'receipt',
         'receipt-unclaimed',
+        'receipt-unbound',
         'unrelated-receipt',
         'credential-operation',
         'restored-credential',
@@ -580,7 +581,10 @@ export function runOrchestratorStoreContract(
           // its first claimed entry cannot mask a later retained owner.
           for (const requestId of ['legacy-first', 'legacy-second']) {
             const { run } = await started(orchestrator, requestId);
-            if (debt !== 'receipt-unclaimed' || requestId !== 'legacy-second') {
+            if (
+              !['receipt-unclaimed', 'receipt-unbound'].includes(debt) ||
+              requestId !== 'legacy-second'
+            ) {
               await store.enqueueRun({ runId: run.runId, now: clock.now() });
               await store.claimQueuedRun({
                 pipelines: ['claude'],
@@ -597,7 +601,9 @@ export function runOrchestratorStoreContract(
           if (owner === undefined) throw new Error('missing terminal owner');
           expect(owner).toMatchObject({ state: 'finished' });
           expect(owner.queue?.state).toBe(
-            debt === 'receipt-unclaimed' ? undefined : 'claimed',
+            ['receipt-unclaimed', 'receipt-unbound'].includes(debt)
+              ? undefined
+              : 'claimed',
           );
           const unrelatedTask = { repo: 'octo/example', issue: 8 } as const;
           const receiptRun =
@@ -632,6 +638,7 @@ export function runOrchestratorStoreContract(
                 receipts: [
                   'receipt',
                   'receipt-unclaimed',
+                  'receipt-unbound',
                   'unrelated-receipt',
                 ].includes(debt)
                   ? [
@@ -640,9 +647,15 @@ export function runOrchestratorStoreContract(
                         slot: 0,
                         revision: 1,
                         runId: receiptRunId,
-                        taskKey: taskKey(
-                          debt === 'unrelated-receipt' ? unrelatedTask : TASK,
-                        ),
+                        ...(debt === 'receipt-unbound'
+                          ? {}
+                          : {
+                              taskKey: taskKey(
+                                debt === 'unrelated-receipt'
+                                  ? unrelatedTask
+                                  : TASK,
+                              ),
+                            }),
                         nonce: 'receipt-nonce-123456',
                         domainId: 'claude',
                         pipeline: 'claude',
@@ -756,7 +769,9 @@ export function runOrchestratorStoreContract(
             pipeline: 'claude',
           });
           expect((await store.readRun(owner.runId))?.queue?.state).toBe(
-            debt === 'receipt-unclaimed' ? undefined : 'claimed',
+            ['receipt-unclaimed', 'receipt-unbound'].includes(debt)
+              ? undefined
+              : 'claimed',
           );
           if (debt === 'unrelated-receipt')
             expect(await readReceipts()).toEqual(receiptBefore);
