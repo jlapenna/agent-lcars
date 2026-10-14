@@ -145,10 +145,22 @@ channel. No issue write.
 
 ## 4. Parking — blocked on a human
 
-Use PARK when progress requires a human decision, approval, or access you
-cannot obtain through the authorized workflow. A timeout, provider quota,
-runner/setup failure, or missing deliverable does not establish that blocker.
-Preserve the execution diagnosis instead of inventing a human handoff.
+Use PARK when progress requires access or a credential you cannot obtain
+through the authorized workflow, or an action this protocol reserves for the
+maintainer (§11's hard limits, an explicit maintainer-only label or approval
+a trusted instruction requires). A timeout, provider quota, runner/setup
+failure, or missing deliverable does not establish that blocker. Preserve the
+execution diagnosis instead of inventing a human handoff.
+
+A judgement call is not a blocker. The maintainer is usually unavailable and
+expects agents to decide: interpreting acceptance criteria, waiving a
+precondition that can no longer be met (a baseline lost to retention), choosing
+between designs, or accepting a result whose evidence is imperfect. Make the
+call within the anchor's scope, state the decision and the evidence it rests
+on in your deliverable, and finish. Do not park asking someone to "approve"
+or "decide" what you could judge yourself; homelab#1329 and #1389 sat open
+for weeks behind an "approve an equivalent-workload design" request whose
+baseline no longer existed.
 
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
