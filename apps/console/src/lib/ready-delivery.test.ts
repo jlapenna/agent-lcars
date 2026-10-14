@@ -225,6 +225,164 @@ describe('authenticated ready delivery evidence', () => {
     });
   });
 
+  it('hands off an armed exact-head PR while independent review and own CI are pending', async () => {
+    const review = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+    };
+    const deps = fixture({ review });
+    const binding = await readyDeliveryBinding(deps, {
+      run: RUN,
+      task: TASK,
+      repo: 'octo/example',
+      number: 12,
+      now: NOW,
+    });
+    expect(binding).toEqual(BINDING);
+    expect(await observeGithubDelivery(deps, binding)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+  });
+
+  it.each([
+    {
+      name: 'changes requested',
+      review: {
+        reviews: {
+          pageInfo: { hasPreviousPage: false },
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: { login: 'reviewer' },
+              commit: { oid: HEAD },
+            },
+          ],
+        },
+      },
+    },
+    {
+      name: 'unresolved thread',
+      review: {
+        reviewThreads: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ isResolved: false }],
+        },
+      },
+    },
+  ])(
+    'corrects late $name on an already merged waiting artifact',
+    async ({ review }) => {
+      expect(
+        await observeGithubDelivery(
+          fixture({
+            pr: {
+              state: 'closed',
+              merged: true,
+              merge_commit_sha: MERGE,
+              auto_merge: null,
+            },
+            review,
+          }),
+          BINDING,
+        ),
+      ).toEqual({
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Review feedback requires correction',
+      });
+    },
+  );
+
+  it('keeps waiting ownership when an armed pending-review PR merges during verification', async () => {
+    const review = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+    };
+    const open = fixture({ review });
+    const merged = fixture({
+      pr: {
+        state: 'closed',
+        merged: true,
+        merge_commit_sha: MERGE,
+        auto_merge: null,
+      },
+      review,
+    });
+    let prReads = 0;
+    const fetchImpl = (async (url: string | URL | Request) =>
+      String(url).endsWith('/pulls/12') && prReads++ > 0
+        ? merged.fetchImpl(url)
+        : open.fetchImpl(url)) as typeof fetch;
+    expect(
+      await readyDeliveryBinding(
+        { ...open, fetchImpl },
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ),
+    ).toEqual(BINDING);
+    expect(prReads).toBe(2);
+    expect(await observeGithubDelivery(merged, BINDING)).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+  });
+
+  it('keeps a pending-review handoff waiting after merge until independent review qualifies landing', async () => {
+    const review = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+    };
+    const binding = await readyDeliveryBinding(fixture({ review }), {
+      run: RUN,
+      task: TASK,
+      repo: 'octo/example',
+      number: 12,
+      now: NOW,
+    });
+    const pr = {
+      state: 'closed',
+      merged: true,
+      merge_commit_sha: MERGE,
+      auto_merge: null,
+    };
+    expect(
+      await observeGithubDelivery(fixture({ pr, review }), binding),
+    ).toEqual({
+      kind: 'waiting',
+      head: HEAD,
+    });
+    expect(await observeGithubDelivery(fixture({ pr }), binding)).toEqual({
+      kind: 'protected-merge',
+      head: HEAD,
+      mergeCommit: MERGE,
+    });
+  });
+
+  it('retains actionable review feedback in the monitor after an armed handoff', async () => {
+    const deps = fixture({
+      review: {
+        reviews: {
+          pageInfo: { hasPreviousPage: false },
+          nodes: [
+            {
+              state: 'CHANGES_REQUESTED',
+              author: { login: 'reviewer' },
+              commit: { oid: HEAD },
+            },
+          ],
+        },
+      },
+    });
+    const binding = await readyDeliveryBinding(deps, {
+      run: RUN,
+      task: TASK,
+      repo: 'octo/example',
+      number: 12,
+      now: NOW,
+    });
+    expect(await observeGithubDelivery(deps, binding)).toMatchObject({
+      kind: 'correction',
+      head: HEAD,
+    });
+  });
+
   it.each([
     { draft: true },
     { auto_merge: null },
@@ -241,7 +399,7 @@ describe('authenticated ready delivery evidence', () => {
     ).rejects.toThrow();
   });
 
-  it('rejects incomplete review reads and author-only approval', async () => {
+  it('rejects incomplete review reads and author-only approval for already merged handoff', async () => {
     for (const review of [
       { reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] } },
       {
@@ -258,13 +416,24 @@ describe('authenticated ready delivery evidence', () => {
       },
     ])
       await expect(
-        readyDeliveryBinding(fixture({ review }), {
-          run: RUN,
-          task: TASK,
-          repo: 'octo/example',
-          number: 12,
-          now: NOW,
-        }),
+        readyDeliveryBinding(
+          fixture({
+            review,
+            pr: {
+              state: 'closed',
+              merged: true,
+              merge_commit_sha: MERGE,
+              auto_merge: null,
+            },
+          }),
+          {
+            run: RUN,
+            task: TASK,
+            repo: 'octo/example',
+            number: 12,
+            now: NOW,
+          },
+        ),
       ).rejects.toThrow();
   });
 
@@ -2043,7 +2212,7 @@ describe('same-head review feedback before unavailable check evidence', () => {
       ),
     ).toEqual({ kind: 'waiting', head: HEAD });
   });
-  it('retains merged independent-review fence instead of scheduling feedback correction', async () => {
+  it('retains merged same-head review feedback as correction before unavailable checks', async () => {
     expect(
       await observeGithubDelivery(
         unavailableEvidence('refused checks', changesRequested, {
@@ -2052,7 +2221,11 @@ describe('same-head review feedback before unavailable check evidence', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'waiting', head: HEAD });
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
   });
   it.each([{ draft: true }, { state: 'closed' }, { auto_merge: null }])(
     'retains withdrawn PR waiting before review feedback: %j',
@@ -2102,13 +2275,24 @@ describe('nullable historical review identities', () => {
   });
   it('never treats nullable-only identities as independent approval', async () => {
     await expect(
-      readyDeliveryBinding(fixture({ review: review(history) }), {
-        run: RUN,
-        task: TASK,
-        repo: 'octo/example',
-        number: 12,
-        now: NOW,
-      }),
+      readyDeliveryBinding(
+        fixture({
+          pr: {
+            state: 'closed',
+            merged: true,
+            merge_commit_sha: MERGE,
+            auto_merge: null,
+          },
+          review: review(history),
+        }),
+        {
+          run: RUN,
+          task: TASK,
+          repo: 'octo/example',
+          number: 12,
+          now: NOW,
+        },
+      ),
     ).rejects.toThrow();
     expect(
       await observeGithubDelivery(
@@ -2120,18 +2304,39 @@ describe('nullable historical review identities', () => {
       ),
     ).toEqual({ kind: 'waiting', head: HEAD });
   });
-  it.each(['DISMISSED', 'CHANGES_REQUESTED'])(
-    'retains valid reviewer %s authority beside nullable history',
-    async (state) => {
+  it.each([
+    { state: 'DISMISSED', expected: { kind: 'waiting', head: HEAD } },
+    {
+      state: 'CHANGES_REQUESTED',
+      expected: {
+        kind: 'correction',
+        head: HEAD,
+        reason: 'Review feedback requires correction',
+      },
+    },
+  ])(
+    'retains valid reviewer $state authority beside nullable history',
+    async ({ state, expected }) => {
       const nodes = [valid, ...history, { ...valid, state }];
       await expect(
-        readyDeliveryBinding(fixture({ review: review(nodes) }), {
-          run: RUN,
-          task: TASK,
-          repo: 'octo/example',
-          number: 12,
-          now: NOW,
-        }),
+        readyDeliveryBinding(
+          fixture({
+            pr: {
+              state: 'closed',
+              merged: true,
+              merge_commit_sha: MERGE,
+              auto_merge: null,
+            },
+            review: review(nodes),
+          }),
+          {
+            run: RUN,
+            task: TASK,
+            repo: 'octo/example',
+            number: 12,
+            now: NOW,
+          },
+        ),
       ).rejects.toThrow();
       expect(
         await observeGithubDelivery(
@@ -2141,7 +2346,7 @@ describe('nullable historical review identities', () => {
           }),
           BINDING,
         ),
-      ).toEqual({ kind: 'waiting', head: HEAD });
+      ).toEqual(expected);
     },
   );
   it('keeps unresolved threads actionable beside nullable history', async () => {
