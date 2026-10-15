@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react';
 
-import { RailEnvironment, RailReadouts } from './console-frame-readouts';
+import {
+  RailEnvironment,
+  RailReadouts,
+  ReadoutStrip,
+} from './console-frame-readouts';
 import { ConsoleHeader, type ConsoleHeaderProps } from './console-header';
 import { accentForNavKey } from './console-navigation';
 import { ConsolePageShell } from './console-page-shell';
@@ -58,6 +62,7 @@ export function ConsoleAppShell({
     >
       {header.hideHeader ? null : <ConsoleRail />}
       <ConsoleHeader {...header} />
+      {header.hideHeader ? null : <ReadoutStrip />}
       <main className="console-page-content">{children}</main>
       {footer ? <div className="console-page-footer">{footer}</div> : null}
     </ConsolePageShell>

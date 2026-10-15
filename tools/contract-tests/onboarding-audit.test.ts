@@ -124,16 +124,16 @@ describe('read-only onboarding audit', () => {
     });
     const result = await audit(api);
     expect(result).toMatchObject([
-      { fact: 'fleet-login', status: 'PASS' },
-      { fact: 'labels', status: 'PASS' },
+      { fact: 'fleet-login', status: 'pass' },
+      { fact: 'labels', status: 'pass' },
       {
         fact: 'variables',
-        status: 'UNVERIFIED',
+        status: 'unverifiable',
         detail: expect.stringContaining('Repository variables'),
       },
       {
         fact: 'required-checks',
-        status: 'UNVERIFIED',
+        status: 'unverifiable',
         detail: expect.stringContaining('Rules and check metadata'),
       },
     ]);
@@ -141,12 +141,129 @@ describe('read-only onboarding audit', () => {
       result
         .filter(({ fact }) => ['variables', 'required-checks'].includes(fact))
         .every(({ detail }) =>
-          (detail as string).includes('ONBOARDING_AUDIT_READ_TOKEN'),
+          (detail as string).includes('existing maintainer credential'),
         ),
     ).toBe(true);
     expect(auditHasFailure(result)).toBe(false);
-    expect(auditHasFailure([...result, { status: 'FAIL' }])).toBe(true);
+    expect(auditHasFailure([...result, { status: 'fail' }])).toBe(true);
   });
+
+  it.each([403, 404])(
+    'reports permission-limited facts as unverifiable (HTTP %s)',
+    async (status) => {
+      const denied = await githubHttpError(status, '4999');
+      const { api } = fixture({
+        [`/repos/${repo}/collaborators/fleet/permission`]: denied,
+        [`/repos/${repo}/labels?per_page=100&page=1`]: denied,
+        [`/repos/${repo}/actions/variables?per_page=100&page=1`]: denied,
+        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: denied,
+      });
+      const result = await audit(api);
+      expect(result.map(({ status }: { status: string }) => status)).toEqual([
+        'unverifiable',
+        'unverifiable',
+        'unverifiable',
+        'unverifiable',
+      ]);
+      expect(auditHasFailure(result)).toBe(false);
+    },
+  );
+
+  it.each([401, 429, 500])(
+    'keeps authentication and operational errors fatal (HTTP %s)',
+    async (status) => {
+      const { api } = fixture({
+        [`/repos/${repo}/actions/variables?per_page=100&page=1`]:
+          await githubHttpError(status, '4999'),
+      });
+      const result = await audit(api);
+      expect(result[2]).toMatchObject({
+        status: 'fail',
+        detail: `GitHub HTTP ${status}`,
+      });
+      expect(auditHasFailure(result)).toBe(true);
+    },
+  );
+
+  it.each([403, 404])(
+    'continues every fact when the App cannot resolve an installation (HTTP %s)',
+    async (status) => {
+      const { privateKey } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+      });
+      const denied = await githubHttpError(status, '4999');
+      const result = await runAudit({
+        clientId: 'fleet-app',
+        privateKey,
+        repos: [repo],
+        labels,
+        profiles,
+        fleetLogin: 'fleet',
+        registrationConfig: {},
+        api: async () => {
+          throw denied;
+        },
+      });
+      expect(result).toHaveLength(6);
+      expect(
+        result.every(
+          ({ status }: { status: string }) => status === 'unverifiable',
+        ),
+      ).toBe(true);
+      expect(auditHasFailure(result)).toBe(false);
+    },
+  );
+
+  it.each([403, 404])(
+    'keeps runner access gaps unverifiable but revocation errors fatal (HTTP %s)',
+    async (status) => {
+      const { privateKey } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+      });
+      const denied = await githubHttpError(status, '4999');
+      const options = {
+        clientId: 'fleet-app',
+        privateKey,
+        repos: [],
+        labels,
+        profiles,
+        fleetLogin: 'fleet',
+        registrationConfig: {
+          registrations: [
+            {
+              name: 'lane',
+              github: { url: `https://github.com/${repo}` },
+              app: { client_id: 'fleet-app', installation_id: 7 },
+            },
+          ],
+        },
+      };
+      for (const revokeFails of [false, true]) {
+        let revoked = false;
+        const result = await runAudit({
+          ...options,
+          api: async (path: string, _token: string, method = 'GET') => {
+            if (path.endsWith('/installation'))
+              return { id: 7, permissions: { administration: 'write' } };
+            if (path.endsWith('/access_tokens'))
+              return { token: 'private-read-token' };
+            if (method === 'DELETE') {
+              revoked = true;
+              if (revokeFails) throw denied;
+              return null;
+            }
+            throw denied;
+          },
+        });
+        expect(revoked).toBe(true);
+        expect(result[0]).toMatchObject({
+          status: revokeFails ? 'fail' : 'unverifiable',
+        });
+        expect(auditHasFailure(result)).toBe(revokeFails);
+        expect(JSON.stringify(result)).not.toContain('private-read-token');
+      }
+    },
+  );
 
   it('fails when a required-check request is rate limited', async () => {
     const rateLimited = await githubHttpError(403, '0');
@@ -157,7 +274,7 @@ describe('read-only onboarding audit', () => {
     const result = await audit(api);
     expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
       {
-        status: 'FAIL',
+        status: 'fail',
         detail: 'GitHub HTTP 403',
       },
     );
@@ -173,7 +290,7 @@ describe('read-only onboarding audit', () => {
     const result = await audit(api);
     expect(result.find(({ fact }) => fact === 'required-checks')).toMatchObject(
       {
-        status: 'FAIL',
+        status: 'fail',
         detail: 'GitHub HTTP 403',
       },
     );
@@ -202,7 +319,7 @@ describe('read-only onboarding audit', () => {
     });
     expect(
       result.slice(0, 5).map((fact: { status: string }) => fact.status),
-    ).toEqual(['FAIL', 'UNVERIFIED', 'UNVERIFIED', 'PASS', 'PASS']);
+    ).toEqual(['fail', 'unverifiable', 'unverifiable', 'pass', 'pass']);
     expect(
       base.requests.some((path) => /collaborators|assignees|labels/.test(path)),
     ).toBe(false);
@@ -246,7 +363,7 @@ describe('read-only onboarding audit', () => {
       },
     });
     expect((await audit(api))[3]).toMatchObject({
-      status: 'UNVERIFIED',
+      status: 'unverifiable',
       detail: expect.stringContaining('CI completes'),
     });
   });
@@ -255,10 +372,10 @@ describe('read-only onboarding audit', () => {
     const { api } = fixture();
     const result = await audit(api);
     expect(result.map((fact: { status: string }) => fact.status)).toEqual([
-      'PASS',
-      'PASS',
-      'PASS',
-      'PASS',
+      'pass',
+      'pass',
+      'pass',
+      'pass',
     ]);
   });
 
@@ -274,10 +391,10 @@ describe('read-only onboarding audit', () => {
     });
     const result = await audit(api);
     expect(result.map((fact: { status: string }) => fact.status)).toEqual([
-      'FAIL',
-      'FAIL',
-      'FAIL',
-      'PASS',
+      'fail',
+      'fail',
+      'fail',
+      'pass',
     ]);
     expect(JSON.stringify(result)).not.toContain('must-not-appear');
     expect(result[2].detail).toContain('AGENT_FLEET_LOGIN');
@@ -292,7 +409,7 @@ describe('read-only onboarding audit', () => {
       ],
     });
     expect((await audit(api))[3]).toMatchObject({
-      status: 'FAIL',
+      status: 'fail',
       detail: expect.stringContaining('Verify'),
     });
   });
@@ -308,7 +425,7 @@ describe('read-only onboarding audit', () => {
         { name: 'type:bug', color: 'abcdef', description: 'Bug' },
       ],
     });
-    expect((await audit(api))[1].status).toBe('PASS');
+    expect((await audit(api))[1].status).toBe('pass');
     expect(requests).toContain(`/repos/${repo}/labels?per_page=100&page=2`);
   });
 
@@ -365,8 +482,8 @@ describe('read-only onboarding audit', () => {
       },
     });
     expect(result.map((fact: { status: string }) => fact.status)).toEqual([
-      'UNVERIFIED',
-      'PASS',
+      'unverifiable',
+      'pass',
     ]);
     expect(calls.filter((call) => call.method === 'POST')).toEqual([
       {
@@ -491,7 +608,7 @@ describe('read-only onboarding audit', () => {
         {
           repo: 'registrations',
           fact: 'configuration',
-          status: 'UNVERIFIED',
+          status: 'unverifiable',
           detail: expect.stringContaining('No active runner registrations'),
         },
       ]);
@@ -540,7 +657,7 @@ describe('read-only onboarding audit', () => {
         {
           repo: 'registrations',
           fact: 'configuration',
-          status: 'UNVERIFIED',
+          status: 'unverifiable',
           detail: expect.stringContaining('No active runner registrations'),
         },
       ]);

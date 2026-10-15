@@ -18,7 +18,8 @@ const UNAVAILABLE = '—';
  * depth, tokens and merges over the last day, and the date. The same figures
  * on every route. Maintainer data only; other sessions see the frame alone.
  */
-export function RailReadouts() {
+/** The rail's figures, shared by the rail and its narrow-screen strip. */
+function useRailFigures() {
   const state = useShellReadouts();
   const now = useMinuteClock();
   const readouts = state.status === 'ready' ? state.readouts : undefined;
@@ -76,6 +77,11 @@ export function RailReadouts() {
     },
   ];
 
+  return { blocks, now };
+}
+
+export function RailReadouts() {
+  const { blocks, now } = useRailFigures();
   return (
     <div className="lcars-rail-body" aria-label="Fleet readouts" role="group">
       {blocks.map((block) => (
@@ -95,6 +101,39 @@ export function RailReadouts() {
       <div className="lcars-rail-block lcars-rail-block--end">
         {now ? <b>{stardate(now)}</b> : null}
       </div>
+    </div>
+  );
+}
+
+/** Short labels so the strip fits a phone line; the rail's own read in full. */
+const STRIP_LABELS: Record<string, string> = {
+  fleet: 'fleet',
+  queue: 'queue',
+  tokens: 'tokens 24h',
+  merged: 'merged 24h',
+};
+
+/** Below 64em the rail is hidden, so its readouts ride a line under the
+ * header: the date and the same figures, short-labelled, wrapping rather
+ * than clipping on the narrowest phones. */
+export function ReadoutStrip() {
+  const { blocks, now } = useRailFigures();
+  return (
+    <div
+      className="lcars-readout-strip"
+      aria-label="Fleet readouts, compact"
+      role="group"
+    >
+      {now ? (
+        <span className="lcars-readout-strip__date">{stardate(now)}</span>
+      ) : null}
+      {blocks.map((block) =>
+        block.value !== undefined ? (
+          <span key={block.key} data-testid={`strip-readout-${block.key}`}>
+            <b>{block.value}</b> {STRIP_LABELS[block.key] ?? block.label}
+          </span>
+        ) : null,
+      )}
     </div>
   );
 }
