@@ -14,7 +14,7 @@ const readJson = (name) =>
   JSON.parse(readFileSync(new URL(name, root), 'utf8'));
 const readYaml = (name) => parse(readFileSync(new URL(name, root), 'utf8'));
 class AuditError extends Error {}
-class UnverifiedError extends AuditError {}
+class UnverifiableError extends AuditError {}
 class GitHubHttpError extends AuditError {
   constructor(status, rateLimited) {
     super(`GitHub HTTP ${status}`);
@@ -22,6 +22,17 @@ class GitHubHttpError extends AuditError {
     this.rateLimited = rateLimited;
   }
 }
+// GitHub hides permission-limited resources behind both 403 and 404. Neither
+// proves a setup mismatch. Rate limits and authentication/server errors do.
+const isAccessGap = (error) =>
+  error instanceof GitHubHttpError &&
+  [403, 404].includes(error.status) &&
+  !error.rateLimited;
+const failureStatus = (error) =>
+  error instanceof UnverifiableError || isAccessGap(error)
+    ? 'unverifiable'
+    : 'fail';
+
 const safeMessage = (error) =>
   error instanceof AuditError || /^GitHub HTTP \d+$/.test(error.message)
     ? error.message
@@ -189,37 +200,31 @@ export async function auditRepository({
   const explicitMetadataToken = auditReadToken?.trim();
   const metadataToken = explicitMetadataToken || token;
   const missingMetadataCredential = (capability) =>
-    new UnverifiedError(
-      `${capability}: metadata credential unavailable; set AUDIT_READ_TOKEN (ONBOARDING_AUDIT_READ_TOKEN in the scheduled workflow)`,
+    new UnverifiableError(
+      `${capability}: unavailable to the current identity; run the onboarding audit with the existing maintainer credential as AUDIT_READ_TOKEN`,
     );
   async function optionalMetadataRead(capability, action) {
     try {
       return await action();
     } catch (error) {
-      if (
-        !explicitMetadataToken &&
-        error instanceof GitHubHttpError &&
-        error.status === 403 &&
-        !error.rateLimited
-      )
-        throw missingMetadataCredential(capability);
+      if (isAccessGap(error)) throw missingMetadataCredential(capability);
       throw error;
     }
   }
   async function fact(name, action) {
     try {
-      facts.push({ repo, fact: name, status: 'PASS', detail: await action() });
+      facts.push({ repo, fact: name, status: 'pass', detail: await action() });
     } catch (error) {
       facts.push({
         repo,
         fact: name,
-        status: error instanceof UnverifiedError ? 'UNVERIFIED' : 'FAIL',
+        status: failureStatus(error),
         detail: safeMessage(error),
       });
     }
   }
   await fact('fleet-login', async () => {
-    if (!token) throw new UnverifiedError('Fleet App credential unavailable');
+    if (!token) throw new UnverifiableError('Fleet App credential unavailable');
     const permission = await api(
       `/repos/${repo}/collaborators/${fleetLogin}/permission`,
       token,
@@ -233,7 +238,7 @@ export async function auditRepository({
     return 'push permission and assignability verified';
   });
   await fact('labels', async () => {
-    if (!token) throw new UnverifiedError('Fleet App credential unavailable');
+    if (!token) throw new UnverifiableError('Fleet App credential unavailable');
     const expected = labels.repositories[repo]?.labels;
     if (!expected)
       throw new AuditError('Repository missing from label manifest');
@@ -343,7 +348,7 @@ export async function auditRepository({
           !runs.workflow_runs?.length ||
           runs.workflow_runs.some((run) => run.status !== 'completed')
         ) {
-          throw new UnverifiedError(
+          throw new UnverifiableError(
             `Required contexts not yet observed on ${commit.sha}; rerun after default-branch CI completes`,
           );
         }
@@ -358,7 +363,7 @@ export async function auditRepository({
 }
 
 export function auditHasFailure(facts) {
-  return facts.some((fact) => fact.status === 'FAIL');
+  return facts.some((fact) => fact.status === 'fail');
 }
 
 export async function runAudit({
@@ -438,14 +443,14 @@ export async function runAudit({
         facts.push({
           repo,
           fact: 'app-installation',
-          status: 'PASS',
+          status: 'pass',
           detail: `installation ${installations.get(repo).id}`,
         });
       } catch (error) {
         facts.push({
           repo,
           fact: 'app-installation',
-          status: 'FAIL',
+          status: failureStatus(error),
           detail: safeMessage(error),
         });
       }
@@ -480,14 +485,14 @@ export async function runAudit({
         legacyRunnerApp,
       );
       if (!registrations.length)
-        throw new UnverifiedError(
+        throw new UnverifiableError(
           'No active runner registrations in configuration; supply current registration targets and their actual App identities with --registrations=PATH. Runner coverage was not audited.',
         );
     } catch (error) {
       facts.push({
         repo: 'registrations',
         fact: 'configuration',
-        status: error instanceof UnverifiedError ? 'UNVERIFIED' : 'FAIL',
+        status: failureStatus(error),
         detail: safeMessage(error),
       });
     }
@@ -507,7 +512,7 @@ export async function runAudit({
       if (!registrationJwt) {
         facts.push({
           ...fact,
-          status: 'UNVERIFIED',
+          status: 'unverifiable',
           detail:
             'Registration App identity absent or differs from supplied App credential; supply its declared identity with RUNNER_APP_CLIENT_ID/RUNNER_APP_PRIVATE_KEY (or the LEGACY_RUNNER_APP_* pair)',
         });
@@ -526,7 +531,9 @@ export async function runAudit({
           ? 'administration'
           : 'organization_self_hosted_runners';
         if (!installation.permissions[readable])
-          throw new AuditError('Registration App lacks runner-list permission');
+          throw new UnverifiableError(
+            'Registration App lacks runner-list permission; use its existing authorized identity at onboarding',
+          );
         const minted = await api(
           `/app/installations/${installation.id}/access_tokens`,
           registrationJwt,
@@ -535,16 +542,24 @@ export async function runAudit({
         );
         try {
           await api(`${registration.endpoint}?per_page=1`, minted.token);
-          facts.push({
-            ...fact,
-            status: 'PASS',
-            detail: 'correctly scoped runner-list request succeeded',
-          });
         } finally {
-          await api('/installation/token', minted.token, 'DELETE');
+          try {
+            await api('/installation/token', minted.token, 'DELETE');
+          } catch {
+            throw new AuditError('Could not revoke temporary read token');
+          }
         }
+        facts.push({
+          ...fact,
+          status: 'pass',
+          detail: 'correctly scoped runner-list request succeeded',
+        });
       } catch (error) {
-        facts.push({ ...fact, status: 'FAIL', detail: safeMessage(error) });
+        facts.push({
+          ...fact,
+          status: failureStatus(error),
+          detail: safeMessage(error),
+        });
       }
     }
   } finally {
@@ -555,7 +570,7 @@ export async function runAudit({
         facts.push({
           repo: 'credentials',
           fact: 'token-revocation',
-          status: 'FAIL',
+          status: 'fail',
           detail: 'Could not revoke temporary read token',
         });
       }

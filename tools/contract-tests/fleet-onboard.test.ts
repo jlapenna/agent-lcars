@@ -168,7 +168,7 @@ describe('admit', () => {
     expect(
       facts.find((fact: { fact: string }) => fact.fact === 'variables'),
     ).toMatchObject({
-      status: 'PASS',
+      status: 'pass',
       detail: 'required fleet-member variables present',
     });
     const log: string[] = [];
