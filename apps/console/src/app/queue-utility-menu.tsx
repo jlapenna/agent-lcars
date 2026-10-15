@@ -6,6 +6,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
+import { MenuIdentity } from './console-frame-readouts';
 import { consoleDestinations, type NavKey } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
 import { InboxNotificationsToggle } from './inbox-notifications';
@@ -76,6 +77,7 @@ export function QueueUtilityMenu({
         <InboxNotificationsToggle />
         <Menu.Divider />
         <Menu.Label>Console</Menu.Label>
+        <MenuIdentity />
         <div className="queue-utility-menu__control">{signOutControl}</div>
         <Anchor
           href={repositoryUrl}

@@ -343,6 +343,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   flex-direction: column;
 }
 
+/* The identity as a console-menu line (console-frame-readouts.tsx
+   MenuIdentity), shown on every width: narrow headers drop the block. */
+.console-menu-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 8px;
+  font-size: 0.8125rem;
+}
+
 .console-identity__grants {
   color: var(--lcars-ink-dim);
   font-size: 0.75rem;
