@@ -302,7 +302,7 @@ export type RunQueue = z.infer<typeof runQueueSchema>;
 /** A server-recorded action through an authenticated operator boundary.
  * This proves an authorized API intervention, never that the caller is human. */
 export const operationalInterventionSchema = z.strictObject({
-  kind: z.enum(['work-api-cancel', 'work-api-reply']),
+  kind: z.enum(['work-api-cancel', 'work-api-reply', 'work-api-redispatch']),
   principal: z.string().min(1).max(128),
 });
 export type OperationalIntervention = z.infer<

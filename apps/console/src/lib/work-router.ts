@@ -453,6 +453,10 @@ export const workRouter = os.router({
         requestId: `${input.id}:${task.task.runCount + 1}`,
         pipeline: spec.pipeline,
         priority: spec.priority,
+        intervention: {
+          kind: 'work-api-redispatch',
+          principal: context.principal.principal,
+        },
         providerFallback: authorizeProviderFallback(
           context.principal,
           spec.pipeline,

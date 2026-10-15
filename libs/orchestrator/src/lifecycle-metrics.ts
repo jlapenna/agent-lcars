@@ -48,6 +48,8 @@ const HELP = {
     'Retained server-observed provider OS spawns during the rolling hour, not authentication or model execution.',
   reply_interventions_window:
     'Admitted rolling-hour run identities with a typed authorized Work API reply, not unique tasks or human identity.',
+  redispatch_interventions_window:
+    'Admitted rolling-hour run identities with a typed authorized native Work API redispatch, not unique tasks or human identity.',
   operational_interventions_window:
     'Settled rolling-hour run identities with a typed server-recorded authorized API intervention, not a human-touch or unique-task rate.',
   terminal_clock_unknown_window:
@@ -83,7 +85,11 @@ function terminalAt(run: Run): string | undefined {
   return [...run.events].reverse().find((event) => event.to === run.state)?.at;
 }
 
-function hasReplyIntervention(run: Run, now: number): boolean {
+function hasRequestIntervention(
+  run: Run,
+  now: number,
+  kind: 'work-api-reply' | 'work-api-redispatch',
+): boolean {
   const event = run.events[0];
   const updated = Date.parse(run.updatedAt);
   return (
@@ -91,7 +97,7 @@ function hasReplyIntervention(run: Run, now: number): boolean {
     event?.by === 'request' &&
     event.to === 'pending' &&
     event.at === run.createdAt &&
-    event.intervention?.kind === 'work-api-reply' &&
+    event.intervention?.kind === kind &&
     operationalInterventionSchema.safeParse(event.intervention).success &&
     Number.isFinite(updated) &&
     Date.parse(run.createdAt) <= updated &&
@@ -255,7 +261,7 @@ export function lifecycleMetricSnapshot(
     const admittedTasks = new Set(admittedRuns.map((run) => taskKey(run.task)));
     const replyTasks = new Set(
       admittedRuns
-        .filter((run) => hasReplyIntervention(run, now))
+        .filter((run) => hasRequestIntervention(run, now, 'work-api-reply'))
         .map((run) => taskKey(run.task)),
     );
     const cancelTasks = new Set(
@@ -263,11 +269,23 @@ export function lifecycleMetricSnapshot(
         .filter((run) => hasCancelIntervention(run, now))
         .map((run) => taskKey(run.task)),
     );
-    const intervenedTasks = new Set([...replyTasks, ...cancelTasks]);
+    const redispatchTasks = new Set(
+      admittedRuns
+        .filter((run) =>
+          hasRequestIntervention(run, now, 'work-api-redispatch'),
+        )
+        .map((run) => taskKey(run.task)),
+    );
+    const intervenedTasks = new Set([
+      ...replyTasks,
+      ...cancelTasks,
+      ...redispatchTasks,
+    ]);
     gauge('admitted_tasks_window', admittedTasks.size);
     for (const [kind, tasks] of [
       ['work-api-reply', replyTasks],
       ['work-api-cancel', cancelTasks],
+      ['work-api-redispatch', redispatchTasks],
       ['any', intervenedTasks],
     ] as const)
       gauge('intervened_tasks_window', tasks.size, { kind });
@@ -281,9 +299,15 @@ export function lifecycleMetricSnapshot(
       );
       const admitted = runs.filter((run) => inWindow(run.createdAt));
       const replyInterventions = admitted.filter((run) =>
-        hasReplyIntervention(run, now),
+        hasRequestIntervention(run, now, 'work-api-reply'),
       );
       gauge('reply_interventions_window', replyInterventions.length, {
+        pipeline,
+      });
+      const redispatchInterventions = admitted.filter((run) =>
+        hasRequestIntervention(run, now, 'work-api-redispatch'),
+      );
+      gauge('redispatch_interventions_window', redispatchInterventions.length, {
         pipeline,
       });
       const claimed = runs.filter((run) => inWindow(run.queue?.claimedAt));
@@ -484,6 +508,10 @@ export function lifecycleMetricSnapshot(
         ['useful_outcome', finished.length - completedDeliveries.length],
         ['operational_intervention', terminal.length - interventions.length],
         ['reply_intervention', admitted.length - replyInterventions.length],
+        [
+          'redispatch_intervention',
+          admitted.length - redispatchInterventions.length,
+        ],
         ['human_touch', terminal.length],
         ['cost', finished.length],
       ] as const)
