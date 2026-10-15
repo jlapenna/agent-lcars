@@ -120,6 +120,27 @@ describe('Shuttlebay provider evidence', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('emits nothing before the first host snapshot, even when admission reads first', async () => {
+    let push: ((result: typeof telemetry) => void) | undefined;
+    mocks.subscribe.mockImplementation(async (callback) => {
+      push = callback;
+      return mocks.stop;
+    });
+    const output = vi.fn();
+    const stop = await subscribeShuttlebayStatus(output);
+    await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The page keeps its server-rendered read rather than an empty status.
+    expect(output).not.toHaveBeenCalled();
+    if (push === undefined) throw new Error('missing listener');
+    push({ warnings: ['First producer snapshot'] });
+    expect(output).toHaveBeenLastCalledWith({
+      warnings: ['First producer snapshot'],
+      providerAdmission: admission,
+    });
+    stop();
+  });
+
   it('streams telemetry independently of slow admission and cleans up late completion', async () => {
     vi.useFakeTimers();
     let push: ((result: typeof telemetry) => void) | undefined;
