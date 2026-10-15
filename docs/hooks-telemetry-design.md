@@ -598,8 +598,10 @@ image build under QEMU, and the end was lost (#2827). The Codex stub
 therefore returns from `SessionEnd` at once. It copies the payload into
 `~/.local/state/agent-lcars/hook-inflight/` and starts a detached
 `lcars hook codex` in its own session, which deletes the payload once it is
-done. The runner drain (`hook-telemetry-bootstrap.sh`) waits for that
-directory to empty, bounded at 30 s, before it fences late events.
+done. A host without `setsid` (stock macOS) keeps the in-place hook rather
+than leave the client in the hook's process group. The runner drain
+(`hook-telemetry-bootstrap.sh`) waits for that directory to empty, bounded at
+30 s, before it fences late events.
 
 The `command` is a constant launcher stub, the shape herdr uses for
 `herdr-agent-state.sh`: `~/.codex/lcars-hook.sh` execs the `lcars` bundle

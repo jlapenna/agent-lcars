@@ -173,11 +173,10 @@ const CODEX_SESSION_END_HANDOFF: readonly string[] = [
   `  inflight="\${HOME:-}/${path.posix.join('.local', 'state', 'agent-lcars', HOOK_INFLIGHT_DIRECTORY)}" &&`,
   '  [ -n "${HOME:-}" ] && (umask 077 && mkdir -p "$inflight") 2>/dev/null &&',
   '  pending="$(mktemp "$inflight/end.XXXXXX" 2>/dev/null)"; then',
-  '  if cat "$input" >"$pending" 2>/dev/null; then',
-  '    detach=""',
-  '    command -v setsid >/dev/null 2>&1 && detach=setsid',
-  '    # Own session: Codex reaps its hook process group on timeout and exit.',
-  '    $detach sh -c \'"$1" hook "$2" <"$3" >/dev/null 2>&1; rm -f "$3"\' lcars-hook-end \\',
+  // Without setsid (stock macOS) the child would stay in the hook's process
+  // group, which Codex may kill with it; running in place is safer there.
+  '  if command -v setsid >/dev/null 2>&1 && cat "$input" >"$pending" 2>/dev/null; then',
+  '    setsid sh -c \'"$1" hook "$2" <"$3" >/dev/null 2>&1; rm -f "$3"\' lcars-hook-end \\',
   '      "$lcars_bin" "$runtime" "$pending" </dev/null >/dev/null 2>&1 &',
   '    exit 0',
   '  fi',
