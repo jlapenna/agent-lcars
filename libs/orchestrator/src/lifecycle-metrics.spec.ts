@@ -876,3 +876,214 @@ describe('durable lifecycle metric accounting', () => {
     );
   });
 });
+
+describe('unique task operational intervention cohort', () => {
+  function reply(over: Partial<Run> = {}): Run {
+    return run({
+      events: [
+        {
+          at: createdAt,
+          to: 'pending',
+          by: 'request',
+          intervention: {
+            kind: 'work-api-reply',
+            principal: 'svc:verified-operator',
+          },
+        },
+      ],
+      ...over,
+    });
+  }
+  function cancel(over: Partial<Run> = {}): Run {
+    return run({
+      state: 'canceled',
+      updatedAt: finishedAt,
+      events: [
+        { at: createdAt, to: 'pending', by: 'request' },
+        {
+          at: finishedAt,
+          to: 'canceled',
+          by: 'operator',
+          intervention: {
+            kind: 'work-api-cancel',
+            principal: 'svc:verified-operator',
+          },
+        },
+      ],
+      ...over,
+    });
+  }
+  function taskMeasurements(text: string) {
+    const value = (name: string) =>
+      Number(text.match(new RegExp(`${name} (\\d+)\\n`, 'u'))?.[1]);
+    return {
+      admitted: value('lcars_product_admitted_tasks_window'),
+      reply: value(
+        'lcars_product_intervened_tasks_window\\{kind="work-api-reply"\\}',
+      ),
+      cancel: value(
+        'lcars_product_intervened_tasks_window\\{kind="work-api-cancel"\\}',
+      ),
+      any: value('lcars_product_intervened_tasks_window\\{kind="any"\\}'),
+      unknown: value('lcars_product_task_intervention_unknown_window'),
+    };
+  }
+  it('deduplicates the distinct task cohort across retries, providers and overlapping action kinds', () => {
+    const records = [
+      reply(),
+      cancel({
+        runId: 'private/repo#42/r2',
+        pipeline: 'codex',
+        requestSource: 'auto-retry',
+      }),
+      reply({ runId: 'private/repo#42/r3', pipeline: 'opencode' }),
+      reply({
+        runId: 'other/repo#42/r1',
+        task: { repo: 'other/repo', issue: 42 },
+      }),
+      run({
+        runId: 'work:01ARZ3NDEKTSV4RRFFQ69G5FAV/r1',
+        task: { workId: '01ARZ3NDEKTSV4RRFFQ69G5FAV' },
+      }),
+    ];
+    const text = snapshot([...records, ...records]);
+    const measured = taskMeasurements(text);
+    expect(measured).toEqual({
+      admitted: 3,
+      reply: 2,
+      cancel: 1,
+      any: 2,
+      unknown: 1,
+    });
+    expect(measured.any + measured.unknown).toBe(measured.admitted);
+    const singleFeed = snapshot(records);
+    expect(taskMeasurements(singleFeed)).toEqual(measured);
+    expect(singleFeed).toContain(
+      'lcars_product_snapshot_records{feed="recent_runs"} 5\n',
+    );
+    expect(text).toContain(
+      'lcars_product_snapshot_records{feed="recent_runs"} 10\n',
+    );
+    expect(text).not.toContain('svc:verified-operator');
+    expect(text).not.toContain('private/repo');
+    expect(text).not.toContain('01ARZ3NDEKTSV4RRFFQ69G5FAV');
+  });
+  it('excludes an older admission cancellation from task credit while retaining the settled-run count', () => {
+    const old = cancel({ createdAt: '2026-10-10T10:30:00.000Z' });
+    const current = run({
+      runId: 'private/repo#42/r2',
+      requestSource: 'auto-retry',
+    });
+    const text = snapshot([old, current]);
+    expect(taskMeasurements(text)).toEqual({
+      admitted: 1,
+      reply: 0,
+      cancel: 0,
+      any: 0,
+      unknown: 1,
+    });
+    expect(text).toContain(
+      'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="human_touch"} 1\n',
+    );
+  });
+  it('uses inclusive admission bounds without treating settlement as admission', () => {
+    const times = [
+      '2026-10-10T10:59:59.999Z',
+      '2026-10-10T11:00:00.000Z',
+      NOW,
+      '2026-10-10T12:00:00.001Z',
+      'invalid',
+    ];
+    const records = times.map((at, i) =>
+      run({
+        runId: `private/repo#${i + 1}/r1`,
+        task: { repo: 'private/repo', issue: i + 1 },
+        createdAt: at,
+      }),
+    );
+    expect(taskMeasurements(snapshot(records))).toEqual({
+      admitted: 2,
+      reply: 0,
+      cancel: 0,
+      any: 0,
+      unknown: 2,
+    });
+  });
+  it('uses the newest Run revision before classifying a task and does not recover stale provenance', () => {
+    const old = reply();
+    const current = run({ updatedAt: finishedAt });
+    expect(taskMeasurements(snapshot([old], { liveRuns: [current] }))).toEqual({
+      admitted: 1,
+      reply: 0,
+      cancel: 0,
+      any: 0,
+      unknown: 1,
+    });
+    expect(taskMeasurements(snapshot([current], { liveRuns: [old] }))).toEqual({
+      admitted: 1,
+      reply: 0,
+      cancel: 0,
+      any: 0,
+      unknown: 1,
+    });
+  });
+  it.each([
+    ['missing provenance', run()],
+    [
+      'reply revision before admission',
+      reply({ updatedAt: '2026-10-10T11:39:59.999Z' }),
+    ],
+    ['future reply revision', reply({ updatedAt: '2026-10-10T12:00:00.001Z' })],
+    [
+      'wrong reply event clock',
+      reply({ events: [{ ...reply().events[0], at: finishedAt }] }),
+    ],
+    ['retry carrying a reply stamp', reply({ requestSource: 'auto-retry' })],
+    [
+      'cancel settlement before admission',
+      cancel({
+        events: [{ ...cancel().events[1], at: '2026-10-10T11:39:59.999Z' }],
+      }),
+    ],
+    [
+      'future cancel revision',
+      cancel({ updatedAt: '2026-10-10T12:00:00.001Z' }),
+    ],
+    [
+      'unverified cancel principal',
+      cancel({
+        events: [
+          {
+            ...cancel().events[1],
+            intervention: { kind: 'work-api-cancel', principal: '' },
+          },
+        ],
+      }),
+    ],
+  ])(
+    'keeps %s unknown rather than claiming an untouched task',
+    (_name, record) => {
+      const measured = taskMeasurements(snapshot([record as Run]));
+      expect(measured).toEqual({
+        admitted: 1,
+        reply: 0,
+        cancel: 0,
+        any: 0,
+        unknown: 1,
+      });
+    },
+  );
+  it('omits every derived task gauge when any bounded feed is incomplete', () => {
+    const text = snapshot([reply()], { complete: false });
+    for (const metric of [
+      'admitted_tasks_window',
+      'intervened_tasks_window',
+      'task_intervention_unknown_window',
+    ]) {
+      expect(text).not.toContain(`lcars_product_${metric}`);
+    }
+  });
+});

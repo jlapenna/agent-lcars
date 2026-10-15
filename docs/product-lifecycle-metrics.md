@@ -134,16 +134,42 @@ settled-hour cancellation cohort; neither family changes `human_touch`
 unknowns. No human identity, unique-task rate, successful outcome or eventual
 merge follows from an authorized reply. Principal values never become labels.
 
+`admitted_tasks_window` counts distinct canonical task identities with at least
+one Run `createdAt` in the inclusive rolling-hour window. This is an admitted
+attempt cohort: it includes retries and replies for older tasks, not just
+first-ever task creation. One task counts once across automatic retries,
+provider generations and duplicate feeds, using the newest observed revision of
+each Run. It is global rather than split by pipeline, so provider switching
+does not duplicate the denominator. No task identity is exported as a label.
+
+`intervened_tasks_window{kind="work-api-reply"|"work-api-cancel"}` counts those
+cohort tasks with the corresponding qualified durable action on an admitted
+Run, using the same exact event/provenance/clock checks as the Run families
+above. `kind="any"` is the distinct union, not a sum: a task with both actions
+counts once. Cancellation of a Run admitted before the hour is excluded from
+this cohort even when cancellation occurs in the hour; the existing settled-hour
+Run cancellation family still includes it. Actions on generations admitted before this window do not supply credit to
+a newly admitted retry of the same task.
+
+`task_intervention_unknown_window` is the admitted task denominator minus that
+qualified union. A missing or invalid stamp supplies unknown history, never an
+untouched or human-free classification. The positive union plus unknown equals
+the distinct cohort size. This is observed API-intervention incidence, not a
+human-touch rate: verified principals can be automation, other action producers
+and earlier history remain incomplete, and no eventual merge join is supplied.
+An incomplete bounded snapshot exports none of these task gauges. Repeated
+scrapes cannot add tasks; do not apply `rate`/`increase` to these rolling gauges.
+
 The remaining original intervention join stays open. These existing owners
 provide the next action boundaries; none alone proves a biological human:
 
-| Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                                         |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                                            |
-| Reply / provider selection (`work-reply.ts`, `request`) | Work API replies now stamp the first admission event with typed action provenance; other channels retain only opaque params. Task-cohort/eventual-merge joins remain absent; automatic retries receive no stamp. |
-| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                                      |
-| GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                                              |
-| Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.                           |
+| Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                                                                                              |
+| Reply / provider selection (`work-reply.ts`, `request`) | Work API replies now stamp the first admission event with typed action provenance; other channels retain only opaque params. Admitted-task incidence is now deduplicated; full-history/eventual-merge joins remain absent, and automatic retries receive no stamp. |
+| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                                                                                        |
+| GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                                                                                                |
+| Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.                                                                             |
 
 A complete task-level rate still needs a unique admitted-task cohort across
 retry/provider generations, explicit typed action coverage, eventual trusted
