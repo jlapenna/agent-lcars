@@ -60,6 +60,41 @@ const refs = (prNumbers: number[], referenceRepo = repo) => ({
 const merged = '2026-09-01T00:00:00Z';
 
 describe('selected session spend', () => {
+  it('folds unsupported pipelines before deduplicating their merged PR denominator', () => {
+    const docs = [
+      doc({
+        sessionId: 'first',
+        agent: 'gemini',
+        totalCostUsd: 3,
+        deliverables: refs([42, 42]),
+      }),
+      doc({
+        sessionId: 'retry',
+        agent: 'antigravity',
+        totalCostUsd: 5,
+        deliverables: refs([42]),
+      }),
+      doc({ sessionId: 'failed-without-pr', agent: 'gemini', totalCostUsd: 2 }),
+    ];
+    const projections = new Map([
+      ['jlapenna/agent-lcars#42', projection(42, merged)],
+    ]);
+    expect(
+      aggregateSessionSpend(docs, projections, false, 'lifecycle').byPipeline,
+    ).toEqual([
+      expect.objectContaining({
+        key: 'unknown',
+        sessions: 3,
+        reportedCostUsd: 10,
+        mergedPRs: 1,
+        costPerMergedDeliverableUsd: 10,
+      }),
+    ]);
+    expect(
+      aggregateSessionSpend(docs, projections).byPipeline.map((row) => row.key),
+    ).toEqual(['other: antigravity', 'other: gemini']);
+  });
+
   it('reconciles mixed providers/models and repeated attempts with both existing ledgers', () => {
     const docs = [
       doc({
