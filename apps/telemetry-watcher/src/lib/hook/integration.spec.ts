@@ -453,10 +453,11 @@ describe('lcars integration', () => {
     const release = path.join(home, 'release');
     const received = path.join(home, 'received');
     // The fake client blocks until the test releases it, so "returned before
-    // the client finished" is ordering, not timing.
+    // the client finished" is ordering, not timing. It gives up after 10 s so
+    // a failed run cannot orphan it.
     fs.writeFileSync(
       path.join(bin, 'lcars'),
-      `#!/bin/sh\nwhile [ ! -e "${release}" ]; do sleep 0.05; done\ncat >>"${received}"\n`,
+      `#!/bin/sh\nn=0\nwhile [ ! -e "${release}" ]; do\n  n=$((n + 1)); [ "$n" -le 200 ] || exit 1\n  sleep 0.05\ndone\ncat >>"${received}"\n`,
       { mode: 0o755 },
     );
     const inflight = path.join(
@@ -470,19 +471,25 @@ describe('lcars integration', () => {
         env: { PATH: `${bin}:${process.env['PATH']}`, HOME: home },
         timeout: 10_000,
       });
+    // The client removes its payload when it exits, release or deadline.
+    const clientDone = () =>
+      vi.waitFor(
+        () => {
+          expect(fs.readdirSync(inflight)).toEqual([]);
+        },
+        { timeout: 15_000, interval: 50 },
+      );
 
     const end = { hook_event_name: 'SessionEnd', session_id: 's1' };
-    expect(runStub(end).status).toBe(0);
-    expect(fs.existsSync(received)).toBe(false);
-    expect(fs.readdirSync(inflight)).toHaveLength(1);
-
-    fs.writeFileSync(release, '');
-    await vi.waitFor(
-      () => {
-        expect(fs.readdirSync(inflight)).toEqual([]);
-      },
-      { timeout: 10_000, interval: 50 },
-    );
+    try {
+      expect(runStub(end).status).toBe(0);
+      expect(fs.existsSync(received)).toBe(false);
+      expect(fs.readdirSync(inflight)).toHaveLength(1);
+    } finally {
+      // Release and reap the detached client before afterEach removes home.
+      fs.writeFileSync(release, '');
+      if (fs.existsSync(inflight)) await clientDone();
+    }
     expect(JSON.parse(fs.readFileSync(received, 'utf8'))).toEqual(end);
 
     // Model text quoting the key is escaped JSON and stays synchronous.
