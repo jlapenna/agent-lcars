@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
   resolveRepo: vi.fn(),
   githubGet: vi.fn(),
+  issueCreate: vi.fn(),
   createLifecycle: vi.fn(),
   prepare: vi.fn(),
   rollback: vi.fn(),
@@ -40,7 +41,10 @@ vi.mock('@orpc/next', () => ({
 vi.mock('@/lib/github-client', () => ({
   resolveWatchedRepo: mocks.resolveRepo,
   createGithubUserClient: vi.fn(() => ({
-    rest: { repos: { get: mocks.githubGet } },
+    rest: {
+      repos: { get: mocks.githubGet },
+      issues: { create: mocks.issueCreate },
+    },
   })),
 }));
 vi.mock('@/lib/quick-task-evidence-lifecycle', () => ({
@@ -51,7 +55,11 @@ vi.mock('@/lib/work-mint', () => ({
   forbiddenReason: mocks.forbiddenReason,
 }));
 
-import { createItem, createItemWithEvidence } from './actions';
+import {
+  createItem,
+  createItemWithEvidence,
+  createTrackingIssue,
+} from './actions';
 
 const intent = {
   workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -248,4 +256,45 @@ describe('createItemWithEvidence', () => {
       }
     },
   );
+});
+
+describe('createTrackingIssue', () => {
+  const input = {
+    workId: intent.workId,
+    repository: intent.repository,
+    title: 'Tracking',
+    body: 'Body',
+  };
+
+  it('requests a new sign-in when GitHub rejects the user credential', async () => {
+    mocks.issueCreate.mockRejectedValueOnce(
+      Object.assign(new Error('Bad credentials: private detail'), {
+        status: 401,
+      }),
+    );
+
+    const [error, data] = await createTrackingIssue(input);
+
+    expect(error).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(error?.message).toContain('Sign out and sign in again');
+    expect(error?.message).not.toContain('private detail');
+    expect(data).toBeUndefined();
+  });
+
+  it('files the issue with a valid credential', async () => {
+    mocks.issueCreate.mockResolvedValueOnce({
+      data: {
+        number: 7,
+        html_url: 'https://github.com/jlapenna/agent-lcars/issues/7',
+      },
+    });
+
+    const [error, data] = await createTrackingIssue(input);
+
+    expect(error).toBeUndefined();
+    expect(data).toEqual({
+      number: 7,
+      url: 'https://github.com/jlapenna/agent-lcars/issues/7',
+    });
+  });
 });
