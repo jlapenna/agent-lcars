@@ -180,7 +180,7 @@ export function RailEnvironment() {
   // a line arriving with the readouts lifted the brand above it.
   return (
     <span className="lcars-rail-code" data-testid="rail-environment">
-      {environment ?? '\u00a0'}
+      {environment || '\u00a0'}
     </span>
   );
 }
