@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { act, cleanup, render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ShellReadouts } from '../lib/shell-readouts';
@@ -16,6 +17,7 @@ import { ConsoleNavigationProvider } from './console-navigation-context';
 import {
   publishLiveState,
   resetShellStateForTests,
+  ShellIdentityProvider,
 } from './console-shell-state';
 
 vi.mock('next/link', () => ({
@@ -261,5 +263,61 @@ describe('console frame readouts', () => {
       '—Queue depth',
     );
     expect(screen.queryByTestId('console-identity')).toBeNull();
+  });
+});
+
+describe('the frame at first paint', () => {
+  beforeEach(() => resetShellStateForTests());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders the served identity before the readouts arrive', () => {
+    const html = renderToStaticMarkup(
+      <ShellIdentityProvider identity={admin}>
+        <RailEnvironment />
+        <ConsoleIdentity />
+        <MenuIdentity />
+      </ShellIdentityProvider>,
+    );
+    expect(html).toContain('lcars.example.test');
+    expect(html).toContain('data-testid="console-identity"');
+    expect(html).toContain('data-testid="console-identity-menu"');
+    expect(html).toContain('admin · work.operator');
+  });
+
+  it('holds the load time slot until the page has loaded', () => {
+    const html = renderToStaticMarkup(<ConsoleLiveStatus />);
+    expect(html).toContain('console-live-status__reserve');
+    expect(html).toContain(' · loaded 00:00:00');
+  });
+
+  it('lets the readouts replace the served identity', async () => {
+    respond({
+      ...admin,
+      user: { login: 'operator', initials: 'OP', grants: ['work.operator'] },
+    });
+    render(
+      <ShellIdentityProvider identity={admin}>
+        <ConsoleIdentity />
+        <ConsoleLiveStatus />
+      </ShellIdentityProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('console-identity')).toHaveTextContent(
+      'operator',
+    );
+    expect(screen.getByTestId('console-identity')).not.toHaveTextContent(
+      'jlapenna',
+    );
+    expect(
+      screen
+        .getByTestId('console-live-status')
+        .querySelector('.console-live-status__reserve'),
+    ).toBeNull();
   });
 });

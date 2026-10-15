@@ -1,8 +1,15 @@
 'use client';
 
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
-import type { ShellReadouts } from '../lib/shell-readouts';
+import type { ShellIdentity, ShellReadouts } from '../lib/shell-readouts';
 
 /* ---- Live status ----
    `LiveDashboard` (mounted by the live routes) publishes its stream state
@@ -110,6 +117,33 @@ export function useShellReadouts(): ReadoutsState {
 }
 
 /** For tests: forget cached figures and live state between renders. */
+/* ---- Identity ----
+   The root layout reads who is signed in, so the identity block and the
+   environment line render with the first paint instead of shifting the
+   header when the readouts arrive. The readouts' copy wins once present. */
+
+const IdentityContext = createContext<ShellIdentity | undefined>(undefined);
+
+export function ShellIdentityProvider({
+  identity,
+  children,
+}: {
+  identity: ShellIdentity | undefined;
+  children: ReactNode;
+}) {
+  return (
+    <IdentityContext.Provider value={identity}>
+      {children}
+    </IdentityContext.Provider>
+  );
+}
+
+export function useShellIdentity(): ShellIdentity | undefined {
+  const state = useShellReadouts();
+  const served = useContext(IdentityContext);
+  return state.status === 'ready' ? state.readouts : served;
+}
+
 export function resetShellStateForTests() {
   readoutsState = LOADING;
   inFlight = undefined;

@@ -280,6 +280,10 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   font-weight: 500;
 }
 
+.console-live-status__reserve {
+  visibility: hidden;
+}
+
 .console-live-status[data-tone='ok'] b {
   color: var(--mantine-color-green-5);
 }
