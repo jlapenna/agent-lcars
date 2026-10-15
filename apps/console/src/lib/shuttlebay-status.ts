@@ -129,19 +129,20 @@ export async function getShuttlebayStatus(): Promise<AutoscalerStatusResult> {
 
 /** Host updates are emitted immediately. An independent bounded admission
  * refresh emits against the latest host snapshot, even if host updates keep
- * arriving or stop altogether. The two sources cannot starve each other. */
+ * arriving or stop altogether. The two sources cannot starve each other.
+ * Nothing is emitted before the first host snapshot (or listener failure):
+ * the page already drew the server's read, and an admission refresh that won
+ * the race used to replace it with an empty status for a frame. */
 export async function subscribeShuttlebayStatus(
   onResult: (result: AutoscalerStatusResult) => void,
 ): Promise<() => void> {
   let closed = false;
   let refreshing = false;
-  let latest: AutoscalerStatusResult = {
-    warnings: ['Runner status awaiting first snapshot.'],
-  };
+  let latest: AutoscalerStatusResult | undefined;
   let admission: QueueAdmissionStatus | undefined;
   let admissionUnavailable = true;
   const emit = () => {
-    if (!closed)
+    if (!closed && latest !== undefined)
       onResult({
         ...withRunnerWork(latest),
         providerAdmission: admission,
