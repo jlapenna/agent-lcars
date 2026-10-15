@@ -112,7 +112,7 @@ importers:
         specifier: ^8.0.1
         version: 8.0.3(supports-color@8.1.1)
       '@jlapenna/repo-tools':
-        specifier: github:jlapenna/repo-tools#main
+        specifier: github:jlapenna/repo-tools#v2.0.8
         version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/4f4db8d972e21f6b4d3837c3c320e189fa01546a(eslint@10.12.0(jiti@2.7.0)(supports-color@8.1.1))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))(supports-color@8.1.1)(typescript@6.0.3)
       '@naxodev/gonx':
         specifier: 4.1.2
