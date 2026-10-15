@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parse } from 'yaml';
+import { z } from 'zod';
 
 import { createAppJwt } from './configure-github-app-webhook.mjs';
 
@@ -38,6 +39,37 @@ export function watchedRepositories(config) {
   if (!repos.length || repos.some((repo) => !repoPattern.test(repo)))
     throw new AuditError('Invalid watched-repository configuration');
   return [...new Set(repos)];
+}
+
+// The receipt transport accepts only the resolved public identity projection.
+// Full deployed configurations remain supported by the existing file input.
+export function resolvedRegistrationInventory(source) {
+  const registration = z.strictObject({
+    name: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/),
+    github: z.strictObject({
+      url: z.string().regex(/^https:\/\/github\.com\/[\w.-]+(?:\/[\w.-]+)?$/),
+    }),
+    app: z.strictObject({
+      client_id: z.string().regex(/^(?:Iv[A-Za-z0-9]+|[1-9][0-9]*)$/),
+      installation_id: z.number().int().positive().safe(),
+    }),
+  });
+  try {
+    const config = z
+      .strictObject({
+        registrations: z.array(registration).min(1),
+      })
+      .parse(parse(source));
+    if (
+      new Set(config.registrations.map(({ name }) => name)).size !==
+      config.registrations.length
+    )
+      throw new Error('Duplicate registration');
+    return config;
+  } catch {
+    // Never print YAML, schema diagnostics, or arbitrary supplied field values.
+    throw new AuditError('Invalid resolved registration inventory');
+  }
 }
 
 export function runnerRegistrations(config, legacyApp) {
@@ -433,7 +465,7 @@ export async function runAudit({
     // import code or copy its registration list into this repository.
     let registrations = [];
     try {
-      if (!registrationConfig) {
+      if (registrationConfig === undefined) {
         const token = await tokenFor('jlapenna/homelab');
         const file = await api(
           '/repos/jlapenna/homelab/contents/github-runner-autoscaler/orchestrator.yml',
