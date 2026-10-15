@@ -7,6 +7,7 @@ import {
   ConsoleIdentity,
   ConsoleLiveStatus,
   MenuIdentity,
+  RailEnvironment,
   RailReadouts,
   ReadoutStrip,
 } from './console-frame-readouts';
@@ -204,6 +205,20 @@ describe('console frame readouts', () => {
       await Promise.resolve();
     });
     expect(screen.queryByTestId('strip-readout-fleet')).toBeNull();
+  });
+
+  it('holds the rail environment line before the readouts arrive', async () => {
+    respond(admin);
+    render(<RailEnvironment />);
+    // A non-breaking space, so the bottom-aligned head does not move.
+    expect(screen.getByTestId('rail-environment').textContent).toBe('\u00a0');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('rail-environment')).toHaveTextContent(
+      'lcars.example.test',
+    );
   });
 
   it('names the signed-in identity in the console menu', async () => {
