@@ -2,6 +2,7 @@ import {
   type DeliveryBinding,
   isLive,
   isWorkAnchor,
+  type OperationalIntervention,
   type OutboxEntry,
   type ProviderFallback,
   type ProviderFallbackRequest,
@@ -579,6 +580,8 @@ export function cancelRun(input: {
   task: Task;
   run: Run;
   note?: string;
+  /** Trusted ingress provenance; absent for automation and historical callers. */
+  intervention?: OperationalIntervention;
   /** Server-only native item cancellation, distinct from canceling a run. */
   nativeTask?: WorkAnchor;
 }): Decision | Refusal {
@@ -603,6 +606,9 @@ export function cancelRun(input: {
         at: now,
         to: 'canceled',
         by: 'operator',
+        ...(input.intervention === undefined
+          ? {}
+          : { intervention: input.intervention }),
         ...(input.note === undefined ? {} : { note: input.note }),
       },
     ],

@@ -351,6 +351,7 @@ export const workRouter = os.router({
             live.runId,
             `canceled by ${context.principal.principal}`,
             { workId: input.id },
+            { kind: 'work-api-cancel', principal: context.principal.principal },
           );
     if (isRefusal(outcome)) {
       throw errors.CONFLICT({ message: outcome.reason });

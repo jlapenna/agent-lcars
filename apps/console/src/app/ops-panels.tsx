@@ -224,7 +224,9 @@ function DispatchRow({
         </div>
       </td>
       {showRunner && (
-        <td className="ops-mono-dim">{run.queue?.claimedBy ?? UNAVAILABLE}</td>
+        <td className="ops-mono-dim ops-wrap">
+          {run.queue?.claimedBy ?? UNAVAILABLE}
+        </td>
       )}
       <td className="ops-num">
         <ScreenshotStableDuration seconds={run.elapsedSeconds} />
