@@ -163,10 +163,33 @@ async function createItemWithEvidenceUnsafe(form: FormData) {
       undefined,
     ] as const;
   }
-  const { data: repo } = await createGithubUserClient(token).rest.repos.get({
-    owner: repository.owner,
-    repo: repository.name,
-  });
+  const response = await createGithubUserClient(token)
+    .rest.repos.get({
+      owner: repository.owner,
+      repo: repository.name,
+    })
+    .catch((error: unknown) => {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        error.status === 401
+      ) {
+        return undefined;
+      }
+      throw error;
+    });
+  if (response === undefined) {
+    return [
+      {
+        code: 'UNAUTHORIZED',
+        message:
+          'GitHub authorization failed. Sign out and sign in again, then retry.',
+      },
+      undefined,
+    ] as const;
+  }
+  const { data: repo } = response;
   const visibility = repo.visibility;
   if (
     visibility !== 'public' &&
