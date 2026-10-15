@@ -116,7 +116,6 @@ export function useShellReadouts(): ReadoutsState {
   );
 }
 
-/** For tests: forget cached figures and live state between renders. */
 /* ---- Identity ----
    The root layout reads who is signed in, so the identity block and the
    environment line render with the first paint instead of shifting the
@@ -144,6 +143,7 @@ export function useShellIdentity(): ShellIdentity | undefined {
   return state.status === 'ready' ? state.readouts : served;
 }
 
+/** For tests: forget cached figures and live state between renders. */
 export function resetShellStateForTests() {
   readoutsState = LOADING;
   inFlight = undefined;
