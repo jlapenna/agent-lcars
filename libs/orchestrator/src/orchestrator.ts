@@ -27,6 +27,7 @@ import { advanceDelivery, type DeliveryObservation } from './delivery';
 import {
   type DeliveryBinding,
   isLive,
+  type OperationalIntervention,
   type ProviderFallbackRequest,
   type QueuePriority,
   type RequestSource,
@@ -617,6 +618,7 @@ export class Orchestrator {
     runId: string,
     note?: string,
     nativeTask?: WorkAnchor,
+    intervention?: OperationalIntervention,
   ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       cancelRun({
@@ -625,6 +627,7 @@ export class Orchestrator {
         run,
         ...(note === undefined ? {} : { note }),
         ...(nativeTask === undefined ? {} : { nativeTask }),
+        ...(intervention === undefined ? {} : { intervention }),
       }),
     );
   }
