@@ -258,7 +258,9 @@ test.describe('overlays inherit the LCARS theme', () => {
         name: 'Create work item',
         exact: true,
       });
-      await create.scrollIntoViewIfNeeded();
+      await create.evaluate((button) =>
+        button.scrollIntoView({ block: 'center', inline: 'nearest' }),
+      );
       await expect(create).toBeEnabled();
       await expect(create).toBeInViewport({ ratio: 1 });
       // Visibility alone passes for a squeezed button whose label is clipped.
