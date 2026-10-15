@@ -116,6 +116,7 @@ const mounts = [
   'apps/runner-autoscaler/runner-image/direct-runner.sh',
   ...[
     'worker-policy-bootstrap.sh',
+    'worker-activation.sh',
     'verify-outcome.sh',
     'worker-completion.sh',
   ].map((name) => 'apps/runner-autoscaler/runner-image/runtime/' + name),
