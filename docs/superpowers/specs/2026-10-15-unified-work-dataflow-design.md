@@ -51,7 +51,7 @@ WorkSpec {
   title, description, priority,
   agent: AgentId,                 // registry key
   fallbackAgents?: AgentId[],     // must be registry-compatible
-  resources: Resource[],          // may be empty
+  resources: Resource[],          // empty only if the agent requires none
   intent: Intent[],               // what must be true when done (≥1)
 }
 Resource = { kind: 'repo'; repo: string; access: 'read' | 'write' }
@@ -73,16 +73,22 @@ This is a clean break: `pipeline`, `mode`, `fallbackPipelines` and `target` are 
 - `id`: for example `claude`, `codex`, `opencode`, `openclaw/investigator`.
 - `runtime`: `cli` (plus provider) or `openclaw`.
 - `accepts`: the resource kinds it can be granted. `cli` agents accept `repo`; `openclaw/investigator` accepts none.
+- `requires`: the resources it cannot run without. `cli` agents require at least one `repo`, because the runtime needs a checkout; `openclaw/investigator` requires none.
 - `satisfies`: the intent kinds it may be asked for. `openclaw/investigator` satisfies only `report` and `none`.
 - `maxLiveClaims`: moves here from `QUEUE_PIPELINE_MAX_LIVE_CLAIMS`.
 
 The GitHub label (`agent:*`) and reply-trigger config moves into the **GitHub channel adapter** as a map from label or trigger to `{agent, intent}`, so the registry itself has no GitHub fields.
 
-**Admission** refuses a work item unless all three hold:
+**Admission** refuses a work item unless all of these hold:
 
 - the agent `satisfies` every intent
-- every resource is in `accepts`
+- every resource is in `accepts`, and every `requires` entry is present
+- every repo-valued intent names a repo that is also a `resources` entry
+- every referenced repo (resources and intents) passes `isControlPlaneRepository()`, as `target.repo` does today in `work-mint.ts`
+- when the caller's principal carries a signed `sourceRepository` (OIDC), every referenced repo equals it, as `work-router.ts` enforces for `target.repo` today
 - the grant allows the agent (`AGENT_LCARS_WORK_GRANTS` gains `agents: AgentId[]`)
+
+Redispatch and fallback re-run the same checks against the next agent, so a fallback can't widen the repo set or the caller binding.
 
 ## Verification: check the state, not a token
 
@@ -114,7 +120,7 @@ The existing `direct-runner.sh` path, now reading `agent`, `resources` and `inte
 The QueueExecutor launches a bridge Job. The Job keeps every LCARS lifecycle duty (claim, lease, heartbeat, startup deadline, `lost`, retries) and runs no model. It hands the attempt to a stateless Homelab-owned OpenClaw plugin, **`lcars-agent-bridge`**, and waits for the answer.
 
 - **Why a Job.** The Console (Firebase App Hosting) can't reach the LAN gateway, but the k3s QueueExecutor can. No OpenClaw credential leaves laforge: the gateway token carries every operator scope, and no RPC token can be limited to one agent.
-- **Auth.** The plugin checks the caller's run bearer with `POST /runs/{runId}/introspect`, reusing the investigation gateway's client (agent-lcars#2572). The run must be live, with `agent = openclaw/<name>`. This is access control, so random LAN callers can't drive agents; it isn't provenance.
+- **Auth.** The plugin checks the caller's run bearer with `GET /runs/{runId}/introspect`, reusing the investigation gateway's client (agent-lcars#2572). The run must be live, with `agent = openclaw/<name>`. This is access control, so random LAN callers can't drive agents; it isn't provenance.
 - **Allowlist.** Plugin config `agents: [...]`. Anything else gets `403`.
 - **Turn settings:**
   - session key `agent:<name>:lcars:<attemptId>`, fresh per attempt (never `main` or a shared hook key; see #2484)
