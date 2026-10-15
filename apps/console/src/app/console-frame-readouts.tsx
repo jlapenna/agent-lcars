@@ -138,6 +138,30 @@ export function ReadoutStrip() {
   );
 }
 
+/** The signed-in identity as a line of the console menu: where narrow
+ * headers, which drop the identity block, still say who is signed in. */
+export function MenuIdentity() {
+  const state = useShellReadouts();
+  if (state.status !== 'ready') return null;
+  const { user } = state.readouts;
+  return (
+    <div className="console-menu-identity" data-testid="console-identity-menu">
+      <span className="console-identity__avatar" aria-hidden="true">
+        {user.initials}
+      </span>
+      <span>
+        {user.login}
+        {user.grants.length > 0 ? (
+          <span className="console-identity__grants">
+            {' '}
+            {user.grants.join(' · ')}
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
 /** The rail head's environment line: the host this console serves. */
 export function RailEnvironment() {
   const state = useShellReadouts();
