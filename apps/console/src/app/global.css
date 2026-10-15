@@ -690,12 +690,13 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
 /* The date and figures arrive after mount (console-frame-readouts.tsx), so the
    strip holds their lines from first paint: one for the date everyone gets,
-   and below 30em, where a maintainer's figures (about 470px) wrap, a second. */
+   and below 32em, where a maintainer's figures (up to about 476px) wrap, a
+   second. */
 .lcars-readout-strip {
   min-height: 1.4em;
 }
 
-@media (max-width: 29.99em) {
+@media (max-width: 31.99em) {
   .lcars-readout-strip[data-figures] {
     min-height: calc(2.8em + 2px);
   }
