@@ -4,6 +4,7 @@ import {
   operationalInterventionSchema,
   type OutboxEntry,
   type Run,
+  taskKey,
 } from './model';
 
 /** Each query reads at most limit+1 documents; overflow fails closed. */
@@ -33,6 +34,12 @@ const HELP = {
     'Snapshot observation time in Unix seconds.',
   snapshot_records: 'Records returned by each bounded durable feed.',
   admitted_window: 'Run identities admitted during the rolling hour.',
+  admitted_tasks_window:
+    'Distinct task identities with at least one run admitted during the rolling hour, across pipelines and retry generations.',
+  intervened_tasks_window:
+    'Distinct admitted-hour cohort tasks with a typed authorized API intervention on an admitted run; kinds overlap and any is their union, not human identity.',
+  task_intervention_unknown_window:
+    'Distinct admitted-hour cohort tasks without a qualified intervention on an admitted run; absence is unknown, never untouched or human-free.',
   auto_retries_window:
     'Automatic retry generations admitted during the rolling hour.',
   claims_window:
@@ -74,6 +81,42 @@ const HELP = {
 
 function terminalAt(run: Run): string | undefined {
   return [...run.events].reverse().find((event) => event.to === run.state)?.at;
+}
+
+function hasReplyIntervention(run: Run, now: number): boolean {
+  const event = run.events[0];
+  const updated = Date.parse(run.updatedAt);
+  return (
+    run.requestSource === 'caller' &&
+    event?.by === 'request' &&
+    event.to === 'pending' &&
+    event.at === run.createdAt &&
+    event.intervention?.kind === 'work-api-reply' &&
+    operationalInterventionSchema.safeParse(event.intervention).success &&
+    Number.isFinite(updated) &&
+    Date.parse(run.createdAt) <= updated &&
+    updated <= now
+  );
+}
+
+function hasCancelIntervention(run: Run, now: number): boolean {
+  const event = [...run.events]
+    .reverse()
+    .find((value) => value.to === run.state);
+  const admission = Date.parse(run.createdAt);
+  const settlement = Date.parse(event?.at ?? '');
+  const updated = Date.parse(run.updatedAt);
+  return (
+    run.state === 'canceled' &&
+    event?.by === 'operator' &&
+    event.intervention?.kind === 'work-api-cancel' &&
+    operationalInterventionSchema.safeParse(event.intervention).success &&
+    Number.isFinite(admission) &&
+    Number.isFinite(updated) &&
+    admission <= settlement &&
+    settlement <= updated &&
+    updated <= now
+  );
 }
 
 /** DeliveryBinding is written by the exact-attempt server verifier and trusted
@@ -204,26 +247,42 @@ export function lifecycleMetricSnapshot(
         start <= now
       );
     };
+    // This cohort concerns admitted Run generations, not every task touched or
+    // first-ever task admission. Count one canonical identity across pipelines.
+    const admittedRuns = [...byId.values()].filter((run) =>
+      inWindow(run.createdAt),
+    );
+    const admittedTasks = new Set(admittedRuns.map((run) => taskKey(run.task)));
+    const replyTasks = new Set(
+      admittedRuns
+        .filter((run) => hasReplyIntervention(run, now))
+        .map((run) => taskKey(run.task)),
+    );
+    const cancelTasks = new Set(
+      admittedRuns
+        .filter((run) => hasCancelIntervention(run, now))
+        .map((run) => taskKey(run.task)),
+    );
+    const intervenedTasks = new Set([...replyTasks, ...cancelTasks]);
+    gauge('admitted_tasks_window', admittedTasks.size);
+    for (const [kind, tasks] of [
+      ['work-api-reply', replyTasks],
+      ['work-api-cancel', cancelTasks],
+      ['any', intervenedTasks],
+    ] as const)
+      gauge('intervened_tasks_window', tasks.size, { kind });
+    gauge(
+      'task_intervention_unknown_window',
+      admittedTasks.size - intervenedTasks.size,
+    );
     for (const pipeline of PIPELINES) {
       const runs = [...byId.values()].filter(
         (run) => pipelineFor(run) === pipeline,
       );
       const admitted = runs.filter((run) => inWindow(run.createdAt));
-      const replyInterventions = admitted.filter((run) => {
-        const event = run.events[0];
-        const updated = Date.parse(run.updatedAt);
-        return (
-          run.requestSource === 'caller' &&
-          event?.by === 'request' &&
-          event.to === 'pending' &&
-          event.at === run.createdAt &&
-          event.intervention?.kind === 'work-api-reply' &&
-          operationalInterventionSchema.safeParse(event.intervention).success &&
-          Number.isFinite(updated) &&
-          Date.parse(run.createdAt) <= updated &&
-          updated <= now
-        );
-      });
+      const replyInterventions = admitted.filter((run) =>
+        hasReplyIntervention(run, now),
+      );
       gauge('reply_interventions_window', replyInterventions.length, {
         pipeline,
       });
@@ -233,25 +292,9 @@ export function lifecycleMetricSnapshot(
       );
       // by=operator also covers automated anchor closure and provider switches.
       // Only the authenticated ingress's typed durable fact earns credit.
-      const interventions = terminal.filter((run) => {
-        const event = [...run.events]
-          .reverse()
-          .find((value) => value.to === run.state);
-        const admission = Date.parse(run.createdAt);
-        const settlement = Date.parse(event?.at ?? '');
-        const updated = Date.parse(run.updatedAt);
-        return (
-          run.state === 'canceled' &&
-          event?.by === 'operator' &&
-          event.intervention?.kind === 'work-api-cancel' &&
-          operationalInterventionSchema.safeParse(event.intervention).success &&
-          Number.isFinite(admission) &&
-          Number.isFinite(updated) &&
-          admission <= settlement &&
-          settlement <= updated &&
-          updated <= now
-        );
-      });
+      const interventions = terminal.filter((run) =>
+        hasCancelIntervention(run, now),
+      );
       gauge('operational_interventions_window', interventions.length, {
         pipeline,
         kind: 'work-api-cancel',
