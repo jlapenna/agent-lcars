@@ -22,6 +22,7 @@ import {
   observeGithubDelivery,
   readGithubIntakePermission,
   readyDeliveryBinding,
+  UnqualifiedDeliveryError,
 } from './ready-delivery';
 
 vi.mock('./deployment', () => ({ isControlPlaneRepository: () => true }));
@@ -384,19 +385,51 @@ describe('authenticated ready delivery evidence', () => {
   });
 
   it.each([
-    { draft: true },
-    { auto_merge: null },
-    { body: '<!-- attempt-claim:old -->' },
-  ])('refuses unready, unarmed or wrong-attempt evidence: %j', async (pr) => {
-    await expect(
-      readyDeliveryBinding(fixture({ pr }), {
+    { pr: { draft: true }, unqualified: false },
+    { pr: { auto_merge: null }, unqualified: true },
+    { pr: { auto_merge: { merge_method: 'merge' } }, unqualified: true },
+    { pr: { body: '<!-- attempt-claim:old -->' }, unqualified: false },
+    { pr: { auto_merge: null, body: null }, unqualified: false },
+    { pr: { auto_merge: null, draft: true }, unqualified: false },
+    { pr: { auto_merge: null, state: 'closed' }, unqualified: false },
+  ])(
+    'refuses unready, unarmed or wrong-attempt evidence: $pr',
+    async ({ pr, unqualified }) => {
+      const error = await readyDeliveryBinding(fixture({ pr }), {
         run: RUN,
         task: TASK,
         repo: 'octo/example',
         number: 12,
         now: NOW,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      // Only this run's exact marked, open, ready PR that is merely unarmed
+      // is the narrow unqualified state; everything else stays generic.
+      expect(error instanceof UnqualifiedDeliveryError).toBe(unqualified);
+    },
+  );
+
+  it('keeps unreadable PR evidence and a foreign target generic', async () => {
+    const refused = fixture({ pr: { auto_merge: null } });
+    const fetchImpl = (async () =>
+      new Response(null, { status: 502 })) as typeof fetch;
+    for (const attempt of [
+      readyDeliveryBinding(
+        { ...refused, fetchImpl },
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ),
+      readyDeliveryBinding(refused, {
+        run: RUN,
+        task: TASK,
+        repo: 'octo/other',
+        number: 12,
+        now: NOW,
       }),
-    ).rejects.toThrow();
+    ]) {
+      const error = await attempt.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(UnqualifiedDeliveryError);
+    }
   });
 
   it('rejects incomplete review reads and author-only approval for already merged handoff', async () => {

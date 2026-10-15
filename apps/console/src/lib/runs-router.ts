@@ -48,7 +48,10 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
-import { readyDeliveryBinding } from './ready-delivery';
+import {
+  readyDeliveryBinding,
+  UnqualifiedDeliveryError,
+} from './ready-delivery';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
@@ -1060,14 +1063,20 @@ export const runsRouter = os.router({
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        // A correction or a merged-deliverable claim exists only to bind
-        // delivery evidence, so an unqualified one stays refused. An initial
-        // PR is still a published deliverable: GitHub arming, merging and
-        // review are asynchronous (a repository's arming workflow can land
-        // after the executor exits), so settle it as an ordinary
+        // Fail closed by default. The single relaxation: an initial
+        // pull-request result whose own exact attempt-marked, ready PR the
+        // authoritative read proved, but which is not armed yet (a
+        // repository's arming workflow can land after the executor exits)
+        // or merged without independent review. It settles as an ordinary
         // pull-request result without durable delivery ownership instead of
-        // discarding it as runner-failed.
-        if (deliveryCorrection || result.summary === 'merged-deliverable') {
+        // discarding the deliverable as runner-failed. Read failures,
+        // malformed or missing evidence, corrections and merged-deliverable
+        // claims all stay refused.
+        if (
+          !(error instanceof UnqualifiedDeliveryError) ||
+          deliveryCorrection ||
+          result.summary !== 'pull-request'
+        ) {
           console.warn(
             `agent-lcars: ready delivery handoff refused for ${run.runId}: ${reason}`,
           );

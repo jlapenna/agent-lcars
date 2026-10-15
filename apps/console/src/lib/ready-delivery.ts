@@ -245,6 +245,14 @@ function hasIndependentReview(
   );
 }
 
+/** Thrown only after an authoritative read proved the run's own exact
+ * attempt-marked, non-draft PR in its target repository, which merely has not
+ * qualified for durable delivery ownership yet (not armed, or merged without
+ * independent exact-head review). Every other failure is a generic Error. */
+export class UnqualifiedDeliveryError extends Error {
+  override readonly name = 'UnqualifiedDeliveryError';
+}
+
 /** A successful PR artifact is not a completion verdict. This exact server
  * read establishes the narrow ready handoff before authenticated settlement. */
 export async function readyDeliveryBinding(
@@ -262,26 +270,33 @@ export async function readyDeliveryBinding(
   const generation = parseRunGeneration(run.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: run.runId });
+  const payload = workPayloadSchema.parse(task.work);
+  if (payload.spec.target.repo !== repo)
+    throw new Error('Delivery target changed');
   if (
     pr.number !== number ||
     (!pr.merged && pr.state !== 'open') ||
     pr.draft ||
-    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`) ||
-    (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
+    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Deliverable is not ready and armed');
+  // Proven by the authoritative read above: this run's exact marked, ready,
+  // open PR in its own target repository, merely not armed yet.
+  if (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
+    throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
   await protectedChecks(deps, repo, pr.base.ref);
   // An open, armed artifact transfers waiting ownership; asynchronous review
   // belongs to the durable monitor, rather than the implementation executor.
   // Already merged artifacts still require review before accepting landing.
   if (pr.merged) {
     const review = await reviews(deps, repo, number, pr.head.sha);
+    // Only a complete, successful review read proving absence qualifies as
+    // the narrow unqualified state; read failures above stay generic.
     if (!hasIndependentReview(review, pr.user.login))
-      throw new Error('Deliverable requires exact-head independent review');
+      throw new UnqualifiedDeliveryError(
+        'Deliverable requires exact-head independent review',
+      );
   }
-  const payload = workPayloadSchema.parse(task.work);
-  if (payload.spec.target.repo !== repo)
-    throw new Error('Delivery target changed');
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (
     final.head.sha !== pr.head.sha ||

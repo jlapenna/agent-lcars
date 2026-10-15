@@ -460,10 +460,12 @@ protected target and squash arming before accepting this waiting handoff. It
 settles execution through normal credential cleanup and positive physical
 retirement. Already merged initial handoffs still require independent exact-head
 GitHub review, resolved threads and exact protected landing before acceptance.
-An initial PR that does not yet qualify (for example, a repository workflow
-arms it after the executor exits) still settles as an ordinary pull-request
-result, without durable delivery ownership; a delivery correction or
-merged-deliverable claim that does not qualify is refused.
+Only when the authoritative read proves the run's own exact attempt-marked,
+ready PR in its target repository that is merely unarmed (for example, a
+repository workflow arms it after the executor exits) or merged without
+independent review does an initial pull-request result settle without durable
+delivery ownership. Every other refusal, unreadable evidence, correction and
+merged-deliverable claim fails closed.
 Without the advertised capability, continue the existing delivery path. The
 baked runner propagates only the serving Console’s version into the brief;
 repository content cannot enable it.

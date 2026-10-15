@@ -26,6 +26,7 @@ import {
 import { recoverCodexCredentialOperations } from './codex-credential-operations';
 import { codexCentralAuthObject } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
+import { UnqualifiedDeliveryError } from './ready-delivery';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
@@ -2771,6 +2772,64 @@ describe('complete', () => {
   // fifteen seconds after the executor's completion, so the handoff was not
   // yet qualified. That must not turn a published deliverable into a 409 and
   // runner-failed; it settles without durable delivery ownership.
+  async function claimedForCompletion(name: string) {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid(name),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    return { store, orchestrator, now, runId, token };
+  }
+
+  it.each([
+    {
+      name: 'a generic read failure',
+      error: new Error('Delivery read refused (502)'),
+      outcome: 'pull-request',
+    },
+    {
+      name: 'a non-Error rejection',
+      error: 'unknown',
+      outcome: 'pull-request',
+    },
+    {
+      name: 'an unqualified merged-deliverable claim',
+      error: new UnqualifiedDeliveryError('not armed'),
+      outcome: 'merged-deliverable',
+    },
+  ])('fails closed on $name, leaving the run live', async (c) => {
+    const f = await claimedForCompletion(`work-complete-closed-${c.outcome}`);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const r = await call(
+      {
+        ...f,
+        ...context,
+        bearerToken: f.token,
+        loadReadyDeliveryBinding: async () => {
+          throw c.error;
+        },
+      },
+      'POST',
+      runPath(f.runId, '/complete'),
+      {
+        outcome: c.outcome,
+        outcomeReference: { kind: 'pull-request', number: 4 },
+      },
+    );
+    warn.mockRestore();
+    expect(r.status).toBe(409);
+    const run = (await f.store.readRun(f.runId))!;
+    expect(run.state).toBe('running');
+    expect(run.result).toBeUndefined();
+  });
+
   it('settles an initial PR whose ready handoff is not yet qualified, without delivery ownership', async () => {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
@@ -2785,7 +2844,7 @@ describe('complete', () => {
       tokenHash: hashRunToken(token),
     });
     const ready = vi.fn(async () => {
-      throw new Error('Deliverable is not ready and armed');
+      throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const r = await call(
@@ -2807,7 +2866,7 @@ describe('complete', () => {
     expect(r).toEqual({ status: 200, json: { runId, state: 'finished' } });
     expect(ready).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Deliverable is not ready and armed'),
+      expect.stringContaining('Deliverable is not armed yet'),
     );
     warn.mockRestore();
     const settled = (await store.readRun(runId))!;
