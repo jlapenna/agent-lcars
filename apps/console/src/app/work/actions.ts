@@ -91,6 +91,26 @@ async function settleCreate<T>(run: () => Promise<T>) {
   }
 }
 
+const REJECTED_GITHUB_CREDENTIAL = {
+  code: 'UNAUTHORIZED',
+  message:
+    'GitHub authorization failed. Sign out and sign in again, then retry.',
+} as const;
+
+/** A 401 from GitHub means the session's user token was rejected; retrying
+ * with it cannot succeed, so callers ask for a fresh sign-in instead. */
+function undefinedWhenGithubRejectsCredential(error: unknown): undefined {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    error.status === 401
+  ) {
+    return undefined;
+  }
+  throw error;
+}
+
 /** Native Work creation with an optional screenshot. The evidence keeps its
  * historical authenticated read URL and immutable binding, while the task is
  * minted exclusively through the canonical Work procedure. */
@@ -169,26 +189,9 @@ async function createItemWithEvidenceUnsafe(form: FormData) {
       owner: repository.owner,
       repo: repository.name,
     })
-    .catch((error: unknown) => {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error &&
-        error.status === 401
-      ) {
-        return undefined;
-      }
-      throw error;
-    });
+    .catch(undefinedWhenGithubRejectsCredential);
   if (response === undefined) {
-    return [
-      {
-        code: 'UNAUTHORIZED',
-        message:
-          'GitHub authorization failed. Sign out and sign in again, then retry.',
-      },
-      undefined,
-    ] as const;
+    return [REJECTED_GITHUB_CREDENTIAL, undefined] as const;
   }
   const { data: repo } = response;
   const visibility = repo.visibility;
@@ -290,11 +293,17 @@ export async function createTrackingIssue(
   const { workId, repository, title, body } = parsed.data;
   const watched = resolveWatchedRepo(repository);
   const origin = process.env['AUTH_URL'] ?? '';
-  const { data } = await createGithubUserClient(token).rest.issues.create({
-    owner: watched.owner,
-    repo: watched.name,
-    title,
-    body: `${body}\n\n---\nTracks Agent LCARS work item [work:${workId}](${origin}/work/${workId}).`,
-  });
+  const created = await createGithubUserClient(token)
+    .rest.issues.create({
+      owner: watched.owner,
+      repo: watched.name,
+      title,
+      body: `${body}\n\n---\nTracks Agent LCARS work item [work:${workId}](${origin}/work/${workId}).`,
+    })
+    .catch(undefinedWhenGithubRejectsCredential);
+  if (created === undefined) {
+    return [REJECTED_GITHUB_CREDENTIAL, undefined] as const;
+  }
+  const { data } = created;
   return [undefined, { number: data.number, url: data.html_url }] as const;
 }
