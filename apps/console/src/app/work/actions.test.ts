@@ -186,4 +186,27 @@ describe('createItemWithEvidence', () => {
     expect(log).toHaveBeenCalled();
     log.mockRestore();
   });
+
+  it.each(['context', 'githubGet', 'create'] as const)(
+    'contains an unexpected %s failure without exposing server details',
+    async (stage) => {
+      const failure = new Error('Bad credentials: private server detail');
+      const log = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => undefined);
+      mocks[stage].mockRejectedValueOnce(failure);
+      try {
+        const [error, data] = await createItemWithEvidence(form());
+
+        expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+        expect(error?.message).not.toContain('private server detail');
+        expect(data).toBeUndefined();
+        expect(log).toHaveBeenCalledWith('work item creation failed', failure);
+        expect(mocks.rollback).not.toHaveBeenCalled();
+        if (stage === 'create') expect(mocks.prepare).toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 });

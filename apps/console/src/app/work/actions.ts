@@ -83,8 +83,7 @@ async function settleCreate<T>(run: () => Promise<T>) {
     return [
       {
         code: 'INTERNAL_SERVER_ERROR',
-        message:
-          'Work item creation failed on the server. Retry, and check the console logs if it persists.',
+        message: 'Work item creation failed. Please try again.',
       },
       undefined,
     ] as const;
