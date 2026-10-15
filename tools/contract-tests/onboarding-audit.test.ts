@@ -9,6 +9,7 @@ import {
   auditHasFailure,
   auditRepository,
   createApi,
+  resolvedRegistrationInventory,
   runAudit,
   runnerRegistrations,
   watchedRepositories,
@@ -397,8 +398,67 @@ describe('read-only onboarding audit', () => {
     ).toThrow('Invalid runner registration URL');
   });
 
+  it('accepts the resolved receipt shape while preserving per-registration App identities', () => {
+    const config = {
+      registrations: [
+        {
+          name: 'repo',
+          github: { url: 'https://github.com/example/project' },
+          app: { client_id: 'IvExample123', installation_id: 7 },
+        },
+        {
+          name: 'org',
+          github: { url: 'https://github.com/example' },
+          app: { client_id: '1234', installation_id: 8 },
+        },
+      ],
+    };
+    expect(resolvedRegistrationInventory(JSON.stringify(config))).toEqual(
+      config,
+    );
+    expect(
+      runnerRegistrations(config).map(({ installationId }) => installationId),
+    ).toEqual([7, 8]);
+  });
+
+  it.each([
+    '',
+    'registrations: []',
+    'registrations: [invalid]',
+    JSON.stringify({
+      registrations: [
+        {
+          name: 'lane',
+          github: { url: 'https://github.com/example' },
+          app: {
+            client_id: 'IvExample',
+            installation_id: 7,
+            private_key: 'must-not-appear',
+          },
+        },
+      ],
+    }),
+    JSON.stringify({
+      registrations: [
+        {
+          name: 'lane',
+          github: { url: 'https://github.com/example?token=must-not-appear' },
+          app: { client_id: 'IvExample', installation_id: 7 },
+        },
+      ],
+    }),
+  ])(
+    'rejects incomplete or extra receipt fields without reporting their values (%#)',
+    (source) => {
+      expect(() => resolvedRegistrationInventory(source)).toThrow(
+        /^Invalid resolved registration inventory$/,
+      );
+    },
+  );
+
   it.each([
     ['empty operator inventory', {}],
+    ['explicit empty YAML document', null],
     [
       'QueueExecutor-only configuration',
       { kubernetes: { namespace: 'agent-lcars' } },
