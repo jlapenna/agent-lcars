@@ -6,6 +6,7 @@ import type { ShellReadouts } from '../lib/shell-readouts';
 import {
   ConsoleIdentity,
   ConsoleLiveStatus,
+  MenuIdentity,
   RailReadouts,
   ReadoutStrip,
 } from './console-frame-readouts';
@@ -176,6 +177,18 @@ describe('console frame readouts', () => {
     expect(screen.getByTestId('strip-readout-merged')).toHaveTextContent(
       '14 merged 24h',
     );
+  });
+
+  it('names the signed-in identity in the console menu', async () => {
+    respond(admin);
+    render(<MenuIdentity />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const identity = screen.getByTestId('console-identity-menu');
+    expect(identity).toHaveTextContent('JL');
+    expect(identity).toHaveTextContent('jlapenna admin · work.operator');
   });
 
   it('marks a partial token total as a lower bound', async () => {
