@@ -11,6 +11,9 @@ export const displayFont = localFont({
   weight: '500 700',
   style: 'normal',
   variable: '--font-display',
+  // Keep cold-route bandwidth available for body text and action hydration.
+  // Headings retain the same swap-loaded local face without an eager preload.
+  preload: false,
   display: 'swap',
 });
 
@@ -40,5 +43,7 @@ export const monoFont = localFont({
     },
   ],
   variable: '--font-mono',
+  // Request each data weight when used rather than preloading both on every route.
+  preload: false,
   display: 'swap',
 });
