@@ -1,5 +1,6 @@
 'use server';
 
+import { logger } from '@agent-lcars/logging';
 import {
   fallbackPipelinesSchema,
   workIdSchema,
@@ -79,7 +80,7 @@ async function settleCreate<T>(run: () => Promise<T>) {
   try {
     return await run();
   } catch (error) {
-    console.error('work item creation failed', error);
+    logger.error('work item creation failed', error);
     return [
       {
         code: 'INTERNAL_SERVER_ERROR',

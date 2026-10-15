@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -208,7 +209,7 @@ describe('createItemWithEvidence', () => {
   });
 
   it('turns an unexpected create throw into a coded error instead of rejecting', async () => {
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     mocks.create.mockRejectedValue(new Error('firestore unavailable'));
     const [error, data] = await createItem({
       id: intent.workId,
@@ -231,9 +232,7 @@ describe('createItemWithEvidence', () => {
       const failure = Object.assign(new Error('private server detail'), {
         status: 503,
       });
-      const log = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => undefined);
+      const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
       mocks[stage].mockRejectedValueOnce(failure);
       try {
         const [error, data] = await createItemWithEvidence(form());
