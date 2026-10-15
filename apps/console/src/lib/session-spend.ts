@@ -204,12 +204,16 @@ function addSession(
   }
 }
 
-function pipelineKey(doc: SessionDoc): string {
+export type SpendPipelineGrouping = 'adapter' | 'lifecycle';
+
+function pipelineKey(doc: SessionDoc, grouping: SpendPipelineGrouping): string {
   return doc.agent === 'claude-code'
     ? 'claude'
     : doc.agent === 'codex' || doc.agent === 'opencode'
       ? doc.agent
-      : `other: ${doc.agent}`;
+      : grouping === 'lifecycle'
+        ? 'unknown'
+        : `other: ${doc.agent}`;
 }
 
 type Bucket = SpendTotals & { prs: Set<string> };
@@ -221,6 +225,7 @@ export function aggregateSessionSpend(
   docs: SessionDoc[],
   projections: ReadonlyMap<string, GithubAnchorProjection> = new Map(),
   coverageLimited = false,
+  pipelineGrouping: SpendPipelineGrouping = 'adapter',
 ): SessionSpend {
   const totals = emptyTotals(),
     withoutPR = emptyTotals();
@@ -236,7 +241,7 @@ export function aggregateSessionSpend(
     const keys = sessionPRKeys(doc, projections);
     if (keys.length === 0) addSession(withoutPR, doc, projections);
     const dimensions = [
-      pipelineKey(doc),
+      pipelineKey(doc, pipelineGrouping),
       doc.model ?? 'unknown',
       doc.resolvedModel ?? 'unknown',
     ];

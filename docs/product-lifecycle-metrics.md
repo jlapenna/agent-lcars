@@ -92,6 +92,47 @@ credit one Run using its newest observed revision; retries remain separate Run
 identities, even if they concern the same PR. No task-level success ratio or
 cost-per-distinct-merge denominator is derived from this subset.
 
+`operational_interventions_window{kind="work-api-cancel"}` counts a narrow,
+positive operational-intervention fact in the same settled-hour Run cohort.
+Only the authenticated `work.operator` Work API live-cancel handler stamps
+`RunEvent.intervention` with this kind and its verified principal, atomically
+with cancellation. The terminal event must be `by=operator`, and admission,
+settlement, Run revision and snapshot clocks must be valid and ordered.
+Duplicate feeds and repeated reads count one newest Run identity; retry
+generations remain distinct. No caller body, worker parameter, note, username
+or authentication method supplies this fact. Automated anchor closure and
+provider replacement call the same cancellation primitive without this stamp
+and receive no credit. Closing an already parked task settles no Run and is
+outside this subset. No historical record is backfilled.
+
+`measurement_unknown_window{measurement="operational_intervention"}` is the
+settled-hour cohort minus these qualified members. Absence of a stamp is
+unknown, never proof of no intervention. Invalid/missing terminal clocks retain
+the separate `terminal_clock_unknown_window` diagnostic. Principal values stay
+in the durable record and never become metric labels. An authorized API caller
+can itself be automation: this observation does not reduce `human_touch`
+unknowns, establish a human identity, deduplicate unique tasks or correlate
+interventions with eventual merge. It provides one trusted producer for that
+future task-level join; no human-touch rate or target is claimed.
+
+The remaining original intervention join stays open. These existing owners
+provide the next action boundaries; none alone proves a biological human:
+
+| Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                            |
+| Reply / provider selection (`work-reply.ts`, `request`) | `Run.params` retains reply channel/principal and a keyed admission receipt; those opaque fields are not typed intervention provenance. Automated provider fallback/retries must remain excluded. |
+| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                      |
+| GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                              |
+| Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.           |
+
+A complete task-level rate still needs a unique admitted-task cohort across
+retry/provider generations, explicit typed action coverage, eventual trusted
+merge identity, and unresolved/censored outcomes. Missing action history or
+unknown human identity cannot become a zero-touch task. This producer step
+supplies no task-level rate, broad artifact classification, monitoring install
+or SLO-attainment claim; the original #2200 acceptance remains open.
+
 `measurement_unknown_window` deliberately retains unavailable facts:
 
 - `provider_start`: observations without a valid retained server spawn clock.
@@ -121,11 +162,12 @@ cost-per-distinct-merge denominator is derived from this subset.
   admission cohort, correlate immutable verified park/manual-action events
   to eventual merge, and retain unresolved/censored tasks as unknown. A
   reported park alone is only a reported handoff, not all human activity.
-- `cost`: denominator finished runs. Real cost-per-merged-deliverable needs
-  exact attempt-to-session billing joins (all retries/parks included), actual
-  currency/price basis and independently verified distinct merged PRs. Missing
-  subscription/local-inference prices and unmatched sessions remain unknown,
-  not zero-dollar or token-derived claims.
+- `cost`: denominator finished runs. This series retains unknown Work-attempt
+  billing because exact attempt-to-session invoice joins are absent. The
+  separate canonical session-cost proxy below supplies reported/estimated
+  session cost per known distinct merge, with explicit cohort and coverage;
+  it does not claim an invoice join. Missing subscription/local-inference
+  prices and unmatched sessions remain unknown, not zero-dollar claims.
 
 Webhook-receipt admission latency, console time-to-decision, degradation
 rate, phone decision reach and end-to-end traceability also remain unknown:
@@ -167,7 +209,54 @@ After durable trustworthy events and longitudinal data exist, the suggested
 30-day SLO handoff is a reviewed dual-window budget burn: fast 14.4x on both
 1h/5m and slow 6x on both 6h/30m, with minimum-volume and unknown-data gates.
 The current overlapping 1h gauges cannot implement those independent windows;
-the template deliberately does not pretend to do so. Keep #2200 open for
-those event joins, collection installation and real elapsed qualification.
+the template deliberately does not pretend to do so. The original #2200
+source acceptance requires the definitions, measurements, accounting tests and
+operator handoff. Missing authoritative event producers remain source gaps;
+collection installation and elapsed SLO qualification are separate Homelab
+operational work, not additional original source-closure requirements.
 Prometheus owns the [rule-test format](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/)
 and [alert `for` semantics](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/).
+
+## Session cost proxy
+
+The same authenticated export appends `lcars_product_session_cost_*` gauges
+from the canonical Costs `SessionSpend` owner. It selects sessions with recorded
+activity in the rolling hour ending at `observedAt`, retains at most 200 newest
+sessions, and uses existing stored GitHub PR projections (at most 200 point
+reads, eight concurrent, five-second shared projection deadline). The session
+reader streams matching recent records with bounded retained memory; 200 is the
+returned-page bound, not a promise of 200 underlying document reads. This is a
+read-only, nontransactional snapshot. Future/invalid activity clocks are excluded
+and make coverage partial. Page saturation also makes coverage partial.
+
+`session_cost_reported_usd` and `session_cost_estimated_usd` remain separate.
+Both are **whole cumulative session costs**, not charges incurred during that
+hour or actual invoice amounts. All selected sessions contribute, including
+retries, failed attempts and sessions without PRs. The denominator is distinct
+repository-qualified, known-merged PRs referenced by that same selected cohort,
+regardless of merge date. The canonical stored-evidence attribution rules apply;
+worker claims and unqualified PR numbers never establish a merge. A PR shared
+by multiple selected sessions counts once within each pipeline; pipeline PR
+counts must not be summed to obtain a globally unique denominator.
+
+Only `claude`, `codex`, `opencode` and `unknown` pipeline labels are exported.
+Other adapters fold into `unknown` before canonical PR deduplication. No session,
+model, repository, principal, URL or error labels are exported. The existing
+Costs page retains its adapter-specific grouping.
+
+`session_cost_read_available=0` suppresses money/cohort samples when the feed
+fails or aggregates are nonfinite. `session_cost_read_complete=0` marks a capped
+or degraded archive/projection read. Those gauges are independent of the
+existing three-durable-feed `snapshot_complete`; cost uncertainty does not hide
+live-run or dead-letter health. Unpriced sessions, unknown PR statuses and
+unqualified reference counts remain explicit. The cost-per-merged-PR proxy is
+omitted if no price or known merge exists; otherwise `coverage=partial` marks
+any missing price, attribution or read coverage. Reported zero is distinct from
+unknown pricing. Do not sum successive rolling-window gauges or treat this
+proxy as actual task/run billing.
+
+This completes the source cost-proxy boundary, not the whole original SLO
+acceptance: broad independently verified evidence and typed human-intervention
+producer facts remain unknown. The operator recording-rule/alert handoff is a
+source deliverable; installation and elapsed SLO qualification remain separate
+Homelab operational work.

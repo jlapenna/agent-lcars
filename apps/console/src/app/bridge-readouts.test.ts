@@ -4,6 +4,7 @@ import type { RunTimeline } from '../lib/run-history';
 import {
   type BridgeReadoutInput,
   bridgeReadouts,
+  dayOfHours,
   fleetReadoutInput,
 } from './bridge-readouts';
 
@@ -108,7 +109,8 @@ describe('bridgeReadouts', () => {
     expect(r['busy']?.spark?.values).toEqual([6, undefined, 7]);
     expect(r['spend']?.spark).toEqual({
       label: 'Spend per hour today, by last activity (lower bound)',
-      values: [1, 0, 2],
+      // 24 slots ending at the current hour; those before midnight empty.
+      values: [...Array.from({ length: 21 }, () => undefined), 1, 0, 2],
     });
   });
 });
@@ -197,5 +199,16 @@ describe('fleetReadoutInput', () => {
       now,
     });
     expect(input.history).toBeUndefined();
+  });
+});
+
+describe('dayOfHours', () => {
+  it('keeps a day of hourly slots so early hours draw as bars, not a block', () => {
+    const values = dayOfHours([1.5]);
+    expect(values).toHaveLength(24);
+    expect(values?.slice(0, 23).every((v) => v === undefined)).toBe(true);
+    expect(values?.at(-1)).toBe(1.5);
+    expect(dayOfHours(undefined)).toBeUndefined();
+    expect(dayOfHours(Array.from({ length: 24 }, () => 1))).toHaveLength(24);
   });
 });

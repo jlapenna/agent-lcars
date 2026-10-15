@@ -421,6 +421,50 @@ describe('getSessionArchive', () => {
 
 describe('costs archive selection', () => {
   afterEach(() => vi.resetAllMocks());
+  it('uses the export observation clock and marks excluded future or malformed sessions partial', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue([
+      cliDoc({ sessionId: 'selected', agent: 'gemini', totalCostUsd: 3 }),
+      cliDoc({
+        sessionId: 'future',
+        totalCostUsd: 100,
+        lastActivityAt: '2026-07-10T11:00:01.000Z',
+      }),
+      cliDoc({
+        sessionId: 'bad-clock',
+        totalCostUsd: 100,
+        lastActivityAt: 'invalid',
+      }),
+      cliDoc({
+        sessionId: 'too-old',
+        totalCostUsd: 100,
+        lastActivityAt: '2026-07-10T09:59:59.000Z',
+      }),
+    ]);
+    const result = await getSessionArchive(
+      { days: ONE_HOUR_DAYS },
+      {
+        includeSpend: true,
+        observedAt: '2026-07-10T11:00:00.000Z',
+        spendPipelineGrouping: 'lifecycle',
+      },
+    );
+    expect(result.rows.map((row) => row.sessionId)).toEqual(['selected']);
+    expect(result.available).toBe(true);
+    expect(result.spend).toMatchObject({
+      coverageLimited: true,
+      totals: { sessions: 1, reportedCostUsd: 3 },
+      byPipeline: [expect.objectContaining({ key: 'unknown' })],
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(listSessionDocs).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        activeSince: '2026-07-10T10:00:00.000Z',
+        limit: 200,
+      }),
+    );
+  });
+
   it('uses exactly the filtered archive and preserves unknown merge evidence on failure', async () => {
     vi.mocked(listSessionDocs).mockResolvedValue([
       cliDoc({

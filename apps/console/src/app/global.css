@@ -343,6 +343,16 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   flex-direction: column;
 }
 
+/* The identity as a console-menu line (console-frame-readouts.tsx
+   MenuIdentity), shown on every width: narrow headers drop the block. */
+.console-menu-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 8px;
+  font-size: 0.8125rem;
+}
+
 .console-identity__grants {
   color: var(--lcars-ink-dim);
   font-size: 0.75rem;
@@ -655,6 +665,64 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 @media (min-width: 80em) {
   .console-page-shell[data-frame='rail'] .console-live-status {
     display: block;
+  }
+}
+
+/* The rail's readouts on one line where the rail is hidden (below 64em,
+   console-frame-readouts.tsx ReadoutStrip). */
+.lcars-readout-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding-inline: var(--lcars-content-start, 0) var(--lcars-content-gutter, 0);
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.lcars-readout-strip > span {
+  white-space: nowrap;
+}
+
+/* The streamed placeholder's strip goes with its header once the real page
+   arrives (see the header handoff rule at the top of this file). */
+body:has(.console-header:not([data-streaming-fallback]))
+  .console-page-shell[data-streaming-fallback]
+  > .lcars-readout-strip {
+  display: none;
+}
+
+.lcars-readout-strip b {
+  color: var(--lcars-ink);
+  font-weight: 500;
+}
+
+@media (min-width: 64em) {
+  .lcars-readout-strip {
+    display: none;
+  }
+}
+
+/* Below 80em the header's sync block does not fit, so the same status rides
+   one line under the title (console-frame-readouts.tsx, compact): every width
+   says whether the page is live, as the mockup's header does. */
+.console-live-status--compact {
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 0.6875rem;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+@media (min-width: 80em) {
+  .console-page-shell[data-frame='rail'] .console-live-status--compact {
+    display: none;
   }
 }
 
@@ -1240,7 +1308,7 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
 
   /* Only ConsoleToolbar's own form folds (the Inbox's repository form shares
      the class), and only once hydrated: before then the toggle cannot open
-     anything, so every control stays in view for the native Apply. The
+     anything, so every control stays in view until it can. The
      window stays out: it is one compact row and would otherwise be a hidden
      filter. */
   .console-toolbar
@@ -4453,6 +4521,22 @@ td.costs-repo-spend__num {
 .ops-host {
   font-family: var(--font-mono), monospace;
   font-weight: 500;
+  /* Runner pod names run to sixty unbroken characters (a direct executor's
+     job hash); unwrapped they widened the Runners table past its column and
+     over the Runner fleet beside it. */
+  overflow-wrap: anywhere;
+}
+
+/* A runner's job link (repository · job name) and a dispatch's claiming
+   runner wrap within their cells for the same reason; work references
+   elsewhere stay on one line. */
+.ops-wrap {
+  overflow-wrap: anywhere;
+}
+
+.ops-mono-dim .ops-ref {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ops-host-spec {
@@ -4867,6 +4951,16 @@ td.costs-repo-spend__num {
 
   .inbox-agent-select {
     flex: 1 1 auto;
+  }
+
+  /* The same phone fold as every workspace toolbar (console-toolbar.tsx). */
+  .inbox-toolbar[data-hydrated] > .console-toolbar__toggle {
+    display: inline-flex;
+  }
+
+  .inbox-toolbar[data-hydrated]:not([data-filters-open])
+    > :is(.console-repository-selector, .inbox-agent-select) {
+    display: none;
   }
 
   .inbox-respond-oldest {

@@ -119,6 +119,7 @@ async function InboxBody({
           />
         }
         mobileScopeLabel={mobileScopeLabel}
+        repoScoped={repoFilter !== undefined}
         toolbarStart={
           <RepositorySelector
             repos={watchedRepos}
