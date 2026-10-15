@@ -396,6 +396,23 @@ App permissions, registration configuration, or rulesets. A configuration audit
 does not establish that committed configuration is deployed or that a real
 dispatch works.
 
+The scheduled and manual workflow accepts the optional repository variable
+`ONBOARDING_AUDIT_REGISTRATIONS` containing the resolved registration YAML.
+The approved Homelab ARC apply produces
+`github-runner-autoscaler/.arc-registration-audit.yml` beside its accepted
+`.arc-lanes.applied.yml` receipt; see the
+[Homelab input owner](https://github.com/jlapenna/homelab/blob/main/github-runner-autoscaler/README.md#resolved-arc-onboarding-input).
+After an approved apply, an operator can copy that public identity projection
+into the variable. Refresh it after each accepted lane/App identity change;
+a source merge alone does not create a deployed receipt. The workflow validates the nonempty allowlisted identity shape, rejects duplicate
+lane names and extra fields (including private keys), and passes the value as data through a private temporary file to `--registrations=PATH`
+and removes the file on exit. An unset variable preserves the default
+configuration lookup and its explicit coverage gap. A supplied empty or
+invalid inventory cannot silently fall back to that lookup. GitHub may display public step environment values in its run log. Keep private
+keys out of this inventory. This transport does not authenticate the declared App;
+runner scope still requires its separately supplied actual credential.
+Publishing the inventory and provisioning credentials remain operator actions.
+
 The workflow accepts optional `ONBOARDING_AUDIT_READ_TOKEN` and
 `AGENT_LCARS_RUNNER_APP_PRIVATE_KEY` secrets, with the corresponding runner
 identity variables. Adding or distributing these credentials is a separate
