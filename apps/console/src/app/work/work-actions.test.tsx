@@ -1,5 +1,11 @@
 import { MantineProvider } from '@mantine/core';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WorkActions } from './work-actions';
@@ -89,7 +95,9 @@ describe('WorkActions', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Use Firestore.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    });
     await waitFor(() =>
       expect(reply).toHaveBeenCalledWith({ id: 'ID1', text: 'Use Firestore.' }),
     );
@@ -144,7 +152,11 @@ describe('WorkActions', () => {
       fireEvent.change(screen.getByRole('textbox'), {
         target: { value: 'Use Firestore.' },
       });
-      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      // Reply starts an async transition; finish its act scope before
+      // applying the refresh, even if the draft has already cleared.
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      });
       await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue(''));
       // Apply the real refresh's new state; a permanently parked test would
       // miss the original regression, which hid the note behind canReply.
@@ -205,7 +217,9 @@ describe('WorkActions', () => {
       fireEvent.change(screen.getByRole('textbox'), {
         target: { value: 'Finish this quickly.' },
       });
-      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      });
       await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue(''));
       // Never observe running: the accepted round finishes before refresh.
       rerender(
@@ -250,15 +264,21 @@ describe('WorkActions', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Start fresh.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
-    // Another operator's r3 is visible before our r2 response arrives. Its
-    // history is current, but resumed=false still describes r2 alone.
-    rerender(
-      <MantineProvider>
-        <WorkActions {...props} state="running" latestRunId="work:ID1/r3" />
-      </MantineProvider>,
-    );
-    finish(response);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+      // Another operator's r3 is visible before our r2 response arrives. Its
+      // history is current, but resumed=false still describes r2 alone.
+      rerender(
+        <MantineProvider>
+          <WorkActions {...props} state="running" latestRunId="work:ID1/r3" />
+        </MantineProvider>,
+      );
+    });
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: /Cancel/i })).toBeDisabled();
+    await act(async () => {
+      finish(response);
+    });
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Cancel/i })).toBeEnabled(),
     );
@@ -288,7 +308,9 @@ describe('WorkActions', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Keep my refused draft.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Reply/i }));
+    });
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Reply/i })).toBeEnabled(),
     );
