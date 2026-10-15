@@ -4472,6 +4472,22 @@ td.costs-repo-spend__num {
 .ops-host {
   font-family: var(--font-mono), monospace;
   font-weight: 500;
+  /* Runner pod names run to sixty unbroken characters (a direct executor's
+     job hash); unwrapped they widened the Runners table past its column and
+     over the Runner fleet beside it. */
+  overflow-wrap: anywhere;
+}
+
+/* A runner's job link (repository · job name) and a dispatch's claiming
+   runner wrap within their cells for the same reason; work references
+   elsewhere stay on one line. */
+.ops-wrap {
+  overflow-wrap: anywhere;
+}
+
+.ops-mono-dim .ops-ref {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ops-host-spec {

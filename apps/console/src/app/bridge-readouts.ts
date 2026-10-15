@@ -146,6 +146,17 @@ function withCurrent(
   };
 }
 
+/** 24 hourly slots ending at the current hour; slots before UTC midnight
+ * stay empty, so early in the day the few hours elapsed draw as bars rather
+ * than one block, and the current hour stays the newest bar. */
+export function dayOfHours(
+  byHour: readonly number[] | undefined,
+): (number | undefined)[] | undefined {
+  if (byHour === undefined) return undefined;
+  const pad = Math.max(0, 24 - byHour.length);
+  return [...Array.from({ length: pad }, () => undefined), ...byHour];
+}
+
 export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
   const { online, busy, capacity } = input.fleet;
   // Busy and its denominator come from one producer, the lanes; `online`
@@ -239,7 +250,7 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
         label: input.spendToday?.partial
           ? 'Spend per hour today, by last activity (lower bound)'
           : 'Spend per hour today, by last activity',
-        values: input.spendToday?.byHourUsd,
+        values: dayOfHours(input.spendToday?.byHourUsd),
       },
     },
   ];
