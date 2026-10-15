@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 
+import { logger } from '@agent-lcars/logging';
 import {
   type CapacityAuthority,
   CapacityProtocol,
@@ -2806,7 +2807,7 @@ describe('complete', () => {
     },
   ])('fails closed on $name, leaving the run live', async (c) => {
     const f = await claimedForCompletion(`work-complete-closed-${c.outcome}`);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const r = await call(
       {
         ...f,
@@ -2846,7 +2847,7 @@ describe('complete', () => {
     const ready = vi.fn(async () => {
       throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
     });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const r = await call(
       {
         store,
@@ -2866,7 +2867,9 @@ describe('complete', () => {
     expect(r).toEqual({ status: 200, json: { runId, state: 'finished' } });
     expect(ready).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('Deliverable is not armed yet'),
+      expect.stringContaining('settling the PR without delivery ownership'),
+      runId,
+      'Deliverable is not armed yet',
     );
     warn.mockRestore();
     const settled = (await store.readRun(runId))!;
@@ -6595,7 +6598,7 @@ describe('merged delivery corrections cross the authenticated PR gate', () => {
     f.ready.mockRejectedValueOnce(
       new UnqualifiedDeliveryError('Deliverable is not armed yet'),
     );
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const result = await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
       outcome: 'pull-request',
       outcomeReference: { kind: 'pull-request', number: 99 },

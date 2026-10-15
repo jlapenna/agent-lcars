@@ -1077,16 +1077,20 @@ export const runsRouter = os.router({
           deliveryCorrection ||
           result.summary !== 'pull-request'
         ) {
-          console.warn(
-            `agent-lcars: ready delivery handoff refused for ${run.runId}: ${reason}`,
+          logger.warn(
+            'agent-lcars: ready delivery handoff refused for %s: %s',
+            run.runId,
+            reason,
           );
           throw new ORPCError('CONFLICT', {
             message:
               'Ready delivery handoff refused; exact review and protected delivery evidence required',
           });
         }
-        console.warn(
-          `agent-lcars: ready delivery handoff not established for ${run.runId}; settling the PR without delivery ownership: ${reason}`,
+        logger.warn(
+          'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
+          run.runId,
+          reason,
         );
       }
     }
