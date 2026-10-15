@@ -175,22 +175,11 @@ These override any default behavior:
   guidance, not an authorization boundary: the issue-workflow hook must never
   halt work because a title is missing, stale, mismatched, or unreadable.
 
-- **LCARS session title**: the console's session list shows a title taken
-  from the transcript, which for Claude Code is `aiTitle` — written once,
-  early, and never revised. A session that runs long and drifts therefore
-  advertises what it started as, not what it became. When the work moves on
-  from the prompt that opened it, say so:
-
-  ```bash
-  lcars session title "Land session titles end to end"
-  ```
-
-  No session id is needed — the CLI reads `CLAUDE_CODE_SESSION_ID` or
-  `CODEX_THREAD_ID` from its own environment. `lcars session title --clear`
-  removes the override and falls back to the transcript's own title; it does
-  not blank the entry. This is the same "make concurrent sessions
-  distinguishable at a glance" idea as the tmux title above, for the people
-  reading the console instead of the terminal.
+- **LCARS console visibility**: when the user asks for console session title
+  or status updates, use
+  [lcars-session-updates](../lcars-session-updates/SKILL.md). Interactive
+  progress belongs in the conversation; headless status obligations belong in
+  the dispatch protocol.
 
 ## Workflows
 
