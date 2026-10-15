@@ -1038,8 +1038,16 @@ describe('native delivery finalization reuses terminal outcome and session expir
           result: 'pass',
           after_sha: MERGE,
           rule_evaluations: [
-            { rule_type: 'required_status_checks', result: 'pass' },
-            { rule_type: 'pull_request', result: 'pass' },
+            {
+              rule_type: 'required_status_checks',
+              result: 'pass',
+              enforcement: 'active',
+            },
+            {
+              rule_type: 'pull_request',
+              result: 'pass',
+              enforcement: 'active',
+            },
           ],
         });
       throw new Error(`Unexpected evidence request ${url}`);

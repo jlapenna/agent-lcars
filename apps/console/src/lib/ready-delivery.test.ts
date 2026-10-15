@@ -188,8 +188,16 @@ function fixture(
           result: 'pass',
           after_sha: MERGE,
           rule_evaluations: [
-            { rule_type: 'required_status_checks', result: 'pass' },
-            { rule_type: 'pull_request', result: 'pass' },
+            {
+              rule_type: 'required_status_checks',
+              result: 'pass',
+              enforcement: 'active',
+            },
+            {
+              rule_type: 'pull_request',
+              result: 'pass',
+              enforcement: 'active',
+            },
           ],
         },
       );
@@ -781,6 +789,30 @@ describe('authenticated ready delivery evidence', () => {
         BINDING,
       ),
     ).rejects.toThrow();
+    await expect(
+      observeGithubDelivery(
+        fixture({
+          pr,
+          suite: {
+            result: 'pass',
+            after_sha: MERGE,
+            rule_evaluations: [
+              {
+                rule_type: 'required_status_checks',
+                result: 'pass',
+                enforcement: 'active',
+              },
+              {
+                rule_type: 'pull_request',
+                result: 'pass',
+                enforcement: 'evaluate',
+              },
+            ],
+          },
+        }),
+        BINDING,
+      ),
+    ).rejects.toThrow('Protected checks did not pass');
     expect(await observeGithubDelivery(fixture({ pr }), BINDING)).toEqual({
       kind: 'protected-merge',
       head: HEAD,

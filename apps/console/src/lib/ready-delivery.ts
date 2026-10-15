@@ -291,19 +291,29 @@ async function verifyProtectedMerge(
       result: z.literal('pass'),
       after_sha: sha,
       rule_evaluations: z
-        .array(z.object({ rule_type: z.string(), result: z.string() }))
+        .array(
+          z.object({
+            rule_type: z.string(),
+            result: z.string(),
+            enforcement: z.string().optional(),
+          }),
+        )
         .min(1),
     })
     .parse(
       await github(deps, binding.repo, `rulesets/rule-suites/${suite.id}`),
     );
+  // An evaluate-only ruleset reports a pass it never enforced, so only
+  // actively enforced required-check and pull-request rules qualify.
+  const enforced = (ruleType: string) =>
+    details.rule_evaluations.some(
+      (rule) => rule.rule_type === ruleType && rule.enforcement === 'active',
+    );
   if (
     details.after_sha !== mergeCommit ||
     details.rule_evaluations.some((rule) => rule.result !== 'pass') ||
-    !details.rule_evaluations.some(
-      (rule) => rule.rule_type === 'required_status_checks',
-    ) ||
-    !details.rule_evaluations.some((rule) => rule.rule_type === 'pull_request')
+    !enforced('required_status_checks') ||
+    !enforced('pull_request')
   )
     throw new Error('Protected checks did not pass');
 }
@@ -311,7 +321,9 @@ async function verifyProtectedMerge(
 /** Thrown only after an authoritative read proved the run's own exact
  * attempt-marked, non-draft, open PR in its target repository with an
  * established protected target policy, which merely has no auto-merge arm
- * yet. Every other failure is a generic Error. */
+ * yet, or (as ProtectedMergeWithoutReviewError) that the PR already merged
+ * through actively enforced protection. Every other failure is a generic
+ * Error. */
 export class UnqualifiedDeliveryError extends Error {
   override readonly name: string = 'UnqualifiedDeliveryError';
 }
