@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -50,7 +51,7 @@ vi.mock('@/lib/work-mint', () => ({
   forbiddenReason: mocks.forbiddenReason,
 }));
 
-import { createItemWithEvidence } from './actions';
+import { createItem, createItemWithEvidence } from './actions';
 
 const intent = {
   workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -144,6 +145,44 @@ describe('createItemWithEvidence', () => {
     expect(mocks.createLifecycle).not.toHaveBeenCalled();
   });
 
+  it('requests a new sign-in for a rejected GitHub credential before any evidence or Work mutation', async () => {
+    mocks.githubGet.mockRejectedValueOnce(
+      Object.assign(new Error('Bad credentials: private server detail'), {
+        status: 401,
+      }),
+    );
+
+    const [error, data] = await createItemWithEvidence(form());
+
+    expect(error).toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(error?.message).toContain('Sign out and sign in again');
+    expect(error?.message).not.toContain('private server detail');
+    expect(data).toBeUndefined();
+    expect(mocks.createLifecycle).not.toHaveBeenCalled();
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it('authorizes a valid GitHub credential before uploading evidence and creating Work', async () => {
+    const [error, data] = await createItemWithEvidence(form());
+
+    expect(error).toBeUndefined();
+    expect(data).toEqual({ id: intent.workId });
+    expect(mocks.githubGet).toHaveBeenCalledWith({
+      owner: 'jlapenna',
+      repo: 'agent-lcars',
+    });
+    expect(mocks.prepare).toHaveBeenCalledWith(
+      expect.objectContaining({ repositoryId: 42, visibility: 'private' }),
+    );
+    expect(mocks.githubGet.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.prepare.mock.invocationCallOrder[0],
+    );
+    expect(mocks.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.create.mock.invocationCallOrder[0],
+    );
+  });
+
   it('retains evidence when native creation reports an ambiguous internal failure', async () => {
     mocks.create.mockResolvedValue([
       { code: 'INTERNAL_SERVER_ERROR', message: 'unknown commit result' },
@@ -168,4 +207,45 @@ describe('createItemWithEvidence', () => {
     expect(mocks.prepare).toHaveBeenCalled();
     expect(mocks.rollback).not.toHaveBeenCalled();
   });
+
+  it('turns an unexpected create throw into a coded error instead of rejecting', async () => {
+    const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    mocks.create.mockRejectedValue(new Error('firestore unavailable'));
+    const [error, data] = await createItem({
+      id: intent.workId,
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'codex',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    });
+    expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(data).toBeUndefined();
+    expect(log).toHaveBeenCalled();
+    log.mockRestore();
+  });
+
+  it.each(['context', 'githubGet', 'create'] as const)(
+    'contains an unexpected %s failure without exposing server details',
+    async (stage) => {
+      const failure = Object.assign(new Error('private server detail'), {
+        status: 503,
+      });
+      const log = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+      mocks[stage].mockRejectedValueOnce(failure);
+      try {
+        const [error, data] = await createItemWithEvidence(form());
+
+        expect(error).toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+        expect(error?.message).not.toContain('private server detail');
+        expect(data).toBeUndefined();
+        expect(log).toHaveBeenCalledWith('work item creation failed', failure);
+        expect(mocks.rollback).not.toHaveBeenCalled();
+        expect(mocks.prepare).toHaveBeenCalledTimes(stage === 'create' ? 1 : 0);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
 });
