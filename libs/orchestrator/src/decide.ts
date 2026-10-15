@@ -143,6 +143,7 @@ export interface RequestRunInput {
   pipeline: string;
   priority?: QueuePriority;
   params?: Record<string, string>;
+  intervention?: OperationalIntervention;
   work?: WorkPayload;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }
@@ -217,6 +218,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     pipeline: input.pipeline,
     priority: input.priority,
     params: input.params,
+    intervention: input.intervention,
     providerFallback: input.providerFallback,
   });
 }
@@ -231,6 +233,7 @@ function mintRun(input: {
   pipeline: string;
   priority?: QueuePriority;
   params?: Record<string, string>;
+  intervention?: OperationalIntervention;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
@@ -264,7 +267,16 @@ function mintRun(input: {
           },
         }),
     leaseExpiresAt: runLeaseExpiresAt(now),
-    events: [{ at: now, to: 'pending', by: 'request' }],
+    events: [
+      {
+        at: now,
+        to: 'pending',
+        by: 'request',
+        ...(input.intervention === undefined
+          ? {}
+          : { intervention: input.intervention }),
+      },
+    ],
     createdAt: now,
     updatedAt: now,
   };

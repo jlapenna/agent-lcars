@@ -115,16 +115,35 @@ unknowns, establish a human identity, deduplicate unique tasks or correlate
 interventions with eventual merge. It provides one trusted producer for that
 future task-level join; no human-touch rate or target is claimed.
 
+`reply_interventions_window` counts admitted-hour Run identities whose first
+pending/request event contains the typed `work-api-reply` action. Only the
+authenticated `work.operator` reply handler supplies its verified principal to
+the admission transaction. The event clock must exactly equal admission;
+revision and snapshot clocks must be valid and ordered, and request source must
+be `caller`. Raw reply params, channel, supplied principal text and initial
+admission cannot manufacture the stamp. Other reply ingresses, legacy records
+and automatic retries remain unknown. Replayed request keys return the original
+Run without another admission; separate accepted replies count separate Run
+generations, even for the same task. Provider selection inside this API reply
+is included once with its newly admitted generation, not also credited as a
+cancellation of the replaced generation.
+
+`measurement_unknown_window{measurement="reply_intervention"}` is the
+admitted-hour cohort minus qualified API replies. This cohort differs from the
+settled-hour cancellation cohort; neither family changes `human_touch`
+unknowns. No human identity, unique-task rate, successful outcome or eventual
+merge follows from an authorized reply. Principal values never become labels.
+
 The remaining original intervention join stays open. These existing owners
 provide the next action boundaries; none alone proves a biological human:
 
-| Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                         |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                            |
-| Reply / provider selection (`work-reply.ts`, `request`) | `Run.params` retains reply channel/principal and a keyed admission receipt; those opaque fields are not typed intervention provenance. Automated provider fallback/retries must remain excluded. |
-| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                      |
-| GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                              |
-| Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.           |
+| Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                                         |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                                            |
+| Reply / provider selection (`work-reply.ts`, `request`) | Work API replies now stamp the first admission event with typed action provenance; other channels retain only opaque params. Task-cohort/eventual-merge joins remain absent; automatic retries receive no stamp. |
+| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                                      |
+| GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                                              |
+| Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.                           |
 
 A complete task-level rate still needs a unique admitted-task cohort across
 retry/provider generations, explicit typed action coverage, eventual trusted

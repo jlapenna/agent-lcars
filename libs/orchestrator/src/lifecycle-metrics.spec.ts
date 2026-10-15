@@ -85,6 +85,114 @@ function deliveryMeasurements(original: Run) {
 }
 
 describe('durable lifecycle metric accounting', () => {
+  function replied(over: Partial<Run> = {}): Run {
+    return run({
+      events: [
+        {
+          at: createdAt,
+          to: 'pending',
+          by: 'request',
+          intervention: {
+            kind: 'work-api-reply',
+            principal: 'svc:verified-operator',
+          },
+        },
+      ],
+      ...over,
+    });
+  }
+  it('counts a typed reply admission once across feeds and leaves human identity unknown', () => {
+    const original = replied({
+      state: 'finished',
+      events: [
+        ...replied().events,
+        { at: finishedAt, to: 'finished', by: 'report' },
+      ],
+      updatedAt: finishedAt,
+    });
+    const text = snapshot([original, original], { liveRuns: [original] });
+    expect(text).toContain(
+      'lcars_product_reply_interventions_window{pipeline="claude"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="reply_intervention"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="human_touch"} 1\n',
+    );
+    expect(text).not.toContain('svc:verified-operator');
+  });
+  it('counts distinct reply generations and keeps params-only/retry/legacy admissions unknown', () => {
+    const text = snapshot([
+      replied(),
+      replied({ runId: 'private/repo#42/r2' }),
+      run({
+        runId: 'private/repo#42/r3',
+        params: { mode: 'reply', replyPrincipal: 'user:forged' },
+      }),
+      replied({ runId: 'private/repo#42/r4', requestSource: 'auto-retry' }),
+    ]);
+    expect(text).toContain(
+      'lcars_product_reply_interventions_window{pipeline="claude"} 2\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="reply_intervention"} 2\n',
+    );
+  });
+  it.each([
+    {
+      name: 'revision before admission',
+      over: { updatedAt: '2026-10-10T11:39:00.000Z' },
+    },
+    {
+      name: 'future revision',
+      over: { updatedAt: '2026-10-10T12:01:00.000Z' },
+    },
+    { name: 'invalid revision', over: { updatedAt: 'invalid' } },
+    {
+      name: 'stamp after first event',
+      over: { events: [...run().events, ...replied().events] },
+    },
+    {
+      name: 'wrong event clock',
+      over: { events: [{ ...replied().events[0], at: finishedAt }] },
+    },
+    {
+      name: 'wrong action kind',
+      over: {
+        events: [
+          {
+            ...replied().events[0],
+            intervention: {
+              kind: 'work-api-cancel' as const,
+              principal: 'svc:operator',
+            },
+          },
+        ],
+      },
+    },
+  ])('keeps $name reply attribution unknown', ({ over }) => {
+    const text = snapshot([replied(over)]);
+    expect(text).toContain(
+      'lcars_product_reply_interventions_window{pipeline="claude"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="reply_intervention"} 1\n',
+    );
+  });
+  it('uses reply admission rather than settlement and suppresses incomplete reads', () => {
+    const old = replied({
+      createdAt: '2026-10-10T10:00:00.000Z',
+      updatedAt: finishedAt,
+    });
+    expect(snapshot([old])).toContain(
+      'lcars_product_reply_interventions_window{pipeline="claude"} 0\n',
+    );
+    expect(snapshot([replied()], { complete: false })).not.toContain(
+      'reply_interventions_window',
+    );
+  });
+
   function canceled(intervention = true): Run {
     const original = run();
     const decision = cancelRun({

@@ -39,6 +39,8 @@ const HELP = {
     'Retained claims timestamped during the rolling hour, not all claim attempts.',
   provider_starts_window:
     'Retained server-observed provider OS spawns during the rolling hour, not authentication or model execution.',
+  reply_interventions_window:
+    'Admitted rolling-hour run identities with a typed authorized Work API reply, not unique tasks or human identity.',
   operational_interventions_window:
     'Settled rolling-hour run identities with a typed server-recorded authorized API intervention, not a human-touch or unique-task rate.',
   terminal_clock_unknown_window:
@@ -207,6 +209,24 @@ export function lifecycleMetricSnapshot(
         (run) => pipelineFor(run) === pipeline,
       );
       const admitted = runs.filter((run) => inWindow(run.createdAt));
+      const replyInterventions = admitted.filter((run) => {
+        const event = run.events[0];
+        const updated = Date.parse(run.updatedAt);
+        return (
+          run.requestSource === 'caller' &&
+          event?.by === 'request' &&
+          event.to === 'pending' &&
+          event.at === run.createdAt &&
+          event.intervention?.kind === 'work-api-reply' &&
+          operationalInterventionSchema.safeParse(event.intervention).success &&
+          Number.isFinite(updated) &&
+          Date.parse(run.createdAt) <= updated &&
+          updated <= now
+        );
+      });
+      gauge('reply_interventions_window', replyInterventions.length, {
+        pipeline,
+      });
       const claimed = runs.filter((run) => inWindow(run.queue?.claimedAt));
       const terminal = runs.filter(
         (run) => !isLive(run.state) && inWindow(terminalAt(run)),
@@ -223,6 +243,7 @@ export function lifecycleMetricSnapshot(
         return (
           run.state === 'canceled' &&
           event?.by === 'operator' &&
+          event.intervention?.kind === 'work-api-cancel' &&
           operationalInterventionSchema.safeParse(event.intervention).success &&
           Number.isFinite(admission) &&
           Number.isFinite(updated) &&
@@ -419,6 +440,7 @@ export function lifecycleMetricSnapshot(
         ['verified_evidence', finished.length],
         ['useful_outcome', finished.length - completedDeliveries.length],
         ['operational_intervention', terminal.length - interventions.length],
+        ['reply_intervention', admitted.length - replyInterventions.length],
         ['human_touch', terminal.length],
         ['cost', finished.length],
       ] as const)
