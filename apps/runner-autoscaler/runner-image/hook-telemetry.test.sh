@@ -372,8 +372,17 @@ run_env "$codex_home" lcars integration install codex > /dev/null ||
   fail "codex exec exited $status against the localhost provider"
 }
 printf '0\n' > "$tmp/codex.exit"
+# Codex kills a SessionEnd hook at 3 s, so the stub hands the end to a
+# detached client (integration.ts, #2827); this waits for that client.
 await_kinds "$codex_home" codex start stop end
 check_events "$codex_home" codex
+# The client releases the payload the runner drain waits on once spooled.
+inflight="$codex_home/.local/state/agent-lcars/hook-inflight"
+deadline=$((SECONDS + event_timeout_seconds))
+while compgen -G "$inflight/*" > /dev/null; do
+  [ "$SECONDS" -lt "$deadline" ] || fail "codex SessionEnd client left its payload in $inflight"
+  sleep 0.5
+done
 
 # --- OpenCode ---------------------------------------------------------------
 opencode_home="$tmp/opencode-home"
