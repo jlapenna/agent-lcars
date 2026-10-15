@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { decidedRun, isRefusal } from './decide';
+import { cancelRun, decidedRun, isRefusal } from './decide';
 import { advanceDelivery } from './delivery';
 import {
   type LifecycleMetricRecords,
@@ -85,6 +85,101 @@ function deliveryMeasurements(original: Run) {
 }
 
 describe('durable lifecycle metric accounting', () => {
+  function canceled(intervention = true): Run {
+    const original = run();
+    const decision = cancelRun({
+      now: finishedAt,
+      task: {
+        task: original.task,
+        activeRunId: original.runId,
+        runCount: 1,
+        consecutiveLost: 0,
+        work: {},
+        updatedAt: createdAt,
+      },
+      run: original,
+      ...(intervention
+        ? {
+            intervention: {
+              kind: 'work-api-cancel' as const,
+              principal: 'workflow:authorized-automation',
+            },
+          }
+        : {}),
+    });
+    if (isRefusal(decision)) throw new Error(decision.reason);
+    return decidedRun(decision);
+  }
+  it('exports an ingress-recorded cancellation once while keeping human identity unknown', () => {
+    const original = canceled();
+    const text = snapshot([original, original], { liveRuns: [run()] });
+    expect(text).toContain(
+      'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="operational_intervention"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="human_touch"} 1\n',
+    );
+    expect(text).not.toContain('authorized-automation');
+    expect(snapshot([original, original], { liveRuns: [run()] })).toBe(text);
+  });
+  it('keeps untyped automated/legacy cancellation and worker text unknown', () => {
+    const original = canceled(false);
+    const text = snapshot([
+      {
+        ...original,
+        params: { intervention: 'work-api-cancel' },
+        result: { ok: true, summary: 'work-api-cancel' },
+        events: original.events.map((event) => ({
+          ...event,
+          note: 'canceled by user:jlapenna; work-api-cancel',
+        })),
+      },
+    ]);
+    expect(text).toContain(
+      'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="operational_intervention"} 1\n',
+    );
+  });
+  it.each([
+    { name: 'pre-admission', createdAt: '2026-10-10T11:46:00.000Z' },
+    { name: 'before revision', updatedAt: '2026-10-10T11:44:00.000Z' },
+    { name: 'future revision', updatedAt: '2026-10-10T12:00:00.001Z' },
+    { name: 'invalid admission', createdAt: 'invalid' },
+  ])('keeps $name intervention clocks unknown', ({ name: _name, ...over }) => {
+    const text = snapshot([{ ...canceled(), ...over }]);
+    expect(text).toContain(
+      'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="operational_intervention"} 1\n',
+    );
+  });
+  it('uses settlement rather than recent updates and suppresses incomplete intervention reads', () => {
+    const original = canceled();
+    const old = {
+      ...original,
+      createdAt: '2026-10-10T10:00:00.000Z',
+      events: original.events.map((event) =>
+        event.to === 'canceled'
+          ? {
+              ...event,
+              at: '2026-10-10T10:59:59.999Z',
+            }
+          : event,
+      ),
+    };
+    expect(snapshot([old])).toContain(
+      'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 0\n',
+    );
+    expect(snapshot([original], { complete: false })).not.toContain(
+      'operational_interventions_window',
+    );
+  });
   it('credits completed protected PR delivery from the canonical delivery state machine', () => {
     const original = delivered({ state: 'waiting', mergeCommit: undefined });
     const decision = advanceDelivery({

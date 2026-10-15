@@ -299,6 +299,16 @@ export const runQueueSchema = z.strictObject({
 });
 export type RunQueue = z.infer<typeof runQueueSchema>;
 
+/** A server-recorded action through an authenticated operator boundary.
+ * This proves an authorized API intervention, never that the caller is human. */
+export const operationalInterventionSchema = z.strictObject({
+  kind: z.literal('work-api-cancel'),
+  principal: z.string().min(1).max(128),
+});
+export type OperationalIntervention = z.infer<
+  typeof operationalInterventionSchema
+>;
+
 /** One recorded transition. The list of these is the run's whole history. */
 export const runEventSchema = z.strictObject({
   at: isoUtc,
@@ -314,6 +324,8 @@ export const runEventSchema = z.strictObject({
     'provider-fallback',
   ]),
   note: z.string().max(1_024).optional(),
+  /** Set by the trusted ingress, never inferred from by/note or worker params. */
+  intervention: operationalInterventionSchema.optional(),
 });
 export type RunEvent = z.infer<typeof runEventSchema>;
 

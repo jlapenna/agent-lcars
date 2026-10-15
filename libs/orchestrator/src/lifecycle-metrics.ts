@@ -1,6 +1,7 @@
 import {
   deliveryBindingSchema,
   isLive,
+  operationalInterventionSchema,
   type OutboxEntry,
   type Run,
 } from './model';
@@ -38,6 +39,8 @@ const HELP = {
     'Retained claims timestamped during the rolling hour, not all claim attempts.',
   provider_starts_window:
     'Retained server-observed provider OS spawns during the rolling hour, not authentication or model execution.',
+  operational_interventions_window:
+    'Settled rolling-hour run identities with a typed server-recorded authorized API intervention, not a human-touch or unique-task rate.',
   terminal_clock_unknown_window:
     'Recently updated terminal runs without a valid terminal event clock.',
   settled_window:
@@ -208,6 +211,30 @@ export function lifecycleMetricSnapshot(
       const terminal = runs.filter(
         (run) => !isLive(run.state) && inWindow(terminalAt(run)),
       );
+      // by=operator also covers automated anchor closure and provider switches.
+      // Only the authenticated ingress's typed durable fact earns credit.
+      const interventions = terminal.filter((run) => {
+        const event = [...run.events]
+          .reverse()
+          .find((value) => value.to === run.state);
+        const admission = Date.parse(run.createdAt);
+        const settlement = Date.parse(event?.at ?? '');
+        const updated = Date.parse(run.updatedAt);
+        return (
+          run.state === 'canceled' &&
+          event?.by === 'operator' &&
+          operationalInterventionSchema.safeParse(event.intervention).success &&
+          Number.isFinite(admission) &&
+          Number.isFinite(updated) &&
+          admission <= settlement &&
+          settlement <= updated &&
+          updated <= now
+        );
+      });
+      gauge('operational_interventions_window', interventions.length, {
+        pipeline,
+        kind: 'work-api-cancel',
+      });
       const live = runs.filter((run) => isLive(run.state));
       gauge('admitted_window', admitted.length, { pipeline });
       gauge(
@@ -391,6 +418,7 @@ export function lifecycleMetricSnapshot(
         ],
         ['verified_evidence', finished.length],
         ['useful_outcome', finished.length - completedDeliveries.length],
+        ['operational_intervention', terminal.length - interventions.length],
         ['human_touch', terminal.length],
         ['cost', finished.length],
       ] as const)
