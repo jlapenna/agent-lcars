@@ -563,13 +563,12 @@ export function QuickTaskDialog({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
-          <Group align="flex-end" wrap="nowrap">
-            <QuickTaskScreenshotField
-              value={screenshot ?? undefined}
-              onChange={(file) => setScreenshot(file ?? null)}
-            />
+          <QuickTaskScreenshotField
+            value={screenshot ?? undefined}
+            onChange={(file) => setScreenshot(file ?? null)}
+          />
+          <Group justify="flex-end">
             <Button
-              style={{ flex: 1 }}
               disabled={
                 !description.trim() ||
                 !selectedRepo ||
