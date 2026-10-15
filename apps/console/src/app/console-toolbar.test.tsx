@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -73,7 +74,83 @@ describe('ConsoleToolbar', () => {
     ).toHaveClass('console-toolbar__primary');
   });
 
-  it('shows a native Apply until the controls hydrate', () => {
+  it('applies the filters when focus leaves them for the page, not for another control', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <>
+        <ConsoleToolbar action="/work">
+          <ToolbarSearch name="q" label="Find" placeholder="title" />
+          <input aria-label="Principal" name="principal" />
+        </ConsoleToolbar>
+        <button type="button">New work</button>
+      </>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    const principal = screen.getByRole('textbox', { name: 'Principal' });
+
+    fireEvent.change(find, { target: { value: 'healthz' } });
+    // On to another filter: nothing yet.
+    fireEvent.focusOut(find, { relatedTarget: principal });
+    // Out to another action: it runs; no reload races it.
+    fireEvent.change(principal, { target: { value: 'user:jlapenna' } });
+    fireEvent.focusOut(principal, {
+      relatedTarget: screen.getByRole('button', { name: 'New work' }),
+    });
+    expect(submit).not.toHaveBeenCalled();
+    // Out to the page from a sibling filter: both edits apply.
+    fireEvent.focusOut(principal, { relatedTarget: null });
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('applies a cleared FIND and ignores an unchanged one', () => {
+    const submit = vi
+      .spyOn(HTMLFormElement.prototype, 'requestSubmit')
+      .mockImplementation(() => undefined);
+    render(
+      <ConsoleToolbar action="/agents">
+        <ToolbarSearch name="q" label="Find" placeholder="issue" value="x" />
+      </ConsoleToolbar>,
+    );
+    const find = screen.getByRole('searchbox', { name: 'Find' });
+    fireEvent.focusOut(find, { relatedTarget: null });
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.change(find, { target: { value: '' } });
+    fireEvent(find, new Event('search'));
+    expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it('folds the filters behind a toggle that counts active selects', () => {
+    render(
+      <ConsoleToolbar action="/agents">
+        <ToolbarSelect
+          name="agent"
+          label="Agent"
+          value="codex"
+          options={[
+            { value: '', label: 'All agents' },
+            { value: 'codex', label: 'codex' },
+          ]}
+        />
+        <ToolbarSearch name="q" label="Find" placeholder="issue" />
+      </ConsoleToolbar>,
+    );
+    const form = screen.getByRole('search', { name: 'Filters' });
+    const toggle = screen.getByRole('button', { name: 'Filters · 1' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(form).not.toHaveAttribute('data-open');
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(form).toHaveAttribute('data-open');
+  });
+
+  it('offers Apply only to browsers without JavaScript', () => {
+    // Server markup carries it inside <noscript>; a scripted page never lays
+    // it out, so hydrating moves nothing.
+    expect(renderToStaticMarkup(<ToolbarApply />)).toBe(
+      '<noscript><button type="submit" class="console-toolbar__apply">Apply</button></noscript>',
+    );
     render(
       <form>
         <ToolbarSelect
@@ -84,10 +161,7 @@ describe('ConsoleToolbar', () => {
         <ToolbarApply />
       </form>,
     );
-    // After the select's effect runs, CSS hides Apply inside this form.
-    expect(
-      screen.getByRole('button', { name: 'Apply' }).closest('form'),
-    ).toHaveAttribute('data-hydrated');
+    expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull();
   });
 
   it('draws a disabled window option that cannot be chosen and says why', () => {

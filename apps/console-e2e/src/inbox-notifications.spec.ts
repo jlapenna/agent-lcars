@@ -29,6 +29,90 @@ async function openPreferences(page: Page) {
   return control;
 }
 
+async function installNotificationStub(page: Page) {
+  await page.addInitScript(() => {
+    const counters = { permission: 0, registered: 0, delivered: 0 };
+    const requests: { title: string; href: string }[] = [];
+    Object.assign(window, {
+      notificationCounters: counters,
+      notificationRequests: requests,
+    });
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: {
+        permission: 'granted',
+        requestPermission: async () => {
+          counters.permission++;
+          return 'granted';
+        },
+      },
+    });
+    const registration = {
+      active: {},
+      showNotification: async (
+        title: string,
+        options: { data: { href: string } },
+      ) => {
+        counters.delivered++;
+        requests.push({ title, href: options.data.href });
+      },
+      getNotifications: async () => [],
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        register: async () => {
+          counters.registered++;
+          return registration;
+        },
+        getRegistration: async () => registration,
+      },
+    });
+  });
+}
+
+async function notificationCounters(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          notificationCounters: {
+            permission: number;
+            registered: number;
+            delivered: number;
+          };
+        }
+      ).notificationCounters,
+  );
+}
+
+async function notificationRequests(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          notificationRequests: { title: string; href: string }[];
+        }
+      ).notificationRequests,
+  );
+}
+
+/** Hold Inbox RSC GETs and refresh server actions until the context closes.
+ * Plain authenticated notification GETs still use the normal server route. */
+async function holdRscRefreshes(page: Page) {
+  await page.route('**/*', (route) => {
+    const request = route.request();
+    const headers = request.headers();
+    if (
+      new URL(request.url()).pathname === '/inbox' &&
+      ((request.method() === 'GET' && headers['rsc'] === '1') ||
+        (request.method() === 'POST' && headers['next-action']))
+    )
+      return;
+    return route.fallback();
+  });
+}
+
 /** Actual authenticated RSC/GET read, fake browser delivery. Never send
  * OS notifications from CI or mint a real notification subscription. */
 for (const width of [390, 768, 1280]) {
@@ -36,52 +120,10 @@ for (const width of [390, 768, 1280]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
-    await page.addInitScript(() => {
-      const counters = { permission: 0, registered: 0, delivered: 0 };
-      Object.assign(window, { notificationCounters: counters });
-      Object.defineProperty(window, 'Notification', {
-        configurable: true,
-        value: {
-          permission: 'granted',
-          requestPermission: async () => {
-            counters.permission++;
-            return 'granted';
-          },
-        },
-      });
-      const registration = {
-        active: {},
-        showNotification: async () => {
-          counters.delivered++;
-        },
-        getNotifications: async () => [],
-      };
-      Object.defineProperty(navigator, 'serviceWorker', {
-        configurable: true,
-        value: {
-          register: async () => {
-            counters.registered++;
-            return registration;
-          },
-          getRegistration: async () => registration,
-        },
-      });
-    });
+    await installNotificationStub(page);
     await page.goto('/inbox');
     let control = await openPreferences(page);
-    const counters = () =>
-      page.evaluate(
-        () =>
-          (
-            window as unknown as {
-              notificationCounters: {
-                permission: number;
-                registered: number;
-                delivered: number;
-              };
-            }
-          ).notificationCounters,
-      );
+    const counters = () => notificationCounters(page);
     expect(await counters()).toEqual({
       permission: 0,
       registered: 0,
@@ -155,3 +197,103 @@ for (const width of [390, 768, 1280]) {
     );
   });
 }
+
+/** Exercise the real authenticated GET and existing emulator-only seed actions.
+ * Block RSC refreshes so only the independent observer can discover the change.
+ * Notification permission, registration and delivery remain explicit stubs. */
+test('discovers new and reopened decisions while Inbox RSC refreshes are blocked', async ({
+  page,
+  request,
+}) => {
+  // Three 30-second production polls cover arrival, disappearance and reopening.
+  // A rate-limit edge can defer the second delivery to a fourth poll: 120 seconds
+  // plus 30 seconds for authenticated reads and fixture writes, without retries
+  // or changing the application interval, clock or one-minute delivery limit.
+  test.setTimeout(150_000);
+  await installNotificationStub(page);
+  await page.goto('/inbox');
+  const control = await openPreferences(page);
+  await holdRscRefreshes(page);
+  await control
+    .getByRole('button', { name: 'Enable Inbox notifications' })
+    .click();
+  await expect(control.getByRole('status')).toHaveText(
+    'Watching for new human decisions',
+  );
+  expect(await notificationCounters(page)).toEqual({
+    permission: 1,
+    registered: 1,
+    delivered: 0,
+  });
+
+  const decision = 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G';
+  const nextSnapshot = (present: boolean) =>
+    page.waitForResponse(
+      async (response) => {
+        if (
+          !response.url().endsWith('/api/inbox-notifications') ||
+          response.request().method() !== 'GET' ||
+          response.status() !== 200
+        )
+          return false;
+        const snapshot = (await response.json()) as {
+          available: boolean;
+          decisions: { id: string }[];
+        };
+        return (
+          snapshot.available &&
+          snapshot.decisions.some((item) => item.id === decision) === present
+        );
+      },
+      { timeout: 40_000 },
+    );
+  const nativeRow = page.getByTestId(`queue-row-${decision}`);
+  await expect(nativeRow).toHaveCount(0);
+
+  const arrived = nextSnapshot(true);
+  expect(
+    (
+      await request.post('/api/e2e/seed', {
+        data: { action: 'seed-inbox-only' },
+      })
+    ).ok(),
+  ).toBe(true);
+  await arrived;
+  await expect
+    .poll(async () => (await notificationCounters(page)).delivered)
+    .toBe(1);
+  const target = {
+    title: 'Agent LCARS',
+    href: `/inbox?item=${encodeURIComponent(decision)}`,
+  };
+  expect(await notificationRequests(page)).toEqual([target]);
+  await expect(nativeRow).toHaveCount(0);
+
+  const absent = nextSnapshot(false);
+  expect(
+    (await request.post('/api/e2e/seed', { data: { action: 'reset' } })).ok(),
+  ).toBe(true);
+  await absent;
+  await expect(control.getByRole('status')).toHaveText(
+    'Watching for new human decisions',
+  );
+  expect((await notificationCounters(page)).delivered).toBe(1);
+
+  const reopened = nextSnapshot(true);
+  expect(
+    (
+      await request.post('/api/e2e/seed', {
+        data: { action: 'seed-inbox-only' },
+      })
+    ).ok(),
+  ).toBe(true);
+  await reopened;
+  await expect
+    .poll(async () => (await notificationCounters(page)).delivered, {
+      timeout: 40_000,
+    })
+    .toBe(2);
+  expect(await notificationRequests(page)).toEqual([target, target]);
+  await expect(nativeRow).toHaveCount(0);
+  // The existing usePopulatedFixtures afterAll owns emulator fixture cleanup.
+});

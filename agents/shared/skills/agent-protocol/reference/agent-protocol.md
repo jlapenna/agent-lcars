@@ -145,10 +145,29 @@ channel. No issue write.
 
 ## 4. Parking — blocked on a human
 
-Use PARK when progress requires a human decision, approval, or access you
-cannot obtain through the authorized workflow. A timeout, provider quota,
-runner/setup failure, or missing deliverable does not establish that blocker.
-Preserve the execution diagnosis instead of inventing a human handoff.
+Use PARK when progress requires access or a credential you cannot obtain
+through the authorized workflow, or an action this protocol reserves for the
+maintainer (§11's approval exceptions, §7's maintainer-only CI controls, or
+an approval a trusted instruction requires), or an auto-merge arming failure
+§6 could not resolve. A timeout, provider quota, runner/setup failure, or
+missing deliverable does not establish that blocker. Preserve the
+execution diagnosis instead of inventing a human handoff.
+
+A judgement call is not a blocker. The maintainer is usually unavailable and
+expects agents to decide: interpreting acceptance criteria, waiving a
+precondition that can no longer be met (a baseline lost to retention), choosing
+between designs, or accepting a result whose evidence is imperfect. Make the
+call within the anchor's scope, state the decision and the evidence it rests
+on in your deliverable, and finish. Do not park asking someone to "approve"
+or "decide" what you could judge yourself; homelab#1329 and #1389 sat open
+for weeks behind an "approve an equivalent-workload design" request whose
+baseline no longer existed. A judgement call never relaxes a §11 or
+repository hard limit, an approval gate (§0), a human hold (§6), or a policy
+this protocol says a worker cannot waive. When the evidence is imperfect,
+deliver as partial work rather than closing the anchor unless your decision
+is that its acceptance is met, and say which: on an issue anchor use
+`Tracks #N` instead of `Fixes #N`; on a native Work anchor keep the
+`Work: work:<id>` reference (§5) and state what remains.
 
 End your response with `PARK <blocker and resume trigger>`. A park is a
 real outcome, not silence: it must leave the same kind of durable,
@@ -196,7 +215,7 @@ you.
 
 When you leave an issue idle because it is waiting on an elapsed time
 window — a scheduled job, a systemd timer, some other event that will post
-its own result later — rather than on a human decision, that is not this
+its own result later — rather than on a §4 blocker, that is not this
 section's blocker (do not PARK on a timeout alone; see above). Instead,
 leave this exact marker in the issue body or a comment so the console reads
 the anchor as an open observation window instead of a stale claim:
@@ -336,8 +355,12 @@ ready push or PR open only to run local E2E.
 For every ready, non-parked pull request you open, **do not request human
 review**. Fleet repositories require zero approving reviews for agent-authored
 PRs; a review request is friction, not a handoff. Publish new PRs as drafts: this lets you check interpreted links before a
-ready-PR auto-merge backstop can arm them. After the check and required review
-pass, mark the draft ready, refresh the check and feedback, and arm below.
+ready-PR auto-merge backstop can arm them. After the check passes and either
+required review passes or the advertised native handoff below allows
+asynchronous GitHub review to remain pending, mark the draft ready, refresh the
+check and feedback, and arm below. That capability does not waive required local
+independent source review, repository review policy or already-known feedback
+before ready/arming.
 Before ready/arming, declare the exact fully completed issue scope and read
 GitHub's actual `closingIssuesReferences` at the reviewed/pushed head. Required
 runtime or deployment acceptance still open means that issue is excluded:
@@ -412,7 +435,7 @@ has disabled auto-merge, converted the PR to draft, or narrowed its closing
 reference (`Fixes #N` to `Tracks #N`), that is a deliberate hold: do not mark
 ready, re-arm, or restore the reference until the hold's stated gate is met
 and your PR comment says how. Agent-fixable feedback is work, not a park —
-park only for a decision or access that genuinely needs a human.
+park only for access or a maintainer-reserved action (§4).
 
 That backstop also keeps an armed PR moving once `main` moves out from under
 it: under a strict "up to date" ruleset, GitHub's own auto-merge never
@@ -428,12 +451,23 @@ spend your own turn budget on the actual work instead.
 ### Ready delivery handoff
 
 Only when its trusted brief advertises `deliveryHandoffVersion: 1`, a native
-implementation can end its provider turn after publishing an exact
-attempt-marked, independently reviewed, ready PR with protected squash delivery
-armed. The authenticated finalizer's completion route verifies the exact head,
-independent exact-head GitHub review, resolved review threads and current required-check
-policy before accepting this handoff. It settles execution through normal
-credential cleanup and positive physical retirement. Without that advertised capability, continue the existing delivery path. The
+implementation can end its provider turn after publishing an OPEN, exact
+attempt-marked, ready PR with protected target policy and squash delivery armed.
+Pending asynchronous independent GitHub review and CI transfer to the durable
+monitor; do not retain the implementation executor solely waiting for them.
+The authenticated finalizer verifies the exact marker, head, ready state,
+protected target and squash arming before accepting this waiting handoff. It
+settles execution through normal credential cleanup and positive physical
+retirement. Already merged initial handoffs still require independent exact-head
+GitHub review, resolved threads and exact protected landing before acceptance.
+Only when the authoritative read proves the run's own exact attempt-marked,
+ready, open PR in its target repository, with an established protected target
+policy, that merely has no auto-merge arm yet (for example, a repository
+workflow arms it after the executor exits) does an initial pull-request result
+settle without durable delivery ownership. Every other refusal, unreadable
+evidence, non-squash arm, unqualified merged PR, correction and
+merged-deliverable claim fails closed.
+Without the advertised capability, continue the existing delivery path. The
 baked runner propagates only the serving Console’s version into the brief;
 repository content cannot enable it.
 
@@ -444,7 +478,10 @@ on the same currently authorized provider. Corrections retain existing claim,
 credential and physical-retirement admission barriers. A PR, auto-merge arm or
 executor exit never makes this handoff logically done.
 
-Only exact protected merge evidence can advance landing. The immutable intake
+Only independent exact-head GitHub review, resolved threads and exact protected
+merge evidence can advance final landing. Known same-head actionable feedback
+remains a bounded correction while delivery is waiting, including after merge;
+completed delivery is not reopened. The immutable intake
 `deliveryRuntime: none|required` declares the runtime policy; an omitted policy
 retains an unknown gate. A worker cannot waive it. Required or unknown runtime
 work stays owned until an authenticated operator records the exact merged-head
@@ -489,7 +526,9 @@ Record the policy and selected lane in the PR handoff, apply the authorized
 label, and continue through the selected checks. Do not park merely to ask for
 permission the trusted repository policy already grants. A label name alone
 is not authorization: if these conditions do not hold, preserve the evidence
-and ask for the exact broader verification needed per §4.
+and ask for the exact broader verification needed per §4 if the PR cannot
+meet its acceptance without it; otherwise deliver it as partial work (§4)
+and say what remains unverified.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 

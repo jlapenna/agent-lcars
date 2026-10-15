@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { constants, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { expect, it } from 'vitest';
@@ -33,6 +33,7 @@ it.each([
     const writerIdentity = join(root, 'writer-identity.json');
     const writerDone = join(root, 'writer-done');
     const transportEvidence = join(root, 'transport-evidence.json');
+    const drainEvidence = join(root, 'drain-evidence.json');
     const foreign = join(root, 'unrelated-home');
     mkdirSync(foreign);
     const unrelated = pendingWriter
@@ -90,7 +91,7 @@ const child=require('node:child_process').spawn(process.execPath,['-e',
 ${JSON.stringify(`const fs=require('node:fs');setTimeout(()=>{
 fs.writeFileSync(process.argv[1]+'/delayed-output','owned test output');
 fs.writeFileSync(${JSON.stringify(writerDone)},'finished');
-},1200);`)},runtimeLib],{detached:true,stdio:'ignore',env:process.env});
+},${refuseDrain ? 60_000 : 1200});`)},runtimeLib],{detached:true,stdio:'ignore',env:process.env});
 const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
 fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib}));
 child.unref();
@@ -152,9 +153,41 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       ])
         writeFileSync(join(project, file), readFileSync(resolve(file)));
       if (refuseDrain)
-        writeFileSync(join(bin, 'python3'), '#!/bin/sh\nexit 1\n', {
-          mode: 0o755,
-        });
+        // Run the actual helper. Refuse only after it owns a real PIDFD, then
+        // observe its finally block closing that descriptor without raw errors.
+        writeFileSync(
+          join(bin, 'python3'),
+          `#!/usr/bin/env node
+const fs=require('node:fs'),child=require('node:child_process');
+const prelude=${JSON.stringify(`import atexit, errno, json, os, pathlib, select
+original_select = select.select
+observed = []
+def refuse_owned(readers, writers, errors, timeout=None):
+    if readers:
+        observed.extend(readers)
+        raise OSError(errno.EIO, 'private-drain-detail private-credential')
+    return original_select(readers, writers, errors, timeout)
+def record_closed():
+    closed = []
+    for descriptor in observed:
+        try:
+            os.fstat(descriptor)
+            closed.append(False)
+        except OSError as error:
+            closed.append(error.errno == errno.EBADF)
+    pathlib.Path(${JSON.stringify(drainEvidence)}).write_text(json.dumps({
+        'ownedPidfdCount': len(observed), 'allClosed': bool(closed) and all(closed)}))
+select.select = refuse_owned
+atexit.register(record_closed)
+`)};
+const result=child.spawnSync('python3',process.argv.slice(2),{
+input:prelude+fs.readFileSync(0,'utf8'),encoding:'utf8',
+env:{...process.env,PATH:process.env.PATH.split(':').slice(1).join(':')}});
+process.stdout.write(result.stdout??'');process.stderr.write(result.stderr??'');
+process.exit(result.status??1);
+`,
+          { mode: 0o755 },
+        );
       smoke = join(project, 'tools/hook-telemetry-runtime-smoke.sh');
     }
     try {
@@ -173,7 +206,7 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
         encoding: 'utf8',
         timeout: 100_000,
       });
-      expect(result.error).toBeUndefined();
+      const spawnError = Boolean(result.error);
       const line = result.stderr
         .split('\n')
         .find((value) => value.startsWith('hook smoke lifecycle: '));
@@ -220,7 +253,47 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
           /* Already exited naturally. */
         }
       }
-      expect(result.status).toBe(missingStop || refuseDrain ? 1 : 0);
+      const drainDiagnostic = result.stderr.match(
+        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=(OSError|PermissionError|FileNotFoundError|ProcessLookupError|TimeoutError|RuntimeError|IndexError|ValueError|NotImplementedError|unknown) errno=(none|[0-9]{1,3})$/m,
+      );
+      const classification = result.stderr.includes(
+        'hook smoke cleanup: process drainage refused; retaining private scratch',
+      )
+        ? 'drain-refused'
+        : result.stderr.includes('session is missing hook events: stop')
+          ? 'missing-hook-events'
+          : result.status === 0
+            ? 'none'
+            : 'unclassified';
+      // Assertion failures show only bounded categories, never child output.
+      expect({
+        status: result.status,
+        signal: result.signal ? (constants.signals[result.signal] ?? -1) : null,
+        spawnError,
+        classification,
+        exception: drainDiagnostic?.[1] ?? null,
+        errno:
+          drainDiagnostic && drainDiagnostic[2] !== 'none'
+            ? Number(drainDiagnostic[2])
+            : null,
+      }).toEqual({
+        status: missingStop || refuseDrain ? 1 : 0,
+        signal: null,
+        spawnError: false,
+        classification: refuseDrain
+          ? 'drain-refused'
+          : missingStop
+            ? 'missing-hook-events'
+            : 'none',
+        exception: refuseDrain ? 'OSError' : null,
+        errno: refuseDrain ? constants.errno.EIO : null,
+      });
+      const drainage = existsSync(drainEvidence)
+        ? JSON.parse(readFileSync(drainEvidence, 'utf8'))
+        : undefined;
+      expect(drainage).toEqual(
+        refuseDrain ? { ownedPidfdCount: 1, allClosed: true } : undefined,
+      );
       expect(
         result.stderr.includes('session is missing hook events: stop'),
       ).toBe(missingStop);
@@ -264,8 +337,11 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
         'private-request-body',
         'private-model-body',
         'private-error-detail',
+        'private-drain-detail',
       ])
-        expect(result.stdout + result.stderr).not.toContain(privateValue);
+        expect((result.stdout + result.stderr).includes(privateValue)).toBe(
+          false,
+        );
       expect(readdirSync(scratch).length === 0).toBe(!refuseDrain);
     } finally {
       let ownedCleanupStatus = 0;

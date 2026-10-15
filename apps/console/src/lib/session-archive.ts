@@ -28,7 +28,11 @@ import {
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { matchesSessionFind } from './session-find';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
-import { aggregateSessionSpend, type SessionSpend } from './session-spend';
+import {
+  aggregateSessionSpend,
+  type SessionSpend,
+  type SpendPipelineGrouping,
+} from './session-spend';
 import {
   aggregateSpendByRepository,
   type RepositorySpend,
@@ -270,6 +274,8 @@ export interface SessionArchiveResult {
    * runner-sessions.ts). */
   warnings: string[];
   spend?: SessionSpend;
+  /** False only when the session feed itself could not be read. */
+  available?: boolean;
   /** With `includeSpend`: spend by repository for today and seven days. */
   spendByRepository?: RepositorySpend;
 }
@@ -282,10 +288,20 @@ export interface SessionArchiveResult {
  */
 export async function getSessionArchive(
   query: SessionArchiveQuery,
-  options: { includeSpend?: boolean } = {},
+  options: {
+    includeSpend?: boolean;
+    observedAt?: string;
+    spendPipelineGrouping?: SpendPipelineGrouping;
+  } = {},
 ): Promise<SessionArchiveResult> {
+  const observed =
+    options.observedAt === undefined
+      ? Date.now()
+      : Date.parse(options.observedAt);
+  if (!Number.isFinite(observed))
+    throw new RangeError('Invalid archive observation clock');
   const activeSince = new Date(
-    Date.now() - query.days * 24 * 60 * 60 * 1000,
+    observed - query.days * 24 * 60 * 60 * 1000,
   ).toISOString();
 
   let docs: SessionDoc[];
@@ -302,6 +318,7 @@ export async function getSessionArchive(
   } catch (error) {
     logger.error('agent-lcars: failed to list session archive:', error);
     return {
+      available: false,
       rows: [],
       ledger: { byIssue: [], byWeek: [] },
       warnings: ['Session archive unavailable (agent-telemetry store failed).'],
@@ -311,7 +328,22 @@ export async function getSessionArchive(
     };
   }
 
-  const coverageLimited = docs.length >= ARCHIVE_LIST_LIMIT;
+  const pageCapped = docs.length >= ARCHIVE_LIST_LIMIT;
+  let coverageLimited = pageCapped;
+  // Snapshot consumers must not charge future or malformed activity clocks.
+  // Apply after the bounded page; excluded rows make coverage explicitly partial.
+  if (options.observedAt !== undefined) {
+    const selected = docs.filter((doc) => {
+      const activity = Date.parse(doc.lastActivityAt);
+      return (
+        Number.isFinite(activity) &&
+        activity >= Date.parse(activeSince) &&
+        activity <= observed
+      );
+    });
+    coverageLimited ||= selected.length !== docs.length;
+    docs = selected;
+  }
 
   // No repo field on `listSessionDocs` to filter server-side by, unlike
   // source/issueNumber (which are indexed Firestore query params) - applied
@@ -337,11 +369,16 @@ export async function getSessionArchive(
     docs = docs.filter((doc) => matchesSessionFind(toSessionRow(doc, at), q));
   }
 
-  const warnings = coverageLimited
-    ? [
-        'Session limit reached; totals may be partial, including repository-filtered totals.',
-      ]
-    : [];
+  const warnings = [
+    ...(pageCapped
+      ? [
+          'Session limit reached; totals may be partial, including repository-filtered totals.',
+        ]
+      : []),
+    ...(coverageLimited && !pageCapped
+      ? ['Snapshot activity clocks excluded; totals may be partial.']
+      : []),
+  ];
   let spend: SessionSpend | undefined;
   if (options.includeSpend) {
     let projections = new Map<string, GithubAnchorProjection>();
@@ -364,10 +401,19 @@ export async function getSessionArchive(
         'Pull request merge evidence unavailable; deliverables remain unknown.',
       );
     }
-    spend = aggregateSessionSpend(docs, projections, coverageLimited);
+    spend = aggregateSessionSpend(
+      docs,
+      projections,
+      coverageLimited,
+      options.spendPipelineGrouping,
+    );
   }
-  const now = new Date().toISOString();
+  const now =
+    options.observedAt === undefined
+      ? new Date().toISOString()
+      : new Date(observed).toISOString();
   return {
+    available: true,
     rows: docs.map((doc) => toSessionRow(doc, now)),
     ledger: aggregateSessionLedger(docs),
     warnings,

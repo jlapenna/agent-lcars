@@ -14,9 +14,7 @@ test.describe('/shuttlebay workspace', () => {
     await expect(page.getByRole('heading', { name: 'Shuttlebay' })).toHaveCount(
       1,
     );
-    await expect(
-      page.getByText('Updates live as runner capacity changes.'),
-    ).toBeVisible();
+    await expect(page.getByRole('search', { name: 'Filters' })).toBeVisible();
     await expect(
       page
         .getByRole('navigation', { name: 'Console sections' })

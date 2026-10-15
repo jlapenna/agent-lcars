@@ -7,6 +7,7 @@ import {
   ConsoleIdentity,
   ConsoleLiveStatus,
   RailReadouts,
+  ReadoutStrip,
 } from './console-frame-readouts';
 import { ConsoleNavRail } from './console-nav-rail';
 import {
@@ -145,6 +146,36 @@ describe('console frame readouts', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('gives narrow headers the same status on one line', async () => {
+    respond(admin);
+    render(<ConsoleLiveStatus compact />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const status = screen.getByTestId('console-live-status-compact');
+    expect(status).toHaveTextContent('Snapshot');
+    expect(status).not.toHaveTextContent('refresh to update');
+    expect(status).toHaveClass('console-live-status--compact');
+  });
+
+  it('repeats the rail readouts on one line for narrow screens', async () => {
+    respond(admin);
+    render(<ReadoutStrip />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('strip-readout-fleet')).toHaveTextContent(
+      '11/12 fleet',
+    );
+    expect(screen.getByTestId('strip-readout-queue')).toHaveTextContent(
+      '09 queue',
+    );
+    expect(screen.getByTestId('strip-readout-merged')).toHaveTextContent(
+      '14 merged 24h',
+    );
   });
 
   it('marks a partial token total as a lower bound', async () => {

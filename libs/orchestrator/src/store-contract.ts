@@ -525,7 +525,203 @@ export function runOrchestratorStoreContract(
         expect(await store.listRuns(TASK)).toHaveLength(1);
       });
 
-      it('serializes a label handoff against claim and retains refusal after terminal settlement', async () => {
+      it('refuses a running claimed attempt before a label successor', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const { run } = await started(orchestrator);
+        await store.enqueueRun({ runId: run.runId, now: clock.now() });
+        await orchestrator.confirmDispatch(run.runId);
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        clock.advanceMinutes(1);
+        expect(
+          await orchestrator.request({
+            taskId: TASK,
+            requestId: 'running-label',
+            pipeline: 'opencode',
+            pipelineForStoredTask: () => 'claude',
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          }),
+        ).toMatchObject({
+          task: {
+            activeRunId: run.runId,
+            providerRouting: {
+              status: 'refused',
+              reason: 'run-already-claimed',
+            },
+          },
+          outbox: [],
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'running',
+        });
+      });
+
+      it.each([
+        'none',
+        'receipt',
+        'credential-operation',
+        'restored-credential',
+      ] as const)(
+        'gates terminal claimed label successors on durable ownership evidence: %s',
+        async (debt) => {
+          const { store, orchestrator, clock } = await fixture();
+          // Multiple legacy remnants exercise the Firestore query boundary:
+          // its first claimed entry cannot mask a later retained owner.
+          for (const requestId of ['legacy-first', 'legacy-second']) {
+            const { run } = await started(orchestrator, requestId);
+            await store.enqueueRun({ runId: run.runId, now: clock.now() });
+            await store.claimQueuedRun({
+              pipelines: ['claude'],
+              now: clock.now(),
+              claimedBy: 'executor',
+              tokenHash: 'a'.repeat(64),
+            });
+            await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+            clock.advanceMinutes(1);
+          }
+          const runs = await store.listRuns(TASK);
+          const owner = runs.find((run) => run.requestId === 'legacy-second');
+          if (owner === undefined) throw new Error('missing terminal owner');
+          expect(owner).toMatchObject({
+            state: 'finished',
+            queue: { state: 'claimed' },
+          });
+          await store.transactCapacity({
+            now: clock.now(),
+            recordKeys: [],
+            runId: owner.runId,
+            decide: ({ state }) => ({
+              value: undefined,
+              state: {
+                ...state,
+                receipts:
+                  debt === 'receipt'
+                    ? [
+                        {
+                          poolId: 'pool',
+                          slot: 0,
+                          revision: 1,
+                          runId: owner.runId,
+                          taskKey: taskKey(TASK),
+                          nonce: 'receipt-nonce-123456',
+                          domainId: 'claude',
+                          pipeline: 'claude',
+                          subject: 'executor',
+                          runner: 'runner',
+                          producerId: 'producer',
+                          claimedAt: T0,
+                          state: 'retiring',
+                          unplaced: false,
+                          tokenHash: 'a'.repeat(64),
+                          jobName: 'retained-job',
+                          retiredWorkers: [],
+                          producers: [
+                            {
+                              producerId: 'producer',
+                              subject: 'executor',
+                              stopped: true,
+                              fenced: true,
+                              pendingWrites: [],
+                            },
+                          ],
+                        },
+                      ]
+                    : [],
+              },
+              run: {
+                ...owner,
+                ...(debt === 'credential-operation'
+                  ? {
+                      credentialOperation: {
+                        id: 'cleanup',
+                        kind: 'cleanup',
+                        claimFingerprint: 'a'.repeat(64),
+                        startedAt: clock.now(),
+                        recoverAfter: clock.now(),
+                        mutationSequence: 0,
+                      },
+                    }
+                  : {}),
+                ...(debt === 'restored-credential'
+                  ? {
+                      credentialRestoredClaimFingerprint: 'a'.repeat(64),
+                    }
+                  : {}),
+              },
+            }),
+          });
+          // A newer unclaimed terminal attempt must not hide older debt either.
+          const latest = await started(orchestrator, 'latest-unclaimed');
+          await orchestrator.report(latest.run.runId, { ok: true });
+          clock.advanceMinutes(1);
+          const request = (requestId: string) =>
+            orchestrator.request({
+              taskId: TASK,
+              requestId,
+              pipeline: 'opencode',
+              pipelineForStoredTask: () => 'claude',
+              labelProviderRequest: {
+                requestedAt: clock.now(),
+                actor: 'maintainer',
+                allowProviderChange: true,
+              },
+            });
+          const result = await request('label-successor');
+          if (debt === 'none') {
+            expect(result).toMatchObject({
+              run: { pipeline: 'opencode' },
+              task: {
+                work: TASK_WORK,
+                providerRouting: { status: 'accepted' },
+              },
+            });
+          } else {
+            expect(result).toMatchObject({
+              task: {
+                providerRouting: {
+                  status: 'refused',
+                  reason: 'physical-retirement-required',
+                },
+              },
+              outbox: [],
+            });
+            expect(await store.listRuns(TASK)).toHaveLength(3);
+            // Positive debt cleanup, followed by a fresh source clock, unlocks
+            // the request without rewriting the legacy queue history.
+            await store.transactCapacity({
+              now: clock.now(),
+              recordKeys: [],
+              runId: owner.runId,
+              decide: ({ state }) => ({
+                value: undefined,
+                state: { ...state, receipts: [] },
+                run: owner,
+              }),
+            });
+            clock.advanceMinutes(1);
+            expect(await request('label-after-cleanup')).toMatchObject({
+              run: { pipeline: 'opencode' },
+              task: { providerRouting: { status: 'accepted' } },
+            });
+          }
+          expect(await store.readRun(owner.runId)).toMatchObject({
+            state: 'finished',
+            pipeline: 'claude',
+            queue: { state: 'claimed' },
+          });
+        },
+      );
+
+      it('serializes a label handoff against claim and admits a later settled legacy successor', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator);
         await store.enqueueRun({ runId: run.runId, now: T0 });
@@ -574,13 +770,13 @@ export function runOrchestratorStoreContract(
           ).toMatchObject({
             task: {
               providerRouting: {
-                status: 'refused',
-                reason: 'physical-retirement-required',
+                status: 'accepted',
+                effectivePipeline: 'opencode',
               },
             },
-            outbox: [],
+            run: { pipeline: 'opencode' },
           });
-          expect(await store.listRuns(TASK)).toHaveLength(1);
+          expect(await store.listRuns(TASK)).toHaveLength(2);
         } else {
           expect(claim).toBeUndefined();
           expect(handoff.run.pipeline).toBe('opencode');

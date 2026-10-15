@@ -13,6 +13,7 @@ import {
 } from './bridge-selection';
 import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
+import { renderCardMarkdown } from './render-card-markdown';
 import { SectionHeading } from './section-heading';
 import type { ReplyAction } from './work/work-actions';
 
@@ -25,6 +26,7 @@ export function DecisionInbox({
   selectedItemKey,
   mobileDataFreshness,
   mobileScopeLabel,
+  repoScoped,
   replyToWorkItem,
   toolbarStart,
   toolbarEnd,
@@ -34,6 +36,7 @@ export function DecisionInbox({
   selectedItemKey?: string;
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  repoScoped?: boolean;
   replyToWorkItem?: ReplyAction;
   toolbarStart?: ReactNode;
   toolbarEnd?: ReactNode;
@@ -42,12 +45,19 @@ export function DecisionInbox({
 
   return (
     <QueueWorkspace
-      cards={yourQueue}
-      selectedCard={selectedCard}
+      cards={yourQueue.map((card) =>
+        'work' in card ? card : renderCardMarkdown(card),
+      )}
+      selectedCard={
+        selectedCard && !('work' in selectedCard)
+          ? renderCardMarkdown(selectedCard)
+          : selectedCard
+      }
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}
       mobileScopeLabel={mobileScopeLabel}
+      repoScoped={repoScoped}
       replyToWorkItem={replyToWorkItem}
       toolbarStart={toolbarStart}
       toolbarEnd={toolbarEnd}

@@ -305,13 +305,14 @@ describe('LCARS design system contract', () => {
       // the output a class, so every link in a GitHub comment body fell
       // through to the browser's defaults (#1843).
       for (const view of [
-        'action-item-card.tsx',
+        'render-card-markdown.tsx',
         'artifact-viewer.tsx',
         'sessions/[id]/transcript-timeline-view.tsx',
       ]) {
         expect(source(view)).toContain('<ConsoleMarkdown');
         expect(source(view)).not.toContain('<ReactMarkdown');
       }
+      expect(source('action-item-card.tsx')).not.toContain('<ReactMarkdown');
     });
 
     it('colours markdown links, including :visited', () => {

@@ -111,6 +111,8 @@ async function milestone(page, origin, active, phase) {
       readyMs: performance.now(),
       responseStartMs: navigation.responseStart,
       responseEndMs: navigation.responseEnd,
+      documentTransferBytes: navigation.transferSize,
+      documentEncodedBytes: navigation.encodedBodySize,
       domInteractiveMs: navigation.domInteractive,
       domContentLoadedMs: navigation.domContentLoadedEventEnd,
       loadEventMs: navigation.loadEventEnd,

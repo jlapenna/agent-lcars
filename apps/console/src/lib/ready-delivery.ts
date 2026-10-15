@@ -245,6 +245,14 @@ function hasIndependentReview(
   );
 }
 
+/** Thrown only after an authoritative read proved the run's own exact
+ * attempt-marked, non-draft, open PR in its target repository with an
+ * established protected target policy, which merely has no auto-merge arm
+ * yet. Every other failure is a generic Error. */
+export class UnqualifiedDeliveryError extends Error {
+  override readonly name = 'UnqualifiedDeliveryError';
+}
+
 /** A successful PR artifact is not a completion verdict. This exact server
  * read establishes the narrow ready handoff before authenticated settlement. */
 export async function readyDeliveryBinding(
@@ -262,26 +270,44 @@ export async function readyDeliveryBinding(
   const generation = parseRunGeneration(run.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: run.runId });
+  const payload = workPayloadSchema.parse(task.work);
+  if (payload.spec.target.repo !== repo)
+    throw new Error('Delivery target changed');
   if (
     pr.number !== number ||
     (!pr.merged && pr.state !== 'open') ||
     pr.draft ||
-    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`) ||
-    (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
+    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Deliverable is not ready and armed');
+  if (
+    !pr.merged &&
+    pr.auto_merge !== null &&
+    pr.auto_merge.merge_method !== 'squash'
+  )
+    throw new Error('Deliverable is armed with a non-squash method');
   await protectedChecks(deps, repo, pr.base.ref);
-  const review = await reviews(deps, repo, number, pr.head.sha);
-  if (!hasIndependentReview(review, pr.user.login))
-    throw new Error('Deliverable requires exact-head independent review');
-  const payload = workPayloadSchema.parse(task.work);
-  if (payload.spec.target.repo !== repo)
-    throw new Error('Delivery target changed');
+  // Proven by the authoritative read above and the established protected
+  // target policy: this run's exact marked, ready, open PR in its own target
+  // repository, merely not armed yet.
+  if (!pr.merged && pr.auto_merge === null)
+    throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
+  // An open, armed artifact transfers waiting ownership; asynchronous review
+  // belongs to the durable monitor, rather than the implementation executor.
+  // Already merged artifacts still require review before accepting landing.
+  if (pr.merged) {
+    const review = await reviews(deps, repo, number, pr.head.sha);
+    if (!hasIndependentReview(review, pr.user.login))
+      throw new Error('Deliverable requires exact-head independent review');
+  }
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (
     final.head.sha !== pr.head.sha ||
     final.base.ref !== pr.base.ref ||
-    final.merged !== pr.merged ||
+    // An armed open artifact may auto-merge during verification. That
+    // same-head transition keeps the waiting binding: the monitor then
+    // requires independent review before accepting the landing.
+    (pr.merged && !final.merged) ||
     (!final.merged && final.state !== 'open') ||
     final.draft ||
     (!final.merged && final.auto_merge?.merge_method !== 'squash') ||
@@ -464,6 +490,14 @@ export async function observeGithubDelivery(
       return { kind: 'waiting', head: binding.head };
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
   }
+  // Late same-head feedback remains actionable while delivery is waiting,
+  // even if checks allowed the artifact to merge before review arrived.
+  if (review.changesRequested || review.unresolved)
+    return {
+      kind: 'correction',
+      head: binding.head,
+      reason: 'Review feedback requires correction',
+    };
   if (pr.merged && pr.merge_commit_sha !== null) {
     if (!hasIndependentReview(review, pr.user.login))
       return { kind: 'waiting', head: binding.head };
@@ -531,12 +565,6 @@ export async function observeGithubDelivery(
       mergeCommit: pr.merge_commit_sha,
     };
   }
-  if (review.changesRequested || review.unresolved)
-    return {
-      kind: 'correction',
-      head: binding.head,
-      reason: 'Review feedback requires correction',
-    };
   const required = await protectedChecks(deps, binding.repo, pr.base.ref);
   const checkRuns = await currentCheckRuns(deps, binding);
   const candidateFailures = checkRuns.filter(

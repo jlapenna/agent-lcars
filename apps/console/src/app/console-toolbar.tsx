@@ -1,6 +1,6 @@
 'use client';
 
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 /**
  * The workspace toolbar band's controls (design/fleet-console.html): a
@@ -25,15 +25,45 @@ export function ConsoleToolbar({
   /** The route's one primary action, docked to the trailing edge. */
   primary?: ReactNode;
 }) {
+  // Phones keep FIND, the window and the primary action in view and fold the
+  // selects and More filters behind one toggle, so the band does not fill the
+  // first screen. The toggle names how many folded filters narrow the view,
+  // so a filtered page never looks unfiltered.
+  const formRef = useRef<HTMLFormElement>(null);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    // What the fold hides: the selects and More filters' fields.
+    setActive(
+      [
+        ...form.querySelectorAll<HTMLSelectElement>(':scope > select'),
+        ...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+          '.console-toolbar__more :is(select, input:not([type=hidden]))',
+        ),
+      ].filter((field) => field.value).length,
+    );
+  }, []);
   return (
     <div className="console-toolbar">
       <form
+        ref={formRef}
         method="get"
         action={action}
         className="console-toolbar__filters"
         role="search"
         aria-label="Filters"
+        data-open={open ? '' : undefined}
       >
+        <button
+          type="button"
+          className="console-toolbar__field console-toolbar__toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {active > 0 ? `Filters · ${active}` : 'Filters'}
+        </button>
         {Object.entries(preserve).map(([name, value]) =>
           value === undefined ? null : (
             <input key={name} type="hidden" name={name} value={value} />
@@ -54,7 +84,8 @@ function submitClosestForm(element: HTMLElement) {
 }
 
 /** Marks the control's form as hydrated: from then on changes submit
- * themselves and the form's pre-hydration Apply button is hidden. */
+ * themselves, and the phone fold may hide the form's selects behind its
+ * toggle. */
 function useMarkFormHydrated<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   useEffect(() => {
@@ -63,13 +94,17 @@ function useMarkFormHydrated<T extends HTMLElement>() {
   return ref;
 }
 
-/** A native submit for the moments before hydration (or if it fails), when
- * the controls cannot submit on change; hidden once they can. */
+/** A native submit for browsers without JavaScript, where the controls cannot
+ * submit on change. In `<noscript>` so it never takes a box otherwise: a box
+ * that hydration then hid either kept an empty row or, removed, shifted
+ * everything below the band. */
 export function ToolbarApply({ label = 'Apply' }: { label?: string }) {
   return (
-    <button type="submit" className="console-toolbar__apply">
-      {label}
-    </button>
+    <noscript>
+      <button type="submit" className="console-toolbar__apply">
+        {label}
+      </button>
+    </noscript>
   );
 }
 
@@ -161,6 +196,20 @@ export function ToolbarWindow({
   );
 }
 
+/** The form's filters as one comparable string. */
+function formState(form: HTMLFormElement): string {
+  return new URLSearchParams(
+    [...new FormData(form)].map(([key, value]) => [key, String(value)]),
+  ).toString();
+}
+
+/** Applies when its value is committed - Enter, the clear button, or focus
+ * leaving the filters for no other control - so FIND behaves like the
+ * selects and window beside it rather than waiting for a separate Apply. Not
+ * per keystroke: each application is a navigation. Moving among the form's
+ * own fields (Work's principal behind More filters) waits, and leaving to
+ * another action (New work, a link) lets that action run instead of racing it
+ * with a reload; Enter still applies. */
 export function ToolbarSearch({
   name,
   label,
@@ -172,10 +221,36 @@ export function ToolbarSearch({
   placeholder: string;
   value?: string;
 }) {
+  const ref = useMarkFormHydrated<HTMLInputElement>();
+  useEffect(() => {
+    const input = ref.current;
+    const form = input?.form;
+    if (!input || !form) return;
+    let applied = formState(form);
+    const onSubmit = () => {
+      applied = formState(form);
+    };
+    const commit = () => {
+      if (formState(form) !== applied) form.requestSubmit();
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      // Null: focus went to the page itself, not to another control.
+      if (event.relatedTarget === null) commit();
+    };
+    form.addEventListener('submit', onSubmit);
+    form.addEventListener('focusout', onFocusOut);
+    input.addEventListener('search', commit);
+    return () => {
+      form.removeEventListener('submit', onSubmit);
+      form.removeEventListener('focusout', onFocusOut);
+      input.removeEventListener('search', commit);
+    };
+  }, [ref]);
   return (
     <label className="console-toolbar__field console-toolbar__search">
       <span className="lcars-eyebrow">Find</span>
       <input
+        ref={ref}
         type="search"
         name={name}
         aria-label={label}

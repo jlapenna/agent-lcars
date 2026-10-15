@@ -192,7 +192,6 @@ async function IndexBody({
   repoFilter,
   repoFilterKey,
   view,
-  watchedRepos,
   selectedKey,
   stoppedCursor,
   multiRepo,
@@ -201,7 +200,6 @@ async function IndexBody({
   repoFilterKey?: string;
   /** The toolbar's agent, window and find, as on Agents. */
   view: AgentsViewFilters;
-  watchedRepos: WatchedRepo[];
   selectedKey?: string;
   stoppedCursor?: string;
   multiRepo: boolean;
@@ -404,27 +402,18 @@ async function IndexBody({
       toolbar={
         <ConsoleToolbar
           action="/"
-          preserve={{ sel: selectedKey }}
+          preserve={{ repo: repoFilterKey, sel: selectedKey }}
           primary={
             <DeckInboxSummary
+              compact
               count={decisionCount}
               nativeAvailable={nativeInbox.available}
               inboxHref={inboxHref}
             />
           }
         >
-          <ToolbarSelect
-            name="repo"
-            label="Repository"
-            value={repoFilterKey ?? ''}
-            options={[
-              { value: '', label: `All repositories (${watchedRepos.length})` },
-              ...watchedRepos.map((repo) => ({
-                value: repoKey(repo),
-                label: repoKey(repo),
-              })),
-            ]}
-          />
+          {/* No repository select here: scope arrives from navigation and
+              "Clear repository" below leaves it (#2533). */}
           <ToolbarSelect
             name="agent"
             label="Agent"
@@ -467,8 +456,7 @@ async function IndexBody({
             fetchedAt={dataAsOf}
             initialLabel={formatRelativeTime(dataAsOf)}
           />
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
@@ -596,7 +584,6 @@ interface IndexViewProps {
 }
 
 function IndexViewContent({
-  watchedRepos,
   repoFilter,
   repoFilterKey,
   view,
@@ -615,7 +602,6 @@ function IndexViewContent({
           repoFilter={repoFilter}
           repoFilterKey={repoFilterKey}
           view={view}
-          watchedRepos={watchedRepos}
           selectedKey={selectedKey}
           stoppedCursor={stoppedCursor}
           multiRepo={multiRepo}

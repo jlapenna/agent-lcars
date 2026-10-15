@@ -1,6 +1,7 @@
 import {
   isCanonicalSessionRepository,
   isSessionAgent,
+  type QualifiedSessionPR,
   type SessionAgent,
   type SessionDeliverables,
   type SessionLiveness,
@@ -191,8 +192,36 @@ function parseDeliverables(value: unknown): SessionDeliverables | undefined {
     if (!text || !/^[0-9a-f]{7,40}$/i.test(text)) return undefined;
     shas.push(text);
   }
+  const refs: Pick<
+    SessionDeliverables,
+    'qualifiedPRs' | 'publicationCandidates'
+  > = {};
+  for (const field of ['qualifiedPRs', 'publicationCandidates'] as const) {
+    if (record[field] === undefined) continue;
+    const values = asArray(record[field]);
+    if (!values || values.length > MAX_LIST) return undefined;
+    const parsed: QualifiedSessionPR[] = [];
+    for (const value of values) {
+      const ref = asRecord(value);
+      const repo = ref?.['repo'];
+      const number = nonNegativeInteger(ref?.['number']);
+      if (
+        !isCanonicalSessionRepository(repo) ||
+        !Number.isSafeInteger(number) ||
+        !number
+      )
+        return undefined;
+      parsed.push({ repo: { owner: repo.owner, name: repo.name }, number });
+    }
+    refs[field] = parsed;
+  }
   const branch = boundedString(record['branch']);
-  return { prNumbers: prs, commitShas: shas, ...(branch && { branch }) };
+  return {
+    prNumbers: prs,
+    commitShas: shas,
+    ...refs,
+    ...(branch && { branch }),
+  };
 }
 
 function parseLastToolCall(value: unknown): ToolCallDigest | undefined {
@@ -268,6 +297,11 @@ export function parseSessionSummaryV1(
   const cwd = boundedString(record['cwd']);
   const worktree = boundedString(record['worktree']);
   const branch = boundedString(record['branch']);
+  const actor = asString(record['githubActor']);
+  const githubActor =
+    actor && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(actor)
+      ? actor
+      : undefined;
   const model = boundedString(record['model']);
   const resolvedModel = boundedString(record['resolvedModel']);
   const permissionMode = boundedString(record['permissionMode']);
@@ -288,6 +322,7 @@ export function parseSessionSummaryV1(
     ...(cwd && { cwd }),
     ...(worktree && { worktree }),
     ...(branch && { branch }),
+    ...(githubActor && { githubActor }),
     ...(model && { model }),
     ...(resolvedModel && { resolvedModel }),
     ...(permissionMode && { permissionMode }),

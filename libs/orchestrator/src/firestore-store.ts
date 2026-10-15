@@ -55,6 +55,7 @@ import {
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
+import { retainsPhysicalClaim } from './provider-routing';
 import {
   parseProviderCooldown,
   projectQueueAdmissionStatus,
@@ -424,12 +425,18 @@ export class FirestoreStore implements OrchestratorStore {
                 this.#runRef(`${taskKey(input.taskId)}/r${task.task.runCount}`),
               ),
               tx.get(
-                this.#runsForTask(input.taskId)
-                  .where('queue.state', '==', 'claimed')
-                  .limit(1),
+                this.#runsForTask(input.taskId).where(
+                  'queue.state',
+                  '==',
+                  'claimed',
+                ),
               ),
+              tx.get(this.#capacity.doc('active')),
             ])
           : undefined;
+      const routingCapacity = routing?.[2].exists
+        ? capacityStateSchema.parse(routing[2].data())
+        : emptyCapacityState();
       const outcome = input.decide({
         ...(routing === undefined
           ? {}
@@ -437,9 +444,12 @@ export class FirestoreStore implements OrchestratorStore {
               latestRun: routing[0].exists
                 ? runSchema.parse(routing[0].data())
                 : undefined,
-              retainedClaims: routing[1].docs.map((doc) =>
-                runSchema.parse(doc.data()),
-              ),
+              // Read every claimed candidate: an older legacy remnant must
+              // not hide a later capacity or credential owner behind limit(1).
+              // Capacity shares this transaction with admission and release.
+              retainedClaims: routing[1].docs
+                .map((doc) => runSchema.parse(doc.data()))
+                .filter((run) => retainsPhysicalClaim(run, routingCapacity)),
             }),
         task,
         activeRun,

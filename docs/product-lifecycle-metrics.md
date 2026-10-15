@@ -49,21 +49,50 @@ observation denominator. Check a live export with `promtool check metrics`.
 
 All names below have prefix `lcars_product_`.
 
-| Measurement                                    | Exact event/clock and interpretation                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `admitted_window`, `auto_retries_window`       | One Run identity with `createdAt` in the hour; retries additionally require durable `requestSource=auto-retry`. This is admitted generations, not received webhooks, unique tasks or launched agents.                                                                                                                                                                     |
-| `claims_window`                                | Retained `queue.claimedAt` in the hour. Releasing/reclaiming a reservation erases/replaces that field; this is not an all-time claim-attempt counter.                                                                                                                                                                                                                     |
-| `latency_window_*`, stage `admission_to_queue` | Run `createdAt` to the first durable `by=dispatch` event; included when that dispatch event is in the hour. This queue-confirmation observation excludes webhook transport delay and does not prove worker launch.                                                                                                                                                        |
-| `latency_window_*`, stage `queue_to_claim`     | First durable dispatch event to retained `claimedAt`; included when claim is in the hour. Includes cooldown, deferral and capacity waits. The record does not retain a capacity-eligible clock, so this cannot prove the proposed capacity-conditional claim SLO.                                                                                                         |
-| Latency count/sum/buckets/unknown              | Known finite nonnegative durations contribute one sample to count/sum and cumulative buckets 60/120/300/900/3600/+Inf seconds. Missing or reversed clocks contribute to unknown, never zero latency. Quantiles are estimates over known durations only.                                                                                                                   |
-| `settled_window`                               | Finished/canceled/lost runs whose last event into their current terminal state is in the hour; no heartbeat `updatedAt` substitution. `terminal_clock_unknown_window` counts recently updated terminal records missing that clock.                                                                                                                                        |
-| `reported_outcome_window`                      | Finished-window denominator, split by reported summary: pull-request, merged-deliverable, comment, review, park, no-op, provider-limit, provider-capacity, runner-failed, agent-failed, no-deliverable, unknown-success, other/missing. `ok=true` is never called useful work; park/no-op stay separate. These are worker reports, not independent artifact verification. |
-| `live_runs`, `oldest_queued_seconds`           | All observed live records split into queued/claimed/unclassified; oldest queued age is since Run admission (`createdAt`), including pre-queue time. Running state alone does not mean claimed or executing.                                                                                                                                                               |
-| `silent_loss_runs`                             | Live, non-queued runs with lease expiry more than the five-minute maintenance interval before observation. Queued capacity waits are excluded because their execution leases do not expire. This is an overdue-recovery signal, not proof a provider is silently dead.                                                                                                    |
-| `outbox_entries`, `outbox_oldest_seconds`      | All outstanding entries split by bounded kind/state, including old failed dead letters. Age is since entry creation; done entries are excluded.                                                                                                                                                                                                                           |
-| `outbox_recorded_delivery_failures`            | Sum of persisted `deliveryFailures` on outstanding entries, not outbox `attempts`. Claims and expired drain-lease recoveries alone contribute zero. Settlement/removal can decrease this stock gauge.                                                                                                                                                                     |
+| Measurement                                                    | Exact event/clock and interpretation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admitted_window`, `auto_retries_window`                       | One Run identity with `createdAt` in the hour; retries additionally require durable `requestSource=auto-retry`. This is admitted generations, not received webhooks, unique tasks or launched agents.                                                                                                                                                                                                                                                                                                                                    |
+| `claims_window`                                                | Retained `queue.claimedAt` in the hour. Releasing/reclaiming a reservation erases/replaces that field; this is not an all-time claim-attempt counter.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `latency_window_*`, stage `admission_to_queue`                 | Run `createdAt` to the first durable `by=dispatch` event; included when that dispatch event is in the hour. This queue-confirmation observation excludes webhook transport delay and does not prove worker launch.                                                                                                                                                                                                                                                                                                                       |
+| `latency_window_*`, stage `queue_to_claim`                     | First durable dispatch event to retained `claimedAt`; included when claim is in the hour. Includes cooldown, deferral and capacity waits. The record does not retain a capacity-eligible clock, so this cannot prove the proposed capacity-conditional claim SLO.                                                                                                                                                                                                                                                                        |
+| `latency_window_*`, stage `admission_to_completed_pr_delivery` | Run `createdAt` to its trusted final complete `delivery.observedAt`, using the same finished-hour cohort and qualification as `completed_pr_delivery_window`. Required runtime gates measure through the authorized runtime attestation. This is admission-to-observed-completion of a PR-delivery attempt, not GitHub merge time, artifact creation time, or universal usefulness. Every unqualified finished cohort member contributes one unknown, not a zero-duration sample.                                                        |
+| Latency count/sum/buckets/unknown                              | Known finite nonnegative durations contribute one sample to count/sum and cumulative buckets 60/120/300/900/3600/+Inf seconds. Missing or reversed clocks contribute to unknown, never zero latency. Quantiles are estimates over known durations only.                                                                                                                                                                                                                                                                                  |
+| `settled_window`                                               | Finished/canceled/lost runs whose last event into their current terminal state is in the hour; no heartbeat `updatedAt` substitution. `terminal_clock_unknown_window` counts recently updated terminal records missing that clock.                                                                                                                                                                                                                                                                                                       |
+| `reported_outcome_window`                                      | Finished-window denominator, split by reported summary: pull-request, merged-deliverable, comment, review, park, no-op, provider-limit, provider-capacity, runner-failed, agent-failed, no-deliverable, unknown-success, other/missing. `ok=true` is never called useful work; park/no-op stay separate. These are worker reports, not independent artifact verification.                                                                                                                                                                |
+| `completed_pr_delivery_window`                                 | Subset of the same finished-hour Run cohort with trusted completed protected PR delivery. Each binding must identify this exact Run, contain valid head/merge identity and an admission-or-later server observation no later than the Run revision or snapshot. Required/unknown runtime gates additionally need the matching authorized runtime-evidence observation; none requires no runtime evidence. This counts completed PR-delivery attempts, not distinct PRs, all useful artifact kinds, or delivery observations in the hour. |
+| `live_runs`, `oldest_queued_seconds`                           | All observed live records split into queued/claimed/unclassified; oldest queued age is since Run admission (`createdAt`), including pre-queue time. Running state alone does not mean claimed or executing.                                                                                                                                                                                                                                                                                                                              |
+| `silent_loss_runs`                                             | Live, non-queued runs with lease expiry more than the five-minute maintenance interval before observation. Queued capacity waits are excluded because their execution leases do not expire. This is an overdue-recovery signal, not proof a provider is silently dead.                                                                                                                                                                                                                                                                   |
+| `outbox_entries`, `outbox_oldest_seconds`                      | All outstanding entries split by bounded kind/state, including old failed dead letters. Age is since entry creation; done entries are excluded.                                                                                                                                                                                                                                                                                                                                                                                          |
+| `outbox_recorded_delivery_failures`                            | Sum of persisted `deliveryFailures` on outstanding entries, not outbox `attempts`. Claims and expired drain-lease recoveries alone contribute zero. Settlement/removal can decrease this stock gauge.                                                                                                                                                                                                                                                                                                                                    |
 
-`measurement_unknown_window` deliberately describes the unsupported facts:
+Completed PR delivery is read from `Run.delivery`, authored by the server's
+exact-attempt review/protected-landing verifier and trusted delivery state
+machine. The worker's `ok`, summary or PR-shaped reference cannot establish
+this fact. A successful finished Run with a valid complete binding earns one
+sample; waiting/runtime-required bindings, mismatched Run identity, missing
+merge identity, malformed/future/reversed clocks and unsatisfied runtime gates
+remain unknown. Inconsistent park/no-op/review reports receive no credit.
+Runtime evidence is an authorized operator attestation, not a new fetch or
+independent inspection of the referenced content by the metrics exporter.
+
+The cohort clock remains the last durable finished event. A delivery completed
+after its Run's settlement leaves the rolling hour does not enter this metric
+through its recent `updatedAt`. It is not a complete journal of delivery events.
+The admission-to-completed-PR-delivery latency uses this same cohort. Its end
+clock is the retained final authorized binding observation, not a worker report,
+PR timestamp or exporter read time. It includes review/check/runtime waits up to
+that observation; delayed verification can therefore exceed actual merge time.
+The bucket/count/sum distribution describes qualified attempts only, while its
+unknown count includes all other finished cohort members. It is diagnostic:
+no new SLO target or success claim follows from adding this duration.
+
+Protected landing can already be established before execution settlement, so
+the observation need not follow the finished event. Duplicate feeds/exports
+credit one Run using its newest observed revision; retries remain separate Run
+identities, even if they concern the same PR. No task-level success ratio or
+cost-per-distinct-merge denominator is derived from this subset.
+
+`measurement_unknown_window` deliberately retains unavailable facts:
 
 - `provider_start`: observations without a valid retained server spawn clock.
   Candidates are spawn clocks in the hour, plus retained claims in the hour
@@ -81,19 +110,23 @@ All names below have prefix `lcars_product_`.
   a reported outcome but not the artifact verifier result/version/exact
   attempt marker and its durable verification time. Parks and no-ops require
   their own verified classifications, not useful-deliverable credit.
-- `useful_outcome`: same denominator. It needs independently verified
-  deliverable kind and usefulness/merge evidence. A PR-shaped ref or an
-  agent's `merged-deliverable` summary is not a GitHub merge fact.
+- `useful_outcome`: finished-hour denominator minus qualified completed PR
+  delivery members of that same cohort. Other artifact kinds remain unknown;
+  no negative usefulness conclusion follows from a missing binding. This
+  narrow completed-delivery observation does not establish semantic quality
+  for every artifact. A PR-shaped ref or an agent's `merged-deliverable`
+  summary is not a GitHub merge fact.
 - `human_touch`: denominator terminal runs, explicitly **not** a unique-task
   rate. A real task-level rate must deduplicate task identity over an
   admission cohort, correlate immutable verified park/manual-action events
   to eventual merge, and retain unresolved/censored tasks as unknown. A
   reported park alone is only a reported handoff, not all human activity.
-- `cost`: denominator finished runs. Real cost-per-merged-deliverable needs
-  exact attempt-to-session billing joins (all retries/parks included), actual
-  currency/price basis and independently verified distinct merged PRs. Missing
-  subscription/local-inference prices and unmatched sessions remain unknown,
-  not zero-dollar or token-derived claims.
+- `cost`: denominator finished runs. This series retains unknown Work-attempt
+  billing because exact attempt-to-session invoice joins are absent. The
+  separate canonical session-cost proxy below supplies reported/estimated
+  session cost per known distinct merge, with explicit cohort and coverage;
+  it does not claim an invoice join. Missing subscription/local-inference
+  prices and unmatched sessions remain unknown, not zero-dollar claims.
 
 Webhook-receipt admission latency, console time-to-decision, degradation
 rate, phone decision reach and end-to-end traceability also remain unknown:
@@ -135,7 +168,54 @@ After durable trustworthy events and longitudinal data exist, the suggested
 30-day SLO handoff is a reviewed dual-window budget burn: fast 14.4x on both
 1h/5m and slow 6x on both 6h/30m, with minimum-volume and unknown-data gates.
 The current overlapping 1h gauges cannot implement those independent windows;
-the template deliberately does not pretend to do so. Keep #2200 open for
-those event joins, collection installation and real elapsed qualification.
+the template deliberately does not pretend to do so. The original #2200
+source acceptance requires the definitions, measurements, accounting tests and
+operator handoff. Missing authoritative event producers remain source gaps;
+collection installation and elapsed SLO qualification are separate Homelab
+operational work, not additional original source-closure requirements.
 Prometheus owns the [rule-test format](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/)
 and [alert `for` semantics](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/).
+
+## Session cost proxy
+
+The same authenticated export appends `lcars_product_session_cost_*` gauges
+from the canonical Costs `SessionSpend` owner. It selects sessions with recorded
+activity in the rolling hour ending at `observedAt`, retains at most 200 newest
+sessions, and uses existing stored GitHub PR projections (at most 200 point
+reads, eight concurrent, five-second shared projection deadline). The session
+reader streams matching recent records with bounded retained memory; 200 is the
+returned-page bound, not a promise of 200 underlying document reads. This is a
+read-only, nontransactional snapshot. Future/invalid activity clocks are excluded
+and make coverage partial. Page saturation also makes coverage partial.
+
+`session_cost_reported_usd` and `session_cost_estimated_usd` remain separate.
+Both are **whole cumulative session costs**, not charges incurred during that
+hour or actual invoice amounts. All selected sessions contribute, including
+retries, failed attempts and sessions without PRs. The denominator is distinct
+repository-qualified, known-merged PRs referenced by that same selected cohort,
+regardless of merge date. The canonical stored-evidence attribution rules apply;
+worker claims and unqualified PR numbers never establish a merge. A PR shared
+by multiple selected sessions counts once within each pipeline; pipeline PR
+counts must not be summed to obtain a globally unique denominator.
+
+Only `claude`, `codex`, `opencode` and `unknown` pipeline labels are exported.
+Other adapters fold into `unknown` before canonical PR deduplication. No session,
+model, repository, principal, URL or error labels are exported. The existing
+Costs page retains its adapter-specific grouping.
+
+`session_cost_read_available=0` suppresses money/cohort samples when the feed
+fails or aggregates are nonfinite. `session_cost_read_complete=0` marks a capped
+or degraded archive/projection read. Those gauges are independent of the
+existing three-durable-feed `snapshot_complete`; cost uncertainty does not hide
+live-run or dead-letter health. Unpriced sessions, unknown PR statuses and
+unqualified reference counts remain explicit. The cost-per-merged-PR proxy is
+omitted if no price or known merge exists; otherwise `coverage=partial` marks
+any missing price, attribution or read coverage. Reported zero is distinct from
+unknown pricing. Do not sum successive rolling-window gauges or treat this
+proxy as actual task/run billing.
+
+This completes the source cost-proxy boundary, not the whole original SLO
+acceptance: broad independently verified evidence and typed human-intervention
+producer facts remain unknown. The operator recording-rule/alert handoff is a
+source deliverable; installation and elapsed SLO qualification remain separate
+Homelab operational work.

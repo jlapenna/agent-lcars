@@ -22,6 +22,7 @@ import { implement, ORPCError } from '@orpc/server';
 import { readAnchorOwner } from './anchor-owner';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
+import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
 import { grantForPrincipal } from './work-grants';
@@ -186,7 +187,12 @@ export const workRouter = os.router({
         until: observedAt,
         limit: LIFECYCLE_METRICS_READ_LIMIT,
       });
-      return lifecycleMetricSnapshot(records, observedAt);
+      const snapshot = lifecycleMetricSnapshot(records, observedAt);
+      return {
+        ...snapshot,
+        prometheus:
+          snapshot.prometheus + (await readLifecycleCostMetrics(observedAt)),
+      };
     },
   ),
   maintenanceTick: cron.maintenanceTick.handler(async ({ context }) => {
