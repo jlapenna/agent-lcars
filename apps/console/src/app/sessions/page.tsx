@@ -205,9 +205,7 @@ async function SessionsBody({
               />
             </div>
           </details>
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate (the mockup's toolbar has none), then keeps
-              its box so hydrating moves nothing. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }

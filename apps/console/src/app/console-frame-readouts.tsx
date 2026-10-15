@@ -115,7 +115,15 @@ function clockTime(at: number): string {
 
 /** "■ LIVE · synced 14:32:08" for routes with a live stream; otherwise the
  * time the page was loaded, labelled as a snapshot. */
-export function ConsoleLiveStatus({ dataAt }: { dataAt?: string } = {}) {
+export function ConsoleLiveStatus({
+  dataAt,
+  compact = false,
+}: {
+  dataAt?: string;
+  /** One line under the title where the header's sync block does not fit
+   * (below 80em): the same status, without the refresh hint. */
+  compact?: boolean;
+} = {}) {
   const live = useLiveState();
   // The page's own load time, captured once: a snapshot does not advance.
   const [loadedAt, setLoadedAt] = useState<number>();
@@ -150,9 +158,15 @@ export function ConsoleLiveStatus({ dataAt }: { dataAt?: string } = {}) {
   const at = mode === undefined ? loadedAt : live?.syncedAt;
   return (
     <div
-      className="console-live-status"
+      className={
+        compact
+          ? 'console-live-status console-live-status--compact'
+          : 'console-live-status'
+      }
       data-tone={tone}
-      data-testid="console-live-status"
+      data-testid={
+        compact ? 'console-live-status-compact' : 'console-live-status'
+      }
       title={live?.label}
     >
       <b>■ {headline}</b>
@@ -166,10 +180,14 @@ export function ConsoleLiveStatus({ dataAt }: { dataAt?: string } = {}) {
           {mode === undefined ? 'loaded' : 'synced'} {clockTime(at)}
         </span>
       ) : null}
-      <br />
-      <span>
-        {mode === undefined ? 'refresh to update' : 'auto-refresh 5 s'}
-      </span>
+      {compact ? null : (
+        <>
+          <br />
+          <span>
+            {mode === undefined ? 'refresh to update' : 'auto-refresh 5 s'}
+          </span>
+        </>
+      )}
     </div>
   );
 }
