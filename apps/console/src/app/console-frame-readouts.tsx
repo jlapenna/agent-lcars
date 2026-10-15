@@ -176,9 +176,13 @@ export function RailEnvironment() {
   const state = useShellReadouts();
   const environment =
     state.status === 'ready' ? state.readouts.environment : undefined;
-  return environment ? (
-    <span className="lcars-rail-code">{environment}</span>
-  ) : null;
+  // The line is held from first paint: the head sits on its bottom edge, so
+  // a line arriving with the readouts lifted the brand above it.
+  return (
+    <span className="lcars-rail-code" data-testid="rail-environment">
+      {environment || '\u00a0'}
+    </span>
+  );
 }
 
 function clockTime(at: number): string {
