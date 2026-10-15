@@ -725,6 +725,19 @@ RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh
 # private writable layer. No host mount or shared mutable cache is involved.
 # The regression test exercises a pnpm 11 lower-layer content hit followed by
 # a writable miss, including the no-whole-store-copy property.
+#
+# Pin the destination's ancestor mtimes first. BuildKit writes every ancestor
+# directory into a layer's tar with its current mtime, and the steps above
+# rebuild on every Agent LCARS commit (CACHE_BUST), so without this the ~2 GiB
+# of unchanged seed got a new digest on every publish and was re-stored in
+# full although only ancestor directory headers differed (homelab registry churn,
+# 2026-10-15). With the ancestors fixed, an unchanged seed reproduces the
+# same blobs. touch only changes times, so /home/runner keeps its mode.
+# The copies then land in existing directories and take the source
+# directories' times, so their own parents stay pinned too.
+RUN mkdir -p /home/runner/.local/share/pnpm/store /home/runner/.cache/pnpm && \
+    touch -d @0 /home/runner /home/runner/.local /home/runner/.local/share \
+      /home/runner/.local/share/pnpm /home/runner/.cache
 COPY --from=pnpm-store-seed --chown=runner:runner \
     /pnpm-store/ /home/runner/.local/share/pnpm/store/
 # pnpm's registry-metadata cache from the same fetch, so a job's supply-chain
