@@ -172,7 +172,7 @@ and earlier history remain incomplete, and no eventual merge join is supplied.
 An incomplete bounded snapshot exports none of these task gauges. Repeated
 scrapes cannot add tasks; do not apply `rate`/`increase` to these rolling gauges.
 
-The remaining original intervention join stays open. These existing owners
+The fuller intervention join remains a product goal. These existing owners
 provide the next action boundaries; none alone proves a biological human:
 
 | Action boundary                                         | Existing durable fact and remaining join                                                                                                                                                                                                                           |
@@ -188,7 +188,8 @@ retry/provider generations, explicit typed action coverage, eventual trusted
 merge identity, and unresolved/censored outcomes. Missing action history or
 unknown human identity cannot become a zero-touch task. This producer step
 supplies no task-level rate, broad artifact classification, monitoring install
-or SLO-attainment claim; the original #2200 acceptance remains open.
+or SLO-attainment claim. These explicit unknowns are part of #2200's measurement
+contract; the broader product goals do not become measured facts by inference.
 
 `measurement_unknown_window` deliberately retains unavailable facts:
 
@@ -312,8 +313,8 @@ any missing price, attribution or read coverage. Reported zero is distinct from
 unknown pricing. Do not sum successive rolling-window gauges or treat this
 proxy as actual task/run billing.
 
-This completes the source cost-proxy boundary, not the whole original SLO
-acceptance: broad independently verified evidence and typed human-intervention
-producer facts remain unknown. The operator recording-rule/alert handoff is a
-source deliverable; installation and elapsed SLO qualification remain separate
-Homelab operational work.
+The source cost proxy retains unknown prices and attribution explicitly, as
+required by #2200's measurement contract. Universal artifact verification,
+human identity and exact invoice joins remain broader product goals. The
+operator recording-rule/alert handoff is a source deliverable; installation
+and elapsed SLO qualification remain separate Homelab operational work.

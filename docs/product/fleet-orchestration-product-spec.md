@@ -588,12 +588,15 @@ consumed by every dispatched run in every member repository.
   `expireAt` retention deadline (`lib/session-expiry.ts`,
   `bin/session-expiry.ts`). Reopening the item clears it again.
 - **FL-OB-5 [Partial]** The [durable observation contract](../product-lifecycle-metrics.md)
-  exposes bounded queue/claim/settlement/outbox metrics and a tested,
-  unapplied recording/alert handoff. Provider-start, independently verified
-  useful evidence, task-level human-touch and billing/merge joins remain
-  unknown. Homelab collection/alert installation and elapsed SLO
-  qualification remain open under #2200; no production monitoring apply is
-  implied by an in-repository template.
+  exposes bounded queue, claim, server-observed OS-spawn, settlement and outbox
+  metrics, qualified completed-PR delivery, authorized API-intervention
+  incidence and the canonical session-cost proxy. It includes a tested,
+  unapplied recording/alert handoff. Unsupported artifact verification,
+  human identity, full action history and exact billing joins remain explicit
+  unknowns. Issue #2200 owns these source definitions, measurements, accounting
+  tests and operator handoff. Homelab collection/alert installation and elapsed
+  SLO qualification are separate operational work; the template neither applies
+  production monitoring nor establishes SLO attainment.
 
 ## 11. Fleet, identity, and infrastructure boundaries
 
@@ -718,7 +721,7 @@ claims do not prove provider launch. Never infer those facts from a UI state.
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | Intake latency              | Verified webhook receipt to durable Run admission; receipt join currently unknown                                | p95 < 60s                          |
 | Claim latency               | Queue to retained claim; capacity-eligible/no-cooldown clock currently unknown                                   | p95 < 2 min                        |
-| Provider-process latency    | Queue/claim to server-observed OS spawn; durable clock exists, lifecycle export adoption still pending           | Define after qualified observation |
+| Provider-process latency    | Retained claim to server-observed OS spawn, exported by the lifecycle snapshot; not model-start latency          | Define after qualified observation |
 | Evidence coverage           | Independently verified classifications / finished attempts; parks and no-ops classified separately               | > 95%                              |
 | Useful-attempt rate         | Independently verified useful deliverables / settled attempts, not raw `ok`                                      | Trend upward; target provisional   |
 | Silent loss                 | Non-queued live runs past execution lease plus one maintenance interval                                          | 0                                  |
