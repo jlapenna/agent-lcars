@@ -142,10 +142,22 @@ provider generations and duplicate feeds, using the newest observed revision of
 each Run. It is global rather than split by pipeline, so provider switching
 does not duplicate the denominator. No task identity is exported as a label.
 
-`intervened_tasks_window{kind="work-api-reply"|"work-api-cancel"}` counts those
+`redispatch_interventions_window` counts admitted-hour Run identities created by
+the authenticated native Work item's redispatch route. That handler stamps
+`work-api-redispatch` with its verified principal on the first request/pending
+event, atomically with admission. The same clock and provenance checks as reply
+admissions apply. Initial creation, automatic retries, GitHub-anchor redispatch
+and caller-supplied params receive no credit. A repeat while the generation is
+live is refused and adds no admission; a later accepted redispatch after another
+park/failure is a separate generation. The corresponding
+`measurement_unknown_window{measurement="redispatch_intervention"}` is the
+admitted-hour Run cohort minus qualified native redispatches. Authorized callers
+can be automation, so this does not establish human identity or useful work.
+
+`intervened_tasks_window{kind="work-api-reply"|"work-api-cancel"|"work-api-redispatch"}` counts those
 cohort tasks with the corresponding qualified durable action on an admitted
 Run, using the same exact event/provenance/clock checks as the Run families
-above. `kind="any"` is the distinct union, not a sum: a task with both actions
+above. `kind="any"` is the distinct union, not a sum: a task with multiple actions
 counts once. Cancellation of a Run admitted before the hour is excluded from
 this cohort even when cancellation occurs in the hour; the existing settled-hour
 Run cancellation family still includes it. Actions on generations admitted before this window do not supply credit to
@@ -167,7 +179,7 @@ provide the next action boundaries; none alone proves a biological human:
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Live Work API cancel (`work-router.ts`, `cancelRun`)    | This typed cancellation event now proves authorized API intervention; parked-item close only has `Task.closedAt` and still needs a typed action fact.                                                                                                              |
 | Reply / provider selection (`work-reply.ts`, `request`) | Work API replies now stamp the first admission event with typed action provenance; other channels retain only opaque params. Admitted-task incidence is now deduplicated; full-history/eventual-merge joins remain absent, and automatic retries receive no stamp. |
-| Explicit redispatch (`work-router.ts`, `request`)       | A fresh caller Run is durable, but initial admission and retry need an explicit action distinction; `requestSource=caller` alone cannot prove intervention.                                                                                                        |
+| Explicit redispatch (`work-router.ts`, `request`)       | Native Work API redispatch now stamps typed provenance and joins the admitted task cohort. GitHub-anchor redispatch and other ingresses remain unknown; `requestSource=caller` alone cannot prove intervention.                                                    |
 | GitHub label/provider/manual action owners              | Signed webhook actor/clock and provider-routing acceptance exist; accepted action provenance must survive in the task cohort without interpreting a login as human.                                                                                                |
 | Runtime evidence (`work-router.ts`, `advanceDelivery`)  | Exact Run/head/merge binding retains authorized attestation principal and clock; it must join to the same task cohort, while independent content verification remains a separate fact.                                                                             |
 

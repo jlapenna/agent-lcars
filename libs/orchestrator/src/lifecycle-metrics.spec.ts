@@ -85,6 +85,96 @@ function deliveryMeasurements(original: Run) {
 }
 
 describe('durable lifecycle metric accounting', () => {
+  it('counts trusted redispatch generations separately while deduplicating their task', () => {
+    const redispatched = run({
+      events: [
+        {
+          at: createdAt,
+          to: 'pending',
+          by: 'request',
+          intervention: {
+            kind: 'work-api-redispatch',
+            principal: 'svc:verified',
+          },
+        },
+      ],
+    });
+    const retry = {
+      ...redispatched,
+      runId: 'private/repo#42/r2',
+      pipeline: 'codex',
+    };
+    const text = snapshot([redispatched, retry, redispatched]);
+    for (const pipeline of ['claude', 'codex']) {
+      expect(text).toContain(
+        `lcars_product_redispatch_interventions_window{pipeline="${pipeline}"} 1\n`,
+      );
+      expect(text).toContain(
+        `lcars_product_reply_interventions_window{pipeline="${pipeline}"} 0\n`,
+      );
+      expect(text).toContain(
+        `lcars_product_measurement_unknown_window{pipeline="${pipeline}",measurement="redispatch_intervention"} 0\n`,
+      );
+    }
+    expect(text).toContain('lcars_product_admitted_tasks_window 1\n');
+    expect(text).toContain(
+      'lcars_product_intervened_tasks_window{kind="work-api-redispatch"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_intervened_tasks_window{kind="any"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_task_intervention_unknown_window 0\n',
+    );
+    expect(text).not.toContain('svc:verified');
+    expect(snapshot([redispatched], { complete: false })).not.toContain(
+      'redispatch_interventions_window',
+    );
+  });
+
+  it('keeps forged, automatic, old and invalid redispatch provenance unknown', () => {
+    const event = {
+      at: createdAt,
+      to: 'pending' as const,
+      by: 'request' as const,
+      intervention: {
+        kind: 'work-api-redispatch' as const,
+        principal: 'svc:verified',
+      },
+    };
+    const records = [
+      run({ params: { mode: 'redispatch', principal: 'svc:forged' } }),
+      run({ events: [event], requestSource: 'auto-retry' }),
+      run({ events: [{ ...event, at: finishedAt }] }),
+      run({
+        events: [
+          { ...event, intervention: { ...event.intervention, principal: '' } },
+        ],
+      }),
+      run({ events: [event], updatedAt: '2026-10-10T12:00:00.001Z' }),
+      run({ events: [event], updatedAt: '2026-10-10T11:39:59.999Z' }),
+      run({ events: [event], createdAt: '2026-10-10T10:59:59.999Z' }),
+    ].map((record, index) => ({
+      ...record,
+      runId: `private/repo#${index + 1}/r1`,
+      task: { repo: 'private/repo', issue: index + 1 },
+    }));
+    const text = snapshot(records);
+    expect(text).toContain(
+      'lcars_product_redispatch_interventions_window{pipeline="claude"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="redispatch_intervention"} 6\n',
+    );
+    expect(text).toContain('lcars_product_admitted_tasks_window 6\n');
+    expect(text).toContain(
+      'lcars_product_intervened_tasks_window{kind="any"} 0\n',
+    );
+    expect(text).toContain(
+      'lcars_product_task_intervention_unknown_window 6\n',
+    );
+  });
+
   function replied(over: Partial<Run> = {}): Run {
     return run({
       events: [

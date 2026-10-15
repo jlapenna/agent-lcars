@@ -925,6 +925,62 @@ describe('items routes', () => {
     });
   });
 
+  it.each([
+    operator,
+    {
+      ...operator,
+      principal: 'svc:authorized-automation',
+      via: 'google' as const,
+    },
+  ])(
+    'records only an accepted native redispatch from $principal',
+    async (principal) => {
+      const ctx = context({ principal });
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      const original = await ctx.runtime.store.readRun(`work:${ID}/r1`);
+      expect(original?.events[0].intervention).toBeUndefined();
+      await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+        ok: false,
+        summary: 'blocked',
+      });
+      expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+        200,
+      );
+      const accepted = await ctx.runtime.store.readRun(`work:${ID}/r2`);
+      expect(accepted?.events[0]).toEqual({
+        at: accepted?.createdAt,
+        to: 'pending',
+        by: 'request',
+        intervention: {
+          kind: 'work-api-redispatch',
+          principal: principal.principal,
+        },
+      });
+      const metrics = await call(ctx, 'GET', '/metrics/lifecycle');
+      expect(metrics.status).toBe(200);
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_redispatch_interventions_window{pipeline="claude"} 1\n',
+      );
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_intervened_tasks_window{kind="work-api-redispatch"} 1\n',
+      );
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_reply_interventions_window{pipeline="claude"} 0\n',
+      );
+      expect(metrics.json.prometheus).not.toContain(principal.principal);
+      // A subsequent request while this generation is live is refused, not
+      // credited as another admission. Re-parking and redispatching later is
+      // a separate accepted action, not an idempotent replay.
+      expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+        409,
+      );
+      expect(await ctx.runtime.store.readRun(`work:${ID}/r2`)).toEqual(
+        accepted,
+      );
+      expect(await ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+    },
+  );
+
   it('refuses to redispatch an item whose repo is not admitted, with 403', async () => {
     const ctx = context();
     // Seeded straight through the orchestrator, because `create` would
