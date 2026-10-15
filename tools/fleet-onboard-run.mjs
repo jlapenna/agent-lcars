@@ -19,6 +19,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { dependencyInstallArgs } from './fleet-onboard.mjs';
+
 export const STEPS = Object.freeze(['target', 'lcars', 'homelab', 'github']);
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const LCARS_REPO = 'jlapenna/agent-lcars';
@@ -206,6 +208,11 @@ export function stepTarget(ctx) {
     cwd: clone,
     mutate: true,
   });
+  const read = (file) => {
+    const full = path.join(clone, file);
+    return existsSync(full) ? readFileSync(full, 'utf8') : null;
+  };
+  const packageBefore = read('package.json');
   const scaffold = run(
     'node',
     [
@@ -236,6 +243,28 @@ export function stepTarget(ctx) {
           ? 'target already carries the scaffold'
           : `scaffold would write files and open a draft PR on ${branch}`,
     };
+  // A Husky scaffold can add repo-tools to package.json. Install before
+  // staging so its lockfile and the command invoked by the hooks both exist.
+  if (read('package.json') !== packageBefore) {
+    const [command, ...args] = dependencyInstallArgs(read);
+    run(command, args, { cwd: clone, mutate: true });
+    const unignored = run(
+      'git',
+      [
+        'ls-files',
+        '--others',
+        '--exclude-standard',
+        '--directory',
+        '--',
+        ':(glob)**/node_modules/**',
+      ],
+      { cwd: clone },
+    ).stdout.trim();
+    if (unignored)
+      throw new RunError(
+        'Dependency installation left unignored node_modules files; add dependency directories to .gitignore before committing the target scaffold.',
+      );
+  }
   const changed = commitAndPush(run, clone, {
     branch,
     message: 'chore: join the Agent LCARS fleet',
@@ -586,7 +615,7 @@ export function runAll({
 const USAGE = `usage:
   fleet-onboard-run.mjs --repo OWNER/NAME [--runner-label L]
       [--ci-workflow FILE]... [--ci-workflow-name NAME]... [--ci-checks "A,B"]
-      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA] [--alias NAME]
+      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev TAG] [--alias NAME]
       [--copy-from OWNER/NAME] [--private-key-command CMD]
       [--homelab DIR] [--workdir DIR] [--dry-run] [--skip STEP]...
 

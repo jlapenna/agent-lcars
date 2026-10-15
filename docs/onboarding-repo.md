@@ -145,7 +145,7 @@ copying files from the last onboarded repository:
 node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME \
   [--runner-label NAME-default] \
   [--ci-workflow ci.yml --ci-checks "Check A,Check B" [--ci-workflow-name CI]] \
-  [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA] \
+  [--hooks auto|pre-commit|husky|none] [--repo-tools-rev TAG] \
   [--check] [--force]
 ```
 
@@ -166,10 +166,18 @@ than restating it.
   `--ci-checks`; `infra/github-ruleset/README.md` and
   `.terraform.lock.hcl` are seeded once.
 - `repo-require-worktree` wiring: a `.pre-commit-config.yaml` block
-  pinned to `--repo-tools-rev` (resolved from `jlapenna/repo-tools` `main`
-  when omitted), or seeded `.husky/pre-commit` and `.husky/pre-push` hooks
-  for Node repositories. `--hooks` overrides the auto-detection; the tool
-  prints the install note for the mechanism it chose.
+  pinned to `--repo-tools-rev` (the latest `jlapenna/repo-tools` `vX.Y.Z`
+  release tag when omitted), or, for Node repositories, `.husky/pre-commit`
+  and `.husky/pre-push` hooks plus a `@jlapenna/repo-tools` devDependency
+  pinned to that tag. The hooks call the guard unconditionally, so a checkout
+  without the devDependency installed fails closed; run the package manager
+  install after scaffolding. Renovate updates both pins by tag. `--hooks`
+  overrides the auto-detection; the tool prints the install note for the
+  mechanism it chose.
+  Existing pre-commit revisions are preserved; branch/SHA revisions are reported
+  for manual migration to release tags. The automated onboarding wrapper runs
+  the detected package manager before committing a changed package manifest,
+  and stops before commit/push when installation fails.
 - `renovate.json`: seeded once, extending the repo-tools preset.
 - `AGENTS.md`: a marker-delimited fleet-membership section merged into the
   existing file.

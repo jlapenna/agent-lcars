@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -316,6 +317,144 @@ describe('apply path', () => {
       expect.arrayContaining(['--default-branch', 'trunk']),
     );
     expect(scaffold?.args).not.toContain('--check');
+  });
+
+  it.each([
+    ['pnpm-lock.yaml', 'pnpm'],
+    ['yarn.lock', 'yarn'],
+    ['bun.lock', 'bun'],
+    ['package-lock.json', 'npm'],
+  ])(
+    'updates %s before committing a new Husky dependency',
+    (lockfile, manager) => {
+      const ctx = context();
+      const clone = path.join(ctx.workdir, 'project');
+      const pkg = path.join(clone, 'package.json');
+      writeFileSync(pkg, '{"name":"project"}\n');
+      writeFileSync(path.join(clone, lockfile), 'old lock');
+      const { exec, calls } = fakeExec([
+        [has('diff --cached --quiet'), { status: 1 }],
+        [
+          has('pr create'),
+          { stdout: 'https://github.com/example/project/pull/3\n' },
+        ],
+      ]);
+      const committedLocks: string[] = [];
+      const run = createRunner({
+        dryRun: false,
+        log: quiet,
+        exec: (command, args, options) => {
+          if (has('fleet-onboard.mjs scaffold')({ command, args }))
+            writeFileSync(
+              pkg,
+              '{"name":"project","devDependencies":{"@jlapenna/repo-tools":"github:jlapenna/repo-tools#v2.0.8"}}\n',
+            );
+          if (command === manager && args[0] === 'install')
+            writeFileSync(
+              path.join(clone, lockfile),
+              'lock includes repo-tools',
+            );
+          if (command === 'git' && args[0] === 'commit')
+            committedLocks.push(
+              readFileSync(path.join(clone, lockfile), 'utf8'),
+            );
+          return exec(command, args, options);
+        },
+      });
+      expect(stepTarget({ ...ctx, run, log: quiet }).status).toBe('done');
+      expect(committedLocks).toEqual(['lock includes repo-tools']);
+      expect(
+        calls
+          .filter((call) => call.command === manager)
+          .map((call) => call.args),
+      ).toEqual([['install']]);
+    },
+  );
+
+  it('does not commit or push when installing the scaffold dependency fails', () => {
+    const ctx = context();
+    const pkg = path.join(ctx.workdir, 'project', 'package.json');
+    writeFileSync(pkg, '{"name":"project"}\n');
+    const { exec, calls } = fakeExec([
+      [has('npm install'), { status: 1, stderr: 'registry unavailable' }],
+    ]);
+    const run = createRunner({
+      dryRun: false,
+      log: quiet,
+      exec: (command, args, options) => {
+        if (has('fleet-onboard.mjs scaffold')({ command, args }))
+          writeFileSync(
+            pkg,
+            '{"name":"project","devDependencies":{"@jlapenna/repo-tools":"github:jlapenna/repo-tools#v2.0.8"}}\n',
+          );
+        return exec(command, args, options);
+      },
+    });
+    expect(() => stepTarget({ ...ctx, run, log: quiet })).toThrow(
+      /npm install exited 1/,
+    );
+    expect(
+      calls.some(
+        (call) =>
+          call.command === 'git' && ['commit', 'push'].includes(call.args[0]),
+      ),
+    ).toBe(false);
+  });
+
+  it('does not stage installed dependency files when the target lacks an ignore rule', () => {
+    const ctx = context();
+    const clone = path.join(ctx.workdir, 'project');
+    const pkg = path.join(clone, 'package.json');
+    execFileSync('git', ['init', '--quiet', clone]);
+    execFileSync('git', [
+      '-C',
+      clone,
+      'config',
+      'core.excludesFile',
+      '/dev/null',
+    ]);
+    writeFileSync(pkg, '{"name":"project"}\n');
+    const { exec, calls } = fakeExec();
+    const run = createRunner({
+      dryRun: false,
+      log: quiet,
+      exec: (command, args, options) => {
+        if (has('fleet-onboard.mjs scaffold')({ command, args }))
+          writeFileSync(
+            pkg,
+            '{"name":"project","devDependencies":{"@jlapenna/repo-tools":"github:jlapenna/repo-tools#v2.0.8"}}\n',
+          );
+        if (command === 'npm' && args[0] === 'install') {
+          mkdirSync(path.join(clone, 'node_modules', 'installed'), {
+            recursive: true,
+          });
+          writeFileSync(
+            path.join(clone, 'node_modules', 'installed', 'package.json'),
+            '{}',
+          );
+        }
+        const result = exec(command, args, options);
+        if (command === 'git' && args[0] === 'ls-files')
+          return {
+            ...result,
+            stdout: execFileSync(command, args, {
+              cwd: clone,
+              encoding: 'utf8',
+            }),
+          };
+        return result;
+      },
+    });
+    expect(() => stepTarget({ ...ctx, run, log: quiet })).toThrow(
+      /unignored node_modules/,
+    );
+    expect(
+      calls.some(
+        (call) =>
+          call.command === 'git' &&
+          ['add', 'commit', 'push'].includes(call.args[0]),
+      ),
+    ).toBe(false);
   });
 
   it('runs the GitHub helper from the admission worktree once it lists the repo', () => {

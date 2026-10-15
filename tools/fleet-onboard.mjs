@@ -36,6 +36,9 @@ const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const AGENTS_BEGIN = '<!-- fleet-onboard:begin -->';
 const AGENTS_END = '<!-- fleet-onboard:end -->';
 const REPO_TOOLS_URL = 'https://github.com/jlapenna/repo-tools';
+const REPO_TOOLS_PACKAGE = '@jlapenna/repo-tools';
+const REPO_TOOLS_TAG_SPEC = /^github:jlapenna\/repo-tools#v\d+\.\d+\.\d+$/;
+const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const CHECKOUT_PIN = '3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1';
 const GITLEAKS_PIN = 'e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0';
 const SETUP_TERRAFORM_PIN = 'dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1';
@@ -527,10 +530,8 @@ ${renderPreCommitBlock(rev)}
 function huskyGuard(stage) {
   return stage === 'pre-push'
     ? `refs="$(cat)"
-if command -v repo-require-worktree >/dev/null 2>&1; then
-  printf '%s\\n' "$refs" | repo-require-worktree pushes
-fi`
-    : `if command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree commits; fi`;
+printf '%s\\n' "$refs" | repo-require-worktree pushes`
+    : 'repo-require-worktree commits';
 }
 
 export function renderHuskyHook(stage) {
@@ -538,10 +539,66 @@ export function renderHuskyHook(stage) {
 # ${MANAGED_NOTE}
 set -e
 
-# The public repo-tools worktree guard, guarded with command -v so a machine
-# without the package still commits and pushes.
+# The public repo-tools worktree guard. Husky puts node_modules/.bin on PATH,
+# and the ${REPO_TOOLS_PACKAGE} devDependency installs the command there, so a
+# checkout missing it fails closed instead of skipping the guard.
 ${huskyGuard(stage)}
 `;
+}
+
+/** The package manager whose lockfile the target already commits. */
+export function dependencyInstallArgs(read) {
+  if (read('pnpm-lock.yaml') !== null) return ['pnpm', 'install'];
+  if (read('yarn.lock') !== null) return ['yarn', 'install'];
+  if (read('bun.lock') !== null || read('bun.lockb') !== null)
+    return ['bun', 'install'];
+  return ['npm', 'install'];
+}
+
+/**
+ * Add the repo-tools devDependency the Husky hooks run. An existing entry is
+ * never rewritten; one that is not a release-tag pin is reported, because
+ * Renovate only updates github: dependencies by tag.
+ * Returns { text, note }.
+ */
+export function mergeRepoToolsDependency(existingText, rev) {
+  let pkg;
+  try {
+    pkg = JSON.parse(existingText);
+  } catch {
+    return {
+      text: existingText,
+      note: `package.json is not valid JSON; add "${REPO_TOOLS_PACKAGE}": "github:jlapenna/repo-tools#<release tag>" to devDependencies by hand`,
+    };
+  }
+  const current =
+    pkg.devDependencies?.[REPO_TOOLS_PACKAGE] ??
+    pkg.dependencies?.[REPO_TOOLS_PACKAGE];
+  if (current !== undefined)
+    return {
+      text: existingText,
+      note: REPO_TOOLS_TAG_SPEC.test(current)
+        ? null
+        : `package.json pins ${REPO_TOOLS_PACKAGE} to ${JSON.stringify(current)}, not a release tag; Renovate only updates tag pins, so change it to "github:jlapenna/repo-tools#<release tag>" by hand`,
+    };
+  const indent = existingText.match(/^[ \t]+(?=")/m)?.[0] ?? '  ';
+  const devDependencies = {
+    ...pkg.devDependencies,
+    [REPO_TOOLS_PACKAGE]: `github:jlapenna/repo-tools#${rev}`,
+  };
+  const keys = Object.keys(pkg.devDependencies ?? {});
+  const sorted = keys.every((key, i) => i === 0 || keys[i - 1] <= key);
+  pkg.devDependencies = sorted
+    ? Object.fromEntries(
+        Object.entries(devDependencies).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0,
+        ),
+      )
+    : devDependencies;
+  return {
+    text: `${JSON.stringify(pkg, null, indent)}\n`,
+    note: null,
+  };
 }
 
 export function renderAgentsSection() {
@@ -799,26 +856,56 @@ export function mergePreCommitConfig(existingText, rev) {
   return merged;
 }
 
+/** The highest vX.Y.Z tag in `git ls-remote --tags` output, or null. */
+export function latestReleaseTag(lsRemoteOutput) {
+  const versions = lsRemoteOutput
+    .split('\n')
+    .map((line) => line.split('\t')[1]?.trim() ?? '')
+    // Annotated tags list a peeled ^{} line too; the tag ref itself suffices.
+    .filter((ref) => ref.startsWith('refs/tags/') && !ref.endsWith('^{}'))
+    .map((ref) => ref.slice('refs/tags/'.length))
+    .map((tag) => ({
+      tag,
+      parts: tag.match(RELEASE_TAG)?.slice(1).map(Number),
+    }))
+    .filter(({ parts }) => parts);
+  versions.sort(
+    (a, b) =>
+      b.parts[0] - a.parts[0] ||
+      b.parts[1] - a.parts[1] ||
+      b.parts[2] - a.parts[2],
+  );
+  return versions[0]?.tag ?? null;
+}
+
+/**
+ * The repo-tools revision new pins use: the latest release tag, because
+ * Renovate updates github: and pre-commit pins only by tag.
+ */
 export function resolveRepoToolsRev(spec, exec = execFileSync) {
   if (spec.repoToolsRev) return spec.repoToolsRev;
   let output;
   try {
-    output = exec('git', ['ls-remote', `${REPO_TOOLS_URL}.git`, 'main'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 30_000,
-    });
+    output = exec(
+      'git',
+      ['ls-remote', '--tags', `${REPO_TOOLS_URL}.git`, 'v*'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 30_000,
+      },
+    );
   } catch (error) {
     throw new OnboardError(
-      `Could not resolve jlapenna/repo-tools main (${error.message}); pass --repo-tools-rev`,
+      `Could not list jlapenna/repo-tools release tags (${error.message}); pass --repo-tools-rev`,
     );
   }
-  const sha = output.split(/\s+/)[0];
-  if (!/^[0-9a-f]{40}$/.test(sha ?? ''))
+  const tag = latestReleaseTag(String(output));
+  if (!tag)
     throw new OnboardError(
-      'Could not resolve jlapenna/repo-tools main; pass --repo-tools-rev',
+      'jlapenna/repo-tools has no vX.Y.Z release tag; pass --repo-tools-rev',
     );
-  return sha;
+  return tag;
 }
 
 function detectHooks(target, spec) {
@@ -1080,6 +1167,15 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
   if (hooks === 'pre-commit') {
     const existing = read('.pre-commit-config.yaml');
     const needsRev = !existing || !existing.includes(`repo: ${REPO_TOOLS_URL}`);
+    if (!needsRev) {
+      const current = parseYaml(existing)?.repos?.find(
+        (entry) => entry?.repo === REPO_TOOLS_URL,
+      )?.rev;
+      if (!RELEASE_TAG.test(String(current ?? '')))
+        notes.push(
+          `.pre-commit-config.yaml pins repo-tools to ${JSON.stringify(current ?? null)}, not a release tag; Renovate only updates tag pins, so change rev to a vX.Y.Z release tag by hand.`,
+        );
+    }
     let rev = null;
     if (needsRev)
       rev = check
@@ -1102,17 +1198,45 @@ export function planScaffold(target, spec, { resolveRev, check = false } = {}) {
       const existing = read(`.husky/${stage}`);
       if (existing && !existing.includes('repo-require-worktree'))
         notes.push(
-          `.husky/${stage} exists without the repo-require-worktree guard; add this guarded call to it: ${huskyGuard(stage).replace(/\n/g, ' ')}`,
+          `.husky/${stage} exists without the repo-require-worktree guard; add this call to it: ${huskyGuard(stage).replace(/\n/g, '; ')}`,
         );
-      // An already guarded hook is reported as unchanged rather than omitted.
+      // A locally owned guarded hook is reported as unchanged; a managed one
+      // is refreshed so earlier command -v guarded copies fail closed.
       else
         files.push({
           file: `.husky/${stage}`,
-          kind: 'seed',
-          render: (text) => text ?? renderHuskyHook(stage),
+          kind: 'merge',
+          render: (text) =>
+            text && !text.includes(MANAGED_MARKER)
+              ? text
+              : renderHuskyHook(stage),
           mode: 0o755,
         });
     }
+    const pkgText = read('package.json');
+    if (pkgText !== null) {
+      const needsRev =
+        mergeRepoToolsDependency(pkgText, UNRESOLVED_REV).text !== pkgText;
+      let rev = null;
+      if (needsRev)
+        rev = check
+          ? spec.repoToolsRev || UNRESOLVED_REV
+          : (resolveRev ?? resolveRepoToolsRev)(spec);
+      const { note } = mergeRepoToolsDependency(pkgText, rev);
+      if (note) notes.push(note);
+      files.push({
+        file: 'package.json',
+        kind: 'merge',
+        render: (text) => mergeRepoToolsDependency(text, rev).text,
+      });
+      if (needsRev)
+        notes.push(
+          `Added ${REPO_TOOLS_PACKAGE} to package.json devDependencies; run \`${dependencyInstallArgs(read).join(' ')}\` and commit the lockfile, or the Husky hooks fail closed because repo-require-worktree is not installed.`,
+        );
+    } else
+      notes.push(
+        `No package.json; Husky hooks need ${REPO_TOOLS_PACKAGE} as a devDependency (github:jlapenna/repo-tools#<release tag>) to find repo-require-worktree.`,
+      );
     let hasPrepare;
     try {
       hasPrepare = Boolean(
@@ -1561,7 +1685,7 @@ export function renderPlan(spec, plan = null) {
 const USAGE = `usage:
   fleet-onboard.mjs scaffold --repo OWNER/NAME --target DIR [--runner-label L]
       [--ci-workflow FILE[,FILE] [--ci-workflow-name NAME[,NAME]] --ci-checks "A,B"]
-      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev SHA]
+      [--hooks auto|pre-commit|husky|none] [--repo-tools-rev TAG]
       [--default-branch NAME] [--check] [--force]
   fleet-onboard.mjs admit --repo OWNER/NAME [--alias NAME] [--like OWNER/NAME] [--check]
   fleet-onboard.mjs plan --repo OWNER/NAME [--runner-label L]

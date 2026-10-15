@@ -19,6 +19,7 @@ import {
   ensureRepoToolsHookIds,
   GENERATED_WORKFLOW_NAMES,
   GUARDRAIL_COMMAND,
+  latestReleaseTag,
   main,
   MANAGED_MARKER,
   membershipGaps,
@@ -26,6 +27,7 @@ import {
   mergeGitignore,
   mergeGuardrailHooks,
   mergePreCommitConfig,
+  mergeRepoToolsDependency,
   OnboardError,
   parseCli,
   planAdmit,
@@ -33,6 +35,7 @@ import {
   readMembership,
   renderAgentsSection,
   renderPlan,
+  resolveRepoToolsRev,
   resolveSpec,
   workflowRunNames,
 } from '../fleet-onboard.mjs';
@@ -451,9 +454,130 @@ describe('scaffold', () => {
       '.husky/pre-commit',
     );
     expect(plan.notes.join('\n')).toContain('.husky/pre-commit exists');
-    expect(read(target, '.husky/pre-push')).toContain(
-      'repo-require-worktree pushes',
+    const prePush = read(target, '.husky/pre-push');
+    expect(prePush).toContain(
+      `printf '%s\\n' "$refs" | repo-require-worktree pushes`,
     );
+    expect(prePush).toContain(MANAGED_MARKER);
+    expect(prePush).not.toContain('command -v');
+    expect(
+      JSON.parse(read(target, 'package.json')).devDependencies[
+        '@jlapenna/repo-tools'
+      ],
+    ).toBe(`github:jlapenna/repo-tools#${REV}`);
+    expect(plan.notes.join('\n')).toContain('run `npm install`');
+  });
+
+  it('refreshes managed Husky hooks so they fail closed', () => {
+    const target = scratch('fleet-onboard-target');
+    write(target, 'package.json', '{"name":"x"}\n');
+    write(target, 'pnpm-lock.yaml', '');
+    write(
+      target,
+      '.husky/pre-commit',
+      `#!/bin/sh\n# ${MANAGED_MARKER}\nif command -v repo-require-worktree >/dev/null 2>&1; then repo-require-worktree commits; fi\n`,
+    );
+    const { plan, results } = scaffold(target);
+    expect(results.find((r) => r.file === '.husky/pre-commit')?.action).toBe(
+      'update',
+    );
+    const preCommit = read(target, '.husky/pre-commit');
+    expect(preCommit).toMatch(/\nrepo-require-worktree commits\n$/);
+    expect(preCommit).not.toContain('command -v');
+    expect(plan.notes.join('\n')).toContain('run `pnpm install`');
+  });
+
+  it('keeps an existing repo-tools dependency and reports non-tag pins', () => {
+    const tagged =
+      '{\n    "devDependencies": {\n        "@jlapenna/repo-tools": "github:jlapenna/repo-tools#v1.2.3"\n    }\n}\n';
+    expect(mergeRepoToolsDependency(tagged, 'v9.9.9')).toEqual({
+      text: tagged,
+      note: null,
+    });
+    const branch = tagged.replace('#v1.2.3', '#main');
+    const merged = mergeRepoToolsDependency(branch, 'v9.9.9');
+    expect(merged.text).toBe(branch);
+    expect(merged.note).toContain('"github:jlapenna/repo-tools#main"');
+
+    const added = mergeRepoToolsDependency(
+      '{\n    "devDependencies": {\n        "zod": "1",\n        "@a/b": "1"\n    }\n}\n',
+      'v1.5.3',
+    ).text;
+    expect(added).toContain('\n        "@jlapenna/repo-tools"');
+    expect(Object.keys(JSON.parse(added).devDependencies)).toEqual([
+      'zod',
+      '@a/b',
+      '@jlapenna/repo-tools',
+    ]);
+    const sorted = mergeRepoToolsDependency(
+      '{"devDependencies":{"@a/b":"1","zod":"1"}}',
+      'v1.5.3',
+    ).text;
+    expect(Object.keys(JSON.parse(sorted).devDependencies)).toEqual([
+      '@a/b',
+      '@jlapenna/repo-tools',
+      'zod',
+    ]);
+
+    const target = scratch('fleet-onboard-target');
+    write(target, 'package.json', branch);
+    const { plan, results } = scaffold(target);
+    expect(results.find((r) => r.file === 'package.json')?.action).toBe(
+      'unchanged',
+    );
+    expect(plan.notes.join('\n')).toContain('not a release tag');
+  });
+
+  it.each(['main', 'a'.repeat(40)])(
+    'reports an existing pre-commit revision %s without rewriting it',
+    (rev) => {
+      const target = scratch('fleet-onboard-target');
+      const config = `repos:\n  - repo: https://github.com/jlapenna/repo-tools\n    rev: ${rev}\n    hooks:\n      - id: repo-require-worktree\n      - id: repo-require-worktree-push\n`;
+      write(target, '.pre-commit-config.yaml', config);
+      const { plan } = scaffold(target);
+      expect(read(target, '.pre-commit-config.yaml')).toBe(config);
+      expect(plan.notes.join('\n')).toContain('not a release tag');
+      expect(plan.notes.join('\n')).toContain(rev);
+    },
+  );
+
+  it('resolves the highest repo-tools release tag', () => {
+    const output = [
+      'aaa\trefs/tags/v1.9.0',
+      'bbb\trefs/tags/v1.10.0',
+      'ccc\trefs/tags/v1.10.0^{}',
+      'ddd\trefs/tags/v2.0.0-rc.1',
+      'eee\trefs/tags/v1.10.0.1',
+      'fff\trefs/tags/vnext',
+      '',
+    ].join('\n');
+    expect(latestReleaseTag(output)).toBe('v1.10.0');
+    expect(latestReleaseTag('')).toBeNull();
+
+    const calls: string[][] = [];
+    const exec = (_cmd: string, args: string[]) => {
+      calls.push(args);
+      return output;
+    };
+    expect(resolveRepoToolsRev({ repoToolsRev: null }, exec)).toBe('v1.10.0');
+    expect(calls[0]).toEqual([
+      'ls-remote',
+      '--tags',
+      'https://github.com/jlapenna/repo-tools.git',
+      'v*',
+    ]);
+    expect(resolveRepoToolsRev({ repoToolsRev: 'v0.1.0' }, exec)).toBe(
+      'v0.1.0',
+    );
+    expect(calls).toHaveLength(1);
+    expect(() => resolveRepoToolsRev({ repoToolsRev: null }, () => '')).toThrow(
+      /no vX\.Y\.Z release tag/,
+    );
+    expect(() =>
+      resolveRepoToolsRev({ repoToolsRev: null }, () => {
+        throw new Error('offline');
+      }),
+    ).toThrow(/release tags \(offline\)/);
   });
 
   it('rejects invalid specifications', () => {
