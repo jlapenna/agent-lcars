@@ -111,6 +111,10 @@ attempts retain the fence while an unreleased capacity receipt or unresolved
 credential authority/operation exists; those require credential cleanup and
 physical retirement. A settled legacy attempt with neither form of evidence
 may start a successor despite its historical `queue.state == 'claimed'`.
+All active receipts for the Task retain the fence, including a receipt whose Run
+is not claimed. A receipt with unavailable Task lineage retains the existing
+global admission fence. Claimed-Run inventory is bounded and overflow refuses
+admission.
 Parked/terminal tasks with no retained owner may start a fresh provider attempt.
 A delayed label cannot replace a newer reply, retry or other non-label generation;
 it records `run-newer-than-label` and requires a new label application.

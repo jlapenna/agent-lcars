@@ -35,6 +35,7 @@ export function decideLabelProviderRequest(
     label: { requestedAt: string; actor: string; allowProviderChange: boolean };
     latestRun?: Run;
     retainedClaims?: readonly Run[];
+    capacityReceiptRunIds?: readonly string[];
   },
 ): Decision | Refusal {
   if (isWorkAnchor(input.taskId)) return refused('not-native');
@@ -106,9 +107,13 @@ export function decideLabelProviderRequest(
     return reject('physical-ownership-unavailable');
   if (task?.closedAt !== undefined) return reject('task-closed');
   // Missing transactional physical-owner evidence is not absence of ownership.
-  if (task !== undefined && input.retainedClaims === undefined)
+  if (
+    task !== undefined &&
+    (input.retainedClaims === undefined ||
+      input.capacityReceiptRunIds === undefined)
+  )
     return reject('physical-ownership-unavailable');
-  if (input.retainedClaims?.length)
+  if (input.capacityReceiptRunIds?.length || input.retainedClaims?.length)
     return reject(
       isLive(activeRun?.state ?? 'finished')
         ? 'run-already-claimed'

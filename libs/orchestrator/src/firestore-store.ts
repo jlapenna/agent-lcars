@@ -69,6 +69,7 @@ import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
+  PROVIDER_ROUTING_CLAIM_READ_LIMIT,
   queuePriorityCursorSchema,
   queuePriorityTurnAfter,
   type RequestBinding,
@@ -425,11 +426,9 @@ export class FirestoreStore implements OrchestratorStore {
                 this.#runRef(`${taskKey(input.taskId)}/r${task.task.runCount}`),
               ),
               tx.get(
-                this.#runsForTask(input.taskId).where(
-                  'queue.state',
-                  '==',
-                  'claimed',
-                ),
+                this.#runsForTask(input.taskId)
+                  .where('queue.state', '==', 'claimed')
+                  .limit(PROVIDER_ROUTING_CLAIM_READ_LIMIT + 1),
               ),
               tx.get(this.#capacity.doc('active')),
             ])
@@ -447,9 +446,22 @@ export class FirestoreStore implements OrchestratorStore {
               // Read every claimed candidate: an older legacy remnant must
               // not hide a later capacity or credential owner behind limit(1).
               // Capacity shares this transaction with admission and release.
-              retainedClaims: routing[1].docs
-                .map((doc) => runSchema.parse(doc.data()))
-                .filter((run) => retainsPhysicalClaim(run, routingCapacity)),
+              capacityReceiptRunIds: routingCapacity.receipts
+                .filter(
+                  (receipt) =>
+                    receipt.taskKey === undefined ||
+                    receipt.taskKey === taskKey(input.taskId),
+                )
+                .map((receipt) => receipt.runId),
+              // Persist a refusal for incomplete inventory; never admit a partial read.
+              retainedClaims:
+                routing[1].size <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
+                  ? routing[1].docs
+                      .map((doc) => runSchema.parse(doc.data()))
+                      .filter((run) =>
+                        retainsPhysicalClaim(run, routingCapacity),
+                      )
+                  : undefined,
             }),
         task,
         activeRun,
