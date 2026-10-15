@@ -429,6 +429,97 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('admits a first queued label Run with an unbound receipt and retains that receipt', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        expect(await store.readTask(TASK)).toBeUndefined();
+        await store.transactCapacity({
+          now: clock.now(),
+          recordKeys: [],
+          decide: ({ state }) => ({
+            value: undefined,
+            state: {
+              ...state,
+              receipts: [
+                {
+                  poolId: 'pool',
+                  slot: 0,
+                  revision: 1,
+                  runId: 'legacy-unbound/r1',
+                  nonce: 'receipt-nonce-123456',
+                  domainId: 'claude',
+                  pipeline: 'claude',
+                  subject: 'executor',
+                  runner: 'runner',
+                  producerId: 'producer',
+                  claimedAt: T0,
+                  state: 'retiring',
+                  unplaced: false,
+                  tokenHash: 'a'.repeat(64),
+                  jobName: 'retained-job',
+                  retiredWorkers: [],
+                  producers: [
+                    {
+                      producerId: 'producer',
+                      subject: 'executor',
+                      stopped: true,
+                      fenced: true,
+                      pendingWrites: [],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        });
+        const receipts = () =>
+          store.transactCapacity({
+            now: clock.now(),
+            recordKeys: [],
+            decide: ({ state }) => ({ value: state.receipts, state }),
+          });
+        const before = await receipts();
+        const request = () =>
+          orchestrator.request({
+            taskId: TASK,
+            requestId: 'first-label',
+            pipeline: 'claude',
+            work: TASK_WORK,
+            labelProviderRequest: {
+              requestedAt: clock.now(),
+              actor: 'maintainer',
+              allowProviderChange: true,
+            },
+          });
+        const outcome = await request();
+        expect(outcome).toMatchObject({
+          run: {
+            runId: 'octo/example#7/r1',
+            state: 'pending',
+            pipeline: 'claude',
+          },
+          task: {
+            work: TASK_WORK,
+            runCount: 1,
+            providerRouting: { status: 'accepted' },
+          },
+        });
+        if (isRefusal(outcome)) throw new Error(outcome.reason);
+        const run = decidedRun(outcome);
+        await store.enqueueRun({ runId: run.runId, now: clock.now() });
+        await orchestrator.confirmDispatch(run.runId);
+        expect(await store.readRun(run.runId)).toMatchObject({
+          state: 'running',
+          queue: { state: 'queued' },
+        });
+        expect(await request()).toMatchObject({
+          refused: true,
+          reason: 'duplicate-request',
+          existingRun: { runId: run.runId },
+        });
+        expect(await store.listRuns(TASK)).toHaveLength(1);
+        expect(await receipts()).toEqual(before);
+      });
+
       it('atomically orders label handoffs, preserves Work and prevents the old provider claim', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator);
@@ -568,6 +659,9 @@ export function runOrchestratorStoreContract(
       it.each([
         'none',
         'receipt',
+        'receipt-unclaimed',
+        'receipt-unbound',
+        'unrelated-receipt',
         'credential-operation',
         'restored-credential',
       ] as const)(
@@ -578,23 +672,52 @@ export function runOrchestratorStoreContract(
           // its first claimed entry cannot mask a later retained owner.
           for (const requestId of ['legacy-first', 'legacy-second']) {
             const { run } = await started(orchestrator, requestId);
-            await store.enqueueRun({ runId: run.runId, now: clock.now() });
-            await store.claimQueuedRun({
-              pipelines: ['claude'],
-              now: clock.now(),
-              claimedBy: 'executor',
-              tokenHash: 'a'.repeat(64),
-            });
+            if (
+              !['receipt-unclaimed', 'receipt-unbound'].includes(debt) ||
+              requestId !== 'legacy-second'
+            ) {
+              await store.enqueueRun({ runId: run.runId, now: clock.now() });
+              await store.claimQueuedRun({
+                pipelines: ['claude'],
+                now: clock.now(),
+                claimedBy: 'executor',
+                tokenHash: 'a'.repeat(64),
+              });
+            }
             await orchestrator.report(run.runId, { ok: true, summary: 'park' });
             clock.advanceMinutes(1);
           }
           const runs = await store.listRuns(TASK);
           const owner = runs.find((run) => run.requestId === 'legacy-second');
           if (owner === undefined) throw new Error('missing terminal owner');
-          expect(owner).toMatchObject({
-            state: 'finished',
-            queue: { state: 'claimed' },
-          });
+          expect(owner).toMatchObject({ state: 'finished' });
+          expect(owner.queue?.state).toBe(
+            ['receipt-unclaimed', 'receipt-unbound'].includes(debt)
+              ? undefined
+              : 'claimed',
+          );
+          const unrelatedTask = { repo: 'octo/example', issue: 8 } as const;
+          const receiptRun =
+            debt === 'unrelated-receipt'
+              ? await orchestrator.request({
+                  taskId: unrelatedTask,
+                  requestId: 'unrelated',
+                  pipeline: 'claude',
+                  work: TASK_WORK,
+                })
+              : undefined;
+          if (
+            receiptRun !== undefined &&
+            (isRefusal(receiptRun) || receiptRun.run === undefined)
+          )
+            throw new Error('missing unrelated receipt Run');
+          let receiptRunId = owner.runId;
+          if (
+            receiptRun !== undefined &&
+            !isRefusal(receiptRun) &&
+            receiptRun.run !== undefined
+          )
+            receiptRunId = receiptRun.run.runId;
           await store.transactCapacity({
             now: clock.now(),
             recordKeys: [],
@@ -603,39 +726,51 @@ export function runOrchestratorStoreContract(
               value: undefined,
               state: {
                 ...state,
-                receipts:
-                  debt === 'receipt'
-                    ? [
-                        {
-                          poolId: 'pool',
-                          slot: 0,
-                          revision: 1,
-                          runId: owner.runId,
-                          taskKey: taskKey(TASK),
-                          nonce: 'receipt-nonce-123456',
-                          domainId: 'claude',
-                          pipeline: 'claude',
-                          subject: 'executor',
-                          runner: 'runner',
-                          producerId: 'producer',
-                          claimedAt: T0,
-                          state: 'retiring',
-                          unplaced: false,
-                          tokenHash: 'a'.repeat(64),
-                          jobName: 'retained-job',
-                          retiredWorkers: [],
-                          producers: [
-                            {
-                              producerId: 'producer',
-                              subject: 'executor',
-                              stopped: true,
-                              fenced: true,
-                              pendingWrites: [],
-                            },
-                          ],
-                        },
-                      ]
-                    : [],
+                receipts: [
+                  'receipt',
+                  'receipt-unclaimed',
+                  'receipt-unbound',
+                  'unrelated-receipt',
+                ].includes(debt)
+                  ? [
+                      {
+                        poolId: 'pool',
+                        slot: 0,
+                        revision: 1,
+                        runId: receiptRunId,
+                        ...(debt === 'receipt-unbound'
+                          ? {}
+                          : {
+                              taskKey: taskKey(
+                                debt === 'unrelated-receipt'
+                                  ? unrelatedTask
+                                  : TASK,
+                              ),
+                            }),
+                        nonce: 'receipt-nonce-123456',
+                        domainId: 'claude',
+                        pipeline: 'claude',
+                        subject: 'executor',
+                        runner: 'runner',
+                        producerId: 'producer',
+                        claimedAt: T0,
+                        state: 'retiring',
+                        unplaced: false,
+                        tokenHash: 'a'.repeat(64),
+                        jobName: 'retained-job',
+                        retiredWorkers: [],
+                        producers: [
+                          {
+                            producerId: 'producer',
+                            subject: 'executor',
+                            stopped: true,
+                            fenced: true,
+                            pendingWrites: [],
+                          },
+                        ],
+                      },
+                    ]
+                  : [],
               },
               run: {
                 ...owner,
@@ -675,8 +810,15 @@ export function runOrchestratorStoreContract(
                 allowProviderChange: true,
               },
             });
+          const readReceipts = () =>
+            store.transactCapacity({
+              now: clock.now(),
+              recordKeys: [],
+              decide: ({ state }) => ({ value: state.receipts, state }),
+            });
+          const receiptBefore = await readReceipts();
           const result = await request('label-successor');
-          if (debt === 'none') {
+          if (debt === 'none' || debt === 'unrelated-receipt') {
             expect(result).toMatchObject({
               run: { pipeline: 'opencode' },
               task: {
@@ -716,10 +858,87 @@ export function runOrchestratorStoreContract(
           expect(await store.readRun(owner.runId)).toMatchObject({
             state: 'finished',
             pipeline: 'claude',
-            queue: { state: 'claimed' },
           });
+          expect((await store.readRun(owner.runId))?.queue?.state).toBe(
+            ['receipt-unclaimed', 'receipt-unbound'].includes(debt)
+              ? undefined
+              : 'claimed',
+          );
+          if (debt === 'unrelated-receipt')
+            expect(await readReceipts()).toEqual(receiptBefore);
         },
       );
+
+      it('persists a bounded label inventory refusal without minting a successor', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await started(orchestrator);
+        await store.enqueueRun({ runId: first.run.runId, now: clock.now() });
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        await orchestrator.report(first.run.runId, { ok: true });
+        const legacy = await store.readRun(first.run.runId);
+        if (legacy === undefined) throw new Error('missing legacy Run');
+        // Four bounded storage transactions model a genuine long-lived Task's
+        // terminal claimed history, without dispatching or retiring any worker.
+        for (let start = 2; start <= 1001; start += 250) {
+          const task = await store.readTask(TASK);
+          if (task === undefined) throw new Error('missing Task');
+          const additionalRuns = Array.from(
+            { length: Math.min(250, 1002 - start) },
+            (_, index) => ({
+              ...legacy,
+              runId: `${taskKey(TASK)}/r${start + index}`,
+              requestId: `legacy-${start + index}`,
+            }),
+          );
+          await store.apply({
+            expectedRevision: task.revision,
+            decision: {
+              task: {
+                ...task.task,
+                runCount: start + additionalRuns.length - 1,
+              },
+              additionalRuns,
+              outbox: [],
+            },
+          });
+        }
+        clock.advanceMinutes(1);
+        const request = {
+          taskId: TASK,
+          requestId: 'inventory-overflow-label',
+          pipeline: 'opencode',
+          pipelineForStoredTask: () => 'claude',
+          labelProviderRequest: {
+            requestedAt: clock.now(),
+            actor: 'maintainer',
+            allowProviderChange: true,
+          },
+        };
+        const refusal = await orchestrator.request(request);
+        expect(refusal).toMatchObject({
+          task: {
+            providerRouting: {
+              status: 'refused',
+              reason: 'physical-ownership-unavailable',
+            },
+          },
+          outbox: [],
+        });
+        expect(
+          (await store.readTask(TASK))?.task.providerRouting,
+        ).toMatchObject({
+          status: 'refused',
+          reason: 'physical-ownership-unavailable',
+        });
+        expect(await orchestrator.request(request)).toEqual(refusal);
+        expect(await store.listRuns(TASK)).toHaveLength(1001);
+        expect(await store.readRun(legacy.runId)).toEqual(legacy);
+      });
 
       it('serializes a label handoff against claim and admits a later settled legacy successor', async () => {
         const { store, orchestrator, clock } = await fixture();
