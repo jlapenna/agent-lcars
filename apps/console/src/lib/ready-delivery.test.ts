@@ -22,6 +22,7 @@ import {
   observeGithubDelivery,
   readGithubIntakePermission,
   readyDeliveryBinding,
+  UnqualifiedDeliveryError,
 } from './ready-delivery';
 
 vi.mock('./deployment', () => ({ isControlPlaneRepository: () => true }));
@@ -384,57 +385,139 @@ describe('authenticated ready delivery evidence', () => {
   });
 
   it.each([
-    { draft: true },
-    { auto_merge: null },
-    { body: '<!-- attempt-claim:old -->' },
-  ])('refuses unready, unarmed or wrong-attempt evidence: %j', async (pr) => {
-    await expect(
-      readyDeliveryBinding(fixture({ pr }), {
+    { pr: { draft: true }, unqualified: false },
+    { pr: { auto_merge: null }, unqualified: true },
+    { pr: { auto_merge: { merge_method: 'merge' } }, unqualified: false },
+    { pr: { auto_merge: { merge_method: 'rebase' } }, unqualified: false },
+    { pr: { auto_merge: null }, rules: [], unqualified: false },
+    {
+      pr: { auto_merge: null },
+      rules: [{ type: 'pull_request' }],
+      unqualified: false,
+    },
+    {
+      pr: { auto_merge: null },
+      rules: new Response(null, { status: 502 }),
+      unqualified: false,
+    },
+    { pr: { body: '<!-- attempt-claim:old -->' }, unqualified: false },
+    { pr: { auto_merge: null, body: null }, unqualified: false },
+    {
+      pr: { auto_merge: null, body: '<!-- attempt-claim:old -->' },
+      unqualified: false,
+    },
+    { pr: { auto_merge: null, number: 13 }, unqualified: false },
+    { pr: { auto_merge: null, draft: true }, unqualified: false },
+    { pr: { auto_merge: null, state: 'closed' }, unqualified: false },
+  ])(
+    'refuses unready, unarmed or wrong-attempt evidence: $pr',
+    async ({ pr, rules, unqualified }) => {
+      const error = await readyDeliveryBinding(fixture({ pr, rules }), {
         run: RUN,
         task: TASK,
         repo: 'octo/example',
         number: 12,
         now: NOW,
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      // Only this run's exact marked, open, ready PR that is merely unarmed
+      // is the narrow unqualified state; everything else stays generic.
+      expect(error instanceof UnqualifiedDeliveryError).toBe(unqualified);
+    },
+  );
+
+  it('keeps unreadable PR evidence and a foreign target generic', async () => {
+    const refused = fixture({ pr: { auto_merge: null } });
+    const fetchImpl = (async () =>
+      new Response(null, { status: 502 })) as typeof fetch;
+    for (const attempt of [
+      readyDeliveryBinding(
+        { ...refused, fetchImpl },
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ),
+      readyDeliveryBinding(refused, {
+        run: RUN,
+        task: TASK,
+        repo: 'octo/other',
+        number: 12,
+        now: NOW,
       }),
-    ).rejects.toThrow();
+    ]) {
+      const error = await attempt.catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(UnqualifiedDeliveryError);
+    }
   });
 
   it('rejects incomplete review reads and author-only approval for already merged handoff', async () => {
-    for (const review of [
-      { reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] } },
+    const merged = {
+      state: 'closed',
+      merged: true,
+      merge_commit_sha: MERGE,
+      auto_merge: null,
+    };
+    for (const { review, rules, unqualified } of [
       {
-        reviews: {
-          pageInfo: { hasPreviousPage: false },
-          nodes: [
-            {
-              state: 'APPROVED',
-              author: { login: 'author' },
-              commit: { oid: HEAD },
-            },
-          ],
+        review: {
+          reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
         },
+        unqualified: false,
       },
-    ])
-      await expect(
-        readyDeliveryBinding(
-          fixture({
-            review,
-            pr: {
-              state: 'closed',
-              merged: true,
-              merge_commit_sha: MERGE,
-              auto_merge: null,
-            },
-          }),
-          {
-            run: RUN,
-            task: TASK,
-            repo: 'octo/example',
-            number: 12,
-            now: NOW,
+      {
+        review: {
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state: 'APPROVED',
+                author: { login: 'author' },
+                commit: { oid: HEAD },
+              },
+            ],
           },
-        ),
-      ).rejects.toThrow();
+        },
+        unqualified: false,
+      },
+      {
+        review: {
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state: 'CHANGES_REQUESTED',
+                author: { login: 'reviewer' },
+                commit: { oid: HEAD },
+              },
+            ],
+          },
+        },
+        unqualified: false,
+      },
+      {
+        review: {
+          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+          reviewThreads: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ isResolved: false }],
+          },
+        },
+        unqualified: false,
+      },
+      {
+        review: {
+          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+        },
+        rules: new Response(null, { status: 502 }),
+        unqualified: false,
+      },
+    ]) {
+      const error = await readyDeliveryBinding(
+        fixture({ review, pr: merged, rules }),
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof UnqualifiedDeliveryError).toBe(unqualified);
+    }
   });
 
   it('requests correction only for actual failed required checks or review feedback', async () => {
