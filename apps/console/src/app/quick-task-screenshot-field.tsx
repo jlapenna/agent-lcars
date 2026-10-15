@@ -75,7 +75,7 @@ export function QuickTaskScreenshotField({
   };
 
   return (
-    <Stack gap="xs">
+    <Stack gap="xs" miw={0} maw="100%">
       <input
         ref={inputRef}
         id={inputId}
@@ -110,16 +110,19 @@ export function QuickTaskScreenshotField({
         </Text>
       )}
       {value && previewUrl && (
-        <Group align="flex-start" wrap="nowrap">
+        <Group align="flex-start">
           <Image
             src={previewUrl}
             alt={`Screenshot preview: ${value.name}`}
             w={160}
+            maw="100%"
             h={100}
             fit="contain"
           />
-          <Stack gap="xs">
-            <Text size="sm">{value.name}</Text>
+          <Stack gap="xs" style={{ flex: '1 1 160px', minWidth: 0 }}>
+            <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+              {value.name}
+            </Text>
             <Button
               size="compact-xs"
               variant="light"

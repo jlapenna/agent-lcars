@@ -231,6 +231,66 @@ test.describe('overlays inherit the LCARS theme', () => {
     });
   }
 
+  for (const width of [320, 390, 1280]) {
+    test(`New work keeps Create usable after attaching a screenshot at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto('/');
+      await page.getByRole('button', { name: 'New work' }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog
+        .getByLabel('Description')
+        .fill('Keep attachment actions usable');
+      const filename = `${'screenshot-with-a-long-name-'.repeat(6)}.png`;
+      await dialog.getByLabel('Screenshot file').setInputFiles({
+        name: filename,
+        mimeType: 'image/png',
+        buffer: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          'base64',
+        ),
+      });
+      await expect(
+        dialog.getByRole('img', { name: `Screenshot preview: ${filename}` }),
+      ).toBeVisible();
+      const create = dialog.getByRole('button', {
+        name: 'Create work item',
+        exact: true,
+      });
+      await create.evaluate((button) =>
+        button.scrollIntoView({ block: 'center', inline: 'nearest' }),
+      );
+      await expect(create).toBeEnabled();
+      await expect(create).toBeInViewport({ ratio: 1 });
+      // Visibility alone passes for a squeezed button whose label is clipped.
+      await expect
+        .poll(() =>
+          create.evaluate((button) => {
+            const label = button.querySelector('.mantine-Button-label');
+            return label !== null && label.scrollWidth <= label.clientWidth;
+          }),
+        )
+        .toBe(true);
+      await expect
+        .poll(() =>
+          dialog.evaluate(
+            (element) => element.scrollWidth <= element.clientWidth,
+          ),
+        )
+        .toBe(true);
+      await create.click({ trial: true });
+      await dialog.getByRole('button', { name: 'Remove screenshot' }).click();
+      await expect(
+        dialog.getByRole('img', {
+          name: `Screenshot preview: ${filename}`,
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await expect(create).toBeEnabled();
+    });
+  }
+
   test('the New work modal opens, is dismissible, and uses the app fonts', async ({
     page,
   }) => {
