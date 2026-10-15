@@ -1017,11 +1017,13 @@ export const runsRouter = os.router({
       input.message,
       { issue: target.issue, mode: run.params?.mode },
     );
+    const deliveryCorrection =
+      run.params?.deliveryPredecessor !== undefined ||
+      (task?.delivery !== undefined &&
+        task.delivery.state !== 'complete' &&
+        task.delivery.runId !== run.runId);
     if (
-      (run.params?.deliveryPredecessor !== undefined ||
-        (task?.delivery !== undefined &&
-          task.delivery.state !== 'complete' &&
-          task.delivery.runId !== run.runId)) &&
+      deliveryCorrection &&
       result.ok &&
       result.summary !== 'park' &&
       (!['pull-request', 'merged-deliverable'].includes(result.summary ?? '') ||
@@ -1056,11 +1058,27 @@ export const runsRouter = os.router({
             now: context.now().toISOString(),
           },
         );
-      } catch {
-        throw new ORPCError('CONFLICT', {
-          message:
-            'Ready delivery handoff refused; exact review and protected delivery evidence required',
-        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // A correction or a merged-deliverable claim exists only to bind
+        // delivery evidence, so an unqualified one stays refused. An initial
+        // PR is still a published deliverable: GitHub arming, merging and
+        // review are asynchronous (a repository's arming workflow can land
+        // after the executor exits), so settle it as an ordinary
+        // pull-request result without durable delivery ownership instead of
+        // discarding it as runner-failed.
+        if (deliveryCorrection || result.summary === 'merged-deliverable') {
+          console.warn(
+            `agent-lcars: ready delivery handoff refused for ${run.runId}: ${reason}`,
+          );
+          throw new ORPCError('CONFLICT', {
+            message:
+              'Ready delivery handoff refused; exact review and protected delivery evidence required',
+          });
+        }
+        console.warn(
+          `agent-lcars: ready delivery handoff not established for ${run.runId}; settling the PR without delivery ownership: ${reason}`,
+        );
       }
     }
     const settled = await capacityCall(() =>

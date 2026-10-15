@@ -2766,6 +2766,57 @@ describe('complete', () => {
     const settled = await store.readRun(runId);
     expect(settled?.state).toBe('finished');
   });
+
+  // homelab#2562/r1: the repository's arming workflow armed the published PR
+  // fifteen seconds after the executor's completion, so the handoff was not
+  // yet qualified. That must not turn a published deliverable into a 409 and
+  // runner-failed; it settles without durable delivery ownership.
+  it('settles an initial PR whose ready handoff is not yet qualified, without delivery ownership', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-complete-unarmed-pr'),
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await store.claimQueuedRun({
+      pipelines: ['claude'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      tokenHash: hashRunToken(token),
+    });
+    const ready = vi.fn(async () => {
+      throw new Error('Deliverable is not ready and armed');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        bearerToken: token,
+        loadReadyDeliveryBinding: ready,
+      },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'pull-request',
+        outcomeReference: { kind: 'pull-request', number: 3 },
+      },
+    );
+    expect(r).toEqual({ status: 200, json: { runId, state: 'finished' } });
+    expect(ready).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Deliverable is not ready and armed'),
+    );
+    warn.mockRestore();
+    const settled = (await store.readRun(runId))!;
+    expect(settled.result).toMatchObject({
+      ok: true,
+      summary: 'pull-request',
+    });
+    expect((await store.readTask(settled.task))!.task.delivery).toBeUndefined();
+  });
 });
 
 describe('checkoutToken', () => {
