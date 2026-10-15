@@ -168,13 +168,13 @@ describe('console frame readouts', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('strip-readout-fleet')).toHaveTextContent(
-      '11/12 Fleet online',
+      '11/12 fleet',
     );
     expect(screen.getByTestId('strip-readout-queue')).toHaveTextContent(
-      '09 Queue depth',
+      '09 queue',
     );
     expect(screen.getByTestId('strip-readout-merged')).toHaveTextContent(
-      '14 Merged · 24h',
+      '14 merged 24h',
     );
   });
 

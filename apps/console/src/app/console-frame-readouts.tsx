@@ -105,8 +105,17 @@ export function RailReadouts() {
   );
 }
 
-/** Below 64em the rail is hidden, so its readouts ride one line under the
- * header: the same figures and date, compact. */
+/** Short labels so the strip fits a phone line; the rail's own read in full. */
+const STRIP_LABELS: Record<string, string> = {
+  fleet: 'fleet',
+  queue: 'queue',
+  tokens: 'tokens 24h',
+  merged: 'merged 24h',
+};
+
+/** Below 64em the rail is hidden, so its readouts ride a line under the
+ * header: the date and the same figures, short-labelled, wrapping rather
+ * than clipping on the narrowest phones. */
 export function ReadoutStrip() {
   const { blocks, now } = useRailFigures();
   return (
@@ -115,16 +124,16 @@ export function ReadoutStrip() {
       aria-label="Fleet readouts, compact"
       role="group"
     >
-      {blocks.map((block) =>
-        block.value !== undefined ? (
-          <span key={block.key} data-testid={`strip-readout-${block.key}`}>
-            <b>{block.value}</b> {block.label}
-          </span>
-        ) : null,
-      )}
       {now ? (
         <span className="lcars-readout-strip__date">{stardate(now)}</span>
       ) : null}
+      {blocks.map((block) =>
+        block.value !== undefined ? (
+          <span key={block.key} data-testid={`strip-readout-${block.key}`}>
+            <b>{block.value}</b> {STRIP_LABELS[block.key] ?? block.label}
+          </span>
+        ) : null,
+      )}
     </div>
   );
 }
