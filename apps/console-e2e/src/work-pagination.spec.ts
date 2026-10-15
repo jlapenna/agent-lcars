@@ -195,7 +195,8 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
  * with the decision queue; wait for it rather than sampling once. */
 async function revealInboxRepositoryFilter(page: Page) {
   if (new URL(page.url()).pathname !== '/inbox') return;
-  // Phones fold the Inbox's selects behind its Filters toggle once hydrated.
+  // Phones fold the Inbox's selects behind its Filters toggle; the selects
+  // act only once hydrated.
   const toolbar = page.locator('.inbox-toolbar').filter({ visible: true });
   await expect(toolbar).toHaveAttribute('data-hydrated', '');
   await openFold(toolbar);
