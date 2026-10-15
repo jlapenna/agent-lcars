@@ -6590,6 +6590,22 @@ describe('merged delivery corrections cross the authenticated PR gate', () => {
       expect((await f.store.readRun(f.runId))?.state).toBe('running');
     },
   );
+  it('keeps an unqualified correction PR refused and the run live', async () => {
+    const f = await correction();
+    f.ready.mockRejectedValueOnce(
+      new UnqualifiedDeliveryError('Deliverable is not armed yet'),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const result = await call(f.ctx, 'POST', runPath(f.runId, '/complete'), {
+      outcome: 'pull-request',
+      outcomeReference: { kind: 'pull-request', number: 99 },
+    });
+    warn.mockRestore();
+    expect(result.status).toBe(409);
+    expect(f.ready).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.runId))?.state).toBe('running');
+    expect((await f.store.readRun(f.runId))?.result).toBeUndefined();
+  });
   it('refuses a merged result when its server protected-evidence read fails', async () => {
     const f = await correction();
     f.ready.mockRejectedValueOnce(new Error('protected merge unavailable'));

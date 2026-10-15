@@ -290,12 +290,17 @@ export async function readyDeliveryBinding(
   // Already merged artifacts still require review before accepting landing.
   if (pr.merged) {
     const review = await reviews(deps, repo, number, pr.head.sha);
-    // Only a complete, successful review read proving absence qualifies as
-    // the narrow unqualified state; read failures above stay generic.
-    if (!hasIndependentReview(review, pr.user.login))
-      throw new UnqualifiedDeliveryError(
-        'Deliverable requires exact-head independent review',
-      );
+    if (!hasIndependentReview(review, pr.user.login)) {
+      // Only a complete, successful review read proving mere absence of an
+      // independent approval is the narrow unqualified state. Requested
+      // changes and unresolved threads are rejections; read failures above
+      // stay generic too.
+      if (!review.changesRequested && !review.unresolved)
+        throw new UnqualifiedDeliveryError(
+          'Deliverable requires exact-head independent review',
+        );
+      throw new Error('Deliverable has unresolved review feedback');
+    }
   }
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (

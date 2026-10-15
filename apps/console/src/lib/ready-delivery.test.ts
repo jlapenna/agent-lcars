@@ -433,41 +433,74 @@ describe('authenticated ready delivery evidence', () => {
   });
 
   it('rejects incomplete review reads and author-only approval for already merged handoff', async () => {
-    for (const review of [
-      { reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] } },
+    const merged = {
+      state: 'closed',
+      merged: true,
+      merge_commit_sha: MERGE,
+      auto_merge: null,
+    };
+    for (const { review, rules, unqualified } of [
       {
-        reviews: {
-          pageInfo: { hasPreviousPage: false },
-          nodes: [
-            {
-              state: 'APPROVED',
-              author: { login: 'author' },
-              commit: { oid: HEAD },
-            },
-          ],
+        review: {
+          reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
         },
+        unqualified: false,
       },
-    ])
-      await expect(
-        readyDeliveryBinding(
-          fixture({
-            review,
-            pr: {
-              state: 'closed',
-              merged: true,
-              merge_commit_sha: MERGE,
-              auto_merge: null,
-            },
-          }),
-          {
-            run: RUN,
-            task: TASK,
-            repo: 'octo/example',
-            number: 12,
-            now: NOW,
+      {
+        review: {
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state: 'APPROVED',
+                author: { login: 'author' },
+                commit: { oid: HEAD },
+              },
+            ],
           },
-        ),
-      ).rejects.toThrow();
+        },
+        unqualified: true,
+      },
+      {
+        review: {
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state: 'CHANGES_REQUESTED',
+                author: { login: 'reviewer' },
+                commit: { oid: HEAD },
+              },
+            ],
+          },
+        },
+        unqualified: false,
+      },
+      {
+        review: {
+          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+          reviewThreads: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ isResolved: false }],
+          },
+        },
+        unqualified: false,
+      },
+      {
+        review: {
+          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+        },
+        rules: new Response(null, { status: 502 }),
+        unqualified: false,
+      },
+    ]) {
+      const error = await readyDeliveryBinding(
+        fixture({ review, pr: merged, rules }),
+        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof UnqualifiedDeliveryError).toBe(unqualified);
+    }
   });
 
   it('requests correction only for actual failed required checks or review feedback', async () => {
