@@ -192,6 +192,20 @@ describe('console frame readouts', () => {
     expect(container.firstElementChild).not.toHaveAttribute('data-figures');
   });
 
+  it('draws no maintainer marks for a limited session whose read fails', async () => {
+    respond({ error: 'Console readouts unavailable' }, false);
+    render(
+      <ConsoleNavigationProvider navigationKeys={['work']}>
+        <ReadoutStrip />
+      </ConsoleNavigationProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId('strip-readout-fleet')).toBeNull();
+  });
+
   it('names the signed-in identity in the console menu', async () => {
     respond(admin);
     render(<MenuIdentity />);
