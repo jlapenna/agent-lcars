@@ -72,7 +72,11 @@ export const INTEGRATION_TARGETS: Readonly<
       { event: 'SessionStart', timeout: 10 },
       { event: 'UserPromptSubmit', async: true },
       { event: 'PostToolUse', async: true },
-      { event: 'Stop', async: true },
+      // Synchronous for the same reason as Claude's: an async Stop can still
+      // hold the session lock when SessionEnd starts, and Codex kills
+      // SessionEnd hooks at 3 s whatever their timeout, losing the end.
+      { event: 'Stop', timeout: 5 },
+      { event: 'SubagentStop', async: true },
       { event: 'Interrupt', timeout: 1 },
       { event: 'SessionEnd', timeout: 3 },
     ],
@@ -289,7 +293,7 @@ function stripOurHooks(hooks: JsonRecord): number {
   return removed;
 }
 
-/** Replaces our entry inside the group that already carries one (keeping
+/** Replaces our entry inside every group that already carries one (keeping
  *  any foreign hooks sharing that group and the group's position, so a
  *  file another tool also manages is not reordered on every install) or
  *  appends a fresh group. */
@@ -302,10 +306,10 @@ function placeOurGroup(
     ? [...(hooks[event] as unknown[])]
     : [];
   const ourHook = (group['hooks'] as unknown[])[0];
-  const index = groups.findIndex(groupIsOurs);
-  if (index === -1) {
-    groups.push(group);
-  } else {
+  let found = false;
+  for (let index = 0; index < groups.length; index++) {
+    if (!groupIsOurs(groups[index])) continue;
+    found = true;
     const existing = groups[index] as JsonRecord;
     const entries = existing['hooks'] as unknown[];
     const first = entries.findIndex(hookIsOurs);
@@ -316,6 +320,7 @@ function placeOurGroup(
         .filter((hook, i) => i === first || !hookIsOurs(hook)),
     };
   }
+  if (!found) groups.push(group);
   hooks[event] = groups;
 }
 
@@ -340,15 +345,36 @@ function settingsIntegrationStatus(
   const stubVersion = stubVersionOf(script);
   const stubCurrent = script === stubScript(runtime);
   let entriesPresent = 0;
+  let entriesCurrent = 0;
   try {
     const settings = readSettings(resolved.settingsPath);
     const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
     for (const spec of target.entries) {
       const groups = hooks[spec.event];
-      if (Array.isArray(groups) && groups.some(groupIsOurs)) entriesPresent++;
+      if (!Array.isArray(groups)) continue;
+      const managedHooks = groups.flatMap((group) =>
+        isRecord(group) && Array.isArray(group['hooks'])
+          ? group['hooks'].filter(hookIsOurs)
+          : [],
+      );
+      if (managedHooks.length === 0) continue;
+      entriesPresent++;
+      if (
+        managedHooks.every(
+          (hook) =>
+            isRecord(hook) &&
+            hook['type'] === 'command' &&
+            hook['command'] === stubCommand(runtime, resolved.stubRef) &&
+            (hook['async'] === undefined ? false : hook['async']) ===
+              (spec.async ?? false) &&
+            hook['timeout'] === spec.timeout,
+        )
+      )
+        entriesCurrent++;
     }
   } catch {
     entriesPresent = 0;
+    entriesCurrent = 0;
   }
   return {
     runtime,
@@ -357,7 +383,7 @@ function settingsIntegrationStatus(
     stubCurrent,
     entriesPresent,
     entriesExpected: target.entries.length,
-    installed: stubCurrent && entriesPresent === target.entries.length,
+    installed: stubCurrent && entriesCurrent === target.entries.length,
   };
 }
 

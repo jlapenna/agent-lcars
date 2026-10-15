@@ -129,6 +129,155 @@ describe('getAutoscalerStatuses', () => {
     ]);
   });
 
+  it('projects a fresh host inventory and drops a stale or malformed one', async () => {
+    const updatedAt = new Date().toISOString();
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 6_100,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      runnerPods: 1,
+      queueJobPods: 1,
+    };
+    const doc = (overrides: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: { hosts: [host] },
+      updatedAt,
+      expireAt: Timestamp.now(),
+      ...overrides,
+    });
+    mockStore([doc({})]);
+    expect((await getAutoscalerStatuses()).hostInventory).toEqual({
+      hosts: [host],
+      updatedAt,
+    });
+    mockStore([
+      doc({ updatedAt: new Date(Date.now() - 600_000).toISOString() }),
+    ]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    mockStore([doc({ inventory: { hosts: [{ ...host, cpuMillis: -1 }] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    const dotted = { ...host, name: 'worker-1.example.internal' };
+    mockStore([doc({ inventory: { hosts: [dotted] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      dotted,
+    ]);
+    mockStore([doc({ inventory: { hosts: [{ ...host, name: 'Bad_Name' }] } })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+  });
+
+  it('carries live usage only when a host reports both CPU and memory', async () => {
+    const updatedAt = new Date().toISOString();
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 6_100,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      runnerPods: 1,
+      queueJobPods: 1,
+    };
+    const doc = (hostOverrides: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: { hosts: [{ ...host, ...hostOverrides }] },
+      updatedAt,
+      expireAt: Timestamp.now(),
+    });
+    const sampled = { usedCpuMillis: 2_535, usedMemoryBytes: 8 * 1024 ** 3 };
+    mockStore([doc(sampled)]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      { ...host, ...sampled },
+    ]);
+    mockStore([doc({ usedCpuMillis: null, usedMemoryBytes: null })]);
+    expect((await getAutoscalerStatuses()).hostInventory?.hosts).toEqual([
+      host,
+    ]);
+    mockStore([doc({ usedCpuMillis: 2_535 })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+    mockStore([doc({ ...sampled, usedMemoryBytes: -1 })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toBeUndefined();
+  });
+
+  it('carries per-runner rows only when every row is valid', async () => {
+    const updatedAt = new Date().toISOString();
+    const host = {
+      name: 'spark',
+      ready: true,
+      unschedulable: false,
+      cpuMillis: 20_000,
+      memoryBytes: 128 * 1024 ** 3,
+      requestedCpuMillis: 4_000,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      runnerPods: 1,
+      queueJobPods: 1,
+    };
+    const arc = {
+      name: 'lcars-ci-abc-runner-x1',
+      kind: 'arc',
+      lane: 'lcars-ci',
+      host: 'spark',
+      state: 'busy',
+      since: '2026-10-14T07:00:00Z',
+      requestedCpuMillis: 4_000,
+      requestedMemoryBytes: 12 * 1024 ** 3,
+      jobRepository: 'jlapenna/agent-lcars',
+      jobName: 'Verify',
+      workflowRunId: 9001,
+    };
+    const direct = {
+      name: 'lcars-run-1',
+      kind: 'direct',
+      lane: 'direct',
+      state: 'starting',
+      since: '2026-10-14T07:05:00Z',
+      requestedCpuMillis: 2_000,
+      requestedMemoryBytes: 4 * 1024 ** 3,
+      runId: 'run-1',
+    };
+    const doc = (inventory: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      kind: 'hosts',
+      inventory: { hosts: [host], ...inventory },
+      updatedAt,
+      expireAt: Timestamp.now(),
+    });
+    mockStore([doc({ runners: [arc, direct], runnerJobsKnown: true })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toEqual({
+      hosts: [host],
+      runners: [arc, direct],
+      runnerJobsKnown: true,
+      updatedAt,
+    });
+    // An executor that predates runner rows, or a fleet past the limit.
+    mockStore([doc({ runners: null })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toEqual({
+      hosts: [host],
+      updatedAt,
+    });
+    // One malformed row drops the list, never the hosts.
+    mockStore([doc({ runners: [arc, { ...direct, state: 'lost' }] })]);
+    expect((await getAutoscalerStatuses()).hostInventory).toEqual({
+      hosts: [host],
+      updatedAt,
+    });
+    mockStore([
+      doc({
+        runners: [{ ...arc, requestedCpuMillis: -1 }],
+        runnerJobsKnown: true,
+      }),
+    ]);
+    expect(
+      (await getAutoscalerStatuses()).hostInventory?.runners,
+    ).toBeUndefined();
+  });
+
   it('ignores retired scale-set records instead of publishing obsolete capacity', async () => {
     mockStore([
       {

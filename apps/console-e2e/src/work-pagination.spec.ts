@@ -41,6 +41,8 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   ).toBeVisible();
   // Toolbar selects submit on change and carry the typed principal with them;
   // principal sits behind More filters so the band stays one row.
+  // Phones fold the selects and More filters behind the Filters toggle.
+  await openToolbarFilters(page);
   const moreFilters = page.locator('summary', { hasText: /^More filters/ });
   await moreFilters.click();
   await page
@@ -54,8 +56,12 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
     .getByTestId('work-cards')
     .getByRole('link', { name: /^Pagination fixture / });
   await expect(links).toHaveCount(199); // the existing native fixture occupies one raw slot
+  // A full screenful of matches stops the scan at the first store page.
+  await expect(page.getByTestId('work-scan-extent')).toHaveText(
+    'Searched up to 200 native tasks; older work continues on the next page.',
+  );
   const first = await links.allTextContents();
-  await page.getByRole('link', { name: 'Next work page' }).click();
+  await page.getByRole('link', { name: 'Search older work' }).click();
   await expect(page).toHaveURL(/cursor=/);
   await expect(page).toHaveURL(/repo=supersprinklesracing%2Fsprinkles/);
   await expect(page.getByLabel('Principal', { exact: true })).toHaveValue(
@@ -72,17 +78,19 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
   );
   await page.reload();
   await expect(links).toHaveCount(6);
+  await openToolbarFilters(page);
   await moreFilters.click();
   await page.getByLabel('State', { exact: true }).selectOption('parked');
   await expect(page).not.toHaveURL(/cursor=/);
-  await expect(
-    page.getByText('No matching work items on this page.'),
-  ).toBeVisible();
-  await page.getByRole('link', { name: 'Next work page' }).click();
+  // The newest store page holds no parked fixture; the view reads on to the
+  // older page that does instead of showing an empty page (#1546).
   await expect(links).toHaveText(['Pagination fixture 1']);
-  await expect(page.getByRole('link', { name: 'Next work page' })).toHaveCount(
-    0,
+  await expect(page.getByTestId('work-scan-extent')).toHaveText(
+    'Searched 2 pages of up to 200 native tasks, through the oldest.',
   );
+  await expect(
+    page.getByRole('link', { name: 'Search older work' }),
+  ).toHaveCount(0);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -187,6 +195,16 @@ test('Work filters and cursors reach 205 items and an older park at 320px', asyn
  * with the decision queue; wait for it rather than sampling once. */
 async function revealInboxRepositoryFilter(page: Page) {
   if (new URL(page.url()).pathname !== '/inbox') return;
+  // Phones fold the Inbox's selects behind its Filters toggle once hydrated.
+  const toolbar = page.locator('.inbox-toolbar').filter({ visible: true });
+  await expect(toolbar).toHaveAttribute('data-hydrated', '');
+  const toggle = toolbar.getByRole('button', { name: /^Filters/ });
+  if (
+    (await toggle.isVisible()) &&
+    (await toggle.getAttribute('aria-expanded')) === 'false'
+  ) {
+    await toggle.click();
+  }
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toBeVisible();
@@ -309,12 +327,14 @@ async function expectNoBridgeRepositoryForm(page: Page) {
 }
 
 async function expectSelectedRepositoryForm(page: Page) {
+  await openToolbarFilters(page);
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toHaveValue(E2E_FIXTURE_REPOSITORY);
 }
 
 async function expectClearedRepositoryForm(page: Page) {
+  await openToolbarFilters(page);
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toHaveValue('');
@@ -325,8 +345,28 @@ async function selectBridgeRepositoryLink(page: Page) {
   await page.goto(`/?${new URLSearchParams({ repo: E2E_FIXTURE_REPOSITORY })}`);
 }
 
+/** Phones fold a workspace toolbar's selects behind its Filters toggle. */
+async function openToolbarFilters(page: Page) {
+  // The Inbox draws its own toolbar; revealInboxRepositoryFilter opens its
+  // fold.
+  if (new URL(page.url()).pathname === '/inbox') return;
+  // Wait for the toolbar to stream in and hydrate: the fold, and the toggle
+  // that opens it, start then. Checking for the form before it arrives would
+  // skip the toggle and leave the select folded.
+  const form = page.getByRole('search', { name: 'Filters' });
+  await expect(form).toHaveAttribute('data-hydrated', '');
+  const toggle = form.getByRole('button', { name: /^Filters/ });
+  if (
+    (await toggle.isVisible()) &&
+    (await toggle.getAttribute('aria-expanded')) === 'false'
+  ) {
+    await toggle.click();
+  }
+}
+
 async function selectRepositoryForm(page: Page) {
   await revealInboxRepositoryFilter(page);
+  await openToolbarFilters(page);
   await page
     .getByRole('combobox', { name: 'Repository', exact: true })
     .selectOption(E2E_FIXTURE_REPOSITORY);

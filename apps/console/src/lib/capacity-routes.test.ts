@@ -2,6 +2,7 @@ import {
   CapacityProtocol,
   MemoryStore,
   Orchestrator,
+  retiredKey,
 } from '@agent-lcars/orchestrator';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -896,6 +897,52 @@ describe('permanent retirement inspection for executor barriers', () => {
         },
       },
     });
+    const foreign = {
+      ...context,
+      principal: {
+        ...principal,
+        subject: 'executor-b',
+        capacityPool: 'pool-b',
+      },
+    };
+    expect(
+      (
+        await call(foreign, '/runs/capacity', {
+          action: 'configure',
+          policy: { ...policy, poolId: 'pool-b', cluster: 'cluster-b' },
+        })
+      ).status,
+    ).toBe(200);
+    const inspection = { action: 'inspect-retired', runId: claim.runId };
+    const readStored = () =>
+      context.store.transactCapacity({
+        now,
+        recordKeys: [retiredKey(claim.runId)],
+        runId: claim.runId,
+        decide: (snapshot) => ({ value: snapshot }),
+      });
+    const storedBefore = await readStored();
+    const original = await call(context, '/runs/capacity', inspection);
+    expect(await call(foreign, '/runs/capacity', inspection)).toEqual({
+      status: 200,
+      body: { ok: true, retirement: null },
+    });
+    for (const substituted of [
+      { poolId: 'pool-a' },
+      { nonce: 'substituted-retirement-nonce' },
+      { jobUid: 'foreign-job' },
+    ])
+      expect(
+        (
+          await call(foreign, '/runs/capacity', {
+            ...inspection,
+            ...substituted,
+          })
+        ).status,
+      ).toBe(400);
+    expect(await call(context, '/runs/capacity', inspection)).toEqual(original);
+    expect(await readStored()).toEqual(storedBefore);
+
     expect(
       (
         await call(

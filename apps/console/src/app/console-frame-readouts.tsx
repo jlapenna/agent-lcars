@@ -9,6 +9,7 @@ import {
   useMinuteClock,
   useShellReadouts,
 } from './console-shell-state';
+import { formatCompactRelativeTime } from './format';
 
 const UNAVAILABLE = '—';
 
@@ -17,7 +18,8 @@ const UNAVAILABLE = '—';
  * depth, tokens and merges over the last day, and the date. The same figures
  * on every route. Maintainer data only; other sessions see the frame alone.
  */
-export function RailReadouts() {
+/** The rail's figures, shared by the rail and its narrow-screen strip. */
+function useRailFigures() {
   const state = useShellReadouts();
   const now = useMinuteClock();
   const readouts = state.status === 'ready' ? state.readouts : undefined;
@@ -75,6 +77,11 @@ export function RailReadouts() {
     },
   ];
 
+  return { blocks, now };
+}
+
+export function RailReadouts() {
+  const { blocks, now } = useRailFigures();
   return (
     <div className="lcars-rail-body" aria-label="Fleet readouts" role="group">
       {blocks.map((block) => (
@@ -98,6 +105,39 @@ export function RailReadouts() {
   );
 }
 
+/** Short labels so the strip fits a phone line; the rail's own read in full. */
+const STRIP_LABELS: Record<string, string> = {
+  fleet: 'fleet',
+  queue: 'queue',
+  tokens: 'tokens 24h',
+  merged: 'merged 24h',
+};
+
+/** Below 64em the rail is hidden, so its readouts ride a line under the
+ * header: the date and the same figures, short-labelled, wrapping rather
+ * than clipping on the narrowest phones. */
+export function ReadoutStrip() {
+  const { blocks, now } = useRailFigures();
+  return (
+    <div
+      className="lcars-readout-strip"
+      aria-label="Fleet readouts, compact"
+      role="group"
+    >
+      {now ? (
+        <span className="lcars-readout-strip__date">{stardate(now)}</span>
+      ) : null}
+      {blocks.map((block) =>
+        block.value !== undefined ? (
+          <span key={block.key} data-testid={`strip-readout-${block.key}`}>
+            <b>{block.value}</b> {STRIP_LABELS[block.key] ?? block.label}
+          </span>
+        ) : null,
+      )}
+    </div>
+  );
+}
+
 /** The rail head's environment line: the host this console serves. */
 export function RailEnvironment() {
   const state = useShellReadouts();
@@ -114,11 +154,28 @@ function clockTime(at: number): string {
 
 /** "■ LIVE · synced 14:32:08" for routes with a live stream; otherwise the
  * time the page was loaded, labelled as a snapshot. */
-export function ConsoleLiveStatus() {
+export function ConsoleLiveStatus({
+  dataAt,
+  compact = false,
+}: {
+  dataAt?: string;
+  /** One line under the title where the header's sync block does not fit
+   * (below 80em): the same status, without the refresh hint. */
+  compact?: boolean;
+} = {}) {
   const live = useLiveState();
   // The page's own load time, captured once: a snapshot does not advance.
   const [loadedAt, setLoadedAt] = useState<number>();
   useEffect(() => setLoadedAt(Date.now()), []);
+  // A snapshot served from cached sources says how old its data is, not when
+  // the page loaded. Formatted after mount: relative time differs between the
+  // server render and hydration.
+  // The minute clock re-reads the age, as the rail's figures do.
+  const now = useMinuteClock();
+  const [dataAge, setDataAge] = useState<string>();
+  useEffect(() => {
+    if (dataAt && now) setDataAge(formatCompactRelativeTime(dataAt));
+  }, [dataAt, now]);
   const mode = live?.mode;
   const tone =
     mode === 'live' || mode === 'updating'
@@ -140,22 +197,36 @@ export function ConsoleLiveStatus() {
   const at = mode === undefined ? loadedAt : live?.syncedAt;
   return (
     <div
-      className="console-live-status"
+      className={
+        compact
+          ? 'console-live-status console-live-status--compact'
+          : 'console-live-status'
+      }
       data-tone={tone}
-      data-testid="console-live-status"
+      data-testid={
+        compact ? 'console-live-status-compact' : 'console-live-status'
+      }
       title={live?.label}
     >
       <b>■ {headline}</b>
-      {at !== undefined ? (
+      {mode === undefined && dataAge !== undefined ? (
+        <span>
+          {' · '}data {dataAge}
+        </span>
+      ) : at !== undefined ? (
         <span>
           {' · '}
           {mode === undefined ? 'loaded' : 'synced'} {clockTime(at)}
         </span>
       ) : null}
-      <br />
-      <span>
-        {mode === undefined ? 'refresh to update' : 'auto-refresh 5 s'}
-      </span>
+      {compact ? null : (
+        <>
+          <br />
+          <span>
+            {mode === undefined ? 'refresh to update' : 'auto-refresh 5 s'}
+          </span>
+        </>
+      )}
     </div>
   );
 }

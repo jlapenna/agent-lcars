@@ -42,7 +42,7 @@ export function decisionRows(
           ref: `${meta.repo.name} work`,
           refHref: `/work/${card.work.id}`,
           agent: inboxCardAgent(card),
-          waitingSince: meta.updatedAt,
+          waitingSince: meta.waitingSince,
           respondHref: inboxItemHref(card, repoFilterKey),
         };
       }
@@ -54,7 +54,7 @@ export function decisionRows(
         ref: `${item.repo.name} ${item.kind === 'pr' ? 'PR ' : ''}#${item.number}`,
         refHref: `/task/${item.repo.owner}/${item.repo.name}/${item.number}`,
         agent: inboxCardAgent(card),
-        waitingSince: item.updatedAt,
+        waitingSince: meta.waitingSince,
         respondHref: inboxItemHref(card, repoFilterKey),
       };
     });

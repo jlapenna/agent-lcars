@@ -29,4 +29,36 @@ describe('ConsoleReadouts', () => {
         .querySelector('.lcars-readout__detail'),
     ).toBeNull();
   });
+
+  it('draws a sparkline, or the unavailable mark when there is no history', () => {
+    render(
+      <MantineProvider>
+        <ConsoleReadouts
+          label="Bridge readouts"
+          readouts={[
+            {
+              id: 'queue',
+              label: 'Queue depth',
+              value: 3,
+              spark: { label: 'Queue depth, last 30 minutes', values: [1, 3] },
+            },
+            {
+              id: 'online',
+              label: 'Runners online',
+              value: 11,
+              spark: { label: 'Runners online, last 30 minutes' },
+            },
+          ]}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByRole('img', { name: 'Queue depth, last 30 minutes' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('img', {
+        name: 'Runners online, last 30 minutes: unavailable',
+      }),
+    ).toHaveTextContent('—');
+  });
 });

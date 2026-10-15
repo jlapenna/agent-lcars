@@ -3,7 +3,12 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { admittedAt, admittedQueue, WorkList } from './work-list';
+import {
+  admittedAt,
+  admittedQueue,
+  providerCeilingMeta,
+  WorkList,
+} from './work-list';
 
 const item: ItemView = {
   id: '01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -86,6 +91,15 @@ describe('WorkList', () => {
     expect(screen.getAllByText('parked')[0]).toBeInTheDocument();
   });
 
+  it('keeps the phone Recent work head when nothing has stopped', () => {
+    renderList([
+      { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3H', state: 'running' },
+    ]);
+    const cards = screen.getByTestId('work-cards');
+    expect(within(cards).getByText('Recent work')).toBeInTheDocument();
+    expect(within(cards).getByText('None.')).toBeInTheDocument();
+  });
+
   it('orders the admitted queue by priority, FIFO within a priority', () => {
     const at = (minute: number) =>
       `2026-08-26T10:${String(minute).padStart(2, '0')}:00.000Z`;
@@ -164,5 +178,15 @@ describe('WorkList', () => {
     renderList([]);
     expect(screen.getByText(/No work items yet/)).toBeInTheDocument();
     expect(screen.queryByTestId('work-cards')).toBeNull();
+  });
+});
+
+describe('providerCeilingMeta', () => {
+  it('names providers that share a ceiling together', () => {
+    expect(providerCeilingMeta()).toBe('codex & opencode ceiling 1');
+    expect(
+      providerCeilingMeta({ opencode: 1, codex: 2, claude: undefined }),
+    ).toBe('codex ceiling 2 · opencode ceiling 1');
+    expect(providerCeilingMeta({})).toBeUndefined();
   });
 });

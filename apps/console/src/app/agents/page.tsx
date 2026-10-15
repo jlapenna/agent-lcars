@@ -48,6 +48,7 @@ import {
 import { DataFreshness } from '../data-freshness';
 import { formatRelativeTime } from '../format';
 import { LiveDashboard } from '../live-dashboard';
+import { MergedLastDay } from '../merged-last-day';
 import { NavPageLoading, PageLoading } from '../page-loading';
 import { withConsolePageShell } from '../with-console-page-shell';
 import { ActiveAgentsSection } from './active-agents-section';
@@ -317,8 +318,7 @@ async function AgentsPageBody({
               Clear repository
             </Anchor>
           ) : null}
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate, then keeps its box. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
@@ -359,6 +359,7 @@ async function AgentsPageBody({
             activeSessions={filteredActiveSessions}
             items={filteredItems}
             sessionsByRunId={sessionsByRunId}
+            activityFetchedAt={activityFetchedAt}
           />
         </>
       }
@@ -380,6 +381,11 @@ async function AgentsPageBody({
           <RecentOutcomesSection
             recentRuns={filteredActivity.recentRuns}
             sessionsByRunId={sessionsByRunId}
+            merged={
+              <MergedLastDay
+                repo={repoFilter ? repoKey(repoFilter) : undefined}
+              />
+            }
           />
         ) : null
       }

@@ -14,7 +14,14 @@ cd "$repo_root"
 
 # `lcars hook` starts the flusher from beside its own bundle, as in the image.
 lib_dir="$(mktemp -d)"
-trap 'rm -rf "$lib_dir"' EXIT
+cleanup() {
+  if [ -f "$lib_dir/.hook-smoke-drained" ]; then
+    rm -rf "$lib_dir"
+  else
+    echo "hook smoke cleanup: retaining private bundles after refused smoke" >&2
+  fi
+}
+trap cleanup EXIT
 cp dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
   dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs "$lib_dir/"
 

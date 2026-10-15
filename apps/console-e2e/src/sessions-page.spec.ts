@@ -123,18 +123,24 @@ test.describe('/sessions workspace @smoke', () => {
   }) => {
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
 
-    await page.getByRole('button', { name: 'Switch to light mode' }).click();
-    await expect(
-      page.getByRole('button', { name: 'Switch to dark mode' }),
-    ).toBeVisible();
+    // The theme action lives under Preferences in the console menu, the same
+    // place on every route.
+    await page.getByRole('button', { name: 'More console options' }).click();
+    await page
+      .getByRole('menu')
+      .getByRole('button', { name: 'Switch to light mode' })
+      .click();
     await expect(page.locator('html')).toHaveAttribute(
       'data-mantine-color-scheme',
       'light',
     );
 
     await page.reload();
+    await page.getByRole('button', { name: 'More console options' }).click();
     await expect(
-      page.getByRole('button', { name: 'Switch to dark mode' }),
+      page
+        .getByRole('menu')
+        .getByRole('button', { name: 'Switch to dark mode' }),
     ).toBeVisible();
   });
 

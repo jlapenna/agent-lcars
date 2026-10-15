@@ -45,9 +45,16 @@ export function parseBridgeSelection(
   return value && value.length > 0 ? value : undefined;
 }
 
+/** The toolbar's agent, window and find (`?agent=`, `?window=`, `?q=`). */
+export interface BridgeView {
+  agent?: string;
+  window?: string;
+  q?: string;
+}
+
 /**
  * Build the Bridge href that selects `key`, preserving the active repo scope
- * and clearing any prior selection back to bare `/`. Kept as a plain string
+ * and toolbar view and clearing any prior selection back to bare `/`. Kept as a plain string
  * builder (not `useSearchParams`) so the server page can render selection links
  * without a client boundary.
  */
@@ -55,9 +62,13 @@ export function bridgeSelectionHref(
   key: BridgeSelectionKey | undefined,
   repoFilterKey?: string,
   stoppedCursor?: string,
+  view: BridgeView = {},
 ): string {
   const params = new URLSearchParams();
   if (repoFilterKey) params.set('repo', repoFilterKey);
+  if (view.agent) params.set('agent', view.agent);
+  if (view.window) params.set('window', view.window);
+  if (view.q) params.set('q', view.q);
   if (key) params.set(SEL_PARAM, key);
   if (stoppedCursor) params.set('stoppedCursor', stoppedCursor);
   const query = params.toString();

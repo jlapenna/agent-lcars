@@ -154,6 +154,10 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 						queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 					}
 					queue.draining = queueDraining.Load
+					// Only a writing publisher has somewhere to put the inventory.
+					if hosts, ok := statusPublisher.(hostStatusPublisher); ok {
+						go runHostStatusPublisher(ctx, hosts, queue.client, logger.With("component", "host-status"))
+					}
 					go queue.runPlacementObserver(ctx, queuePlacementReporter(consoleURL, func() (string, error) {
 						return idTokenFromSource(tokenSource)
 					}))

@@ -198,9 +198,13 @@ function RunRow({ run, anchorPrefix }: { run: Run; anchorPrefix: string }) {
 export function RunsSection({
   runs,
   anchorPrefix = 'run',
+  title = 'Runs',
 }: {
   runs: Run[];
   anchorPrefix?: string;
+  /** Inside a task's Runs panel the section is that panel's timeline, so it
+   * does not repeat the panel's own title. */
+  title?: string;
 }) {
   const sorted = [...runs].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
@@ -208,7 +212,7 @@ export function RunsSection({
   return (
     <Stack gap={10} data-testid="runs-section">
       <Text size="sm" fw={600}>
-        Runs ({runs.length})
+        {title} ({runs.length})
       </Text>
       {sorted.map((run, index) => (
         <Stack key={run.runId} gap={10}>

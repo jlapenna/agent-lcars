@@ -1,3 +1,4 @@
+import type { CapacityState } from './capacity-model';
 import {
   cancelRun,
   decidedRun,
@@ -9,6 +10,21 @@ import {
   type RequestRunInput,
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
+
+/** A legacy terminal claim has no retirement writer. Preserve the fence only
+ * for a live owner or durable capacity/credential debt, not its queue history. */
+export function retainsPhysicalClaim(
+  run: Run,
+  capacity: CapacityState,
+): boolean {
+  return (
+    run.queue?.state === 'claimed' &&
+    (isLive(run.state) ||
+      run.credentialOperation !== undefined ||
+      run.credentialRestoredClaimFingerprint !== undefined ||
+      capacity.receipts.some((receipt) => receipt.runId === run.runId))
+  );
+}
 
 /** Label handoff is an explicit request, never an automatic successor of a
  * refusal. The store reads task, queue claim and retained physical owners in

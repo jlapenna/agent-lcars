@@ -46,6 +46,10 @@ function useFreshFleet(fleet: FleetSummary | undefined) {
       Number.isFinite(githubDeadline) && now <= githubDeadline
         ? fleet?.busy
         : undefined,
+    registered:
+      Number.isFinite(githubDeadline) && now <= githubDeadline
+        ? fleet?.registered
+        : undefined,
     directExecutor:
       Number.isFinite(executorDeadline) && now <= executorDeadline
         ? fleet?.directExecutor
@@ -68,7 +72,7 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
     <Text size="xs" c="dimmed" data-testid="fleet-chip">
       {fresh.online === undefined
         ? 'GitHub runner status unavailable'
-        : `${fresh.online} GitHub runner${fresh.online === 1 ? '' : 's'} registered (${fresh.busy ?? 0} running)`}
+        : `${fresh.online} GitHub runner${fresh.online === 1 ? '' : 's'} online (${fresh.busy ?? 0} running)`}
       {' · '}
       {fresh.directExecutor === undefined
         ? 'Direct executor status unavailable'
@@ -82,7 +86,9 @@ export function FleetRunnerOccupancy({ fleet }: { fleet?: FleetSummary }) {
   if (fresh.online === undefined) return null;
   return (
     <Text size="xs" c="dimmed" data-testid="metric-runner-occupancy">
-      {fresh.busy ?? 0}/{fresh.online} GitHub runners running
+      {/* Running jobs over the lanes' registered runners: one producer. */}
+      {fresh.busy ?? 0}/{fresh.registered ?? fresh.online} GitHub runners
+      running
     </Text>
   );
 }

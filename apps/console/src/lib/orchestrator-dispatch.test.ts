@@ -13,6 +13,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { drainOutbox, outcomeCommentBody } from './orchestrator-dispatch';
+import type {
+  OutcomeWebhookPayload,
+  OutcomeWebhookTarget,
+} from './outcome-webhook';
 
 const TASK: TaskId = { repo: 'octo/example', issue: 7 };
 const NOW = '2026-08-29T12:00:00.000Z';
@@ -774,4 +778,580 @@ describe('delayed failure outcome advice', () => {
       're-request manually',
     );
   });
+});
+
+describe('native delivery finalization reuses terminal outcome and session expiry', () => {
+  const WORK_ID = '01J5Z3K9QX8F0N2B4V6C8D1E4H';
+  const HEAD = 'a'.repeat(40),
+    MERGE = 'b'.repeat(40);
+  afterEach(() => vi.unstubAllEnvs());
+  async function reported(
+    runtimeGate: 'none' | 'required' = 'none',
+    state: 'waiting' | 'complete' = 'waiting',
+  ) {
+    vi.stubEnv(
+      'AGENT_LCARS_OUTCOME_WEBHOOKS',
+      JSON.stringify({
+        slack: { url: 'https://bot.example/outcome', audience: 'bot' },
+      }),
+    );
+    const f = fixture();
+    const run = await requestedWithOrigin(
+      f.orchestrator,
+      { principal: 'test:delivery', channel: 'slack', thread: 'thread' },
+      WORK_ID,
+    );
+    const original = {
+      ok: true,
+      summary: 'pull-request',
+      ref: 'https://github.com/octo/example/pull/12',
+      message: 'Published ready PR',
+    };
+    const decision = await f.orchestrator.report(
+      run.runId,
+      original,
+      undefined,
+      undefined,
+      undefined,
+      {
+        runId: run.runId,
+        repo: 'octo/example',
+        number: 12,
+        baseRef: 'main',
+        head: HEAD,
+        state,
+        ...(state === 'complete' ? { mergeCommit: MERGE } : {}),
+        runtimeGate,
+        observedAt: NOW,
+      },
+    );
+    const fetchImpl = vi.fn(
+      async () => new Response(null, { status: 204 }),
+    ) as unknown as typeof fetch;
+    const deliver = vi.fn(
+      async (_target: OutcomeWebhookTarget, _payload: OutcomeWebhookPayload) =>
+        undefined,
+    );
+    const deps = {
+      ...f,
+      tokens,
+      fetchImpl,
+      deliverOutcomeWebhook: deliver,
+      now: () => NOW,
+    };
+    if (isRefusal(decision)) throw new Error(decision.reason);
+    return { ...f, run, original, fetchImpl, deliver, deps, decision };
+  }
+  async function waiting(runtimeGate: 'none' | 'required' = 'none') {
+    const f = await reported(runtimeGate);
+    await drainOutbox(f.deps);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    return f;
+  }
+  it('emits one distinct final native event and expiry after none runtime gating, preserving the original result', async () => {
+    const f = await waiting('none');
+    const landing = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    expect(isRefusal(landing)).toBe(false);
+    const final = await drainOutbox(f.deps);
+    expect(final.reported).toEqual([f.run.runId]);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(f.fetchImpl).mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+      runId: f.run.runId,
+    });
+    expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it('emits one distinct final native event and expiry after required runtime gating, preserving the original result', async () => {
+    const f = await waiting('required');
+    const landing = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    expect(isRefusal(landing)).toBe(false);
+    expect((await drainOutbox(f.deps)).reported).toEqual([]);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    const runtime = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      {
+        kind: 'runtime-evidence',
+        head: HEAD,
+        mergeCommit: MERGE,
+        principal: 'user:operator',
+        ref: 'https://example.test/runtime-proof',
+      },
+      () => true,
+    );
+    expect(isRefusal(runtime)).toBe(false);
+
+    const final = await drainOutbox(f.deps);
+    expect(final.reported).toEqual([f.run.runId]);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(f.fetchImpl).mock.calls[0]?.[0])).toContain(
+      '/work-session-expiry.yml/dispatches',
+    );
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+      runId: f.run.runId,
+    });
+    expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
+  it('retries final delivery with the same event identity without replaying the settled execution event', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    f.deliver.mockRejectedValueOnce(new Error('lost response'));
+    expect((await drainOutbox(f.deps)).failed).toHaveLength(1);
+    const retry = { ...f.deps, now: () => '2026-08-29T12:02:00.000Z' };
+    expect((await drainOutbox(retry)).reported).toEqual([f.run.runId]);
+    expect(f.deliver).toHaveBeenCalledTimes(3);
+    const attempts = f.deliver.mock.calls.slice(1).map((call) => call[1]);
+    expect(attempts[0]).toEqual(attempts[1]);
+    expect(attempts[0]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+    });
+    expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
+    await drainOutbox(retry);
+    expect(f.deliver).toHaveBeenCalledTimes(3);
+  });
+  it('immediate native complete delivery emits one final marker and owns expiry once', async () => {
+    const f = await reported('none', 'complete');
+    expect(f.decision.outbox.map((entry) => entry.entryId)).toContain(
+      `outcome/${f.run.runId}`,
+    );
+    expect(f.decision.outbox.map((entry) => entry.entryId)).toContain(
+      `delivery-outcome/${f.run.runId}`,
+    );
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('eventId');
+    expect(f.deliver.mock.calls[1]?.[1]).toMatchObject({
+      eventId: `delivery-outcome/${f.run.runId}`,
+      deliveryStage: 'complete',
+    });
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    await drainOutbox(f.deps);
+    expect(f.deliver).toHaveBeenCalledTimes(2);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+  });
+  it('closed native monitor retires before any GitHub read and preserves accepted execution', async () => {
+    const f = await waiting();
+    expect(isRefusal(await f.orchestrator.close(f.run.task))).toBe(false);
+    expect(
+      (await drainOutbox({ ...f.deps, now: () => '2026-08-29T12:01:00.000Z' }))
+        .failed,
+    ).toEqual([]);
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    const pending = await f.store.claimPendingOutbox({
+      now: '2026-08-29T12:10:00.000Z',
+      leaseExpiresAt: '2026-08-29T12:11:00.000Z',
+      limit: 20,
+    });
+    expect(pending.some((entry) => entry.kind === 'monitor-delivery')).toBe(
+      false,
+    );
+  });
+  it('closed native monitor rejects closure racing the actual GitHub evidence read', async () => {
+    const f = await waiting();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/pulls/12')) {
+        const closed = await f.orchestrator.close(f.run.task);
+        if (isRefusal(closed)) throw new Error(closed.reason);
+        return Response.json({
+          number: 12,
+          body: `<!-- attempt-claim:g1:${f.run.runId} -->`,
+          state: 'closed',
+          draft: false,
+          head: { sha: HEAD },
+          base: { ref: 'main' },
+          user: { login: 'author' },
+          merged: true,
+          merge_commit_sha: MERGE,
+          auto_merge: null,
+        });
+      }
+      if (url.endsWith('/graphql'))
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                headRefOid: HEAD,
+                reviews: {
+                  pageInfo: { hasPreviousPage: false },
+                  nodes: [
+                    {
+                      state: 'APPROVED',
+                      author: { login: 'reviewer' },
+                      commit: { oid: HEAD },
+                    },
+                  ],
+                },
+                reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
+              },
+            },
+          },
+        });
+      if (url.includes('/rulesets/rule-suites?'))
+        return Response.json([
+          { id: 1, after_sha: MERGE, result: 'pass', ref: 'refs/heads/main' },
+        ]);
+      if (url.endsWith('/rulesets/rule-suites/1'))
+        return Response.json({
+          result: 'pass',
+          after_sha: MERGE,
+          rule_evaluations: [
+            { rule_type: 'required_status_checks', result: 'pass' },
+            { rule_type: 'pull_request', result: 'pass' },
+          ],
+        });
+      throw new Error(`Unexpected evidence request ${url}`);
+    });
+    expect(
+      (
+        await drainOutbox({
+          ...f.deps,
+          fetchImpl,
+          now: () => '2026-08-29T12:01:00.000Z',
+        })
+      ).failed,
+    ).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    const task = (await f.store.readTask(f.run.task))!.task;
+    expect(task.closedAt).toBe(NOW);
+    expect(task.delivery).toMatchObject({ head: HEAD, state: 'waiting' });
+    expect(task.runCount).toBe(1);
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    const pending = await f.store.claimPendingOutbox({
+      now: '2026-08-29T12:10:00.000Z',
+      leaseExpiresAt: '2026-08-29T12:11:00.000Z',
+      limit: 20,
+    });
+    expect(
+      pending.some(
+        (entry) =>
+          entry.kind === 'monitor-delivery' ||
+          entry.entryId.startsWith('delivery-outcome/'),
+      ),
+    ).toBe(false);
+  });
+  async function laterPark(f: Awaited<ReturnType<typeof waiting>>, ok = true) {
+    const request = await f.orchestrator.request({
+      taskId: f.run.task,
+      requestId: 'later-reply',
+      pipeline: 'claude',
+      params: { mode: 'reply', replyPrincipal: 'user:operator' },
+    });
+    if (isRefusal(request)) throw new Error(request.reason);
+    const later = decidedRun(request);
+    await f.orchestrator.confirmDispatch(later.runId);
+    const outcome = await f.orchestrator.report(later.runId, {
+      ok,
+      summary: ok ? 'park' : 'failed',
+    });
+    if (isRefusal(outcome)) throw new Error(outcome.reason);
+    return later;
+  }
+  it('closed native final delivery is suppressed while the later execution outcome remains', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    const later = await laterPark(f);
+    expect(isRefusal(await f.orchestrator.close(f.run.task))).toBe(false);
+    await drainOutbox(f.deps);
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter((payload) => payload.deliveryStage === 'complete'),
+    ).toEqual([]);
+    expect(f.deliver.mock.calls.at(-1)?.[1]).toMatchObject({
+      runId: later.runId,
+      parked: true,
+    });
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect((await f.store.readTask(f.run.task))!.task.closedAt).toBe(NOW);
+  });
+  it('a later failed reply retains its ordinary expiry after an older completed delivery', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    await drainOutbox(f.deps);
+    vi.mocked(f.fetchImpl).mockClear();
+    f.deliver.mockClear();
+    const later = await laterPark(f, false);
+    await drainOutbox(f.deps);
+    expect(f.fetchImpl).toHaveBeenCalledOnce();
+    expect(f.deliver).toHaveBeenCalledOnce();
+    expect(f.deliver.mock.calls[0]?.[1]).toMatchObject({
+      runId: later.runId,
+      ok: false,
+    });
+    expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('deliveryStage');
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+  });
+  it('native item cancellation retires monitoring during an active correction', async () => {
+    const f = await waiting();
+    const correction = await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'correction', head: HEAD, reason: 'review change' },
+      () => true,
+    );
+    if (isRefusal(correction)) throw Error(correction.reason);
+    const active = correction.additionalRuns![0]!;
+    const canceled = await f.orchestrator.cancel(
+      active.runId,
+      'native item canceled',
+      { workId: WORK_ID },
+    );
+    if (isRefusal(canceled)) throw Error(canceled.reason);
+    expect(canceled.task.closedAt).toBe(NOW);
+    expect(
+      (await drainOutbox({ ...f.deps, now: () => '2026-08-29T12:01:00.000Z' }))
+        .failed,
+    ).toEqual([]);
+    expect(
+      vi
+        .mocked(f.fetchImpl)
+        .mock.calls.some(([input]) => String(input).includes('/pulls/')),
+    ).toBe(false);
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter((payload) => payload.deliveryStage === 'complete'),
+    ).toEqual([]);
+    expect(f.deliver.mock.calls.at(-1)?.[1]).toMatchObject({
+      runId: active.runId,
+      state: 'canceled',
+    });
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect(
+      await f.orchestrator.observeDelivery(
+        f.run.runId,
+        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        () => true,
+      ),
+    ).toMatchObject({ refused: true, reason: 'task-closed' });
+  });
+
+  it('delayed native final survives a later ready handoff with its immutable identity', async () => {
+    const f = await waiting();
+    await f.orchestrator.observeDelivery(
+      f.run.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => true,
+    );
+    const originalBinding = (await f.store.readRun(f.run.runId))!.delivery;
+    f.deliver.mockRejectedValueOnce(Error('temporary lost response'));
+    expect((await drainOutbox(f.deps)).failed).toHaveLength(1);
+    const request = await f.orchestrator.request({
+      taskId: f.run.task,
+      requestId: 'later-ready-reply',
+      pipeline: 'claude',
+      params: { mode: 'reply', replyPrincipal: 'user:operator' },
+    });
+    if (isRefusal(request)) throw Error(request.reason);
+    const later = decidedRun(request);
+    await f.orchestrator.confirmDispatch(later.runId);
+    const head = 'd'.repeat(40);
+    const laterResult = {
+      ok: true,
+      summary: 'pull-request',
+      ref: 'https://github.com/octo/example/pull/13',
+      message: 'Later ready PR',
+    };
+    const report = await f.orchestrator.report(
+      later.runId,
+      laterResult,
+      undefined,
+      undefined,
+      undefined,
+      {
+        runId: later.runId,
+        repo: 'octo/example',
+        number: 13,
+        baseRef: 'main',
+        head,
+        state: 'waiting',
+        runtimeGate: 'none',
+        observedAt: NOW,
+      },
+    );
+    if (isRefusal(report)) throw Error(report.reason);
+    await drainOutbox(f.deps);
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/pulls/13'))
+          return Response.json({
+            number: 13,
+            body: `<!-- attempt-claim:g2:${later.runId} -->`,
+            state: 'open',
+            draft: false,
+            head: { sha: head },
+            base: { ref: 'main' },
+            user: { login: 'author' },
+            merged: false,
+            merge_commit_sha: null,
+            auto_merge: { merge_method: 'squash' },
+          });
+        if (url.endsWith('/graphql'))
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  headRefOid: head,
+                  reviews: {
+                    pageInfo: { hasPreviousPage: false },
+                    nodes: [
+                      {
+                        state: 'APPROVED',
+                        author: { login: 'reviewer' },
+                        commit: { oid: head },
+                      },
+                    ],
+                  },
+                  reviewThreads: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [],
+                  },
+                },
+              },
+            },
+          });
+        if (url.includes('/rules/branches/'))
+          return Response.json([
+            { type: 'pull_request' },
+            {
+              type: 'required_status_checks',
+              parameters: { required_status_checks: [{ context: 'Verify' }] },
+            },
+          ]);
+        if (url.includes(`/commits/${head}/check-runs`))
+          return Response.json({
+            total_count: 1,
+            check_runs: [
+              {
+                name: 'Verify',
+                head_sha: head,
+                status: 'queued',
+                conclusion: null,
+              },
+            ],
+          });
+        return f.fetchImpl(input, init);
+      },
+    );
+    const retry = await drainOutbox({
+      ...f.deps,
+      fetchImpl,
+      now: () => '2026-08-29T12:02:00.000Z',
+    });
+    expect(retry.failed).toEqual([]);
+    expect(retry.reported).toContain(f.run.runId);
+    const originalFinals = f.deliver.mock.calls
+      .map((call) => call[1])
+      .filter(
+        (payload) => payload.eventId === `delivery-outcome/${f.run.runId}`,
+      );
+    expect(originalFinals).toHaveLength(2);
+    expect(originalFinals[1]).toEqual(originalFinals[0]);
+    expect(originalFinals[1]).toMatchObject({
+      runId: f.run.runId,
+      deliveryStage: 'complete',
+      ref: f.original.ref,
+    });
+    expect(
+      f.deliver.mock.calls
+        .map((call) => call[1])
+        .filter(
+          (payload) =>
+            payload.runId === f.run.runId &&
+            payload.deliveryStage === undefined,
+        ),
+    ).toHaveLength(1);
+    expect((await f.store.readTask(f.run.task))!.task.delivery).toMatchObject({
+      runId: later.runId,
+      head,
+      state: 'waiting',
+    });
+    expect((await f.store.readRun(f.run.runId))!.delivery).toEqual(
+      originalBinding,
+    );
+    expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    expect((await f.store.readRun(later.runId))!.result).toEqual(laterResult);
+  });
+
+  it.each(['wrong-run', 'waiting', 'missing-merge'] as const)(
+    'suppresses a final event without its own complete immutable %s binding',
+    async (cause) => {
+      const f = await waiting();
+      await f.orchestrator.observeDelivery(
+        f.run.runId,
+        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        () => true,
+      );
+      const task = (await f.store.readTask(f.run.task))!;
+      const original = (await f.store.readRun(f.run.runId))!;
+      const delivery = { ...original.delivery! };
+      if (cause === 'wrong-run') delivery.runId = `${f.run.runId}-wrong`;
+      if (cause === 'waiting') delivery.state = 'waiting';
+      if (cause === 'missing-merge') delete delivery.mergeCommit;
+      await f.store.apply({
+        expectedRevision: task.revision,
+        decision: {
+          task: task.task,
+          run: { ...original, delivery },
+          outbox: [],
+        },
+      });
+      await drainOutbox(f.deps);
+      expect(f.deliver).toHaveBeenCalledOnce();
+      expect(f.deliver.mock.calls[0]?.[1]).not.toHaveProperty('deliveryStage');
+      expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
+    },
+  );
 });

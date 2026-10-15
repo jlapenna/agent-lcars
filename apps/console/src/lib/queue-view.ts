@@ -60,16 +60,28 @@ export function buildQueueView(
   const items = rawItems.map((item) => {
     const key = repoItemKey(item.repo, item.number);
     const diagnosis = silentErrorByIssue.get(key);
+    const failedRun = failedRunByIssue.has(key)
+      ? newestRunByIssue.get(key)
+      : undefined;
     const actionTypes = [
       ...item.actionTypes,
-      ...(failedRunByIssue.has(key) ? (['run-failed'] as const) : []),
+      ...(failedRun ? (['run-failed'] as const) : []),
       ...(diagnosis ? (['silent-error'] as const) : []),
     ];
     if (actionTypes.length === item.actionTypes.length) return item;
+    // Only the runs queued an item without a decision reason of its own, so
+    // its wait began when the earliest of them ended.
+    const queuedByRuns = item.actionTypes.length === 0 || isWaitOnly(item);
+    const runEnds = [failedRun?.updatedAt, diagnosis?.at].filter(
+      (at): at is string => at !== undefined,
+    );
     return {
       ...item,
       actionTypes,
-      ...(diagnosis === undefined ? {} : { silentErrorDiagnosis: diagnosis }),
+      ...(diagnosis === undefined
+        ? {}
+        : { silentErrorDiagnosis: diagnosis.diagnosis }),
+      ...(queuedByRuns ? { decisionSince: runEnds.sort()[0] } : {}),
     };
   });
 

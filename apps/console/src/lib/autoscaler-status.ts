@@ -7,7 +7,8 @@ import {
   getAgentTelemetryReaderFirestore,
 } from '@agent-lcars/telemetry/server';
 
-import { type JobStartupWindow, parseJobStartupWindow } from './ci-wait';
+import { type HistogramWindow, parseHistogramWindow } from './histogram-window';
+import { parseRunnerWindow, type RunnerSample } from './runner-history';
 import {
   ARC_UNBOUNDED_MAX_RUNNERS,
   RUNNER_STATUS_STALENESS_MS,
@@ -28,6 +29,8 @@ export interface QueueExecutorStatus {
   maxConcurrent: number;
   updatedAt: string;
   claims?: QueueClaimWindow;
+  /** The executor's own Work API response times, when known. */
+  workApiLatency?: HistogramWindow;
 }
 
 export interface QueueClaimWindow {
@@ -38,8 +41,80 @@ export interface QueueClaimWindow {
   windowEnd: string;
 }
 
+/** One cluster node, as the queue executor's host inventory reports it:
+ * what the pods on it request, and metrics-server's live usage when the
+ * executor may read it. */
+export interface FleetHost {
+  name: string;
+  ready: boolean;
+  unschedulable: boolean;
+  cpuMillis: number;
+  memoryBytes: number;
+  requestedCpuMillis: number;
+  requestedMemoryBytes: number;
+  /** Both present or both absent: a host is sampled whole or not at all. */
+  usedCpuMillis?: number;
+  usedMemoryBytes?: number;
+  runnerPods: number;
+  queueJobPods: number;
+}
+
+export const FLEET_RUNNER_STATES = [
+  'starting',
+  'idle',
+  'busy',
+  /** Up, but ARC's job assignment could not be read: idle or busy. */
+  'online',
+  'draining',
+  'offline',
+] as const;
+export type FleetRunnerState = (typeof FLEET_RUNNER_STATES)[number];
+
+/** The work item a direct runner runs, resolved by the console server. */
+export interface RunnerWork {
+  label: string;
+  href: string;
+  /** `owner/name`. */
+  repo: string;
+  pipeline: string;
+}
+
+/** One runner pod: an ARC ephemeral runner taking GitHub Actions jobs, or a
+ * queue executor Job pod running one LCARS run. */
+export interface FleetRunner {
+  name: string;
+  kind: 'arc' | 'direct';
+  /** The ARC scale set, or `direct`. */
+  lane: string;
+  /** Absent until the pod is scheduled. */
+  host?: string;
+  state: FleetRunnerState;
+  /** When the pod started. */
+  since: string;
+  requestedCpuMillis: number;
+  requestedMemoryBytes: number;
+  runId?: string;
+  /** `owner/name` of the GitHub Actions job an ARC runner has taken. */
+  jobRepository?: string;
+  jobName?: string;
+  workflowRunId?: number;
+  work?: RunnerWork;
+}
+
+export interface FleetHostInventory {
+  hosts: FleetHost[];
+  /** Absent from an executor that predates per-runner rows, from a fleet
+   * past its publication limit, or when a row is malformed. */
+  runners?: FleetRunner[];
+  /** False when ARC runners' jobs could not be read. */
+  runnerJobsKnown?: boolean;
+  updatedAt: string;
+}
+
 export interface AutoscalerStatusResult {
   lanes?: ArcLaneStatus[];
+  /** Absent while no fresh, valid host inventory exists. */
+  hostInventory?: FleetHostInventory;
   /** A configured lane is missing/stale/invalid, or its inventory is unknown. */
   lanesIncomplete?: boolean;
   queueExecutor?: QueueExecutorStatus;
@@ -64,7 +139,9 @@ export interface ArcLaneStatus {
   /** Absent when the scale set configures no maximum. */
   maxRunners?: number;
   /** The listener's last 30 minutes of job-startup latency, when known. */
-  jobStartup?: JobStartupWindow;
+  jobStartup?: HistogramWindow;
+  /** Registered and running counts a minute apart, last 30 minutes. */
+  runnerHistory?: RunnerSample[];
   updatedAt: string;
 }
 
@@ -94,7 +171,8 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
     )
   )
     return undefined;
-  const jobStartup = parseJobStartupWindow(status['jobStartup']);
+  const jobStartup = parseHistogramWindow(status['jobStartup']);
+  const runnerHistory = parseRunnerWindow(status['runnerHistory']);
   return {
     schemaVersion: 3,
     kind: 'arc-lane',
@@ -114,6 +192,7 @@ function parseArcLane(value: unknown): ArcLaneStatus | undefined {
       ? { maxRunners: status['maxRunners'] as number }
       : {}),
     ...(jobStartup === undefined ? {} : { jobStartup }),
+    ...(runnerHistory === undefined ? {} : { runnerHistory }),
     updatedAt: status['updatedAt'],
   };
 }
@@ -134,6 +213,7 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
   ) {
     return undefined;
   }
+  const workApiLatency = parseHistogramWindow(status['workApiLatency']);
   return {
     schemaVersion: 2,
     kind: 'queue-executor',
@@ -148,6 +228,7 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
     ...(parseClaimWindow(status['claims'], status['updatedAt']) === undefined
       ? {}
       : { claims: parseClaimWindow(status['claims'], status['updatedAt']) }),
+    ...(workApiLatency === undefined ? {} : { workApiLatency }),
   };
 }
 
@@ -187,6 +268,154 @@ function parseClaimWindow(
   };
 }
 
+function parseHostInventory(value: unknown): FleetHostInventory | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const status = value as Record<string, unknown>;
+  const inventory = status['inventory'] as Record<string, unknown> | undefined;
+  const hosts = inventory?.['hosts'];
+  if (
+    status['schemaVersion'] !== 1 ||
+    status['kind'] !== 'hosts' ||
+    typeof status['updatedAt'] !== 'string' ||
+    !Array.isArray(hosts) ||
+    hosts.length > 64
+  )
+    return undefined;
+  const counts = [
+    'cpuMillis',
+    'memoryBytes',
+    'requestedCpuMillis',
+    'requestedMemoryBytes',
+    'runnerPods',
+    'queueJobPods',
+  ] as const;
+  const parsed: FleetHost[] = [];
+  for (const host of hosts) {
+    if (!host || typeof host !== 'object') return undefined;
+    const record = host as Record<string, unknown>;
+    if (
+      !isNodeName(record['name']) ||
+      typeof record['ready'] !== 'boolean' ||
+      typeof record['unschedulable'] !== 'boolean' ||
+      counts.some(
+        (key) =>
+          !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
+      )
+    )
+      return undefined;
+    const used = ['usedCpuMillis', 'usedMemoryBytes'] as const;
+    const sampled = used.filter((key) => record[key] != null);
+    if (
+      sampled.length === 1 ||
+      sampled.some(
+        (key) =>
+          !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
+      )
+    )
+      return undefined;
+    parsed.push({
+      name: record['name'],
+      ready: record['ready'],
+      unschedulable: record['unschedulable'],
+      cpuMillis: record['cpuMillis'] as number,
+      memoryBytes: record['memoryBytes'] as number,
+      requestedCpuMillis: record['requestedCpuMillis'] as number,
+      requestedMemoryBytes: record['requestedMemoryBytes'] as number,
+      ...(sampled.length === 2
+        ? {
+            usedCpuMillis: record['usedCpuMillis'] as number,
+            usedMemoryBytes: record['usedMemoryBytes'] as number,
+          }
+        : {}),
+      runnerPods: record['runnerPods'] as number,
+      queueJobPods: record['queueJobPods'] as number,
+    });
+  }
+  const runners = parseRunners(inventory?.['runners']);
+  return {
+    hosts: parsed,
+    ...(runners === undefined
+      ? {}
+      : { runners, runnerJobsKnown: inventory?.['runnerJobsKnown'] === true }),
+    updatedAt: status['updatedAt'],
+  };
+}
+
+const MAX_RUNNERS = 128;
+
+function optionalString(
+  value: unknown,
+  max = 256,
+): value is string | undefined {
+  return value == null || (typeof value === 'string' && value.length <= max);
+}
+
+/** Every row valid or none: a partial list would misstate the fleet. */
+function parseRunners(value: unknown): FleetRunner[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_RUNNERS) return undefined;
+  const runners: FleetRunner[] = [];
+  for (const row of value) {
+    if (!row || typeof row !== 'object') return undefined;
+    const r = row as Record<string, unknown>;
+    const kind = r['kind'];
+    const state = r['state'];
+    if (
+      typeof r['name'] !== 'string' ||
+      r['name'].length === 0 ||
+      r['name'].length > 253 ||
+      (kind !== 'arc' && kind !== 'direct') ||
+      typeof r['lane'] !== 'string' ||
+      !(FLEET_RUNNER_STATES as readonly unknown[]).includes(state) ||
+      typeof r['since'] !== 'string' ||
+      !Number.isFinite(Date.parse(r['since'])) ||
+      (r['host'] != null && !isNodeName(r['host'])) ||
+      !optionalString(r['runId']) ||
+      !optionalString(r['jobRepository']) ||
+      !optionalString(r['jobName']) ||
+      (r['workflowRunId'] != null &&
+        !(
+          Number.isSafeInteger(r['workflowRunId']) &&
+          (r['workflowRunId'] as number) > 0
+        )) ||
+      (['requestedCpuMillis', 'requestedMemoryBytes'] as const).some(
+        (key) => !Number.isSafeInteger(r[key]) || (r[key] as number) < 0,
+      )
+    )
+      return undefined;
+    runners.push({
+      name: r['name'],
+      kind,
+      lane: r['lane'],
+      ...(r['host'] ? { host: r['host'] as string } : {}),
+      state: state as FleetRunnerState,
+      since: r['since'],
+      requestedCpuMillis: r['requestedCpuMillis'] as number,
+      requestedMemoryBytes: r['requestedMemoryBytes'] as number,
+      ...(r['runId'] ? { runId: r['runId'] as string } : {}),
+      ...(r['jobRepository']
+        ? { jobRepository: r['jobRepository'] as string }
+        : {}),
+      ...(r['jobName'] ? { jobName: r['jobName'] as string } : {}),
+      ...(r['workflowRunId']
+        ? { workflowRunId: r['workflowRunId'] as number }
+        : {}),
+    });
+  }
+  return runners;
+}
+
+/** Kubernetes node names are DNS subdomains (RFC 1123): dotted labels, up
+ * to 253 characters, so `worker-1.example.internal` is valid. */
+function isNodeName(name: unknown): name is string {
+  return (
+    typeof name === 'string' &&
+    name.length <= 253 &&
+    /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/.test(
+      name,
+    )
+  );
+}
+
 function isFresh(updatedAt: string, now: number): boolean {
   const parsed = Date.parse(updatedAt);
   return Number.isFinite(parsed) && now - parsed <= RUNNER_STATUS_STALENESS_MS;
@@ -214,6 +443,12 @@ export function projectAutoscalerStatuses(
     .find(
       (status): status is QueueExecutorStatus =>
         status !== undefined && isFresh(status.updatedAt, now),
+    );
+  const hostInventory = records
+    .map(parseHostInventory)
+    .find(
+      (inventory): inventory is FleetHostInventory =>
+        inventory !== undefined && isFresh(inventory.updatedAt, now),
     );
   const laneRecords = records
     .map(parseArcLane)
@@ -266,6 +501,7 @@ export function projectAutoscalerStatuses(
       ? { lanesIncomplete: true }
       : {}),
     ...(queueExecutor === undefined ? {} : { queueExecutor }),
+    ...(hostInventory === undefined ? {} : { hostInventory }),
     warnings: [
       ...(stale ? ['ARC lane status is stale.'] : []),
       ...(invalid ? ['ARC lane status is invalid.'] : []),

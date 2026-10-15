@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { fleetCiWait } from './ci-wait';
 import {
-  fleetCiWait,
   histogramQuantile,
-  type JobStartupWindow,
-  parseJobStartupWindow,
-} from './ci-wait';
+  type HistogramWindow,
+  parseHistogramWindow,
+} from './histogram-window';
 
 const raw = {
   bounds: [1, 10, 60],
@@ -16,9 +16,9 @@ const raw = {
   ],
 };
 
-describe('parseJobStartupWindow', () => {
+describe('parseHistogramWindow', () => {
   it('keeps only minutes with a job start, as nonzero buckets', () => {
-    expect(parseJobStartupWindow(raw)).toEqual({
+    expect(parseHistogramWindow(raw)).toEqual({
       bounds: [1, 10, 60],
       startedAt: '2026-10-13T12:00:00Z',
       endedAt: '2026-10-13T12:02:00Z',
@@ -57,7 +57,7 @@ describe('parseJobStartupWindow', () => {
     ['start after an interval', { ...raw, startedAt: '2026-10-13T12:01:30Z' }],
     ['missing', undefined],
   ])('rejects %s', (_, value) => {
-    expect(parseJobStartupWindow(value)).toBeUndefined();
+    expect(parseHistogramWindow(value)).toBeUndefined();
   });
 });
 
@@ -82,7 +82,7 @@ describe('histogramQuantile', () => {
 
 function window(
   endedAt: string,
-  minutes: JobStartupWindow['minutes'],
+  minutes: HistogramWindow['minutes'],
   startedAt = new Date(Date.parse(endedAt) - 30 * 60_000).toISOString(),
 ) {
   return { jobStartup: { bounds: [1, 10, 60], startedAt, endedAt, minutes } };
@@ -159,7 +159,7 @@ describe('fleetCiWait', () => {
         endedAt: '2026-10-13T12:30:00Z',
         minutes: [{ endedAt: '2026-10-13T12:30:00Z', jobs: [[0, 7]] }],
       },
-    } satisfies { jobStartup: JobStartupWindow };
+    } satisfies { jobStartup: HistogramWindow };
     const quiet = window('2026-10-13T12:30:00Z', []);
     expect(fleetCiWait([quiet, {}])?.partial).toBe(true);
     expect(fleetCiWait([quiet, other])).toMatchObject({

@@ -23,7 +23,9 @@ import {
   type SchedulerDisruptionEvidence,
   updateTaskWork,
 } from './decide';
+import { advanceDelivery, type DeliveryObservation } from './delivery';
 import {
+  type DeliveryBinding,
   isLive,
   type ProviderFallbackRequest,
   type QueuePriority,
@@ -32,6 +34,7 @@ import {
   type RunResult,
   type Task,
   type TaskId,
+  type WorkAnchor,
   type WorkPayload,
 } from './model';
 import {
@@ -349,6 +352,22 @@ export class Orchestrator {
     );
   }
 
+  async observeDelivery(
+    runId: string,
+    observation: DeliveryObservation,
+    authorize: (task: Task, run: Run) => boolean,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      advanceDelivery({
+        now: this.clock.now(),
+        task,
+        run,
+        observation,
+        correctionAuthorized: authorize(task, run),
+      }),
+    );
+  }
+
   async report(
     runId: string,
     result: RunResult,
@@ -356,6 +375,8 @@ export class Orchestrator {
     /** Server-owned cleanup identity, captured before the retryable transaction. */
     credentialCleanupId?: string,
     workerPermit?: CapacityWorkerPermit,
+    /** Validated server-only ready handoff, never a raw worker field. */
+    delivery?: DeliveryBinding,
   ): Promise<Decision | Refusal> {
     if (this.fallbackAuthority !== undefined && !result.ok) {
       return this.transactOnRun(
@@ -408,14 +429,22 @@ export class Orchestrator {
     }
     return this.transactOnRun(
       runId,
-      (task, run) =>
-        reportResult({
+      (task, run) => {
+        if (
+          delivery !== undefined &&
+          (delivery.runId !== run.runId ||
+            !result.ok ||
+            (run.delivery !== undefined && run.delivery.head !== delivery.head))
+        )
+          return refused('stale-lease');
+        return reportResult({
           now: this.clock.now(),
           task,
-          run,
+          run: delivery === undefined ? run : { ...run, delivery },
           result,
           ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
-        }),
+        });
+      },
       credentialCleanupId,
       undefined,
       workerPermit,
@@ -584,13 +613,18 @@ export class Orchestrator {
     return rerouted;
   }
 
-  async cancel(runId: string, note?: string): Promise<Decision | Refusal> {
+  async cancel(
+    runId: string,
+    note?: string,
+    nativeTask?: WorkAnchor,
+  ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       cancelRun({
         now: this.clock.now(),
         task,
         run,
         ...(note === undefined ? {} : { note }),
+        ...(nativeTask === undefined ? {} : { nativeTask }),
       }),
     );
   }

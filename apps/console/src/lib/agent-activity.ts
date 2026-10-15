@@ -13,6 +13,12 @@ import {
 import { repoItemKey, type WatchedRepo } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import {
+  RUN_HISTORY_MINUTES,
+  type RunTimeline,
+  runTimeline,
+} from './run-history';
+import {
+  arcRunnerCount,
   fleetCapacity,
   RUNNER_STATUS_STALENESS_MS,
 } from './runner-status-contract';
@@ -37,6 +43,10 @@ export const RECENT_RUN_LIMIT = 8;
 /** Small bounded overfetch allows the global feed to contain live runs while
  * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
+/** One updatedAt-ordered read serves both: its first RECENT_RUN_FETCH_LIMIT
+ * runs are the outcome feed, and all of it reaches back RUN_HISTORY_MINUTES
+ * for the readouts' sparklines unless the fleet ran more than this since. */
+const RUN_HISTORY_FETCH_LIMIT = 100;
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
@@ -74,11 +84,17 @@ export interface AgentRun {
 /** The server-owned autoscaler telemetry aggregate. Runners are ephemeral,
  * can scale to zero when idle, and have no useful repository affiliation. */
 export interface FleetSummary {
-  /** Fresh ARC GitHub Actions capacity only; absent is not scaled-to-zero. */
+  /** Fresh ARC GitHub Actions runners online; absent is not scaled-to-zero.
+   * Counted from the host inventory's runner pods when it carries them, else
+   * the lanes' registered runners. */
   online?: number;
   busy?: number;
-  /** Sum of the fresh lanes' configured maximum runners; absent when any
-   * lane configures no maximum. */
+  /** The lanes' registered runners: the per-minute runner history's own
+   * measure, which `online` replaces once pods are listed. */
+  registered?: number;
+  /** The denominator of `online`: every ARC runner pod in the inventory, or
+   * without one the lanes' configured maximum; absent when neither is known
+   * (a lane with no maximum). */
   capacity?: number;
   /** Earliest ARC producer expiry; one stale lane invalidates the total. */
   githubExpiresAt?: string;
@@ -109,6 +125,11 @@ export interface AgentActivity {
   /** Lifecycle counts from authoritative Run records, never scale-set
    * telemetry. `claimed` remains pending until its executor starts it. */
   queue?: QueueRunSummary;
+  /** Every run live at any point in the last RUN_HISTORY_MINUTES, for the
+   * Queue depth and Agents running sparklines. Absent when a read failed,
+   * a run's repository is unknown, or the bounded read did not reach back
+   * that far: a partial history would draw a quieter past than the real one. */
+  runHistory?: RunTimeline[];
   /** Human-readable notes when a section above degraded instead of crashing. */
   warnings: string[];
 }
@@ -120,21 +141,29 @@ export function fleetFromAutoscalerStatuses(
 ): FleetSummary {
   const lanes = status.lanes ?? [];
   const executor = status.queueExecutor;
+  const inventory = status.hostInventory;
+  // One snapshot for both halves of "online/total": the inventory's pods when
+  // it lists them, so the fraction never mixes two producers' counts.
+  const pods = arcRunnerCount(inventory?.runners, lanes);
+  const capacity = pods?.total ?? fleetCapacity(lanes);
+  const registered = lanes.reduce(
+    (count, lane) => count + lane.registeredRunners,
+    0,
+  );
   return {
     ...(lanes.length === 0 || status.lanesIncomplete
       ? {}
       : {
-          online: lanes.reduce(
-            (count, lane) => count + lane.registeredRunners,
-            0,
-          ),
+          online: pods?.online ?? registered,
+          registered,
           busy: lanes.reduce((count, lane) => count + lane.runningJobs, 0),
-          ...(fleetCapacity(lanes) === undefined
-            ? {}
-            : { capacity: fleetCapacity(lanes) }),
+          ...(capacity === undefined ? {} : { capacity }),
+          // The earliest producer behind the figures sets their expiry.
           githubExpiresAt: new Date(
-            Math.min(...lanes.map((lane) => Date.parse(lane.updatedAt))) +
-              RUNNER_STATUS_STALENESS_MS,
+            Math.min(
+              ...lanes.map((lane) => Date.parse(lane.updatedAt)),
+              ...(pods && inventory ? [Date.parse(inventory.updatedAt)] : []),
+            ) + RUNNER_STATUS_STALENESS_MS,
           ).toISOString(),
         }),
     ...(executor === undefined
@@ -397,13 +426,44 @@ export function agentRunFromOrchestrator(
   };
 }
 
+/** Each history run's timeline under the same repository its projection
+ * reports; one unknown repository withholds the whole history. */
+function historyTimelines(
+  runs: readonly OrchestratorRun[],
+  taskByKey: ReadonlyMap<string, Task>,
+): RunTimeline[] | undefined {
+  const timelines: RunTimeline[] = [];
+  const seen = new Set<string>();
+  for (const run of runs) {
+    if (seen.has(run.runId)) continue;
+    seen.add(run.runId);
+    let repo: WatchedRepo | undefined;
+    if (isWorkAnchor(run.task)) {
+      const spec = workSpecSchema.safeParse(
+        (
+          taskByKey.get(taskKey(run.task))?.work as
+            Record<string, unknown> | undefined
+        )?.['spec'],
+      );
+      repo = spec.success
+        ? repositoryFromTarget(spec.data.target.repo)
+        : undefined;
+    } else {
+      repo = repositoryFromTarget(run.task.repo);
+    }
+    if (!repo) return undefined;
+    timelines.push(runTimeline(run, repo));
+  }
+  return timelines;
+}
+
 export async function getAgentActivity(): Promise<AgentActivity> {
   const { store } = createOrchestratorRuntime();
 
   const warnings: string[] = [];
   const [liveRead, recentRead, autoscalerRead] = await Promise.allSettled([
     store.listLiveRuns(),
-    store.listRecentRuns(RECENT_RUN_FETCH_LIMIT),
+    store.listRecentRuns(RUN_HISTORY_FETCH_LIMIT),
     getAutoscalerStatuses(),
   ]);
   const autoscaler =
@@ -439,11 +499,55 @@ export async function getAgentActivity(): Promise<AgentActivity> {
 
   const authoritativeLiveRuns =
     liveRead.status === 'fulfilled' ? liveRead.value : [];
-  const terminalRecentRuns = (
-    recentRead.status === 'fulfilled' ? recentRead.value : []
-  ).filter((run) => run.state !== 'pending' && run.state !== 'running');
+  const recentWindow =
+    recentRead.status === 'fulfilled' ? recentRead.value : [];
+  const terminalRecentRuns = recentWindow
+    .slice(0, RECENT_RUN_FETCH_LIMIT)
+    .filter((run) => run.state !== 'pending' && run.state !== 'running');
+  const historyStart = Date.now() - RUN_HISTORY_MINUTES * 60_000;
+  const oldestRecent = recentWindow.at(-1);
+  const historyReached =
+    liveRead.status === 'fulfilled' &&
+    recentRead.status === 'fulfilled' &&
+    (recentWindow.length < RUN_HISTORY_FETCH_LIMIT ||
+      (oldestRecent !== undefined &&
+        Date.parse(oldestRecent.updatedAt) < historyStart));
+  // A run that ended inside the window was last written inside it.
+  // The two reads are not one snapshot. A run the recent read saw live
+  // and the live read did not ended between them, at an unknown instant:
+  // dropping it would undercount the past and keeping its stale state would
+  // overcount now, so the history waits for the next, consistent read.
+  const liveRunIds = new Set(authoritativeLiveRuns.map((run) => run.runId));
+  const readsAgree = !recentWindow.some(
+    (run) =>
+      (run.state === 'pending' || run.state === 'running') &&
+      !liveRunIds.has(run.runId),
+  );
+  const historyRuns =
+    historyReached && readsAgree
+      ? [
+          ...authoritativeLiveRuns,
+          ...recentWindow.filter(
+            (run) =>
+              run.state !== 'pending' &&
+              run.state !== 'running' &&
+              Date.parse(run.updatedAt) >= historyStart,
+          ),
+        ]
+      : [];
+  // Only the live list and outcome feed report invalid task metadata; a
+  // history-only run with an unreadable task just withholds the history.
+  const feedTaskKeys = new Set(
+    [...authoritativeLiveRuns, ...terminalRecentRuns].map((run) =>
+      taskKey(run.task),
+    ),
+  );
   const runsByTask = new Map<string, OrchestratorRun[]>();
-  for (const run of [...authoritativeLiveRuns, ...terminalRecentRuns]) {
+  for (const run of [
+    ...authoritativeLiveRuns,
+    ...terminalRecentRuns,
+    ...historyRuns.filter((run) => isWorkAnchor(run.task)),
+  ]) {
     const key = taskKey(run.task);
     const runs = runsByTask.get(key);
     if (runs) runs.push(run);
@@ -457,7 +561,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       try {
         const task = await store.readTask(run.task);
         if (task === undefined) {
-          invalidMetadata.value = true;
+          if (feedTaskKeys.has(key)) invalidMetadata.value = true;
         } else {
           taskByKey.set(key, task.task);
         }
@@ -466,7 +570,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
           'agent-lcars: failed to read authoritative run task:',
           error,
         );
-        invalidMetadata.value = true;
+        if (feedTaskKeys.has(key)) invalidMetadata.value = true;
       }
     }),
   );
@@ -474,6 +578,10 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     runs
       .map((run) => project(run, taskByKey.get(taskKey(run.task))))
       .filter((run): run is AgentRun => run !== undefined);
+  const runHistory =
+    historyReached && readsAgree
+      ? historyTimelines(historyRuns, taskByKey)
+      : undefined;
   const liveRuns = projectRuns(authoritativeLiveRuns);
   const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
   if (invalidMetadata.value) {
@@ -492,6 +600,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
     ...(liveRead.status === 'fulfilled'
       ? { queue: queueFromLiveRuns(authoritativeLiveRuns) }
       : {}),
+    ...(runHistory === undefined ? {} : { runHistory }),
     warnings: Array.from(new Set(warnings)),
   };
 }

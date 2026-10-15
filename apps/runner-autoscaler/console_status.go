@@ -57,6 +57,7 @@ type consoleStatusDocument interface {
 var (
 	_ map[consoleQueueExecutorStatus]struct{}
 	_ map[consoleARCLaneStatus]struct{}
+	_ map[consoleHostStatus]struct{}
 )
 
 func (s consoleQueueExecutorStatus) contentKey() any {
@@ -129,6 +130,9 @@ type consoleQueueExecutorStatus struct {
 	UpdatedAt     string              `firestore:"updatedAt"`
 	ExpireAt      time.Time           `firestore:"expireAt"`
 	Claims        *consoleClaimWindow `firestore:"claims,omitempty"`
+	// This process's Work API response times over the last 30 minutes; see
+	// workAPITimingTransport. Absent until two snapshots are known.
+	WorkAPILatency *consoleHistogramWindow `firestore:"workApiLatency,omitempty"`
 }
 
 // A bounded difference of the existing successful-claim counters. The exact
@@ -203,6 +207,10 @@ func (p *firestoreConsoleStatusPublisher) PublishQueueExecutor(_ context.Context
 
 func (p *firestoreConsoleStatusPublisher) PublishARCLane(_ context.Context, status consoleARCLaneStatus) {
 	p.publish("arc-"+status.Lane, status)
+}
+
+func (p *firestoreConsoleStatusPublisher) PublishHosts(_ context.Context, status consoleHostStatus) {
+	p.publish("hosts", status)
 }
 
 func (p *firestoreConsoleStatusPublisher) Enabled() bool { return true }

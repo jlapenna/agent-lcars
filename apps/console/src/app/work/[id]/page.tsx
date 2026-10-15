@@ -8,6 +8,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
+import { DetailWorkspace } from '../../detail-workspace';
 import { formatRelativeTime } from '../../format';
 import { NavPageLoading } from '../../page-loading';
 import { TaskDetailHistory } from '../../task/task-detail-history';
@@ -53,39 +54,45 @@ export function WorkDetailViewContent({
 }: WorkDetailContentProps) {
   if (detail.status === 'error') {
     return (
-      <Text c="dimmed" size="sm">
-        {detail.message}
-      </Text>
+      // The message is the page; a "No data warnings" band above it would
+      // contradict it.
+      <DetailWorkspace ariaLabel="Work item" warnings={false}>
+        <Text c="dimmed" size="sm">
+          {detail.message}
+        </Text>
+      </DetailWorkspace>
     );
   }
 
   const { item } = detail;
 
   return (
-    <Stack gap="md">
-      <EditWork
-        id={item.id}
-        title={item.spec.title}
-        description={item.spec.description}
-        running={item.state === 'running'}
-        update={updateItem}
-      />
-      <TaskDetailHistory
-        anchor={{ workId: item.id }}
-        item={item}
-        canViewSessions={isAdmin}
-        actions={
-          <WorkActions
-            id={item.id}
-            latestRunId={latestRun(item.runs)?.runId}
-            state={item.state}
-            cancel={cancelItem}
-            redispatch={redispatchItem}
-            reply={replyToWorkItem}
-          />
-        }
-      />
-    </Stack>
+    <DetailWorkspace ariaLabel="Work item">
+      <Stack gap={28}>
+        <EditWork
+          id={item.id}
+          title={item.spec.title}
+          description={item.spec.description}
+          running={item.state === 'running'}
+          update={updateItem}
+        />
+        <TaskDetailHistory
+          anchor={{ workId: item.id }}
+          item={item}
+          canViewSessions={isAdmin}
+          actions={
+            <WorkActions
+              id={item.id}
+              latestRunId={latestRun(item.runs)?.runId}
+              state={item.state}
+              cancel={cancelItem}
+              redispatch={redispatchItem}
+              reply={replyToWorkItem}
+            />
+          }
+        />
+      </Stack>
+    </DetailWorkspace>
   );
 }
 

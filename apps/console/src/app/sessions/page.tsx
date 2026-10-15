@@ -1,4 +1,8 @@
-import { SESSION_AGENTS } from '@agent-lcars/telemetry';
+import {
+  CLI_SESSION_RETENTION_DAYS,
+  ISSUE_AGENT_SESSION_RETENTION_DAYS,
+  SESSION_AGENTS,
+} from '@agent-lcars/telemetry';
 import { Anchor, Card, Group, Title } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { cache, Suspense } from 'react';
@@ -12,7 +16,9 @@ import {
   repoKey,
 } from '../../lib/github-client';
 import {
+  archiveDaysParam,
   DEFAULT_ARCHIVE_DAYS,
+  describeArchiveFilters,
   describeArchiveWindow,
   getSessionArchive,
   parseSessionArchiveQuery,
@@ -67,7 +73,7 @@ function displayHref(
 ): string {
   const params = new URLSearchParams();
   if (query.days !== DEFAULT_ARCHIVE_DAYS) {
-    params.set('days', String(query.days));
+    params.set('days', archiveDaysParam(query.days));
   }
   if (query.source) params.set('source', query.source);
   if (query.issueNumber !== undefined) {
@@ -171,7 +177,7 @@ async function SessionsBody({
           <ToolbarWindow
             name="days"
             label="Window"
-            value={String(query.days)}
+            value={archiveDaysParam(query.days)}
             options={windowOptions(query.days)}
           />
           <ToolbarSearch
@@ -199,9 +205,7 @@ async function SessionsBody({
               />
             </div>
           </details>
-          {/* Selects and the window submit on change; Apply shows only
-              until they hydrate (the mockup's toolbar has none), then keeps
-              its box so hydrating moves nothing. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
@@ -213,11 +217,20 @@ async function SessionsBody({
           wrap="nowrap"
           className="sessions-panel__head"
         >
-          <Title order={2}>Sessions</Title>
+          {/* The mockup's "Sessions · today": the toolbar's window label. */}
+          <Title order={2}>
+            Sessions ·{' '}
+            {windowOptions(query.days).find(
+              (option) => option.value === archiveDaysParam(query.days),
+            )?.label ?? `${query.days}d`}
+          </Title>
           <span className="sessions-panel__count">{rows.length}</span>
           <span className="sessions-panel__meta">
-            {view === 'by-issue' ? 'grouped by issue' : 'flat'} ·{' '}
-            {describeArchiveWindow(query)}
+            {[
+              view === 'by-issue' ? 'grouped by issue' : 'flat',
+              ...describeArchiveFilters(query),
+              `retained ${ISSUE_AGENT_SESSION_RETENTION_DAYS} days · CLI ${CLI_SESSION_RETENTION_DAYS}`,
+            ].join(' · ')}
           </span>
           {/* The panel's own layout control, beside the meta it names. */}
           <ViewToggle

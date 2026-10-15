@@ -19,9 +19,12 @@ import {
   TEST_SPRINKLES_REPOSITORY,
 } from '../test-support/watched-repos';
 import {
+  archiveDaysParam,
   DEFAULT_ARCHIVE_DAYS,
+  describeArchiveWindow,
   getSessionArchive,
   MAX_ARCHIVE_DAYS,
+  ONE_HOUR_DAYS,
   parseSessionArchiveQuery,
   toSessionRow,
 } from './session-archive';
@@ -92,6 +95,18 @@ function agentDoc(
 }
 
 describe('parseSessionArchiveQuery', () => {
+  it('reads days=1h as the one-hour window and round-trips it', () => {
+    const query = parseSessionArchiveQuery({ days: '1h' });
+    expect(query.days).toBe(ONE_HOUR_DAYS);
+    expect(archiveDaysParam(query.days)).toBe('1h');
+    expect(describeArchiveWindow(query)).toBe('last 1 hour');
+    expect(archiveDaysParam(7)).toBe('7');
+  });
+
+  it('never rounds a fractional day below one whole day', () => {
+    expect(parseSessionArchiveQuery({ days: '0.3' }).days).toBe(1);
+  });
+
   it('defaults to 14 days with no filters when the params are empty', () => {
     expect(parseSessionArchiveQuery({})).toEqual({
       days: DEFAULT_ARCHIVE_DAYS,
@@ -379,6 +394,20 @@ describe('getSessionArchive', () => {
     expect(result.rows).toEqual([]);
   });
 
+  it('narrows to FIND matches before the ledger is summed', async () => {
+    (listSessionDocs as Mock).mockResolvedValue([
+      agentDoc({ sessionId: 'heartbeat-run', title: 'Timely heartbeat' }),
+      agentDoc({ sessionId: 'other-run', title: 'Something else' }),
+    ]);
+
+    const result = await getSessionArchive({ days: 14, q: 'HEARTBEAT' });
+
+    expect(result.rows.map((r) => r.sessionId)).toEqual(['heartbeat-run']);
+    expect(
+      result.ledger.byWeek.reduce((total, week) => total + week.sessions, 0),
+    ).toBe(1);
+  });
+
   it('degrades to an empty result with a warning when the store throws', async () => {
     (listSessionDocs as Mock).mockRejectedValue(new Error('boom'));
 
@@ -392,6 +421,50 @@ describe('getSessionArchive', () => {
 
 describe('costs archive selection', () => {
   afterEach(() => vi.resetAllMocks());
+  it('uses the export observation clock and marks excluded future or malformed sessions partial', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue([
+      cliDoc({ sessionId: 'selected', agent: 'gemini', totalCostUsd: 3 }),
+      cliDoc({
+        sessionId: 'future',
+        totalCostUsd: 100,
+        lastActivityAt: '2026-07-10T11:00:01.000Z',
+      }),
+      cliDoc({
+        sessionId: 'bad-clock',
+        totalCostUsd: 100,
+        lastActivityAt: 'invalid',
+      }),
+      cliDoc({
+        sessionId: 'too-old',
+        totalCostUsd: 100,
+        lastActivityAt: '2026-07-10T09:59:59.000Z',
+      }),
+    ]);
+    const result = await getSessionArchive(
+      { days: ONE_HOUR_DAYS },
+      {
+        includeSpend: true,
+        observedAt: '2026-07-10T11:00:00.000Z',
+        spendPipelineGrouping: 'lifecycle',
+      },
+    );
+    expect(result.rows.map((row) => row.sessionId)).toEqual(['selected']);
+    expect(result.available).toBe(true);
+    expect(result.spend).toMatchObject({
+      coverageLimited: true,
+      totals: { sessions: 1, reportedCostUsd: 3 },
+      byPipeline: [expect.objectContaining({ key: 'unknown' })],
+    });
+    expect(result.warnings).toHaveLength(1);
+    expect(listSessionDocs).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        activeSince: '2026-07-10T10:00:00.000Z',
+        limit: 200,
+      }),
+    );
+  });
+
   it('uses exactly the filtered archive and preserves unknown merge evidence on failure', async () => {
     vi.mocked(listSessionDocs).mockResolvedValue([
       cliDoc({

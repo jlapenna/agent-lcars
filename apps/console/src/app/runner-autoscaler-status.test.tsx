@@ -377,6 +377,109 @@ describe('RunnerAutoscalerStatus', () => {
     expect(executorRow).toHaveTextContent('5 active · 3 max');
   });
 
+  it('draws one row per runner pod once the executor publishes them', () => {
+    const hostInventory = {
+      hosts: [
+        {
+          name: 'spark',
+          ready: true,
+          unschedulable: false,
+          cpuMillis: 20_000,
+          memoryBytes: 128 * 1024 ** 3,
+          requestedCpuMillis: 6_000,
+          requestedMemoryBytes: 16 * 1024 ** 3,
+          runnerPods: 2,
+          queueJobPods: 1,
+        },
+      ],
+      runners: [
+        {
+          name: 'lcars-ci-x1',
+          kind: 'arc' as const,
+          lane: 'lcars-ci',
+          host: 'spark',
+          state: 'busy' as const,
+          since: lane.updatedAt,
+          requestedCpuMillis: 4_000,
+          requestedMemoryBytes: 12 * 1024 ** 3,
+          jobRepository: 'jlapenna/agent-lcars',
+          jobName: 'Verify',
+          workflowRunId: 9001,
+        },
+        {
+          name: 'lcars-ci-x2',
+          kind: 'arc' as const,
+          lane: 'lcars-ci',
+          host: 'spark',
+          state: 'idle' as const,
+          since: lane.updatedAt,
+          requestedCpuMillis: 0,
+          requestedMemoryBytes: 0,
+        },
+        {
+          name: 'lcars-run-1',
+          kind: 'direct' as const,
+          lane: 'direct',
+          host: 'worf',
+          state: 'offline' as const,
+          since: lane.updatedAt,
+          requestedCpuMillis: 2_000,
+          requestedMemoryBytes: 4 * 1024 ** 3,
+          runId: 'run-1',
+          work: {
+            label: 'agent-lcars#2479',
+            href: '/task/jlapenna/agent-lcars/2479',
+            repo: 'jlapenna/agent-lcars',
+            pipeline: 'claude',
+          },
+        },
+      ],
+      runnerJobsKnown: true,
+      updatedAt: lane.updatedAt,
+    };
+    const { rerender } = render(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ lanes: [lane], hostInventory, warnings: [] }}
+        />
+      </MantineProvider>,
+    );
+    const panel = screen.getByTestId('shuttlebay-runners');
+    expect(panel).toHaveTextContent('2/3 online');
+    expect(panel).toHaveTextContent('every job fits one host after reserves');
+    expect(screen.queryByTestId('arc-lane-lcars-ci')).toBeNull();
+    expect(
+      screen.getByRole('link', { name: 'agent-lcars · Verify ↗' }),
+    ).toHaveAttribute(
+      'href',
+      'https://github.com/jlapenna/agent-lcars/actions/runs/9001',
+    );
+    expect(screen.getByTestId('runner-lcars-ci-x1')).toHaveTextContent(
+      '4c/12G',
+    );
+    expect(screen.getByTestId('runner-lcars-ci-x2')).toHaveTextContent('Idle');
+    const direct = screen.getByTestId('runner-lcars-run-1');
+    expect(direct).toHaveTextContent('Offline');
+    expect(
+      screen.getByRole('link', { name: 'agent-lcars#2479' }),
+    ).toHaveAttribute('href', '/task/jlapenna/agent-lcars/2479');
+
+    rerender(
+      <MantineProvider>
+        <RunnerAutoscalerStatus
+          initial={{ lanes: [lane], hostInventory, warnings: [] }}
+          filters={{ agent: 'codex' }}
+        />
+      </MantineProvider>,
+    );
+    // The live island keeps its first snapshot; filters narrow it, count too.
+    expect(screen.queryByTestId('runner-lcars-run-1')).toBeNull();
+    expect(screen.getByTestId('shuttlebay-runners')).toHaveTextContent(
+      '2/2 online',
+    );
+    expect(screen.getByTestId('runner-lcars-ci-x1')).toBeInTheDocument();
+  });
+
   it('distinguishes missing telemetry from fresh zero ARC capacity and unknown Job occupancy', () => {
     const { rerender } = render(
       <MantineProvider>

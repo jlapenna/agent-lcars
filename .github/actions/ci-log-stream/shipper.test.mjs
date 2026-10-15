@@ -367,23 +367,75 @@ test('drops one oversized partial line without retaining it in memory', async ()
   );
 });
 
-test('bounds slow successful shutdown pushes by the shutdown deadline', async () => {
+test('bounds slow successful shutdown pushes by the shutdown deadline', async (context) => {
   const directory = await temporaryDirectory();
-  const loki = await lokiServer([204], 60);
   await writeFile(path.join(directory, 'job_all_0.log'), 'one\ntwo\nthree\n');
-  const shipper = makeShipper(directory, loki.endpoint, {
-    now: Date.now,
-    config: {
-      maxBatchLines: 1,
-      pushTimeoutMs: 200,
-      shutdownBudgetMs: 80,
-    },
+  const initialTime = 1_800_000_000_000;
+  let now = initialTime;
+  const pushes = [];
+  const timeoutBudgets = [];
+  const timeout = AbortSignal.timeout;
+  context.mock.method(AbortSignal, 'timeout', (milliseconds) => {
+    timeoutBudgets.push(milliseconds);
+    return timeout(milliseconds);
   });
+  const shipper = makeShipper(
+    directory,
+    'https://loki.invalid/loki/api/v1/push',
+    {
+      now: () => now,
+      fetchImplementation: async (_url, options) => {
+        pushes.push({
+          startedAt: now - initialTime,
+          body: JSON.parse(options.body),
+          signal: options.signal,
+        });
+        now += 60;
+        return new Response(null, { status: 204 });
+      },
+      config: {
+        maxBatchLines: 1,
+        pushTimeoutMs: 200,
+        shutdownBudgetMs: 80,
+      },
+    },
+  );
 
-  const startedAt = Date.now();
   await shipper.shutdown();
 
-  assert.ok(Date.now() - startedAt < 180);
-  assert.ok(shipper.queue.length > 0);
-  assert.ok(loki.requests.length <= 2);
+  assert.deepEqual(
+    pushes.map((push) => push.startedAt),
+    [0, 60],
+  );
+  assert.ok(pushes.every((push) => push.startedAt < 80));
+  assert.deepEqual(timeoutBudgets, [80, 20]);
+  // Exercise the exact signals supplied to fetch, not merely their creation.
+  for (const { signal } of pushes) {
+    assert.ok(signal instanceof AbortSignal);
+    await new Promise((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(witnessTimeout);
+        resolve();
+      };
+      // A referenced witness keeps Node alive for AbortSignal.timeout's unref timer.
+      const witnessTimeout = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        reject(new Error('The supplied fetch signal did not abort'));
+      }, 1000);
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    });
+    assert.equal(signal.reason?.name, 'TimeoutError');
+  }
+  assert.deepEqual(
+    pushes.flatMap((push) =>
+      push.body.streams[0].values.map((value) => value[1]),
+    ),
+    ['one', 'two'],
+  );
+  assert.deepEqual(
+    shipper.queue.map((entry) => entry.value[1]),
+    ['three'],
+  );
+  assert.ok(shipper.queueBytes > 0);
 });

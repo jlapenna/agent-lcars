@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
+import { archiveDaysParam, DEFAULT_ARCHIVE_DAYS } from '@/lib/archive-window';
 import type { SessionArchiveQuery } from '@/lib/session-archive';
 
 import { repoScopedConsoleHrefs } from './console-hrefs';
@@ -33,13 +33,14 @@ function navHref(
 
   const params = new URLSearchParams();
   if (archiveQuery.days !== DEFAULT_ARCHIVE_DAYS) {
-    params.set('days', String(archiveQuery.days));
+    params.set('days', archiveDaysParam(archiveQuery.days));
   }
   if (archiveQuery.source) params.set('source', archiveQuery.source);
   if (archiveQuery.issueNumber !== undefined) {
     params.set('issue', String(archiveQuery.issueNumber));
   }
   if (archiveQuery.agent) params.set('agent', archiveQuery.agent);
+  if (archiveQuery.q) params.set('q', archiveQuery.q);
   const queryString = params.toString();
   return queryString ? `${item.href}?${queryString}` : item.href;
 }

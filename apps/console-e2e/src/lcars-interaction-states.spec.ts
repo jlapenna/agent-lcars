@@ -279,7 +279,12 @@ test.describe('overlays inherit the LCARS theme', () => {
         .toBe(true);
       await create.click({ trial: true });
       await dialog.getByRole('button', { name: 'Remove screenshot' }).click();
-      await expect(dialog.getByRole('img')).toHaveCount(0);
+      await expect(
+        dialog.getByRole('img', {
+          name: `Screenshot preview: ${filename}`,
+          exact: true,
+        }),
+      ).toHaveCount(0);
       await expect(create).toBeEnabled();
     });
   }
@@ -374,7 +379,12 @@ test.describe('overlays inherit the LCARS theme', () => {
     await page.getByRole('button', { name: 'New work' }).click();
     let dialog = page.getByRole('dialog');
     await dialog.getByRole('combobox', { name: 'Agent' }).click();
-    await page.getByRole('option', { name: 'opencode' }).click();
+    // Scoped to the dialog's listbox: the Bridge toolbar's native Agent
+    // select lists the same pipelines.
+    await page
+      .getByRole('listbox', { name: 'Agent' })
+      .getByRole('option', { name: 'opencode' })
+      .click();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
 

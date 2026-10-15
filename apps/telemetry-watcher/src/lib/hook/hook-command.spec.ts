@@ -2,7 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { type SessionEventV1 } from '@agent-lcars/telemetry';
+import {
+  isNewerHookWrite,
+  parseSessionEventV1,
+  type SessionEventV1,
+  sessionWriteForEvent,
+} from '@agent-lcars/telemetry';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -123,6 +128,63 @@ describe('lcars hook claude', () => {
     });
   });
 
+  it('carries authenticated GitHub actor through the real spool parser and session writer', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'), {
+      resolveGithubActor: async () => 'jlapenna',
+    });
+    await executeHookCommand(['claude'], d);
+    const parsed = parseSessionEventV1(spooledEvents(home)[0]);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const write = sessionWriteForEvent(
+      parsed.event,
+      undefined,
+      '2026-10-10T12:00:00.000Z',
+    );
+    expect(write?.doc).toMatchObject({
+      githubActor: 'jlapenna',
+      branch: 'feat/hooks',
+    });
+    expect(write?.clearFields).not.toContain('githubActor');
+  });
+
+  it.each([undefined, 'failure'])(
+    'leaves actor unknown when the authenticated read is unavailable: %s',
+    async (failure) => {
+      const home = tempHome();
+      const d = deps(home, payload('PostToolUse'), {
+        resolveGithubActor: async () => {
+          if (failure) throw new Error('offline');
+          return undefined;
+        },
+      });
+      await executeHookCommand(['claude'], d);
+      const parsed = parseSessionEventV1(spooledEvents(home)[0]);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      const write = sessionWriteForEvent(
+        parsed.event,
+        undefined,
+        '2026-10-10T12:00:00.000Z',
+      );
+      expect(write?.doc).not.toHaveProperty('githubActor');
+      expect(write?.clearFields).toContain('githubActor');
+    },
+  );
+
+  it('does not qualify a transcript branch when live git resolution fails', async () => {
+    const home = tempHome();
+    const resolveGithubActor = vi.fn(async () => 'jlapenna');
+    const d = deps(home, payload('PostToolUse'), {
+      resolveGitBranch: async () => undefined,
+      resolveGithubActor,
+    });
+    await executeHookCommand(['claude'], d);
+    expect(spooledEvents(home)[0].summary).not.toHaveProperty('branch');
+    expect(spooledEvents(home)[0].summary).not.toHaveProperty('githubActor');
+    expect(resolveGithubActor).not.toHaveBeenCalled();
+  });
+
   it('resolves the repository against the allowlist so it is stored canonically', async () => {
     const home = tempHome();
     const resolveGitRepo = vi.fn(async () => ({
@@ -161,6 +223,11 @@ describe('lcars hook claude', () => {
         )
       ).action,
     ).toBe('skipped-subagent');
+    expect(
+      fs.readFileSync(path.join(home, STATE_DIR, 'hook.log'), 'utf8'),
+    ).toContain(
+      'skipped-subagent parent=session- child=sub-1 event=PostToolUse',
+    );
     expect(
       (await executeHookCommand(['claude'], deps(home, payload('PreCompact'))))
         .action,
@@ -484,4 +551,273 @@ describe('lcars hook flush', () => {
     expect((await executeHookCommand(['bogus'], d)).action).toBe('usage');
     expect(d.stderr).toHaveBeenCalledOnce();
   });
+});
+
+describe('Codex child publication ownership (#2669)', () => {
+  const childId = '01a13376-2c94-7bc3-a67a-53d940003daa';
+  const parentId = '01a11f2d-166d-7651-9a36-7bc92635eceb';
+  const childFixture = path.join(
+    __dirname,
+    'fixtures/codex-child-publication.jsonl',
+  );
+  type Row = {
+    type: string;
+    timestamp: string;
+    payload: Record<string, unknown>;
+  };
+  const rows = (): Row[] =>
+    fs
+      .readFileSync(childFixture, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Row);
+  function childDeps(
+    home: string,
+    input = rows(),
+    event = 'PostToolUse',
+    overrides: Record<string, unknown> = {},
+  ) {
+    const transcript = path.join(home, 'child.jsonl');
+    const parentTranscript = path.join(home, 'parent.jsonl');
+    fs.writeFileSync(
+      transcript,
+      input.map((row) => JSON.stringify(row)).join('\n'),
+    );
+    fs.writeFileSync(
+      parentTranscript,
+      JSON.stringify({ type: 'session_meta', payload: { id: parentId } }),
+    );
+    return deps(
+      home,
+      payload(event, {
+        session_id: parentId,
+        agent_id: childId,
+        transcript_path: parentTranscript,
+        ...(event === 'SubagentStop' && { agent_transcript_path: transcript }),
+        ...overrides,
+      }),
+      {
+        findCodexRollout: (_codexHome, sessionId) =>
+          sessionId === childId ? transcript : undefined,
+      },
+    );
+  }
+
+  it('retains the real delayed child publication once with only child thread usage', async () => {
+    const home = tempHome();
+    const input = rows();
+    input.splice(
+      2,
+      0,
+      {
+        type: 'event_msg',
+        timestamp: input[0].timestamp,
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              input_tokens: 900000,
+              cached_input_tokens: 0,
+              output_tokens: 800000,
+            },
+          },
+        },
+      },
+      {
+        type: 'response_item',
+        timestamp: input[0].timestamp,
+        payload: {
+          type: 'function_call',
+          name: 'exec_command',
+          call_id: 'inherited-create',
+          arguments: JSON.stringify({ cmd: 'gh pr create' }),
+        },
+      },
+      {
+        type: 'response_item',
+        timestamp: input[0].timestamp,
+        payload: {
+          type: 'function_call_output',
+          call_id: 'inherited-create',
+          output: 'https://github.com/jlapenna/agent-lcars/pull/2282',
+        },
+      },
+    );
+    // Legacy counters in the suffix are not evidence of child-owned usage.
+    input.push({
+      type: 'event_msg',
+      timestamp: input.at(-1)!.timestamp,
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: {
+            input_tokens: 9000000,
+            cached_input_tokens: 0,
+            output_tokens: 8000000,
+          },
+        },
+      },
+    });
+    const d = childDeps(home, input);
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.sessionId).toBe(childId);
+    expect(event.summary?.sessionId).toBe(childId);
+    expect(event.summary?.tokens).toEqual({
+      inputTokens: 1087,
+      outputTokens: 46,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 62208,
+    });
+    expect(event.summary?.deliverables.qualifiedPRs).toEqual([
+      { repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 2666 },
+    ]);
+    expect(event.summary?.deliverables.prNumbers).not.toContain(2282);
+    expect(event.summary?.totalCostUsd).toBeUndefined();
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+    const write = sessionWriteForEvent(event, undefined, event.occurredAt);
+    expect(write?.doc.sessionId).toBe(childId);
+    expect(write?.doc.tokens).toEqual(event.summary?.tokens);
+    expect(write?.doc.deliverables.qualifiedPRs).toEqual(
+      event.summary?.deliverables.qualifiedPRs,
+    );
+    expect(isNewerHookWrite(write?.doc.observer, write?.doc.observer)).toBe(
+      false,
+    );
+    await executeHookCommand(['codex'], d);
+    const latest = spooledEvents(home).at(-1)!;
+    const replacement = sessionWriteForEvent(
+      latest,
+      write?.doc,
+      latest.occurredAt,
+    );
+    expect(replacement?.doc.deliverables.qualifiedPRs).toHaveLength(1);
+    expect(replacement?.doc.tokens).toEqual(write?.doc.tokens);
+  });
+
+  it('collects the documented parent-session SubagentStop from its exact child transcript', async () => {
+    const home = tempHome();
+    const d = childDeps(home, rows(), 'SubagentStop');
+    d.findCodexRollout = vi.fn(() => undefined);
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    expect(spooledEvents(home)[0]).toMatchObject({
+      sessionId: childId,
+      kind: 'stop',
+    });
+    expect(d.findCodexRollout).not.toHaveBeenCalled();
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    'wrong parent',
+    'unsafe child',
+    'same child and parent',
+    'parent transcript',
+    'missing child lookup',
+  ])('refuses documented child payload with %s', async (defect) => {
+    const home = tempHome();
+    const overrides: Record<string, unknown> = {};
+    if (defect === 'wrong parent') overrides.session_id = 'another-parent';
+    if (defect === 'unsafe child') overrides.agent_id = '../child';
+    if (defect === 'same child and parent') overrides.agent_id = parentId;
+    if (defect === 'parent transcript')
+      overrides.agent_transcript_path = path.join(home, 'parent.jsonl');
+    const d = childDeps(home, rows(), 'SubagentStop', overrides);
+    if (defect === 'missing child lookup') {
+      d.readStdin = () =>
+        payload('PostToolUse', {
+          session_id: parentId,
+          agent_id: childId,
+          transcript_path: path.join(home, 'parent.jsonl'),
+        });
+      d.findCodexRollout = () => undefined;
+    }
+    expect((await executeHookCommand(['codex'], d)).action).toBe(
+      'skipped-subagent',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    'mismatched child',
+    'same parent',
+    'mismatched fork',
+    'missing boundary',
+    'foreign boundary',
+    'missing usage',
+    'foreign usage',
+    'invalid usage',
+    'foreign metadata',
+  ])('does not create a child record with %s', async (defect) => {
+    const input = rows();
+    if (defect === 'mismatched child') input[0].payload.id = parentId;
+    if (defect === 'same parent')
+      input[0].payload.source = {
+        subagent: { thread_spawn: { parent_thread_id: childId } },
+      };
+    if (defect === 'mismatched fork')
+      input[0].payload.forked_from_id = 'another-parent';
+    if (defect === 'missing boundary') input.splice(2, 1);
+    if (defect === 'foreign boundary') input[2].payload.thread_id = parentId;
+    if (defect === 'missing usage') input.splice(3, 1);
+    if (defect === 'foreign usage') input[3].payload.thread_id = parentId;
+    if (defect === 'invalid usage')
+      input[3].payload.thread_token_usage = {
+        input_tokens: 1,
+        output_tokens: 2,
+        cached_input_tokens: 3,
+      };
+    if (defect === 'foreign metadata')
+      input.push({
+        type: 'session_meta',
+        timestamp: input.at(-1)!.timestamp,
+        payload: { id: parentId },
+      });
+    const home = tempHome();
+    const d = childDeps(home, input);
+    expect((await executeHookCommand(['codex'], d)).action).toBe(
+      'skipped-subagent',
+    );
+    expect(spooledEvents(home)).toEqual([]);
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), childId),
+    ).toBeUndefined();
+    expect(d.spawnFlusher).not.toHaveBeenCalled();
+  });
+
+  it.each(['failed', 'edit', 'replayed poll'])(
+    'keeps the unchanged publication guard for %s child output',
+    async (outcome) => {
+      const input = rows();
+      if (outcome === 'failed') {
+        const output = input[7].payload.output as {
+          type: string;
+          text: string;
+        }[];
+        for (const block of output)
+          block.text = block.text.replace('"exit_code":0', '"exit_code":1');
+      }
+      if (outcome === 'edit')
+        input[4].payload.input = (input[4].payload.input as string).replace(
+          'gh pr create',
+          'gh pr edit',
+        );
+      if (outcome === 'replayed poll') {
+        input.splice(6, 0, { ...input[6], payload: { ...input[6].payload } });
+      }
+      const home = tempHome();
+      await executeHookCommand(['codex'], childDeps(home, input));
+      expect(
+        spooledEvents(home)[0].summary?.deliverables.qualifiedPRs,
+      ).toBeUndefined();
+      expect(spooledEvents(home)[0].summary?.tokens.outputTokens).toBe(46);
+    },
+  );
 });

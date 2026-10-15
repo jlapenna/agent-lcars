@@ -18,7 +18,7 @@ import {
   listSessionDocs,
 } from '@agent-lcars/telemetry/server';
 
-import { DEFAULT_ARCHIVE_DAYS } from './archive-window';
+import { DEFAULT_ARCHIVE_DAYS, ONE_HOUR_DAYS } from './archive-window';
 import {
   getWatchedRepos,
   parseRepoFilterParam,
@@ -26,15 +26,24 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
+import { matchesSessionFind } from './session-find';
 import { aggregateSessionLedger, type SessionLedger } from './session-ledger';
-import { aggregateSessionSpend, type SessionSpend } from './session-spend';
+import {
+  aggregateSessionSpend,
+  type SessionSpend,
+  type SpendPipelineGrouping,
+} from './session-spend';
 import {
   aggregateSpendByRepository,
   type RepositorySpend,
 } from './session-spend-by-repo';
 import { loadSpendProjections } from './session-spend-projections';
 
-export { DEFAULT_ARCHIVE_DAYS } from './archive-window';
+export {
+  archiveDaysParam,
+  DEFAULT_ARCHIVE_DAYS,
+  ONE_HOUR_DAYS,
+} from './archive-window';
 
 export const MAX_ARCHIVE_DAYS = 90;
 
@@ -45,12 +54,16 @@ export const MAX_ARCHIVE_DAYS = 90;
 const ARCHIVE_LIST_LIMIT = 200;
 
 export interface SessionArchiveQuery {
+  /** Whole days, or ONE_HOUR_DAYS (archive-window.ts). */
   days: number;
   source?: SessionSource;
   issueNumber?: number;
   repo?: WatchedRepo;
   /** Narrows to one agent after the fetch, like `repo`. */
   agent?: SessionAgent;
+  /** FIND (matchesSessionFind), after the fetch. /costs sets it so its ledger
+   * sums only the matching sessions; /sessions narrows its rows itself. */
+  q?: string;
 }
 
 type RawSearchParams = Record<string, string | string[] | undefined>;
@@ -72,11 +85,14 @@ function firstValue(value: string | string[] | undefined): string | undefined {
 export function parseSessionArchiveQuery(
   searchParams: RawSearchParams,
 ): SessionArchiveQuery {
-  const daysRaw = Number(firstValue(searchParams['days']));
+  const daysParam = firstValue(searchParams['days']);
+  const daysRaw = Number(daysParam);
   const days =
-    Number.isFinite(daysRaw) && daysRaw > 0
-      ? Math.min(Math.round(daysRaw), MAX_ARCHIVE_DAYS)
-      : DEFAULT_ARCHIVE_DAYS;
+    daysParam === '1h'
+      ? ONE_HOUR_DAYS
+      : Number.isFinite(daysRaw) && daysRaw > 0
+        ? Math.min(Math.max(1, Math.round(daysRaw)), MAX_ARCHIVE_DAYS)
+        : DEFAULT_ARCHIVE_DAYS;
 
   const sourceRaw = firstValue(searchParams['source']);
   const source: SessionSource | undefined =
@@ -99,13 +115,24 @@ export function parseSessionArchiveQuery(
  * archive through the same three query params, so a divergent wording
  * would just be two ways of describing one window. */
 export function describeArchiveWindow(query: SessionArchiveQuery): string {
-  const parts = [`last ${query.days} day${query.days === 1 ? '' : 's'}`];
+  return [
+    query.days === ONE_HOUR_DAYS
+      ? 'last 1 hour'
+      : `last ${query.days} day${query.days === 1 ? '' : 's'}`,
+    ...describeArchiveFilters(query),
+  ].join(', ');
+}
+
+/** The archive query's narrowing beyond its window, e.g. `repo=owner/name`. */
+export function describeArchiveFilters(query: SessionArchiveQuery): string[] {
+  const parts: string[] = [];
   if (query.source) parts.push(`source=${query.source}`);
   if (query.issueNumber !== undefined)
     parts.push(`issue #${query.issueNumber}`);
   if (query.repo) parts.push(`repo=${repoKey(query.repo)}`);
   if (query.agent) parts.push(`agent=${query.agent}`);
-  return parts.join(', ');
+  if (query.q) parts.push(`find "${query.q}"`);
+  return parts;
 }
 
 /** Wall-clock span of a session's own recorded activity (lastActivityAt
@@ -247,6 +274,8 @@ export interface SessionArchiveResult {
    * runner-sessions.ts). */
   warnings: string[];
   spend?: SessionSpend;
+  /** False only when the session feed itself could not be read. */
+  available?: boolean;
   /** With `includeSpend`: spend by repository for today and seven days. */
   spendByRepository?: RepositorySpend;
 }
@@ -259,10 +288,20 @@ export interface SessionArchiveResult {
  */
 export async function getSessionArchive(
   query: SessionArchiveQuery,
-  options: { includeSpend?: boolean } = {},
+  options: {
+    includeSpend?: boolean;
+    observedAt?: string;
+    spendPipelineGrouping?: SpendPipelineGrouping;
+  } = {},
 ): Promise<SessionArchiveResult> {
+  const observed =
+    options.observedAt === undefined
+      ? Date.now()
+      : Date.parse(options.observedAt);
+  if (!Number.isFinite(observed))
+    throw new RangeError('Invalid archive observation clock');
   const activeSince = new Date(
-    Date.now() - query.days * 24 * 60 * 60 * 1000,
+    observed - query.days * 24 * 60 * 60 * 1000,
   ).toISOString();
 
   let docs: SessionDoc[];
@@ -279,6 +318,7 @@ export async function getSessionArchive(
   } catch (error) {
     logger.error('agent-lcars: failed to list session archive:', error);
     return {
+      available: false,
       rows: [],
       ledger: { byIssue: [], byWeek: [] },
       warnings: ['Session archive unavailable (agent-telemetry store failed).'],
@@ -288,7 +328,22 @@ export async function getSessionArchive(
     };
   }
 
-  const coverageLimited = docs.length >= ARCHIVE_LIST_LIMIT;
+  const pageCapped = docs.length >= ARCHIVE_LIST_LIMIT;
+  let coverageLimited = pageCapped;
+  // Snapshot consumers must not charge future or malformed activity clocks.
+  // Apply after the bounded page; excluded rows make coverage explicitly partial.
+  if (options.observedAt !== undefined) {
+    const selected = docs.filter((doc) => {
+      const activity = Date.parse(doc.lastActivityAt);
+      return (
+        Number.isFinite(activity) &&
+        activity >= Date.parse(activeSince) &&
+        activity <= observed
+      );
+    });
+    coverageLimited ||= selected.length !== docs.length;
+    docs = selected;
+  }
 
   // No repo field on `listSessionDocs` to filter server-side by, unlike
   // source/issueNumber (which are indexed Firestore query params) - applied
@@ -308,11 +363,22 @@ export async function getSessionArchive(
     docs = docs.filter((doc) => doc.agent === agentFilter);
   }
 
-  const warnings = coverageLimited
-    ? [
-        'Session limit reached; totals may be partial, including repository-filtered totals.',
-      ]
-    : [];
+  if (query.q) {
+    const q = query.q;
+    const at = new Date().toISOString();
+    docs = docs.filter((doc) => matchesSessionFind(toSessionRow(doc, at), q));
+  }
+
+  const warnings = [
+    ...(pageCapped
+      ? [
+          'Session limit reached; totals may be partial, including repository-filtered totals.',
+        ]
+      : []),
+    ...(coverageLimited && !pageCapped
+      ? ['Snapshot activity clocks excluded; totals may be partial.']
+      : []),
+  ];
   let spend: SessionSpend | undefined;
   if (options.includeSpend) {
     let projections = new Map<string, GithubAnchorProjection>();
@@ -335,10 +401,19 @@ export async function getSessionArchive(
         'Pull request merge evidence unavailable; deliverables remain unknown.',
       );
     }
-    spend = aggregateSessionSpend(docs, projections, coverageLimited);
+    spend = aggregateSessionSpend(
+      docs,
+      projections,
+      coverageLimited,
+      options.spendPipelineGrouping,
+    );
   }
-  const now = new Date().toISOString();
+  const now =
+    options.observedAt === undefined
+      ? new Date().toISOString()
+      : new Date(observed).toISOString();
   return {
+    available: true,
     rows: docs.map((doc) => toSessionRow(doc, now)),
     ledger: aggregateSessionLedger(docs),
     warnings,

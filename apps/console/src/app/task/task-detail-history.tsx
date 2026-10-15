@@ -13,11 +13,11 @@ import {
   TableThead,
   TableTr,
   Text,
-  Title,
 } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { ExecutionStatus } from '../execution-status';
+import { OpsPanel } from '../ops-primitives';
 import { Conversation } from '../work/conversation';
 import { resultRefs } from '../work/result-refs';
 import { safeHttpUrl } from '../work/safe-url';
@@ -236,10 +236,7 @@ export function TaskDetailHistory({
                 : ' · Reapply the intended label after ownership settles and physical retirement completes.')}
         </Text>
       )}
-      <Stack gap="xs">
-        <Title order={2} size="h4">
-          Conversation
-        </Title>
+      <OpsPanel title="Conversation">
         {item.runs.length === 0 ? (
           <Text size="sm" c="dimmed">
             No conversation yet.
@@ -247,19 +244,13 @@ export function TaskDetailHistory({
         ) : (
           <Conversation item={item} canViewSessions={canViewSessions} />
         )}
-      </Stack>
+      </OpsPanel>
       {actions}
-      <Stack gap="xs">
-        <Title order={2} size="h4">
-          Runs
-        </Title>
+      <OpsPanel title="Runs" count={item.runs.length}>
         <RunsTable runs={item.runs} />
         {audit}
-      </Stack>
-      <Stack gap="xs">
-        <Title order={2} size="h4">
-          Sessions
-        </Title>
+      </OpsPanel>
+      <OpsPanel title="Sessions" count={item.sessions.length}>
         <SessionsList
           sessions={item.sessions}
           canViewSessions={canViewSessions}
@@ -269,11 +260,12 @@ export function TaskDetailHistory({
             item.state === 'failed'
           }
         />
-      </Stack>
-      <Stack gap="xs" data-testid="task-deliverables">
-        <Title order={2} size="h4">
-          Deliverables
-        </Title>
+      </OpsPanel>
+      <OpsPanel
+        title="Deliverables"
+        count={deliverables.length}
+        data-testid="task-deliverables"
+      >
         {deliverables.length === 0 ? (
           <Text size="sm" c="dimmed">
             No deliverables yet.
@@ -304,7 +296,7 @@ export function TaskDetailHistory({
             </Group>
           ))
         )}
-      </Stack>
+      </OpsPanel>
     </Stack>
   );
 }

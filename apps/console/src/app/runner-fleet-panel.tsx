@@ -2,10 +2,17 @@ import type { ReactNode } from 'react';
 
 import type {
   ArcLaneStatus,
+  FleetHost,
+  FleetHostInventory,
   QueueExecutorStatus,
 } from '../lib/autoscaler-status';
 import { CI_WAIT_MINUTES, fleetCiWait } from '../lib/ci-wait';
-import { fleetCapacity } from '../lib/runner-status-contract';
+import {
+  HISTOGRAM_WINDOW_MINUTES,
+  type HistogramWindow,
+  summarizeWindows,
+} from '../lib/histogram-window';
+import { arcRunnerCount, fleetCapacity } from '../lib/runner-status-contract';
 import {
   TOKEN_RATE_AVERAGE_MINUTES,
   TOKEN_RATE_MINUTES,
@@ -14,6 +21,7 @@ import {
 import { formatDuration } from './format';
 import {
   formatTokens,
+  Meter,
   OpsPanel,
   Sparkline,
   StateMark,
@@ -62,6 +70,8 @@ export function RunnerFleetPanel({
   chip,
   filteredOut = false,
   tokenRate,
+  workApiLatency,
+  hostInventory,
 }: {
   lanes?: ArcLaneStatus[];
   lanesIncomplete?: boolean;
@@ -73,14 +83,29 @@ export function RunnerFleetPanel({
   /** Tokens / min, or why it is unknown: the session store failed, or no
    * active session records per-minute tokens. */
   tokenRate?: TokenRate | { unavailable: string };
+  /** The queue executor's Work API response times. Passed apart from
+   * `executor` because a page filter can hide the executor's row without
+   * changing how the Work API is responding. */
+  workApiLatency?: HistogramWindow;
+  /** One row per cluster node, as the mockup draws the fleet. Without it the
+   * rows fall back to ARC lanes, whose host load is unknown. */
+  hostInventory?: FleetHostInventory;
 }) {
+  const hosts = hostInventory?.hosts.length ? hostInventory.hosts : undefined;
   // No lane records is unknown capacity, not zero capacity - unless a filter
   // emptied a known fleet.
   const known =
     filteredOut ||
     (lanes !== undefined && lanes.length > 0 && !lanesIncomplete);
-  const online = lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
-  const max = lanes && fleetCapacity(lanes);
+  // The inventory's ARC pods on the lanes shown, as the rail counts them;
+  // without it, the lanes' registered runners and configured maximum.
+  const pods =
+    lanes && !lanesIncomplete
+      ? arcRunnerCount(hostInventory?.runners, lanes)
+      : undefined;
+  const online =
+    pods?.online ?? lanes?.reduce((n, lane) => n + lane.registeredRunners, 0);
+  const max = pods?.total ?? (lanes && fleetCapacity(lanes));
   const ciWait = lanes && fleetCiWait(lanes);
   return (
     <OpsPanel
@@ -100,11 +125,14 @@ export function RunnerFleetPanel({
           <tr>
             <th>Host</th>
             <th>Slots</th>
-            <th>Load</th>
+            <th>{hosts ? `Load · ${hostLoadBasis(hosts)}` : 'Load'}</th>
           </tr>
         </thead>
         <tbody>
-          {(lanes ?? []).map((lane) => (
+          {hosts?.map((host) => (
+            <HostRow key={host.name} host={host} />
+          ))}
+          {(hosts ? [] : (lanes ?? [])).map((lane) => (
             <tr key={lane.lane} data-testid={`fleet-lane-${lane.lane}`}>
               <td>
                 <span className="ops-host">{lane.lane}</span>
@@ -164,15 +192,17 @@ export function RunnerFleetPanel({
               </td>
             </tr>
           )}
-          {(lanes === undefined || lanes.length === 0) && !executor && (
-            <tr>
-              <td colSpan={3} className="ops-dim">
-                {filteredOut
-                  ? 'No runner lane matches these filters.'
-                  : 'Runner status unavailable'}
-              </td>
-            </tr>
-          )}
+          {!hosts &&
+            (lanes === undefined || lanes.length === 0) &&
+            !executor && (
+              <tr>
+                <td colSpan={3} className="ops-dim">
+                  {filteredOut
+                    ? 'No runner lane matches these filters.'
+                    : 'Runner status unavailable'}
+                </td>
+              </tr>
+            )}
         </tbody>
       </table>
       <div className="ops-telemetry" data-testid="fleet-telemetry">
@@ -204,7 +234,7 @@ export function RunnerFleetPanel({
             </>
           )}
         </div>
-        <UnavailableTelemetry label="Work API p95" />
+        <WorkApiTelemetry window={workApiLatency} />
       </div>
     </OpsPanel>
   );
@@ -252,12 +282,131 @@ function TokenRateTelemetry({
   );
 }
 
-function UnavailableTelemetry({ label }: { label: string }) {
+const GIB = 1024 ** 3;
+
+/** Runner and queue Job pods on a host. Whether a warm runner pod has a job
+ * is not visible to the executor, so these are pods, never "busy". */
+function PodSlots({ runners, jobs }: { runners: number; jobs: number }) {
+  const label = `${runners} runner ${runners === 1 ? 'pod' : 'pods'}, ${jobs} queue job ${jobs === 1 ? 'pod' : 'pods'}`;
   return (
-    <div>
-      <div className="lcars-eyebrow">{label}</div>
-      <div className="ops-telemetry__value">{UNAVAILABLE}</div>
-      <div className="ops-unavailable">no metrics source</div>
+    <div className="ops-slots" role="img" aria-label={label} title={label}>
+      {Array.from({ length: Math.min(runners + jobs, SLOT_LIMIT) }, (_, i) => (
+        <i key={i} data-state="pod" />
+      ))}
+    </div>
+  );
+}
+
+function loadTone(fraction: number): 'warn' | 'fail' | undefined {
+  return fraction >= 1 ? 'fail' : fraction >= 0.8 ? 'warn' : undefined;
+}
+
+function isSampled(
+  host: FleetHost,
+): host is FleetHost & { usedCpuMillis: number; usedMemoryBytes: number } {
+  return host.usedCpuMillis !== undefined && host.usedMemoryBytes !== undefined;
+}
+
+/**
+ * What the Load meters measure: metrics-server's live usage where the
+ * executor reports it, otherwise what the node's pods request. A NotReady
+ * host draws no meters, so it does not decide the column's label.
+ */
+function hostLoadBasis(hosts: readonly FleetHost[]): string {
+  const drawn = hosts.filter((host) => host.ready);
+  const sampled = drawn.filter(isSampled).length;
+  return sampled === 0
+    ? 'requested'
+    : sampled === drawn.length
+      ? 'used'
+      : 'used or requested';
+}
+
+function HostRow({ host }: { host: FleetHost }) {
+  const sampled = isSampled(host);
+  const basis = sampled ? 'used' : 'requested';
+  const cpuLoad = sampled ? host.usedCpuMillis : host.requestedCpuMillis;
+  const memoryLoad = sampled ? host.usedMemoryBytes : host.requestedMemoryBytes;
+  const cpu = host.cpuMillis > 0 ? cpuLoad / host.cpuMillis : 0;
+  const memory = host.memoryBytes > 0 ? memoryLoad / host.memoryBytes : 0;
+  const pods = host.runnerPods + host.queueJobPods;
+  return (
+    <tr data-testid={`fleet-host-${host.name}`}>
+      <td>
+        <span className="ops-host">{host.name}</span>
+        <span className="ops-host-spec">
+          {Math.round(host.cpuMillis / 1000)} vCPU ·{' '}
+          {Math.round(host.memoryBytes / GIB)} GiB
+          {host.unschedulable && ' · draining'}
+        </span>
+      </td>
+      <td>
+        {pods === 0 ? (
+          <span className="ops-dim">no runners</span>
+        ) : (
+          <PodSlots runners={host.runnerPods} jobs={host.queueJobPods} />
+        )}
+      </td>
+      <td>
+        {!host.ready ? (
+          <StateMark tone="fail">NotReady</StateMark>
+        ) : (
+          <div className="ops-bars">
+            {(
+              [
+                ['CPU', cpu],
+                ['MEM', memory],
+              ] as const
+            ).map(([label, fraction]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <Meter
+                  fraction={fraction}
+                  tone={loadTone(fraction)}
+                  label={`${label} ${basis} on ${host.name}`}
+                />
+                <span>{Math.round(fraction * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+/** Response times are milliseconds until they are not. */
+function formatLatency(seconds: number): string {
+  return seconds < 1
+    ? `${Math.round(seconds * 1000)} ms`
+    : `${seconds.toFixed(1)} s`;
+}
+
+function WorkApiTelemetry({ window }: { window?: HistogramWindow }) {
+  const latency = window && summarizeWindows([window], 0.95);
+  return (
+    <div data-testid="fleet-work-api">
+      <div className="lcars-eyebrow">Work API p95</div>
+      <div className="ops-telemetry__value">
+        {latency?.quantile === undefined
+          ? UNAVAILABLE
+          : formatLatency(latency.quantile)}
+      </div>
+      {latency === undefined ? (
+        <div className="ops-unavailable">no executor latency data</div>
+      ) : (
+        <>
+          <div className="ops-telemetry__detail">
+            {latency.count === 0
+              ? `no calls · ${latency.coveredMinutes}m`
+              : `${latency.count} ${latency.count === 1 ? 'call' : 'calls'} · ${latency.coveredMinutes}m`}
+          </div>
+          <Sparkline
+            values={latency.series}
+            label={`Work API p95 latency per minute, last ${HISTOGRAM_WINDOW_MINUTES} minutes`}
+          />
+        </>
+      )}
     </div>
   );
 }

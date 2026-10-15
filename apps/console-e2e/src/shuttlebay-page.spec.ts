@@ -14,9 +14,7 @@ test.describe('/shuttlebay workspace', () => {
     await expect(page.getByRole('heading', { name: 'Shuttlebay' })).toHaveCount(
       1,
     );
-    await expect(
-      page.getByText('Updates live as runner capacity changes.'),
-    ).toBeVisible();
+    await expect(page.getByRole('search', { name: 'Filters' })).toBeVisible();
     await expect(
       page
         .getByRole('navigation', { name: 'Console sections' })
@@ -111,6 +109,10 @@ test.describe('Shuttlebay live stream', () => {
           .getByText('No runner lane matches these filters.'),
       ).toBeVisible();
     }
+    // The seeded host inventory is not drawn beside a no-match row.
+    await expect(
+      page.getByTestId('runner-fleet-panel').getByTestId(/^fleet-host-/),
+    ).toHaveCount(0);
     const admission = page.getByTestId('shuttlebay-admission');
     await expect(admission.getByText('codex', { exact: true })).toBeVisible();
     await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);

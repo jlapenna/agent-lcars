@@ -75,7 +75,31 @@ const runResultSchema = z.strictObject({
   message: z.string().max(16_384).optional(),
 });
 
+const deliveryBindingSchema = z.strictObject({
+  runId: z.string(),
+  repo: z.string(),
+  number: z.number().int().positive(),
+  baseRef: z.string().min(1).max(255),
+  head: z.string().regex(/^[a-f0-9]{40}$/u),
+  state: z.enum(['waiting', 'runtime-required', 'complete']),
+  correctionRunId: z.string().optional(),
+  runtimeGate: z.enum(['none', 'required', 'unknown']),
+  observedAt: z.string(),
+  mergeCommit: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/u)
+    .optional(),
+  runtimeEvidence: z
+    .strictObject({
+      principal: z.string(),
+      ref: z.string().url(),
+      observedAt: z.string(),
+    })
+    .optional(),
+});
+
 export const itemRunViewSchema = z.strictObject({
+  delivery: deliveryBindingSchema.optional(),
   runId: z.string(),
   state: z.enum(['pending', 'running', 'finished', 'canceled', 'lost']),
   pipeline: z.string(),
@@ -200,7 +224,7 @@ export const githubDispatchAnchorSchema = z.strictObject({
  * runs, plus recent CLI session telemetry matched to the anchor the same way
  * the Agents page matches it -- never a second claim record.
  *
- * - `fleet-run`: the orchestrator task holds a live run (its mutex).
+ * - `fleet-run`: the task holds execution or durable delivery ownership.
  * - `interactive-session`: no live run, but a live or idle CLI session's
  *   repository and branch or recorded PR reference this anchor.
  * - `none`: neither, among CLI sessions active in the last 72 hours. When
@@ -255,6 +279,31 @@ export const anchorOwnerSchema = z.strictObject({
 export type AnchorOwner = z.output<typeof anchorOwnerSchema>;
 
 export const itemsContract = {
+  deliveryEvidence: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/delivery/{runId}/evidence',
+        operationId: 'recordDeliveryRuntimeEvidence',
+        summary: 'Record an operator verified exact-merge runtime receipt',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Principal may not verify this delivery' },
+      CONFLICT: { message: 'Delivery binding changed' },
+    })
+    .input(
+      z.strictObject({
+        runId: z.string().min(1).max(175),
+        head: z.string().regex(/^[a-f0-9]{40}$/u),
+        mergeCommit: z.string().regex(/^[a-f0-9]{40}$/u),
+        ref: z.string().url().max(2048),
+      }),
+    )
+    .output(
+      z.strictObject({ runId: z.string(), state: z.literal('complete') }),
+    ),
+
   anchorOwner: base
     .meta(
       openapi({
@@ -905,6 +954,31 @@ export const schedulesContract = {
  * literal in sync without importing the storage-oriented orchestrator lib. */
 const runIdSchema = z.string().min(1).max(175);
 
+/** Authenticated identity only: no dispatch payload or credential material. */
+export const runIntrospectionSchema = z.strictObject({
+  version: z.literal(1),
+  runId: runIdSchema,
+  repository: workTargetSchema.shape.repo.max(140),
+  anchor: z.union([
+    z.strictObject({
+      repo: workTargetSchema.shape.repo.max(140),
+      issue: z.number().int().positive(),
+    }),
+    z.strictObject({ workId: workIdSchema }),
+  ]),
+  issueUrl: z.url().max(256).nullable(),
+  verifiedAt: z.iso.datetime(),
+  /** Effective existing authentication deadline, never a lease renewal. */
+  validUntil: z.iso.datetime(),
+  worker: z
+    .strictObject({
+      poolId: z.string().min(1).max(175),
+      podUid: z.string().min(1).max(175),
+      generation: z.number().int().positive(),
+    })
+    .nullable(),
+});
+
 export const runClaimResponseSchema = z.strictObject({
   placementAware: z.literal(true).optional(),
   runId: runIdSchema,
@@ -916,6 +990,8 @@ export const runClaimResponseSchema = z.strictObject({
 });
 
 const runBriefSharedSchema = {
+  /** Serving authority advertises the ready delivery contract to baked workers. */
+  deliveryHandoffVersion: z.literal(1).optional(),
   pipeline: z.string(),
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
@@ -1068,6 +1144,22 @@ export const runsContract = {
     })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(runBriefSchema),
+  introspect: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/introspect',
+        operationId: 'introspectRun',
+        summary: 'Verify live run identity without renewing or changing it',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(runIntrospectionSchema),
   heartbeat: runBase
     .meta(
       openapi({

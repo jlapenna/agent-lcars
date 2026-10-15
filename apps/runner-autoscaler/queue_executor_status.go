@@ -26,6 +26,9 @@ type queueExecutorStatusSource struct {
 	logger        *slog.Logger
 	claimCounters func() ([3]uint64, error)
 	claimSamples  []queueClaimSample
+	// Nil disables the Work API latency window (tests).
+	latency       func() *cumulativeHistogram
+	latencyWindow histogramWindow
 }
 
 type queueClaimSample struct {
@@ -57,6 +60,7 @@ func newQueueExecutorStatusSource(
 		draining:      draining,
 		logger:        logger,
 		claimCounters: currentQueueClaimCounters,
+		latency:       workAPILatency.histogram,
 	}
 }
 
@@ -80,6 +84,7 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 		UpdatedAt:     now.UTC().Format(time.RFC3339Nano),
 		ExpireAt:      now.Add(consoleStatusTTL),
 	}
+	status.WorkAPILatency = s.workAPILatencyWindow(now)
 	if !ready {
 		return status
 	}
@@ -104,6 +109,15 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 	}
 	status.ActiveRuns = &active
 	return status
+}
+
+func (s *queueExecutorStatusSource) workAPILatencyWindow(now time.Time) *consoleHistogramWindow {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.latency == nil {
+		return nil
+	}
+	return s.latencyWindow.observe(now, s.latency())
 }
 
 // Reading these three existing metric series does not touch the claim path,

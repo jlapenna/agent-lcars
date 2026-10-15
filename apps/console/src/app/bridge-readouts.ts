@@ -1,13 +1,22 @@
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
-import { fleetCapacity } from '../lib/runner-status-contract';
+import { runCountHistory } from '../lib/run-history';
+import { fleetRunnerHistory } from '../lib/runner-history';
 import type { SessionArchiveResult } from '../lib/session-archive';
+import { repoKey } from '../lib/watched-repo';
 import type { ConsoleReadout } from './console-readouts';
 import { formatCost, formatDuration } from './format';
 
 export interface BridgeReadoutInput {
   /** Fresh ARC runner counts; undefined when any lane is missing or stale. */
-  fleet: { online?: number; busy?: number; capacity?: number };
+  fleet: {
+    online?: number;
+    busy?: number;
+    /** The lanes' registered runners: what `busy` (running jobs, also from
+     * the lanes) is out of. */
+    registered?: number;
+    capacity?: number;
+  };
   /** Live runs in scope; ignored when the authoritative read failed. */
   liveRuns: readonly {
     pipeline: string;
@@ -18,11 +27,22 @@ export interface BridgeReadoutInput {
   /** Authoritative lifecycle counts in the same scope as `liveRuns`;
    * undefined when the read failed. */
   queue?: { queued: number; claimed: number; running: number };
+  /** Per-minute queue depth and running agents for the last 30 minutes, in
+   * the same scope; undefined when the run history is unavailable. */
+  history?: { queued: number[]; running: number[] };
+  /** Fleet-wide runners online and busy per minute, last 30 minutes, from
+   * the lanes' own windows; undefined while any lane lacks one. */
+  runnerHistory?: {
+    online: (number | undefined)[];
+    busy: (number | undefined)[];
+  };
   /** Known spend of sessions active since 00:00 UTC, the same figure as the
    * cost ledger's "Spend by repository"; undefined when the archive read
    * failed. */
   spendToday?: {
     costUsd?: number;
+    /** `costUsd` split by the UTC hour of each session's last activity. */
+    byHourUsd?: number[];
     estimated: boolean;
     /** The archive hit its session limit: the total is a lower bound. */
     partial: boolean;
@@ -43,25 +63,28 @@ const UNAVAILABLE = '—';
 export function fleetReadoutInput({
   activity,
   liveRuns,
+  repo,
   autoscaler,
   spendArchive,
+  now = Date.now(),
 }: {
-  activity: Pick<AgentActivity, 'fleet' | 'queue'>;
+  activity: Pick<AgentActivity, 'fleet' | 'queue' | 'runHistory'>;
   /** Live runs in the page's repository scope. */
   liveRuns: AgentActivity['liveRuns'];
+  /** That scope (`owner/name`), which the run history is narrowed to. */
+  repo?: string;
+  now?: number;
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
-  const capacity = autoscaler.lanes && fleetCapacity(autoscaler.lanes);
   const repoSpend = spendArchive?.spendByRepository;
   return {
     fleet: {
       online: activity.fleet?.online,
       busy: activity.fleet?.busy,
-      capacity:
-        autoscaler.lanesIncomplete || !autoscaler.lanes?.length
-          ? undefined
-          : capacity,
+      registered: activity.fleet?.registered,
+      // Set only with complete lanes; the same figure the rail shows.
+      capacity: activity.fleet?.capacity,
     },
     liveRuns,
     liveRunsAvailable: activity.queue !== undefined,
@@ -75,10 +98,30 @@ export function fleetReadoutInput({
       ).length,
       running: liveRuns.filter((run) => run.status === 'running').length,
     },
+    history:
+      activity.queue && activity.runHistory
+        ? runCountHistory(
+            repo
+              ? activity.runHistory.filter(
+                  (timeline) => repoKey(timeline.repo) === repo,
+                )
+              : activity.runHistory,
+            now,
+          )
+        : undefined,
+    // Runner counts are fleet-wide, like the figures beside them.
+    runnerHistory:
+      autoscaler.lanesIncomplete || !autoscaler.lanes
+        ? undefined
+        : withCurrent(
+            fleetRunnerHistory(autoscaler.lanes, now),
+            activity.fleet,
+          ),
     spendToday:
       spendArchive?.spend && repoSpend
         ? {
             costUsd: repoSpend.todayUsd,
+            byHourUsd: repoSpend.todayByHourUsd,
             // Only today's sessions: the archive also holds yesterday's.
             estimated: repoSpend.todayEstimated,
             partial: spendArchive.spend.coverageLimited,
@@ -87,8 +130,38 @@ export function fleetReadoutInput({
   };
 }
 
+/** The newest bar is the lanes' current count: their windows sample once a
+ * minute, so the last entry can trail it. The series stays on the lanes'
+ * registered runners throughout, even where the headline counts runner pods,
+ * so a different measure never lands on its last bar. */
+function withCurrent(
+  history: ReturnType<typeof fleetRunnerHistory>,
+  fleet: { registered?: number; busy?: number } | undefined,
+): ReturnType<typeof fleetRunnerHistory> {
+  if (!history || fleet?.registered === undefined || fleet.busy === undefined)
+    return history;
+  return {
+    online: [...history.online.slice(0, -1), fleet.registered],
+    busy: [...history.busy.slice(0, -1), fleet.busy],
+  };
+}
+
+/** 24 hourly slots ending at the current hour; slots before UTC midnight
+ * stay empty, so early in the day the few hours elapsed draw as bars rather
+ * than one block, and the current hour stays the newest bar. */
+export function dayOfHours(
+  byHour: readonly number[] | undefined,
+): (number | undefined)[] | undefined {
+  if (byHour === undefined) return undefined;
+  const pad = Math.max(0, 24 - byHour.length);
+  return [...Array.from({ length: pad }, () => undefined), ...byHour];
+}
+
 export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
   const { online, busy, capacity } = input.fleet;
+  // Busy and its denominator come from one producer, the lanes; `online`
+  // may count the inventory's pods, which can disagree with them.
+  const busyOf = input.fleet.registered ?? online;
   const runningRuns = input.liveRuns.filter((run) => run.status === 'running');
   const byPipeline = new Map<string, number>();
   for (const run of runningRuns) {
@@ -109,18 +182,26 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
             ? String(online)
             : `${online} / ${capacity}`,
       detail: online === undefined ? 'runner status unavailable' : 'ARC lanes',
+      spark: {
+        label: 'Runners online, last 30 minutes',
+        values: input.runnerHistory?.online,
+      },
     },
     {
       id: 'busy',
       label: 'Busy',
       value:
-        busy === undefined || online === undefined
+        busy === undefined || busyOf === undefined
           ? UNAVAILABLE
-          : `${busy} / ${online}`,
+          : `${busy} / ${busyOf}`,
       detail:
-        busy === undefined || online === undefined
+        busy === undefined || busyOf === undefined
           ? 'runner status unavailable'
-          : `${online === 0 ? 0 : Math.round((busy / online) * 100)}% utilisation · ${Math.max(0, online - busy)} idle`,
+          : `${busyOf === 0 ? 0 : Math.round((busy / busyOf) * 100)}% utilisation · ${Math.max(0, busyOf - busy)} idle`,
+      spark: {
+        label: 'Busy runners, last 30 minutes',
+        values: input.runnerHistory?.busy,
+      },
     },
     {
       id: 'queue',
@@ -131,6 +212,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
       detail: input.queue
         ? `${input.queue.claimed} claimed${queuedRuns.length > 0 ? ` · oldest ${formatDuration(oldestQueued)}` : ''}`
         : 'unavailable',
+      spark: {
+        label: 'Queue depth, last 30 minutes',
+        values: input.history?.queued,
+      },
     },
     {
       id: 'running',
@@ -141,6 +226,10 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
             .map(([pipeline, count]) => `${pipeline} ${count}`)
             .join(' · ') || 'none running'
         : 'unavailable',
+      spark: {
+        label: 'Running agents, last 30 minutes',
+        values: input.history?.running,
+      },
     },
     {
       id: 'spend',
@@ -157,6 +246,12 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
           : input.spendToday?.partial
             ? 'partial: session archive limit reached'
             : `since 00:00 UTC · no daily budget${input.spendToday?.estimated ? ' · est.' : ''}`,
+      spark: {
+        label: input.spendToday?.partial
+          ? 'Spend per hour today, by last activity (lower bound)'
+          : 'Spend per hour today, by last activity',
+        values: dayOfHours(input.spendToday?.byHourUsd),
+      },
     },
   ];
 }

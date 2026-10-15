@@ -32,6 +32,7 @@ import {
   workHrefForRun,
 } from './agent-activity-panel';
 import { BridgePaneLink } from './bridge-pane-link';
+import { DecisionSlaMeta, DecisionWaiting } from './decision-waiting';
 import { ExecutionStatus } from './execution-status';
 import { formatCost, formatDuration } from './format';
 import { MobileHistoryDisclosure } from './mobile-history-disclosure';
@@ -223,7 +224,9 @@ function DispatchRow({
         </div>
       </td>
       {showRunner && (
-        <td className="ops-mono-dim">{run.queue?.claimedBy ?? UNAVAILABLE}</td>
+        <td className="ops-mono-dim ops-wrap">
+          {run.queue?.claimedBy ?? UNAVAILABLE}
+        </td>
       )}
       <td className="ops-num">
         <ScreenshotStableDuration seconds={run.elapsedSeconds} />
@@ -280,8 +283,11 @@ export function ActiveDispatchesPanel({
   showRunner = false,
   showQueueHealth = true,
   testId = 'current-work',
+  updatedAt,
 }: {
   liveRuns: AgentRun[];
+  /** When these runs were read: the mockup's `updated 4 s ago`. */
+  updatedAt?: string;
   itemsByRunId?: Record<string, RunItemRef>;
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
   selectHrefFor?: (run: AgentRun) => string;
@@ -294,12 +300,25 @@ export function ActiveDispatchesPanel({
   for (const run of liveRuns) {
     byPipeline.set(run.pipeline, (byPipeline.get(run.pipeline) ?? 0) + 1);
   }
+  const pipelines = [...byPipeline].map(([p, n]) => `${p} ${n}`).join(' · ');
   const columns = showRunner ? 6 : 5;
   return (
     <OpsPanel
       title="Active dispatches"
       count={liveRuns.length}
-      meta={[...byPipeline].map(([p, n]) => `${p} ${n}`).join(' · ')}
+      meta={
+        pipelines || updatedAt !== undefined ? (
+          <>
+            {pipelines}
+            {updatedAt !== undefined && (
+              <>
+                {pipelines && ' · '}updated{' '}
+                <RelativeTime iso={updatedAt} variant="compact" />
+              </>
+            )}
+          </>
+        ) : undefined
+      }
       data-testid={testId}
     >
       {showQueueHealth && <QueueHealthAlert liveRuns={liveRuns} />}
@@ -407,6 +426,7 @@ export function RecentCompletionsPanel({
   title = 'Recent completions',
   footer,
   mobileInitialCount,
+  merged,
 }: {
   runs: AgentRun[];
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
@@ -416,6 +436,9 @@ export function RecentCompletionsPanel({
   footer?: ReactNode;
   /** Phones show this many rows first, the rest behind a disclosure. */
   mobileInitialCount?: number;
+  /** The mockup's head count, "N merged · 24h", which the Bridge streams in
+   * from GitHub. Absent, the head counts the listed runs instead. */
+  merged?: ReactNode;
 }) {
   const classified = runs.map((run) => ({
     run,
@@ -532,11 +555,18 @@ export function RecentCompletionsPanel({
   return (
     <OpsPanel
       title={title}
-      count={`${succeeded} succeeded · last ${runs.length}`}
+      count={merged ?? `${succeeded} succeeded · last ${runs.length}`}
       meta={
-        cycle === undefined
-          ? undefined
-          : `median cycle ${formatDuration(cycle)} · ${failed} failed`
+        [
+          merged === undefined
+            ? undefined
+            : `${succeeded} succeeded · last ${runs.length}`,
+          cycle === undefined
+            ? undefined
+            : `median cycle ${formatDuration(cycle)} · ${failed} failed`,
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
       }
       data-testid={testId}
     >
@@ -571,31 +601,30 @@ export interface DecisionRow {
   respondHref: string;
 }
 
+/**
+ * The Bridge's decision panel: every waiting decision counts toward the
+ * header's `N over SLA · oldest X`, and the first `limit` rows are listed.
+ */
 export function DecisionInboxPanel({
-  rows,
-  total,
+  rows: allRows,
+  limit = 5,
   respondLabel = 'Open',
   testId = 'decision-inbox-panel',
 }: {
   rows: DecisionRow[];
-  total: number;
+  limit?: number;
   respondLabel?: string;
   testId?: string;
 }) {
-  const oldest = rows.reduce<string | undefined>(
-    (min, row) => (!min || row.waitingSince < min ? row.waitingSince : min),
-    undefined,
-  );
+  const rows = allRows.slice(0, limit);
   return (
     <OpsPanel
       title="Decision inbox"
-      count={total}
+      count={allRows.length}
       meta={
-        oldest ? (
-          <>
-            oldest <RelativeTime iso={oldest} variant="compact" />
-          </>
-        ) : undefined
+        <DecisionSlaMeta
+          waitingSince={allRows.map((row) => row.waitingSince)}
+        />
       }
       signalled
       data-testid={testId}
@@ -614,10 +643,7 @@ export function DecisionInboxPanel({
                     {row.ref}
                   </Anchor>
                   {row.agent && <span>{row.agent}</span>}
-                  <span>
-                    waiting{' '}
-                    <RelativeTime iso={row.waitingSince} variant="compact" />
-                  </span>
+                  <DecisionWaiting since={row.waitingSince} />
                 </div>
               </div>
               <Anchor

@@ -20,14 +20,16 @@ describe('DeckInboxSummary', () => {
     expect(tile.textContent).toContain('3');
     expect(tile.textContent).toContain('Decisions waiting');
     expect(
-      screen.getByRole('link', { name: 'Open 3 decisions' }),
+      screen.getByRole('link', { name: 'Review 3 decisions' }),
     ).toHaveAttribute('href', '/inbox?repo=agent%2Flcars');
     expect(tile).not.toHaveAttribute('data-empty');
   });
 
   it('uses singular phrasing for one item', () => {
     renderSummary(1);
-    expect(screen.getByRole('link', { name: 'Open 1 decision' })).toBeTruthy();
+    expect(
+      screen.getByRole('link', { name: 'Review 1 decision' }),
+    ).toBeTruthy();
   });
 
   it('marks the clear state so the accent dims', () => {
@@ -43,5 +45,17 @@ describe('DeckInboxSummary', () => {
     renderSummary(2);
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByRole('region')).toBeNull();
+  });
+
+  it('renders only the action in the toolbar', () => {
+    render(
+      <MantineProvider>
+        <DeckInboxSummary count={3} inboxHref="/inbox" compact />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByRole('link', { name: 'Review 3 decisions' }),
+    ).toBeTruthy();
+    expect(screen.queryByText('Decisions waiting')).toBeNull();
   });
 });

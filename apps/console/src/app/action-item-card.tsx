@@ -16,6 +16,7 @@ import {
 } from '@mantine/core';
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
+import type { ReactNode } from 'react';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
@@ -39,7 +40,6 @@ import {
   type ReplyResult,
   replyToItem,
 } from './actions';
-import { ConsoleMarkdown } from './console-markdown';
 import { githubIssueUrl } from './format';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import {
@@ -113,6 +113,7 @@ function disabledMergeReason(item: {
  */
 function ExpandableMarkdown({
   body,
+  children,
   url,
   expanded,
   onToggle,
@@ -120,6 +121,7 @@ function ExpandableMarkdown({
   linkLabel,
 }: {
   body: string;
+  children?: ReactNode;
   url: string;
   expanded: boolean;
   onToggle: () => void;
@@ -147,7 +149,7 @@ function ExpandableMarkdown({
           }}
         >
           <Box style={{ fontSize: 'var(--mantine-font-size-sm)' }}>
-            <ConsoleMarkdown>{body}</ConsoleMarkdown>
+            {children}
           </Box>
         </Blockquote>
         {isCollapsed && (
@@ -200,6 +202,8 @@ function ExpandableMarkdown({
 export function ActionItemCard({
   item,
   primaryAction,
+  description,
+  lastComment,
   multiRepo = false,
   muted,
   onToggleMute,
@@ -208,6 +212,8 @@ export function ActionItemCard({
 }: {
   item: ActionItem;
   primaryAction?: PrimaryAction;
+  description?: ReactNode;
+  lastComment?: ReactNode;
   /** Whether more than one repo is watched - passed down from the server
    * route rather than resolved here, since this is a client component and
    * getWatchedRepos() needs server-only env access. */
@@ -613,7 +619,9 @@ export function ActionItemCard({
             onToggle={() => setDescriptionExpanded((prev) => !prev)}
             expandLabel="Show full description"
             linkLabel="View description on GitHub"
-          />
+          >
+            {description}
+          </ExpandableMarkdown>
         )}
 
         {item.failingChecks && item.failingChecks.length > 0 && (
@@ -657,7 +665,9 @@ export function ActionItemCard({
             onToggle={() => setExpanded((prev) => !prev)}
             expandLabel="Show full response"
             linkLabel="View comment on GitHub"
-          />
+          >
+            {lastComment}
+          </ExpandableMarkdown>
         )}
 
         {replyRetry && (

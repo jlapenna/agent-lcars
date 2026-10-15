@@ -24,6 +24,7 @@ import {
 } from '../lib/decision-snooze-contract';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
+import { DecisionSlaMeta } from './decision-waiting';
 import { formatAbsoluteLocal } from './format';
 import {
   type InboxCard,
@@ -37,7 +38,6 @@ import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 import { PersistedDetails } from './persisted-details';
 import { QueueItemRow } from './queue-item-row';
 import { INBOX_FILTER_REASONS } from './queue-reason';
-import { RelativeTime } from './relative-time';
 import { useDecisionSnoozes } from './use-decision-snoozes';
 import type { ReplyAction } from './work/work-actions';
 
@@ -108,6 +108,7 @@ export function QueueWorkspace({
   watchedRepos,
   mobileDataFreshness,
   mobileScopeLabel,
+  repoScoped = false,
   replyToWorkItem,
   toolbarStart,
   toolbarEnd,
@@ -120,6 +121,9 @@ export function QueueWorkspace({
   watchedRepos: WatchedRepo[];
   mobileDataFreshness?: ReactNode;
   mobileScopeLabel?: string;
+  /** A watched repository scopes the queue: the page's validated `?repo=`,
+   * not the raw parameter, which may name no watched repository. */
+  repoScoped?: boolean;
   replyToWorkItem?: ReplyAction;
   /** Server-rendered toolbar controls: the repository selector first, the
    * data freshness last (design/fleet-console.html toolbar band). */
@@ -392,6 +396,14 @@ export function QueueWorkspace({
     if (loadingItemKey === selectedItemKey) setLoadingItemKey(undefined);
   }, [loadingItemKey, selectedItemKey]);
 
+  // Phones fold the repository and agent selects behind one toggle, as every
+  // workspace toolbar does (console-toolbar.tsx), once hydrated so the toggle
+  // can open them. It counts the folded filters that narrow the queue.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [toolbarHydrated, setToolbarHydrated] = useState(false);
+  useEffect(() => setToolbarHydrated(true), []);
+  const foldedActive = (repoScoped ? 1 : 0) + (agent ? 1 : 0);
+
   const showDetail =
     explicitDetail || Boolean(retainedDraft) || Boolean(replyConfirmation);
   const mobileView = explicitDetail ? 'detail' : 'list';
@@ -402,7 +414,19 @@ export function QueueWorkspace({
       data-mobile-view={mobileView}
       aria-label="Decision Inbox"
     >
-      <div className="console-workspace__toolbar inbox-toolbar">
+      <div
+        className="console-workspace__toolbar inbox-toolbar"
+        data-hydrated={toolbarHydrated ? '' : undefined}
+        data-filters-open={filtersOpen ? '' : undefined}
+      >
+        <button
+          type="button"
+          className="console-toolbar__field console-toolbar__toggle"
+          aria-expanded={filtersOpen}
+          onClick={() => setFiltersOpen((open) => !open)}
+        >
+          {foldedActive > 0 ? `Filters · ${foldedActive}` : 'Filters'}
+        </button>
         {toolbarStart}
         {agentOptions.length > 0 && (
           <select
@@ -567,15 +591,11 @@ export function QueueWorkspace({
             <h2 className="ops-panel__title">Decision inbox</h2>
             <span className="ops-panel__count">{visibleCards.length}</span>
             <span className="ops-panel__meta">
-              {oldestCard && (
-                <>
-                  oldest{' '}
-                  <RelativeTime
-                    iso={inboxCardMetadata(oldestCard).updatedAt}
-                    variant="compact"
-                  />
-                </>
-              )}
+              <DecisionSlaMeta
+                waitingSince={visibleCards.map(
+                  (card) => inboxCardMetadata(card).waitingSince,
+                )}
+              />
               <span className="queue-kbd-hint">
                 {' '}
                 · j/k to move · / to search
@@ -782,6 +802,8 @@ export function QueueWorkspace({
             <ActionItemCard
               item={selectedCard.item}
               primaryAction={selectedCard.primaryAction}
+              description={selectedCard.description}
+              lastComment={selectedCard.lastComment}
               multiRepo={watchedRepos.length > 1}
               muted={isSnoozed(
                 inboxCardKey(selectedCard),

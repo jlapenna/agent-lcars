@@ -109,6 +109,16 @@ storage together on that host before assessing full declared limits/envelopes
 for credible overlap with the local phase and reserves. Save changed raw node
 and workload rows before issuing the capacity verdict. Kubernetes allocatable
 and Pod inventory alone do not prove complete host safety.
+Classify Pods by their actual controller owner reference, never by name
+substrings. ARC workers require the verified namespace/UID
+Pod → EphemeralRunner → EphemeralRunnerSet → AutoscalingRunnerSet chain and
+matching resource/template bindings. ReplicaSet/Deployment controller Pods and
+listeners remain service workloads with their full requests/limits accounted.
+Classify native Work Pods separately through their canonical Job owner/UID and
+Run identity. For workloads being classified as ARC or native Work workers,
+missing, ambiguous, mismatched or unavailable owner evidence means hold.
+Always retain full service/native ceilings and eligible Pending, replacement
+and retained-work accounting, including standalone/static service Pods.
 Reconcile declared reserve coverage and count nested
 unit/container/Pod/cgroup workloads once. If placement, ownership, required
 accounting visibility, reserve coverage or overlap fit is unknown, hold the phase. Verify
@@ -117,6 +127,25 @@ credible overlap. Temporary contention changes when work can start, not its
 supported size; wait or split/resize actual work while retaining required
 reserves and truthful requests. Never understate demand, rely on overcommit,
 change host controls or stop another owner's workload to make the phase fit.
+
+Classify reclaimable memory separately from immutable resident demand. A
+`memory.current - inactive_file` working set still includes kernel caches:
+record `slab_reclaimable` and `slab_unreclaimable` for each independently owned
+cgroup. These counters identify cache that might be reclaimed, not guaranteed
+available memory. Do not subtract the full counter to manufacture admission
+headroom, or exclude total kernel memory, anonymous memory, shared memory or
+active file memory. Keep the full declared host/service reserve and count its
+covered workloads once. Admission must pass both full-envelope/reserve accounting
+and a fresh host `MemAvailable` bound for additional unallocated phase/native/peer
+memory demand and remaining reserve headroom. Do not add reclaimable-slab counters
+to `MemAvailable`: its estimate already discounts slab still in use. Refuse if
+that additional demand or available headroom cannot be qualified; do not lower
+reserves, purge caches or understate a phase. Re-read counters and availability
+with the complete native/peer overlap immediately before launching.
+The [kernel memory interface](https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files)
+defines the counters; the [host availability estimate](https://docs.kernel.org/filesystems/proc.html#meminfo)
+accounts for in-use slab. [#2763](https://github.com/jlapenna/agent-lcars/issues/2763)
+records a refused phase caused by treating reclaimable slab as an extra reserve.
 
 ### Requalify colocated worker turnover
 
@@ -258,6 +287,60 @@ the document, never the boundary.
 covers those cases through a real transient user unit where a manager is
 reachable, and through a child environment with no inherited PATH everywhere
 else.
+
+### Qualify native-binding cache ancestors
+
+For a phase that loads SWC, an owned cache leaf alone does not qualify its
+placement. Inspect the nested native-loader error: `ERR_SWC_NATIVE_CACHE` can
+reject a group-writable ancestor even when the installed native package and
+binary are present. Check the selected directory's ownership, permissions and
+ancestor trust before claiming a missing dependency or reinstalling.
+
+If the selected cache fails that trust check, use the supported
+`SWC_NATIVE_BINDING_CACHE` override with a phase-specific, user-owned mode `0700`
+directory directly beneath a verified trusted sticky directory (such as
+root-owned mode `01777` `/tmp`), with the remaining ancestors trusted. Pass its absolute path through the
+supervisor's explicit child environment, as with PATH above. The selected cache filesystem must be writable and executable; Linux `noexec`
+is rejected. Choose another ancestor-trusted executable location if needed. See
+[SWC's native-addon cache contract](https://github.com/swc-project/swc/blob/main/docs/native-addon-carriers.md#first-load-and-cache).
+Include this cache
+in the phase's storage sizing/accounting. Preserve the existing `HOME`, worktree,
+Nx cache receipt/helper, other native-cache guards and normal hooks; do not
+change shared directory permissions, reset caches or disable a plugin to make
+the loader succeed.
+
+Before loading SWC, qualify and budget potential native-output locations for
+its selected mode: cache/default/fallback roots, and the installed carrier's
+parent plus process-temporary roots when replacement is eligible. Preserve the
+SDK's ancestor trust, integrity, writable/executable filesystem and cleanup checks.
+Persistent modes on writable btrfs may stage beside and atomically replace the
+carrier, then load a verified temporary image from the default user cache or its
+fallback, independently of the custom override. See
+[SWC's replacement contract](https://github.com/swc-project/swc/blob/main/crates/swc_native_addon/README.md#transparent-filesystem-compression).
+
+From the normally installed worktree and qualified child environment, observe
+the actual native image in that same Node process (on Linux, `/proc/self/maps`)
+and correlate it with the trusted carrier and SDK's verified materialization.
+For cache materialization, verify the actual selected root; an absolute override
+can fall back. Unix unlinks temporary images after loading, so a mapped
+`(deleted)` path can be expected. A preexisting file or version output alone does
+not prove placement. Account for all carrier, staging, cache and temporary
+outputs across their filesystems, rather than silently charging only the override.
+
+An out-of-override image alone is not failure. Unknown/unobservable materialization,
+unqualified locations or fallback, integrity/security errors, or insufficient
+required accounting fail readiness. Retain only selected mode/path evidence,
+not a full process report or environment. Choose qualified locations without
+changing host controls or bypassing SDK checks. Readiness does not replace normal
+affected lint/typechecks, selected Console build/smoke or publication.
+
+Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
+`1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
+ancestor. A private `0700` cache beneath trusted sticky `/tmp` loaded the same
+installed module and completed the unchanged-source normal push, including the
+one-worker production Console build, seven traced external packages and HTTP
+401 smoke. Preserve the original failed hook receipt separately; neither a
+missing payload nor a need to reinstall was established.
 
 ### Qualify the workload shape a CPU bound covers
 

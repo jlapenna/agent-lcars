@@ -8,6 +8,7 @@ import {
   GITHUB_DISPATCH_DESCRIPTION_MAX,
   itemsContract,
   runBriefSchema,
+  runIntrospectionSchema,
   runsContract,
   schedulesContract,
   WORK_ID_PATTERN,
@@ -31,6 +32,7 @@ describe('itemsContract', () => {
       'anchorOwner',
       'cancel',
       'create',
+      'deliveryEvidence',
       'get',
       'lifecycleMetrics',
       'list',
@@ -222,6 +224,7 @@ describe('runsContract', () => {
         'activate',
         'placement',
         'brief',
+        'introspect',
         'heartbeat',
         'exit',
         'complete',
@@ -263,6 +266,7 @@ describe('runsContract', () => {
 
     const routes = [
       [runsContract.brief, { runId }],
+      [runsContract.introspect, { runId }],
       [runsContract.heartbeat, { runId }],
       [runsContract.exit, { runId, runner: 'autoscaler-1' }],
       [runsContract.complete, { runId, outcome: 'done' }],
@@ -291,6 +295,52 @@ describe('runsContract', () => {
         runId: `${runId}x`,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('run introspection output', () => {
+  const body = {
+    version: 1,
+    runId: 'octo/example#2572/r1',
+    repository: 'octo/example',
+    anchor: { repo: 'octo/example', issue: 2572 },
+    issueUrl: 'https://github.com/octo/example/issues/2572',
+    verifiedAt: '2026-10-14T03:00:00.000Z',
+    validUntil: '2026-10-14T03:05:00.000Z',
+    worker: null,
+  };
+
+  it('accepts GitHub and native identities with optional verified worker metadata', () => {
+    expect(runIntrospectionSchema.parse(body)).toEqual(body);
+    const native = {
+      ...body,
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      anchor: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      issueUrl: null,
+      worker: { poolId: 'pool', podUid: 'pod', generation: 1 },
+    };
+    expect(runIntrospectionSchema.parse(native)).toEqual(native);
+  });
+
+  it('rejects credential fields, unbounded identities and malformed deadlines', () => {
+    for (const invalid of [
+      { ...body, token: 'secret' },
+      { ...body, params: { context: 'private' } },
+      { ...body, repository: `owner/${'r'.repeat(140)}` },
+      { ...body, validUntil: 'unknown' },
+      { ...body, anchor: { workId: 'not-a-work-id' } },
+      { ...body, worker: { poolId: 'pool', podUid: 'pod', generation: 0 } },
+      {
+        ...body,
+        worker: {
+          poolId: 'pool',
+          podUid: 'pod',
+          generation: 1,
+          tokenHash: 'secret',
+        },
+      },
+    ])
+      expect(runIntrospectionSchema.safeParse(invalid).success).toBe(false);
   });
 });
 
@@ -460,6 +510,7 @@ describe('generateWorkOpenApi', () => {
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
         '/anchors/github/owner',
+        '/delivery/{runId}/evidence',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/items',
@@ -479,6 +530,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/capacity/metrics',
         '/runs/activate',
         '/runs/{runId}/brief',
+        '/runs/{runId}/introspect',
         '/runs/{runId}/claim-status',
         '/runs/{runId}/startup-placement',
         '/runs/{runId}/heartbeat',
@@ -496,6 +548,9 @@ describe('generateWorkOpenApi', () => {
     ]);
     expect(doc.components.securitySchemes).toHaveProperty('bearerAuth');
     expect(doc.components.securitySchemes).toHaveProperty('runToken');
+    expect(doc.paths['/delivery/{runId}/evidence']?.post).toMatchObject({
+      security: [{ bearerAuth: [] }],
+    });
   });
 
   it('retains every required runId path parameter beside worker headers', async () => {
@@ -510,7 +565,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(10);
+    expect(operations).toHaveLength(12);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -526,7 +581,7 @@ describe('generateWorkOpenApi', () => {
         (scheme: Record<string, unknown>) => 'runToken' in scheme,
       ),
     );
-    expect(workers).toHaveLength(6);
+    expect(workers).toHaveLength(7);
     for (const { operation } of workers)
       expect(operation.parameters).toEqual(
         expect.arrayContaining([
@@ -594,6 +649,7 @@ describe('generateWorkOpenApi', () => {
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
+      'POST /delivery/{runId}/evidence': ['200', '403', '409'],
       'POST /maintenance/tick': ['200'],
       'GET /metrics/lifecycle': ['200'],
       'GET /anchors/github/owner': ['200', '403'],
@@ -613,6 +669,7 @@ describe('generateWorkOpenApi', () => {
       'GET /runs/capacity/metrics': ['200', '401'],
       'POST /runs/activate': ['200', '401', '409'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
+      'GET /runs/{runId}/introspect': ['200', '401', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
       'POST /runs/{runId}/startup-placement': [
         '200',

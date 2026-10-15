@@ -42,7 +42,7 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:4ffadc0002b2581327e06101fc
 ARG GO_VERSION=1.26.5
 
 # One pin feeds the source image and both runtime-user build assertions.
-ARG TERRAFORM_VERSION=1.16.5
+ARG TERRAFORM_VERSION=1.16.6
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
 # `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
@@ -244,10 +244,10 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 #
 # The Docker client supports remote BuildKit and static Compose validation;
 # the worker has no local Docker daemon or mounted host socket.
-FROM ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv-runtime
+FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
-FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:c7926feace05d0f7e73542842bf3945924e955a1f782cf000ccbb8d18fa42d77 AS terraform-runtime
+FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 AS terraform-runtime
 
 FROM ${RUNNER_BASE}
 

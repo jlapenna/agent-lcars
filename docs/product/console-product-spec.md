@@ -220,8 +220,10 @@ product requirements.
 **Purpose:** the landing page, showing in one glance the decisions waiting,
 the work that has stopped, and the work in flight.
 
-- **FE-BR-1 [Shipped]** `DeckInboxSummary` shows "No decisions waiting" or
-  "Open N decisions" and links to `/inbox`.
+- **FE-BR-1 [Shipped]** The toolbar's primary action, "Review N decisions"
+  (or "No decisions waiting"), links to `/inbox` with the Bridge's scope,
+  agent and find. It follows the agent, window and find controls that narrow
+  the Bridge's runs, sessions and items as they do on Agents.
 - **FE-BR-2 [Shipped]** `ParkedWorkPanel`, titled "Stopped work (N)", lists
   native and GitHub-anchored tasks whose latest run is parked or failed.
   Native rows offer **Cancel** and **Redispatch**. GitHub-anchored rows link
@@ -234,7 +236,7 @@ the work that has stopped, and the work in flight.
     run that used 95% or more of its budget is classified as `timeout`.
   - Recent outcomes.
   - Active CLI sessions.
-  - A fleet chip showing registered/running GitHub Actions runners from
+  - A fleet chip showing online/running GitHub Actions runners from
     fresh ARC lane records separately from direct-executor readiness,
     draining state and concurrency limit. Missing capacity is unavailable,
     not zero; fresh scaled-to-zero capacity remains visible. The earliest
@@ -251,6 +253,19 @@ the work that has stopped, and the work in flight.
   kept out of the decision queue.
 - **FE-BR-5 [Shipped]** Selecting a row opens `BridgeDetail` in the right pane
   on desktop, and navigates to it on mobile.
+- **FE-BR-6 [Shipped]** The readout row (runners online, busy, queue depth,
+  agents running, spend today) carries the mockup's sparklines.
+  - Queue depth and agents running are sampled once a minute for 30 minutes
+    from the run records' state transitions, in the page's repository scope.
+    They show the unavailable mark when the bounded read does not reach back
+    30 minutes, when a run's repository is unknown, or when the live and
+    recent reads disagree.
+  - Runners online and busy come from each ARC lane's own per-minute window
+    (`runnerHistory` on the lane document), summed across lanes; the newest
+    bar is the current figure. A minute for which any lane has no sample in
+    the last 90 seconds has no bar.
+  - Spend per hour splits today's spend by the UTC hour of each session's
+    last activity, the same attribution as the figure, so the bars sum to it.
 
 ### 6.2 Decision Inbox (`/inbox`)
 
@@ -388,8 +403,52 @@ the work that has stopped, and the work in flight.
   source is each session's `tokenMinutes`, recorded by hook telemetry. It
   follows the page's repository and agent filters. It is unavailable when the
   session store fails or no active session is measured, partial when some
-  are not, and a known zero when no session is active. Work API p95 has no
-  console data source and renders as unavailable.
+  are not, and a known zero when no session is active.
+- **FE-SB-7 [Implemented]** The same panel shows Work API p95: the 95th
+  percentile response time (request sent to response headers) of the queue
+  executor's own Work API calls (claims, placements, fences, exits and
+  schedule ticks), counting a call that times out at the time it waited, over the last 30 minutes, with a per-minute sparkline. The
+  executor windows the samples itself and publishes them on its status
+  document. It is unavailable without that window, reads "no calls" for a
+  quiet one, and names the minutes covered.
+- **FE-SB-8 [Implemented]** The Runner fleet panel draws one row per cluster
+  host, as the mockup does: allocatable vCPU and GiB, runner and queue-job
+  pods as slots, and CPU and memory meters. The meters show metrics-server's
+  live usage (labeled "used") where the executor may list `metrics.k8s.io`
+  nodes and the host has a sample. Otherwise they show what the host's pods
+  request (the scheduler's accounting, labeled "requested"); a mix reads
+  "used or requested". A NotReady host says so, and a cordoned one reads
+  "draining". Without a fresh inventory the rows
+  fall back to ARC lanes with host load unavailable.
+- **FE-SB-9 [Implemented]** Shuttlebay's toolbar carries the mockup's window
+  control. Its readouts are live or cover the last 30 minutes, the most the
+  autoscaler and session windows keep, so 30m is the one choosable window.
+  1h, 24h and 7d are drawn disabled, with a visible note beside the control,
+  "Runner telemetry keeps the last 30 minutes", that also describes them to
+  assistive technology.
+- **FE-SB-10 [Implemented]** The Runners panel draws one row per runner pod,
+  as the mockup does: ARC ephemeral runners and queue executor Job pods, with
+  state, job, request (`6c/18G`) and age, headed `N/M online`. The executor
+  publishes the rows on its host inventory from the pods it already lists. An
+  ARC runner is busy or idle, with its GitHub Actions job linked, where the
+  executor may list `actions.github.com` EphemeralRunners; otherwise it reads
+  "online", and the panel says job assignments are unavailable. A direct
+  runner names the work item its run belongs to. A NotReady host's runners
+  are offline; a cordoned host's, a terminating pod, or a runner whose
+  container exited is draining. Filters narrow the rows and the count. The
+  meta checks, rather than asserts, that every request fits one ready host's
+  allocatable (already net of reserves), and counts the requests that do not.
+  An executor that predates the rows, or a fleet past 128 runners, keeps the
+  per-lane totals.
+- **FE-SB-11 [Implemented]** Fleet online reads `online/total` wherever it
+  appears, as the mockup's `11/12`: the rail, the Bridge's Runners online
+  readout and the Runner fleet panel on the Bridge and Shuttlebay. Both halves
+  count ARC runner pods from the same host inventory snapshot (online is any
+  pod not starting or offline); queue executor Job pods are agent work, not
+  GitHub Actions runners, and never count. The panel counts the lanes it
+  shows. Without runner rows the figure falls back to the lanes' registered
+  runners over their configured maximum, or the bare count when a lane has
+  no maximum; it never invents a denominator.
 
 ### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
 
@@ -402,7 +461,8 @@ GitHub issues, and manage recurring work.
   first), both with columns Pri, Item (repository · principal and title),
   Agent, State (with the latest run's execution phase), and Waiting or
   Updated, over up to 200 examined rows. State is one of `running`, `parked`,
-  `done`, `failed`, or `canceled`. It is derived and never stored.
+  `done`, `failed`, or `canceled`. It is derived and never stored. Phones
+  keep both panel heads (title, count, meta) over card rows.
 - **FE-WK-2 [Shipped] Create work** ("New work", the Work toolbar's primary
   action and the header command elsewhere; see FE-AUTH-4 for when it is
   shown):
@@ -451,13 +511,19 @@ GitHub issues, and manage recurring work.
     `work-schedules.spec.ts` covers create, enable, disable, edit, and
     confirmed delete in the browser.
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
-  (Work API inputs), agent, window (1h/24h/7d) and find (applied within the
-  examined page), and cursor-based next-page navigation in the URL. Each page examines up to
-  200 native tasks; an empty filtered page can still lead to older matches.
+  (Work API inputs), agent, window (1h/24h/7d) and find, and cursor-based
+  next-page navigation in the URL. The Work API filters each 200-task store
+  page after reading it, so with any filter active the page keeps reading
+  older store pages until it has 50 matches, reaches the oldest task, or has
+  read 5 pages. It then says how far it searched and offers "Search older
+  work" from where it stopped. Unfiltered, each page shows up to 200 tasks.
   Bridge stopped work pages over the authoritative all-anchor task feed with
   the same explicit 200-task bound. Inbox and Agents provide a repository
   selector and clear action. Bridge accepts repository scope from navigation
   and exposes a clear action when scoped, without a repository selector.
+  Every toolbar control applies on change: a select or window when chosen,
+  FIND when its value is committed (Enter, leaving the field, or clearing it).
+  The Apply button shows only until the page hydrates.
   Scope is preserved across navigation between these pages.
   Schedules support revision-checked editing/deletion in the UI and API,
   with UTC evaluation and labeled local display. `PUT` remains an idempotent
@@ -482,14 +548,15 @@ CLI sessions and dispatched runs.
 
 - **FE-SE-1 [Shipped]** Filters, in the workspace toolbar
   (`ConsoleToolbar`, as in `design/fleet-console.html#sessions`):
-  - `repo` (Repository select) and `days` (Window: 24h, 7d, 14d default, 30d,
-    90d; maximum 90).
+  - `repo` (Repository select) and `days` (Window: 1h (`days=1h`), 24h, 7d,
+    14d default, 30d, 90d; maximum 90).
   - `source`: `cli` or `issue-agent`; `issue` is carried through.
   - `agent` and `q` (Find: session, issue, PR, run, host or repository text)
     narrow the loaded window on the page; they are not archive query params.
   - `view`: `by-issue` (the default, grouped, with older groups behind a
     disclosure on phones) or `flat`.
-- **FE-SE-2 [Shipped]** One "Sessions N" panel. Its table shows Session
+- **FE-SE-2 [Shipped]** One "Sessions · <window> N" panel, its meta the
+  layout, active filters and retention ("retained 365 days · CLI 30"). Its table shows Session
   (source, run/host/session id, title, status line), Issue, Agent, Outcome
   (liveness mark and deliverable PRs), Duration, cost-weighted Tokens, and
   Started. Requested model/route, resolved backend, turns and cost are the
@@ -521,12 +588,15 @@ CLI sessions and dispatched runs.
   filters are shared with Sessions. When a provider reports no `costUSD`, cost
   is estimated from `MODEL_RATES`.
 - **FE-CO-3 [Shipped]** The page follows `design/fleet-console.html#costs`.
-  The toolbar carries Repository, Agent (an archive filter), Window (`days`)
-  and Source, with **Export ledger** (the by-issue and by-week ledger as CSV,
-  `/costs/export`, same filters) as the primary action. A readout row leads
+  The toolbar carries Repository, Agent (an archive filter), Window (`days`,
+  1h to 90d), Find (`q`: the same match as Sessions' Find, narrowing the
+  sessions every ledger figure sums) and Source, with **Export ledger** (the
+  by-issue and by-week ledger as CSV, `/costs/export`, same filters) as the
+  primary action. A readout row leads
   with spend today (UTC day), and "Spend by repository" lists each
   repository's today and seven-day known spend, sessions and spend per
-  session; seven-day figures are withheld when the window is under 7 days.
+  session; seven-day figures are withheld when the window is under 7 days,
+  and today's when it is under a day.
 - **FE-CO-2 [Partial]** Costs shows spend by pipeline, requested model, and
   resolved model; cost per merged deliverable with a per-deliverable list; and
   budget warning states when `AGENT_LCARS_COST_BUDGET_USD` is configured

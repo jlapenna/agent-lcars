@@ -84,7 +84,7 @@ test.describe('populated dashboard', () => {
       await page.clock.install();
       await page.goto(path);
       await expect(page.getByTestId('fleet-chip')).toHaveText(
-        '2 GitHub runners registered (1 running) · Direct executor ready (limit 3)',
+        '2 GitHub runners online (1 running) · Direct executor ready (limit 3)',
       );
       await page.clock.fastForward(195_000);
       await expect(page.getByTestId('fleet-chip')).toHaveText(
@@ -287,7 +287,7 @@ test.describe('populated dashboard', () => {
     // stalled past the threshold, which is what drives the queue alert.
     await expect(page.getByTestId('queue-health-alert')).toBeVisible();
     await expect(page.getByTestId('fleet-chip')).toHaveText(
-      '2 GitHub runners registered (1 running) · Direct executor ready (limit 3)',
+      '2 GitHub runners online (1 running) · Direct executor ready (limit 3)',
     );
 
     // #306: the fixture's duplicate live attempt on the same issue/pipeline
@@ -387,7 +387,7 @@ test.describe('populated dashboard', () => {
     // anomaly comes from durable Task/Run state, not a hosted-attempt title
     // marker or an Actions API lookup.
     const runs = card.getByTestId('runs-section');
-    await expect(runs).toContainText('Runs (2)');
+    await expect(runs).toContainText('Run timeline (2)');
     await expect(runs.getByText(/pending/).first()).toBeVisible();
     await expect(runs.getByText(/running/).first()).toBeVisible();
 

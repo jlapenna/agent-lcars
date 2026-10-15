@@ -1,5 +1,5 @@
 import type { Run, Task } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   agentRunFromOrchestrator,
@@ -164,13 +164,14 @@ describe('getAgentActivity', () => {
     ]);
     expect(activity.fleet).toEqual({
       online: 2,
+      registered: 2,
       busy: 1,
       capacity: 2,
       githubExpiresAt: '2026-08-28T12:03:00.000Z',
     });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
     expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
@@ -206,7 +207,7 @@ describe('getAgentActivity', () => {
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(24);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
     expect(store.readTask).toHaveBeenCalledTimes(1);
     expect(store).not.toHaveProperty('listTasks');
     expect(store).not.toHaveProperty('listRuns');
@@ -282,6 +283,62 @@ describe('fleetFromAutoscalerStatuses', () => {
       }),
     ).toMatchObject({ online: 0, busy: 0 });
   });
+  it('reads online/total from the inventory pods when it lists them', () => {
+    const lane = (name: string, updatedAt: string) => ({
+      schemaVersion: 3 as const,
+      kind: 'arc-lane' as const,
+      lane: name,
+      registrationUrl: 'https://github.com/octo/example',
+      assignedJobs: 1,
+      runningJobs: 1,
+      pendingJobs: 0,
+      idleRunners: 1,
+      registeredRunners: 2,
+      desiredRunners: 2,
+      minRunners: 0,
+      updatedAt,
+    });
+    const runner = (name: string, laneName: string, state: string) => ({
+      name,
+      kind: 'arc' as const,
+      lane: laneName,
+      state: state as 'busy',
+      since: T0,
+      requestedCpuMillis: 2000,
+      requestedMemoryBytes: 1,
+    });
+    const lanes = [lane('ci', T0), lane('e2e', '2026-08-28T10:01:00.000Z')];
+    const withoutRows = fleetFromAutoscalerStatuses({ warnings: [], lanes });
+    // No maximum on either lane and no rows: the bare count, no denominator.
+    expect(withoutRows).toMatchObject({ online: 4, busy: 2 });
+    expect(withoutRows.capacity).toBeUndefined();
+    expect(
+      fleetFromAutoscalerStatuses({
+        warnings: [],
+        lanes,
+        hostInventory: {
+          hosts: [],
+          runners: [
+            runner('a', 'ci', 'busy'),
+            runner('b', 'ci', 'idle'),
+            runner('c', 'e2e', 'busy'),
+            runner('d', 'e2e', 'offline'),
+            { ...runner('e', 'direct', 'busy'), kind: 'direct' as const },
+          ],
+          runnerJobsKnown: true,
+          updatedAt: '2026-08-28T09:59:00.000Z',
+        },
+      }),
+    ).toMatchObject({
+      online: 3,
+      capacity: 4,
+      registered: 4,
+      busy: 2,
+      // The older inventory snapshot expires the figures first.
+      githubExpiresAt: '2026-08-28T10:02:00.000Z',
+    });
+  });
+
   it('keeps absent ARC capacity unknown and direct executor health separate', () => {
     expect(fleetFromAutoscalerStatuses({ warnings: [] })).toEqual({});
     expect(
@@ -350,5 +407,131 @@ describe('duplicateLiveGroups', () => {
       pipeline: (item) => item.kind,
     });
     expect(groups.size).toBe(0);
+  });
+});
+
+describe('getAgentActivity run history', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const minutesAgo = (minutes: number) =>
+    new Date(NOW - minutes * 60_000).toISOString();
+
+  it('keeps every run live in the last 30 minutes under its repository', async () => {
+    const native = nativeTask();
+    const live = run({ updatedAt: minutesAgo(1) });
+    const endedInside = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: native.task,
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(10),
+    });
+    const endedBefore = run({
+      runId: 'octo/example#7/r1',
+      task: { repo: 'octo/example', issue: 7 },
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(45),
+    });
+    store.listLiveRuns.mockResolvedValue([live]);
+    store.listRecentRuns.mockResolvedValue([endedInside, endedBefore]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? { task: native, revision: 1 }
+        : { task: githubTask(task.issue), revision: 1 },
+    );
+
+    const activity = await getAgentActivity();
+
+    expect(
+      activity.runHistory?.map((timeline) => [
+        timeline.repo,
+        timeline.state,
+        timeline.updatedAt,
+      ]),
+    ).toEqual([
+      [{ owner: 'octo', name: 'example' }, 'running', minutesAgo(1)],
+      [{ owner: 'octo', name: 'example' }, 'finished', minutesAgo(10)],
+    ]);
+  });
+
+  it('withholds the history when the bounded read stops short of 30 minutes', async () => {
+    store.listRecentRuns.mockResolvedValue(
+      Array.from({ length: 100 }, (_, i) =>
+        run({
+          runId: `octo/example#${i + 1}/r1`,
+          task: { repo: 'octo/example', issue: i + 1 },
+          state: 'finished',
+          result: { ok: true },
+          updatedAt: minutesAgo(5),
+        }),
+      ),
+    );
+    store.readTask.mockImplementation(async (task: Task['task']) => ({
+      task: githubTask('issue' in task ? task.issue : 1),
+      revision: 1,
+    }));
+
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
+  });
+
+  it('withholds the history when a run in it has no readable repository', async () => {
+    store.listRecentRuns.mockResolvedValue([
+      run({
+        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+        task: nativeTask().task,
+        state: 'finished',
+        result: { ok: true },
+        updatedAt: minutesAgo(3),
+      }),
+    ]);
+    store.readTask.mockResolvedValue(undefined);
+
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
+  });
+
+  it('withholds the history when the live and recent reads disagree', async () => {
+    // The recent read still saw it running; the live read no longer did.
+    const between = run({ updatedAt: minutesAgo(2) });
+    store.listRecentRuns.mockResolvedValue([between]);
+    store.readTask.mockResolvedValue({ task: githubTask(), revision: 1 });
+
+    expect((await getAgentActivity()).runHistory).toBeUndefined();
+  });
+
+  it('withholds only the history when a history-only task is unreadable', async () => {
+    const recent = Array.from({ length: 24 }, (_, i) =>
+      run({
+        runId: `octo/example#${i + 1}/r1`,
+        task: { repo: 'octo/example', issue: i + 1 },
+        state: 'finished',
+        result: { ok: true },
+        updatedAt: minutesAgo(1),
+      }),
+    );
+    const historyOnly = run({
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      task: nativeTask().task,
+      state: 'finished',
+      result: { ok: true },
+      updatedAt: minutesAgo(4),
+    });
+    store.listRecentRuns.mockResolvedValue([...recent, historyOnly]);
+    store.readTask.mockImplementation(async (task: Task['task']) =>
+      'workId' in task
+        ? undefined
+        : { task: githubTask(task.issue), revision: 1 },
+    );
+
+    const activity = await getAgentActivity();
+
+    expect(activity.runHistory).toBeUndefined();
+    expect(activity.warnings).toEqual([]);
   });
 });

@@ -85,4 +85,12 @@ jq -e '(.truncated // []) | index("reply") == null' "$context_path" >/dev/null |
 
 echo "scenario native-reply-long: OK"
 
+unset DELIVERY_HANDOFF_VERSION
+run_prepare_dispatch legacy-delivery-capability
+jq -e 'has("deliveryHandoffVersion") | not' "$context_path" >/dev/null || fail "legacy brief falsely enabled ready handoff"
+export DELIVERY_HANDOFF_VERSION=1
+run_prepare_dispatch ready-delivery-capability
+jq -e '.deliveryHandoffVersion == 1' "$context_path" >/dev/null || fail "advertised ready handoff lost before provider execution"
+unset DELIVERY_HANDOFF_VERSION
+
 echo "prepare-dispatch.test.sh: all scenarios passed"

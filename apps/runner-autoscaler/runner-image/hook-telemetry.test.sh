@@ -9,8 +9,9 @@
 # A localhost provider answers every model request with "ok"; nothing leaves
 # the container. No writer is configured for Claude Code and Codex, so the
 # flusher leaves their events in the spool. OpenCode's plugin only reports
-# once LCARS_TELEMETRY_CREDENTIALS_FILE is set; the placeholder file it names
-# is not a credential, so its flushes fail and the events stay spooled too.
+# once LCARS_TELEMETRY_CREDENTIALS_FILE is set. Its parent gets a placeholder
+# path to activate the plugin; the test-owned lcars stub clears that transport
+# credential so the real hook client stays spool-only, with no Firestore writes.
 set -euo pipefail
 
 lib_dir="${HOOK_TEST_LIB_DIR:-/usr/local/lib/agent-lcars}"
@@ -41,17 +42,110 @@ fail() {
 tmp="$(mktemp -d)"
 server_pid=""
 cleanup() {
+  drained=true
+  # CLI exit and spooled events do not mean its detached hook clients exited.
+  # Drain only this test's unique TMPDIR before deleting files they still use.
+  if ! python3 - "$tmp" <<'PY_DRAIN'
+import errno, os, pathlib, select, sys, time
+
+scratch = os.fsencode(sys.argv[1])
+deadline = time.monotonic() + 30
+owned = {}
+empty_scans = 0
+
+def start_ticks(process):
+    return (process / 'stat').read_text().rsplit(') ', 1)[1].split()[19]
+
+try:
+    while True:
+        for process in pathlib.Path('/proc').iterdir():
+            if not process.name.isdigit():
+                continue
+            try:
+                if process.stat().st_uid != os.getuid():
+                    continue
+                before = start_ticks(process)
+                environment = (process / 'environ').read_bytes().split(b'\0')
+                if b'TMPDIR=' + scratch not in environment:
+                    # A fork/exec transition can briefly expose an empty env.
+                    # Its inherited private cwd still binds the startup owner.
+                    if any(environment):
+                        continue
+                    cwd = os.fsencode(os.readlink(process / 'cwd'))
+                    if cwd != scratch and not cwd.startswith(scratch + b'/'):
+                        continue
+                key = (int(process.name), before)
+                if key not in owned:
+                    descriptor = os.pidfd_open(key[0])
+                    if start_ticks(process) != before:
+                        os.close(descriptor)
+                        raise RuntimeError('owned process identity changed')
+                    owned[key] = descriptor
+            except OSError as error:
+                if error.errno in (errno.EACCES, errno.EPERM):
+                    # An unrelated protected process is not this test's owner.
+                    # A process inside our scratch that cannot be checked is.
+                    try:
+                        cwd = os.fsencode(os.readlink(process / 'cwd'))
+                    except OSError:
+                        continue
+                    if cwd == scratch or cwd.startswith(scratch + b'/'):
+                        raise RuntimeError('owned process cannot be verified')
+                    continue
+                if error.errno not in (errno.ENOENT, errno.ESRCH):
+                    raise
+        for key, descriptor in list(owned.items()):
+            if select.select([descriptor], [], [], 0)[0]:
+                os.close(owned.pop(key))
+        if not owned:
+            empty_scans += 1
+            if empty_scans >= 2:
+                break
+        else:
+            empty_scans = 0
+        if time.monotonic() >= deadline:
+            raise RuntimeError('owned hook processes did not drain')
+        time.sleep(0.05)
+except Exception as error:
+    # Only built-in categories and known numeric errnos are safe diagnostics.
+    categories = {
+        OSError: 'OSError', PermissionError: 'PermissionError',
+        FileNotFoundError: 'FileNotFoundError', ProcessLookupError: 'ProcessLookupError',
+        TimeoutError: 'TimeoutError', RuntimeError: 'RuntimeError',
+        IndexError: 'IndexError', ValueError: 'ValueError',
+        NotImplementedError: 'NotImplementedError',
+    }
+    category = categories.get(type(error), 'unknown')
+    code = error.errno if isinstance(error, OSError) else None
+    code = code if type(code) is int and code in errno.errorcode else 'none'
+    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code}', file=sys.stderr)
+    sys.exit(1)
+finally:
+    for descriptor in owned.values():
+        os.close(descriptor)
+PY_DRAIN
+  then
+    drained=false
+  fi
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
+  if [ "$drained" != true ]; then
+    return 1
+  fi
   rm -rf "$tmp"
+  # The wrapper owns a writable private bundle directory; direct image tests
+  # keep the default library read-only and need no acknowledgement file.
+  if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
+  fi
 }
 trap cleanup EXIT
 
 # The hook stubs run `lcars` from PATH; point it at this image's bundle.
 mkdir -p "$tmp/bin" "$tmp/work"
-printf '#!/bin/sh\nexec node %q "$@"\n' "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
+printf '#!/bin/sh\nunset LCARS_TELEMETRY_CREDENTIALS_FILE\nexec node %q "$@"\n' "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
 chmod +x "$tmp/bin/lcars"
 
 cat > "$tmp/provider.mjs" <<'JS'
@@ -63,7 +157,18 @@ const sse = (res, events) => {
   res.end();
 };
 const usage = { input_tokens: 1, output_tokens: 1 };
+let lifecycleRecords = 0;
+const record = (value) => {
+  if (lifecycleRecords++ < 64) fs.appendFileSync(process.argv[3], JSON.stringify(value) + '\n');
+};
 const server = http.createServer((req, res) => {
+  // Only the mock provider's lifecycle is diagnostic: never retain headers,
+  // model inputs, outputs, or arbitrary request URLs.
+  const route = ['/v1/messages', '/v1/responses', '/v1/chat/completions']
+    .find((path) => req.url.startsWith(path)) ?? 'unknown';
+  record({ route, stage: 'request' });
+  res.on('finish', () => record({ route, stage: 'response', status: res.statusCode, completed: true }));
+  res.on('close', () => record({ route, stage: 'closed', completed: res.writableFinished }));
   req.resume();
   req.on('end', () => {
     if (req.url.startsWith('/v1/messages')) {
@@ -100,7 +205,7 @@ const server = http.createServer((req, res) => {
 });
 server.listen(0, '127.0.0.1', () => fs.writeFileSync(process.argv[2], String(server.address().port)));
 JS
-node "$tmp/provider.mjs" "$tmp/port" &
+node "$tmp/provider.mjs" "$tmp/port" "$tmp/provider-lifecycle.ndjson" &
 server_pid=$!
 deadline=$((SECONDS + 30))
 while [ ! -s "$tmp/port" ]; do
@@ -125,6 +230,45 @@ spooled() {
   cat "$spool/events.pending.ndjson" "$spool/events.ndjson" 2>/dev/null || true
 }
 
+# Print only bounded metadata from files this smoke owns. CLI output includes
+# model text even against the mock provider, so raw output is never published.
+failure_diagnostics() {
+  local agent="$1"
+  node - "$tmp" "$agent" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const [root, agent] = process.argv.slice(2);
+const read = (name) => {
+  try {
+    const fd = fs.openSync(path.join(root, name), 'r');
+    try {
+      const bytes = Buffer.alloc(65536);
+      const size = fs.fstatSync(fd).size;
+      const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
+      return { size, text: bytes.subarray(0, length).toString('utf8') };
+    } finally { fs.closeSync(fd); }
+  } catch { return { size: 0, text: '' }; }
+};
+const output = read(`${agent === 'claude-code' ? 'claude' : agent}.out`);
+const cli = read(`${agent}.exit`);
+const provider = read('provider-lifecycle.ndjson');
+const counts = { error: 0, warning: 0, timeout: 0, connection: 0 };
+for (const line of output.text.split('\n')) {
+  for (const key of Object.keys(counts)) {
+    if (new RegExp(`\\b${key === 'warning' ? 'warn(?:ing)?' : key}\\b`, 'i').test(line)) counts[key]++;
+  }
+}
+console.error('hook smoke lifecycle: ' + JSON.stringify({
+  agent, cliExit: /^\d+\s*$/.test(cli.text) ? Number(cli.text) : null,
+  outputBytes: output.size, inspectedBytes: Math.min(output.size, 65536),
+  outputCategories: counts,
+  provider: provider.text.trim().split('\n').filter(Boolean).slice(-64).map((line) => {
+    try { return JSON.parse(line); } catch { return { malformed: true }; }
+  }),
+}));
+JS
+}
+
 # Background hooks finish after their CLI exits; wait for the expected kinds.
 await_kinds() {
   local home="$1" agent="$2"
@@ -137,6 +281,7 @@ await_kinds() {
     done
     [ -z "$missing" ] && return 0
     if [ "$SECONDS" -ge "$deadline" ]; then
+      failure_diagnostics "$agent"
       echo "$agent spool:" >&2
       spooled "$home" >&2
       cat "$home/.local/state/agent-lcars/hook.log" >&2 2>/dev/null || true
@@ -185,6 +330,7 @@ mv "$tmp/settings.json" "$claude_home/.claude/settings.json"
   cat "$tmp/claude.out" >&2
   fail "claude -p exited $status against the localhost provider"
 }
+printf '0\n' > "$tmp/claude-code.exit"
 [ -e "$tmp/claude-session-end-ran" ] ||
   fail "claude -p ran no SessionEnd hooks (an async hook still running at exit?)"
 await_kinds "$claude_home" claude-code start stop end
@@ -215,7 +361,8 @@ run_env "$codex_home" lcars integration install codex > /dev/null ||
   cat "$tmp/codex.out" >&2
   fail "codex exec exited $status against the localhost provider"
 }
-await_kinds "$codex_home" codex start end
+printf '0\n' > "$tmp/codex.exit"
+await_kinds "$codex_home" codex start stop end
 check_events "$codex_home" codex
 
 # --- OpenCode ---------------------------------------------------------------
@@ -250,5 +397,6 @@ printf '{}\n' > "$tmp/not-a-credential.json"
   cat "$tmp/opencode.out" >&2
   fail "opencode run exited $status against the localhost provider"
 }
+printf '0\n' > "$tmp/opencode.exit"
 await_kinds "$opencode_home" opencode start stop
 check_events "$opencode_home" opencode

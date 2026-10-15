@@ -26,9 +26,10 @@ export interface WorkViewFilters {
   q?: string;
 }
 
-/** The toolbar's within-page filters, as the mockup draws them: agent,
- * activity window and free-text find. Like the API filters they apply within
- * each examined page. Unknown values are ignored rather than rejected. */
+/** The toolbar's view filters, as the mockup draws them: agent, activity
+ * window and free-text find. Like the API filters they apply to each store
+ * page read; work-list-scan.ts reads on past pages they empty. Unknown
+ * values are ignored rather than rejected. */
 export function parseWorkViewFilters(params: WorkListParams): WorkViewFilters {
   const agent = params.agent?.trim() || undefined;
   const window = (WORK_WINDOWS as readonly string[]).includes(

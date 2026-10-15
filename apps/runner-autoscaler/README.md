@@ -77,6 +77,33 @@ the reset. A malformed histogram drops only `jobStartup`; the lane's capacity
 snapshot is still written. A listener that has reported no job
 start since it began exposes no histogram, so it publishes no window.
 
+The executor's own status document carries `workApiLatency` in the same
+window shape: the response times (request sent to response headers) of
+every Work API call this process makes, timed by a wrapper around Go's
+default HTTP transport, which all of its Work API clients use. A call that
+hits its deadline is recorded at the time it waited; other failures without
+a response are not. The console reads it for Work API
+p95.
+
+Once the Kubernetes preflight passes, the executor also publishes `hosts`
+(`schemaVersion: 1`, `kind: hosts`): every node with its allocatable CPU and
+memory, Ready and cordon state, the summed requests of pods still occupying
+it (counted like `nodesFit`) and its ARC runner and queue Job pod counts. It
+uses the executor's existing `nodes`/`pods` list grant. A failed read
+publishes nothing, so the document expires. Where metrics-server has sampled
+a node, the host also carries `usedCpuMillis` and `usedMemoryBytes`. That
+read needs `list` on `metrics.k8s.io` `nodes`, granted by Homelab's
+`lcars-queue-capacity-reader` role. Without the grant or metrics-server, or
+when the read fails, hosts publish requests alone: the console's Load column
+then reads "requested", and the executor logs the failure once, when it
+starts or changes. Load and usage changes ride the 60s heartbeat; a node
+joining, leaving, going NotReady or being cordoned writes at once.
+
+Each successful lane snapshot also carries `runnerHistory`: registered and
+running counts at most once a minute over the last 30 minutes, for the
+console's Runners online and Busy sparklines. A minute without a successful
+scrape has no sample.
+
 Each successful lane snapshot repeats `expectedLanes`: the sorted,
 comma-separated DNS-label names from the validated `arc_lanes` configuration.
 This bounded inventory uses the existing change/heartbeat write gate, with no

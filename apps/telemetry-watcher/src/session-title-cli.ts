@@ -3,6 +3,10 @@ import {
   executeHookCommand,
 } from './lib/hook/hook-command';
 import { executeIntegrationCommand } from './lib/hook/integration';
+import {
+  defaultInvestigateCommandDeps,
+  executeInvestigateCommand,
+} from './lib/investigate-command';
 import { executeSessionTitleAnnotationCommand } from './lib/session-title-annotation-command';
 import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 
@@ -11,6 +15,14 @@ import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 // and, for status --watch, polls), so it runs inside an IIFE instead.
 void (async () => {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'investigate') {
+    const result = await executeInvestigateCommand(
+      argv.slice(1),
+      defaultInvestigateCommandDeps(process.env),
+    );
+    process.exitCode = result.ok ? 0 : 1;
+    return;
+  }
   if (argv[0] === 'hook') {
     // Runtime hook entry (docs/hooks-telemetry-design.md). Exit 0 whatever
     // happened: a hook that fails or prints would degrade the agent, and

@@ -23,6 +23,9 @@ interface RawAnchorDetails {
       author?: { login?: string } | null;
     } | null)[];
   } | null;
+  createdAt?: string;
+  headRefName?: string;
+  headRepository?: { nameWithOwner?: string } | null;
   isDraft?: boolean;
   mergedAt?: string | null;
   mergeStateStatus?: string;
@@ -129,6 +132,7 @@ export async function enrichGithubAnchorProjections(
         ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { login } } } }
         ... on PullRequest {
           body isDraft mergedAt mergeStateStatus
+          createdAt headRefName headRepository { nameWithOwner }
           comments(last: 1) { nodes { body url createdAt updatedAt author { login } } }
           reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
           reviewThreads(first: 100) { totalCount nodes { id isResolved } }
@@ -216,6 +220,11 @@ export async function enrichGithubAnchorProjections(
             }),
         ...(projection.kind === 'pr'
           ? {
+              ...(detail.createdAt && { createdAt: detail.createdAt }),
+              ...(detail.headRefName && { headRefName: detail.headRefName }),
+              ...(detail.headRepository?.nameWithOwner && {
+                headRepository: detail.headRepository.nameWithOwner,
+              }),
               draft: detail.isDraft ?? projection.draft ?? false,
               ...(mergeFieldFailed || detail.mergedAt === undefined
                 ? {}

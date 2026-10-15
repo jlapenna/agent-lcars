@@ -1,4 +1,5 @@
 import {
+  type DeliveryBinding,
   isLive,
   isWorkAnchor,
   type OutboxEntry,
@@ -16,6 +17,7 @@ import {
   type Task,
   type TaskId,
   taskKey,
+  type WorkAnchor,
   type WorkPayload,
 } from './model';
 
@@ -165,6 +167,20 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
   if (input.task?.closedAt !== undefined) {
     return refused('task-closed');
   }
+  if (
+    input.task?.delivery !== undefined &&
+    input.task.delivery.state !== 'complete' &&
+    !(
+      input.params?.mode === 'reply' &&
+      input.params.replyPrincipal !== undefined
+    ) &&
+    !(
+      input.requestSource !== undefined &&
+      input.requestSource !== 'caller' &&
+      input.params?.deliveryPredecessor === input.task.delivery.runId
+    )
+  )
+    return refused('task-busy');
   const work = input.task?.work ?? input.work;
   if (work === undefined) return refused('missing-work');
   const baseTask: Task = {
@@ -179,6 +195,11 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     // a later operator request, or the pre-startup recovery path would be
     // unbounded for anyone willing to re-request.
     schedulerDisruptions: input.task?.schedulerDisruptions ?? 0,
+    // Delivery correction/recovery retains logical ownership until a fresh
+    // authenticated ready handoff replaces the binding.
+    ...(input.task?.delivery === undefined
+      ? {}
+      : { delivery: input.task.delivery }),
     // Written once: only the request that creates the task may set `work`.
     work,
     ...(input.task?.providerRouting === undefined
@@ -519,11 +540,37 @@ export function reportResult(input: {
     events: [...run.events, { at: now, to: 'finished', by: 'report' }],
     updatedAt: now,
   };
-  return settle(
+  const decision = settle(
     resetLossBudgets(releaseLock(task, run.runId, now)),
     settled,
     now,
   );
+  if (result.ok && run.delivery !== undefined) {
+    const deliveryOutbox: OutboxEntry[] =
+      isWorkAnchor(run.task) && run.delivery.state === 'complete'
+        ? finalDeliveryOutbox(decision.task, settled, run.delivery, now)
+        : [
+            {
+              entryId: `delivery/${run.runId}`,
+              kind: 'monitor-delivery',
+              // Completion drains outcomes; monitoring starts after the worker
+              // can finish credential cleanup and physical retirement.
+              nextAttemptAt: new Date(Date.parse(now) + 60_000).toISOString(),
+              task: run.task,
+              runId: run.runId,
+              state: 'pending',
+              attempts: 0,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ];
+    return {
+      ...decision,
+      task: { ...decision.task, delivery: run.delivery },
+      outbox: [...decision.outbox, ...deliveryOutbox],
+    };
+  }
+  return decision;
 }
 
 /** An operator stops a run and releases the lock; reports onward. */
@@ -532,11 +579,21 @@ export function cancelRun(input: {
   task: Task;
   run: Run;
   note?: string;
+  /** Server-only native item cancellation, distinct from canceling a run. */
+  nativeTask?: WorkAnchor;
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (!isLive(run.state)) return refused('run-not-live');
   if (run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
+  if (input.nativeTask !== undefined) {
+    if (!isWorkAnchor(task.task)) return refused('not-native');
+    if (
+      task.task.workId !== input.nativeTask.workId ||
+      task.activeRunId !== run.runId
+    )
+      return refused('task-busy');
+  }
   const settled: Run = {
     ...run,
     state: 'canceled',
@@ -551,8 +608,13 @@ export function cancelRun(input: {
     ],
     updatedAt: now,
   };
+  const released = resetLossBudgets(releaseLock(task, run.runId, now));
+  const closeDelivery =
+    input.nativeTask !== undefined &&
+    task.delivery !== undefined &&
+    task.delivery.state !== 'complete';
   return settle(
-    resetLossBudgets(releaseLock(task, run.runId, now)),
+    closeDelivery ? { ...released, closedAt: now } : released,
     settled,
     now,
   );
@@ -928,4 +990,27 @@ function outcomeEntry(run: Run, now: string): OutboxEntry {
     createdAt: now,
     updatedAt: now,
   };
+}
+
+/** The original execution outcome is immutable and already delivered. Native
+ * logical completion owns a distinct durable event through the same dispatcher. */
+export function finalDeliveryOutbox(
+  task: Task,
+  run: Run,
+  delivery: DeliveryBinding,
+  now: string,
+): OutboxEntry[] {
+  if (!isWorkAnchor(task.task) || delivery.state !== 'complete') return [];
+  return [
+    {
+      entryId: `delivery-outcome/${run.runId}`,
+      kind: 'report-outcome',
+      task: run.task,
+      runId: run.runId,
+      state: 'pending',
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
 }

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
+import { DecisionWaiting } from './decision-waiting';
 import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
@@ -54,9 +55,7 @@ export function NativeDecisionRow({
               {work.spec.target.repo} / {work.id}
             </span>
             <span>{work.spec.pipeline}</span>
-            <span>
-              waiting <RelativeTime iso={work.updatedAt} variant="compact" />
-            </span>
+            <DecisionWaiting since={work.updatedAt} />
           </div>
         </div>
         <span

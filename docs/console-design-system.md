@@ -160,7 +160,9 @@ Route-specific rules may not restate the frame's appearance. When three routes
 each carried their own copy of the warning band, they drifted.
 
 This covers more than the seven destinations. Sub-routes use the same frame as
-their parent (`/work/schedules` reuses `WorkWorkspace`), and the message
+their parent (`/work/schedules` reuses `WorkWorkspace`; the work item, task and
+session drill-downs use `DetailWorkspace`, with each section an `OpsPanel`),
+and the message
 states — loading, not found, the error boundary — use `ConsoleMessage`, which
 is the same frame with a panel spine. Anything rendering its content as bare
 text on the page ground is a bug, not a simpler case: it reads as an unstyled

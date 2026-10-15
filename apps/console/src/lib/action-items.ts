@@ -56,6 +56,11 @@ export interface ActionItem {
   ciRunning?: boolean;
   unresolvedReviewThreadCount?: number;
   silentErrorDiagnosis?: string;
+  /** When a run-derived reason (`run-failed`, `silent-error`) put an item
+   *  with no GitHub decision reason of its own into the queue: the decision
+   *  has waited since that run ended, not since the anchor last changed.
+   *  Absent when the anchor's own reasons queue it and `updatedAt` stands. */
+  decisionSince?: string;
   /** The later of the `<!-- agent-lcars:observe-until <ISO instant> -->`
    *  marker found in the body and in the last comment, if either carries
    *  one - see `parseObserveUntilMarker`. An agent or human leaves this

@@ -28,6 +28,7 @@ import {
   workListHref,
   type WorkListParams,
 } from './work-list-query';
+import { scanWorkPages } from './work-list-scan';
 import { WorkWorkspace } from './work-workspace';
 
 /**
@@ -37,6 +38,10 @@ import { WorkWorkspace } from './work-workspace';
  * `operator` middleware); a signed-in user without one gets a 401 tuple
  * back, rendered here as a plain "no grant" message instead of the table.
  */
+type ListResult = Awaited<ReturnType<typeof listItems>>;
+type ListError = NonNullable<ListResult[0]>;
+type ListedWork = NonNullable<ListResult[1]>['items'][number];
+
 async function WorkBody({ query }: { query: WorkListParams }) {
   let input;
   try {
@@ -50,8 +55,26 @@ async function WorkBody({ query }: { query: WorkListParams }) {
     );
   }
   const filters = parseWorkViewFilters(query);
-  const [err, data] = await listItems(input);
-  if (err) {
+  const now = Date.now();
+  const filtered = Boolean(
+    input.state ||
+    input.repo ||
+    input.principal ||
+    filters.agent ||
+    filters.window ||
+    filters.q,
+  );
+  const scan = await scanWorkPages<ListedWork, ListError>({
+    list: async (cursor) => {
+      const [error, page] = await listItems({ ...input, cursor });
+      return error ? { error } : { page };
+    },
+    cursor: input.cursor,
+    matches: (item) => matchesWorkView(item, filters, now),
+    scan: filtered,
+  });
+  if ('error' in scan) {
+    const err = scan.error;
     return (
       <div className="work-workspace__empty">
         <Text c="dimmed" size="sm">
@@ -62,25 +85,31 @@ async function WorkBody({ query }: { query: WorkListParams }) {
       </div>
     );
   }
+  const examined =
+    scan.pages === 1
+      ? `up to ${WORK_PAGE_LIMIT} native tasks`
+      : `${scan.pages} pages of up to ${WORK_PAGE_LIMIT} native tasks`;
   return (
     <>
       <div className="console-workspace__section work-workspace__list">
-        {(() => {
-          const now = Date.now();
-          const items = data.items.filter((item) =>
-            matchesWorkView(item, filters, now),
-          );
-          return items.length === 0 ? (
-            <Text c="dimmed" size="sm">
-              No matching work items on this page.
-            </Text>
-          ) : (
-            <WorkList items={items} />
-          );
-        })()}
-        <Text size="xs" c="dimmed">
-          Each page examines up to {WORK_PAGE_LIMIT} native tasks. Filters apply
-          within each page; an empty page may have older matches.
+        {scan.items.length === 0 ? (
+          <Text c="dimmed" size="sm">
+            {scan.nextCursor
+              ? 'No matching work items yet.'
+              : 'No matching work items.'}
+          </Text>
+        ) : (
+          <WorkList items={scan.items} />
+        )}
+        {scan.stoppedOn && (
+          <Text size="xs" c="red" role="alert">
+            Stopped reading older work: {scan.stoppedOn.message}
+          </Text>
+        )}
+        <Text size="xs" c="dimmed" data-testid="work-scan-extent">
+          {filtered
+            ? `Searched ${examined}${scan.nextCursor ? '; older work continues on the next page.' : ', through the oldest.'}`
+            : `Showing ${examined}.`}
         </Text>
         <Group mt="sm" wrap="wrap">
           {input.cursor && (
@@ -88,9 +117,9 @@ async function WorkBody({ query }: { query: WorkListParams }) {
               First work page
             </Anchor>
           )}
-          {data.nextCursor && (
-            <Anchor href={workListHref({ ...query, cursor: data.nextCursor })}>
-              Next work page →
+          {scan.nextCursor && (
+            <Anchor href={workListHref({ ...query, cursor: scan.nextCursor })}>
+              {filtered ? 'Search older work →' : 'Next work page →'}
             </Anchor>
           )}
         </Group>
