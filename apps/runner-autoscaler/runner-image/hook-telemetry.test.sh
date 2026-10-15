@@ -65,6 +65,11 @@ try:
                 if process.stat().st_uid != os.getuid():
                     continue
                 before = start_ticks(process)
+                key = (int(process.name), before)
+                # The pinned PIDFD already proves this exact process owner.
+                # Its natural exit is observed below without another environment read.
+                if key in owned:
+                    continue
                 environment = (process / 'environ').read_bytes().split(b'\0')
                 if b'TMPDIR=' + scratch not in environment:
                     # A fork/exec transition can briefly expose an empty env.
@@ -74,7 +79,6 @@ try:
                     cwd = os.fsencode(os.readlink(process / 'cwd'))
                     if cwd != scratch and not cwd.startswith(scratch + b'/'):
                         continue
-                key = (int(process.name), before)
                 if key not in owned:
                     descriptor = os.pidfd_open(key[0])
                     if start_ticks(process) != before:
@@ -118,7 +122,13 @@ except Exception as error:
     category = categories.get(type(error), 'unknown')
     code = error.errno if isinstance(error, OSError) else None
     code = code if type(code) is int and code in errno.errorcode else 'none'
-    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code}', file=sys.stderr)
+    reasons = {
+        'owned process identity changed': 'identity-changed',
+        'owned process cannot be verified': 'owner-unverifiable',
+        'owned hook processes did not drain': 'deadline',
+    }
+    reason = reasons.get(str(error), 'other') if type(error) is RuntimeError else 'other'
+    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code} reason={reason}', file=sys.stderr)
     sys.exit(1)
 finally:
     for descriptor in owned.values():
