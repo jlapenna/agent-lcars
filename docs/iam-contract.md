@@ -93,8 +93,8 @@ complete repository list; both temporary tokens were revoked.
 
 | App                      | Installation | Account              | Selection | Observed repositories |
 | ------------------------ | ------------ | -------------------- | --------- | --------------------- |
-| `agent-lcars`            | `150568943`  | jlapenna             | `all`     | 35                    |
-| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`     | 35                    |
+| `agent-lcars`            | `150568943`  | jlapenna             | `all`     | 36                    |
+| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`     | 36                    |
 | `agent-lcars-autoscaler` | `154210731`  | supersprinklesracing | `all`     | Existing baseline     |
 
 The jlapenna autoscaler installation was previously narrowed under #1381.
