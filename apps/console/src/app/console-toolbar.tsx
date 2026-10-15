@@ -30,7 +30,6 @@ export function ConsoleToolbar({
   // first screen. The toggle names how many folded filters narrow the view,
   // so a filtered page never looks unfiltered.
   const formRef = useRef<HTMLFormElement>(null);
-  const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   useEffect(() => {
     const form = formRef.current;
@@ -54,16 +53,8 @@ export function ConsoleToolbar({
         className="console-toolbar__filters"
         role="search"
         aria-label="Filters"
-        data-open={open ? '' : undefined}
       >
-        <button
-          type="button"
-          className="console-toolbar__field console-toolbar__toggle"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {active > 0 ? `Filters · ${active}` : 'Filters'}
-        </button>
+        <ToolbarFoldToggle active={active} />
         {Object.entries(preserve).map(([name, value]) =>
           value === undefined ? null : (
             <input key={name} type="hidden" name={name} value={value} />
@@ -79,13 +70,26 @@ export function ConsoleToolbar({
   );
 }
 
+/** The phone toggle for a toolbar's folded filters. A nameless checkbox rather
+ * than a scripted button, so the fold (global.css) is closed from first paint
+ * and opens before hydration or without JavaScript: a fold that waited for
+ * hydration drew every control and then collapsed the band under the reader.
+ * Without a name it never submits with the filters. */
+export function ToolbarFoldToggle({ active }: { active: number }) {
+  return (
+    <label className="console-toolbar__field console-toolbar__toggle">
+      <input type="checkbox" className="console-toolbar__fold" />
+      {active > 0 ? `Filters · ${active}` : 'Filters'}
+    </label>
+  );
+}
+
 function submitClosestForm(element: HTMLElement) {
   element.closest('form')?.requestSubmit();
 }
 
 /** Marks the control's form as hydrated: from then on changes submit
- * themselves, and the phone fold may hide the form's selects behind its
- * toggle. */
+ * themselves. */
 function useMarkFormHydrated<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   useEffect(() => {

@@ -1,4 +1,4 @@
-import type { Frame, Page, Request, Response } from '@playwright/test';
+import type { Frame, Locator, Page, Request, Response } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { resetCliSessions } from './seed';
@@ -198,13 +198,7 @@ async function revealInboxRepositoryFilter(page: Page) {
   // Phones fold the Inbox's selects behind its Filters toggle once hydrated.
   const toolbar = page.locator('.inbox-toolbar').filter({ visible: true });
   await expect(toolbar).toHaveAttribute('data-hydrated', '');
-  const toggle = toolbar.getByRole('button', { name: /^Filters/ });
-  if (
-    (await toggle.isVisible()) &&
-    (await toggle.getAttribute('aria-expanded')) === 'false'
-  ) {
-    await toggle.click();
-  }
+  await openFold(toolbar);
   await expect(
     page.getByRole('combobox', { name: 'Repository', exact: true }),
   ).toBeVisible();
@@ -350,17 +344,24 @@ async function openToolbarFilters(page: Page) {
   // The Inbox draws its own toolbar; revealInboxRepositoryFilter opens its
   // fold.
   if (new URL(page.url()).pathname === '/inbox') return;
-  // Wait for the toolbar to stream in and hydrate: the fold, and the toggle
-  // that opens it, start then. Checking for the form before it arrives would
-  // skip the toggle and leave the select folded.
+  // Wait for the toolbar to stream in and hydrate: its selects submit on
+  // change from then. Checking for the form before it arrives would skip the
+  // toggle and leave the select folded.
   const form = page.getByRole('search', { name: 'Filters' });
   await expect(form).toHaveAttribute('data-hydrated', '');
-  const toggle = form.getByRole('button', { name: /^Filters/ });
+  await openFold(form);
+}
+
+/** Opens a phone toolbar's fold. Its checkbox is drawn by its label, which
+ * takes the tap; desktops draw no toggle and fold nothing. */
+async function openFold(toolbar: Locator) {
+  const toggle = toolbar.locator('label.console-toolbar__toggle');
   if (
     (await toggle.isVisible()) &&
-    (await toggle.getAttribute('aria-expanded')) === 'false'
+    !(await toggle.getByRole('checkbox').isChecked())
   ) {
     await toggle.click();
+    await expect(toggle.getByRole('checkbox')).toBeChecked();
   }
 }
 

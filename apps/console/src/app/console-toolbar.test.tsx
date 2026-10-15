@@ -137,12 +137,17 @@ describe('ConsoleToolbar', () => {
       </ConsoleToolbar>,
     );
     const form = screen.getByRole('search', { name: 'Filters' });
-    const toggle = screen.getByRole('button', { name: 'Filters · 1' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(form).not.toHaveAttribute('data-open');
+    // A checkbox, so the CSS fold opens before hydration; nameless, so it
+    // never rides along with the filters.
+    const toggle = screen.getByRole('checkbox', { name: 'Filters · 1' });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).not.toHaveAttribute('name');
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(form).toHaveAttribute('data-open');
+    expect(toggle).toBeChecked();
+    expect([...new FormData(form as HTMLFormElement).keys()]).toEqual([
+      'agent',
+      'q',
+    ]);
   });
 
   it('offers Apply only to browsers without JavaScript', () => {
