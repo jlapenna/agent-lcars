@@ -254,7 +254,7 @@ process.exit(result.status??1);
         }
       }
       const drainDiagnostic = result.stderr.match(
-        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=(OSError|PermissionError|FileNotFoundError|ProcessLookupError|TimeoutError|RuntimeError|IndexError|ValueError|NotImplementedError|unknown) errno=(none|[0-9]{1,3})$/m,
+        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=(OSError|PermissionError|FileNotFoundError|ProcessLookupError|TimeoutError|RuntimeError|IndexError|ValueError|NotImplementedError|unknown) errno=(none|[0-9]{1,3}) reason=(identity-changed|owner-unverifiable|deadline|other)$/m,
       );
       const classification = result.stderr.includes(
         'hook smoke cleanup: process drainage refused; retaining private scratch',
@@ -272,6 +272,7 @@ process.exit(result.status??1);
         spawnError,
         classification,
         exception: drainDiagnostic?.[1] ?? null,
+        reason: drainDiagnostic?.[3] ?? null,
         errno:
           drainDiagnostic && drainDiagnostic[2] !== 'none'
             ? Number(drainDiagnostic[2])
@@ -286,6 +287,7 @@ process.exit(result.status??1);
             ? 'missing-hook-events'
             : 'none',
         exception: refuseDrain ? 'OSError' : null,
+        reason: refuseDrain ? 'other' : null,
         errno: refuseDrain ? constants.errno.EIO : null,
       });
       const drainage = existsSync(drainEvidence)
