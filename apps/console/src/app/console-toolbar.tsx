@@ -15,6 +15,7 @@ export function ConsoleToolbar({
   action,
   preserve = {},
   children,
+  folded = 0,
   primary,
 }: {
   /** The route path the form submits to. */
@@ -22,6 +23,9 @@ export function ConsoleToolbar({
   /** Other URL state to carry through a submission (e.g. `?sel=`). */
   preserve?: Record<string, string | undefined>;
   children?: ReactNode;
+  /** How many of the folded filters (the selects and More filters) narrow
+   * the view: the phone toggle's count before hydration. */
+  folded?: number;
   /** The route's one primary action, docked to the trailing edge. */
   primary?: ReactNode;
 }) {
@@ -29,8 +33,10 @@ export function ConsoleToolbar({
   // selects and More filters behind one toggle, so the band does not fill the
   // first screen. The toggle names how many folded filters narrow the view,
   // so a filtered page never looks unfiltered.
+  // The route's count names them in server markup, as the fold is closed from
+  // first paint; once mounted, the form's own fields are the count.
   const formRef = useRef<HTMLFormElement>(null);
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState(folded);
   useEffect(() => {
     const form = formRef.current;
     if (!form) return;

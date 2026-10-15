@@ -270,7 +270,11 @@ async function AgentsPageBody({
   return (
     <AgentsWorkspace
       toolbar={
-        <ConsoleToolbar action="/agents" preserve={{ sel: selectedKey }}>
+        <ConsoleToolbar
+          action="/agents"
+          preserve={{ sel: selectedKey }}
+          folded={[repoFilter, filters.agent].filter(Boolean).length}
+        >
           <ToolbarSelect
             name="repo"
             label="Repository"

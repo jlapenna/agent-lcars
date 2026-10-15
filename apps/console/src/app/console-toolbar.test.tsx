@@ -150,6 +150,15 @@ describe('ConsoleToolbar', () => {
     ]);
   });
 
+  it('names the folded filters in server markup, before hydration', () => {
+    const html = renderToStaticMarkup(
+      <ConsoleToolbar action="/work" folded={2}>
+        <ToolbarSearch name="q" label="Find" placeholder="title" />
+      </ConsoleToolbar>,
+    );
+    expect(html).toContain('Filters · 2</label>');
+  });
+
   it('offers Apply only to browsers without JavaScript', () => {
     // Server markup carries it inside <noscript>; a scripted page never lays
     // it out, so hydrating moves nothing.
