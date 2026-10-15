@@ -402,6 +402,11 @@ describe('authenticated ready delivery evidence', () => {
     },
     { pr: { body: '<!-- attempt-claim:old -->' }, unqualified: false },
     { pr: { auto_merge: null, body: null }, unqualified: false },
+    {
+      pr: { auto_merge: null, body: '<!-- attempt-claim:old -->' },
+      unqualified: false,
+    },
+    { pr: { auto_merge: null, number: 13 }, unqualified: false },
     { pr: { auto_merge: null, draft: true }, unqualified: false },
     { pr: { auto_merge: null, state: 'closed' }, unqualified: false },
   ])(
