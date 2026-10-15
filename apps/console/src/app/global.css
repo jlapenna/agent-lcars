@@ -688,6 +688,19 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   white-space: nowrap;
 }
 
+/* The date and figures arrive after mount (console-frame-readouts.tsx), so the
+   strip holds their lines from first paint: one for the date everyone gets,
+   and below 30em, where a maintainer's figures (about 470px) wrap, a second. */
+.lcars-readout-strip {
+  min-height: 1.4em;
+}
+
+@media (max-width: 29.99em) {
+  .lcars-readout-strip[data-figures] {
+    min-height: calc(2.8em + 2px);
+  }
+}
+
 /* The streamed placeholder's strip goes with its header once the real page
    arrives (see the header handoff rule at the top of this file). */
 body:has(.console-header:not([data-streaming-fallback]))

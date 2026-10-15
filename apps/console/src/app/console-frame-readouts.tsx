@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { useConsoleNavigationKeys } from './console-navigation-context';
 import {
   compactNumber,
   stardate,
@@ -118,11 +119,17 @@ const STRIP_LABELS: Record<string, string> = {
  * than clipping on the narrowest phones. */
 export function ReadoutStrip() {
   const { blocks, now } = useRailFigures();
+  // The date and figures arrive after mount, so the strip reserves the lines
+  // they fill (global.css) rather than pushing the page down twice. Only
+  // maintainers get the figures; the root layout gives them, and only them,
+  // the full navigation, so this is known from the first render.
+  const figures = useConsoleNavigationKeys() === undefined;
   return (
     <div
       className="lcars-readout-strip"
       aria-label="Fleet readouts, compact"
       role="group"
+      data-figures={figures ? '' : undefined}
     >
       {now ? (
         <span className="lcars-readout-strip__date">{stardate(now)}</span>

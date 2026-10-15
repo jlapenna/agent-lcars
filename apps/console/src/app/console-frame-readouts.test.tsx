@@ -11,6 +11,7 @@ import {
   ReadoutStrip,
 } from './console-frame-readouts';
 import { ConsoleNavRail } from './console-nav-rail';
+import { ConsoleNavigationProvider } from './console-navigation-context';
 import {
   publishLiveState,
   resetShellStateForTests,
@@ -177,6 +178,18 @@ describe('console frame readouts', () => {
     expect(screen.getByTestId('strip-readout-merged')).toHaveTextContent(
       '14 merged 24h',
     );
+  });
+
+  it('says from the first render whether the strip will carry figures', () => {
+    const { container, rerender } = render(<ReadoutStrip />);
+    // Outside a limited navigation (a maintainer): figures to reserve.
+    expect(container.firstElementChild).toHaveAttribute('data-figures', '');
+    rerender(
+      <ConsoleNavigationProvider navigationKeys={['work']}>
+        <ReadoutStrip />
+      </ConsoleNavigationProvider>,
+    );
+    expect(container.firstElementChild).not.toHaveAttribute('data-figures');
   });
 
   it('names the signed-in identity in the console menu', async () => {
