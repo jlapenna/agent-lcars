@@ -387,15 +387,27 @@ describe('authenticated ready delivery evidence', () => {
   it.each([
     { pr: { draft: true }, unqualified: false },
     { pr: { auto_merge: null }, unqualified: true },
-    { pr: { auto_merge: { merge_method: 'merge' } }, unqualified: true },
+    { pr: { auto_merge: { merge_method: 'merge' } }, unqualified: false },
+    { pr: { auto_merge: { merge_method: 'rebase' } }, unqualified: false },
+    { pr: { auto_merge: null }, rules: [], unqualified: false },
+    {
+      pr: { auto_merge: null },
+      rules: [{ type: 'pull_request' }],
+      unqualified: false,
+    },
+    {
+      pr: { auto_merge: null },
+      rules: new Response(null, { status: 502 }),
+      unqualified: false,
+    },
     { pr: { body: '<!-- attempt-claim:old -->' }, unqualified: false },
     { pr: { auto_merge: null, body: null }, unqualified: false },
     { pr: { auto_merge: null, draft: true }, unqualified: false },
     { pr: { auto_merge: null, state: 'closed' }, unqualified: false },
   ])(
     'refuses unready, unarmed or wrong-attempt evidence: $pr',
-    async ({ pr, unqualified }) => {
-      const error = await readyDeliveryBinding(fixture({ pr }), {
+    async ({ pr, rules, unqualified }) => {
+      const error = await readyDeliveryBinding(fixture({ pr, rules }), {
         run: RUN,
         task: TASK,
         repo: 'octo/example',
@@ -459,7 +471,7 @@ describe('authenticated ready delivery evidence', () => {
             ],
           },
         },
-        unqualified: true,
+        unqualified: false,
       },
       {
         review: {

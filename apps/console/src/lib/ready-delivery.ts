@@ -246,9 +246,9 @@ function hasIndependentReview(
 }
 
 /** Thrown only after an authoritative read proved the run's own exact
- * attempt-marked, non-draft PR in its target repository, which merely has not
- * qualified for durable delivery ownership yet (not armed, or merged without
- * independent exact-head review). Every other failure is a generic Error. */
+ * attempt-marked, non-draft, open PR in its target repository with an
+ * established protected target policy, which merely has no auto-merge arm
+ * yet. Every other failure is a generic Error. */
 export class UnqualifiedDeliveryError extends Error {
   override readonly name = 'UnqualifiedDeliveryError';
 }
@@ -280,27 +280,25 @@ export async function readyDeliveryBinding(
     !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Deliverable is not ready and armed');
-  // Proven by the authoritative read above: this run's exact marked, ready,
-  // open PR in its own target repository, merely not armed yet.
-  if (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
-    throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
+  if (
+    !pr.merged &&
+    pr.auto_merge !== null &&
+    pr.auto_merge.merge_method !== 'squash'
+  )
+    throw new Error('Deliverable is armed with a non-squash method');
   await protectedChecks(deps, repo, pr.base.ref);
+  // Proven by the authoritative read above and the established protected
+  // target policy: this run's exact marked, ready, open PR in its own target
+  // repository, merely not armed yet.
+  if (!pr.merged && pr.auto_merge === null)
+    throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
   // An open, armed artifact transfers waiting ownership; asynchronous review
   // belongs to the durable monitor, rather than the implementation executor.
   // Already merged artifacts still require review before accepting landing.
   if (pr.merged) {
     const review = await reviews(deps, repo, number, pr.head.sha);
-    if (!hasIndependentReview(review, pr.user.login)) {
-      // Only a complete, successful review read proving mere absence of an
-      // independent approval is the narrow unqualified state. Requested
-      // changes and unresolved threads are rejections; read failures above
-      // stay generic too.
-      if (!review.changesRequested && !review.unresolved)
-        throw new UnqualifiedDeliveryError(
-          'Deliverable requires exact-head independent review',
-        );
-      throw new Error('Deliverable has unresolved review feedback');
-    }
+    if (!hasIndependentReview(review, pr.user.login))
+      throw new Error('Deliverable requires exact-head independent review');
   }
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (
