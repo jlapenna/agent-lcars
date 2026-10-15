@@ -55,8 +55,16 @@ hook_telemetry_drain() {
   local flusher="${HOOK_TELEMETRY_FLUSHER:-/usr/local/lib/agent-lcars/lcars-hook-flush.cjs}"
   local state="${HOME}/.local/state/agent-lcars"
   mkdir -p "$state"
-  : > "$state/hook-fence"
   local waited=0
+  # Codex's SessionEnd hook hands its payload to a detached client, which
+  # deletes it from hook-inflight/ once spooled (integration.ts). Fencing
+  # before then would turn the session's end away.
+  while compgen -G "$state/hook-inflight/*" > /dev/null && [ "$waited" -lt 30 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  : > "$state/hook-fence"
+  waited=0
   # In-flight producers hold hook-sessions/<id>.lock while they append.
   while compgen -G "$state/hook-sessions/*.lock" > /dev/null && [ "$waited" -lt 30 ]; do
     sleep 1

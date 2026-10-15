@@ -146,11 +146,44 @@ export function stubScript(runtime: SettingsRuntime): string {
     'else',
     '  exit 0',
     'fi',
+    ...(runtime === 'codex' ? CODEX_SESSION_END_HANDOFF : []),
     '"$lcars_bin" hook "$runtime" <"$input" >/dev/null 2>&1 || true',
     'exit 0',
     '',
   ].join('\n');
 }
+
+/** Directory, under the hook state root, holding SessionEnd payloads a
+ *  detached client has not finished with. The runner's drain waits for it to
+ *  empty before fencing (runtime/hook-telemetry-bootstrap.sh). */
+export const HOOK_INFLIGHT_DIRECTORY = 'hook-inflight';
+
+/**
+ * Codex kills a SessionEnd hook after 3 s whatever its `timeout`. Starting
+ * node and reducing the rollout can take longer on a slow host (the arm64
+ * image smoke under QEMU took ~3 s per hook and lost the end, #2827), so the
+ * stub returns at once and a detached client records the end. The payload
+ * waits in `hook-inflight/` until that client is done with it, so the
+ * runner's drain cannot fence it away. A match only changes where the
+ * payload is handled; `lcars hook` still parses it properly. Escaped quotes
+ * inside model text cannot match the unescaped key pattern.
+ */
+const CODEX_SESSION_END_HANDOFF: readonly string[] = [
+  `if grep -q '"hook_event_name"[[:space:]]*:[[:space:]]*"SessionEnd"' "$input" 2>/dev/null &&`,
+  `  inflight="\${HOME:-}/${path.posix.join('.local', 'state', 'agent-lcars', HOOK_INFLIGHT_DIRECTORY)}" &&`,
+  '  [ -n "${HOME:-}" ] && (umask 077 && mkdir -p "$inflight") 2>/dev/null &&',
+  '  pending="$(mktemp "$inflight/end.XXXXXX" 2>/dev/null)"; then',
+  '  if cat "$input" >"$pending" 2>/dev/null; then',
+  '    detach=""',
+  '    command -v setsid >/dev/null 2>&1 && detach=setsid',
+  '    # Own session: Codex reaps its hook process group on timeout and exit.',
+  '    $detach sh -c \'"$1" hook "$2" <"$3" >/dev/null 2>&1; rm -f "$3"\' lcars-hook-end \\',
+  '      "$lcars_bin" "$runtime" "$pending" </dev/null >/dev/null 2>&1 &',
+  '    exit 0',
+  '  fi',
+  '  rm -f "$pending"',
+  'fi',
+];
 
 export interface IntegrationDependencies {
   homeDirectory?: string;

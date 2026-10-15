@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   executeIntegrationCommand,
+  HOOK_INFLIGHT_DIRECTORY,
   installIntegration,
   INTEGRATION_VERSION,
   integrationStatus,
@@ -438,6 +440,59 @@ describe('lcars integration', () => {
       stubCurrent: false,
       installed: false,
     });
+  });
+
+  // Codex kills a SessionEnd hook at 3 s whatever its timeout (#2827). The
+  // stub must return before the client finishes, and the payload must stay
+  // in hook-inflight/ until the client is done, for the runner drain.
+  it('hands a Codex SessionEnd to a detached client and runs other events in place', async () => {
+    const home = tempHome();
+    expect(installIntegration('codex', home, {}).installed).toBe(true);
+    const bin = path.join(home, 'bin');
+    fs.mkdirSync(bin);
+    const release = path.join(home, 'release');
+    const received = path.join(home, 'received');
+    // The fake client blocks until the test releases it, so "returned before
+    // the client finished" is ordering, not timing.
+    fs.writeFileSync(
+      path.join(bin, 'lcars'),
+      `#!/bin/sh\nwhile [ ! -e "${release}" ]; do sleep 0.05; done\ncat >>"${received}"\n`,
+      { mode: 0o755 },
+    );
+    const inflight = path.join(
+      home,
+      '.local/state/agent-lcars',
+      HOOK_INFLIGHT_DIRECTORY,
+    );
+    const runStub = (payload: object) =>
+      spawnSync('sh', [path.join(home, '.codex/lcars-hook.sh'), 'codex'], {
+        input: JSON.stringify(payload),
+        env: { PATH: `${bin}:${process.env['PATH']}`, HOME: home },
+        timeout: 10_000,
+      });
+
+    const end = { hook_event_name: 'SessionEnd', session_id: 's1' };
+    expect(runStub(end).status).toBe(0);
+    expect(fs.existsSync(received)).toBe(false);
+    expect(fs.readdirSync(inflight)).toHaveLength(1);
+
+    fs.writeFileSync(release, '');
+    await vi.waitFor(
+      () => {
+        expect(fs.readdirSync(inflight)).toEqual([]);
+      },
+      { timeout: 10_000, interval: 50 },
+    );
+    expect(JSON.parse(fs.readFileSync(received, 'utf8'))).toEqual(end);
+
+    // Model text quoting the key is escaped JSON and stays synchronous.
+    fs.rmSync(received);
+    const stop = {
+      hook_event_name: 'Stop',
+      last_assistant_message: '"hook_event_name": "SessionEnd"',
+    };
+    expect(runStub(stop).status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(received, 'utf8'))).toEqual(stop);
   });
 
   it('exposes install/status/uninstall through the CLI with exit codes', () => {
