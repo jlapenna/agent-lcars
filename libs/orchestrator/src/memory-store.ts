@@ -236,8 +236,6 @@ export class MemoryStore implements OrchestratorStore {
           (run) => taskKey(run.task) === key && run.queue?.state === 'claimed',
         )
       : undefined;
-    if ((claimedCandidates?.length ?? 0) > PROVIDER_ROUTING_CLAIM_READ_LIMIT)
-      throw new Error('Provider routing claim inventory exceeds read bound');
     const outcome = input.decide({
       task,
       activeRun,
@@ -257,13 +255,16 @@ export class MemoryStore implements OrchestratorStore {
                   receipt.taskKey === undefined || receipt.taskKey === key,
               )
               .map((receipt) => receipt.runId),
-            retainedClaims: structuredClone(
-              (claimedCandidates ?? []).filter(
-                (run) =>
-                  taskKey(run.task) === key &&
-                  retainsPhysicalClaim(run, this.#capacity),
-              ),
-            ),
+            // Incomplete inventory is durable refusal evidence, not a retryable error.
+            retainedClaims:
+              claimedCandidates !== undefined &&
+              claimedCandidates.length <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
+                ? structuredClone(
+                    claimedCandidates.filter((run) =>
+                      retainsPhysicalClaim(run, this.#capacity),
+                    ),
+                  )
+                : undefined,
           }
         : {}),
     });

@@ -433,11 +433,6 @@ export class FirestoreStore implements OrchestratorStore {
               tx.get(this.#capacity.doc('active')),
             ])
           : undefined;
-      if (
-        routing !== undefined &&
-        routing[1].size > PROVIDER_ROUTING_CLAIM_READ_LIMIT
-      )
-        throw new Error('Provider routing claim inventory exceeds read bound');
       const routingCapacity = routing?.[2].exists
         ? capacityStateSchema.parse(routing[2].data())
         : emptyCapacityState();
@@ -458,9 +453,15 @@ export class FirestoreStore implements OrchestratorStore {
                     receipt.taskKey === taskKey(input.taskId),
                 )
                 .map((receipt) => receipt.runId),
-              retainedClaims: routing[1].docs
-                .map((doc) => runSchema.parse(doc.data()))
-                .filter((run) => retainsPhysicalClaim(run, routingCapacity)),
+              // Persist a refusal for incomplete inventory; never admit a partial read.
+              retainedClaims:
+                routing[1].size <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
+                  ? routing[1].docs
+                      .map((doc) => runSchema.parse(doc.data()))
+                      .filter((run) =>
+                        retainsPhysicalClaim(run, routingCapacity),
+                      )
+                  : undefined,
             }),
         task,
         activeRun,

@@ -778,6 +778,77 @@ export function runOrchestratorStoreContract(
         },
       );
 
+      it('persists a bounded label inventory refusal without minting a successor', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const first = await started(orchestrator);
+        await store.enqueueRun({ runId: first.run.runId, now: clock.now() });
+        await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'executor',
+          tokenHash: 'a'.repeat(64),
+        });
+        await orchestrator.report(first.run.runId, { ok: true });
+        const legacy = await store.readRun(first.run.runId);
+        if (legacy === undefined) throw new Error('missing legacy Run');
+        // Four bounded storage transactions model a genuine long-lived Task's
+        // terminal claimed history, without dispatching or retiring any worker.
+        for (let start = 2; start <= 1001; start += 250) {
+          const task = await store.readTask(TASK);
+          if (task === undefined) throw new Error('missing Task');
+          const additionalRuns = Array.from(
+            { length: Math.min(250, 1002 - start) },
+            (_, index) => ({
+              ...legacy,
+              runId: `${taskKey(TASK)}/r${start + index}`,
+              requestId: `legacy-${start + index}`,
+            }),
+          );
+          await store.apply({
+            expectedRevision: task.revision,
+            decision: {
+              task: {
+                ...task.task,
+                runCount: start + additionalRuns.length - 1,
+              },
+              additionalRuns,
+              outbox: [],
+            },
+          });
+        }
+        clock.advanceMinutes(1);
+        const request = {
+          taskId: TASK,
+          requestId: 'inventory-overflow-label',
+          pipeline: 'opencode',
+          pipelineForStoredTask: () => 'claude',
+          labelProviderRequest: {
+            requestedAt: clock.now(),
+            actor: 'maintainer',
+            allowProviderChange: true,
+          },
+        };
+        const refusal = await orchestrator.request(request);
+        expect(refusal).toMatchObject({
+          task: {
+            providerRouting: {
+              status: 'refused',
+              reason: 'physical-ownership-unavailable',
+            },
+          },
+          outbox: [],
+        });
+        expect(
+          (await store.readTask(TASK))?.task.providerRouting,
+        ).toMatchObject({
+          status: 'refused',
+          reason: 'physical-ownership-unavailable',
+        });
+        expect(await orchestrator.request(request)).toEqual(refusal);
+        expect(await store.listRuns(TASK)).toHaveLength(1001);
+        expect(await store.readRun(legacy.runId)).toEqual(legacy);
+      });
+
       it('serializes a label handoff against claim and admits a later settled legacy successor', async () => {
         const { store, orchestrator, clock } = await fixture();
         const { run } = await started(orchestrator);
