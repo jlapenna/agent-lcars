@@ -142,6 +142,9 @@ async function SessionsBody({
       toolbar={
         <ConsoleToolbar
           action="/sessions"
+          folded={
+            [query.repo, query.agent, query.source].filter(Boolean).length
+          }
           preserve={{
             view: view === 'flat' ? 'flat' : undefined,
             issue:

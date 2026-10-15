@@ -75,6 +75,7 @@ function CostsToolbar({
   return (
     <ConsoleToolbar
       action="/costs"
+      folded={[query.repo, query.agent, query.source].filter(Boolean).length}
       preserve={{
         issue:
           query.issueNumber === undefined

@@ -81,8 +81,8 @@ async function configure(
 
 async function selectItem(page: Page, number: number) {
   await page.goto(`/inbox?repo=${REPO_QUERY}&sort=newest`);
-  // Hydration folds the phone toolbar and moves the rows. Wait for that
-  // existing readiness boundary before Playwright computes the click point.
+  // Wait for the Inbox band to hydrate (its rows and controls act through
+  // React) before Playwright computes the click point.
   await expect(page.locator('.inbox-toolbar')).toHaveAttribute(
     'data-hydrated',
     '',

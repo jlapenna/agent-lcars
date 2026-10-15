@@ -15,6 +15,7 @@ export function ConsoleToolbar({
   action,
   preserve = {},
   children,
+  folded = 0,
   primary,
 }: {
   /** The route path the form submits to. */
@@ -22,6 +23,9 @@ export function ConsoleToolbar({
   /** Other URL state to carry through a submission (e.g. `?sel=`). */
   preserve?: Record<string, string | undefined>;
   children?: ReactNode;
+  /** How many of the folded filters (the selects and More filters) narrow
+   * the view: the phone toggle's count before hydration. */
+  folded?: number;
   /** The route's one primary action, docked to the trailing edge. */
   primary?: ReactNode;
 }) {
@@ -29,9 +33,10 @@ export function ConsoleToolbar({
   // selects and More filters behind one toggle, so the band does not fill the
   // first screen. The toggle names how many folded filters narrow the view,
   // so a filtered page never looks unfiltered.
+  // The route's count names them in server markup, as the fold is closed from
+  // first paint; once mounted, the form's own fields are the count.
   const formRef = useRef<HTMLFormElement>(null);
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState(folded);
   useEffect(() => {
     const form = formRef.current;
     if (!form) return;
@@ -54,16 +59,8 @@ export function ConsoleToolbar({
         className="console-toolbar__filters"
         role="search"
         aria-label="Filters"
-        data-open={open ? '' : undefined}
       >
-        <button
-          type="button"
-          className="console-toolbar__field console-toolbar__toggle"
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {active > 0 ? `Filters · ${active}` : 'Filters'}
-        </button>
+        <ToolbarFoldToggle active={active} />
         {Object.entries(preserve).map(([name, value]) =>
           value === undefined ? null : (
             <input key={name} type="hidden" name={name} value={value} />
@@ -79,13 +76,26 @@ export function ConsoleToolbar({
   );
 }
 
+/** The phone toggle for a toolbar's folded filters. A nameless checkbox rather
+ * than a scripted button, so the fold (global.css) is closed from first paint
+ * and opens before hydration or without JavaScript: a fold that waited for
+ * hydration drew every control and then collapsed the band under the reader.
+ * Without a name it never submits with the filters. */
+export function ToolbarFoldToggle({ active }: { active: number }) {
+  return (
+    <label className="console-toolbar__field console-toolbar__toggle">
+      <input type="checkbox" className="console-toolbar__fold" />
+      {active > 0 ? `Filters · ${active}` : 'Filters'}
+    </label>
+  );
+}
+
 function submitClosestForm(element: HTMLElement) {
   element.closest('form')?.requestSubmit();
 }
 
 /** Marks the control's form as hydrated: from then on changes submit
- * themselves, and the phone fold may hide the form's selects behind its
- * toggle. */
+ * themselves. */
 function useMarkFormHydrated<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   useEffect(() => {
@@ -120,6 +130,13 @@ export function ToolbarSelect({
   options: readonly { value: string; label: string }[];
 }) {
   const ref = useMarkFormHydrated<HTMLSelectElement>();
+  // A hand-edited URL can carry a value the list does not offer and still
+  // narrow the view; show it rather than fall back to the first option, so
+  // the select (and the fold's count) never reads as unfiltered.
+  const shown =
+    value && !options.some((option) => option.value === value)
+      ? [...options, { value, label: value }]
+      : options;
   return (
     <select
       ref={ref}
@@ -129,7 +146,7 @@ export function ToolbarSelect({
       defaultValue={value ?? ''}
       onChange={(event) => submitClosestForm(event.currentTarget)}
     >
-      {options.map((option) => (
+      {shown.map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
         </option>

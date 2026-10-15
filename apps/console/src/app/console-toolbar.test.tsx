@@ -137,12 +137,43 @@ describe('ConsoleToolbar', () => {
       </ConsoleToolbar>,
     );
     const form = screen.getByRole('search', { name: 'Filters' });
-    const toggle = screen.getByRole('button', { name: 'Filters · 1' });
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(form).not.toHaveAttribute('data-open');
+    // A checkbox, so the CSS fold opens before hydration; nameless, so it
+    // never rides along with the filters.
+    const toggle = screen.getByRole('checkbox', { name: 'Filters · 1' });
+    expect(toggle).not.toBeChecked();
+    expect(toggle).not.toHaveAttribute('name');
     fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(form).toHaveAttribute('data-open');
+    expect(toggle).toBeChecked();
+    expect([...new FormData(form as HTMLFormElement).keys()]).toEqual([
+      'agent',
+      'q',
+    ]);
+  });
+
+  it('shows a URL value its options lack instead of reading as All', () => {
+    render(
+      <ToolbarSelect
+        name="repo"
+        label="Repository"
+        value="owner/unwatched"
+        options={[
+          { value: '', label: 'All repositories (1)' },
+          { value: 'owner/repo', label: 'owner/repo' },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toHaveValue(
+      'owner/unwatched',
+    );
+  });
+
+  it('names the folded filters in server markup, before hydration', () => {
+    const html = renderToStaticMarkup(
+      <ConsoleToolbar action="/work" folded={2}>
+        <ToolbarSearch name="q" label="Find" placeholder="title" />
+      </ConsoleToolbar>,
+    );
+    expect(html).toContain('Filters · 2</label>');
   });
 
   it('offers Apply only to browsers without JavaScript', () => {

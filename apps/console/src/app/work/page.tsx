@@ -139,6 +139,11 @@ function WorkViewContent({
         canCreateWork ? (
           <ConsoleToolbar
             action="/work"
+            folded={
+              [query.repo, query.agent, query.state, query.principal].filter(
+                Boolean,
+              ).length
+            }
             primary={
               <QuickTaskButton watchedRepos={watchedRepos} size="sm" primary />
             }

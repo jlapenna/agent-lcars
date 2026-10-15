@@ -403,6 +403,7 @@ async function IndexBody({
         <ConsoleToolbar
           action="/"
           preserve={{ repo: repoFilterKey, sel: selectedKey }}
+          folded={view.agent ? 1 : 0}
           primary={
             <DeckInboxSummary
               compact

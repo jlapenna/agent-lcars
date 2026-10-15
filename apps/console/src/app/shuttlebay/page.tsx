@@ -42,7 +42,10 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
       toolbar={
         // No primary: the mockup gives Shuttlebay none, and the header's
         // live status already says the page updates itself.
-        <ConsoleToolbar action="/shuttlebay">
+        <ConsoleToolbar
+          action="/shuttlebay"
+          folded={[filters.repo, filters.agent].filter(Boolean).length}
+        >
           <ToolbarSelect
             name="repo"
             label="Repository"
