@@ -245,12 +245,84 @@ function hasIndependentReview(
   );
 }
 
+/** Proves the exact merge commit passed the active protected-branch rule
+ * suite, including required status checks and the pull-request rule. */
+async function verifyProtectedMerge(
+  deps: DeliveryGithubDeps,
+  binding: DeliveryBinding,
+  mergeCommit: string,
+): Promise<void> {
+  const suiteSchema = z.object({
+    id: z.number(),
+    after_sha: sha,
+    result: z.string(),
+    ref: z.string(),
+  });
+  let suite: z.infer<typeof suiteSchema> | undefined;
+  // The longest documented window is one month. Missing older evidence and
+  // more than ten full pages retain ownership; they never qualify landing.
+  for (let page = 1; page <= 10; page++) {
+    const query = new URLSearchParams({
+      ref: `refs/heads/${binding.baseRef}`,
+      rule_suite_result: 'pass',
+      evaluate_status: 'active',
+      time_period: 'month',
+      per_page: '100',
+      page: String(page),
+    });
+    const suites = z
+      .array(suiteSchema)
+      .max(100)
+      .parse(await github(deps, binding.repo, `rulesets/rule-suites?${query}`));
+    suite = suites.find(
+      (candidate) =>
+        candidate.after_sha === mergeCommit &&
+        candidate.ref === `refs/heads/${binding.baseRef}` &&
+        candidate.result === 'pass',
+    );
+    if (suite !== undefined) break;
+    if (suites.length < 100)
+      throw new Error('Protected merge evidence unavailable');
+  }
+  if (suite === undefined)
+    throw new Error('Protected merge evidence exceeds bounded read');
+  const details = z
+    .object({
+      result: z.literal('pass'),
+      after_sha: sha,
+      rule_evaluations: z
+        .array(z.object({ rule_type: z.string(), result: z.string() }))
+        .min(1),
+    })
+    .parse(
+      await github(deps, binding.repo, `rulesets/rule-suites/${suite.id}`),
+    );
+  if (
+    details.after_sha !== mergeCommit ||
+    details.rule_evaluations.some((rule) => rule.result !== 'pass') ||
+    !details.rule_evaluations.some(
+      (rule) => rule.rule_type === 'required_status_checks',
+    ) ||
+    !details.rule_evaluations.some((rule) => rule.rule_type === 'pull_request')
+  )
+    throw new Error('Protected checks did not pass');
+}
+
 /** Thrown only after an authoritative read proved the run's own exact
  * attempt-marked, non-draft, open PR in its target repository with an
  * established protected target policy, which merely has no auto-merge arm
  * yet. Every other failure is a generic Error. */
 export class UnqualifiedDeliveryError extends Error {
-  override readonly name = 'UnqualifiedDeliveryError';
+  override readonly name: string = 'UnqualifiedDeliveryError';
+}
+
+/** Thrown only after an authoritative read proved the run's own exact
+ * attempt-marked PR already merged in its target repository, with no review
+ * feedback outstanding, and the exact merge commit passed the protected
+ * rule suite (required checks and pull-request rule) without an independent
+ * approval. Protection, not review, gated that merge. */
+export class ProtectedMergeWithoutReviewError extends UnqualifiedDeliveryError {
+  override readonly name = 'ProtectedMergeWithoutReviewError';
 }
 
 /** A successful PR artifact is not a completion verdict. This exact server
@@ -295,9 +367,13 @@ export async function readyDeliveryBinding(
   // An open, armed artifact transfers waiting ownership; asynchronous review
   // belongs to the durable monitor, rather than the implementation executor.
   // Already merged artifacts still require review before accepting landing.
+  let reviewed = true;
   if (pr.merged) {
     const review = await reviews(deps, repo, number, pr.head.sha);
-    if (!hasIndependentReview(review, pr.user.login))
+    reviewed = hasIndependentReview(review, pr.user.login);
+    // Missing approval alone may be settled by protected-merge proof below;
+    // outstanding feedback never is.
+    if (!reviewed && (review.unresolved || review.changesRequested))
       throw new Error('Deliverable requires exact-head independent review');
   }
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
@@ -324,6 +400,14 @@ export async function readyDeliveryBinding(
     runtimeGate: payload.spec.deliveryRuntime ?? 'unknown',
     observedAt: now,
   };
+  if (pr.merged && !reviewed) {
+    if (final.merge_commit_sha === null || final.merge_commit_sha === undefined)
+      throw new Error('Protected landing not established');
+    await verifyProtectedMerge(deps, binding, final.merge_commit_sha);
+    throw new ProtectedMergeWithoutReviewError(
+      'Deliverable merged through protection without independent review',
+    );
+  }
   if (pr.merged) {
     const landed = await observeGithubDelivery(deps, binding);
     if (landed.kind !== 'protected-merge')
@@ -501,64 +585,7 @@ export async function observeGithubDelivery(
   if (pr.merged && pr.merge_commit_sha !== null) {
     if (!hasIndependentReview(review, pr.user.login))
       return { kind: 'waiting', head: binding.head };
-    const suiteSchema = z.object({
-      id: z.number(),
-      after_sha: sha,
-      result: z.string(),
-      ref: z.string(),
-    });
-    let suite: z.infer<typeof suiteSchema> | undefined;
-    // The longest documented window is one month. Missing older evidence and
-    // more than ten full pages retain ownership; they never qualify landing.
-    for (let page = 1; page <= 10; page++) {
-      const query = new URLSearchParams({
-        ref: `refs/heads/${binding.baseRef}`,
-        rule_suite_result: 'pass',
-        evaluate_status: 'active',
-        time_period: 'month',
-        per_page: '100',
-        page: String(page),
-      });
-      const suites = z
-        .array(suiteSchema)
-        .max(100)
-        .parse(
-          await github(deps, binding.repo, `rulesets/rule-suites?${query}`),
-        );
-      suite = suites.find(
-        (candidate) =>
-          candidate.after_sha === pr.merge_commit_sha &&
-          candidate.ref === `refs/heads/${binding.baseRef}` &&
-          candidate.result === 'pass',
-      );
-      if (suite !== undefined) break;
-      if (suites.length < 100)
-        throw new Error('Protected merge evidence unavailable');
-    }
-    if (suite === undefined)
-      throw new Error('Protected merge evidence exceeds bounded read');
-    const details = z
-      .object({
-        result: z.literal('pass'),
-        after_sha: sha,
-        rule_evaluations: z
-          .array(z.object({ rule_type: z.string(), result: z.string() }))
-          .min(1),
-      })
-      .parse(
-        await github(deps, binding.repo, `rulesets/rule-suites/${suite.id}`),
-      );
-    if (
-      details.after_sha !== pr.merge_commit_sha ||
-      details.rule_evaluations.some((rule) => rule.result !== 'pass') ||
-      !details.rule_evaluations.some(
-        (rule) => rule.rule_type === 'required_status_checks',
-      ) ||
-      !details.rule_evaluations.some(
-        (rule) => rule.rule_type === 'pull_request',
-      )
-    )
-      throw new Error('Protected checks did not pass');
+    await verifyProtectedMerge(deps, binding, pr.merge_commit_sha);
     return {
       kind: 'protected-merge',
       head: binding.head,

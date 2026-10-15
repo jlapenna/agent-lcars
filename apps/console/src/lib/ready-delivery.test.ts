@@ -20,6 +20,7 @@ import {
 import {
   deliveryCorrectionAuthorized,
   observeGithubDelivery,
+  ProtectedMergeWithoutReviewError,
   readGithubIntakePermission,
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
@@ -426,6 +427,88 @@ describe('authenticated ready delivery evidence', () => {
     },
   );
 
+  describe('a PR merged through protection before completion', () => {
+    const merged = {
+      state: 'closed',
+      merged: true,
+      merge_commit_sha: MERGE,
+      auto_merge: null,
+    };
+    const noApproval = {
+      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
+    };
+    const input = {
+      run: RUN,
+      task: TASK,
+      repo: 'octo/example',
+      number: 12,
+      now: NOW,
+    };
+
+    it('settles only with exact protected-merge proof and no review feedback', async () => {
+      const error = await readyDeliveryBinding(
+        fixture({ pr: merged, review: noApproval }),
+        input,
+      ).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ProtectedMergeWithoutReviewError);
+      expect(error).toBeInstanceOf(UnqualifiedDeliveryError);
+    });
+
+    it.each([
+      {
+        name: 'a failed protected rule suite',
+        rules: new Response(null, { status: 502 }),
+      },
+      {
+        name: 'unresolved review threads',
+        review: {
+          ...noApproval,
+          reviewThreads: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ isResolved: false }],
+          },
+        },
+      },
+      {
+        name: 'requested changes',
+        review: {
+          reviews: {
+            pageInfo: { hasPreviousPage: false },
+            nodes: [
+              {
+                state: 'CHANGES_REQUESTED',
+                author: { login: 'reviewer' },
+                commit: { oid: HEAD },
+              },
+            ],
+          },
+        },
+      },
+      { name: 'a foreign attempt marker', body: '<!-- attempt-claim:old -->' },
+      { name: 'a wrong PR number', number: 13 },
+      { name: 'a missing merge commit', merge_commit_sha: null },
+    ])(
+      'stays a generic refusal for $name',
+      async ({ name: _name, rules, review, body, number, ...extra }) => {
+        const error = await readyDeliveryBinding(
+          fixture({
+            pr: {
+              ...merged,
+              ...extra,
+              ...(body === undefined ? {} : { body }),
+              ...(number === undefined ? {} : { number }),
+            },
+            review: review ?? noApproval,
+            rules,
+          }),
+          input,
+        ).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(UnqualifiedDeliveryError);
+      },
+    );
+  });
+
   it('keeps unreadable PR evidence and a foreign target generic', async () => {
     const refused = fixture({ pr: { auto_merge: null } });
     const fetchImpl = (async () =>
@@ -476,7 +559,9 @@ describe('authenticated ready delivery evidence', () => {
             ],
           },
         },
-        unqualified: false,
+        // Protection gated the merge; with no feedback outstanding the
+        // missing independent approval is settled by protected-merge proof.
+        unqualified: true,
       },
       {
         review: {
