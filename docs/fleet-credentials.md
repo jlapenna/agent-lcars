@@ -43,7 +43,9 @@ Two GitHub Apps exist and are easy to confuse:
 Both `agent-lcars` installation `150568943` and `agent-lcars-autoscaler`
 installation `154210710` use "All repositories" on jlapenna. Each App's own
 installation token observed 35 repositories, including `labels`, on 2026-10-12;
-the temporary tokens were revoked. The maintainer confirmed that scope.
+the temporary tokens were revoked. The maintainer confirmed that scope. The
+model now lists 36: `herdr-overview`, created 2026-10-14, was reconciled from
+the `FleetIamContractDrift` alert on 2026-10-15.
 The complete observed lists remain in the IAM model, so a newly created
 repository still produces a change for the monitoring owner to reconcile.
 
