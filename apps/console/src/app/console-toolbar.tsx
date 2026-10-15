@@ -130,6 +130,13 @@ export function ToolbarSelect({
   options: readonly { value: string; label: string }[];
 }) {
   const ref = useMarkFormHydrated<HTMLSelectElement>();
+  // A hand-edited URL can carry a value the list does not offer and still
+  // narrow the view; show it rather than fall back to the first option, so
+  // the select (and the fold's count) never reads as unfiltered.
+  const shown =
+    value && !options.some((option) => option.value === value)
+      ? [...options, { value, label: value }]
+      : options;
   return (
     <select
       ref={ref}
@@ -139,7 +146,7 @@ export function ToolbarSelect({
       defaultValue={value ?? ''}
       onChange={(event) => submitClosestForm(event.currentTarget)}
     >
-      {options.map((option) => (
+      {shown.map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
         </option>

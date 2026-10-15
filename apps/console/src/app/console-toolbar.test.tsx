@@ -150,6 +150,23 @@ describe('ConsoleToolbar', () => {
     ]);
   });
 
+  it('shows a URL value its options lack instead of reading as All', () => {
+    render(
+      <ToolbarSelect
+        name="repo"
+        label="Repository"
+        value="owner/unwatched"
+        options={[
+          { value: '', label: 'All repositories (1)' },
+          { value: 'owner/repo', label: 'owner/repo' },
+        ]}
+      />,
+    );
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toHaveValue(
+      'owner/unwatched',
+    );
+  });
+
   it('names the folded filters in server markup, before hydration', () => {
     const html = renderToStaticMarkup(
       <ConsoleToolbar action="/work" folded={2}>
