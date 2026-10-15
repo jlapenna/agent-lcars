@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
+import { useConsoleNavigationKeys } from './console-navigation-context';
 import {
   compactNumber,
   stardate,
@@ -23,11 +24,16 @@ function useRailFigures() {
   const state = useShellReadouts();
   const now = useMinuteClock();
   const readouts = state.status === 'ready' ? state.readouts : undefined;
+  // Only maintainers get figures. The root layout gives them, and only them,
+  // the full navigation, so that is known from the first render, before the
+  // readouts arrive or when their read fails.
+  const maintainer = useConsoleNavigationKeys() === undefined;
   // Loading, or a session without maintainer data: frame only. A failed
   // read, or a missing figure for a maintainer: an explicit unavailable mark.
   const shown =
-    state.status === 'unavailable' ||
-    (readouts?.user.grants.includes('admin') ?? false);
+    maintainer &&
+    (state.status === 'unavailable' ||
+      (readouts?.user.grants.includes('admin') ?? false));
   const value = (figure: string | undefined) =>
     shown ? (figure ?? UNAVAILABLE) : undefined;
 
@@ -77,7 +83,7 @@ function useRailFigures() {
     },
   ];
 
-  return { blocks, now };
+  return { blocks, now, maintainer };
 }
 
 export function RailReadouts() {
@@ -117,12 +123,15 @@ const STRIP_LABELS: Record<string, string> = {
  * header: the date and the same figures, short-labelled, wrapping rather
  * than clipping on the narrowest phones. */
 export function ReadoutStrip() {
-  const { blocks, now } = useRailFigures();
+  const { blocks, now, maintainer } = useRailFigures();
+  // The date and figures arrive after mount, so the strip reserves the lines
+  // they fill (global.css) rather than pushing the page down twice.
   return (
     <div
       className="lcars-readout-strip"
       aria-label="Fleet readouts, compact"
       role="group"
+      data-figures={maintainer ? '' : undefined}
     >
       {now ? (
         <span className="lcars-readout-strip__date">{stardate(now)}</span>
