@@ -4478,8 +4478,13 @@ td.costs-repo-spend__num {
   overflow-wrap: anywhere;
 }
 
-/* A runner's job link (repository · job name) wraps within its cell for the
-   same reason; work references elsewhere stay on one line. */
+/* A runner's job link (repository · job name) and a dispatch's claiming
+   runner wrap within their cells for the same reason; work references
+   elsewhere stay on one line. */
+.ops-wrap {
+  overflow-wrap: anywhere;
+}
+
 .ops-mono-dim .ops-ref {
   white-space: normal;
   overflow-wrap: anywhere;

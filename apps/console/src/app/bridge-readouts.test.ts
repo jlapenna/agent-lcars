@@ -109,7 +109,7 @@ describe('bridgeReadouts', () => {
     expect(r['busy']?.spark?.values).toEqual([6, undefined, 7]);
     expect(r['spend']?.spark).toEqual({
       label: 'Spend per hour today, by last activity (lower bound)',
-      // The day's 24 hourly slots, the hours not yet reached empty in front.
+      // 24 slots ending at the current hour; those before midnight empty.
       values: [...Array.from({ length: 21 }, () => undefined), 1, 0, 2],
     });
   });

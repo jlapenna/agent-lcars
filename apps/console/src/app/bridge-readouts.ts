@@ -146,9 +146,9 @@ function withCurrent(
   };
 }
 
-/** The UTC day's 24 hourly slots, the hours not yet reached left empty at the
- * front: early in the day one or two hours otherwise stretched across the
- * whole sparkline as a solid block. The current hour stays the newest bar. */
+/** 24 hourly slots ending at the current hour; slots before UTC midnight
+ * stay empty, so early in the day the few hours elapsed draw as bars rather
+ * than one block, and the current hour stays the newest bar. */
 export function dayOfHours(
   byHour: readonly number[] | undefined,
 ): (number | undefined)[] | undefined {
