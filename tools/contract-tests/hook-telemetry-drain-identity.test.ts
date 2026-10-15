@@ -22,7 +22,12 @@ rows=[]
 for mode in ['tracked','undiscovered']:
  root=p/mode;root.mkdir();scratch=root/'private';scratch.mkdir();control=root/'control';ready=root/'ready';denied=root/'denied';restored=root/'restored';done=root/'done';observed=root/'observed'
  child_script=r"""import ctypes,os,pathlib,sys,time
-root=pathlib.Path(sys.argv[1]);c=ctypes.CDLL(None,use_errno=True);root.joinpath('ready').write_text('ready');deadline=time.monotonic()+1.2
+root=pathlib.Path(sys.argv[1]);mode=sys.argv[2];c=ctypes.CDLL(None,use_errno=True);root.joinpath('ready').write_text('ready')
+startup=time.monotonic()+3
+while not root.joinpath('held').exists() and not root.joinpath('control').exists() and time.monotonic()<startup:time.sleep(.001)
+assert root.joinpath('held').exists() or root.joinpath('control').exists()
+# The natural-exit interval starts only after the actual ownership boundary.
+deadline=time.monotonic()+1.2
 while time.monotonic()<deadline:
  if root.joinpath('control').exists() and not root.joinpath('denied').exists():
   assert c.prctl(4,0,0,0,0)==0
@@ -31,16 +36,17 @@ while time.monotonic()<deadline:
   while root.joinpath('control').read_text()!='restore' and time.monotonic()<limit:time.sleep(.001)
   assert c.prctl(4,1,0,0,0)==0
   root.joinpath('restored').write_text('restored')
+  if mode=='undiscovered':deadline=time.monotonic()+1.2
  time.sleep(.001)
 root.joinpath('done').write_text('done')
 """
- child=subprocess.Popen(['python3','-c',child_script,str(root)],cwd=scratch,env={**os.environ,'TMPDIR':str(scratch)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ child=subprocess.Popen(['python3','-c',child_script,str(root),mode],cwd=scratch,env={**os.environ,'TMPDIR':str(scratch)},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
  cleanup_fd=os.pidfd_open(child.pid)
  try:
   deadline=time.monotonic()+3
   while not ready.exists() and time.monotonic()<deadline:time.sleep(.001)
   assert ready.exists()
-  prelude=f"""import pathlib,os,time,json,errno
+  prelude=f"""import pathlib,os,time,json,errno,select
 original_read_bytes=pathlib.Path.read_bytes
 target={child.pid}; mode={mode!r}; root=pathlib.Path({str(root)!r}); triggered=False
 def controlled_read(self,*args,**kwargs):
@@ -59,11 +65,21 @@ def controlled_read(self,*args,**kwargs):
    raise
  return original_read_bytes(self,*args,**kwargs)
 pathlib.Path.read_bytes=controlled_read
+original_select=select.select
+def observe_select(readers,writers,errors,timeout=None):
+ matches=[(key,fd) for key,fd in globals().get('owned',{{}}).items() if key[0]==target and fd in readers]
+ if matches and not root.joinpath('held').exists():
+  key,fd=matches[0]
+  os.fstat(fd)
+  start=pathlib.Path(f'/proc/{{target}}/stat').read_text().rsplit(') ',1)[1].split()[19]
+  root.joinpath('held').write_text(json.dumps(dict(pidfdHeld=os.readlink(f'/proc/self/fd/{{fd}}')=='anon_inode:[pidfd]',sameStart=start==key[1],signaledAtOwnership=bool(original_select([fd],[],[],0)[0]))))
+ return original_select(readers,writers,errors,timeout)
+select.select=observe_select
 """
   st=time.monotonic();r=subprocess.run(['python3','-',str(scratch)],input=prelude+helper,capture_output=True,text=True,env={**os.environ,'TMPDIR':str(root)},timeout=40)
   done_at_drain_return=done.exists()
   child_exit=child.wait(timeout=4)
-  rows.append({'mode':mode,'status':r.returncode,'signal':-r.returncode if r.returncode<0 else None,'childExit':child_exit,'done':done.exists(),'doneAtDrainReturn':done_at_drain_return,'refused':r.stderr.strip()=='hook smoke cleanup: process drainage refused; retaining private scratch; exception=RuntimeError errno=none reason=owner-unverifiable','nativeObservation':json.loads(observed.read_text())if observed.exists()else None})
+  rows.append({'mode':mode,'status':r.returncode,'signal':-r.returncode if r.returncode<0 else None,'childExit':child_exit,'done':done.exists(),'doneAtDrainReturn':done_at_drain_return,'heldWitness':json.loads(root.joinpath('held').read_text())if root.joinpath('held').exists()else None,'refused':r.stderr.strip()=='hook smoke cleanup: process drainage refused; retaining private scratch; exception=RuntimeError errno=none reason=owner-unverifiable','nativeObservation':json.loads(observed.read_text())if observed.exists()else None})
  finally:
   try:
    child.wait(timeout=6)
@@ -97,6 +113,11 @@ print(json.dumps(rows))
         childExit: 0,
         done: true,
         doneAtDrainReturn: true,
+        heldWitness: {
+          pidfdHeld: true,
+          sameStart: true,
+          signaledAtOwnership: false,
+        },
         refused: false,
         nativeObservation: null,
       },
@@ -107,6 +128,7 @@ print(json.dumps(rows))
         childExit: 0,
         done: true,
         doneAtDrainReturn: false,
+        heldWitness: null,
         refused: true,
         nativeObservation: {
           nativeErrno: 13,
