@@ -6,6 +6,7 @@ import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
+  type OperationalIntervention,
   type Run,
   type TaskId,
   taskKey,
@@ -151,6 +152,7 @@ export function selectResumeSession(
 export async function requestReply(
   context: WorkContext,
   request: ReplyRequest,
+  intervention?: OperationalIntervention,
 ): Promise<ReplyOutcome> {
   // A reply always carries an authenticated identity: the router's
   // `operator` middleware guarantees `context.principal` for the console
@@ -259,6 +261,7 @@ export async function requestReply(
     requestId,
     pipeline,
     priority: latest?.priority ?? spec.priority ?? 'normal',
+    ...(intervention === undefined ? {} : { intervention }),
     providerFallback: authorizeProviderFallback(
       principal,
       pipeline,

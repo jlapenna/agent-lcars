@@ -475,21 +475,27 @@ export const workRouter = os.router({
   ),
 
   reply: operator.reply.handler(async ({ input, context, errors }) => {
-    const outcome = await requestReply(context, {
-      task: { workId: input.id },
-      text: input.text,
-      // The console session and a service principal are the only two
-      // callers this route has today; plan 2's GitHub ingest and plan 5's
-      // Slack adapter call `requestReply` directly with their own channel.
-      channel: context.principal.via === 'session' ? 'console' : 'api',
-      principal: context.principal.principal,
-      ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
-      ...(input.resume === undefined ? {} : { resume: input.resume }),
-      ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
-      ...(input.fallbackPipelines === undefined
-        ? {}
-        : { fallbackPipelines: input.fallbackPipelines }),
-    });
+    const outcome = await requestReply(
+      context,
+      {
+        task: { workId: input.id },
+        text: input.text,
+        // The console session and a service principal are the only two
+        // callers this route has today; plan 2's GitHub ingest and plan 5's
+        // Slack adapter call `requestReply` directly with their own channel.
+        channel: context.principal.via === 'session' ? 'console' : 'api',
+        principal: context.principal.principal,
+        ...(input.requestId === undefined
+          ? {}
+          : { requestId: input.requestId }),
+        ...(input.resume === undefined ? {} : { resume: input.resume }),
+        ...(input.pipeline === undefined ? {} : { pipeline: input.pipeline }),
+        ...(input.fallbackPipelines === undefined
+          ? {}
+          : { fallbackPipelines: input.fallbackPipelines }),
+      },
+      { kind: 'work-api-reply', principal: context.principal.principal },
+    );
     if (!outcome.ok) {
       if (outcome.code === 'NOT_FOUND') throw errors.NOT_FOUND();
       if (outcome.code === 'FORBIDDEN')

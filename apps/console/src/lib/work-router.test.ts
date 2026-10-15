@@ -1136,6 +1136,17 @@ describe('items routes', () => {
       });
       expect(later.json.runs).toHaveLength(3);
       const stored = await ctx.runtime.store.readRun(first.json.admittedRunId);
+      expect(stored?.events[0]).toEqual({
+        at: '2026-08-26T10:00:00.000Z',
+        to: 'pending',
+        by: 'request',
+        intervention: { kind: 'work-api-reply', principal: 'user:jlapenna' },
+      });
+      const metrics = await call(ctx, 'GET', '/metrics/lifecycle');
+      expect(metrics.status).toBe(200);
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_reply_interventions_window{pipeline="claude"} 2\n',
+      );
       expect(stored?.params).toMatchObject({
         replyPrincipal: 'user:jlapenna',
         replyChannel: 'api',

@@ -96,6 +96,8 @@ export interface RequestInput {
   pipeline: string;
   priority?: QueuePriority;
   params?: Record<string, string>;
+  /** Typed action provenance supplied only by a trusted admission adapter. */
+  intervention?: OperationalIntervention;
   work?: WorkPayload;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
   providerFallback?: ProviderFallbackRequest;
@@ -219,6 +221,9 @@ export class Orchestrator {
             input.priority ??
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),
+          ...(input.intervention === undefined
+            ? {}
+            : { intervention: input.intervention }),
           ...(input.work === undefined ? {} : { work: input.work }),
           ...(providerFallback === undefined ? {} : { providerFallback }),
         };

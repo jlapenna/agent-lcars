@@ -220,6 +220,21 @@ function sessionDoc(over: Partial<SessionDoc> = {}): SessionDoc {
 }
 
 describe('requestReply', () => {
+  it('does not infer an API intervention from reply text, principal or channel', async () => {
+    const { store, orchestrator, context } = fixture();
+    await parkGithubTask(orchestrator);
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text: 'Continue',
+      channel: 'api',
+      principal: 'forged-caller',
+      requestId: 'unstamped',
+    });
+    expect(outcome.ok).toBe(true);
+    const admitted = await store.readActiveRun(ANCHOR);
+    expect(admitted?.events[0].intervention).toBeUndefined();
+  });
+
   it.each(['urgent', 'background'] as const)(
     'carries the newest %s run priority into a reply',
     async (priority) => {
