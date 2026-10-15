@@ -658,6 +658,45 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   }
 }
 
+/* The rail's readouts on one line where the rail is hidden (below 64em,
+   console-frame-readouts.tsx ReadoutStrip). */
+.lcars-readout-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  min-width: 0;
+  margin: 0 0 12px;
+  padding-inline: var(--lcars-content-start, 0) var(--lcars-content-gutter, 0);
+  color: var(--lcars-ink-dim);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.lcars-readout-strip > span {
+  white-space: nowrap;
+}
+
+/* The streamed placeholder's strip goes with its header once the real page
+   arrives (see the header handoff rule at the top of this file). */
+body:has(.console-header:not([data-streaming-fallback]))
+  .console-page-shell[data-streaming-fallback]
+  > .lcars-readout-strip {
+  display: none;
+}
+
+.lcars-readout-strip b {
+  color: var(--lcars-ink);
+  font-weight: 500;
+}
+
+@media (min-width: 64em) {
+  .lcars-readout-strip {
+    display: none;
+  }
+}
+
 /* Below 80em the header's sync block does not fit, so the same status rides
    one line under the title (console-frame-readouts.tsx, compact): every width
    says whether the page is live, as the mockup's header does. */
