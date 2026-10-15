@@ -135,8 +135,7 @@ function CostsToolbar({
           { value: 'issue-agent', label: 'Dispatched agent' },
         ]}
       />
-      {/* Selects and the window submit on change; Apply shows only until
-          they hydrate (the mockup's toolbar has none). */}
+      {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
       <ToolbarApply label="Apply" />
     </ConsoleToolbar>
   );

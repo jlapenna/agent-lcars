@@ -84,7 +84,8 @@ function submitClosestForm(element: HTMLElement) {
 }
 
 /** Marks the control's form as hydrated: from then on changes submit
- * themselves and the form's pre-hydration Apply button is hidden. */
+ * themselves, and the phone fold may hide the form's selects behind its
+ * toggle. */
 function useMarkFormHydrated<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   useEffect(() => {

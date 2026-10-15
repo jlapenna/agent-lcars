@@ -20,6 +20,13 @@ import { OpenAPILink } from '@orpc/openapi/fetch';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CliSession } from './cli-sessions';
+import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
+
+vi.mock('./lifecycle-cost-metrics', () => ({
+  readLifecycleCostMetrics: vi.fn(
+    async () => 'lcars_product_session_cost_read_available 0\n',
+  ),
+}));
 import { controlPlaneRepository } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { createWorkHandler, type WorkContext } from './work-router';
@@ -239,6 +246,13 @@ describe('items routes', () => {
       expect(first.status).toBe(200);
       expect(again.json).toEqual(first.json);
       expect(first.json).toMatchObject({ complete: true, windowSeconds: 3600 });
+      expect(first.json.prometheus).toContain(
+        'lcars_product_session_cost_read_available 0',
+      );
+      expect(first.json.prometheus).toContain('lcars_product_silent_loss_runs');
+      expect(readLifecycleCostMetrics).toHaveBeenCalledWith(
+        '2026-08-26T10:00:00.000Z',
+      );
       expect(read).toHaveBeenCalledWith({
         since: '2026-08-26T09:00:00.000Z',
         until: '2026-08-26T10:00:00.000Z',
@@ -763,6 +777,53 @@ describe('items routes', () => {
     expect(c1.json.state).toBe('canceled');
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(409);
   });
+
+  it.each([
+    operator,
+    githubActionsOperator,
+    {
+      ...operator,
+      via: 'google' as const,
+      principal: 'svc:authorized-operator',
+    },
+  ])(
+    'records only the authenticated cancel principal for $via, without asserting human activity',
+    async (principal) => {
+      const ctx = context({ principal });
+      await call(ctx, 'PUT', `/items/${ID}`, { spec });
+      const forged = await call(ctx, 'POST', `/items/${ID}/cancel`, {
+        intervention: { kind: 'work-api-cancel', principal: 'forged-user' },
+      });
+      expect(forged.status).toBe(400);
+      expect((await ctx.runtime.store.readRun(`work:${ID}/r1`))?.state).toBe(
+        'pending',
+      );
+      const canceled = await call(ctx, 'POST', `/items/${ID}/cancel`);
+      expect(canceled.status).toBe(200);
+      const stored = await ctx.runtime.store.readRun(`work:${ID}/r1`);
+      expect(stored?.events.at(-1)).toMatchObject({
+        by: 'operator',
+        to: 'canceled',
+        intervention: {
+          kind: 'work-api-cancel',
+          principal: principal.principal,
+        },
+      });
+      const metrics = await call(ctx, 'GET', '/metrics/lifecycle');
+      expect(metrics.status).toBe(200);
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_operational_interventions_window{pipeline="claude",kind="work-api-cancel"} 1\n',
+      );
+      expect(metrics.json.prometheus).toContain(
+        'lcars_product_measurement_unknown_window{pipeline="claude",measurement="human_touch"} 1\n',
+      );
+      expect(metrics.json.prometheus).not.toContain(principal.principal);
+      expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(409);
+      expect(
+        (await ctx.runtime.store.readRun(`work:${ID}/r1`))?.events,
+      ).toEqual(stored?.events);
+    },
+  );
 
   it('starts session expiry when it closes a parked item, but leaves a live run to the outbox', async () => {
     const expireItemSessions = vi.fn().mockResolvedValue(undefined);

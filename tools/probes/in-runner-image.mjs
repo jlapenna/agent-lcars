@@ -62,6 +62,7 @@ if (
   throw new Error('Image direct runner source mismatch');
 for (const helper of [
   'worker-policy-bootstrap.sh',
+  'worker-activation.sh',
   'verify-outcome.sh',
   'worker-completion.sh',
 ]) {

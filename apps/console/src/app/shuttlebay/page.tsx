@@ -80,8 +80,7 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
             placeholder="runner lane"
             value={filters.q}
           />
-          {/* Selects submit on change; Apply shows only until they hydrate,
-              then keeps its box. */}
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }

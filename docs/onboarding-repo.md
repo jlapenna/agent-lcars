@@ -67,6 +67,9 @@ links to the section that owns its policy and evidence.
    ([step 5](#5-audit-setup-before-dispatch)).
 7. **Prove** — label exactly one real issue `agent:*` and record the
    evidence ([step 6](#6-prove-the-complete-path)).
+8. **Qualify** — run the full audit with existing maintainer and actual
+   registration identities, retaining every fact as the final setup record
+   ([step 7](#7-complete-the-authoritative-onboarding-audit)).
 
 ### Operations beyond the scaffolder
 
@@ -335,7 +338,7 @@ console's actual repository list and reads Homelab's legacy
 `github-runner-autoscaler/orchestrator.yml` through the GitHub API; it does not
 copy the registration list or import Homelab source code. That file now owns
 QueueExecutor, not ARC registrations. If it contains no active registrations,
-the audit emits `registrations/configuration: UNVERIFIED`, explicitly reporting
+the audit emits `registrations/configuration: unverifiable`, explicitly reporting
 that runner coverage was not audited. An empty or entirely disabled operator
 inventory produces the same result; a green workflow is not complete coverage.
 
@@ -363,9 +366,16 @@ default-branch rules and are compared with checks/statuses observed on its
 current head. A head whose CI has not emitted every context yet needs a repeat
 after CI completes; this audit does not wait for CI or grade check conclusions.
 
-`PASS` means that particular setup fact was observed. `FAIL` identifies a gap
-or failed API request. `UNVERIFIED` means the necessary credential or identity
-was unavailable; only `FAIL` produces a nonzero exit. In particular,
+`pass` means that particular setup fact was observed. `fail` identifies a
+measured mismatch or operational error. `unverifiable` means the necessary
+access, identity, inventory, or completed CI evidence was unavailable. GitHub
+403 and 404 responses are unverifiable because they can hide resources from
+the current identity; they never establish a pass. Rate limits (including
+403 with exhausted quota or Retry-After), invalid authentication, server errors,
+and token-revocation failures remain failures. Only `fail` produces a nonzero
+exit; an all-unverifiable run is successful execution with zero verified facts.
+For every run, retain the per-fact statuses rather than treating green workflow
+conclusion as full onboarding qualification. In particular,
 the legacy root autoscaler registration gets its App identity from deployment
 environment variables. Its identity cannot be established from the committed
 YAML alone. Supply its resolved registration metadata and its actual App
@@ -374,8 +384,8 @@ not evidence for it. No private-key file referenced by registration YAML is
 opened by this tool. Record per-fact results when registrations use different
 Apps, rather than treating one credential's audit as complete fleet coverage.
 
-`AUDIT_READ_TOKEN` can supply a separate credential for repository variables
-and rules/check metadata. All use of that token is GET-only; installation,
+At onboarding, `AUDIT_READ_TOKEN` supplies the existing maintainer credential
+for repository variables and rules/check metadata (see the final step below). All use of that token is GET-only; installation,
 claim permission, labels, and runner scope still use the actual fleet or
 runner App. This avoids granting administrative visibility to the fleet App
 solely for auditing. For the autoscaler App, supply `RUNNER_APP_CLIENT_ID` and
@@ -385,8 +395,8 @@ from deployment into `LEGACY_RUNNER_APP_CLIENT_ID` and
 operator configuration file. These identifiers must describe the actual
 registration, not whichever credential happens to be available.
 Missing optional credentials and authorization gaps are emitted as
-`UNVERIFIED` facts without failing the workflow; only an observed mismatch or
-operational request failure is `FAIL`.
+`unverifiable` facts without failing the workflow; only an observed mismatch or
+operational request failure is `fail`.
 
 The `Fleet onboarding audit` workflow runs daily, on demand, and after changes
 to its local configuration sources. It uses the existing fleet App credential;
@@ -396,23 +406,32 @@ App permissions, registration configuration, or rulesets. A configuration audit
 does not establish that committed configuration is deployed or that a real
 dispatch works.
 
-The workflow accepts optional `ONBOARDING_AUDIT_READ_TOKEN` and
-`AGENT_LCARS_RUNNER_APP_PRIVATE_KEY` secrets, with the corresponding runner
-identity variables. Adding or distributing these credentials is a separate
-operator action; this change does not provision them. The first live fleet-App
-audit on 2026-09-25 verified installation, fleet permissions, and declared labels
-for all seven watched repositories. Variable reads returned HTTP 403 in all
-seven, and several ruleset metadata reads also returned HTTP 403. Runner scopes
-were unverified with only the fleet credential. These are remaining rollout
-gates for #2037, not a successful complete onboarding audit.
+The scheduled and manual workflow accepts the optional repository variable
+`ONBOARDING_AUDIT_REGISTRATIONS` containing the resolved registration YAML.
+The approved Homelab ARC apply produces
+`github-runner-autoscaler/.arc-registration-audit.yml` beside its accepted
+`.arc-lanes.applied.yml` receipt; see the
+[Homelab input owner](https://github.com/jlapenna/homelab/blob/main/github-runner-autoscaler/README.md#resolved-arc-onboarding-input).
+After an approved apply, an operator can copy that public identity projection
+into the variable. Refresh it after each accepted lane/App identity change;
+a source merge alone does not create a deployed receipt. The workflow validates the nonempty allowlisted identity shape, rejects duplicate
+lane names and extra fields (including private keys), and passes the value as data through a private temporary file to `--registrations=PATH`
+and removes the file on exit. An unset variable preserves the default
+configuration lookup and its explicit coverage gap. A supplied empty or
+invalid inventory cannot silently fall back to that lookup. GitHub may display public step environment values in its run log. Keep private
+keys out of this inventory. This transport does not authenticate the declared App;
+runner scope still requires its separately supplied actual credential.
+Publishing the public inventory remains an operator action. Reuse existing
+identities; do not provision another unattended credential or widen App grants
+for this audit.
 
-A second read-only run supplied the existing maintainer credential for
-administrative metadata and the controller's actual autoscaler credential and
-legacy identity, without persisting or redistributing them. All seven variable
-profiles and all seven runner-list scopes passed. Six repositories' required
-contexts were observed; Agent LCARS's newly merged head was still waiting for
-CI and remained unverified. Scheduled credential provisioning and a completed
-current-head audit remain outstanding.
+The scheduled workflow uses only the existing Fleet App client ID and private
+key, minting temporary read-only installation tokens within its existing grants.
+It does not use a maintainer metadata token or a separate runner private key.
+Facts outside that identity's visibility remain `unverifiable`. A registration
+belonging to another App cannot be authenticated by substituting the Fleet App.
+These visibility gaps are expected schedule results, not requests to provision
+new credentials. The full audit at onboarding is authoritative for them.
 
 ## 6. Prove the complete path
 
@@ -430,12 +449,38 @@ Use a real, suitably scoped issue rather than a synthetic success check.
    QueueExecutor failure as the known dark state. Do not call it onboarded for
    that provider until its credential and dispatch are proven.
 
-## Handoff checklist
+## 7. Complete the authoritative onboarding audit
 
-Before closing the onboarding work, record links to the three PRs, their
-merged commits, the App-membership verification, QueueExecutor-capacity
-evidence, Console admission, and the test dispatch. State which providers are
-fully live, which are intentionally dark, and any maintainer-owned follow-up.
+As the final setup step, run the same verifier from the approved maintainer
+credential environment with the existing maintainer credential available as
+`AUDIT_READ_TOKEN`. Keep the actual Fleet App environment from step 5 for
+installation, login, and label facts. Supply the accepted Homelab registration
+receipt and, when its identity differs from the Fleet App, its **existing**
+`RUNNER_APP_CLIENT_ID` / `RUNNER_APP_PRIVATE_KEY` environment. Do not copy these
+credentials into Actions or add App permissions. No registration credential
+file named by the YAML is read automatically.
+
+```bash
+# Existing approved credentials are already in the environment; no values in
+# shell history or logs. gh uses the existing maintainer login for this command.
+AUDIT_READ_TOKEN="$(gh auth token)" \
+  node tools/verify-onboarding.mjs --registrations=/path/to/accepted-registration-receipt.yml
+```
+
+Run this on the completed default-branch CI head. Preserve all per-repository
+and per-registration JSON facts. Repeat the audit after adding a watched repo
+or changing App permissions, registration identities, or rulesets. Every fact
+must be `pass` for complete qualification; `unverifiable` explicitly records
+what remains unproven even when the command exits zero. Resolve a measured
+`fail` through its owning setup path; no repair mode is provided. If the
+existing maintainer or actual registration identity still cannot read a fact,
+record that exact gap rather than treating the scheduled job as its proof.
+
+Before closing the onboarding work, record the audit results, links to the
+three PRs, their merged commits, the App-membership verification,
+QueueExecutor-capacity evidence, Console admission, and the test dispatch.
+State which providers are fully live, which are intentionally dark, and any
+maintainer-owned follow-up.
 
 This evidence makes the next repository onboarding faster without turning an
-old rollout’s incidental identifiers into a new repository’s instructions.
+old rollout's incidental identifiers into a new repository's instructions.

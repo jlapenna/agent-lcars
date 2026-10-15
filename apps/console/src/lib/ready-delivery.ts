@@ -245,6 +245,14 @@ function hasIndependentReview(
   );
 }
 
+/** Thrown only after an authoritative read proved the run's own exact
+ * attempt-marked, non-draft, open PR in its target repository with an
+ * established protected target policy, which merely has no auto-merge arm
+ * yet. Every other failure is a generic Error. */
+export class UnqualifiedDeliveryError extends Error {
+  override readonly name = 'UnqualifiedDeliveryError';
+}
+
 /** A successful PR artifact is not a completion verdict. This exact server
  * read establishes the narrow ready handoff before authenticated settlement. */
 export async function readyDeliveryBinding(
@@ -262,15 +270,28 @@ export async function readyDeliveryBinding(
   const generation = parseRunGeneration(run.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: run.runId });
+  const payload = workPayloadSchema.parse(task.work);
+  if (payload.spec.target.repo !== repo)
+    throw new Error('Delivery target changed');
   if (
     pr.number !== number ||
     (!pr.merged && pr.state !== 'open') ||
     pr.draft ||
-    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`) ||
-    (!pr.merged && pr.auto_merge?.merge_method !== 'squash')
+    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Deliverable is not ready and armed');
+  if (
+    !pr.merged &&
+    pr.auto_merge !== null &&
+    pr.auto_merge.merge_method !== 'squash'
+  )
+    throw new Error('Deliverable is armed with a non-squash method');
   await protectedChecks(deps, repo, pr.base.ref);
+  // Proven by the authoritative read above and the established protected
+  // target policy: this run's exact marked, ready, open PR in its own target
+  // repository, merely not armed yet.
+  if (!pr.merged && pr.auto_merge === null)
+    throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
   // An open, armed artifact transfers waiting ownership; asynchronous review
   // belongs to the durable monitor, rather than the implementation executor.
   // Already merged artifacts still require review before accepting landing.
@@ -279,9 +300,6 @@ export async function readyDeliveryBinding(
     if (!hasIndependentReview(review, pr.user.login))
       throw new Error('Deliverable requires exact-head independent review');
   }
-  const payload = workPayloadSchema.parse(task.work);
-  if (payload.spec.target.repo !== repo)
-    throw new Error('Delivery target changed');
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (
     final.head.sha !== pr.head.sha ||

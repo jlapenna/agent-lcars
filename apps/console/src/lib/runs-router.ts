@@ -48,7 +48,10 @@ import type {
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
-import { readyDeliveryBinding } from './ready-delivery';
+import {
+  readyDeliveryBinding,
+  UnqualifiedDeliveryError,
+} from './ready-delivery';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
@@ -1017,11 +1020,13 @@ export const runsRouter = os.router({
       input.message,
       { issue: target.issue, mode: run.params?.mode },
     );
+    const deliveryCorrection =
+      run.params?.deliveryPredecessor !== undefined ||
+      (task?.delivery !== undefined &&
+        task.delivery.state !== 'complete' &&
+        task.delivery.runId !== run.runId);
     if (
-      (run.params?.deliveryPredecessor !== undefined ||
-        (task?.delivery !== undefined &&
-          task.delivery.state !== 'complete' &&
-          task.delivery.runId !== run.runId)) &&
+      deliveryCorrection &&
       result.ok &&
       result.summary !== 'park' &&
       (!['pull-request', 'merged-deliverable'].includes(result.summary ?? '') ||
@@ -1056,11 +1061,37 @@ export const runsRouter = os.router({
             now: context.now().toISOString(),
           },
         );
-      } catch {
-        throw new ORPCError('CONFLICT', {
-          message:
-            'Ready delivery handoff refused; exact review and protected delivery evidence required',
-        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        // Fail closed by default. The single relaxation: an initial
+        // pull-request result whose own exact attempt-marked, ready, open PR
+        // on a protected target the authoritative read proved, but which has
+        // no auto-merge arm yet (a repository's arming workflow can land
+        // after the executor exits). It settles as an ordinary
+        // pull-request result without durable delivery ownership instead of
+        // discarding the deliverable as runner-failed. Read failures,
+        // malformed or missing evidence, corrections and merged-deliverable
+        // claims all stay refused.
+        if (
+          !(error instanceof UnqualifiedDeliveryError) ||
+          deliveryCorrection ||
+          result.summary !== 'pull-request'
+        ) {
+          logger.warn(
+            'agent-lcars: ready delivery handoff refused for %s: %s',
+            run.runId,
+            reason,
+          );
+          throw new ORPCError('CONFLICT', {
+            message:
+              'Ready delivery handoff refused; exact review and protected delivery evidence required',
+          });
+        }
+        logger.warn(
+          'agent-lcars: ready delivery handoff not established for %s; settling the PR without delivery ownership: %s',
+          run.runId,
+          reason,
+        );
       }
     }
     const settled = await capacityCall(() =>

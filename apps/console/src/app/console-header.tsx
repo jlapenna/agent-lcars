@@ -104,6 +104,7 @@ export function ConsoleHeader({
             <Text c="dimmed" mt={4} truncate="end">
               {subtitle}
             </Text>
+            <ConsoleLiveStatus dataAt={dataAt} compact />
           </div>
         </Group>
 

@@ -159,7 +159,7 @@ export function workflowFixture(directory, home, mode) {
             'bash',
             [
               '-c',
-              'source "$1/worker-policy-bootstrap.sh"; source "$1/worker-completion.sh"; worker_completion_needed "$2" "$(($(monotonic_seconds) + $3))" && worker_authorize_correction && printf "%s" "$WORKER_COMPLETION_PROMPT"',
+              'source "$1/worker-policy-bootstrap.sh"; source "$1/worker-completion.sh"; source "$1/worker-activation.sh"; worker_completion_needed "$2" "$(($(monotonic_seconds) + $3))" && worker_authorize_correction && printf "%s" "$WORKER_COMPLETION_PROMPT"',
               'workflow-correction',
               helperRoot,
               String(execution.code ?? 1),
@@ -233,9 +233,9 @@ export function workflowFixture(directory, home, mode) {
 if (args[1] === 'repos/octo/example/pulls?state=all&per_page=100' || args[1] === 'repos/octo/example/issues/42/comments?per_page=100') {
   const published = fs.existsSync(${JSON.stringify(sentinel)}) ? JSON.parse(fs.readFileSync(${JSON.stringify(sentinel)}, 'utf8')) : null;
   const records = published && args[1].includes('/pulls?') ? [{number:73,user:{type:'Bot'},title:'Fixture PR',body:published[published.indexOf('--body')+1]}] : [];
-  const result = require('node:child_process').spawnSync('jq', ['-r', args[args.indexOf('--jq')+1]], {input:JSON.stringify(records),encoding:'utf8',timeout:5000});
-  process.stdout.write(result.stdout || '');
-  process.exit(result.status ?? 1);
+  if (!args.includes('--paginate') || !args.includes('--slurp')) process.exit(1);
+  process.stdout.write(JSON.stringify([records]));
+  process.exit(0);
 }
 `,
     completion(context, runtimeEnv, label) {

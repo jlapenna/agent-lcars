@@ -40,12 +40,34 @@ jobs:
         env:
           APP_CLIENT_ID: ${{ vars.AGENT_LCARS_CLIENT_ID }}
           APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
-          AUDIT_READ_TOKEN: ${{ secrets.ONBOARDING_AUDIT_READ_TOKEN }}
           AGENT_FLEET_LOGIN: ${{ vars.AGENT_FLEET_LOGIN }}
-          # Optional operator-provisioned runner credential. Missing access is
-          # reported UNVERIFIED; the fleet App cannot prove another App's scope.
-          RUNNER_APP_CLIENT_ID: ${{ vars.AGENT_LCARS_RUNNER_APP_CLIENT_ID }}
-          RUNNER_APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_RUNNER_APP_PRIVATE_KEY }}
+          # Public resolved identities only; credentials keep separate inputs.
+          REGISTRATIONS_YAML: ${{ vars.ONBOARDING_AUDIT_REGISTRATIONS }}
+          # Reuse only the Fleet App. The verifier mints read-only installation
+          # tokens within its existing grants and revokes them on completion.
+          # Other App identities and permission gaps remain unverifiable; the
+          # full maintainer audit is an onboarding step, not a scheduled secret.
           LEGACY_RUNNER_APP_CLIENT_ID: ${{ vars.LEGACY_RUNNER_APP_CLIENT_ID }}
           LEGACY_RUNNER_APP_INSTALLATION_ID: ${{ vars.LEGACY_RUNNER_APP_INSTALLATION_ID }}
-        run: node tools/verify-onboarding.mjs
+        shell: bash
+        run: |
+          if [[ -n "$REGISTRATIONS_YAML" ]]; then
+            umask 077
+            registrations="$(mktemp "$RUNNER_TEMP/onboarding-registrations.XXXXXX.yml")"
+            trap 'rm -f -- "$registrations"' EXIT
+            export REGISTRATIONS_PATH="$registrations"
+            node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          import { resolvedRegistrationInventory } from './tools/verify-onboarding.mjs';
+          try {
+            const config = resolvedRegistrationInventory(process.env.REGISTRATIONS_YAML);
+            writeFileSync(process.env.REGISTRATIONS_PATH, JSON.stringify(config), { mode: 0o600 });
+          } catch {
+            console.error('Invalid resolved registration inventory; expected the accepted ARC audit receipt.');
+            process.exitCode = 1;
+          }
+          NODE
+            node tools/verify-onboarding.mjs --registrations="$registrations"
+          else
+            node tools/verify-onboarding.mjs
+          fi
