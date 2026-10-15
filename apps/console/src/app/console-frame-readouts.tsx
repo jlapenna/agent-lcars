@@ -8,6 +8,7 @@ import {
   stardate,
   useLiveState,
   useMinuteClock,
+  useShellIdentity,
   useShellReadouts,
 } from './console-shell-state';
 import { formatCompactRelativeTime } from './format';
@@ -150,9 +151,9 @@ export function ReadoutStrip() {
 /** The signed-in identity as a line of the console menu: where narrow
  * headers, which drop the identity block, still say who is signed in. */
 export function MenuIdentity() {
-  const state = useShellReadouts();
-  if (state.status !== 'ready') return null;
-  const { user } = state.readouts;
+  const identity = useShellIdentity();
+  if (!identity) return null;
+  const { user } = identity;
   return (
     <div className="console-menu-identity" data-testid="console-identity-menu">
       <span className="console-identity__avatar" aria-hidden="true">
@@ -173,11 +174,9 @@ export function MenuIdentity() {
 
 /** The rail head's environment line: the host this console serves. */
 export function RailEnvironment() {
-  const state = useShellReadouts();
-  const environment =
-    state.status === 'ready' ? state.readouts.environment : undefined;
-  // The line is held from first paint: the head sits on its bottom edge, so
-  // a line arriving with the readouts lifted the brand above it.
+  const environment = useShellIdentity()?.environment;
+  // The line is held even when empty: the head sits on its bottom edge, so a
+  // line arriving late lifted the brand above it.
   return (
     <span className="lcars-rail-code" data-testid="rail-environment">
       {environment || '\u00a0'}
@@ -255,6 +254,12 @@ export function ConsoleLiveStatus({
           {' · '}
           {mode === undefined ? 'loaded' : 'synced'} {clockTime(at)}
         </span>
+      ) : mode === undefined ? (
+        // The load time is read after mount; its slot is held so the
+        // header's commands do not slide when it fills.
+        <span className="console-live-status__reserve" aria-hidden="true">
+          {' · loaded 00:00:00'}
+        </span>
       ) : null}
       {compact ? null : (
         <>
@@ -270,9 +275,9 @@ export function ConsoleLiveStatus({
 
 /** Avatar initials, login and grants for the signed-in session. */
 export function ConsoleIdentity() {
-  const state = useShellReadouts();
-  if (state.status !== 'ready') return null;
-  const { user } = state.readouts;
+  const identity = useShellIdentity();
+  if (!identity) return null;
+  const { user } = identity;
   return (
     <div className="console-identity" data-testid="console-identity">
       <span className="console-identity__avatar" aria-hidden="true">

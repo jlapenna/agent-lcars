@@ -14,7 +14,9 @@ import { Suspense } from 'react';
 
 import { auth } from '../auth';
 import { consoleDescription } from '../lib/deployment';
+import { loadShellIdentity } from '../lib/shell-readouts';
 import { ConsoleNavigationProvider } from './console-navigation-context';
+import { ShellIdentityProvider } from './console-shell-state';
 import { bodyFont, displayFont, monoFont } from './fonts';
 import { InboxNotificationsProvider } from './inbox-notifications';
 import { Providers } from './providers';
@@ -79,7 +81,9 @@ async function DynamicShell({ children }: { children: React.ReactNode }) {
       ? cookieValue
       : 'dark';
 
-  const session = await auth();
+  // The identity rides the first paint so the header and rail head do not
+  // shift when the frame's readouts arrive.
+  const [session, identity] = await Promise.all([auth(), loadShellIdentity()]);
 
   return (
     <>
@@ -90,13 +94,15 @@ async function DynamicShell({ children }: { children: React.ReactNode }) {
             session?.user.isAdmin ? undefined : session ? ['work'] : []
           }
         >
-          {session?.user.isAdmin && session.user.id ? (
-            <InboxNotificationsProvider principalId={session.user.id}>
-              {children}
-            </InboxNotificationsProvider>
-          ) : (
-            children
-          )}
+          <ShellIdentityProvider identity={identity}>
+            {session?.user.isAdmin && session.user.id ? (
+              <InboxNotificationsProvider principalId={session.user.id}>
+                {children}
+              </InboxNotificationsProvider>
+            ) : (
+              children
+            )}
+          </ShellIdentityProvider>
         </ConsoleNavigationProvider>
       </Providers>
     </>

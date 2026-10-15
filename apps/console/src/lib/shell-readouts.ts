@@ -1,5 +1,6 @@
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { cacheLife } from 'next/cache';
+import type { Session } from 'next-auth';
 
 import { context as workContext } from '../app/work/context';
 import { auth } from '../auth';
@@ -15,10 +16,7 @@ import { getSessionArchive } from './session-archive';
  * source could not be read, which the frame renders as unavailable, never as
  * a zero.
  */
-export interface ShellReadouts {
-  user: { login: string; initials: string; grants: string[] };
-  /** Host the console is served from, the rail's environment line. */
-  environment: string;
+export interface ShellReadouts extends ShellIdentity {
   /** Present for maintainers only. Absent figures read as unavailable. */
   fleet?: { online?: number; capacity?: number };
   /** Admitted runs not yet running (queued + claimed). */
@@ -33,6 +31,15 @@ export interface ShellReadouts {
   /** An unreadable repository or a full page of merges: a lower bound. */
   merged24hPartial?: boolean;
   observedAt: string;
+}
+
+/** Who is signed in and where: the frame's identity block and the rail's
+ * environment line. Read from the session and the configured grants alone,
+ * so the root layout supplies it with the first paint. */
+export interface ShellIdentity {
+  user: { login: string; initials: string; grants: string[] };
+  /** Host the console is served from, the rail's environment line. */
+  environment: string;
 }
 
 interface RecentTokens {
@@ -83,20 +90,31 @@ function environmentLabel(): string {
   }
 }
 
-export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
-  const session = await auth();
-  if (!session?.user) return undefined;
+async function identityOf(session: Session): Promise<ShellIdentity> {
   const login = session.user.login ?? session.user.name ?? '';
   const grants = await workContext()
     .then((ctx) => [...(ctx.principal?.scopes ?? [])].sort())
     .catch(() => [] as string[]);
-  const base: ShellReadouts = {
+  return {
     user: {
       login,
       initials: initialsOf(login || '?'),
       grants: [...(session.user.isAdmin ? ['admin'] : []), ...grants],
     },
     environment: environmentLabel(),
+  };
+}
+
+export async function loadShellIdentity(): Promise<ShellIdentity | undefined> {
+  const session = await auth();
+  return session?.user ? identityOf(session) : undefined;
+}
+
+export async function loadShellReadouts(): Promise<ShellReadouts | undefined> {
+  const session = await auth();
+  if (!session?.user) return undefined;
+  const base: ShellReadouts = {
+    ...(await identityOf(session)),
     observedAt: new Date().toISOString(),
   };
   if (!session.user.isAdmin) return base;
