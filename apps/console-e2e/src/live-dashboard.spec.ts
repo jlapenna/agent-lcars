@@ -96,13 +96,14 @@ test.describe('live authoritative dashboards', () => {
       /Live updates connected/,
       { timeout: 20_000 },
     );
-    await expect(
-      page.getByText('Queue: 2 queued, 0 claimed, 1 running'),
-    ).toBeVisible();
+    await expect(page.getByTestId('queue-lifecycle')).toHaveText(
+      '2 queued · 0 claimed · 1 running',
+    );
     await finishDashboardRun();
-    await expect(
-      page.getByText('Queue: 1 queued, 0 claimed, 1 running'),
-    ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('queue-lifecycle')).toHaveText(
+      '1 queued · 0 claimed · 1 running',
+      { timeout: 20_000 },
+    );
   });
 
   test('preserves selected native reply text and focus while another durable decision changes', async ({

@@ -9,9 +9,9 @@ import { FleetRunnerOccupancy } from '../fleet-status';
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
- * #306's capacity-vs-work distinction, spelled out: three numbers that each
- * answer a different question and must never be read as substitutes for one
- * another (see `deriveActivityMetrics`'s own doc comment).
+ * #306's capacity-vs-work distinction: the raw queued and running attempts,
+ * under the logical-task figure they must never be read as a substitute for
+ * (see `deriveActivityMetrics`'s own doc comment).
  */
 function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
   const hasDispatchWork =

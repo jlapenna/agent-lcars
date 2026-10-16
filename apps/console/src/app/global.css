@@ -1611,11 +1611,8 @@ body:has(.console-header:not([data-streaming-fallback]))
 }
 
 .agents-fleet-strip {
-  background: var(--lcars-surface);
-}
-
-.agents-fleet-strip {
   padding-bottom: 20px;
+  background: var(--lcars-surface);
   border-bottom: 1px solid var(--mantine-color-default-border) !important;
 }
 
@@ -4075,7 +4072,8 @@ td.costs-repo-spend__num {
   }
 
   .operations-row {
-    grid-template-columns: 1fr;
+    /* minmax(0, ...): a long truncating title must not widen the column. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.55rem;
   }
 

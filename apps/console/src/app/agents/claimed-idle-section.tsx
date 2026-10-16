@@ -73,7 +73,7 @@ export function ClaimedIdleSection({
       title="Claimed but idle"
       count={items.length}
       meta="no live run or session"
-      className="operations-panel agents-panel--claimed"
+      className="operations-panel"
       data-testid="claimed-idle-section"
     >
       <div className="ops-rows">
