@@ -92,7 +92,14 @@ case "$ANCHOR_TYPE" in
     exit 1
     ;;
 esac
-export WORK ISSUE
+# Only the stored native Work spec's immutable opt-in enables a report; the
+# Console completion boundary re-checks it. Temporary bridge to #2810's
+# `intent: report`: phase 2 removes this field and the marker path together.
+REPORT_DELIVERABLE=''
+if [ "$ANCHOR_TYPE" = work ] && jq -e '.spec.deliverable == "report"' <<<"$WORK" >/dev/null; then
+  REPORT_DELIVERABLE=1
+fi
+export WORK ISSUE REPORT_DELIVERABLE
 case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;
@@ -583,6 +590,21 @@ the result kind):
 
 Use no-op instead of park only when the requested result already exists. Do
 not create that file for a pull-request outcome."
+  if [ "$REPORT_DELIVERABLE" = 1 ]; then
+    NATIVE_WORK_INSTRUCTIONS="$NATIVE_WORK_INSTRUCTIONS
+
+This item declares deliverable: report, which overrides the commit, push,
+PR and response-ending instructions above. Make no PR, commit or GitHub
+write. When the report is finished, write these two lines to
+\$NATIVE_WORK_OUTCOME_FILE instead of a park/no-op record:
+
+<!-- agent-result:v1:report:$ATTEMPT_ID -->
+<!-- attempt-claim:$ATTEMPT_ID -->
+
+Then end with the complete report as your final response (at most 16000
+characters): that response is the deliverable. A finished report is not a
+park. Park only for a real blocker."
+  fi
 fi
 
 # Canonical direct-runner dispatch prompt. It is self-contained so target
@@ -1271,6 +1293,7 @@ elif [ "$ANCHOR_TYPE" = "work" ]; then
   # park/no-op, matching the shared agent protocol's marker grammar.
   native_park_marker="<!-- agent-result:v1:park:${ATTEMPT_ID} -->"
   native_no_op_marker="<!-- agent-result:v1:no-op:${ATTEMPT_ID} -->"
+  native_report_marker="<!-- agent-result:v1:report:${ATTEMPT_ID} -->"
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
   if [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
     printf '%s\n%s\n' "$native_park_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
@@ -1278,6 +1301,9 @@ elif [ "$ANCHOR_TYPE" = "work" ]; then
   elif [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
     printf '%s\n%s\n' "$native_no_op_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
     OUTCOME=no-op
+  elif [ "$REPORT_DELIVERABLE" = 1 ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
+    printf '%s\n%s\n' "$native_report_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
+    OUTCOME=report
   else
     cat "$VERIFY_OUTPUT"
   fi
@@ -1300,6 +1326,10 @@ AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || 
 # message (#2537); they are never task or tool output, so quoted text in a
 # transcript cannot forge them.
 PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
+# A report's message is its deliverable; a blank one delivered nothing.
+if [ "$OUTCOME" = report ] && [ -z "${AGENT_MESSAGE//[[:space:]]/}" ]; then
+  OUTCOME=no-deliverable
+fi
 # Capacity exhaustion is a provider failure, never a request for a human
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
 # A published deliverable has already settled the outcome above, so work the
@@ -1354,6 +1384,6 @@ COMPLETED=1
 # the structured no-op/park paths; their successful `/complete` callbacks
 # must not turn into container-level failures after the fact.
 case "$OUTCOME" in
-  pull-request | comment | review | no-op | park | unknown-success) ;;
+  pull-request | report | comment | review | no-op | park | unknown-success) ;;
   *) exit 1 ;;
 esac

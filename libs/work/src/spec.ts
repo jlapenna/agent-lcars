@@ -42,6 +42,11 @@ export const workSpecSchema = z
     /** Trusted immutable intake policy. Omitted legacy/implicit requests retain
      * an unknown runtime gate rather than letting a worker waive evidence. */
     deliveryRuntime: z.enum(['none', 'required']).optional(),
+    /** Trusted immutable intake for read-only work whose result is findings,
+     * not a change: the worker publishes a closed `agent-report` issue and
+     * the item settles `done`. Omitted keeps PR/park/no-op as the only
+     * outcomes, so implement work can never substitute a report. */
+    deliverable: z.enum(['report']).optional(),
     target: workTargetSchema,
   })
   .refine((spec) => !spec.fallbackPipelines?.includes(spec.pipeline), {

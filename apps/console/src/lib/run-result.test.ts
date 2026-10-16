@@ -179,3 +179,45 @@ it('omits GitHub comment metadata for native work without a GitHub anchor', () =
     }),
   ).toEqual({ ok: true, summary: 'park' });
 });
+
+describe('declared native report (#2845 bridge to #2810 intent: report)', () => {
+  const report = { mode: 'implement', report: true };
+
+  it('settles an opted-in report whose message is the deliverable', () => {
+    expect(
+      toRunResult('octo/example', 'report', null, '# Findings', report),
+    ).toEqual({ ok: true, summary: 'report', message: '# Findings' });
+  });
+
+  it('never attaches a GitHub reference to a report', () => {
+    expect(
+      toRunResult(
+        'octo/example',
+        'report',
+        { kind: 'pull-request', number: 12 },
+        '# Findings',
+        report,
+      ),
+    ).toEqual({ ok: true, summary: 'report', message: '# Findings' });
+  });
+
+  it('refuses a report without the immutable opt-in', () => {
+    for (const context of [
+      undefined,
+      { mode: 'implement' },
+      { issue: 42, mode: 'implement' },
+    ]) {
+      expect(
+        toRunResult('octo/example', 'report', null, '# Findings', context).ok,
+      ).toBe(false);
+    }
+  });
+
+  it('refuses a blank or missing report message', () => {
+    for (const message of [undefined, '', ' \n\t ', 42]) {
+      expect(
+        toRunResult('octo/example', 'report', null, message, report).ok,
+      ).toBe(false);
+    }
+  });
+});

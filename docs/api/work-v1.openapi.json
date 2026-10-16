@@ -1049,6 +1049,10 @@
                         "type": "string",
                         "enum": ["none", "required"]
                       },
+                      "deliverable": {
+                        "type": "string",
+                        "enum": ["report"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -1129,6 +1133,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -1700,6 +1708,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -2277,6 +2289,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -2900,6 +2916,10 @@
                                 "type": "string",
                                 "enum": ["none", "required"]
                               },
+                              "deliverable": {
+                                "type": "string",
+                                "enum": ["report"]
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -3475,6 +3495,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -4072,6 +4096,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -4718,6 +4746,10 @@
                           "type": "string",
                           "enum": ["none", "required"]
                         },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -5307,6 +5339,10 @@
                         "type": "string",
                         "enum": ["none", "required"]
                       },
+                      "deliverable": {
+                        "type": "string",
+                        "enum": ["report"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -5379,6 +5415,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -5582,6 +5622,10 @@
                         "type": "string",
                         "enum": ["none", "required"]
                       },
+                      "deliverable": {
+                        "type": "string",
+                        "enum": ["report"]
+                      },
                       "target": {
                         "type": "object",
                         "properties": {
@@ -5654,6 +5698,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -5990,6 +6038,10 @@
                           "type": "string",
                           "enum": ["none", "required"]
                         },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
+                        },
                         "target": {
                           "type": "object",
                           "properties": {
@@ -6166,6 +6218,10 @@
                                 "type": "string",
                                 "enum": ["none", "required"]
                               },
+                              "deliverable": {
+                                "type": "string",
+                                "enum": ["report"]
+                              },
                               "target": {
                                 "type": "object",
                                 "properties": {
@@ -6339,6 +6395,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -6576,6 +6636,10 @@
                         "deliveryRuntime": {
                           "type": "string",
                           "enum": ["none", "required"]
+                        },
+                        "deliverable": {
+                          "type": "string",
+                          "enum": ["report"]
                         },
                         "target": {
                           "type": "object",
@@ -9508,6 +9572,10 @@
                               "type": "string",
                               "enum": ["none", "required"]
                             },
+                            "deliverable": {
+                              "type": "string",
+                              "enum": ["report"]
+                            },
                             "target": {
                               "type": "object",
                               "properties": {
@@ -9694,6 +9762,10 @@
                                 "deliveryRuntime": {
                                   "type": "string",
                                   "enum": ["none", "required"]
+                                },
+                                "deliverable": {
+                                  "type": "string",
+                                  "enum": ["report"]
                                 },
                                 "target": {
                                   "type": "object",

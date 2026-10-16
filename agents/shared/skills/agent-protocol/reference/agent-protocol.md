@@ -255,6 +255,15 @@ branch on the reference format:
   `<!-- agent-result:v1:no-op:$ATTEMPT_ID -->`. The hosted finalizer verifies
   that record only after the worker job closes; a bare response remains
   insufficient.
+- **Report Work** (a native Work spec with `deliverable: report`): the
+  findings are the deliverable. Make no PR, commit or GitHub write; record
+  `<!-- agent-result:v1:report:$ATTEMPT_ID -->` with the attempt claim in
+  the same private outcome file, then end with the complete report (at most
+  16,000 characters) as the final response. The item settles done, not
+  parked. Only the stored opt-in enables this; never infer it from the task
+  text. It is a temporary bridge to the unified-dataflow design's
+  `intent: report` (#2810), whose verification phase removes the field and
+  this marker together.
 
 A worker crash, cancellation, quota failure, or timeout is an execution
 outcome. Its failure reporter must preserve the visible diagnosis and verify
@@ -314,13 +323,14 @@ comment must say.
 The dispatch brief's `mode` and `requested_results` fields are authoritative;
 do not infer the job from labels:
 
-| `mode`      | anchor       | deliverable                                                      |
-| ----------- | ------------ | ---------------------------------------------------------------- |
-| `implement` | issue        | open a PR on a new branch                                        |
-| `implement` | pull request | take over and keep pushing to that PR's branch                   |
-| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact |
-| `review`    | pull request | submit a real pull-request review with a body; push nothing      |
-| `reply`     | either       | a comment may be the complete deliverable                        |
+| `mode`      | anchor       | deliverable                                                       |
+| ----------- | ------------ | ----------------------------------------------------------------- |
+| `implement` | issue        | open a PR on a new branch                                         |
+| `implement` | pull request | take over and keep pushing to that PR's branch                    |
+| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact  |
+| `implement` | report work  | final response is the report, plus its marker-bound REPORT record |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing       |
+| `reply`     | either       | a comment may be the complete deliverable                         |
 
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.

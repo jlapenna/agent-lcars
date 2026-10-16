@@ -20,8 +20,9 @@ worker_completion_needed() {
   remaining=$((deadline - $(monotonic_seconds)))
   [ "$remaining" -gt 0 ] || return 1
   if [ "$ANCHOR_TYPE" = work ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
-    local result
-    for result in park no-op; do
+    local result results=(park no-op)
+    [ "${REPORT_DELIVERABLE:-}" != 1 ] || results+=(report)
+    for result in "${results[@]}"; do
       if printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
         "$result" "$ATTEMPT_ID" "$ATTEMPT_ID" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
         return 1

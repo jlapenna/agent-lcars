@@ -551,6 +551,36 @@ describe('lcars work', () => {
     );
     expect(d.out.join('\n')).toMatch(/running/);
   });
+  it('create --deliverable report opts the item into a report result', async () => {
+    let spec: unknown;
+    const d = deps({
+      'PUT /api/work/v1/items/{id}': (init) => {
+        spec = JSON.parse(String(init.body)).spec;
+        return item('running');
+      },
+    });
+    const create = [
+      'create',
+      '--repo',
+      'o/r',
+      '--pipeline',
+      'claude',
+      '--title',
+      't',
+      '--description',
+      'd',
+    ];
+    expect(
+      (await executeWorkCommand([...create, '--deliverable', 'report'], d)).ok,
+    ).toBe(true);
+    expect(spec).toMatchObject({ deliverable: 'report' });
+    const refused = await executeWorkCommand(
+      [...create, '--deliverable', 'pr'],
+      d,
+    );
+    expect(refused.ok).toBe(false);
+    expect(d.calls).toHaveLength(1);
+  });
   it.each(['done', 'parked', 'failed', 'canceled'])(
     'status --watch stops when running work becomes %s',
     async (state) => {

@@ -8,6 +8,7 @@ const OK_OUTCOMES: ReadonlySet<string> = new Set([
   'review',
   'no-op',
   'park',
+  'report',
   'unknown-success',
 ]);
 
@@ -16,6 +17,8 @@ interface ReferenceContext {
   /** Immutable GitHub anchor, absent for native work. */
   issue?: number;
   mode?: string;
+  /** The stored native Work spec opted into `deliverable: report`. */
+  report?: boolean;
 }
 
 /** Restrict REST-sourced permalinks to this repository, anchor and artifact.
@@ -58,8 +61,12 @@ export function toRunResult(
 ): RunResult {
   const summary = typeof outcome === 'string' ? outcome : undefined;
   const parsedRef = outcomeReferenceSchema.safeParse(outcomeReference);
+  // A report's deliverable is its message, never a GitHub artifact.
   const ref =
-    parsedRef.success && typeof outcome === 'string' && OK_OUTCOMES.has(outcome)
+    parsedRef.success &&
+    typeof outcome === 'string' &&
+    OK_OUTCOMES.has(outcome) &&
+    outcome !== 'report'
       ? artifactUrl(repo, parsedRef.data, context)
       : undefined;
   const relatedRefs =
@@ -75,8 +82,15 @@ export function toRunResult(
     typeof message === 'string' && message.length > 0
       ? message.slice(0, 16_384)
       : undefined;
+  // Temporary bridge to #2810's `intent: report`: success only for an item
+  // that opted in, with a nonblank message. Anything else is a failed round.
+  const ok =
+    typeof outcome === 'string' &&
+    OK_OUTCOMES.has(outcome) &&
+    (outcome !== 'report' ||
+      (context?.report === true && (finalMessage?.trim() ?? '') !== ''));
   return {
-    ok: typeof outcome === 'string' && OK_OUTCOMES.has(outcome),
+    ok,
     ...(summary === undefined ? {} : { summary }),
     ...(ref === undefined ? {} : { ref }),
     ...(relatedRefs === undefined || relatedRefs.length === 0

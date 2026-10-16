@@ -269,11 +269,11 @@ case "$url" in
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}${FAKE_SPEC_EXTRA:-}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}${FAKE_SPEC_EXTRA:-}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -1836,6 +1836,37 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
   fail "codex native park: provider did not receive the shared native outcome contract ($(cat "$native_outcome_file" 2>/dev/null))"
 
 echo "scenario codex-native-park: OK"
+
+# Temporary #2845 bridge to #2810's `intent: report`: only a native item
+# whose stored spec opts into `deliverable: report` may settle a report, and
+# its nonblank final message is the deliverable, with no GitHub reference.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_CODEX_LAST_MESSAGE='# Audit findings'
+run_scenario codex-native-report codex
+[ "$rc" -eq 0 ] || fail "codex native report: expected exit 0, got $rc"
+grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG" ||
+  fail "codex native report: prompt did not describe the report deliverable ($(cat "$CODEX_ARGS_LOG"))"
+jq -e '.outcome == "report" and .outcomeReference == null and (.message | contains("# Audit findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report: report was not completed with its message ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report: OK"
+
+export FAKE_CODEX_LAST_MESSAGE=$' \n '
+run_scenario codex-native-report-blank codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report blank: a blank message settled a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-blank: OK"
+
+unset FAKE_SPEC_EXTRA
+export FAKE_CODEX_LAST_MESSAGE='# Audit findings'
+run_scenario codex-native-report-unopted codex
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_CODEX_LAST_MESSAGE
+if grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG"; then
+  fail "codex native report unopted: prompt offered a report without the opt-in"
+fi
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report unopted: an unopted item settled a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-unopted: OK"
 
 # The QueueExecutor adapter must enforce the two-hour OpenCode bound
 # locally. A short override makes this regression deterministic without

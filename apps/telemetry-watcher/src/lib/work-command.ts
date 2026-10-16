@@ -42,7 +42,7 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
@@ -348,6 +348,9 @@ export async function executeWorkCommand(
           !['none', 'required'].includes(deliveryRuntime ?? '')
         )
           return usageFailure(deps);
+        const deliverable = flag(rest, '--deliverable');
+        if (rest.includes('--deliverable') && deliverable !== 'report')
+          return usageFailure(deps);
         const description = readDescription(rest);
         const fallback = flag(rest, '--fallback-pipelines');
         if (rest.includes('--fallback-pipelines') && fallback === undefined)
@@ -373,6 +376,7 @@ export async function executeWorkCommand(
             ...(deliveryRuntime === undefined
               ? {}
               : { deliveryRuntime: deliveryRuntime as 'none' | 'required' }),
+            ...(deliverable === undefined ? {} : { deliverable: 'report' }),
             target: { repo },
           },
         });
