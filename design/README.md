@@ -21,7 +21,8 @@ Decisions the prototype already carries:
 - The Bridge has no repository select; its panels summarise the whole fleet.
 - Every toolbar control applies on change; there is no Apply step.
 - The header carries **New work** (except on Work, whose toolbar owns it),
-  Refresh, the ⋯ console menu (destinations, preferences, identity) and the
+  Refresh, the ⋯ console menu (preferences and identity, plus the
+  destinations below 64em, where the pills fold away) and the
   live status, which reads "Snapshot · loaded …" on routes without a stream.
 - The data-warnings band says "All sources reporting" only when every read
   the page made completed.

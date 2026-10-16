@@ -149,6 +149,8 @@ h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text
 .menu hr { border: 0; border-top: 1px solid var(--hairline); margin: 6px 0; }
 .menu .ident { display: flex; align-items: center; gap: 8px; padding: 4px 12px 8px; font-size: 13px; }
 .menu .ident > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+/* Destinations join the menu only below 64em, where the pills are folded. */
+@media (min-width: 64em) { .menu .nav-group { display: none; } }
 
 /* ---- Workspace frame ---- */
 .body { grid-row: 2; grid-column: 2; padding: 16px 0 28px; min-width: 0; }
@@ -446,7 +448,7 @@ const DEST = [
   { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, live: true, title: 'Decision Inbox', sub: 'Work waiting on a maintainer response · 4 repos' },
   { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, live: true, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes · 4 repos' },
   { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · live runners and queue status' },
-  { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 9, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
+  { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 5, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
   { key: 'sessions', label: 'Sessions', accent: 'teal', w: 140, title: 'Session Archive', sub: 'Durable session records · last 14 days · 31 sessions' },
   { key: 'costs', label: 'Costs', accent: 'gold', w: 112, title: 'Costs', sub: 'Cost ledger · last 14 days · 31 sessions' },
 ];
@@ -499,16 +501,14 @@ const RUNNERS = [
   ['zh2lg-runner-5vfxr', 'homelab-ci', 'data', 'idle', '—', '2c/3G', '31m idle'],
   ['zh2lg-runner-hzx9n', 'homelab-ci', 'worf', 'off', 'node NotReady', '—', '12m'],
 ];
+/* The admitted queue holds running items, FIFO within priority (P1-P3);
+   each shows its execution phase. */
 const QUEUE = [
-  ['P1', 'agent-lcars', '#2480', 'console: show capacity receipt on the run detail', 'claude', 'Admitted', '2m'],
-  ['P1', 'homelab', '#2252', 'loki: retention for telemetry-watcher streams', 'codex', 'Capacity hold · codex ceiling 1', '18m'],
-  ['P2', 'agent-lcars', '#2481', 'work api: paginate /runs/capacity inventory', 'codex', 'Capacity hold · codex ceiling 1', '16m'],
-  ['P2', 'sprinkles', '#6043', 'members: Strava connect button uses official asset', 'opencode', 'Capacity hold · opencode ceiling 1', '11m'],
-  ['P2', 'agent-lcars', '#2482', 'docs: executor capacity recovery runbook', 'claude', 'Admitted', '9m'],
-  ['P3', 'homelab', '#2253', 'renovate: group k3s system-upgrade bumps', 'claude', 'Admitted', '7m'],
-  ['P3', 'messages-control', '#119', 'ci: cache pnpm store on ARC runners', 'claude', 'Admitted', '5m'],
-  ['P3', 'agent-lcars', '#2483', 'e2e: 1024px header overflow regression spec', 'claude', 'Scheduled · 15:00', '—'],
-  ['P4', 'homelab', '#2254', 'nightly: fleet onboarding audit', 'codex', 'Scheduled · 02:30', '—'],
+  ['P1', 'jlapenna/agent-lcars', 'user:jlapenna', 'console: show capacity receipt on the run detail', 'claude', 'provider process started', '2m'],
+  ['P1', 'jlapenna/homelab', 'user:jlapenna', 'loki: retention for telemetry-watcher streams', 'codex', 'waiting for placement', '18m'],
+  ['P2', 'jlapenna/agent-lcars', 'svc:production-verifier', 'work api: paginate /runs/capacity inventory', 'codex', 'queued', '16m'],
+  ['P2', 'supersprinklesracing/sprinkles', 'user:jlapenna', 'members: Strava connect button uses official asset', 'opencode', 'queued', '11m'],
+  ['P3', 'jlapenna/homelab', 'user:jlapenna', 'renovate: group k3s system-upgrade bumps', 'claude', 'placement unavailable', '7m'],
 ];
 const RECENT_WORK = [
   ['P2', 'jlapenna/agent-lcars', 'user:jlapenna', 'console: keep the Inbox row actions on one edge', 'claude', 'fail', 'failed', '2h ago'],
@@ -527,9 +527,9 @@ const CLAIMED = [
   { kind: 'PR', repo: 'homelab', n: 2632, title: 'fix: disable incompatible node-exporter XFS collector', meta: 'updated 5 minutes ago · by agent-lcars-bot', reason: 'never dispatched' },
 ];
 const ADMISSION = [
-  { name: 'claude', cooling: false, line: '1 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '3 claims in the 15m 0s to just now' },
-  { name: 'codex', cooling: true, line: '0 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '0 claims in the 15m 0s to just now', cool: 'Provider limit: cooling down, clears in 14 minutes. Retry/reset deadline from run quota/r1; reported 2 minutes ago.' },
-  { name: 'opencode', cooling: false, line: '0 eligible queued · 1 queued · 0 deferred · 1 live claim', claims: '1 claim in the 15m 0s to just now' },
+  { name: 'claude', eligible: 1, cooling: false, line: '1 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '3 claims in the 15m 0s to just now' },
+  { name: 'codex', eligible: 2, cooling: true, line: '0 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '0 claims in the 15m 0s to just now', cool: 'Provider limit: cooling down, clears in 14 minutes. Retry/reset deadline from run quota/r1; reported 2 minutes ago.' },
+  { name: 'opencode', eligible: 1, cooling: false, line: '0 eligible queued · 1 queued · 0 deferred · 1 live claim', claims: '1 claim in the 15m 0s to just now' },
 ];
 const SESSION_GROUPS = [
   { ref: 'GitHub #2477', repo: 'agent-lcars', title: 'Cover tied issue IDs 99 and 100', rows: [['AGENT', 'jlapenna/agent-lcars#2477/r1', 'test(capacity): explicitly cover tied issue IDs', 'agent-lcars#2477', 'codex', 'ok', 'ended', 'PR #2477', '34m', '1.11M', '1h ago']] },
@@ -640,11 +640,11 @@ function cliPanel() {
 function readouts() {
   const cell = (id, label, val, sub, s) => `<div class="readout" data-od-id="readout-${id}"><div class="eyebrow">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div>${s}</div>`;
   return `<section class="readouts" data-od-id="fleet-readouts">
-    ${cell('online', 'Runners online', '11<small> / 12</small>', 'worf-r1 NotReady · laforge-r2 draining', spark([12,12,12,12,12,12,12,12,12,12,12,12,11,11,11,12,12,12,12,12,12,12,12,12,11,11,11,11,11,11], { label: 'Runners online, last 30 minutes' }))}
+    ${cell('online', 'Runners online', '11<small> / 12</small>', 'ARC lanes', spark([12,12,12,12,12,12,12,12,12,12,12,12,11,11,11,12,12,12,12,12,12,12,12,12,11,11,11,11,11,11], { label: 'Runners online, last 30 minutes' }))}
     ${cell('busy', 'Busy', '7<small> / 11</small>', '64% utilisation · 3 idle', spark(series(6, 2, 30, 2), { label: 'Busy runners, last 30 minutes' }))}
-    ${cell('queue', 'Queue depth', '9', '3 on capacity hold · oldest 18m', spark(series(7, 3, 30, 4), { warnAbove: 10, label: 'Queue depth, last 30 minutes' }))}
+    ${cell('queue', 'Queue depth', '9', '3 claimed · oldest 18m', spark(series(7, 3, 30, 4), { warnAbove: 10, label: 'Queue depth, last 30 minutes' }))}
     ${cell('agents', 'Agents running', '7', 'claude 4 · codex 2 · opencode 1', spark(series(5, 2, 30, 6), { label: 'Running agents, last 30 minutes' }))}
-    ${cell('spend', 'Spend today', '$38.42', 'of $60.00 daily budget · 64%', spark([0.6,0.9,1.2,0.4,0.2,0.1,0.1,0.3,1.8,2.6,3.1,2.9,3.4,4.1,3.8,3.6,2.2,2.7,1.9,1.4], { label: 'Spend per hour today' }))}
+    ${cell('spend', 'Spend today', '$38.42', 'since 00:00 UTC · no daily budget · est.', spark([0,0,0,0,0,0,0,0,0, 0.6,0.9,1.2,0.4,1.8,2.6,3.1,2.9,3.4,4.1,3.8,3.6,2.2,2.7,1.9], { label: 'Spend per hour today, by last activity' }))}
   </section>`;
 }
 
@@ -670,9 +670,9 @@ function claimedPanel() {
   </div></section>`;
 }
 function queuePanel() {
-  const rows = QUEUE.map((q) => `<tr><td class="mono">${q[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${q[1]}${q[2]}</span><span class="item-title">${q[3]}</span></td>
-    <td><span class="tag">${q[4]}</span></td><td><span class="state ${q[5].startsWith('Capacity') ? 'warn' : 'idle'}">${q[5]}</span></td><td class="num">${q[6]}</td></tr>`).join('');
-  return `<section class="panel" data-od-id="panel-work-queue"><div><div class="panel-head"><h2>Admitted queue</h2><span class="count">9</span><span class="meta">FIFO within priority · codex & opencode ceiling 1</span></div>
+  const rows = QUEUE.map((q) => `<tr><td class="mono">${q[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${q[1]} · ${q[2]}</span><span class="item-title">${q[3]}</span></td>
+    <td><span class="tag">${q[4]}</span></td><td><span class="state busy">running</span><span class="links"><span class="tag">${q[5]}</span></span></td><td class="num">${q[6]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-work-queue"><div><div class="panel-head"><h2>Admitted queue</h2><span class="count">${QUEUE.length}</span><span class="meta">FIFO within priority · codex & opencode ceiling 1 · oldest 18m</span></div>
     <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Waiting</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 function recentWorkPanel() {
@@ -680,7 +680,7 @@ function recentWorkPanel() {
     <td><span class="tag">${w[4]}</span></td><td><span class="state ${w[5]}">${w[6]}</span></td><td class="num">${w[7]}</td></tr>`).join('');
   return `<section class="panel" data-od-id="panel-recent-work"><div><div class="panel-head"><h2>Recent work</h2><span class="count">60</span><span class="meta">stopped first · then most recently updated</span></div>
     <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Updated</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="empty-note">Showing up to 50 native tasks. <a href="#">Next work page →</a></div></div></section>`;
+    <div class="empty-note">Showing up to 200 native tasks. <a href="#">Next work page →</a></div></div></section>`;
 }
 function runnersPanel() {
   const cls = { busy: 'busy', idle: 'idle', drain: 'warn', off: 'fail' }, lab = { busy: 'Busy', idle: 'Idle', drain: 'Draining', off: 'Offline' };
@@ -693,7 +693,7 @@ function admissionPanel() {
   const rows = ADMISSION.map((a) => `<div class="admit" data-od-id="provider-admission-${a.name}">
     <div class="name">${a.name} <span class="tag ${a.cooling ? 'idle' : 'live'}">${a.cooling ? 'cooling down' : 'no active cooldown'}</span></div>
     <div>${a.line}</div>${a.cool ? `<div>${a.cool}</div>` : ''}
-    <div class="dim">Durable provider queue: eligible before executor capacity checks, as of 1 minute ago. Provider live-claim limit: 1.</div>
+    <div class="dim">Durable provider queue: ${a.eligible} eligible before executor capacity checks, as of 1 minute ago. Provider live-claim limit: 1.</div>
     <div class="dim">${a.claims}. Executor successful-claim counter; sampled interval, up to 15 minutes.</div></div>`).join('');
   return `<section class="panel" data-od-id="panel-provider-admission"><div><div class="panel-head"><h2>Provider admission</h2><span class="meta">cooldowns, queues and claims</span></div>
     ${rows}<div class="admit-foot">Eligible work can still wait for host placement, credentials, or external checks. Claims precede worker launch.</div></div></section>`;
@@ -705,7 +705,7 @@ function sessionsPanel() {
     <td><span class="state ${s[5]}">${s[6]}</span>${s[7] ? `<span class="links"><a href="#" class="ref">${s[7]}</a></span>` : ''}</td><td class="num">${s[8]}</td><td class="num">${s[9]}</td><td class="num dim">${s[10]}</td></tr>`;
   const groups = SESSION_GROUPS.map((g) => `<div class="group-head"><h3>${g.ref}</h3><span class="tag">${g.repo}</span><span>${g.title}</span><span class="dim">${g.rows.length} session${g.rows.length === 1 ? '' : 's'}</span></div>
     <table class="sess">${SESS_COLS}<tbody>${g.rows.map(row).join('')}</tbody></table>`).join('');
-  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">31</span><span class="meta">grouped by issue · retained 400 days · CLI 30</span>
+  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">31</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
     <div class="seg" role="group" aria-label="View"><button type="button" aria-pressed="false">Flat</button><button type="button" aria-pressed="true">By issue</button></div></div>
     <table class="sess">${SESS_COLS}<thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead></table>
     <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}</div></section>`;
@@ -726,7 +726,7 @@ const find = (ph, opts) => `<label class="field search" data-od-id="search"><spa
 const more = (inner) => `<details class="more"><summary class="field">More filters</summary><div class="more-panel">${inner}</div></details>`;
 const asof = '<span class="asof">Data as of just now</span>';
 const PIPES = ['claude', 'codex', 'opencode'];
-const SESSION_AGENTS = ['claude-code', 'codex', 'gemini', 'opencode'];
+const SESSION_AGENTS = ['claude-code', 'codex', 'gemini', 'antigravity', 'opencode'];
 const SOURCE = '<select class="field" aria-label="Source"><option>All sources</option><option>CLI</option><option>Dispatched agent</option></select>';
 const ARCHIVE_WINDOWS = ['1h', '24h', '7d', '14d', '30d', '90d'];
 
@@ -746,8 +746,8 @@ const VIEWS = {
 };
 
 function renderMenu(d) {
-  $('#menu').innerHTML = `<span class="eyebrow">Navigate</span>${DEST.map((x) => `<a role="menuitem" href="#${x.key}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''}>${x.label}</a>`).join('')}
-    <hr><span class="eyebrow">Preferences</span><button class="item" role="menuitem" type="button">Switch to light mode</button><button class="item" role="menuitem" type="button">Enable decision notifications</button>
+  $('#menu').innerHTML = `<div class="nav-group"><span class="eyebrow">Navigate</span>${DEST.map((x) => `<a role="menuitem" href="#${x.key}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''}>${x.label}</a>`).join('')}<hr></div>
+    <span class="eyebrow">Preferences</span><button class="item" role="menuitem" type="button">Switch to light mode</button><button class="item" role="menuitem" type="button">Enable decision notifications</button>
     <hr><span class="eyebrow">Console</span><div class="ident"><span class="av" style="width:28px;height:28px;background:var(--hairline);display:grid;place-items:center;font:600 12px var(--f-display)">JL</span><span>jlapenna <span class="dim">admin · work.operator</span></span></div>`;
 }
 
