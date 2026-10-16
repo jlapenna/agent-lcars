@@ -394,7 +394,16 @@ export function RunnerAutoscalerStatus({
   return (
     <ShuttlebayWorkspace
       warnings={
-        <DataWarnings warnings={[...result.warnings, ...readWarnings]} />
+        <DataWarnings
+          warnings={[...result.warnings, ...readWarnings]}
+          // Absent telemetry raises no warning of its own, but the panels
+          // below then say unavailable; only a full report vouches for all.
+          sourcesChecked={
+            (live.lanes?.length ?? 0) > 0 &&
+            !live.lanesIncomplete &&
+            live.queueExecutor !== undefined
+          }
+        />
       }
       toolbar={
         toolbar ?? (
