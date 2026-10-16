@@ -390,11 +390,7 @@ export function RunnerAutoscalerStatus({
 
   return (
     <ShuttlebayWorkspace
-      warnings={
-        result.warnings.length > 0 ? (
-          <DataWarnings warnings={result.warnings} />
-        ) : undefined
-      }
+      warnings={<DataWarnings warnings={result.warnings} />}
       toolbar={
         toolbar ?? (
           <Text c="dimmed" size="sm">

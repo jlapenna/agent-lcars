@@ -162,9 +162,7 @@ async function CostsBody({
 
   return (
     <CostsWorkspace
-      warnings={
-        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
-      }
+      warnings={<DataWarnings warnings={warnings} />}
       toolbar={<CostsToolbar query={query} watchedRepos={watchedRepos} />}
     >
       <ConsoleReadouts label="Fleet readouts" readouts={readouts} />
