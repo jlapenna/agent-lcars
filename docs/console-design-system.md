@@ -10,6 +10,11 @@ Read this before changing `apps/console/src/app/global.css` or any route
 shell. `apps/console/src/app/design-system-contract.test.ts` enforces most of
 it, and each assertion there names the drift it exists to stop.
 
+The layout target is [`design/fleet-console.html`](../design/fleet-console.html)
+at desktop, tablet and phone widths. It changes with the console, in the same
+PR: see [`design/README.md`](../design/README.md) for that rule and the
+decisions the prototype records.
+
 ## The six rules
 
 ### 1. One ground

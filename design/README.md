@@ -4,9 +4,31 @@ Browser-renderable design prototypes for the LCARS console. Open the HTML files
 directly (they load bundled fonts from `assets/fonts/` with no build step).
 
 `fleet-console.html` is the layout target for the console: its elbow rail,
-header, workspace frame, panels and tables are what the routes are built to.
-Its numbers are sample data. Where it shows a readout the console has no
-honest source for, the console omits the readout rather than inventing one.
+header, workspace frame, panels and tables are what the routes are built to,
+at three widths — desktop (64em and up), tablet (48–64em: compact elbow,
+destination pills, readout strip) and phone (below 48em: destinations in the
+⋯ menu, filters folded behind **Filters**, tables reflowed into rows). Its
+numbers are sample data, and it shows only what the console renders: a readout
+with no honest source is left out of both.
+
+The prototype and the console must say the same thing. Change the design
+first: a layout or behaviour change lands in the prototype in the same PR as
+the console change (or before it), and a console change that departs from the
+prototype updates it there too. A maintainer's decision about the console
+outranks an older drawing — record it here rather than let the two disagree.
+Decisions the prototype already carries:
+
+- The Bridge has no repository select; its panels summarise the whole fleet.
+- Every toolbar control applies on change; there is no Apply step.
+- The header carries **New work** (except on Work, whose toolbar owns it),
+  Refresh, the ⋯ console menu (destinations, preferences, identity) and the
+  live status, which reads "Snapshot · loaded …" on routes without a stream.
+- The data-warnings band says "All sources reporting" only when every read
+  the page made completed.
+- Panels the first drawing lacked are drawn in its language: Agents' fleet
+  snapshot, CLI sessions and Claimed but idle; Shuttlebay's provider
+  admission; Work's recent work; Sessions' by-issue groups.
+
 The written rules are [`../docs/console-design-system.md`](../docs/console-design-system.md)
 and the token source of truth is `apps/console/src/app/theme.ts`.
 
@@ -23,9 +45,11 @@ readers.
 ## Provenance
 
 Generated with OpenDesign from the brief in `brand-spec.md`. The in-repo
-snapshot is the source of truth: prototypes are authored in an OpenDesign
-workspace and promoted here through a normal PR — nothing in this folder is
-edited out-of-band, and `main` plus CI gate every change.
+snapshot is the source of truth: prototypes may be edited in an OpenDesign
+workspace or directly, and either way reach this folder only through a normal
+PR — nothing here is edited out-of-band, and `main` plus CI gate every change.
+Before editing in OpenDesign, copy this folder into the workspace so it starts
+from the current snapshot, not an older export.
 
 ## Font licenses
 
