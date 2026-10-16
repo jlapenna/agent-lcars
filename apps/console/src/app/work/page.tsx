@@ -1,7 +1,7 @@
 import { PIPELINES } from '@agent-lcars/work';
 import { Anchor, Group, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
+import { cache, Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { getWatchedRepos } from '@/lib/github-client';
@@ -29,7 +29,7 @@ import {
   type WorkListParams,
 } from './work-list-query';
 import { scanWorkPages } from './work-list-scan';
-import { WorkWorkspace } from './work-workspace';
+import { WorkReadWarnings, WorkWorkspace } from './work-workspace';
 
 /**
  * Unlike every other console destination, this page is not admin-gated -
@@ -42,19 +42,17 @@ type ListResult = Awaited<ReturnType<typeof listItems>>;
 type ListError = NonNullable<ListResult[0]>;
 type ListedWork = NonNullable<ListResult[1]>['items'][number];
 
-async function WorkBody({ query }: { query: WorkListParams }) {
-  let input;
+/** One Work API read per request and view, shared by the body and the
+ * warnings band. Invalid filters or cursor read nothing. */
+const readWorkView = cache(async (key: string) => {
+  const query = JSON.parse(key) as WorkListParams;
+  let input, filters;
   try {
     input = parseWorkListQuery(query);
+    filters = parseWorkViewFilters(query);
   } catch {
-    return (
-      <Text role="alert">
-        Invalid Work filters or cursor.{' '}
-        <Anchor href="/work">Reset filters</Anchor>
-      </Text>
-    );
+    return { invalid: true as const };
   }
-  const filters = parseWorkViewFilters(query);
   const now = Date.now();
   const filtered = Boolean(
     input.state ||
@@ -73,6 +71,20 @@ async function WorkBody({ query }: { query: WorkListParams }) {
     matches: (item) => matchesWorkView(item, filters, now),
     scan: filtered,
   });
+  return { input, filtered, scan };
+});
+
+async function WorkBody({ query }: { query: WorkListParams }) {
+  const view = await readWorkView(JSON.stringify(query));
+  if ('invalid' in view) {
+    return (
+      <Text role="alert">
+        Invalid Work filters or cursor.{' '}
+        <Anchor href="/work">Reset filters</Anchor>
+      </Text>
+    );
+  }
+  const { input, filtered, scan } = view;
   if ('error' in scan) {
     const err = scan.error;
     return (
@@ -135,6 +147,16 @@ function WorkViewContent({
 }: WorkViewProps) {
   return (
     <WorkWorkspace
+      warnings={
+        <WorkReadWarnings
+          key={JSON.stringify(query)}
+          read={() =>
+            readWorkView(JSON.stringify(query)).then((view) =>
+              'invalid' in view ? undefined : view.scan,
+            )
+          }
+        />
+      }
       toolbar={
         canCreateWork ? (
           <ConsoleToolbar

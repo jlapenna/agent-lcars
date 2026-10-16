@@ -490,6 +490,10 @@ describe('RunnerAutoscalerStatus', () => {
     expect(
       screen.getByText('Direct executor status unavailable.'),
     ).toBeVisible();
+    // Nothing reported, so the band vouches for nothing either.
+    expect(screen.getByTestId('data-warnings-none')).not.toHaveTextContent(
+      'All sources reporting',
+    );
     rerender(
       <MantineProvider>
         <RunnerAutoscalerStatus

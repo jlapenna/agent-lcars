@@ -10,6 +10,27 @@ import {
 import { bridgeReadouts, fleetReadoutInput } from './bridge-readouts';
 import type { ConsoleReadout } from './console-readouts';
 
+/** What the readout row's reads could not vouch for, for the warnings band:
+ * activity and autoscaler problems, and a failed spend read. */
+export function fleetReadoutWarnings({
+  activity,
+  autoscaler,
+  spendArchive,
+}: {
+  activity: { warnings: string[] };
+  autoscaler: { warnings: string[] };
+  spendArchive: unknown;
+}): string[] {
+  return [
+    ...activity.warnings,
+    ...autoscaler.warnings,
+    ...(spendArchive === undefined ? [SPEND_READ_FAILED] : []),
+  ];
+}
+
+export const SPEND_READ_FAILED =
+  'Spend unavailable (session archive read failed).';
+
 /**
  * The readout row the mockup opens Bridge and Costs with (runners online,
  * busy, queue depth, agents running, spend today), for routes that do not
@@ -17,7 +38,7 @@ import type { ConsoleReadout } from './console-readouts';
  */
 export async function loadFleetReadouts(
   repo?: string,
-): Promise<ConsoleReadout[]> {
+): Promise<{ readouts: ConsoleReadout[]; warnings: string[] }> {
   const [{ data: activity }, autoscaler, spendArchive] = await Promise.all([
     getCachedAgentActivity(),
     getAutoscalerStatuses(),
@@ -31,7 +52,10 @@ export async function loadFleetReadouts(
   const liveRuns = repo
     ? activity.liveRuns.filter((run) => repoKey(run.repo) === repo)
     : activity.liveRuns;
-  return bridgeReadouts(
-    fleetReadoutInput({ activity, liveRuns, repo, autoscaler, spendArchive }),
-  );
+  return {
+    readouts: bridgeReadouts(
+      fleetReadoutInput({ activity, liveRuns, repo, autoscaler, spendArchive }),
+    ),
+    warnings: fleetReadoutWarnings({ activity, autoscaler, spendArchive }),
+  };
 }

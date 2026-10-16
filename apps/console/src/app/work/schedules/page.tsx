@@ -1,7 +1,7 @@
 import { PIPELINES } from '@agent-lcars/work';
 import { Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
-import { Suspense } from 'react';
+import { cache, Suspense } from 'react';
 
 import { auth } from '@/auth';
 import { controlPlaneRepository } from '@/lib/deployment';
@@ -12,7 +12,7 @@ import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading, PageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
-import { WorkWorkspace } from '../work-workspace';
+import { WorkReadWarnings, WorkWorkspace } from '../work-workspace';
 import {
   createSchedule,
   deleteSchedule,
@@ -24,8 +24,11 @@ import {
 import { ScheduleCreateForm } from './schedule-create-form';
 import { ScheduleList } from './schedule-list';
 
+/** One schedules read per request, shared by the body and the band. */
+const readSchedules = cache(() => listSchedules({ limit: 200 }));
+
 async function SchedulesBody() {
-  const [err, data] = await listSchedules({ limit: 200 });
+  const [err, data] = await readSchedules();
   if (err) {
     return (
       <div className="work-workspace__empty">
@@ -65,7 +68,18 @@ async function SchedulesBody() {
 
 function SchedulesViewContent() {
   return (
-    <WorkWorkspace ariaLabel="Work schedules">
+    <WorkWorkspace
+      ariaLabel="Work schedules"
+      warnings={
+        <WorkReadWarnings
+          read={() =>
+            readSchedules().then(([err]) =>
+              err ? { error: err } : { stoppedOn: undefined },
+            )
+          }
+        />
+      }
+    >
       <Suspense fallback={<PageLoading rows={4} header={false} />}>
         <SchedulesBody />
       </Suspense>

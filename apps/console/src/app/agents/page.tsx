@@ -326,9 +326,7 @@ async function AgentsPageBody({
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
       }
-      warnings={
-        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
-      }
+      warnings={<DataWarnings warnings={warnings} />}
       fleet={
         <>
           <DataFreshness

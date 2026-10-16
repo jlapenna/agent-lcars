@@ -91,6 +91,10 @@ export function tokenRate(
   };
 }
 
+/** The warnings band's line when the token-rate snapshot read failed. */
+export const TOKEN_RATE_READ_FAILED =
+  'Token rate unavailable (session store read failed).';
+
 /** The fleet panel's Tokens / min input: a rate, or why there is none. */
 export function fleetTokenRate(
   snapshot: TokenRateSnapshot | undefined,

@@ -307,8 +307,11 @@ export function RunnerAutoscalerStatus({
   filters = {},
   toolbar,
   tokenRate,
+  readWarnings = [],
 }: {
   initial: AutoscalerStatusResult;
+  /** The page's other reads that failed (the token rate), for the band. */
+  readWarnings?: string[];
   /** Read once with the page, already narrowed to the filters. */
   tokenRate?: TokenRate | { unavailable: string };
   /** The toolbar's repository, agent and find filters. */
@@ -391,9 +394,16 @@ export function RunnerAutoscalerStatus({
   return (
     <ShuttlebayWorkspace
       warnings={
-        result.warnings.length > 0 ? (
-          <DataWarnings warnings={result.warnings} />
-        ) : undefined
+        <DataWarnings
+          warnings={[...result.warnings, ...readWarnings]}
+          // Absent telemetry raises no warning of its own, but the panels
+          // below then say unavailable; only a full report vouches for all.
+          sourcesChecked={
+            (live.lanes?.length ?? 0) > 0 &&
+            !live.lanesIncomplete &&
+            live.queueExecutor !== undefined
+          }
+        />
       }
       toolbar={
         toolbar ?? (

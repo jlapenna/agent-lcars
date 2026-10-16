@@ -6,7 +6,7 @@ import { assertAdmin } from '@/lib/auth-guards';
 import { auth } from '../../auth';
 import { getWatchedRepos } from '../../lib/github-client';
 import { getShuttlebayStatus } from '../../lib/shuttlebay-status';
-import { fleetTokenRate } from '../../lib/token-rate';
+import { fleetTokenRate, TOKEN_RATE_READ_FAILED } from '../../lib/token-rate';
 import { getTokenRateSnapshot } from '../../lib/token-rate-data';
 import { repoKey } from '../../lib/watched-repo';
 import { ConsoleCommandUtilities } from '../console-command-utilities';
@@ -39,6 +39,7 @@ async function ShuttlebayBody({ filters, watchedRepos }: ShuttlebayViewProps) {
         repo: filters.repo,
         agent: filters.agent,
       })}
+      readWarnings={tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]}
       toolbar={
         // No primary: the mockup gives Shuttlebay none, and the header's
         // live status already says the page updates itself.
