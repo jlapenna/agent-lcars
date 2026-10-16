@@ -322,6 +322,12 @@ async function AgentsPageBody({
               Clear repository
             </Anchor>
           ) : null}
+          <DataFreshness
+            fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
+            initialLabel={formatRelativeTime(
+              oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
+            )}
+          />
           {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
           <ToolbarApply label="Apply" />
         </ConsoleToolbar>
@@ -330,19 +336,11 @@ async function AgentsPageBody({
         warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
       }
       fleet={
-        <>
-          <DataFreshness
-            fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
-            initialLabel={formatRelativeTime(
-              oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
-            )}
-          />
-          <FleetSnapshotBar
-            activity={filteredActivity}
-            activeCliSessionCount={filteredActiveSessions.length}
-            metrics={activityMetrics}
-          />
-        </>
+        <FleetSnapshotBar
+          activity={filteredActivity}
+          activeCliSessionCount={filteredActiveSessions.length}
+          metrics={activityMetrics}
+        />
       }
       active={
         <>

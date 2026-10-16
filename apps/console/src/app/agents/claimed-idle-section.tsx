@@ -1,4 +1,4 @@
-import { Anchor, Badge, Group, Stack } from '@mantine/core';
+import { Anchor, Badge, Group } from '@mantine/core';
 
 import type { ActionItem } from '../../lib/action-items';
 import type { AuthoritativeTaskState } from '../../lib/authoritative-task-state';
@@ -10,8 +10,8 @@ import type { CliSession } from '../../lib/cli-sessions';
 import { repoItemKey, repoKey } from '../../lib/watched-repo';
 import { CompactItemRow } from '../compact-item-row';
 import { CloseIssueButton, ItemOverflowMenu } from '../item-overflow-menu';
+import { OpsPanel } from '../ops-primitives';
 import { RelativeTime } from '../relative-time';
-import { AgentOperationsPanel } from './agent-operations-panel';
 
 /**
  * The orchestrator's own view of whether this item's mutex is actually
@@ -69,13 +69,14 @@ export function ClaimedIdleSection({
   if (items.length === 0) return null;
 
   return (
-    <AgentOperationsPanel
-      title={`Claimed but Idle (${items.length})`}
-      className="agents-panel--claimed"
-      testId="claimed-idle-section"
-      separated
+    <OpsPanel
+      title="Claimed but idle"
+      count={items.length}
+      meta="no live run or session"
+      className="operations-panel agents-panel--claimed"
+      data-testid="claimed-idle-section"
     >
-      <Stack gap="xs">
+      <div className="ops-rows">
         {items.map((item) => {
           const session = mostRecentSessionForItem(item, cliSessions);
           const key = repoItemKey(item.repo, item.number);
@@ -90,9 +91,9 @@ export function ClaimedIdleSection({
             { observeUntil: item.observeUntil },
           );
           return (
-            <Stack
+            <div
               key={`${repoKey(item.repo)}-${item.kind}-${item.number}`}
-              gap={4}
+              className="operations-row"
             >
               <CompactItemRow
                 item={item}
@@ -134,9 +135,6 @@ export function ClaimedIdleSection({
                         {reason.label}
                       </Badge>
                     )}
-                    {reason?.kind === 'finished' && (
-                      <CloseIssueButton item={item} />
-                    )}
                     {session && (
                       <Anchor
                         href={`/sessions/${session.sessionId}`}
@@ -147,14 +145,19 @@ export function ClaimedIdleSection({
                         session
                       </Anchor>
                     )}
-                    <ItemOverflowMenu item={item} />
                   </Group>
                 }
               />
-            </Stack>
+              <Group gap={4} wrap="nowrap" className="operations-row__actions">
+                {reason?.kind === 'finished' && (
+                  <CloseIssueButton item={item} />
+                )}
+                <ItemOverflowMenu item={item} />
+              </Group>
+            </div>
           );
         })}
-      </Stack>
-    </AgentOperationsPanel>
+      </div>
+    </OpsPanel>
   );
 }

@@ -96,7 +96,12 @@ describe('ClaimedIdleSection', () => {
 
   it('renders one row per stale claim with its updated-at age', () => {
     renderSection([makeItem({ number: 5, title: 'Fix the thing' })]);
-    expect(screen.getByText('Claimed but Idle (1)')).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'Claimed but idle' }),
+    ).toBeTruthy();
+    expect(screen.getByTestId('claimed-idle-section')).toHaveTextContent(
+      'Claimed but idle1',
+    );
     expect(screen.getByTestId('compact-item-5')).toHaveTextContent(
       '#5 Fix the thing',
     );

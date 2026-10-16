@@ -1610,16 +1610,23 @@ body:has(.console-header:not([data-streaming-fallback]))
   }
 }
 
-.agents-fleet-strip,
-.agents-panel {
-  margin: 0 !important;
-  border: 0 !important;
-  border-radius: 0 !important;
+.agents-fleet-strip {
   background: var(--lcars-surface);
 }
 
 .agents-fleet-strip {
+  padding-bottom: 20px;
   border-bottom: 1px solid var(--mantine-color-default-border) !important;
+}
+
+/* The strip's details are the producers' own status lines; they wrap rather
+   than clip mid-sentence. */
+.agents-fleet-strip .lcars-readout__detail {
+  white-space: normal;
+}
+
+.agents-fleet-strip [data-testid='queue-health-alert'] {
+  margin: 16px 20px 0;
 }
 
 .agents-workspace__operations {
@@ -1633,14 +1640,6 @@ body:has(.console-header:not([data-streaming-fallback]))
   background: var(--mantine-color-default-border);
 }
 
-/* Without a secondary column the primary panel is a concise status readout,
-   not a faux full-height card. Leave the route's dark data plane beneath it
-   instead of drawing an empty box to the viewport edge. */
-.agents-workspace__operations:not(:has(.agents-workspace__secondary))
-  .agents-panel {
-  min-height: 0;
-}
-
 .agents-workspace__primary,
 .agents-workspace__secondary {
   min-width: 0;
@@ -1651,17 +1650,6 @@ body:has(.console-header:not([data-streaming-fallback]))
   grid-template-rows: auto minmax(0, 1fr);
   gap: 1px;
   background: var(--mantine-color-default-border);
-}
-
-.agents-panel {
-  min-height: 100%;
-  background: var(--lcars-surface);
-}
-
-.agents-panel h2 {
-  font-family: var(--font-display), sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 /* ---- Sessions archive workspace (#253) ---- */
@@ -3456,16 +3444,6 @@ td.costs-repo-spend__num {
   .agents-workspace__secondary {
     display: block;
     background: transparent;
-  }
-
-  .agents-fleet-strip,
-  .agents-panel {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--mantine-color-default-border) !important;
-  }
-
-  .agents-panel h2 {
-    font-size: 1.1rem;
   }
 
   .agents-workspace a {

@@ -1,6 +1,6 @@
 'use client';
 
-import { Text } from '@mantine/core';
+import { Text, VisuallyHidden } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
 import type { FleetSummary } from '../lib/agent-activity';
@@ -81,14 +81,16 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
   );
 }
 
+/** Busy runners over registered ones, a readout's figure: "2/5", read
+ * aloud in full. A dash once the producer's claim expires. */
 export function FleetRunnerOccupancy({ fleet }: { fleet?: FleetSummary }) {
   const fresh = useFreshFleet(fleet);
-  if (fresh.online === undefined) return null;
+  if (fresh.online === undefined) return <>—</>;
   return (
-    <Text size="xs" c="dimmed" data-testid="metric-runner-occupancy">
+    <span data-testid="metric-runner-occupancy">
       {/* Running jobs over the lanes' registered runners: one producer. */}
-      {fresh.busy ?? 0}/{fresh.registered ?? fresh.online} GitHub runners
-      running
-    </Text>
+      {fresh.busy ?? 0}/{fresh.registered ?? fresh.online}
+      <VisuallyHidden> GitHub runners running</VisuallyHidden>
+    </span>
   );
 }
