@@ -1,5 +1,4 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
-
 import type { ReactNode } from 'react';
 
 import { repoItemKey } from '../lib/watched-repo';

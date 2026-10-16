@@ -1,9 +1,9 @@
 import 'server-only';
 
 import type { BoardCard } from './board-card';
+import { ConsoleMarkdown } from './console-markdown';
 import type { InboxCard, NativeDecisionCard } from './inbox-card';
 import { nativeDecisionQuestion } from './inbox-card';
-import { ConsoleMarkdown } from './console-markdown';
 
 /** Keep parsing server-known bodies out of the interactive card's client graph.
  * Return the same fresh item and action; only its rendered context is added. */
