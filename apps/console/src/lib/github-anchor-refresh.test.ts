@@ -35,6 +35,19 @@ function deferred<T>() {
 }
 
 describe('refreshGithubAnchorProjection', () => {
+  it('does not combine a previous head SHA with a partial new head observation', async () => {
+    const [result] = await enrichGithubAnchorProjections(
+      anchor.repo,
+      [{ ...projection(), headSha: 'a'.repeat(40), headRefName: 'previous' }],
+      {
+        graphql: vi.fn().mockResolvedValue({
+          repository: { i42: { headRefName: 'changed' } },
+        }),
+      },
+    );
+    expect(result.headRefName).toBe('changed');
+    expect(result.headSha).toBeUndefined();
+  });
   it('persists GitHub creation and head facts through the projection schema/store boundary', async () => {
     const store = new MemoryStore();
     const graphql = vi.fn().mockResolvedValue({
@@ -42,6 +55,7 @@ describe('refreshGithubAnchorProjection', () => {
         i42: {
           createdAt: '2026-08-30T11:00:00.000Z',
           headRefName: 'fix/42',
+          headRefOid: 'a'.repeat(40),
           headRepository: { nameWithOwner: 'jlapenna/agent-lcars' },
         },
       },
@@ -63,11 +77,12 @@ describe('refreshGithubAnchorProjection', () => {
     expect(await store.readGithubAnchorProjection(anchor)).toMatchObject({
       createdAt: '2026-08-30T11:00:00.000Z',
       headRefName: 'fix/42',
+      headSha: 'a'.repeat(40),
       headRepository: 'jlapenna/agent-lcars',
     });
     expect(graphql).toHaveBeenCalledWith(
       expect.stringContaining(
-        'createdAt headRefName headRepository { nameWithOwner }',
+        'createdAt headRefName headRefOid headRepository { nameWithOwner }',
       ),
       expect.anything(),
     );

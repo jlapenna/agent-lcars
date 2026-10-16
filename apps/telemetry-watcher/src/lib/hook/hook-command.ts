@@ -20,6 +20,7 @@ import {
 import { resolveGitBranch as defaultResolveGitBranch } from '../git-branch';
 import { applyGitContext } from '../git-context';
 import { resolveGitRepo as defaultResolveGitRepo } from '../git-repo';
+import { resolvePublicationCheckouts } from '../publication-checkouts';
 import { readTranscriptLines as defaultReadTranscriptLines } from '../read-transcript-lines';
 import {
   readSessionStatusOverlay,
@@ -93,6 +94,9 @@ export interface HookCommandDependencies {
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
   /** Read from the hook credential, never the transcript. Failure is unknown. */
   resolveGithubActor?: () => Promise<string | undefined>;
+  resolvePublicationCheckouts?: (
+    cwd: string,
+  ) => Promise<{ branch: string; head: string }[] | undefined>;
   /** Starts the flusher detached from the hook process. */
   spawnFlusher: () => void;
   /** Runs the flusher to completion (`lcars hook flush`, `--inline`). */
@@ -128,6 +132,7 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
+    resolvePublicationCheckouts,
     resolveGithubActor: () =>
       new Promise((resolve) => {
         execFile(
@@ -596,8 +601,29 @@ async function handleRuntimeHook(
           ? await deps.resolveGithubActor?.().catch(() => undefined)
           : undefined;
       delete withGit.githubActor;
+      // A reducer can supply provider identity, never host checkout facts.
+      const deliverables = { ...withGit.deliverables };
+      delete deliverables.publicationCheckouts;
+      const checkouts =
+        githubActor &&
+        payload.cwd &&
+        !config.runner &&
+        deliverables.claudeSessionId &&
+        deliverables.publicationCandidates?.length
+          ? await deps
+              .resolvePublicationCheckouts?.(payload.cwd)
+              .catch(() => undefined)
+          : undefined;
+      if (checkouts && githubActor)
+        deliverables.publicationCheckouts = checkouts.map((checkout) => ({
+          ...checkout,
+          repo,
+          githubActor,
+          observedAt: now,
+        }));
       summary = applyAnnotationOverlays(stateDirectory, {
         ...withGit,
+        deliverables,
         ...(githubActor && { githubActor }),
       });
     }

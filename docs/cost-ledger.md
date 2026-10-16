@@ -43,8 +43,8 @@ creation (#2730, rejected parser approach #2732).
 
 For compound commands, the Claude reducer also retains `publicationCandidates`: URLs
 from a successful, single-use correlated creating-command result. These are
-lookup hints, never qualified publication evidence. Costs qualifies a candidate
-only when the stored GitHub projection agrees with all of:
+lookup hints, never qualified publication evidence. The original strict path
+qualifies a candidate only when the stored GitHub projection agrees with all of:
 
 - the hook-observed authenticated GitHub actor (`githubActor`),
 - a creation timestamp inside the session's inclusive start/last-activity window,
@@ -52,12 +52,30 @@ only when the stored GitHub projection agrees with all of:
 - the session's repository as the head repository (no repository guessing).
 
 An exact `Claude-Session: https://claude.ai/code/<sessionId>` line in GitHub's
-PR body is additionally required, and every such line must match the session.
+PR body is additionally required for this strict path, and every such line
+must match the session.
 Actor/window/head facts alone are ambiguous when another session uses the same
 credential and branch. Missing, blockquoted, fenced, commented, incidental or conflicting session links
-fail closed. This currently supports Claude CLI sessions whose stored ID equals
-the PR attribution ID; Codex/OpenCode and CLI/cloud ID mismatches retain only
-the existing literal-publication path. The hook resolves the actor through `gh api --hostname
+fail closed. The original strict path still requires identical stored and public
+IDs. Native Claude `bridge-session` records additionally bind a local session to
+its public session: consistent `cse_` identities map to the provider's `session_`
+URL form. Conflicting, malformed or sidechain bridge records supply no identity;
+model text and the provider's regex-based `gitOperation` classification supply
+no authority. This path accepts the provider's exact standalone URL footer as
+well as the labeled form, preserving comment/fence/conflict rejection.
+
+For a bridged session, current `main` is not substituted for a PR's branch.
+The host hook observes up to 64 linked worktrees with one two-second Git command,
+64 KiB output bound and matching Git common-directory checks. It records exact
+refs/40-character HEADs, actor/repository and observation time, not shell cwd.
+The projection must match both that ref and immutable head SHA, the actor and
+repository, and the genuine creation window. The checkout observation must be
+after creation and no later than the hook observer clock. Missing/truncated or
+foreign checkout observations fail closed. Up to 200 distinct immutable
+observations survive normal writes after checkout retirement; overflow supplies
+no checkout credit. Codex/OpenCode retain the literal-publication path.
+
+The hook resolves the actor through `gh api --hostname
 github.com user --jq .login` using its existing credential, with a two-second
 subprocess deadline and bounded output, after ordinary event throttling. It
 never reads actor identity from transcript content. Missing `gh`, offline/token

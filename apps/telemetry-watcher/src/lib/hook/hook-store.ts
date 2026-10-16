@@ -36,10 +36,18 @@ export function isTransientFirestoreError(error: unknown): boolean {
   return typeof code !== 'number' || TRANSIENT_CODES.has(code);
 }
 
-function payloadFor(write: SessionWrite): Record<string, unknown> {
+export function hookEventPayload(write: SessionWrite): Record<string, unknown> {
   const { doc, clearFields } = write;
   return {
     ...doc,
+    // A merged map must not retain an old identity after a contradictory
+    // bridge observation, or old checkout credit after bounded overflow.
+    deliverables: {
+      ...doc.deliverables,
+      claudeSessionId: doc.deliverables.claudeSessionId ?? FieldValue.delete(),
+      publicationCheckouts:
+        doc.deliverables.publicationCheckouts ?? FieldValue.delete(),
+    },
     ...(doc.expireAt && {
       expireAt: Timestamp.fromDate(new Date(doc.expireAt)),
     }),
@@ -90,7 +98,7 @@ export function createHookEventWriter(
             const write = sessionWriteForEvent(event, parseStored(stored), now);
             if (!write) return 'invalid' as const;
             observer = write.doc.observer;
-            payload = payloadFor(write);
+            payload = hookEventPayload(write);
           } catch {
             // Deterministic: retrying this event can never succeed.
             return 'invalid' as const;

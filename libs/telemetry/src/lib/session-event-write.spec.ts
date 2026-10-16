@@ -53,6 +53,65 @@ const observer = {
 };
 
 describe('sessionWriteForEvent', () => {
+  it('keeps validated checkout corroboration after retirement without crossing actors or repositories', () => {
+    const checkout = {
+      repo: summary.repo,
+      githubActor: 'jlapenna',
+      branch: 'fix/actual',
+      head: 'a'.repeat(40),
+      observedAt: NOW,
+    };
+    const details = {
+      ...summary,
+      githubActor: 'jlapenna',
+      deliverables: {
+        ...summary.deliverables,
+        claudeSessionId: 'session_actual',
+        publicationCheckouts: [checkout],
+      },
+    };
+    const first = sessionWriteForEvent(
+      event({ summary: details }),
+      undefined,
+      NOW,
+    )!.doc;
+    expect(first.deliverables).toMatchObject({
+      claudeSessionId: 'session_actual',
+      publicationCheckouts: [checkout],
+    });
+    const retired = {
+      ...details,
+      deliverables: { ...details.deliverables, publicationCheckouts: [] },
+    };
+    expect(
+      sessionWriteForEvent(event({ summary: retired }), first, NOW)?.doc
+        .deliverables.publicationCheckouts,
+    ).toEqual([checkout]);
+    for (const patch of [
+      { githubActor: 'another' },
+      { repo: { owner: 'another', name: 'repo' } },
+    ]) {
+      expect(
+        sessionWriteForEvent(
+          event({ summary: { ...retired, ...patch } }),
+          first,
+          NOW,
+        )?.doc.deliverables.publicationCheckouts,
+      ).toEqual([]);
+    }
+    expect(
+      parseSessionEventV1({
+        ...event(),
+        summary: {
+          ...details,
+          deliverables: {
+            ...details.deliverables,
+            publicationCheckouts: [{ ...checkout, head: 'unbound' }],
+          },
+        },
+      }).ok,
+    ).toBe(false);
+  });
   it('preserves observed actor in a lifecycle-only end event and clears it on a failed refresh', () => {
     const existing = sessionWriteForEvent(
       event({ summary: { ...summary, githubActor: 'jlapenna' } }),

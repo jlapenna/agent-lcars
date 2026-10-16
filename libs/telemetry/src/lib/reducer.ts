@@ -41,6 +41,7 @@ interface SessionState {
   firstUserPrompt?: string;
   qualifiedPRs: Map<string, QualifiedSessionPR>;
   publicationCandidates: Map<string, QualifiedSessionPR>;
+  bridgeSessionIds: Set<string>;
   prNumbers: Set<number>;
   commitShas: Set<string>;
   totalCostUsd?: number;
@@ -66,6 +67,7 @@ function createState(sessionId: string, host?: string): SessionState {
     },
     qualifiedPRs: new Map(),
     publicationCandidates: new Map(),
+    bridgeSessionIds: new Set(),
     prNumbers: new Set(),
     commitShas: new Set(),
     pendingBashCommands: new Map(),
@@ -201,6 +203,20 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
   applyTimestamp(state, timestamp);
 
   const isSidechain = asBoolean(raw['isSidechain']) ?? false;
+  if (
+    raw['type'] === 'bridge-session' &&
+    !isSidechain &&
+    raw['sessionId'] === state.sessionId
+  ) {
+    const bridge = asString(raw['bridgeSessionId']);
+    // Claude's native bridge maps cse_ IDs to public session_ IDs. Never
+    // infer this relationship from a tool result, PR link or model text.
+    state.bridgeSessionIds.add(
+      bridge && /^cse_[A-Za-z0-9_]{1,124}$/u.test(bridge)
+        ? bridge.replace(/^cse_/u, 'session_')
+        : '',
+    );
+  }
 
   const cwd = asString(raw['cwd']);
   if (cwd) {
@@ -304,6 +320,10 @@ function finalizeState(state: SessionState): SessionSummary {
       ...(state.publicationCandidates.size > 0 && {
         publicationCandidates: [...state.publicationCandidates.values()],
       }),
+      ...(state.bridgeSessionIds.size === 1 &&
+        !state.bridgeSessionIds.has('') && {
+          claudeSessionId: [...state.bridgeSessionIds][0],
+        }),
       commitShas: Array.from(state.commitShas),
     },
   };

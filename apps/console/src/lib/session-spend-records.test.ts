@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import {
   buildSessionDoc,
@@ -112,6 +115,146 @@ function spend(doc = session(), projection = record()) {
 }
 
 describe('GitHub-record spend attribution (#2730)', () => {
+  it('retains the captured native 2834 compound publication shape across local and public identities', () => {
+    const summary = claudeCodeAdapter.reduce(
+      readFileSync(
+        path.join(
+          import.meta.dirname,
+          '../../../../libs/telemetry/src/lib/fixtures/claude-bridged-publication.jsonl',
+        ),
+        'utf8',
+      )
+        .trim()
+        .split('\n'),
+    )[0];
+    const observedAt = '2026-10-16T21:11:06.226Z';
+    const doc = buildSessionDoc(
+      {
+        ...summary,
+        githubActor: 'jlapenna',
+        repo,
+        branch: 'main',
+        deliverables: {
+          ...summary.deliverables,
+          publicationCheckouts: [
+            {
+              repo,
+              githubActor: 'jlapenna',
+              branch: 'ux/work-sources-verdict',
+              head: 'c'.repeat(40),
+              observedAt,
+            },
+          ],
+        },
+      },
+      'live',
+    ) as CliSessionDoc;
+    doc.observer = {
+      kind: 'hook',
+      runtime: 'claude-code',
+      host: 'laforge',
+      seq: 1,
+      eventId: 'fixture',
+      occurredAt: observedAt,
+    };
+    expect(doc.deliverables.qualifiedPRs).toBeUndefined();
+    expect(doc.deliverables.publicationCandidates).toEqual([
+      { repo, number: 2834 },
+    ]);
+    const projection = record({
+      anchor: { repo: 'jlapenna/agent-lcars', issue: 2834 },
+      createdAt: '2026-10-16T21:10:47.000Z',
+      headRefName: 'ux/work-sources-verdict',
+      headSha: 'c'.repeat(40),
+      mergedAt: null,
+      body: 'https://claude.ai/code/session_01M3e8hqz5EbT75xWPGsS42j',
+    });
+    expect(
+      aggregateSessionSpend(
+        [doc],
+        new Map([['jlapenna/agent-lcars#2834', projection]]),
+      ).unmergedPRs,
+    ).toBe(1);
+  });
+  function bridged() {
+    const doc = session();
+    doc.sessionId = '7de2bec1-aab8-4766-b834-cb6c1a9169a0';
+    doc.branch = 'main';
+    doc.deliverables.claudeSessionId = 'session_01M3e8hqz5EbT75xWPGsS42j';
+    doc.deliverables.publicationCheckouts = [
+      {
+        repo,
+        githubActor: 'jlapenna',
+        branch: 'fix/42',
+        head: 'a'.repeat(40),
+        observedAt: end,
+      },
+    ];
+    doc.observer = {
+      kind: 'hook',
+      runtime: 'claude-code',
+      host: 'fixture',
+      seq: 1,
+      eventId: 'event-1',
+      occurredAt: end,
+    };
+    return doc;
+  }
+  const bridgedRecord = () =>
+    record({
+      headSha: 'a'.repeat(40),
+      body: 'https://claude.ai/code/session_01M3e8hqz5EbT75xWPGsS42j',
+    });
+
+  it('qualifies a real bridge-shaped compound creator using immutable checkout corroboration', () => {
+    expect(spend(bridged(), bridgedRecord())).toMatchObject({
+      mergedPRs: 1,
+      costPerMergedDeliverableUsd: 6,
+    });
+  });
+  it.each([
+    { headSha: 'b'.repeat(40) },
+    { headSha: undefined },
+    { headRefName: 'other' },
+    { author: 'other' },
+    { headRepository: 'foreign/repo' },
+    { createdAt: '2026-10-14T11:00:00.001Z' },
+    { body: 'https://claude.ai/code/session_other' },
+    {
+      body: '```\nhttps://claude.ai/code/session_01M3e8hqz5EbT75xWPGsS42j\n```',
+    },
+    {
+      body: '<!-- https://claude.ai/code/session_01M3e8hqz5EbT75xWPGsS42j -->',
+    },
+    {
+      body: 'https://claude.ai/code/session_01M3e8hqz5EbT75xWPGsS42j\nClaude-Session: https://claude.ai/code/session_other',
+    },
+  ])(
+    'rejects contradictory bridge or immutable GitHub evidence: %j',
+    (patch) => {
+      expect(
+        spend(bridged(), record({ ...bridgedRecord(), ...patch })).mergedPRs,
+      ).toBe(0);
+    },
+  );
+  it('never substitutes current main, a foreign checkout or a future observation', () => {
+    for (const patch of [
+      { branch: 'main' },
+      { repo: { owner: 'foreign', name: 'repo' } },
+      { githubActor: 'other' },
+      { observedAt: '2026-10-14T11:00:00.001Z' },
+      { observedAt: '2026-10-14T09:59:59.999Z' },
+    ]) {
+      const doc = bridged();
+      doc.deliverables.publicationCheckouts = [
+        { ...doc.deliverables.publicationCheckouts![0], ...patch },
+      ];
+      expect(spend(doc, bridgedRecord()).mergedPRs).toBe(0);
+    }
+    const doc = bridged();
+    delete doc.deliverables.publicationCheckouts;
+    expect(spend(doc, bridgedRecord()).mergedPRs).toBe(0);
+  });
   it.each([
     `cd /worktree && gh pr create --draft --body "$(cat <<'EOF'\nbody\nEOF\n)"`,
     'cd /worktree; gh pr create --draft --body-file /tmp/body.md',

@@ -1,5 +1,6 @@
 import {
   isCanonicalSessionRepository,
+  isPublicationCheckout,
   isSessionAgent,
   type QualifiedSessionPR,
   type SessionAgent,
@@ -216,11 +217,36 @@ function parseDeliverables(value: unknown): SessionDeliverables | undefined {
     refs[field] = parsed;
   }
   const branch = boundedString(record['branch']);
+  const claudeSessionId = asString(record['claudeSessionId']);
+  if (
+    record['claudeSessionId'] !== undefined &&
+    (!claudeSessionId ||
+      !/^session_[A-Za-z0-9_]{1,124}$/u.test(claudeSessionId))
+  )
+    return undefined;
+  const checkouts = record['publicationCheckouts'];
+  if (
+    checkouts !== undefined &&
+    (!Array.isArray(checkouts) ||
+      checkouts.length > MAX_LIST ||
+      !checkouts.every(isPublicationCheckout))
+  )
+    return undefined;
   return {
     prNumbers: prs,
     commitShas: shas,
     ...refs,
     ...(branch && { branch }),
+    ...(claudeSessionId && { claudeSessionId }),
+    ...(Array.isArray(checkouts) && {
+      publicationCheckouts: checkouts.map((checkout) => ({
+        repo: { ...checkout.repo },
+        githubActor: checkout.githubActor,
+        branch: checkout.branch,
+        head: checkout.head,
+        observedAt: checkout.observedAt,
+      })),
+    }),
   };
 }
 

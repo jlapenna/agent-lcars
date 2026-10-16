@@ -2,6 +2,7 @@ import { buildSessionWrite } from './session-doc';
 import { livenessForSessionEvent, type SessionEventV1 } from './session-event';
 import { nextTokenMinutes } from './token-minutes';
 import {
+  isPublicationCheckout,
   type SessionDoc,
   type SessionObserver,
   type SessionSummary,
@@ -124,6 +125,41 @@ export function sessionWriteForEvent(
       clientVersion: event.runtime.clientVersion,
     }),
   };
+  // Preserve genuine immutable observations after a worktree is retired. This
+  // is bounded corroboration, not a backfill from URL mentions. Never merge
+  // identities across native sessions, actors or repositories.
+  if (
+    !event.runner &&
+    write.doc.source === 'cli' &&
+    write.doc.githubActor &&
+    write.doc.repo &&
+    existing?.source === 'cli' &&
+    existing.sessionId === write.doc.sessionId &&
+    existing.githubActor === write.doc.githubActor &&
+    existing.repo?.owner.toLowerCase() === write.doc.repo.owner.toLowerCase() &&
+    existing.repo.name.toLowerCase() === write.doc.repo.name.toLowerCase()
+  ) {
+    const checkouts = new Map<
+      string,
+      NonNullable<
+        SessionSummary['deliverables']['publicationCheckouts']
+      >[number]
+    >();
+    for (const checkout of [
+      ...(existing.deliverables.publicationCheckouts ?? []),
+      ...(write.doc.deliverables.publicationCheckouts ?? []),
+    ]) {
+      if (isPublicationCheckout(checkout))
+        checkouts.set(
+          `${checkout.repo.owner}/${checkout.repo.name}:${checkout.githubActor}:${checkout.branch}:${checkout.head}`,
+          checkout,
+        );
+    }
+    // Overflow remains unknown instead of silently qualifying a truncated set.
+    if (checkouts.size <= 200 && checkouts.size > 0)
+      write.doc.deliverables.publicationCheckouts = [...checkouts.values()];
+    else delete write.doc.deliverables.publicationCheckouts;
+  }
   const credited = nextTokenMinutes(
     existing,
     write.doc.tokens,
