@@ -35,19 +35,31 @@ function deferred<T>() {
 }
 
 describe('refreshGithubAnchorProjection', () => {
-  it('does not combine a previous head SHA with a partial new head observation', async () => {
-    const [result] = await enrichGithubAnchorProjections(
-      anchor.repo,
-      [{ ...projection(), headSha: 'a'.repeat(40), headRefName: 'previous' }],
-      {
-        graphql: vi.fn().mockResolvedValue({
-          repository: { i42: { headRefName: 'changed' } },
-        }),
-      },
-    );
-    expect(result.headRefName).toBe('changed');
-    expect(result.headSha).toBeUndefined();
-  });
+  it.each([
+    { headRefName: 'changed', headRepository: { nameWithOwner: anchor.repo } },
+    {
+      headRefOid: 'b'.repeat(40),
+      headRepository: { nameWithOwner: anchor.repo },
+    },
+    { headRefOid: 'b'.repeat(40), headRefName: 'changed' },
+  ])(
+    'never combines a partial new head observation with previous head context: %j',
+    async (detail) => {
+      const [result] = await enrichGithubAnchorProjections(
+        anchor.repo,
+        [
+          {
+            ...projection(),
+            headSha: 'a'.repeat(40),
+            headRefName: 'previous',
+            headRepository: anchor.repo,
+          },
+        ],
+        { graphql: vi.fn().mockResolvedValue({ repository: { i42: detail } }) },
+      );
+      expect(result.headSha).toBeUndefined();
+    },
+  );
   it('persists GitHub creation and head facts through the projection schema/store boundary', async () => {
     const store = new MemoryStore();
     const graphql = vi.fn().mockResolvedValue({

@@ -112,6 +112,7 @@ export function sessionPRReferences(
     )
       return false;
     if (bridge) {
+      const actor = doc.githubActor.toLowerCase();
       const observed = Date.parse(doc.observer?.occurredAt ?? '');
       if (
         !record.headSha ||
@@ -119,8 +120,7 @@ export function sessionPRReferences(
         !doc.deliverables.publicationCheckouts?.some(
           (checkout) =>
             isPublicationCheckout(checkout) &&
-            checkout.githubActor.toLowerCase() ===
-              doc.githubActor!.toLowerCase() &&
+            checkout.githubActor.toLowerCase() === actor &&
             `${checkout.repo.owner}/${checkout.repo.name}`.toLowerCase() ===
               record.headRepository?.toLowerCase() &&
             checkout.branch === record.headRefName &&

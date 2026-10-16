@@ -224,7 +224,11 @@ export async function enrichGithubAnchorProjections(
           ? {
               ...(detail.createdAt && { createdAt: detail.createdAt }),
               ...(detail.headRefName && { headRefName: detail.headRefName }),
-              ...(detail.headRefOid && { headSha: detail.headRefOid }),
+              ...(detail.headRefOid &&
+                detail.headRefName &&
+                detail.headRepository?.nameWithOwner && {
+                  headSha: detail.headRefOid,
+                }),
               ...(detail.headRepository?.nameWithOwner && {
                 headRepository: detail.headRepository.nameWithOwner,
               }),
