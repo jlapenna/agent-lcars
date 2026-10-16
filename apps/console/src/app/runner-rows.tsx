@@ -90,7 +90,6 @@ function RunnerJob({ runner }: { runner: FleetRunner }) {
   return <>{UNAVAILABLE}</>;
 }
 
-/** One row per runner pod (design/fleet-console.html#shuttlebay Runners). */
 /** An ARC runner's name less the lane prefix its second line already names:
  * "homelab-ci-zh2lg-runner-bnwc8" reads "zh2lg-runner-bnwc8" above
  * "homelab-ci · picard", so the identifying suffix fits one line. */
@@ -104,6 +103,7 @@ export function runnerDisplayName(runner: FleetRunner): string {
     : runner.name;
 }
 
+/** One row per runner pod (design/fleet-console.html#shuttlebay Runners). */
 export function RunnerRow({ runner }: { runner: FleetRunner }) {
   const state = STATE_MARK[runner.state];
   return (
