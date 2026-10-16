@@ -15,6 +15,7 @@ import {
 } from '../lib/runner-status-contract';
 import { expireTokenRate, type TokenRate } from '../lib/token-rate';
 import { DataWarnings } from './console-header';
+import { formatDuration } from './format';
 import { OpsPanel, StateMark, UNAVAILABLE } from './ops-primitives';
 import { RelativeTime } from './relative-time';
 import { RunnerFleetPanel } from './runner-fleet-panel';
@@ -109,6 +110,13 @@ export function expireAutoscalerStatuses(
   };
 }
 
+/** The executor's claim window, exact: a fresh baseline samples seconds. */
+function claimWindowLength(window: { windowStart: string; windowEnd: string }) {
+  return formatDuration(
+    (Date.parse(window.windowEnd) - Date.parse(window.windowStart)) / 1000,
+  );
+}
+
 function ProviderAdmissionRows({
   result,
   agent,
@@ -192,29 +200,44 @@ function ProviderAdmissionRows({
                   ·{' '}
                   {provider === undefined
                     ? 'queue unavailable'
-                    : `${provider.queued} queued · ${provider.deferred} deferred · ${provider.liveClaims} live claims`}
+                    : `${provider.queued} queued · ${provider.deferred} deferred · ${provider.liveClaims} live claim${provider.liveClaims === 1 ? '' : 's'}`}
                 </Text>
                 {cooling && (
                   <Text size="xs">
-                    Provider limit: cooling down until {cooldown.expiresAt}.
-                    Retry/reset deadline from run {cooldown.runId}; reported{' '}
-                    {cooldown.observedAt}.
+                    Provider limit: cooling down, clears{' '}
+                    <RelativeTime iso={cooldown.expiresAt} />. Retry/reset
+                    deadline from run {cooldown.runId}; reported{' '}
+                    <RelativeTime iso={cooldown.observedAt} />.
                   </Text>
                 )}
                 {provider !== undefined && (
                   <Text size="xs" c="dimmed">
                     Durable provider queue: {provider.eligible} eligible before
-                    executor capacity checks. Orchestrator snapshot{' '}
-                    {admission?.observedAt}.
+                    executor capacity checks
+                    {admission ? (
+                      <>
+                        , as of <RelativeTime iso={admission.observedAt} />
+                      </>
+                    ) : null}
+                    .
                     {provider.maxLiveClaims === undefined
                       ? ''
                       : ` Provider live-claim limit: ${provider.maxLiveClaims}.`}
                   </Text>
                 )}
                 <Text size="xs" c="dimmed">
-                  {window === undefined
-                    ? 'Recent claims unavailable.'
-                    : `${window[pipeline]} claims from ${window.windowStart} to ${window.windowEnd}. Executor successful-claim counter; sampled interval, up to 15 minutes.`}
+                  {window === undefined ? (
+                    'Recent claims unavailable.'
+                  ) : (
+                    <>
+                      {window[pipeline]} claim
+                      {window[pipeline] === 1 ? '' : 's'} in the{' '}
+                      {claimWindowLength(window)} to{' '}
+                      <RelativeTime iso={window.windowEnd} />. Executor
+                      successful-claim counter; sampled interval, up to 15
+                      minutes.
+                    </>
+                  )}
                 </Text>
               </Stack>
             </div>

@@ -181,9 +181,9 @@ test.describe('Shuttlebay live stream', () => {
     await send(0, snapshot);
     const row = page.getByTestId('provider-admission-claude');
     await expect(row).toContainText('cooling down');
-    await expect(row).toContainText(reset);
+    await expect(row.locator(`time[datetime="${reset}"]`)).toHaveCount(1);
     await expect(row).toContainText('quota/r1');
-    await expect(row).toContainText('3 claims from');
+    await expect(row).toContainText('3 claims in the 1m 0s to');
     const healthy = {
       ...snapshot,
       providerAdmission: {

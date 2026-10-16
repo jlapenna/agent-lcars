@@ -105,7 +105,7 @@ describe('RunnerAutoscalerStatus', () => {
 
   it('renders quota provenance, exact recent claims, drain and unavailable updates', () => {
     const now = new Date(Date.now()).toISOString();
-    const reset = new Date(Date.now() + 60_000).toISOString();
+    const reset = new Date(Date.now() + 90_000).toISOString();
     const executor = {
       schemaVersion: 2 as const,
       kind: 'queue-executor' as const,
@@ -163,11 +163,13 @@ describe('RunnerAutoscalerStatus', () => {
     const claude = screen.getByTestId('provider-admission-claude');
     const codex = screen.getByTestId('provider-admission-codex');
     expect(claude).toHaveTextContent('cooling down');
-    expect(claude).toHaveTextContent(reset);
+    // Readable, with the exact instant kept machine-readable.
+    expect(claude).toHaveTextContent('clears in 1 minute');
+    expect(claude.querySelector(`time[datetime="${reset}"]`)).not.toBeNull();
     expect(claude).toHaveTextContent('quota/r1');
-    expect(claude).toHaveTextContent('3 claims from');
+    expect(claude).toHaveTextContent('3 claims in the 1m 0s to');
     expect(codex).toHaveTextContent('1 eligible queued');
-    expect(codex).toHaveTextContent('0 claims from');
+    expect(codex).toHaveTextContent('0 claims in the 1m 0s to');
     act(() =>
       FakeEventSource.only().push({
         warnings: [],
