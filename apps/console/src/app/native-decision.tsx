@@ -136,9 +136,11 @@ export function NativeDecisionDetail({
         {work.state === 'parked' ? 'Human needed' : work.state} ·{' '}
         <RelativeTime iso={work.updatedAt} />
       </Text>
-      <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-        {nativeDecisionQuestion(work)}
-      </Text>
+      {card.question ?? (
+        <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          {nativeDecisionQuestion(work)}
+        </Text>
+      )}
       <Anchor component={Link} href={`/work/${work.anchor.workId}`}>
         Full history
       </Anchor>

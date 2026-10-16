@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import { renderCardMarkdown } from './render-card-markdown';
+import type { NativeDecisionCard } from './inbox-card';
+import {
+  renderCardMarkdown,
+  renderInboxCardMarkdown,
+} from './render-card-markdown';
 
 const item: ActionItem = {
   kind: 'issue',
@@ -52,5 +56,41 @@ describe('server-rendered card context', () => {
       'Old context',
     );
     expect(after.primaryAction).toEqual(action);
+  });
+});
+
+describe('server-rendered native decision question', () => {
+  it('renders the parked question as Markdown and escapes raw HTML', () => {
+    const native = {
+      canReply: true,
+      work: {
+        id: 'work:1',
+        anchor: { workId: '1' },
+        state: 'parked',
+        createdAt: '2026-10-09T00:00:00Z',
+        updatedAt: '2026-10-09T00:30:00Z',
+        origin: { principal: 'user:maintainer', channel: 'console' },
+        spec: { title: 'T', pipeline: 'claude', target: { repo: 'o/r' } },
+        runs: [
+          {
+            runId: 'r1',
+            state: 'finished',
+            pipeline: 'claude',
+            createdAt: '2026-10-09T00:00:00Z',
+            updatedAt: '2026-10-09T00:30:00Z',
+            result: {
+              ok: true,
+              summary: 'park',
+              message: '**Pick one**\n\n- a\n- b <script>x</script>',
+            },
+          },
+        ],
+      },
+    } as unknown as NativeDecisionCard;
+    const out = renderInboxCardMarkdown(native) as NativeDecisionCard;
+    const html = renderToStaticMarkup(out.question);
+    expect(html).toContain('<strong>Pick one</strong>');
+    expect(html).toContain('<li>a</li>');
+    expect(html).not.toContain('<script>');
   });
 });

@@ -1,5 +1,7 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
 
+import type { ReactNode } from 'react';
+
 import { repoItemKey } from '../lib/watched-repo';
 import type { BoardCard } from './board-card';
 import { queueReasonFor } from './queue-reason';
@@ -7,6 +9,9 @@ import { queueReasonFor } from './queue-reason';
 export interface NativeDecisionCard {
   work: WorkSummary & { anchor: { workId: string } };
   canReply: boolean;
+  /** The parked question rendered as Markdown on the server, so the
+   * interactive detail pane does not carry the parser. */
+  question?: ReactNode;
 }
 
 export type InboxCard = BoardCard | NativeDecisionCard;
