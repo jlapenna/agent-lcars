@@ -167,9 +167,9 @@ describe('RunnerAutoscalerStatus', () => {
     expect(claude).toHaveTextContent('clears in 1 minute');
     expect(claude.querySelector(`time[datetime="${reset}"]`)).not.toBeNull();
     expect(claude).toHaveTextContent('quota/r1');
-    expect(claude).toHaveTextContent('3 claims in the 1 min to');
+    expect(claude).toHaveTextContent('3 claims in the 1m 0s to');
     expect(codex).toHaveTextContent('1 eligible queued');
-    expect(codex).toHaveTextContent('0 claims in the 1 min to');
+    expect(codex).toHaveTextContent('0 claims in the 1m 0s to');
     act(() =>
       FakeEventSource.only().push({
         warnings: [],

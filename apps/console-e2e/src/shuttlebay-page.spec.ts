@@ -183,7 +183,7 @@ test.describe('Shuttlebay live stream', () => {
     await expect(row).toContainText('cooling down');
     await expect(row.locator(`time[datetime="${reset}"]`)).toHaveCount(1);
     await expect(row).toContainText('quota/r1');
-    await expect(row).toContainText('3 claims in the 1 min to');
+    await expect(row).toContainText('3 claims in the 1m 0s to');
     const healthy = {
       ...snapshot,
       providerAdmission: {
