@@ -109,9 +109,10 @@ h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text
 .signal i:nth-child(4) { flex: 0 0 3%; background: var(--amber); }
 .signal i:nth-child(5) { flex: 1; background: var(--teal); max-width: 14%; }
 
-/* destination rail: square modules, label docked to the trailing edge */
+/* destination rail: square modules sized by their labels (6.5rem floor),
+   label docked to the trailing edge, one row at laptop widths */
 .nav { display: flex; gap: 4px; flex-wrap: wrap; }
-.nav a { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; height: 44px; padding: 0 12px 7px; min-width: var(--w, 120px);
+.nav a { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; height: 44px; padding: 0 12px 7px; min-width: 6.5rem;
   background: var(--accent-muted); color: var(--ink-on-muted); text-decoration: none; font: 600 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; }
 .nav a small { font: 500 11px/1 var(--f-mono); letter-spacing: 0; opacity: .9; align-self: flex-start; padding-top: 7px; }
 .nav a:hover { background: var(--accent-muted-hover); }
@@ -304,6 +305,12 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
 .cost-bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
 .cost-bar > span { white-space: nowrap; }
 .est { color: var(--ink-dim); font-size: 11px; }
+
+/* Laptop widths keep the title's room: the full live status joins from
+   80em and the identity's login from 90em; below that, the status rides
+   under the title and the identity is its avatar. */
+@media (max-width: 89.99em) { .who > div:last-child { display: none; } }
+@media (max-width: 79.99em) { .sync { display: none; } .sync-compact { display: block; } }
 
 @media (max-width: 1320px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
@@ -734,15 +741,15 @@ const VIEWS = {
   /* No repository select on the Bridge: its panels summarise the whole fleet. */
   deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 5 decisions</a>',
     body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
-  inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), asof], primary: '<a class="btn btn-primary push" href="#" data-od-id="primary-action">Respond to oldest</a>', body: () => inboxPanel(true) },
+  inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), asof], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => inboxPanel(true) },
   agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
     body: () => `${agentsReadouts()}<div class="alert" role="alert" data-od-id="queue-health-alert">A run has been queued for 11m 0s — the runner autoscaler may not be supplying runners.</div>${runsPanel(true)}${cliPanel()}${donePanel()}${claimedPanel()}` },
   shuttlebay: { warn: true, folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['30m', '1h', '24h', '7d'], '30m', ['1h', '24h', '7d']), '<span class="tb-note">Runner telemetry keeps the last 30 minutes</span>', find('runner lane')],
     body: () => `<div class="cols"><div class="stack">${runnersPanel()}${admissionPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
-  work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id'), more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')],
+  work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id')],
     primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}` },
-  sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id'), more(SOURCE)], body: () => sessionsPanel() },
-  costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id'), SOURCE], primary: '<a class="btn btn-primary push" href="#" data-od-id="primary-action">Export ledger</a>', body: () => `${readouts()}${costsPanel()}` },
+  sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [more(SOURCE)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], body: () => sessionsPanel() },
+  costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}` },
 };
 
 function renderMenu(d) {
@@ -761,7 +768,7 @@ function render(key) {
   $('#sync').innerHTML = `${status[0]}<br>${status[1]}`;
   $('#sync-compact').innerHTML = status[0];
   $('#create').hidden = v.create === false;
-  $('#nav').innerHTML = DEST.map((x, i) => `<a href="#${x.key}" data-accent="${x.accent}" data-key="${x.key}" style="--w:${x.w}px" ${x.key === d.key ? 'aria-current="page"' : ''} data-od-id="nav-${x.key}"><small>0${i + 1}${x.count ? ' · ' + x.count : ''}</small>${x.label}</a>`).join('');
+  $('#nav').innerHTML = DEST.map((x, i) => `<a href="#${x.key}" data-accent="${x.accent}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''} data-od-id="nav-${x.key}"><small>0${i + 1}${x.count ? ' · ' + x.count : ''}</small>${x.label}</a>`).join('');
   renderMenu(d);
   const band = $('#warnband');
   band.classList.toggle('none', !v.warn);
@@ -769,9 +776,10 @@ function render(key) {
     ? `<span class="eyebrow">2 data warnings</span><span>GitHubActionsMainWorkflowFailing ×2 on jlapenna/messages-control (#2469)</span><span class="sep">|</span><span>worf NotReady for 12 min · its slot is excluded from admission</span><a href="#">Details</a>`
     : `<span class="eyebrow">No data warnings</span><span>All sources reporting</span>`;
   $('#toolbar').innerHTML = `
-    <label class="field fold-toggle"><input type="checkbox" aria-label="Show filters"><span class="eyebrow">Filters${v.folded.length ? '' : ''}</span></label>
+    <label class="field fold-toggle"><input type="checkbox" aria-label="Show filters"><span class="eyebrow">Filters</span></label>
     <span class="fold-group">${v.folded.join('')}</span>
     ${v.tools.join('')}
+    ${v.after ? `<span class="fold-group">${v.after.join('')}</span>` : ''}
     ${v.primary || ''}`;
   $('#content').innerHTML = v.body();
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
@@ -784,6 +792,8 @@ document.addEventListener('click', (e) => {
     const open = !$('#menu').hasAttribute('data-open');
     $('#menu').toggleAttribute('data-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); return;
   }
+  // Sample links lead nowhere; they must not reset the route.
+  if (e.target.closest('a[href="#"]')) { e.preventDefault(); return; }
   const nav = e.target.closest('.nav a, .menu a[data-key]');
   if (nav) { e.preventDefault(); closeMenu(); location.hash = nav.dataset.key; return; }
   if (!e.target.closest('#menu')) closeMenu();
