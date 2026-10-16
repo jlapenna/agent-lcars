@@ -649,6 +649,10 @@ if [ "${FAKE_OPENCODE_NATIVE_PARK:-}" = 1 ]; then
     "<!-- agent-result:v1:park:${ATTEMPT_ID} -->" \
     "<!-- attempt-claim:${ATTEMPT_ID} -->" > "$NATIVE_WORK_OUTCOME_FILE"
 fi
+if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
 if [ "${FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS:-}" = 1 ]; then
   printf '[{"id":"ses_new_1","directory":"%s"},{"id":"ses_new_2","directory":"%s"}]\n' "$PWD" "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
 elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSIONS_FILE")" = '[]' ]; then
@@ -1867,6 +1871,24 @@ run_scenario codex-native-report-oversized codex
 jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report oversized: a truncated report settled ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-oversized: OK"
+unset FAKE_CODEX_LAST_MESSAGE
+
+export FAKE_OPENCODE_LAST_MESSAGE='# OpenCode findings'
+run_scenario opencode-native-report opencode
+unset FAKE_OPENCODE_LAST_MESSAGE
+jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report: report was not completed ($(cat "$COMPLETE_LOG"))"
+echo "scenario opencode-native-report: OK"
+
+# OpenCode's extractor caps the head at exactly the capture size, so a
+# message at that size is treated as possibly truncated.
+export FAKE_OPENCODE_LAST_MESSAGE="# Title$(printf '%*s' 16377 '' | tr ' ' x)"
+run_scenario opencode-native-report-capped opencode
+unset FAKE_OPENCODE_LAST_MESSAGE
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report capped: a capped report settled ($(cat "$COMPLETE_LOG"))"
+echo "scenario opencode-native-report-capped: OK"
+export FAKE_CODEX_LAST_MESSAGE="x"
 
 export FAKE_CODEX_LAST_MESSAGE=$' \n '
 run_scenario codex-native-report-blank codex
