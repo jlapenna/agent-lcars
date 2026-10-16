@@ -4,6 +4,7 @@ import type { FleetHost, FleetRunner } from '../lib/autoscaler-status';
 import {
   formatRunnerRequest,
   onlineRunnerCount,
+  runnerDisplayName,
   runnerFitMeta,
 } from './runner-rows';
 
@@ -51,6 +52,26 @@ describe('Runners panel rows', () => {
         runner({ requestedCpuMillis: 0, requestedMemoryBytes: 0 }),
       ),
     ).toBe('—');
+  });
+
+  it('drops the lane prefix the second line already names', () => {
+    expect(
+      runnerDisplayName(
+        runner({ name: 'homelab-ci-zh2lg-runner-bnwc8', lane: 'homelab-ci' }),
+      ),
+    ).toBe('zh2lg-runner-bnwc8');
+    // Only a whole lane prefix, never the whole name, and never the executor.
+    expect(
+      runnerDisplayName(runner({ name: 'homelab-cix-r1', lane: 'homelab-ci' })),
+    ).toBe('homelab-cix-r1');
+    expect(
+      runnerDisplayName(runner({ name: 'homelab-ci-', lane: 'homelab-ci' })),
+    ).toBe('homelab-ci-');
+    expect(
+      runnerDisplayName(
+        runner({ name: 'queue-executor-1', kind: 'direct', lane: 'queue' }),
+      ),
+    ).toBe('queue-executor-1');
   });
 
   it('counts every runner but starting and offline ones as online', () => {
