@@ -136,9 +136,7 @@ async function SessionsBody({
 
   return (
     <SessionsWorkspace
-      warnings={
-        warnings.length > 0 ? <DataWarnings warnings={warnings} /> : undefined
-      }
+      warnings={<DataWarnings warnings={warnings} />}
       toolbar={
         <ConsoleToolbar
           action="/sessions"

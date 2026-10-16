@@ -50,14 +50,16 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; background: var(--surface); color: var(--ink); }
-body { font: 400 14px/1.45 var(--f-body); min-width: 1180px; -webkit-font-smoothing: antialiased; }
+body { font: 400 14px/1.45 var(--f-body); -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 a { color: var(--accent-ink); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .mono { font-family: var(--f-mono); }
 .dim { color: var(--ink-dim); }
 .eyebrow { font: 600 12px/1 var(--f-display); letter-spacing: .07em; text-transform: uppercase; color: var(--ink-dim); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---- Page grid: elbow rail | header + body ---- */
 .page { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: var(--gap); min-height: 100vh; padding-right: 28px; }
@@ -68,7 +70,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
   -webkit-mask: radial-gradient(circle at 100% 100%, transparent calc(var(--knee-r) - .5px), #000 var(--knee-r)) 0 var(--arm-h) / var(--knee-r) var(--knee-r) no-repeat, linear-gradient(#000, #000) 0 0 / 100% var(--arm-h) no-repeat;
           mask: radial-gradient(circle at 100% 100%, transparent calc(var(--knee-r) - .5px), #000 var(--knee-r)) 0 var(--arm-h) / var(--knee-r) var(--knee-r) no-repeat, linear-gradient(#000, #000) 0 0 / 100% var(--arm-h) no-repeat; }
 .rail-brand { font: 700 22px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
-.rail-code { font: 500 11px/1.4 var(--f-mono); margin-top: 6px; }
+/* the environment line: the host this console serves */
+.rail-code { font: 500 11px/1.4 var(--f-mono); margin-top: 6px; text-transform: uppercase; }
 .rail-body { grid-row: 2; display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
 .rail-block { background: var(--accent-muted); color: var(--ink-on-muted); padding: 8px 12px; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; text-align: right; }
 .rail-block b { font: 500 18px/1.1 var(--f-mono); }
@@ -77,18 +80,26 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .rail-block.end { background: var(--accent); color: var(--ink-on-accent); height: 44px; }
 
 /* ---- Header ---- */
-.header { grid-row: 1; grid-column: 2; padding-bottom: 18px; }
+.header { grid-row: 1; grid-column: 2; padding-bottom: 18px; min-width: 0; }
 .arm { display: flex; gap: 6px; height: var(--arm-h); }
 .arm i { background: var(--accent); display: block; }
 .arm i:first-child { flex: 1; }
 .title-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 18px 0 0; }
+.title-block { min-width: 0; }
 h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text-transform: uppercase; }
 .subtitle { margin-top: 6px; color: var(--ink-dim); font-size: 13px; }
-.utilities { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
-.sync { font: 400 12px/1.3 var(--f-mono); color: var(--ink-dim); text-align: right; }
+.subtitle a { color: inherit; text-decoration: underline; text-decoration-color: var(--hairline); text-underline-offset: 3px; }
+.utilities { display: flex; align-items: center; gap: 12px; justify-content: flex-end; position: relative; }
+/* live routes stream; the others say when the page was loaded */
+.sync { font: 400 12px/1.3 var(--f-mono); color: var(--ink-dim); text-align: right; white-space: nowrap; }
 .sync b { color: var(--ok); font-weight: 500; }
-.who { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.sync b.snap { color: var(--ink-dim); }
+.sync-compact { display: none; font: 400 11px/1.3 var(--f-mono); color: var(--ink-dim); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sync-compact b { color: var(--ok); font-weight: 500; }
+.sync-compact b.snap { color: var(--ink-dim); }
+.who { display: flex; align-items: center; gap: 8px; font-size: 13px; white-space: nowrap; }
 .who .av { width: 32px; height: 32px; background: var(--hairline); display: grid; place-items: center; font: 600 13px var(--f-display); letter-spacing: .05em; }
+.icon { width: 16px; height: 16px; flex: none; }
 
 .signal { display: flex; gap: 4px; height: 6px; margin: 16px 0 12px; }
 .signal i { display: block; background: linear-gradient(to right, var(--signal-stops)); }
@@ -98,59 +109,99 @@ h1 { margin: 0; font: 700 46px/.95 var(--f-display); letter-spacing: .04em; text
 .signal i:nth-child(4) { flex: 0 0 3%; background: var(--amber); }
 .signal i:nth-child(5) { flex: 1; background: var(--teal); max-width: 14%; }
 
-/* destination rail: square modules, label docked to the trailing edge */
+/* destination rail: square modules sized by their labels (6.5rem floor),
+   label docked to the trailing edge, one row at laptop widths */
 .nav { display: flex; gap: 4px; flex-wrap: wrap; }
-.nav a { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; height: 44px; padding: 0 12px 7px; min-width: var(--w, 120px);
+.nav a { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; height: 44px; padding: 0 12px 7px; min-width: 6.5rem;
   background: var(--accent-muted); color: var(--ink-on-muted); text-decoration: none; font: 600 15px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; }
 .nav a small { font: 500 11px/1 var(--f-mono); letter-spacing: 0; opacity: .9; align-self: flex-start; padding-top: 7px; }
 .nav a:hover { background: var(--accent-muted-hover); }
 .nav a[aria-current="page"] { background: var(--accent); color: var(--ink-on-accent); }
 .nav a:active { transform: translateY(1px); }
 
+/* readout strip: the rail's figures on one line where the rail is hidden */
+.strip { display: none; font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); }
+.strip b { color: var(--ink); font-weight: 500; }
+.strip > span { white-space: nowrap; margin-right: 12px; }
+
 /* ---- Buttons: flat blocks ---- */
-.btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 16px; border: 0; border-radius: 0; cursor: pointer;
-  font: 600 14px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; border: 0; border-radius: 0; cursor: pointer; text-decoration: none;
+  font: 600 14px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; transition: background-color .14s; white-space: nowrap; }
+.btn:hover { text-decoration: none; }
 .btn-primary { background: var(--accent); color: var(--ink-on-accent); height: 40px; padding: 0 20px; }
 .btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, white); }
 .btn-secondary { background: var(--accent-muted); color: var(--ink-on-muted); }
 .btn-secondary:hover { background: var(--accent-muted-hover); }
+/* the header's create command keeps the console's amber on every route */
+.btn-create { background: var(--amber); color: var(--ink-on-accent); height: 36px; padding: 0 10px; font-size: 13px; }
+.btn-icon { width: 44px; height: 44px; padding: 0; }
 .btn-sm { height: 30px; padding: 0 12px; font-size: 13px; }
 .btn:active { transform: translateY(1px); }
+.kebab { width: 28px; height: 28px; display: inline-grid; place-items: center; background: transparent; border: 0; color: var(--ink-dim); cursor: pointer; font: 600 18px/1 var(--f-body); }
+.kebab:hover { color: var(--ink); background: var(--surface-raised); }
+
+/* ---- Console menu (the ⋯ utility): destinations, preferences, identity ---- */
+.menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; width: 248px; max-width: calc(100vw - 16px); background: var(--surface-raised); border: 1px solid var(--hairline); padding: 6px 0; display: none; }
+.menu[data-open] { display: block; }
+.menu .eyebrow { display: block; padding: 8px 12px 6px; font-size: 11px; }
+.menu a, .menu button.item { display: flex; align-items: center; min-height: 40px; padding: 0 12px; width: 100%; color: var(--ink); background: none; border: 0; font: 400 14px var(--f-body); text-align: left; cursor: pointer; }
+.menu a:hover, .menu button.item:hover { background: var(--hairline); text-decoration: none; }
+.menu a[aria-current="page"] { color: var(--accent-ink); }
+.menu hr { border: 0; border-top: 1px solid var(--hairline); margin: 6px 0; }
+.menu .ident { display: flex; align-items: center; gap: 8px; padding: 4px 12px 8px; font-size: 13px; }
+.menu .ident > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+/* Destinations join the menu only below 64em, where the pills are folded. */
+@media (min-width: 64em) { .menu .nav-group { display: none; } }
 
 /* ---- Workspace frame ---- */
-.body { grid-row: 2; grid-column: 2; padding: 16px 0 28px; }
+.body { grid-row: 2; grid-column: 2; padding: 16px 0 28px; min-width: 0; }
 .frame { border: 1px solid var(--hairline); }
 .warnband { display: flex; align-items: center; gap: 14px; padding: 9px 16px; border-left: 4px solid var(--warn); border-bottom: 1px solid var(--hairline); color: var(--warn-ink); font-size: 13px; }
 .warnband .eyebrow { color: var(--warn-ink); }
 .warnband .sep { color: var(--hairline); }
 .warnband a { color: var(--warn-ink); text-decoration: underline; text-underline-offset: 3px; margin-left: auto; white-space: nowrap; }
-.toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
+.warnband.none { border-left-color: var(--hairline); color: var(--ink-dim); }
+.warnband.none .eyebrow { color: var(--ink-dim); }
+/* Every control applies on change; there is no Apply step. */
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
 .field { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border: 1px solid var(--hairline); background: var(--surface); color: var(--ink); font: 400 13px var(--f-body); }
 .field .eyebrow { font-size: 11px; }
-select.field { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%), linear-gradient(-45deg, transparent 50%, var(--ink-dim) 50%); background-size: 5px 5px; background-position: right 14px center, right 9px center; background-repeat: no-repeat; cursor: pointer; }
+select.field { appearance: none; padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%), linear-gradient(-45deg, transparent 50%, var(--ink-dim) 50%); background-size: 5px 5px; background-position: right 14px center, right 9px center; background-repeat: no-repeat; cursor: pointer; max-width: 220px; }
 .seg { display: inline-flex; border: 1px solid var(--hairline); }
 .seg button { height: 34px; padding: 0 14px; border: 0; background: transparent; color: var(--ink-dim); font: 500 12px var(--f-mono); cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--hairline); }
-.seg button:hover { color: var(--ink); background: var(--surface-raised); }
+.seg button:hover:not(:disabled) { color: var(--ink); background: var(--surface-raised); }
 .seg button[aria-pressed="true"] { background: var(--accent-muted); color: var(--ink-on-muted); }
-.search { width: 240px; }
-.search input { border: 0; background: transparent; color: var(--ink); font: inherit; width: 100%; outline: none; }
+.seg button:disabled { opacity: .4; cursor: not-allowed; }
+.tb-note { font-size: 12px; color: var(--ink-dim); }
+.search { width: 220px; }
+.search input { border: 0; background: transparent; color: var(--ink); font: inherit; width: 100%; outline: none; min-width: 0; }
 .search input::placeholder { color: var(--ink-dim); }
 .search:focus-within { outline: 2px solid var(--amber); outline-offset: 2px; }
+.search .opts { border: 0; background: none; color: var(--ink-dim); cursor: pointer; padding: 0; display: grid; place-items: center; }
+details.more { position: relative; }
+details.more > summary { list-style: none; cursor: pointer; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more[open] .more-panel { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; display: grid; gap: 8px; padding: 10px; background: var(--surface-raised); border: 1px solid var(--hairline); width: 240px; }
+.asof { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
 .toolbar .push { margin-left: auto; }
+.fold-toggle { display: none; }
+.fold-group { display: contents; }
 .content { padding: 20px; display: grid; gap: 28px; }
 
 /* ---- Readouts ---- */
-.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.readouts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); row-gap: 16px; }
 .readout { padding: 2px 20px; border-left: 1px solid var(--hairline); min-width: 0; }
 .readout:first-child { border-left: 0; padding-left: 4px; }
 .readout .val { font: 500 30px/1.1 var(--f-mono); margin: 10px 0 2px; letter-spacing: -.01em; }
 .readout .val small { font-size: 15px; color: var(--ink-dim); }
-.readout .sub { font-size: 12px; color: var(--ink-dim); min-height: 18px; }
+.readout .sub { font-size: 12px; color: var(--ink-dim); min-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.readouts.wrap .sub { white-space: normal; }
 .spark { display: block; width: 100%; height: 28px; margin-top: 10px; }
 .spark rect { fill: var(--spark); }
 .spark rect.now { fill: var(--accent); }
 .spark rect.warn { fill: var(--warn); }
+.alert { padding: 12px 16px; background: color-mix(in srgb, var(--fail) 18%, var(--surface)); color: var(--ink); font-size: 14px; }
 
 /* ---- Panels: square spine down the leading edge ---- */
 .cols { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 28px; align-items: start; }
@@ -159,10 +210,12 @@ select.field { appearance: none; padding-right: 28px; background-image: linear-g
 .panel::before { content: ""; background: var(--accent); }
 .panel.signalled { grid-template-columns: var(--spine) minmax(0, 1fr) var(--spine); }
 .panel.signalled::after { content: ""; background: linear-gradient(to bottom, var(--signal-stops)); }
-.panel-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 0 12px; border-bottom: 1px solid var(--hairline); }
+.panel-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 0 12px; border-bottom: 1px solid var(--hairline); flex-wrap: wrap; }
 .panel-head h2 { margin: 0; font: 600 19px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 .panel-head .count { font: 500 14px var(--f-mono); color: var(--accent-ink); }
 .panel-head .meta { margin-left: auto; font: 400 12px var(--f-mono); color: var(--ink-dim); }
+.panel-head .seg { align-self: center; }
+.panel-head .seg button { height: 26px; padding: 0 10px; font: 600 12px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; }
 
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; padding: 10px 10px 8px 0; font: 600 11px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); border-bottom: 1px solid var(--hairline); white-space: nowrap; }
@@ -173,7 +226,16 @@ td.num { font-family: var(--f-mono); font-size: 13px; }
 .ref { font: 500 12px var(--f-mono); color: var(--accent-ink); white-space: nowrap; }
 .item-title { display: block; color: var(--ink); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .cell-clip { max-width: 0; width: 40%; }
+.links { display: block; margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
 .tag { display: inline-block; padding: 3px 6px 2px; border: 1px solid var(--hairline); font: 500 11px/1 var(--f-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+.tag.live { background: color-mix(in srgb, var(--ok) 55%, var(--surface)); border-color: transparent; color: var(--ink); }
+.tag.idle { background: color-mix(in srgb, var(--warn) 60%, var(--surface)); border-color: transparent; color: var(--ink); }
+.tag.badge { border-color: var(--ink-dim); color: var(--ink); }
+table.sess { table-layout: fixed; }
+table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
+.group-head { display: flex; align-items: baseline; gap: 10px; padding: 16px 0 6px; flex-wrap: wrap; }
+.group-head h3 { margin: 0; font: 600 16px/1 var(--f-display); letter-spacing: .04em; }
+.group-head .dim { font-size: 12px; }
 
 /* phase readout: five flat blocks */
 .phase { display: flex; gap: 2px; }
@@ -198,11 +260,21 @@ td.num { font-family: var(--f-mono); font-size: 13px; }
 /* decision inbox */
 .inbox { list-style: none; margin: 0; padding: 0; }
 .inbox li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; padding: 12px 0; border-bottom: 1px solid var(--hairline); align-items: center; }
+.inbox li.sel { box-shadow: inset 4px 0 0 var(--accent); padding-left: 12px; }
 .inbox .kind { font: 600 12px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
 .inbox .t { color: var(--ink); margin: 5px 0 4px; }
 .inbox .m { font: 400 12px var(--f-mono); color: var(--ink-dim); display: flex; flex-wrap: wrap; gap: 2px 10px; }
 .inbox .m > span { white-space: nowrap; }
 .inbox .m .late { color: var(--warn-ink); }
+.inbox .acts { display: flex; align-items: center; gap: 4px; }
+
+/* operations rows: content left, the action on a stable right edge */
+.ops-rows { display: grid; }
+.op-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.op-row:last-child { border-bottom: 0; }
+.op-row .t { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.op-row .line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--ink-dim); }
+.op-row .acts { display: flex; align-items: center; gap: 4px; }
 
 /* hosts */
 .host-spec { font: 400 11px/1.4 var(--f-mono); color: var(--ink-dim); display: block; margin-top: 2px; white-space: nowrap; }
@@ -211,22 +283,114 @@ td.num { font-family: var(--f-mono); font-size: 13px; }
 .slots i.busy { background: var(--ink-dim); }
 .slots i.drain { background: var(--warn); }
 .slots i.off { background: transparent; border: 1px solid var(--fail); }
+.slots i.open { background: transparent; border: 1px solid var(--hairline); }
 .bars { display: grid; gap: 5px; min-width: 110px; }
 .bars div { display: grid; grid-template-columns: 30px 1fr 30px; gap: 6px; align-items: center; font: 400 11px var(--f-mono); color: var(--ink-dim); }
 .bars span:last-child { text-align: right; }
 .telemetry { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 16px; }
-.telemetry > div { padding: 0 14px; border-left: 1px solid var(--hairline); }
+.telemetry > div { padding: 0 14px; border-left: 1px solid var(--hairline); min-width: 0; }
 .telemetry > div:first-child { padding-left: 0; border-left: 0; }
 .telemetry .v { font: 500 18px var(--f-mono); margin-top: 6px; }
+.telemetry .v small { font-size: 11px; color: var(--ink-dim); display: block; }
 .telemetry .spark { height: 22px; margin-top: 6px; }
 
+/* provider admission */
+.admit { padding: 12px 0 12px 16px; border-bottom: 1px solid var(--hairline); display: grid; gap: 4px; font-size: 12px; }
+.admit .name { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.admit .dim { font-size: 12px; }
+.admit-foot { font-size: 12px; color: var(--ink-dim); padding-top: 10px; }
+
 .empty-note { color: var(--ink-dim); font-size: 13px; padding: 12px 0; }
-.cost-bar { display: grid; grid-template-columns: 1fr 56px; gap: 10px; align-items: center; }
+.cost-7d { width: 38%; }
+.cost-bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
+.cost-bar > span { white-space: nowrap; }
+.est { color: var(--ink-dim); font-size: 11px; }
+
+/* Laptop widths keep the title's room: the full live status joins from
+   80em and the identity's login from 90em; below that, the status rides
+   under the title and the identity is its avatar. */
+@media (max-width: 89.99em) { .who > div:last-child { display: none; } }
+@media (max-width: 79.99em) { .sync { display: none; } .sync-compact { display: block; } }
 
 @media (max-width: 1320px) {
   .cols { grid-template-columns: minmax(0, 1fr); }
-  .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 20px; }
+  .readouts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .readout:nth-child(4) { border-left: 0; padding-left: 4px; }
+}
+
+/* ---- Below 64em: the rail folds into a compact elbow around the header ---- */
+@media (max-width: 63.99em) {
+  :root { --arm-h: 16px; }
+  .page { display: block; padding: 0; }
+  .rail-head, .rail-body { display: none; }
+  .header { position: relative; padding: calc(var(--arm-h) + 12px) 12px 10px 64px; }
+  .header::before { content: ""; position: absolute; left: 0; top: 0; width: 48px; height: 120px; background: var(--accent); border-top-left-radius: 44px; }
+  .header::after { content: ""; position: absolute; left: 48px; top: 0; right: 0; height: var(--arm-h); background: var(--accent); }
+  .arm { display: none; }
+  .title-row { padding: 0; align-items: flex-start; }
+  h1 { font-size: 20px; line-height: 1; font-weight: 600; }
+  .subtitle, .sync, .who, .signal { display: none; }
+  .sync-compact { display: block; }
+  .utilities { gap: 8px; }
+  .nav { margin-top: 12px; }
+  .nav a { height: 40px; min-width: 0; padding: 0 10px 8px; font-size: 14px; }
+  .nav a small { display: none; }
+  .strip { display: block; padding: 12px 0 0; }
+  .body { padding: 12px 12px 24px 64px; }
+  .readouts { grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); }
+  .readout:nth-child(n) { border-left: 1px solid var(--hairline); padding-left: 16px; }
+  .readout:first-child { border-left: 0; padding-left: 4px; }
+  .refresh-label { display: none; }
+  .cost-7d { width: auto; }
+  .cost-bar { grid-template-columns: minmax(40px, 1fr) auto; }
+  .cost-bar .meter { min-width: 40px; }
+  #refresh { width: 44px; height: 44px; padding: 0; }
+  #menu-btn { width: 44px; height: 44px; }
+  .btn-create { height: 44px; }
+}
+
+/* ---- Phones: one column, destinations in the ⋯ menu, filters folded ---- */
+@media (max-width: 47.99em) {
+  :root { --arm-h: 10px; }
+  .header { padding: calc(var(--arm-h) + 10px) 8px 0 52px; min-height: 74px; }
+  .header::before { width: 44px; height: 74px; border-top-left-radius: 40px; }
+  .header::after { left: 44px; }
+  .nav { display: none; }
+  .strip { padding: 10px 8px 0 4px; margin-left: -36px; min-height: 2.8em; }
+  .body { padding: 16px 16px 24px; }
+  .warnband { flex-wrap: wrap; gap: 4px 12px; }
+  .warnband .sep { display: none; }
+  .toolbar { gap: 10px; padding: 12px; }
+  .fold-toggle { display: inline-flex; cursor: pointer; }
+  .fold-toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .fold-group { display: none; }
+  .toolbar:has(.fold-toggle input:checked) .fold-group { display: contents; }
+  .toolbar > *, select.field { max-width: 100%; }
+  .search { width: 100%; }
+  .asof { width: 100%; }
+  .toolbar .push { margin-left: 0; }
+  .content { padding: 16px 0 0; gap: 24px; }
+  .content > .readouts, .content > .alert { margin: 0 12px; }
+  .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .readout { padding: 2px 12px; }
+  .readout:nth-child(odd) { border-left: 0; padding-left: 4px; }
+  .readout:nth-child(even) { border-left: 1px solid var(--hairline); }
+  .panel { padding-right: 12px; }
+  .panel-head .meta { margin-left: 0; width: 100%; }
+  /* tables reflow into stacked rows */
+  table, tbody, tr, td { display: block; }
+  thead { display: none; }
+  tbody tr { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+  td { border: 0; padding: 2px 0; }
+  td.num { text-align: left; display: inline-block; margin-right: 12px; }
+  .cell-clip, .cost-7d { max-width: none; width: auto !important; }
+  .item-title { white-space: normal; }
+  .telemetry { grid-template-columns: 1fr; gap: 12px; }
+  .telemetry > div { border-left: 0; padding-left: 0; }
+  .op-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .op-row .acts .btn { flex: 1; min-height: 44px; }
+  .inbox li { grid-template-columns: minmax(0, 1fr) auto; }
+  .inbox .btn { height: 44px; }
 }
 </style>
 </head>
@@ -235,12 +399,12 @@ td.num { font-family: var(--f-mono); font-size: 13px; }
   <!-- elbow: rail head + knee + arm -->
   <aside class="rail-head" aria-label="Agent LCARS" data-od-id="elbow">
     <div class="rail-brand">Agent<br>LCARS</div>
-    <div class="rail-code">PROD<br>HOMELAB · K3S</div>
+    <div class="rail-code" data-od-id="rail-environment">lcars.jlapenna.net</div>
   </aside>
   <div class="rail-body" aria-hidden="true">
     <div class="rail-block" style="height:84px"><b id="rb-fleet">11/12</b><span>Fleet online</span></div>
     <div class="rail-block" style="height:120px"><b id="rb-queue">09</b><span>Queue depth</span></div>
-    <div class="rail-block" style="height:168px"><b>3.18M</b><span>Tokens today</span></div>
+    <div class="rail-block" style="height:168px"><b>3.18M</b><span>Tokens · 24h sessions</span></div>
     <div class="rail-block fill"><b>14</b><span>Merged · 24h</span></div>
     <div class="rail-block end"><b>2026.284</b></div>
   </div>
@@ -248,57 +412,72 @@ td.num { font-family: var(--f-mono); font-size: 13px; }
   <header class="header" data-od-id="console-header">
     <div class="arm" aria-hidden="true"><i></i><i style="width:56px"></i><i style="width:20px"></i></div>
     <div class="title-row">
-      <div>
+      <div class="title-block">
         <h1 id="page-title" data-od-id="page-title">Bridge</h1>
         <div class="subtitle" id="page-sub">Fleet overview</div>
+        <div class="sync-compact" id="sync-compact"></div>
       </div>
       <div class="utilities" data-od-id="header-utilities">
-        <div class="sync"><b>■ LIVE</b> · synced 14:32:08<br>auto-refresh 15 s</div>
-        <button class="btn btn-secondary" data-od-id="refresh-button" type="button">Refresh</button>
-        <div class="who"><div class="av">JL</div><div>jlapenna<div class="dim" style="font-size:12px">work.operator · admin</div></div></div>
+        <div class="sync" id="sync"></div>
+        <button class="btn btn-create" id="create" type="button" data-od-id="new-work">New work</button>
+        <button class="btn btn-secondary" id="refresh" type="button" data-od-id="refresh-button" aria-label="Refresh">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9M4 5v3h3M4 13a8 8 0 0 0 14.9 3.9M20 19v-3h-3"/></svg><span class="refresh-label">Refresh</span>
+        </button>
+        <button class="btn btn-secondary btn-icon" id="menu-btn" type="button" aria-label="More console options" aria-haspopup="menu" aria-expanded="false" data-od-id="console-menu">
+          <svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+        </button>
+        <div class="who" data-od-id="identity"><div class="av">JL</div><div>jlapenna<div class="dim" style="font-size:12px">admin · work.operator</div></div></div>
+        <div class="menu" id="menu" role="menu" aria-label="Console"></div>
       </div>
     </div>
     <div class="signal" aria-hidden="true" data-od-id="signal-bar"><i></i><i></i><i></i><i></i><i></i></div>
     <nav class="nav" id="nav" aria-label="Destinations" data-od-id="destination-rail"></nav>
+    <div class="strip" role="group" aria-label="Fleet readouts, compact" data-od-id="readout-strip">
+      <span>2026.284</span> <span><b>11/12</b> fleet</span> <span><b>09</b> queue</span> <span><b>3.18M</b> tokens 24h</span> <span><b>14</b> merged 24h</span>
+    </div>
   </header>
 
   <main class="body">
     <section class="frame" data-od-id="workspace-frame">
       <div class="warnband" id="warnband" role="status" data-od-id="warning-band"></div>
-      <div class="toolbar" id="toolbar" data-od-id="toolbar-band"></div>
+      <form class="toolbar" id="toolbar" data-od-id="toolbar-band" onsubmit="return false"></form>
       <div class="content" id="content"></div>
     </section>
   </main>
 </div>
 
 <script>
+/* Sample data only. Where the console has no honest source for a figure it
+   omits the readout rather than inventing one; this page shows only what the
+   console renders. */
 const DEST = [
-  { key: 'deck', label: 'Bridge', accent: 'amber', w: 168, title: 'Bridge', sub: 'Fleet overview · 4 repositories · 12 runners on homelab k3s' },
-  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, title: 'Decision Inbox', sub: 'Work waiting on a maintainer response' },
-  { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes' },
-  { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · Actions Runner Controller on k3s' },
-  { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 9, title: 'Work', sub: 'Admitted queue, capacity holds and schedules' },
-  { key: 'sessions', label: 'Sessions', accent: 'teal', w: 140, title: 'Session Archive', sub: 'Durable session records for investigation and audit' },
-  { key: 'costs', label: 'Costs', accent: 'gold', w: 112, title: 'Costs', sub: 'Cost ledger · daily budget $60.00' },
+  { key: 'deck', label: 'Bridge', accent: 'amber', w: 168, live: true, title: 'Bridge', sub: 'Fleet overview · 4 repos' },
+  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, live: true, title: 'Decision Inbox', sub: 'Work waiting on a maintainer response · 4 repos' },
+  { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, live: true, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes · 4 repos' },
+  { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · live runners and queue status' },
+  { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 5, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
+  { key: 'sessions', label: 'Sessions', accent: 'teal', w: 140, title: 'Session Archive', sub: 'Durable session records · last 14 days · 31 sessions' },
+  { key: 'costs', label: 'Costs', accent: 'gold', w: 112, title: 'Costs', sub: 'Cost ledger · last 14 days · 31 sessions' },
 ];
+const REPOS = ['jlapenna/agent-lcars', 'jlapenna/homelab', 'supersprinklesracing/sprinkles', 'jlapenna/messages-control'];
 
 const RUNS = [
-  { agent: 'claude', repo: 'agent-lcars', ref: '#2479', title: 'routing: switch executor when an authorized maintainer changes agent labels', phase: 2, p: 62, note: 'build · 41 files', el: '23m 41s', used: 2.14, cap: 8, tok: '1.42M', runner: 'picard-r1' },
-  { agent: 'codex', repo: 'agent-lcars', ref: '#2478', title: 'perf(console): expose the cold Inbox interaction breakdown', phase: 3, p: 40, note: 'verify · e2e 2/5', el: '41m 09s', used: 3.90, cap: 6, tok: '2.07M', runner: 'picard-r2' },
-  { agent: 'claude', repo: 'agent-lcars', ref: '#2473', title: 'feat(telemetry): hooks-based session telemetry, phase 0', phase: 4, p: 30, note: 'review · CI pending', el: '1h 12m', used: 7.10, cap: 8, tok: '4.66M', runner: 'spark-r1' },
-  { agent: 'claude', repo: 'homelab', ref: '#2245', title: 'capacity: declare executor hosts and identity trust roots', phase: 2, p: 35, note: 'build · paused for plan', el: '52m 18s', used: 4.60, cap: 8, tok: '3.02M', runner: 'picard-r3' },
-  { agent: 'codex', repo: 'messages-control', ref: '#118', title: 'image workflow: pin buildx and restore GHCR push', phase: 3, p: 70, note: 'verify · actionlint ok', el: '27m 52s', used: 1.75, cap: 6, tok: '0.98M', runner: 'spark-r2' },
-  { agent: 'opencode', repo: 'sprinkles', ref: '#6041', title: 'members: sync .ss-checker divider tokens from the design system', phase: 2, p: 20, note: 'build · 6 files', el: '18m 03s', used: 0.92, cap: 4, tok: '0.61M', runner: 'laforge-r1' },
-  { agent: 'claude', repo: 'homelab', ref: '#2251', title: 'spark: raise memory alert hysteresis after QueueExecutorStalled storm', phase: 1, p: 55, note: 'plan · reading alerts', el: '6m 12s', used: 0.38, cap: 8, tok: '0.21M', runner: 'data-r1' },
+  { agent: 'claude', repo: 'agent-lcars', ref: '#2479', title: 'routing: switch executor when an authorized maintainer changes agent labels', phase: 2, p: 62, note: 'build · 41 files', el: '23m 41s', used: 2.14, cap: 8, tok: '1.42M', runner: 'zh2lg-runner-bnwc8' },
+  { agent: 'codex', repo: 'agent-lcars', ref: '#2478', title: 'perf(console): expose the cold Inbox interaction breakdown', phase: 3, p: 40, note: 'verify · e2e 2/5', el: '41m 09s', used: 3.90, cap: 6, tok: '2.07M', runner: 'zh2lg-runner-c2xx2' },
+  { agent: 'claude', repo: 'agent-lcars', ref: '#2473', title: 'feat(telemetry): hooks-based session telemetry, phase 0', phase: 4, p: 30, note: 'review · CI pending', el: '1h 12m', used: 7.10, cap: 8, tok: '4.66M', runner: 'direct executor' },
+  { agent: 'claude', repo: 'homelab', ref: '#2245', title: 'capacity: declare executor hosts and identity trust roots', phase: 2, p: 35, note: 'build · paused for plan', el: '52m 18s', used: 4.60, cap: 8, tok: '3.02M', runner: 'direct executor' },
+  { agent: 'codex', repo: 'messages-control', ref: '#118', title: 'image workflow: pin buildx and restore GHCR push', phase: 3, p: 70, note: 'verify · actionlint ok', el: '27m 52s', used: 1.75, cap: 6, tok: '0.98M', runner: '2zm2g-runner-rpcqj' },
+  { agent: 'opencode', repo: 'sprinkles', ref: '#6041', title: 'members: sync .ss-checker divider tokens from the design system', phase: 2, p: 20, note: 'build · 6 files', el: '18m 03s', used: 0.92, cap: 4, tok: '0.61M', runner: 'direct executor' },
+  { agent: 'claude', repo: 'homelab', ref: '#2251', title: 'spark: raise memory alert hysteresis after QueueExecutorStalled storm', phase: 1, p: 55, note: 'plan · reading alerts', el: '6m 12s', used: 0.38, cap: 8, tok: '0.21M', runner: 'direct executor' },
 ];
 const PHASES = ['intake', 'plan', 'build', 'verify', 'review'];
 
 const INBOX = [
-  { kind: 'Plan approval', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true },
-  { kind: 'Takeover requested', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true },
-  { kind: 'Review requested', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m' },
-  { kind: 'Merge blocked', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m' },
-  { kind: 'Budget extension', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m' },
+  { kind: 'Plan approval', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true, by: 'jlapenna', notes: 2 },
+  { kind: 'Takeover requested', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true, by: 'agent-lcars-bot', notes: 1 },
+  { kind: 'Review requested', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m', by: 'agent-lcars-bot' },
+  { kind: 'Merge blocked', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m', by: 'agent-lcars-bot' },
+  { kind: 'Budget extension', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m', by: 'agent-lcars-bot', notes: 1 },
 ];
 
 const DONE = [
@@ -317,35 +496,55 @@ const HOSTS = [
   { name: 'data', spec: '8 vCPU · 32 GiB · max job 4c/12G', slots: ['busy', 'idle', 'idle'], cpu: 29, mem: 38 },
   { name: 'worf', spec: '8 vCPU · 16 GiB · max job 4c/6G', slots: ['off'], cpu: 0, mem: 0, off: true },
 ];
+/* ARC runner pods: the row names the pod less its lane, which the second line names */
 const RUNNERS = [
-  ['picard-r1', 'busy', 'agent-lcars#2479', '6c/18G', '23m'], ['picard-r2', 'busy', 'agent-lcars#2478', '4c/12G', '41m'], ['picard-r3', 'busy', 'homelab#2245', '4c/12G', '52m'],
-  ['spark-r1', 'busy', 'agent-lcars#2473', '8c/32G', '1h 12m'], ['spark-r2', 'busy', 'messages-control#118', '4c/16G', '27m'], ['spark-r3', 'idle', '—', '—', '9m idle'],
-  ['laforge-r1', 'busy', 'sprinkles#6041', '4c/10G', '18m'], ['laforge-r2', 'drain', 'draining for node upgrade', '—', '4m'],
-  ['data-r1', 'busy', 'homelab#2251', '2c/6G', '6m'], ['data-r2', 'idle', '—', '—', '31m idle'], ['data-r3', 'idle', '—', '—', '2h idle'],
-  ['worf-r1', 'off', 'node NotReady', '—', '12m'],
+  ['zh2lg-runner-bnwc8', 'homelab-ci', 'picard', 'busy', 'homelab · repository validation', '2c/3G', '23m'],
+  ['zh2lg-runner-c2xx2', 'homelab-ci', 'picard', 'busy', 'homelab · repository validation', '2c/3G', '41m'],
+  ['2zm2g-runner-rpcqj', 'agent-lcars-ci', 'spark', 'busy', 'agent-lcars · verify', '4c/16G', '27m'],
+  ['2zm2g-runner-7kd4w', 'agent-lcars-ci', 'spark', 'idle', '—', '2c/5G', '9m idle'],
+  ['9xqp5-runner-2qvrq', 'agent-lcars-e2e', 'laforge', 'busy', 'agent-lcars · console e2e', '4c/10G', '18m'],
+  ['9xqp5-runner-m8t2z', 'agent-lcars-e2e', 'laforge', 'drain', 'draining for node upgrade', '—', '4m'],
+  ['zh2lg-runner-rg48f', 'homelab-ci', 'data', 'busy', 'homelab · renovate', '2c/6G', '6m'],
+  ['zh2lg-runner-5vfxr', 'homelab-ci', 'data', 'idle', '—', '2c/3G', '31m idle'],
+  ['zh2lg-runner-hzx9n', 'homelab-ci', 'worf', 'off', 'node NotReady', '—', '12m'],
 ];
+/* The admitted queue holds running items, FIFO within priority (P1-P3);
+   each shows its execution phase. */
 const QUEUE = [
-  ['P1', 'agent-lcars', '#2480', 'console: show capacity receipt on the run detail', 'claude', 'Admitted', '2m'],
-  ['P1', 'homelab', '#2252', 'loki: retention for telemetry-watcher streams', 'codex', 'Capacity hold · codex ceiling 1', '18m'],
-  ['P2', 'agent-lcars', '#2481', 'work api: paginate /runs/capacity inventory', 'codex', 'Capacity hold · codex ceiling 1', '16m'],
-  ['P2', 'sprinkles', '#6043', 'members: Strava connect button uses official asset', 'opencode', 'Capacity hold · opencode ceiling 1', '11m'],
-  ['P2', 'agent-lcars', '#2482', 'docs: executor capacity recovery runbook', 'claude', 'Admitted', '9m'],
-  ['P3', 'homelab', '#2253', 'renovate: group k3s system-upgrade bumps', 'claude', 'Admitted', '7m'],
-  ['P3', 'messages-control', '#119', 'ci: cache pnpm store on ARC runners', 'claude', 'Admitted', '5m'],
-  ['P3', 'agent-lcars', '#2483', 'e2e: 1024px header overflow regression spec', 'claude', 'Scheduled · 15:00', '—'],
-  ['P4', 'homelab', '#2254', 'nightly: fleet onboarding audit', 'codex', 'Scheduled · 02:30', '—'],
+  ['P1', 'jlapenna/agent-lcars', 'user:jlapenna', 'console: show capacity receipt on the run detail', 'claude', 'provider process started', '2m'],
+  ['P1', 'jlapenna/homelab', 'user:jlapenna', 'loki: retention for telemetry-watcher streams', 'codex', 'waiting for placement', '18m'],
+  ['P2', 'jlapenna/agent-lcars', 'svc:production-verifier', 'work api: paginate /runs/capacity inventory', 'codex', 'queued', '16m'],
+  ['P2', 'supersprinklesracing/sprinkles', 'user:jlapenna', 'members: Strava connect button uses official asset', 'opencode', 'queued', '11m'],
+  ['P3', 'jlapenna/homelab', 'user:jlapenna', 'renovate: group k3s system-upgrade bumps', 'claude', 'placement unavailable', '7m'],
 ];
-const SESSIONS = [
-  ['ses_8f3a21c4', 'agent-lcars#2477', 'codex', 'ok', 'Merged', '34m', '1.11M', '13:24'],
-  ['ses_77d0be19', 'agent-lcars#2476', 'claude', 'ok', 'Merged', '1h 08m', '3.38M', '12:13'],
-  ['ses_61c2a7f0', 'agent-lcars#2474', 'claude', 'ok', 'Merged', '46m', '2.20M', '12:01'],
-  ['ses_5ab94e02', 'homelab#2249', 'opencode', 'fail', 'Failed · verify', '22m', '0.39M', '11:48'],
-  ['ses_4e81d3aa', 'agent-lcars#2472', 'codex', 'ok', 'Merged', '51m', '1.74M', '10:45'],
-  ['ses_3c07f9b6', 'sprinkles#6029', 'claude', 'neutral', 'Closed · duplicate', '4m', '0.08M', '10:58'],
-  ['ses_2b6e10d8', 'agent-lcars#2471', 'claude', 'ok', 'Merged', '58m', '2.91M', '09:12'],
+const RECENT_WORK = [
+  ['P2', 'jlapenna/agent-lcars', 'user:jlapenna', 'console: keep the Inbox row actions on one edge', 'claude', 'fail', 'failed', '2h ago'],
+  ['P3', 'jlapenna/homelab', 'svc:production-verifier', 'Audit source-landed closure candidates', 'opencode', 'warn', 'parked', '4h ago'],
+  ['P2', 'jlapenna/agent-lcars', 'user:jlapenna', 'telemetry: retain Codex child publications', 'codex', 'ok', 'done', '6h ago'],
+  ['P3', 'supersprinklesracing/sprinkles', 'user:jlapenna', 'members: settle the Strava connect copy', 'claude', 'neutral', 'canceled', '1d ago'],
+];
+const CLI = [
+  { title: 'Console restyle to design mockup', live: 'live', agent: 'claude code', repo: 'agent-lcars' },
+  { title: 'Review product specs and file issues', live: 'live', agent: 'codex', repo: 'agent-lcars' },
+  { title: 'Wedding invite delivery verification', live: 'idle', agent: 'claude code', repo: 'jlapenna/wedding' },
+];
+const CLAIMED = [
+  { kind: 'Issue', repo: 'homelab', n: 2536, title: 'homelab: DeliveryRevisionLag firing again', meta: 'updated 7 hours ago · by jclaw-bot · type:bug, agent:claude', reason: 'finished, not closed', close: true },
+  { kind: 'Issue', repo: 'homelab', n: 2122, title: 'Laforge: agent worktrees fill and wear the 256GB root NVMe', meta: 'updated yesterday · by jlapenna · type:maintenance, agent:codex', reason: 'parked' },
+  { kind: 'PR', repo: 'homelab', n: 2632, title: 'fix: disable incompatible node-exporter XFS collector', meta: 'updated 5 minutes ago · by agent-lcars-bot', reason: 'never dispatched' },
+];
+const ADMISSION = [
+  { name: 'claude', eligible: 1, cooling: false, line: '1 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '3 claims in the 15m 0s to just now' },
+  { name: 'codex', eligible: 2, cooling: true, line: '0 eligible queued · 2 queued · 0 deferred · 1 live claim', claims: '0 claims in the 15m 0s to just now', cool: 'Provider limit: cooling down, clears in 14 minutes. Retry/reset deadline from run quota/r1; reported 2 minutes ago.' },
+  { name: 'opencode', eligible: 1, cooling: false, line: '0 eligible queued · 1 queued · 0 deferred · 1 live claim', claims: '1 claim in the 15m 0s to just now' },
+];
+const SESSION_GROUPS = [
+  { ref: 'GitHub #2477', repo: 'agent-lcars', title: 'Cover tied issue IDs 99 and 100', rows: [['AGENT', 'jlapenna/agent-lcars#2477/r1', 'test(capacity): explicitly cover tied issue IDs', 'agent-lcars#2477', 'codex', 'ok', 'ended', 'PR #2477', '34m', '1.11M', '1h ago']] },
+  { ref: 'GitHub #2476', repo: 'agent-lcars', title: 'Priority in durable Work consumers', rows: [['AGENT', 'jlapenna/agent-lcars#2476/r1', 'test(console): cover priority in Work consumers', 'agent-lcars#2476', 'claude', 'ok', 'ended', 'PR #2476', '1h 08m', '3.38M', '2h ago'], ['AGENT', 'jlapenna/agent-lcars#2476/r2', 'Address review on #2476', 'agent-lcars#2476', 'claude', 'ok', 'ended', 'PR #2476', '12m', '0.41M', '1h ago']] },
+  { ref: 'GitHub #2249', repo: 'homelab', title: 'Tune ContainerProbeFailing quiet hours', rows: [['AGENT', 'jlapenna/homelab#2249/r1', 'alerts: tune ContainerProbeFailing quiet hours', 'homelab#2249', 'opencode', 'fail', 'failed · verify', '', '22m', '0.39M', '3h ago']] },
 ];
 const COSTS = [
-  ['jlapenna/agent-lcars', 24.18, 161.40, 41], ['jlapenna/homelab', 7.62, 58.90, 17], ['supersprinklesracing/sprinkles', 3.37, 29.75, 9], ['jlapenna/messages-control', 3.25, 12.10, 6],
+  ['jlapenna/agent-lcars', 24.18, 161.40, 41, 0], ['jlapenna/homelab', 7.62, 58.90, 17, 2], ['supersprinklesracing/sprinkles', 3.37, 29.75, 9, 1], ['jlapenna/messages-control', 3.25, 12.10, 6, 0],
 ];
 
 const $ = (s) => document.querySelector(s);
@@ -361,6 +560,7 @@ function spark(vals, { warnAbove = Infinity, label = '' } = {}) {
 }
 const series = (base, amp, n, seed) => Array.from({ length: n }, (_, i) => Math.round(base + amp * Math.sin(i * 0.55 + seed) + amp * 0.6 * Math.sin(i * 1.7 + seed * 2)));
 const meterCls = (pct) => pct >= 100 ? 'fail' : pct >= 80 ? 'warn' : '';
+const kebab = (label) => `<button class="kebab" type="button" aria-label="${label}">⋮</button>`;
 
 function phaseCell(r) {
   const blocks = PHASES.map((_, i) => i < r.phase ? '<i class="done"></i>' : i === r.phase ? `<i class="cur" style="--p:${r.p}%"></i>` : '<i></i>').join('');
@@ -374,7 +574,7 @@ function budgetCell(r) {
 function runsPanel(full) {
   const rows = RUNS.map((r) => `<tr data-od-id="run-${r.repo}-${r.ref.replace('#', '')}">
     <td><span class="tag">${r.agent}</span></td>
-    <td class="cell-clip"><span class="ref">${r.repo}${r.ref}</span><span class="item-title" title="${r.title}">${r.title}</span></td>
+    <td class="cell-clip"><span class="ref">${r.repo}${r.ref}</span><span class="item-title" title="${r.title}">${r.title}</span><span class="links"><a href="#">Task/run</a> · <a href="#">View run on GitHub ↗</a></span></td>
     <td>${phaseCell(r)}</td>
     ${full ? `<td class="mono dim" style="font-size:12px">${r.runner}</td>` : ''}
     <td class="num">${r.el}</td>
@@ -387,13 +587,13 @@ function runsPanel(full) {
 }
 
 function inboxPanel(full) {
-  const items = INBOX.map((d, i) => `<li data-od-id="decision-${i + 1}">
+  const items = INBOX.map((d, i) => `<li data-od-id="decision-${i + 1}" class="${full && i === 0 ? 'sel' : ''}">
     <div><div class="kind">${d.kind}</div><div class="t">${d.title}</div>
-    <div class="m"><span><a href="#" class="ref">${d.repo} ${d.ref}</a></span><span>${d.agent}</span><span class="${d.late ? 'late' : ''}">waiting ${d.age}${d.late ? ' · over SLA' : ''}</span></div></div>
-    <button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>
+    <div class="m"><span><a href="#" class="ref">${d.repo} ${d.ref}</a></span><span>${d.agent}</span><span class="${d.late ? 'late' : ''}">waiting ${d.age}${d.late ? ' · over SLA' : ''}</span>${full ? `<span>by ${d.by}${d.notes ? ' · ' + d.notes + (d.notes === 1 ? ' comment' : ' comments') : ''}</span>` : ''}</div></div>
+    <div class="acts"><button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>${full ? kebab('Decision actions') : ''}</div>
   </li>`).join('');
   return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
-    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m</span></div>
+    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? ' · j/k to move · / to search' : ''}</span></div>
     <ul class="inbox">${items}</ul>
   </div></section>`;
 }
@@ -406,7 +606,7 @@ function donePanel() {
     <td class="num">${d.dur}</td><td class="num">${money(d.cost)}</td><td class="num dim">${d.at}</td>
   </tr>`).join('');
   return `<section class="panel" data-od-id="panel-recent-completions"><div>
-    <div class="panel-head"><h2>Recent completions</h2><span class="count">14 merged · 24h</span><span class="meta">median cycle 52m · 1 failed</span></div>
+    <div class="panel-head"><h2>Recent completions</h2><span class="count">14 merged · 24h</span><span class="meta">5 succeeded · last 6 · median cycle 52m · 1 failed</span></div>
     <table><thead><tr><th>Outcome</th><th>Item</th><th>Agent</th><th class="num">Cycle</th><th class="num">Cost</th><th class="num">At</th></tr></thead><tbody>${rows}</tbody></table>
   </div></section>`;
 }
@@ -419,96 +619,189 @@ function fleetPanel() {
     <td>${h.off ? '<span class="state fail">NotReady 12m</span>' : `<div class="bars">
       <div><span>CPU</span><div class="meter ${meterCls(h.cpu)}"><i style="--v:${h.cpu}%"></i></div><span>${h.cpu}%</span></div>
       <div><span>MEM</span><div class="meter ${meterCls(h.mem)}"><i style="--v:${h.mem}%"></i></div><span>${h.mem}%</span></div></div>`}</td>
-  </tr>`).join('');
+  </tr>`).join('') + `<tr data-od-id="host-direct-executor">
+    <td><span class="mono" style="font-weight:500">direct executor</span><span class="host-spec">QueueExecutor · limit 5</span></td>
+    <td><div class="slots"><i class="busy"></i><i class="busy"></i><i class="busy"></i><i class="busy"></i><i class="open"></i></div></td>
+    <td><span class="state ok">Ready</span></td></tr>`;
   return `<section class="panel" data-od-id="panel-runner-fleet"><div>
-    <div class="panel-head"><h2>Runner fleet</h2><span class="count">11/12</span><span class="meta">ARC · k3s</span></div>
-    <table><thead><tr><th>Host</th><th>Slots</th><th>Load</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="panel-head"><h2>Runner fleet</h2><span class="count">11/12</span><span class="meta">11 GitHub runners online (7 running) · Direct executor ready (limit 5)</span></div>
+    <table><thead><tr><th>Host</th><th>Slots</th><th>Load · used</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="telemetry" data-od-id="telemetry-readouts">
-      <div><div class="eyebrow">Tokens / min</div><div class="v">48.2k</div>${spark(series(40, 9, 30, 1), { label: 'Tokens per minute, last 30 minutes' })}</div>
-      <div><div class="eyebrow">CI wait p50</div><div class="v">38 s</div>${spark(series(30, 12, 30, 3), { label: 'CI queue wait, last 30 minutes' })}</div>
-      <div><div class="eyebrow">Work API p95</div><div class="v">212 ms</div>${spark(series(180, 40, 30, 5), { label: 'Work API p95 latency' })}</div>
+      <div><div class="eyebrow">Tokens / min</div><div class="v">48.2k<small>5m avg · 8 sessions</small></div>${spark(series(40, 9, 30, 1), { label: 'Tokens per minute, last 30 minutes' })}</div>
+      <div><div class="eyebrow">CI wait p50</div><div class="v">38 s<small>16 jobs · 30m</small></div>${spark(series(30, 12, 30, 3), { label: 'CI queue wait, last 30 minutes' })}</div>
+      <div><div class="eyebrow">Work API p95</div><div class="v">212 ms<small>194 calls · 30m</small></div>${spark(series(180, 40, 30, 5), { label: 'Work API p95 latency' })}</div>
     </div>
+  </div></section>`;
+}
+
+function cliPanel() {
+  const rows = CLI.map((c, i) => `<div class="op-row" data-od-id="cli-session-${i + 1}">
+    <div><div class="t">${c.title}</div><div class="line"><span class="tag ${c.live}">${c.live}</span><span class="tag">${c.agent}</span><span class="tag">${c.repo}</span></div></div>
+    <div class="acts"><a class="btn btn-secondary btn-sm" href="#sessions">Open session</a></div></div>`).join('');
+  return `<section class="panel" data-od-id="panel-cli-sessions"><div>
+    <div class="panel-head"><h2>CLI sessions</h2><span class="count">${CLI.length}</span></div>
+    <div class="ops-rows">${rows}</div>
   </div></section>`;
 }
 
 function readouts() {
   const cell = (id, label, val, sub, s) => `<div class="readout" data-od-id="readout-${id}"><div class="eyebrow">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div>${s}</div>`;
   return `<section class="readouts" data-od-id="fleet-readouts">
-    ${cell('online', 'Runners online', '11<small> / 12</small>', 'worf-r1 NotReady · laforge-r2 draining', spark([12,12,12,12,12,12,12,12,12,12,12,12,11,11,11,12,12,12,12,12,12,12,12,12,11,11,11,11,11,11], { label: 'Runners online, last 30 minutes' }))}
+    ${cell('online', 'Runners online', '11<small> / 12</small>', 'ARC lanes', spark([12,12,12,12,12,12,12,12,12,12,12,12,11,11,11,12,12,12,12,12,12,12,12,12,11,11,11,11,11,11], { label: 'Runners online, last 30 minutes' }))}
     ${cell('busy', 'Busy', '7<small> / 11</small>', '64% utilisation · 3 idle', spark(series(6, 2, 30, 2), { label: 'Busy runners, last 30 minutes' }))}
-    ${cell('queue', 'Queue depth', '9', '3 on capacity hold · oldest 18m', spark(series(7, 3, 30, 4), { warnAbove: 10, label: 'Queue depth, last 30 minutes' }))}
+    ${cell('queue', 'Queue depth', '9', '3 claimed · oldest 18m', spark(series(7, 3, 30, 4), { warnAbove: 10, label: 'Queue depth, last 30 minutes' }))}
     ${cell('agents', 'Agents running', '7', 'claude 4 · codex 2 · opencode 1', spark(series(5, 2, 30, 6), { label: 'Running agents, last 30 minutes' }))}
-    ${cell('spend', 'Spend today', '$38.42', 'of $60.00 daily budget · 64%', spark([0.6,0.9,1.2,0.4,0.2,0.1,0.1,0.3,1.8,2.6,3.1,2.9,3.4,4.1,3.8,3.6,2.2,2.7,1.9,1.4], { label: 'Spend per hour today' }))}
+    ${cell('spend', 'Spend today', '$38.42', 'since 00:00 UTC · no daily budget · est.', spark([0,0,0,0,0,0,0,0,0, 0.6,0.9,1.2,0.4,1.8,2.6,3.1,2.9,3.4,4.1,3.8,3.6,2.2,2.7,1.9], { label: 'Spend per hour today, by last activity' }))}
   </section>`;
 }
 
 /* ---- Other destinations ---- */
+function agentsReadouts() {
+  const cell = (id, label, val, sub) => `<div class="readout" data-od-id="agents-readout-${id}"><div class="eyebrow">${label}</div><div class="val">${val}</div><div class="sub">${sub}</div></div>`;
+  return `<section class="readouts wrap" aria-label="Fleet snapshot" data-od-id="fleet-snapshot">
+    ${cell('live', 'Live runs', '7', 'claude 4 · codex 2 · opencode 1')}
+    ${cell('cli', 'CLI sessions', '2', 'active')}
+    ${cell('runners', 'Runners busy', '7/11', '11 GitHub runners online (7 running) · Direct executor ready (limit 5)')}
+    ${cell('queue', 'Queue', '6', '6 queued · 3 claimed · 7 running')}
+    ${cell('logical', 'Logical tasks', '9', '6 queued runs · 7 running runs')}
+  </section>`;
+}
+function claimedPanel() {
+  const rows = CLAIMED.map((c) => `<div class="op-row" data-od-id="claimed-${c.n}">
+    <div><div class="line" style="margin:0"><span class="tag badge">${c.kind}</span><span class="tag">${c.repo}</span><span class="t" style="font-weight:400">#${c.n} ${c.title}</span></div>
+    <div class="line">${c.meta} · <a href="#">GitHub ↗</a> <span class="tag">${c.reason}</span></div></div>
+    <div class="acts">${c.close ? '<button class="btn btn-secondary btn-sm" type="button">Close issue</button>' : ''}${kebab('Item actions')}</div></div>`).join('');
+  return `<section class="panel" data-od-id="panel-claimed-idle"><div>
+    <div class="panel-head"><h2>Claimed but idle</h2><span class="count">${CLAIMED.length}</span><span class="meta">no live run or session</span></div>
+    <div class="ops-rows">${rows}</div>
+  </div></section>`;
+}
 function queuePanel() {
-  const rows = QUEUE.map((q) => `<tr><td class="mono">${q[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${q[1]}${q[2]}</span><span class="item-title">${q[3]}</span></td>
-    <td><span class="tag">${q[4]}</span></td><td><span class="state ${q[5].startsWith('Capacity') ? 'warn' : 'idle'}">${q[5]}</span></td><td class="num">${q[6]}</td></tr>`).join('');
-  return `<section class="panel" data-od-id="panel-work-queue"><div><div class="panel-head"><h2>Admitted queue</h2><span class="count">9</span><span class="meta">FIFO within priority · codex & opencode ceiling 1</span></div>
+  const rows = QUEUE.map((q) => `<tr><td class="mono">${q[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${q[1]} · ${q[2]}</span><span class="item-title">${q[3]}</span></td>
+    <td><span class="tag">${q[4]}</span></td><td><span class="state busy">running</span><span class="links"><span class="tag">${q[5]}</span></span></td><td class="num">${q[6]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-work-queue"><div><div class="panel-head"><h2>Admitted queue</h2><span class="count">${QUEUE.length}</span><span class="meta">FIFO within priority · codex & opencode ceiling 1 · oldest 18m</span></div>
     <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Waiting</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function recentWorkPanel() {
+  const rows = RECENT_WORK.map((w) => `<tr><td class="mono">${w[0]}</td><td class="cell-clip" style="width:46%"><span class="ref">${w[1]} · ${w[2]}</span><span class="item-title">${w[3]}</span></td>
+    <td><span class="tag">${w[4]}</span></td><td><span class="state ${w[5]}">${w[6]}</span></td><td class="num">${w[7]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-recent-work"><div><div class="panel-head"><h2>Recent work</h2><span class="count">60</span><span class="meta">stopped first · then most recently updated</span></div>
+    <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Updated</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="empty-note">Showing up to 200 native tasks. <a href="#">Next work page →</a></div></div></section>`;
 }
 function runnersPanel() {
   const cls = { busy: 'busy', idle: 'idle', drain: 'warn', off: 'fail' }, lab = { busy: 'Busy', idle: 'Idle', drain: 'Draining', off: 'Offline' };
-  const rows = RUNNERS.map((r) => `<tr><td class="mono">${r[0]}</td><td><span class="state ${cls[r[1]]}">${lab[r[1]]}</span></td><td class="mono" style="font-size:12px">${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td></tr>`).join('');
-  return `<section class="panel" data-od-id="panel-runners"><div><div class="panel-head"><h2>Runners</h2><span class="count">11/12 online</span><span class="meta">every job fits one runner after reserves</span></div>
+  const rows = RUNNERS.map((r) => `<tr><td><span class="mono" title="${r[1]}-${r[0]}">${r[0]}</span><span class="host-spec">${r[1]} · ${r[2]}</span></td><td><span class="state ${cls[r[3]]}">${lab[r[3]]}</span></td>
+    <td class="mono" style="font-size:12px">${r[3] === 'busy' ? `<a href="#">${r[4]} ↗</a>` : r[4]}</td><td class="num">${r[5]}</td><td class="num">${r[6]}</td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-runners"><div><div class="panel-head"><h2>Runners</h2><span class="count">8/9 online</span><span class="meta">every job fits one host after reserves</span></div>
     <table><thead><tr><th>Runner</th><th>State</th><th>Job</th><th class="num">Request</th><th class="num">For</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
+function admissionPanel() {
+  const rows = ADMISSION.map((a) => `<div class="admit" data-od-id="provider-admission-${a.name}">
+    <div class="name">${a.name} <span class="tag ${a.cooling ? 'idle' : 'live'}">${a.cooling ? 'cooling down' : 'no active cooldown'}</span></div>
+    <div>${a.line}</div>${a.cool ? `<div>${a.cool}</div>` : ''}
+    <div class="dim">Durable provider queue: ${a.eligible} eligible before executor capacity checks, as of 1 minute ago. Provider live-claim limit: 1.</div>
+    <div class="dim">${a.claims}. Executor successful-claim counter; sampled interval, up to 15 minutes.</div></div>`).join('');
+  return `<section class="panel" data-od-id="panel-provider-admission"><div><div class="panel-head"><h2>Provider admission</h2><span class="meta">cooldowns, queues and claims</span></div>
+    ${rows}<div class="admit-foot">Eligible work can still wait for host placement, credentials, or external checks. Claims precede worker launch.</div></div></section>`;
+}
+/* The groups share one header strip, so every group table takes the same columns. */
+const SESS_COLS = '<colgroup><col style="width:34%"><col style="width:15%"><col style="width:11%"><col style="width:14%"><col style="width:9%"><col style="width:8%"><col style="width:9%"></colgroup>';
 function sessionsPanel() {
-  const rows = SESSIONS.map((s) => `<tr><td class="mono" style="font-size:12px">${s[0]}</td><td class="ref">${s[1]}</td><td><span class="tag">${s[2]}</span></td><td><span class="state ${s[3]}">${s[4]}</span></td><td class="num">${s[5]}</td><td class="num">${s[6]}</td><td class="num dim">${s[7]}</td></tr>`).join('');
-  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · today</h2><span class="count">31</span><span class="meta">grouped by issue · retained 400 days</span></div>
-    <table><thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  const row = (s) => `<tr><td class="cell-clip"><span class="tag">${s[0]}</span> <span class="ref">${s[1]}</span><span class="item-title" style="font-weight:600">${s[2]}</span></td><td class="ref">${s[3]}</td><td><span class="tag">${s[4]}</span></td>
+    <td><span class="state ${s[5]}">${s[6]}</span>${s[7] ? `<span class="links"><a href="#" class="ref">${s[7]}</a></span>` : ''}</td><td class="num">${s[8]}</td><td class="num">${s[9]}</td><td class="num dim">${s[10]}</td></tr>`;
+  const groups = SESSION_GROUPS.map((g) => `<div class="group-head"><h3>${g.ref}</h3><span class="tag">${g.repo}</span><span>${g.title}</span><span class="dim">${g.rows.length} session${g.rows.length === 1 ? '' : 's'}</span></div>
+    <table class="sess">${SESS_COLS}<tbody>${g.rows.map(row).join('')}</tbody></table>`).join('');
+  return `<section class="panel" data-od-id="panel-sessions"><div><div class="panel-head"><h2>Sessions · 14d</h2><span class="count">31</span><span class="meta">grouped by issue · retained 365 days · CLI 30</span>
+    <div class="seg" role="group" aria-label="View"><button type="button" aria-pressed="false">Flat</button><button type="button" aria-pressed="true">By issue</button></div></div>
+    <table class="sess">${SESS_COLS}<thead><tr><th>Session</th><th>Issue</th><th>Agent</th><th>Outcome</th><th class="num">Duration</th><th class="num">Tokens</th><th class="num">Started</th></tr></thead></table>
+    <div class="group-head"><h3 class="dim">› No issue</h3><span class="dim">12 sessions</span></div>${groups}</div></section>`;
 }
 function costsPanel() {
   const max = Math.max(...COSTS.map((c) => c[2]));
-  const rows = COSTS.map((c) => `<tr><td class="mono" style="font-size:13px">${c[0]}</td><td class="num">${money(c[1])}</td>
-    <td style="width:38%"><div class="cost-bar"><div class="meter"><i style="--v:${(c[2] / max) * 100}%"></i></div><span class="mono dim" style="font-size:12px;text-align:right">${money(c[2])}</span></div></td><td class="num">${c[3]}</td><td class="num">${money(c[2] / c[3])}</td></tr>`).join('');
-  return `<section class="panel" data-od-id="panel-costs"><div><div class="panel-head"><h2>Spend by repository</h2><span class="count">$38.42 today</span><span class="meta">7-day total $262.15</span></div>
-    <table><thead><tr><th>Repository</th><th class="num">Today</th><th>7 days</th><th class="num">Runs · 7d</th><th class="num">Per run</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+  const rows = COSTS.map((c) => `<tr><td class="mono" style="font-size:13px">${c[0]}</td><td class="num">${money(c[1])} <span class="est">est.</span></td>
+    <td class="cost-7d"><div class="cost-bar"><div class="meter"><i style="--v:${(c[2] / max) * 100}%"></i></div><span class="mono dim" style="font-size:12px;text-align:right">${money(c[2])} <span class="est">est.</span></span></div></td><td class="num">${c[3]}${c[4] ? ` <span class="est">(${c[4]} unpriced)</span>` : ''}</td><td class="num">${money(c[2] / c[3])} <span class="est">est.</span></td></tr>`).join('');
+  return `<section class="panel" data-od-id="panel-costs"><div><div class="panel-head"><h2>Spend by repository</h2><span class="count">$38.42 today</span><span class="meta">7-day total $262.15 · UTC day</span></div>
+    <table><thead><tr><th>Repository</th><th class="num">Today</th><th>7 days</th><th class="num">Sessions · 7d</th><th class="num">Per session</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
+/* ---- Toolbars: every control applies on change; filters fold on phones ---- */
+const repoSelect = () => `<select class="field" aria-label="Repository" data-od-id="filter-repo"><option>All repositories (${REPOS.length})</option>${REPOS.map((r) => `<option>${r}</option>`).join('')}</select>`;
+const agentSelect = (agents) => `<select class="field" aria-label="Agent" data-od-id="filter-agent"><option>All agents</option>${agents.map((a) => `<option>${a}</option>`).join('')}</select>`;
+const windowSeg = (opts, sel, disabled = []) => `<div class="seg" role="group" aria-label="Window" data-od-id="filter-window">${opts.map((w) => `<button type="button" aria-pressed="${w === sel}" ${disabled.includes(w) ? 'disabled' : ''}>${w}</button>`).join('')}</div>`;
+const find = (ph, opts) => `<label class="field search" data-od-id="search"><span class="eyebrow">Find</span><input placeholder="${ph}" aria-label="Find">${opts ? '<button class="opts" type="button" aria-label="Search filters"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></button>' : ''}</label>`;
+const more = (inner) => `<details class="more"><summary class="field">More filters</summary><div class="more-panel">${inner}</div></details>`;
+const asof = '<span class="asof">Data as of just now</span>';
+const PIPES = ['claude', 'codex', 'opencode'];
+const SESSION_AGENTS = ['claude-code', 'codex', 'gemini', 'antigravity', 'opencode'];
+const SOURCE = '<select class="field" aria-label="Source"><option>All sources</option><option>CLI</option><option>Dispatched agent</option></select>';
+const ARCHIVE_WINDOWS = ['1h', '24h', '7d', '14d', '30d', '90d'];
+
 const VIEWS = {
-  deck: { primary: 'Review 5 decisions', warn: true,
-    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}</div></div>` },
-  inbox: { primary: 'Respond to oldest', warn: false, body: () => inboxPanel(true) },
-  agents: { primary: null, warn: false, body: () => `${runsPanel(true)}${donePanel()}` },
-  shuttlebay: { primary: null, warn: true, body: () => `<div class="cols"><div class="stack">${runnersPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
-  work: { primary: 'New work', warn: false, body: () => queuePanel() },
-  sessions: { primary: null, warn: false, body: () => sessionsPanel() },
-  costs: { primary: 'Export ledger', warn: false, body: () => `${readouts()}${costsPanel()}` },
+  /* No repository select on the Bridge: its panels summarise the whole fleet. */
+  deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 5 decisions</a>',
+    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
+  inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), asof], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => inboxPanel(true) },
+  agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
+    body: () => `${agentsReadouts()}<div class="alert" role="alert" data-od-id="queue-health-alert">A run has been queued for 11m 0s — the runner autoscaler may not be supplying runners.</div>${runsPanel(true)}${cliPanel()}${donePanel()}${claimedPanel()}` },
+  shuttlebay: { warn: true, folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['30m', '1h', '24h', '7d'], '30m', ['1h', '24h', '7d']), '<span class="tb-note">Runner telemetry keeps the last 30 minutes</span>', find('runner lane')],
+    body: () => `<div class="cols"><div class="stack">${runnersPanel()}${admissionPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
+  work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id')],
+    primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}` },
+  sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [more(SOURCE)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], body: () => sessionsPanel() },
+  costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}` },
 };
+
+function renderMenu(d) {
+  $('#menu').innerHTML = `<div class="nav-group"><span class="eyebrow">Navigate</span>${DEST.map((x) => `<a role="menuitem" href="#${x.key}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''}>${x.label}</a>`).join('')}<hr></div>
+    <span class="eyebrow">Preferences</span><button class="item" role="menuitem" type="button">Switch to light mode</button><button class="item" role="menuitem" type="button">Enable decision notifications</button>
+    <hr><span class="eyebrow">Console</span><div class="ident"><span class="av" style="width:28px;height:28px;background:var(--hairline);display:grid;place-items:center;font:600 12px var(--f-display)">JL</span><span>jlapenna <span class="dim">admin · work.operator</span></span></div>`;
+}
 
 function render(key) {
   const d = DEST.find((x) => x.key === key) || DEST[0], v = VIEWS[d.key];
   document.body.dataset.accent = d.accent;
   document.title = `Agent LCARS — ${d.title}`;
   $('#page-title').textContent = d.title;
-  $('#page-sub').textContent = d.sub;
-  $('#nav').innerHTML = DEST.map((x, i) => `<a href="#${x.key}" data-accent="${x.accent}" data-key="${x.key}" style="--w:${x.w}px" ${x.key === d.key ? 'aria-current="page"' : ''} data-od-id="nav-${x.key}"><small>0${i + 1}${x.count ? ' · ' + x.count : ''}</small>${x.label}</a>`).join('');
-  $('#warnband').innerHTML = v.warn
-    ? `<span class="eyebrow">2 data warnings</span><span>GitHubActionsMainWorkflowFailing ×2 on jlapenna/messages-control (#2469)</span><span class="sep">|</span><span>worf-r1 NotReady for 12 min · its slot is excluded from admission</span><a href="#">Details</a>`
-    : `<span class="eyebrow">No data warnings</span><span>All sources reporting · telemetry-watcher lag 3 s</span>`;
-  $('#warnband').style.borderLeftColor = v.warn ? '' : 'var(--hairline)';
-  $('#warnband').style.color = v.warn ? '' : 'var(--ink-dim)';
-  $('#warnband').querySelector('.eyebrow').style.color = v.warn ? '' : 'var(--ink-dim)';
+  $('#page-sub').innerHTML = d.sub;
+  const status = d.live ? ['<b>■ LIVE</b> · synced 14:32:08', 'auto-refresh 5 s'] : ['<b class="snap">■ Snapshot</b> · loaded 14:32:08', 'refresh to update'];
+  $('#sync').innerHTML = `${status[0]}<br>${status[1]}`;
+  $('#sync-compact').innerHTML = status[0];
+  $('#create').hidden = v.create === false;
+  $('#nav').innerHTML = DEST.map((x, i) => `<a href="#${x.key}" data-accent="${x.accent}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''} data-od-id="nav-${x.key}"><small>0${i + 1}${x.count ? ' · ' + x.count : ''}</small>${x.label}</a>`).join('');
+  renderMenu(d);
+  const band = $('#warnband');
+  band.classList.toggle('none', !v.warn);
+  band.innerHTML = v.warn
+    ? `<span class="eyebrow">2 data warnings</span><span>GitHubActionsMainWorkflowFailing ×2 on jlapenna/messages-control (#2469)</span><span class="sep">|</span><span>worf NotReady for 12 min · its slot is excluded from admission</span><a href="#">Details</a>`
+    : `<span class="eyebrow">No data warnings</span><span>All sources reporting</span>`;
   $('#toolbar').innerHTML = `
-    <select class="field" aria-label="Repository" data-od-id="filter-repo"><option>All repositories (4)</option><option>jlapenna/agent-lcars</option><option>jlapenna/homelab</option><option>supersprinklesracing/sprinkles</option><option>jlapenna/messages-control</option></select>
-    <select class="field" aria-label="Agent" data-od-id="filter-agent"><option>All agents</option><option>agent:claude</option><option>agent:codex</option><option>agent:opencode</option></select>
-    <div class="seg" role="group" aria-label="Window" data-od-id="filter-window">${['1h', '24h', '7d'].map((w) => `<button type="button" aria-pressed="${w === '24h'}">${w}</button>`).join('')}</div>
-    <label class="field search" data-od-id="search"><span class="eyebrow">Find</span><input placeholder="issue, PR, session id" aria-label="Search"></label>
-    ${v.primary ? `<button class="btn btn-primary push" type="button" data-od-id="primary-action">${v.primary}</button>` : ''}`;
+    <label class="field fold-toggle"><input type="checkbox" aria-label="Show filters"><span class="eyebrow">Filters</span></label>
+    <span class="fold-group">${v.folded.join('')}</span>
+    ${v.tools.join('')}
+    ${v.after ? `<span class="fold-group">${v.after.join('')}</span>` : ''}
+    ${v.primary || ''}`;
   $('#content').innerHTML = v.body();
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
 }
 
+function closeMenu() { $('#menu').removeAttribute('data-open'); $('#menu-btn').setAttribute('aria-expanded', 'false'); }
+
 document.addEventListener('click', (e) => {
-  const nav = e.target.closest('.nav a');
-  if (nav) { e.preventDefault(); render(nav.dataset.key); window.scrollTo(0, 0); return; }
+  if (e.target.closest('#menu-btn')) {
+    const open = !$('#menu').hasAttribute('data-open');
+    $('#menu').toggleAttribute('data-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); return;
+  }
+  // Sample links lead nowhere; they must not reset the route.
+  if (e.target.closest('a[href="#"]')) { e.preventDefault(); return; }
+  const nav = e.target.closest('.nav a, .menu a[data-key]');
+  if (nav) { e.preventDefault(); closeMenu(); location.hash = nav.dataset.key; return; }
+  if (!e.target.closest('#menu')) closeMenu();
   const seg = e.target.closest('.seg button');
-  if (seg) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
-  if (e.target.closest('[data-od-id="primary-action"]') && document.body.dataset.accent === 'amber') render('inbox');
+  if (seg && !seg.disabled) seg.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === seg)));
 });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('hashchange', () => { render(location.hash.slice(1)); window.scrollTo(0, 0); });
 
 let start = 'deck';
 try { start = localStorage.getItem('lcars.dest') || 'deck'; } catch (e) {}

@@ -1959,8 +1959,14 @@ td.sessions-table__num {
   padding: 6px 4px 12px;
 }
 
+/* The panel title at every width: the phone's card list sets its heads
+   outside the panel card, where the card's title rule does not reach. */
 .work-panel__head .mantine-Title-root {
   flex: 0 0 auto;
+  font-size: 1.1875rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .work-panel__count {
