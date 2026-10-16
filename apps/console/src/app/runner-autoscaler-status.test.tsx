@@ -105,7 +105,7 @@ describe('RunnerAutoscalerStatus', () => {
 
   it('renders quota provenance, exact recent claims, drain and unavailable updates', () => {
     const now = new Date(Date.now()).toISOString();
-    const reset = new Date(Date.now() + 60_000).toISOString();
+    const reset = new Date(Date.now() + 90_000).toISOString();
     const executor = {
       schemaVersion: 2 as const,
       kind: 'queue-executor' as const,
