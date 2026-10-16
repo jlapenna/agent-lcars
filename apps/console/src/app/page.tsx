@@ -41,7 +41,7 @@ import {
   parseSessionArchiveQuery,
 } from '../lib/session-archive';
 import { filterSessionsForRepo } from '../lib/session-repo-filter';
-import { fleetTokenRate } from '../lib/token-rate';
+import { fleetTokenRate, TOKEN_RATE_READ_FAILED } from '../lib/token-rate';
 import { getTokenRateSnapshot } from '../lib/token-rate-data';
 import { type BoardCard, BridgeSections } from './action-items-board';
 import {
@@ -81,6 +81,7 @@ import { ConsoleWorkspace } from './console-workspace';
 import { DataFreshness } from './data-freshness';
 import { decisionRows } from './decision-rows';
 import { DeckInboxSummary } from './deck-inbox-summary';
+import { fleetReadoutWarnings } from './fleet-readouts';
 import { formatRelativeTime } from './format';
 import { inboxCardAgent, inboxCardMetadata } from './inbox-card';
 import { LiveDashboard } from './live-dashboard';
@@ -252,6 +253,8 @@ async function IndexBody({
       ...cliSessionWarnings,
       ...runnerSessionWarnings,
       ...nativeInbox.warnings,
+      ...fleetReadoutWarnings({ activity, autoscaler, spendArchive }),
+      ...(tokenRateSnapshot ? [] : [TOKEN_RATE_READ_FAILED]),
     ]),
   );
 

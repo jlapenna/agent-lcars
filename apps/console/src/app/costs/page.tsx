@@ -149,11 +149,16 @@ async function CostsBody({
   query: SessionArchiveQuery;
   watchedRepos: ReturnType<typeof getWatchedRepos>;
 }) {
-  const [{ ledger, warnings, spend, spendByRepository }, readouts] =
-    await Promise.all([
-      getArchive(query),
-      loadFleetReadouts(query.repo ? repoKey(query.repo) : undefined),
-    ]);
+  const [
+    { ledger, warnings: archiveWarnings, spend, spendByRepository },
+    { readouts, warnings: readoutWarnings },
+  ] = await Promise.all([
+    getArchive(query),
+    loadFleetReadouts(query.repo ? repoKey(query.repo) : undefined),
+  ]);
+  const warnings = Array.from(
+    new Set([...archiveWarnings, ...readoutWarnings]),
+  );
   const hasLedgerData = ledger.byIssue.length > 0 || ledger.byWeek.length > 0;
   const budget = parseCostBudget(
     process.env['AGENT_LCARS_COST_BUDGET_USD'],

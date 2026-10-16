@@ -43,11 +43,16 @@ type ListError = NonNullable<ListResult[0]>;
 type ListedWork = NonNullable<ListResult[1]>['items'][number];
 
 /** One Work API read per request and view, shared by the body and the
- * warnings band. Throws on invalid filters or cursor. */
+ * warnings band. Invalid filters or cursor read nothing. */
 const readWorkView = cache(async (key: string) => {
   const query = JSON.parse(key) as WorkListParams;
-  const input = parseWorkListQuery(query);
-  const filters = parseWorkViewFilters(query);
+  let input, filters;
+  try {
+    input = parseWorkListQuery(query);
+    filters = parseWorkViewFilters(query);
+  } catch {
+    return { invalid: true as const };
+  }
   const now = Date.now();
   const filtered = Boolean(
     input.state ||
@@ -70,10 +75,8 @@ const readWorkView = cache(async (key: string) => {
 });
 
 async function WorkBody({ query }: { query: WorkListParams }) {
-  let view;
-  try {
-    view = await readWorkView(JSON.stringify(query));
-  } catch {
+  const view = await readWorkView(JSON.stringify(query));
+  if ('invalid' in view) {
     return (
       <Text role="alert">
         Invalid Work filters or cursor.{' '}
@@ -148,9 +151,8 @@ function WorkViewContent({
         <WorkReadWarnings
           key={JSON.stringify(query)}
           read={() =>
-            readWorkView(JSON.stringify(query)).then(
-              ({ scan }) => scan,
-              () => undefined,
+            readWorkView(JSON.stringify(query)).then((view) =>
+              'invalid' in view ? undefined : view.scan,
             )
           }
         />

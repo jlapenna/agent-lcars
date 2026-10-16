@@ -307,8 +307,11 @@ export function RunnerAutoscalerStatus({
   filters = {},
   toolbar,
   tokenRate,
+  readWarnings = [],
 }: {
   initial: AutoscalerStatusResult;
+  /** The page's other reads that failed (the token rate), for the band. */
+  readWarnings?: string[];
   /** Read once with the page, already narrowed to the filters. */
   tokenRate?: TokenRate | { unavailable: string };
   /** The toolbar's repository, agent and find filters. */
@@ -390,7 +393,9 @@ export function RunnerAutoscalerStatus({
 
   return (
     <ShuttlebayWorkspace
-      warnings={<DataWarnings warnings={result.warnings} />}
+      warnings={
+        <DataWarnings warnings={[...result.warnings, ...readWarnings]} />
+      }
       toolbar={
         toolbar ?? (
           <Text c="dimmed" size="sm">
