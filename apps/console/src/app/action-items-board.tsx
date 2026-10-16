@@ -13,7 +13,7 @@ import {
 } from './bridge-selection';
 import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
-import { renderCardMarkdown } from './render-card-markdown';
+import { renderInboxCardMarkdown } from './render-card-markdown';
 import { SectionHeading } from './section-heading';
 import type { ReplyAction } from './work/work-actions';
 
@@ -45,14 +45,8 @@ export function DecisionInbox({
 
   return (
     <QueueWorkspace
-      cards={yourQueue.map((card) =>
-        'work' in card ? card : renderCardMarkdown(card),
-      )}
-      selectedCard={
-        selectedCard && !('work' in selectedCard)
-          ? renderCardMarkdown(selectedCard)
-          : selectedCard
-      }
+      cards={yourQueue.map(renderInboxCardMarkdown)}
+      selectedCard={selectedCard && renderInboxCardMarkdown(selectedCard)}
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
       mobileDataFreshness={mobileDataFreshness}
