@@ -2,6 +2,7 @@ import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import type { QualifiedSessionPR, SessionDoc } from '@agent-lcars/telemetry';
 import {
   isCanonicalSessionRepository,
+  isPublicationCheckout,
   totalTokens,
 } from '@agent-lcars/telemetry';
 
@@ -59,7 +60,7 @@ export function sessionPRCandidates(doc: SessionDoc): QualifiedSessionPR[] {
     doc.source === 'cli' &&
     doc.agent === 'claude-code' &&
     doc.githubActor &&
-    doc.branch &&
+    (doc.branch || doc.deliverables.claudeSessionId) &&
     doc.repo
   ) {
     refs.push(...(doc.deliverables.publicationCandidates ?? []));
@@ -87,7 +88,9 @@ export function sessionPRReferences(
   return sessionPRCandidates(doc).filter((pr) => {
     const key = spendPRKey(pr.repo, pr.number);
     if (literal.has(key)) return true;
-    if (doc.source !== 'cli' || !doc.githubActor || !doc.branch || !doc.repo)
+    if (doc.source !== 'cli' || !doc.githubActor || !doc.repo) return false;
+    const bridge = doc.deliverables.claudeSessionId;
+    if (bridge !== undefined && !/^session_[A-Za-z0-9_]{1,124}$/u.test(bridge))
       return false;
     const record = projections.get(key);
     const start = Date.parse(doc.startedAt),
@@ -98,7 +101,6 @@ export function sessionPRReferences(
       record.kind !== 'pr' ||
       `${record.anchor.repo.toLowerCase()}#${record.anchor.issue}` !== key ||
       record.author?.toLowerCase() !== doc.githubActor.toLowerCase() ||
-      record.headRefName !== doc.branch ||
       record.headRepository?.toLowerCase() !==
         `${doc.repo.owner}/${doc.repo.name}`.toLowerCase() ||
       !Number.isFinite(start) ||
@@ -109,6 +111,27 @@ export function sessionPRReferences(
       created > end
     )
       return false;
+    if (bridge) {
+      const actor = doc.githubActor.toLowerCase();
+      const observed = Date.parse(doc.observer?.occurredAt ?? '');
+      if (
+        !record.headSha ||
+        !Number.isFinite(observed) ||
+        !doc.deliverables.publicationCheckouts?.some(
+          (checkout) =>
+            isPublicationCheckout(checkout) &&
+            checkout.githubActor.toLowerCase() === actor &&
+            `${checkout.repo.owner}/${checkout.repo.name}`.toLowerCase() ===
+              record.headRepository?.toLowerCase() &&
+            checkout.branch === record.headRefName &&
+            checkout.head === record.headSha &&
+            Date.parse(checkout.observedAt) >= created &&
+            Date.parse(checkout.observedAt) >= start &&
+            Date.parse(checkout.observedAt) <= observed,
+        )
+      )
+        return false;
+    } else if (!doc.branch || record.headRefName !== doc.branch) return false;
     // Shared credentials and overlapping windows cannot identify the creating
     // session on their own. Require a positive exact session binding in GitHub's
     // own PR body, never a transcript assertion or an incidental quoted URL.
@@ -133,16 +156,17 @@ export function sessionPRReferences(
         continue;
       }
       if (fence) continue;
-      const link =
-        /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/u.exec(
-          line,
-        );
+      const link = (
+        bridge
+          ? /^(?:Claude-Session:[ \t]*)?https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/u
+          : /^Claude-Session:[ \t]*https:\/\/claude\.ai\/code\/(session_[A-Za-z0-9_-]+)[ \t]*\r?$/u
+      ).exec(line);
       if (link) links.push(link[1]);
     }
     return (
       doc.agent === 'claude-code' &&
       links.length > 0 &&
-      links.every((sessionId) => sessionId === doc.sessionId)
+      links.every((sessionId) => sessionId === (bridge ?? doc.sessionId))
     );
   });
 }

@@ -75,6 +75,40 @@ export interface QualifiedSessionPR {
   number: number;
 }
 
+/** Hook-observed immutable checkout, not an inference about shell cwd. */
+export interface PublicationCheckout {
+  repo: SessionRepository;
+  githubActor: string;
+  branch: string;
+  head: string;
+  observedAt: string;
+}
+
+export function isPublicationCheckout(
+  value: unknown,
+): value is PublicationCheckout {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false;
+  const row = value as Record<string, unknown>;
+  return (
+    isCanonicalSessionRepository(row['repo']) &&
+    typeof row['githubActor'] === 'string' &&
+    /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$/u.test(row['githubActor']) &&
+    typeof row['branch'] === 'string' &&
+    row['branch'].length > 0 &&
+    row['branch'].length <= 1024 &&
+    [...row['branch']].every(
+      (character) =>
+        character.charCodeAt(0) > 32 && character.charCodeAt(0) !== 127,
+    ) &&
+    typeof row['head'] === 'string' &&
+    /^[a-f0-9]{40}$/u.test(row['head']) &&
+    typeof row['observedAt'] === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(row['observedAt']) &&
+    Number.isFinite(Date.parse(row['observedAt']))
+  );
+}
+
 export interface SessionDeliverables {
   branch?: string;
   prNumbers: number[];
@@ -84,6 +118,10 @@ export interface SessionDeliverables {
   /** Successful correlated create-result URLs; lookup hints only. Costs must
    * verify GitHub author/time/head facts before financial attribution. */
   publicationCandidates?: QualifiedSessionPR[];
+  /** Public identity from consistent provider-owned bridge-session records. */
+  claudeSessionId?: string;
+  /** Same-common-dir checkout corroboration observed by the host hook. */
+  publicationCheckouts?: PublicationCheckout[];
   commitShas: string[];
 }
 

@@ -89,6 +89,10 @@ export const githubAnchorProjectionSchema = z.strictObject({
   /** GitHub-observed PR creation facts; absent on legacy snapshots. */
   createdAt: isoUtc.optional(),
   headRefName: z.string().min(1).max(1024).optional(),
+  headSha: z
+    .string()
+    .regex(/^[a-f0-9]{40}$/u)
+    .optional(),
   headRepository: z.string().min(1).max(140).optional(),
   draft: z.boolean().optional(),
   /** PR merge evidence from GitHub. null means known unmerged; omitted is

@@ -25,6 +25,7 @@ interface RawAnchorDetails {
   } | null;
   createdAt?: string;
   headRefName?: string;
+  headRefOid?: string;
   headRepository?: { nameWithOwner?: string } | null;
   isDraft?: boolean;
   mergedAt?: string | null;
@@ -132,7 +133,7 @@ export async function enrichGithubAnchorProjections(
         ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { login } } } }
         ... on PullRequest {
           body isDraft mergedAt mergeStateStatus
-          createdAt headRefName headRepository { nameWithOwner }
+          createdAt headRefName headRefOid headRepository { nameWithOwner }
           comments(last: 1) { nodes { body url createdAt updatedAt author { login } } }
           reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
           reviewThreads(first: 100) { totalCount nodes { id isResolved } }
@@ -196,8 +197,9 @@ export async function enrichGithubAnchorProjections(
           (detail.reviewThreads?.totalCount ?? threadNodes.length) -
             threadNodes.length,
         );
+      const { headSha: _previousHead, ...withoutHead } = projection;
       enriched.set(`${projection.anchor.repo}#${projection.anchor.issue}`, {
-        ...projection,
+        ...withoutHead,
         ...(detail.body === undefined || detail.body === null
           ? {}
           : { body: detail.body }),
@@ -222,6 +224,11 @@ export async function enrichGithubAnchorProjections(
           ? {
               ...(detail.createdAt && { createdAt: detail.createdAt }),
               ...(detail.headRefName && { headRefName: detail.headRefName }),
+              ...(detail.headRefOid &&
+                detail.headRefName &&
+                detail.headRepository?.nameWithOwner && {
+                  headSha: detail.headRefOid,
+                }),
               ...(detail.headRepository?.nameWithOwner && {
                 headRepository: detail.headRepository.nameWithOwner,
               }),

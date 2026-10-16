@@ -1,6 +1,24 @@
+import { buildSessionWrite, claudeCodeAdapter } from '@agent-lcars/telemetry';
+import { FieldValue } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
 
-import { isTransientFirestoreError } from './hook-store';
+import { hookEventPayload, isTransientFirestoreError } from './hook-store';
+
+it('explicitly deletes missing bridge and checkout fields from a merged Firestore map', () => {
+  const [summary] = claudeCodeAdapter.reduce([
+    JSON.stringify({
+      type: 'user',
+      sessionId: 'session-a',
+      timestamp: '2026-10-16T21:00:00.000Z',
+      message: { role: 'user', content: [] },
+    }),
+  ]);
+  const payload = hookEventPayload(buildSessionWrite(summary, 'live'));
+  expect(payload.deliverables).toMatchObject({
+    claudeSessionId: FieldValue.delete(),
+    publicationCheckouts: FieldValue.delete(),
+  });
+});
 
 describe('isTransientFirestoreError', () => {
   it('retries network, contention, quota, and auth failures', () => {

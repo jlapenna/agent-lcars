@@ -3,6 +3,7 @@ import {
   BuildSessionDocOptions,
   ClearableSessionField,
   isCanonicalSessionRepository,
+  isPublicationCheckout,
   isSessionAgent,
   SessionAgent,
   SessionDoc,
@@ -229,6 +230,23 @@ export function parseSessionDoc(value: unknown): SessionDoc {
     throw new Error('Persisted session document requires an explicit agent');
   }
   const deliverables = value['deliverables'];
+  if (isStoredDocument(deliverables)) {
+    const bridge = deliverables['claudeSessionId'];
+    const checkouts = deliverables['publicationCheckouts'];
+    if (
+      bridge !== undefined &&
+      (typeof bridge !== 'string' ||
+        !/^session_[A-Za-z0-9_]{1,124}$/u.test(bridge))
+    )
+      throw new Error('Persisted session has invalid provider bridge evidence');
+    if (
+      checkouts !== undefined &&
+      (!Array.isArray(checkouts) ||
+        checkouts.length > 200 ||
+        !checkouts.every(isPublicationCheckout))
+    )
+      throw new Error('Persisted session has invalid checkout evidence');
+  }
   for (const field of ['qualifiedPRs', 'publicationCandidates']) {
     if (isStoredDocument(deliverables) && deliverables[field] !== undefined) {
       const refs = deliverables[field];

@@ -94,6 +94,39 @@ function spooledEvents(home: string): SessionEventV1[] {
 }
 
 describe('lcars hook claude', () => {
+  it('spools native bridge identity with host-observed checkout corroboration', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('PostToolUse'), {
+      readTranscriptLines: () => [
+        JSON.stringify({
+          type: 'bridge-session',
+          sessionId: SESSION_ID,
+          bridgeSessionId: 'cse_actual',
+        }),
+        ...fs.readFileSync(FIXTURE, 'utf8').split('\n'),
+      ],
+      resolveGithubActor: async () => 'jlapenna',
+      resolvePublicationCheckouts: async () => [
+        { branch: 'fix/actual', head: 'a'.repeat(40) },
+      ],
+    });
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    const parsed = parseSessionEventV1(event);
+    expect(parsed.ok).toBe(true);
+    expect(event.summary?.deliverables).toMatchObject({
+      claudeSessionId: 'session_actual',
+      publicationCheckouts: [
+        {
+          repo: { owner: 'jlapenna', name: 'agent-lcars' },
+          githubActor: 'jlapenna',
+          branch: 'fix/actual',
+          head: 'a'.repeat(40),
+          observedAt: '2026-10-10T12:00:00.000Z',
+        },
+      ],
+    });
+  });
   it('reduces the transcript, enriches it, and spools a summary-only event', async () => {
     const home = tempHome();
     const d = deps(home, payload('PostToolUse'));

@@ -9,6 +9,33 @@ function readFixture(name: string): string {
 }
 
 describe('reduceTranscript', () => {
+  it('binds the native bridge record to its exact session and rejects conflicting identities', () => {
+    const raw = readFixture('normal-session.jsonl');
+    const bridge = {
+      type: 'bridge-session',
+      sessionId: 'session-normal-1',
+      bridgeSessionId: 'cse_01M3e8hqz5EbT75xWPGsS42j',
+    };
+    expect(
+      reduceTranscript(`${JSON.stringify(bridge)}\n${raw}`)[0].deliverables
+        .claudeSessionId,
+    ).toBe('session_01M3e8hqz5EbT75xWPGsS42j');
+    expect(
+      reduceTranscript(
+        `${JSON.stringify(bridge)}\n${JSON.stringify({ ...bridge, bridgeSessionId: 'cse_other' })}\n${raw}`,
+      )[0].deliverables.claudeSessionId,
+    ).toBeUndefined();
+    expect(
+      reduceTranscript(
+        `${JSON.stringify({ ...bridge, isSidechain: true })}\n${raw}`,
+      )[0].deliverables.claudeSessionId,
+    ).toBeUndefined();
+    expect(
+      reduceTranscript(
+        `${raw}\n${JSON.stringify({ type: 'user', sessionId: 'session-normal-1', message: { role: 'user', content: [{ type: 'text', text: JSON.stringify(bridge) }] } })}`,
+      )[0].deliverables.claudeSessionId,
+    ).toBeUndefined();
+  });
   it('reduces a normal session transcript into a summary', () => {
     const [summary] = reduceTranscript(readFixture('normal-session.jsonl'));
 
