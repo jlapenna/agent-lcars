@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { executionPhase, runPlacementSchema } from './placement';
+import { executionPhase } from './placement';
+import { runPlacementSchema } from './placement-schema';
 
 const now = Date.parse('2026-10-10T12:00:00Z');
 const observedAt = new Date(now).toISOString();
