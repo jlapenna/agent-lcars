@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { fleetReadoutWarnings, SPEND_READ_FAILED } from './fleet-readouts';
+
 vi.mock('../lib/autoscaler-status', () => ({}));
 vi.mock('../lib/dashboard-data', () => ({}));
 vi.mock('../lib/session-archive', () => ({}));
-
-const { fleetReadoutWarnings, SPEND_READ_FAILED } =
-  await import('./fleet-readouts');
 
 describe('fleetReadoutWarnings', () => {
   it('says nothing when every read reported', () => {
