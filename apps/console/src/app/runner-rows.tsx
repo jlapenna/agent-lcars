@@ -91,12 +91,27 @@ function RunnerJob({ runner }: { runner: FleetRunner }) {
 }
 
 /** One row per runner pod (design/fleet-console.html#shuttlebay Runners). */
+/** An ARC runner's name less the lane prefix its second line already names:
+ * "homelab-ci-zh2lg-runner-bnwc8" reads "zh2lg-runner-bnwc8" above
+ * "homelab-ci · picard", so the identifying suffix fits one line. */
+export function runnerDisplayName(runner: FleetRunner): string {
+  const prefix = `${runner.lane}-`;
+  return runner.kind !== 'direct' &&
+    runner.lane &&
+    runner.name.length > prefix.length &&
+    runner.name.startsWith(prefix)
+    ? runner.name.slice(prefix.length)
+    : runner.name;
+}
+
 export function RunnerRow({ runner }: { runner: FleetRunner }) {
   const state = STATE_MARK[runner.state];
   return (
     <tr data-testid={`runner-${runner.name}`}>
       <td>
-        <span className="ops-host">{runner.name}</span>
+        <span className="ops-host" title={runner.name}>
+          {runnerDisplayName(runner)}
+        </span>
         <span className="ops-host-spec">
           {runner.kind === 'direct' ? 'direct executor' : runner.lane} ·{' '}
           {runner.host ?? 'unscheduled'}
