@@ -2353,6 +2353,10 @@ td.costs-repo-spend__num {
 .queue-workspace {
   display: grid;
   grid-template-columns: minmax(21rem, 38%) minmax(0, 1fr);
+  /* A definite row, not the implicit auto one: an auto row grows to the
+     taller pane and the clipped frame then hides the overflow instead of
+     letting the list and detail each scroll. */
+  grid-template-rows: minmax(0, 1fr);
   gap: 12px;
   min-height: 38rem;
   height: calc(100vh - 5rem);
