@@ -88,7 +88,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectDesktopBridgeHeader(header);
     await expect(workspace).toBeVisible();
-    await expectLcarsPanelSpines(workspace.locator('.lcars-panel'));
+    await expectLcarsPanelSpines(workspace.locator('.ops-panel'));
     await expect(page.getByRole('button', { name: 'New work' })).toBeVisible();
     await expect(header.getByRole('button', { name: 'Refresh' })).toBeVisible();
 
@@ -144,7 +144,7 @@ test.describe('/agents page @smoke', () => {
     await expect(header).toHaveCount(1);
     await expectMobileBridgeHeader(header);
     await expect(workspace).toBeVisible();
-    await expectLcarsPanelSpines(workspace.locator('.lcars-panel'));
+    await expectLcarsPanelSpines(workspace.locator('.ops-panel'));
     await expect(header.getByRole('link', { name: 'Agents' })).toBeHidden();
     await expect(header.getByRole('link', { name: 'Bridge' })).toBeHidden();
     await expect(page.getByRole('button', { name: 'New work' })).toBeVisible();

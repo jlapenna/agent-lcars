@@ -1,35 +1,19 @@
-import { Badge, Card, Group, Stack, Text } from '@mantine/core';
+import { VisuallyHidden } from '@mantine/core';
+import type { ReactNode } from 'react';
 
-import type {
-  AgentActivity,
-  AgentPipeline,
-  FleetSummary,
-} from '../../lib/agent-activity';
+import type { AgentActivity, AgentPipeline } from '../../lib/agent-activity';
 import type { ActivityMetrics } from '../../lib/logical-work';
-import {
-  FleetChip,
-  PipelineBadge,
-  QueueHealthAlert,
-} from '../agent-activity-panel';
+import { FleetChip, QueueHealthAlert } from '../agent-activity-panel';
 import { FleetRunnerOccupancy } from '../fleet-status';
 
 const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
- * #306's capacity-vs-work distinction, spelled out: three numbers that each
- * answer a different question and must never be read as substitutes for one
- * another (see `deriveActivityMetrics`'s own doc comment). Optional so
- * every existing caller/test that doesn't yet compute `LogicalWork` keeps
- * rendering exactly as before - this is additive chrome, not a replacement
- * for the per-pipeline live counts above it.
+ * #306's capacity-vs-work distinction: the raw queued and running attempts,
+ * under the logical-task figure they must never be read as a substitute for
+ * (see `deriveActivityMetrics`'s own doc comment).
  */
-function MetricsRow({
-  metrics,
-  fleet,
-}: {
-  metrics: ActivityMetrics;
-  fleet?: FleetSummary;
-}) {
+function MetricsRow({ metrics }: { metrics: ActivityMetrics }) {
   const hasDispatchWork =
     metrics.logicalTaskCount > 0 ||
     metrics.queuedRuns > 0 ||
@@ -37,41 +21,31 @@ function MetricsRow({
 
   if (!hasDispatchWork) {
     return (
-      <Text size="xs" c="dimmed" data-testid="activity-metrics-row">
+      <span data-testid="activity-metrics-row">
         No queued or running dispatches
-      </Text>
+      </span>
     );
   }
 
   return (
-    <Group gap="md" wrap="wrap" data-testid="activity-metrics-row">
-      <Text size="xs" c="dimmed" data-testid="metric-logical-tasks">
-        {metrics.logicalTaskCount} logical task
-        {metrics.logicalTaskCount === 1 ? '' : 's'}
-      </Text>
-      <Text size="xs" c="dimmed" data-testid="metric-queued-attempts">
-        {metrics.queuedRuns} queued run
-        {metrics.queuedRuns === 1 ? '' : 's'}
-      </Text>
-      <Text size="xs" c="dimmed" data-testid="metric-running-attempts">
-        {metrics.runningRuns} running run
-        {metrics.runningRuns === 1 ? '' : 's'}
-      </Text>
-      <FleetRunnerOccupancy fleet={fleet} />
-    </Group>
+    <span data-testid="activity-metrics-row">
+      <span data-testid="metric-queued-attempts">
+        {metrics.queuedRuns} queued run{metrics.queuedRuns === 1 ? '' : 's'}
+      </span>
+      {' · '}
+      <span data-testid="metric-running-attempts">
+        {metrics.runningRuns} running run{metrics.runningRuns === 1 ? '' : 's'}
+      </span>
+    </span>
   );
 }
 
 /**
- * The top strip of the /agents page: "what's the fleet doing right now" at
- * a glance - live run counts per pipeline, active CLI session count, runner
- * fleet size, and the same queue-stall alert the home page's In Flight
- * panel shows (reused verbatim via QueueHealthAlert - it's the same
- * underlying signal, just surfaced a second place for the agent-focused
- * view). `metrics` (#306) adds the logical-task/attempt/runner-occupancy
- * distinction as its own row, deliberately separate from the per-pipeline
- * "N live" counts above (which count raw attempts, not logical tasks - see
- * #306's own duplicate-attempt handling in agent-activity-panel.tsx).
+ * The /agents page's opening readout row, in the Bridge's readout cells
+ * (design/fleet-console.html): live runs by pipeline, active CLI sessions,
+ * runner occupancy with the producers' own status line, the queue, and
+ * #306's logical tasks beside the raw attempts. The queue-stall alert the
+ * Bridge's In Flight panel shows follows it, reused verbatim.
  */
 export function FleetSnapshotBar({
   activity,
@@ -83,56 +57,76 @@ export function FleetSnapshotBar({
   metrics?: ActivityMetrics;
 }) {
   const { liveRuns, fleet, queue } = activity;
-  const liveCountByPipeline = (pipeline: AgentPipeline) =>
-    liveRuns.filter((run) => run.pipeline === pipeline).length;
-  const activePipelines = PIPELINES.filter(
-    (pipeline) => liveCountByPipeline(pipeline) > 0,
-  );
+  const livePipelines = PIPELINES.map((pipeline) => ({
+    pipeline,
+    count: liveRuns.filter((run) => run.pipeline === pipeline).length,
+  })).filter(({ count }) => count > 0);
 
   return (
-    <Card
-      withBorder
-      padding="md"
-      mb="xl"
-      data-testid="fleet-snapshot-bar"
-      className="lcars-panel agents-fleet-strip"
-    >
-      <Stack gap="sm">
-        <Group gap="lg" wrap="wrap">
-          {activePipelines.length > 0 ? (
-            activePipelines.map((pipeline) => (
-              <Group key={pipeline} gap={6} wrap="nowrap">
-                <PipelineBadge pipeline={pipeline} />
-                <Text size="sm">{liveCountByPipeline(pipeline)} live</Text>
-              </Group>
-            ))
-          ) : (
-            <Text size="sm" c="dimmed">
-              No runs active
-            </Text>
-          )}
-          <Group gap={6} wrap="nowrap">
-            <Badge
-              variant="outline"
-              color="teal"
-              size="xs"
-              style={{ flexShrink: 0 }}
-            >
-              CLI
-            </Badge>
-            <Text size="sm">{activeCliSessionCount} active</Text>
-          </Group>
+    <div data-testid="fleet-snapshot-bar" className="agents-fleet-strip">
+      <section className="lcars-readouts" aria-label="Fleet snapshot">
+        <Readout label="Live runs" value={liveRuns.length}>
+          {livePipelines.length > 0
+            ? livePipelines
+                .map(({ pipeline, count }) => `${pipeline} ${count}`)
+                .join(' · ')
+            : 'No runs active'}
+        </Readout>
+        <Readout label="CLI sessions" value={activeCliSessionCount}>
+          active
+        </Readout>
+        <Readout
+          label="Runners busy"
+          value={<FleetRunnerOccupancy fleet={fleet} />}
+        >
           <FleetChip fleet={fleet} />
-        </Group>
-        {queue && (
-          <Text size="xs" c="dimmed" data-testid="queue-lifecycle">
-            Queue: {queue.queued} queued, {queue.claimed} claimed,{' '}
-            {queue.running} running
-          </Text>
+        </Readout>
+        <Readout label="Queue" value={queue ? queue.queued : '—'}>
+          {queue ? (
+            <span data-testid="queue-lifecycle">
+              {queue.queued} queued · {queue.claimed} claimed · {queue.running}{' '}
+              running
+            </span>
+          ) : (
+            'unavailable'
+          )}
+        </Readout>
+        {metrics && (
+          <Readout
+            label="Logical tasks"
+            value={
+              <span data-testid="metric-logical-tasks">
+                {metrics.logicalTaskCount}
+                <VisuallyHidden>
+                  {' '}
+                  logical task{metrics.logicalTaskCount === 1 ? '' : 's'}
+                </VisuallyHidden>
+              </span>
+            }
+          >
+            <MetricsRow metrics={metrics} />
+          </Readout>
         )}
-        {metrics && <MetricsRow metrics={metrics} fleet={fleet} />}
-        <QueueHealthAlert liveRuns={liveRuns} />
-      </Stack>
-    </Card>
+      </section>
+      <QueueHealthAlert liveRuns={liveRuns} />
+    </div>
+  );
+}
+
+function Readout({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="lcars-readout">
+      <span className="lcars-eyebrow lcars-readout__label">{label}</span>
+      <span className="lcars-readout__value">{value}</span>
+      <div className="lcars-readout__detail">{children}</div>
+    </div>
   );
 }

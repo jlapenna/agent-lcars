@@ -322,25 +322,23 @@ async function AgentsPageBody({
               Clear repository
             </Anchor>
           ) : null}
-          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
-          <ToolbarApply label="Apply" />
-        </ConsoleToolbar>
-      }
-      warnings={<DataWarnings warnings={warnings} />}
-      fleet={
-        <>
           <DataFreshness
             fetchedAt={oldestFetchedAt(itemsFetchedAt, activityFetchedAt)}
             initialLabel={formatRelativeTime(
               oldestFetchedAt(itemsFetchedAt, activityFetchedAt),
             )}
           />
-          <FleetSnapshotBar
-            activity={filteredActivity}
-            activeCliSessionCount={filteredActiveSessions.length}
-            metrics={activityMetrics}
-          />
-        </>
+          {/* Controls apply on change; Apply is for browsers without JavaScript (<noscript>). */}
+          <ToolbarApply label="Apply" />
+        </ConsoleToolbar>
+      }
+      warnings={<DataWarnings warnings={warnings} />}
+      fleet={
+        <FleetSnapshotBar
+          activity={filteredActivity}
+          activeCliSessionCount={filteredActiveSessions.length}
+          metrics={activityMetrics}
+        />
       }
       active={
         <>

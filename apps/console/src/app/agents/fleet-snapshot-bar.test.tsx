@@ -81,13 +81,16 @@ describe('FleetSnapshotBar', () => {
       ],
     });
 
-    expect(screen.getByText('2 live')).toBeTruthy();
-    expect(screen.getByText('1 live')).toBeTruthy();
+    expect(screen.getByLabelText('Fleet snapshot')).toHaveTextContent(
+      'Live runs3claude 2 · opencode 1',
+    );
   });
 
   it('renders the active CLI session count', () => {
     renderBar(EMPTY_ACTIVITY, 3);
-    expect(screen.getByText('3 active')).toBeTruthy();
+    expect(screen.getByLabelText('Fleet snapshot')).toHaveTextContent(
+      'CLI sessions3active',
+    );
   });
 
   it('summarizes inactive workflow lanes instead of rendering three zero badges', () => {
@@ -109,7 +112,7 @@ describe('FleetSnapshotBar', () => {
     });
 
     expect(screen.getByTestId('queue-lifecycle')).toHaveTextContent(
-      'Queue: 2 queued, 1 claimed, 3 running',
+      '2 queued · 1 claimed · 3 running',
     );
   });
 
@@ -186,6 +189,8 @@ describe('FleetSnapshotBar', () => {
     expect(screen.getByTestId('activity-metrics-row')).toHaveTextContent(
       'No queued or running dispatches',
     );
-    expect(screen.queryByTestId('metric-logical-tasks')).toBeNull();
+    expect(screen.getByTestId('metric-logical-tasks').textContent).toBe(
+      '0 logical tasks',
+    );
   });
 });
