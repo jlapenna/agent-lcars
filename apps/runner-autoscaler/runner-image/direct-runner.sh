@@ -601,9 +601,12 @@ write. When the report is finished, write these two lines to
 <!-- agent-result:v1:report:$ATTEMPT_ID -->
 <!-- attempt-claim:$ATTEMPT_ID -->
 
-Then end with the complete report as your final response (at most 16000
-characters): that response is the deliverable. A finished report is not a
-park. Park only for a real blocker."
+Then end with the complete report as your final response (at most 12000
+characters): that response is the deliverable, and a longer one is refused.
+A finished report is not a park. Park only for a real blocker."
+    # Only the last round's final message is kept, so a correction round must
+    # repeat the report rather than acknowledge the record.
+    WORKER_COMPLETION_PROMPT="$WORKER_COMPLETION_PROMPT For this report item, write the report record and end with the complete report repeated as your final response; only that final response is kept."
   fi
 fi
 
@@ -1301,7 +1304,8 @@ elif [ "$ANCHOR_TYPE" = "work" ]; then
   elif [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
     printf '%s\n%s\n' "$native_no_op_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
     OUTCOME=no-op
-  elif [ "$REPORT_DELIVERABLE" = 1 ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
+  elif [ "$REPORT_DELIVERABLE" = 1 ] && [ "$AGENT_EXIT" -eq 0 ] && \
+    [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
     printf '%s\n%s\n' "$native_report_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
     OUTCOME=report
   else
@@ -1326,15 +1330,22 @@ AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || 
 # message (#2537); they are never task or tool output, so quoted text in a
 # transcript cannot forge them.
 PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
-# A report's message is its deliverable; a blank one delivered nothing.
-if [ "$OUTCOME" = report ] && [ -z "${AGENT_MESSAGE//[[:space:]]/}" ]; then
-  OUTCOME=no-deliverable
+# A report's message is its deliverable: a blank one delivered nothing, and
+# an oversized one would lose its head to the tail capture above.
+if [ "$OUTCOME" = report ]; then
+  if [ -z "${AGENT_MESSAGE//[[:space:]]/}" ]; then
+    OUTCOME=no-deliverable
+  elif [ "$(wc -c < "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || echo 0)" -gt 16384 ]; then
+    echo "::error::Report final message exceeds 16384 bytes; refusing a truncated report" >&2
+    OUTCOME=no-deliverable
+  fi
 fi
 # Capacity exhaustion is a provider failure, never a request for a human
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
 # A published deliverable has already settled the outcome above, so work the
-# agent finished and pushed is never reclassified.
-if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed ]]; then
+# agent finished and pushed is never reclassified. A report is its message, so
+# a provider failure in that message is not a report.
+if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
   if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
     [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
     OUTCOME=provider-limit

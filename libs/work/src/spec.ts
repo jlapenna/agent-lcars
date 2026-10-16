@@ -43,9 +43,10 @@ export const workSpecSchema = z
      * an unknown runtime gate rather than letting a worker waive evidence. */
     deliveryRuntime: z.enum(['none', 'required']).optional(),
     /** Trusted immutable intake for read-only work whose result is findings,
-     * not a change: the worker publishes a closed `agent-report` issue and
-     * the item settles `done`. Omitted keeps PR/park/no-op as the only
-     * outcomes, so implement work can never substitute a report. */
+     * not a change: the worker's final message is the report and the item
+     * settles `done`. Omitted keeps PR/park/no-op as the only outcomes, so
+     * implement work can never substitute a report. Temporary bridge to the
+     * unified-dataflow `intent: report` (#2810), removed with its phase 2. */
     deliverable: z.enum(['report']).optional(),
     target: workTargetSchema,
   })

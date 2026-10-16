@@ -1849,7 +1849,24 @@ grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG" ||
   fail "codex native report: prompt did not describe the report deliverable ($(cat "$CODEX_ARGS_LOG"))"
 jq -e '.outcome == "report" and .outcomeReference == null and (.message | contains("# Audit findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report: report was not completed with its message ($(cat "$COMPLETE_LOG"))"
+jq -e '.requested_results == ["report", "park", "no-op"]' "$scenario_runner_temp/agent-dispatch/context.json" >/dev/null ||
+  fail "codex native report: brief still offered a PR result ($(cat "$scenario_runner_temp/agent-dispatch/context.json"))"
 echo "scenario codex-native-report: OK"
+
+# A provider stop after the record is a provider failure, not the report.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your weekly limit · resets Sep 13, 12am (UTC)"
+run_scenario codex-native-report-limit codex
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit: limit text settled as a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-limit: OK"
+
+# The message capture keeps only the tail; an oversized report is refused
+# rather than settled without its head.
+export FAKE_CODEX_LAST_MESSAGE="# Title$(printf '%*s' 16400 '' | tr ' ' x)"
+run_scenario codex-native-report-oversized codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report oversized: a truncated report settled ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-oversized: OK"
 
 export FAKE_CODEX_LAST_MESSAGE=$' \n '
 run_scenario codex-native-report-blank codex
