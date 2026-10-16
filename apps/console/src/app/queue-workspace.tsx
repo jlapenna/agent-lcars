@@ -21,7 +21,7 @@ import type { ActionType } from '../lib/action-items';
 import {
   MAX_DECISION_SNOOZES,
   SNOOZE_DURATIONS,
-} from '../lib/decision-snooze-contract';
+} from '../lib/decision-snooze-values';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { ToolbarFoldToggle } from './console-toolbar';

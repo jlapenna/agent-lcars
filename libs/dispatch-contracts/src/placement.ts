@@ -1,19 +1,6 @@
-import { z } from 'zod';
+import type { RunPlacement } from './placement-schema';
 
-export const runPlacementSchema = z.strictObject({
-  phase: z.enum(['waiting-for-placement', 'bootstrapping', 'unavailable']),
-  // Allowlisted scheduler categories only; never raw node names/events.
-  reason: z.enum([
-    'pending',
-    'unschedulable',
-    'scheduled',
-    'inventory-unavailable',
-    'launch-pending',
-  ]),
-  observedAt: z.iso.datetime({ offset: false }).max(32),
-  jobCreatedAt: z.iso.datetime({ offset: false }).max(32).optional(),
-});
-export type RunPlacement = z.infer<typeof runPlacementSchema>;
+export type { RunPlacement } from './placement-schema';
 
 /** Observation freshness follows the executor's existing three-heartbeat TTL.
  * Keep expiry on the source observation, never on a page refresh. */

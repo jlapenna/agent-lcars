@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type {
+  DecisionSnoozeAnchor,
+  DecisionSnoozeResult,
+  DecisionSnoozes,
+  SnoozeDecisionInput,
+} from '../lib/decision-snooze-contract';
 import {
-  type DecisionSnoozeAnchor,
-  type DecisionSnoozeResult,
-  type DecisionSnoozes,
   LEGACY_MUTE_STORAGE_KEY,
   parseLegacyMutes,
-  type SnoozeDecisionInput,
-} from '../lib/decision-snooze-contract';
+} from '../lib/decision-snooze-values';
 import {
   importDecisionSnoozes,
   readDecisionSnoozes,

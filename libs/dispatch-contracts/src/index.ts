@@ -27,8 +27,8 @@ export {
   EXECUTION_PHASE_LABELS,
   executionPhase,
   PLACEMENT_STALENESS_MS,
-  runPlacementSchema,
 } from './placement';
+export { runPlacementSchema } from './placement-schema';
 export { QUEUE_PRIORITIES, type QueuePriority } from './priority';
 export { providerRoutingSchema } from './provider-routing';
 export type { QuickTaskIdentity } from './quick-task';
