@@ -4991,4 +4991,10 @@ td.costs-repo-spend__num {
     min-height: 44px;
     padding: 10px 6px 10px 0;
   }
+
+  /* The selection bar is drawn inside the row; the selected row's text
+     steps in past it rather than running under it. */
+  .queue-item-row[data-selected] .queue-item-row__link {
+    padding-left: 12px;
+  }
 }
