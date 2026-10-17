@@ -1,7 +1,5 @@
 import { Badge, Group, Stack } from '@mantine/core';
-import type { ReactNode } from 'react';
 
-import { getWatchedRepos } from '../lib/github-client';
 import { repoKey } from '../lib/watched-repo';
 import { RepoBadge } from './agent-activity-panel';
 import type { BoardCard } from './board-card';
@@ -11,53 +9,9 @@ import {
   type BridgeView,
   itemKey,
 } from './bridge-selection';
-import type { InboxCard } from './inbox-card';
 import { OpsPanel } from './ops-primitives';
-import { QueueWorkspace } from './queue-workspace';
-import { renderInboxCardMarkdown } from './render-card-markdown';
-import type { ReplyAction } from './work/work-actions';
 
 export type { BoardCard } from './board-card';
-
-/** The standalone master/detail surface for work awaiting a decision. */
-export function DecisionInbox({
-  yourQueue,
-  selectedCard,
-  selectedItemKey,
-  mobileDataFreshness,
-  mobileScopeLabel,
-  repoScoped,
-  replyToWorkItem,
-  toolbarStart,
-  toolbarEnd,
-}: {
-  yourQueue: InboxCard[];
-  selectedCard?: InboxCard;
-  selectedItemKey?: string;
-  mobileDataFreshness?: ReactNode;
-  mobileScopeLabel?: string;
-  repoScoped?: boolean;
-  replyToWorkItem?: ReplyAction;
-  toolbarStart?: ReactNode;
-  toolbarEnd?: ReactNode;
-}) {
-  const watchedRepos = getWatchedRepos();
-
-  return (
-    <QueueWorkspace
-      cards={yourQueue.map(renderInboxCardMarkdown)}
-      selectedCard={selectedCard && renderInboxCardMarkdown(selectedCard)}
-      selectedItemKey={selectedItemKey}
-      watchedRepos={watchedRepos}
-      mobileDataFreshness={mobileDataFreshness}
-      mobileScopeLabel={mobileScopeLabel}
-      repoScoped={repoScoped}
-      replyToWorkItem={replyToWorkItem}
-      toolbarStart={toolbarStart}
-      toolbarEnd={toolbarEnd}
-    />
-  );
-}
 
 /**
  * One Bridge section of idle GitHub items parked on a wait. Every row gets
