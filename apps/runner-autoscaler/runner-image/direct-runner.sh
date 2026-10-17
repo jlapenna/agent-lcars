@@ -593,10 +593,11 @@ not create that file for a pull-request outcome."
   if [ "$REPORT_DELIVERABLE" = 1 ]; then
     report_final='the complete report'
     report_followup=''
-    if [ "$MODE" = reply ]; then
-      # A reply round's final message replaces the report the requester
-      # reads. Only the resumed agent knows whether it delivered a report or
-      # parked on a question, so the prompt names both cases.
+    # A reply round's final message replaces the report the requester reads.
+    # Only a resumed agent holds the earlier conversation, so only it can
+    # tell a delivered report from a parked question and answer a follow-up
+    # alone; a fresh session rebuilds the report around the reply.
+    if [ "$MODE" = reply ] && [ -n "$REPLY" ] && [ -n "$RESUME_SESSION_ID" ]; then
       report_final='the complete report, or your complete answer to a follow-up,'
       report_followup="
 This round follows a human reply. If you already delivered the report and
@@ -605,6 +606,10 @@ the whole report. Your final response replaces the report the requester
 reads, so make it self-contained: the answer, plus any earlier finding it
 changes. If the reply answers a question you parked on, finish the full
 report."
+    elif [ "$MODE" = reply ]; then
+      report_followup="
+This round follows a human reply in the brief, without the earlier
+conversation. Produce the full report and address the reply within it."
     fi
     NATIVE_WORK_INSTRUCTIONS="$NATIVE_WORK_INSTRUCTIONS
 

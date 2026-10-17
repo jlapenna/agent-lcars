@@ -2002,6 +2002,21 @@ jq -e '.outcome == "report" and (.message | contains("Finding 3 means"))' < <(ta
   fail "codex native report follow-up: the answer did not settle as the report ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-followup: OK"
 
+# Without the earlier conversation the agent cannot see the report it would
+# be answering about, so a fresh reply round rebuilds the full report.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report FAKE_MODE=reply FAKE_BRIEF_NO_RESUME=1
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_REPLY='Explain finding 3 in more detail'
+export FAKE_CODEX_LAST_MESSAGE='# Full report addressing finding 3'
+run_scenario codex-native-report-followup-fresh codex
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_MODE FAKE_BRIEF_NO_RESUME FAKE_SPEC_EXTRA FAKE_REPLY FAKE_CODEX_LAST_MESSAGE
+if grep -Fq 'answer that follow-up directly' "$CODEX_ARGS_LOG"; then
+  fail "codex native report fresh follow-up: a session without the report was told to answer alone"
+fi
+grep -Fq 'Produce the full report and address the reply within it' "$CODEX_ARGS_LOG" ||
+  fail "codex native report fresh follow-up: prompt did not ask for the full report ($(cat "$CODEX_ARGS_LOG"))"
+echo "scenario codex-native-report-followup-fresh: OK"
+
 # The QueueExecutor adapter must enforce the two-hour OpenCode bound
 # locally. A short override makes this regression deterministic without
 # waiting two hours: timeout sends TERM to the trusted CLI, then the runner
