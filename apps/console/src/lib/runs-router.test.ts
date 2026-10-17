@@ -7565,7 +7565,7 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
      *  retried on the execution budget. */
     async function expectOrdinaryLoss(
       f: ReturnType<typeof backendFixture>,
-      claim: { workId: string; runId: string },
+      claim: { workId: string; runId: string; claimFingerprint: string },
       disruption: ReturnType<typeof evidence>,
     ) {
       const exit = await call(f.ctx(), 'POST', runPath(claim.runId, '/exit'), {
