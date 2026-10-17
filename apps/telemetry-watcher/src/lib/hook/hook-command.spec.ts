@@ -643,6 +643,10 @@ describe('Codex child publication ownership (#2669)', () => {
       2,
       0,
       {
+        ...input[3],
+        payload: { ...input[3].payload, thread_id: parentId },
+      },
+      {
         type: 'event_msg',
         timestamp: input[0].timestamp,
         payload: {
@@ -744,6 +748,168 @@ describe('Codex child publication ownership (#2669)', () => {
       readHookSessionState(path.join(home, STATE_DIR), parentId),
     ).toBeUndefined();
   });
+
+  it('collects an independent child before its first thread-settings event', async () => {
+    const home = tempHome();
+    // Genuine independent children 01a13cec-1233/54ff have exact thread_spawn
+    // parents, no forked_from_id, and owned usage before thread settings.
+    // Reuse the existing publication fixture as a synthetic contract check.
+    const input = rows();
+    delete input[0].payload.forked_from_id;
+    input.splice(1, 2);
+    const d = childDeps(home, input, 'SubagentStop');
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.summary?.tokens).toEqual({
+      inputTokens: 1087,
+      outputTokens: 46,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 62208,
+    });
+    expect(event.summary?.deliverables.qualifiedPRs).toEqual([
+      { repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 2666 },
+    ]);
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+  });
+
+  it('retains actual independent-child metadata and explicit thread usage', async () => {
+    const home = tempHome();
+    // Selected metadata/first usage from the real 2026-10-15 child rollout;
+    // no parent history, provider calls, or publication output is fabricated.
+    const input = fs
+      .readFileSync(
+        path.join(__dirname, 'fixtures/codex-independent-child.jsonl'),
+        'utf8',
+      )
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Row);
+    const actualChildId = '01a13cec-1233-7f43-90d4-83a6746e3b71';
+    const d = childDeps(home, input, 'SubagentStop', {
+      agent_id: actualChildId,
+    });
+    expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+    const [event] = spooledEvents(home);
+    expect(event.sessionId).toBe(actualChildId);
+    expect(event.summary?.tokens).toEqual({
+      inputTokens: 13960,
+      outputTokens: 49,
+      cacheCreationTokens: 0,
+      cacheReadTokens: 12032,
+    });
+    const write = sessionWriteForEvent(event, undefined, event.occurredAt);
+    expect(write?.doc.sessionId).toBe(actualChildId);
+    expect(write?.doc.tokens).toEqual(event.summary?.tokens);
+    expect(write?.doc.totalCostUsd).toBeUndefined();
+    expect(
+      readHookSessionState(path.join(home, STATE_DIR), parentId),
+    ).toBeUndefined();
+  });
+
+  it.each(['parent history', 'foreign usage', 'unknown fork'])(
+    'refuses an independent child with %s',
+    async (defect) => {
+      const home = tempHome();
+      const input = rows();
+      delete input[0].payload.forked_from_id;
+      if (defect !== 'parent history') input.splice(1, 2);
+      if (defect === 'foreign usage') input[1].payload.thread_id = parentId;
+      if (defect === 'unknown fork') input[0].payload.forked_from_id = null;
+      const d = childDeps(home, input, 'SubagentStop');
+      expect((await executeHookCommand(['codex'], d)).action).toBe(
+        'skipped-subagent',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+      expect(d.spawnFlusher).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    ['independent', 'forked'].flatMap((kind) =>
+      [parentId, undefined].flatMap((threadId) =>
+        ['before usage', 'after usage', 'after publication'].map(
+          (position) => ({
+            kind,
+            threadId,
+            position,
+          }),
+        ),
+      ),
+    ),
+  )(
+    'refuses mixed $kind usage ($threadId) $position',
+    async ({ kind, threadId, position }) => {
+      const home = tempHome();
+      const input = rows();
+      if (kind === 'independent') {
+        delete input[0].payload.forked_from_id;
+        input.splice(1, 2);
+      }
+      const usageIndex = input.findIndex(
+        (row) => row.type === 'token_usage_record',
+      );
+      const mixedUsage = structuredClone(input[usageIndex]);
+      if (threadId) mixedUsage.payload.thread_id = threadId;
+      else delete mixedUsage.payload.thread_id;
+      input.splice(
+        position === 'before usage'
+          ? usageIndex
+          : position === 'after usage'
+            ? usageIndex + 1
+            : input.length,
+        0,
+        mixedUsage,
+      );
+      const d = childDeps(home, input, 'SubagentStop');
+      expect((await executeHookCommand(['codex'], d)).action).toBe(
+        'skipped-subagent',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+      expect(
+        readHookSessionState(path.join(home, STATE_DIR), childId),
+      ).toBeUndefined();
+      expect(
+        readHookSessionState(path.join(home, STATE_DIR), parentId),
+      ).toBeUndefined();
+      expect(d.spawnFlusher).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['independent', parentId],
+    ['independent', undefined],
+    ['forked', parentId],
+    ['forked', undefined],
+  ])(
+    'refuses a mixed %s child stream after an ambiguous/foreign thread boundary (%s)',
+    async (kind, foreignThreadId) => {
+      const home = tempHome();
+      const input = rows();
+      if (kind === 'independent') {
+        delete input[0].payload.forked_from_id;
+        input.splice(1, 2);
+      }
+      input.splice(kind === 'independent' ? 2 : 4, 0, {
+        type: 'event_msg',
+        timestamp: input[0].timestamp,
+        payload: {
+          type: 'thread_settings_applied',
+          ...(foreignThreadId && { thread_id: foreignThreadId }),
+        },
+      });
+      const d = childDeps(home, input, 'SubagentStop');
+      expect((await executeHookCommand(['codex'], d)).action).toBe(
+        'skipped-subagent',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+      expect(
+        readHookSessionState(path.join(home, STATE_DIR), childId),
+      ).toBeUndefined();
+      expect(d.spawnFlusher).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     'wrong parent',
