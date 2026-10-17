@@ -493,8 +493,9 @@ established protected target policy:
 These are initial-result settlement exceptions, not a review bypass before
 publication or arming, and do not change ordinary independently reviewed merged
 handoffs. Unreadable or malformed evidence, wrong identities, markers or target,
-failed or missing protection, non-squash arms, corrections or foreign delivery
-ownership, and merged-deliverable claims remain refused. The semantic owners are
+failed or missing protection, and non-squash arms remain refused. These exceptions
+never admit corrections, foreign delivery ownership, or merged-deliverable claims;
+those require the normal fully qualified delivery binding. The semantic owners are
 [`readyDeliveryBinding`](../../../../../apps/console/src/lib/ready-delivery.ts)
 and the initial-result fence in
 [`runs-router.ts`](../../../../../apps/console/src/lib/runs-router.ts).
