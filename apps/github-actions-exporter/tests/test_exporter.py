@@ -555,7 +555,8 @@ class GitHubActionsExporterTests(unittest.TestCase):
                 return generate_latest(registry).decode()
 
         # The cutoff is inclusive: the success created exactly a window ago
-        # still bounds the streak.
+        # still bounds the streak. The cancelled run between the two failures
+        # neither counts nor breaks it, so the streak is 2.
         at_cutoff = scrape(window)
         self.assertIn(
             f"github_actions_workflow_consecutive_failures{labels} 2.0", at_cutoff
@@ -572,7 +573,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
             f"github_actions_workflow_consecutive_failures_complete{labels} 0.0",
             success_expired,
         )
-        # The cancelled run neither counts nor breaks the streak.
+        # The older failure has expired too.
         self.assertIn(
             f"github_actions_workflow_consecutive_failures{labels} 1.0",
             scrape(window + 250),
