@@ -124,8 +124,11 @@ describe('ParkedWorkPanel', () => {
     });
     expect(redispatchButtons).toHaveLength(2);
     expect(
-      screen.getByRole('heading', { name: /Stopped work \(2\)/ }),
+      screen.getByRole('heading', { name: 'Stopped work' }),
     ).toBeInTheDocument();
+    expect(screen.getByTestId('parked-work-panel')).toHaveTextContent(
+      'Stopped work2',
+    );
 
     // Rows render oldest-first (asserted above), so the first Redispatch
     // button belongs to the older row.

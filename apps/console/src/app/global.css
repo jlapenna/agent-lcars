@@ -777,7 +777,7 @@ body:has(.console-header:not([data-streaming-fallback]))
 }
 
 /* The hairline goes under the whole head. A heading followed by its own
-   description line (SectionHeading) draws it under that line instead. A
+   description line draws it under that line instead. A
    panel whose content is wrapped in a Stack (Operations, the Agents columns)
    has its head as that Stack's first child. */
 :is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
@@ -2191,28 +2191,10 @@ td.costs-repo-spend__num {
   min-width: 0;
 }
 
-.costs-ledger-section__heading {
-  position: relative;
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: var(--lcars-surface);
-}
-
-.costs-ledger-section__heading::before {
-  content: '';
-  position: absolute;
-  inset-block: 0;
-  left: 0;
-  width: var(--lcars-spine-width);
-  background: var(--lcars-accent);
-}
-
-.costs-ledger-section__heading::after {
-  display: none;
+/* The deliverables panel sits outside the ledger grid; it keeps the same
+   inset from the frame's edge. */
+[data-testid='spend-breakdowns'] > .costs-deliverables {
+  margin: 0 16px;
 }
 
 .costs-ledger-scroll {
@@ -3581,47 +3563,30 @@ td.costs-repo-spend__num {
   }
 
   .costs-ledger-grid {
-    display: block;
-    padding: 0;
-  }
-
-  .costs-ledger-section + .costs-ledger-section {
-    border-left: 0;
-    border-top: 12px solid var(--lcars-hairline);
-  }
-
-  .costs-ledger-section__heading {
-    min-height: 48px;
-    padding-inline: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 16px;
   }
 
   .costs-ledger-mobile-list {
     display: block;
   }
 
+  /* Rows sit inside a spined panel, so they draw no bar of their own. */
   .costs-ledger-mobile-row {
-    position: relative;
     display: flex;
     min-height: 68px;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 10px 16px;
+    padding: 10px 0;
     border-bottom: 1px solid var(--lcars-hairline);
     background: var(--lcars-surface);
   }
 
   .costs-ledger-mobile-row:nth-child(even) {
     background: var(--lcars-surface);
-  }
-
-  .costs-ledger-mobile-row::before {
-    content: '';
-    position: absolute;
-    inset-block: 8px;
-    left: 0;
-    width: var(--lcars-spine-width);
-    background: var(--lcars-accent);
   }
 
   .costs-ledger-mobile-row__identity a {
@@ -4024,6 +3989,13 @@ td.costs-repo-spend__num {
 
 .parked-work-row:last-child {
   border-bottom: 0;
+}
+
+/* The row's text column truncates its title rather than widening the row
+   past a narrow phone. */
+.parked-work-row > .mantine-Stack-root {
+  min-width: 0;
+  flex: 1 1 12rem;
 }
 
 /* Action-first Bridge rows: the result or task action has a stable right
