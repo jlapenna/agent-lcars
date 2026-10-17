@@ -78,6 +78,15 @@ export function inboxCardSignature(card: InboxCard): string {
   ].join('|');
 }
 
+/** When a native card last changed for its reader: a report's own run, since
+ * a later spec edit advances `work.updatedAt` without touching the report. */
+export function nativeCardTime(card: NativeDecisionCard): string {
+  return (
+    (card.kind === 'report' && nativeReportRun(card.work)?.updatedAt) ||
+    card.work.updatedAt
+  );
+}
+
 /** What a native row and detail show: the report, or the parked question. */
 export function nativeCardText(card: NativeDecisionCard): string {
   return (
@@ -101,8 +110,8 @@ export function inboxCardMetadata(card: InboxCard) {
     const [owner, name] = card.work.spec.target.repo.split('/');
     return {
       repo: { owner, name },
-      updatedAt: card.work.updatedAt,
-      waitingSince: card.work.updatedAt,
+      updatedAt: nativeCardTime(card),
+      waitingSince: nativeCardTime(card),
       actionTypes: [
         card.kind === 'report' ? 'report-ready' : 'needs-human',
       ] as const,

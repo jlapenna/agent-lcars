@@ -6,7 +6,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { DecisionWaiting } from './decision-waiting';
-import { nativeCardText, type NativeDecisionCard } from './inbox-card';
+import {
+  nativeCardText,
+  nativeCardTime,
+  type NativeDecisionCard,
+} from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
 import { replyAdmissionMessage } from './reply-admission-message';
@@ -57,7 +61,7 @@ export function NativeDecisionRow({
             <span>{work.spec.pipeline}</span>
             {report ? (
               <span>
-                settled <RelativeTime iso={work.updatedAt} />
+                settled <RelativeTime iso={nativeCardTime(card)} />
               </span>
             ) : (
               <DecisionWaiting since={work.updatedAt} />
@@ -144,7 +148,7 @@ export function NativeDecisionDetail({
           : card.kind === 'report'
             ? 'Report ready'
             : work.state}{' '}
-        · <RelativeTime iso={work.updatedAt} />
+        · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
       {card.question ?? (
         <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>

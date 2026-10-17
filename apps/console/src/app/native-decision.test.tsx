@@ -243,6 +243,21 @@ describe('native report card', () => {
     expect(before).not.toBe(inboxCardSignature(card));
   });
 
+  it('dates a report by its run, not by a later edit of the item', () => {
+    const edited = {
+      ...report,
+      work: { ...report.work, updatedAt: '2026-10-12T00:00:00Z' },
+    };
+    const settled = report.work.runs[0].updatedAt;
+    expect(inboxCardMetadata(edited)).toMatchObject({
+      updatedAt: settled,
+      waitingSince: settled,
+    });
+    expect(inboxCardMetadata({ ...card, work: edited.work }).updatedAt).toBe(
+      '2026-10-12T00:00:00Z',
+    );
+  });
+
   it('files under Report ready, ranked below decisions, searchable by its text', () => {
     const meta = inboxCardMetadata(report);
     expect(meta.actionTypes).toEqual(['report-ready']);
