@@ -1341,10 +1341,59 @@ class Database:
 
 
 class DatabaseMetrics:
+    """Serve stored history from a snapshot the poll loop rebuilds (homelab#2653).
+
+    The aggregations below scan the whole retained history: 130k runs and 340k
+    jobs took about 5s of SQL per scrape on 2026-10-17, serialized on the
+    database lock with the poller's writes and with any concurrent scrape, so
+    scrapes straddled Prometheus's 10s timeout and kept growing with history.
+    The stored history only changes when the poller writes, so the poll loop
+    calls refresh() once per cycle and a scrape only renders the last snapshot.
+    Queue ages are still computed at scrape time so they keep advancing.
+    """
+
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._snapshot: tuple[list[Any], list[tuple[list[str], float]]] | None = None
+
+    def refresh(self) -> None:
+        """Run the history aggregations and replace the snapshot scrapes serve."""
+        families = list(self._history_families())
+        placeholders = ",".join("?" for _ in QUEUED_STATUSES)
+        oldest_queued = [
+            (
+                [row["repository"], row["workflow"], row["name"], row["runs_on"]],
+                float(row["oldest"]),
+            )
+            for row in self.database.rows(
+                f"""
+                SELECT repository, workflow, name, runs_on, MIN(created_at) AS oldest
+                FROM jobs
+                WHERE status IN ({placeholders}) AND created_at IS NOT NULL
+                GROUP BY repository, workflow, name, runs_on
+                """,
+                QUEUED_STATUSES,
+            )
+        ]
+        self._snapshot = (families, oldest_queued)
 
     def collect(self):
+        if self._snapshot is None:
+            self.refresh()
+        families, oldest_queued_rows = self._snapshot
+        yield from families
+
+        oldest_queued = GaugeMetricFamily(
+            "github_actions_job_oldest_queued_seconds",
+            "Age in seconds of the oldest currently queued job. runs_on is the fleet label the job targets, empty for GitHub-hosted jobs (agent-lcars#1699).",
+            labels=("repository", "workflow", "job", "runs_on"),
+        )
+        now = time.time()
+        for labels, oldest in oldest_queued_rows:
+            oldest_queued.add_metric(labels, max(0, now - oldest))
+        yield oldest_queued
+
+    def _history_families(self):
         workflow_runs = CounterMetricFamily(
             "github_actions_workflow_runs",
             "Completed GitHub Actions workflow runs.",
@@ -1532,28 +1581,6 @@ class DatabaseMetrics:
                 float(row["total"]),
             )
         yield current_jobs
-
-        oldest_queued = GaugeMetricFamily(
-            "github_actions_job_oldest_queued_seconds",
-            "Age in seconds of the oldest currently queued job. runs_on is the fleet label the job targets, empty for GitHub-hosted jobs (agent-lcars#1699).",
-            labels=("repository", "workflow", "job", "runs_on"),
-        )
-        placeholders = ",".join("?" for _ in QUEUED_STATUSES)
-        now = time.time()
-        for row in self.database.rows(
-            f"""
-            SELECT repository, workflow, name, runs_on, MIN(created_at) AS oldest
-            FROM jobs
-            WHERE status IN ({placeholders}) AND created_at IS NOT NULL
-            GROUP BY repository, workflow, name, runs_on
-            """,
-            QUEUED_STATUSES,
-        ):
-            oldest_queued.add_metric(
-                [row["repository"], row["workflow"], row["name"], row["runs_on"]],
-                max(0, now - float(row["oldest"])),
-            )
-        yield oldest_queued
 
         yield from self._histogram(
             "github_actions_workflow_duration_seconds",
@@ -1802,10 +1829,11 @@ class Poller:
                 self.state.poll_errors.labels(repository, "refresh").inc()
                 LOGGER.exception("failed to refresh %s", repository)
 
-    def run_forever(self) -> None:
+    def run_forever(self, after_refresh: Callable[[], None]) -> None:
         while True:
             started = time.monotonic()
             self.refresh_all()
+            after_refresh()
             elapsed = time.monotonic() - started
             time.sleep(max(1, self.config.poll_interval_seconds - elapsed))
 
@@ -1860,7 +1888,9 @@ def main() -> None:
     database = Database(config.database_path)
     with ExitStack() as resources:
         resources.callback(database.close)
-        registry.register(DatabaseMetrics(database))
+        metrics = DatabaseMetrics(database)
+        metrics.refresh()
+        registry.register(metrics)
         api = GitHubAPI(config, state)
         resources.callback(api.close)
         poller = Poller(config, database, api, state)
@@ -1879,7 +1909,7 @@ def main() -> None:
             config.port,
             ", ".join(config.repositories),
         )
-        poller.run_forever()
+        poller.run_forever(metrics.refresh)
 
 
 if __name__ == "__main__":

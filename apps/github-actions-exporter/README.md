@@ -95,10 +95,18 @@ therefore survives a reinstall without a restart.
 
 ## HTTP endpoints
 
-| Path       | Cost                 | Purpose                                     |
-| ---------- | -------------------- | ------------------------------------------- |
-| `/metrics` | Renders the registry | Prometheus scrape target.                   |
-| `/healthz` | Constant             | Container liveness probe; returns `200 ok`. |
+| Path       | Cost                           | Purpose                                     |
+| ---------- | ------------------------------ | ------------------------------------------- |
+| `/metrics` | Renders the last poll snapshot | Prometheus scrape target.                   |
+| `/healthz` | Constant                       | Container liveness probe; returns `200 ok`. |
+
+`/metrics` runs no SQL. The history aggregations scan every stored run and job,
+which reached about 5s per scrape at 130k runs and pushed scrapes past
+Prometheus's 10s timeout (homelab#2653), so the poll loop rebuilds a snapshot
+once per cycle and scrapes render it. Stored data only changes when the poller
+writes, so the snapshot is as fresh as the database; queue ages are still
+computed at scrape time. A snapshot query failure stops the process, as a
+failed scrape did before, rather than serving stale history silently.
 
 Point container healthchecks at `/healthz`, never at `/metrics`. prometheus_client
 serves the metrics payload on _every_ GET path for backwards compatibility, so a
