@@ -62,6 +62,13 @@ const QUEUE_REASONS: Record<ActionType, QueueReason> = {
     color: 'gray',
     rank: 7,
   },
+  // Below every decision: a report is read, never answered.
+  'report-ready': {
+    type: 'report-ready',
+    label: 'Report ready',
+    color: 'teal',
+    rank: 6,
+  },
 };
 
 /** Reasons that describe a wait rather than a decision. They rank last so an

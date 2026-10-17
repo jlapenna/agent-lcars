@@ -366,12 +366,14 @@ async function IndexBody({
 
   // Agent and find narrow decisions exactly as the Inbox does, so the count
   // matches what "Review N decisions" opens. The window is the Inbox's own.
+  // Finished reports are listed there too but are not decisions.
   const decisionCards = [
     ...queueView.yourQueue
       .filter((item) => matchesFilter(item.repo))
       .map((item) => toCard(item)),
-    ...nativeInbox.cards.filter((card) =>
-      matchesFilter(inboxCardMetadata(card).repo),
+    ...nativeInbox.cards.filter(
+      (card) =>
+        card.kind === 'decision' && matchesFilter(inboxCardMetadata(card).repo),
     ),
   ].filter(
     (card) =>

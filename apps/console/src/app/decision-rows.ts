@@ -6,7 +6,7 @@ import {
   inboxCardMetadata,
 } from './inbox-card';
 import type { DecisionRow } from './ops-panels';
-import { queueReasonFor } from './queue-reason';
+import { actionTypeMeta, queueReasonFor } from './queue-reason';
 
 /** Inbox link that opens one decision, keeping the repository scope. */
 export function inboxItemHref(card: InboxCard, repoFilterKey?: string): string {
@@ -37,7 +37,7 @@ export function decisionRows(
       if ('work' in card) {
         return {
           key: card.work.id,
-          reason: 'Human needed',
+          reason: actionTypeMeta(meta.actionTypes[0]).label,
           title: card.work.spec.title,
           ref: `${meta.repo.name} work`,
           refHref: `/work/${card.work.id}`,

@@ -213,3 +213,27 @@ it('keeps fallback provenance and exact result links when session access is with
   ).toEqual([ref, blocker]);
   expect(screen.queryByRole('link', { name: 'session' })).toBeNull();
 });
+
+it("labels a report as the round's result, and only a report", () => {
+  renderConversation({
+    ...baseItem,
+    state: 'done',
+    runs: [
+      {
+        runId: 'work:x/r1',
+        state: 'finished',
+        pipeline: 'claude',
+        createdAt: '2026-08-26T10:00:00.000Z',
+        updatedAt: '2026-08-26T10:05:00.000Z',
+        result: { ok: true, summary: 'report', message: '# Findings' },
+      },
+    ],
+  });
+  expect(screen.getByText('Report')).toBeTruthy();
+  expect(screen.getByText('# Findings')).toBeTruthy();
+});
+
+it('does not label an ordinary agent turn as a report', () => {
+  renderConversation(itemWithTwoRounds);
+  expect(screen.queryByText('Report')).toBeNull();
+});

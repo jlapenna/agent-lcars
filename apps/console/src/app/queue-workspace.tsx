@@ -33,6 +33,7 @@ import {
   inboxCardKey,
   inboxCardMetadata,
   inboxCardSignature,
+  REPORT_DISMISS_MINUTES,
 } from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
 import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
@@ -164,6 +165,17 @@ export function QueueWorkspace({
     importLegacy,
   } = useDecisionSnoozes();
   const [snoozeCard, setSnoozeCard] = useState<InboxCard>();
+  // A report has nothing to come back to: Dismiss snoozes it past its Inbox
+  // window instead of asking how long; Unsnooze under "Snoozed" restores it.
+  const snoozeOrDismiss = (card: InboxCard) => {
+    if ('work' in card && card.kind === 'report')
+      void snooze({
+        anchor: inboxCardKey(card),
+        signature: inboxCardSignature(card),
+        minutes: REPORT_DISMISS_MINUTES,
+      });
+    else setSnoozeCard(card);
+  };
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keyboardNavigated = useRef(false);
@@ -669,7 +681,7 @@ export function QueueWorkspace({
                         inboxCardKey(selectedCard) === key
                       }
                       onNavigate={() => setLoadingItemKey(key)}
-                      onSnooze={() => setSnoozeCard(card)}
+                      onSnooze={() => snoozeOrDismiss(card)}
                     />
                   );
                 return (
@@ -769,9 +781,11 @@ export function QueueWorkspace({
                 size="compact-xs"
                 variant="subtle"
                 disabled={pending}
-                onClick={() => setSnoozeCard(selectedCard)}
+                onClick={() => snoozeOrDismiss(selectedCard)}
               >
-                Snooze decision
+                {selectedCard.kind === 'report'
+                  ? 'Dismiss report'
+                  : 'Snooze decision'}
               </Button>
               <NativeDecisionDetail
                 key={selectedCard.work.id}
