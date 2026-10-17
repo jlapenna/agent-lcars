@@ -75,6 +75,15 @@ if [ "$#" -gt 0 ]; then
   exit 2
 fi
 
+# A prepared Linux PrivateNetwork unit can opt in to a loopback-only cohort.
+# Validate before acquiring locks, allocating HOME, building or touching ports.
+# The caller creates the namespace for this whole process tree, never just
+# Chromium: the app, emulators and browser must share its loopback interface.
+if [ "${E2E_NETWORK_MODE:-host}" != "host" ]; then
+  env -i "PATH=$PATH" "E2E_NETWORK_MODE=$E2E_NETWORK_MODE" \
+    node "$ROOT/tools/e2e/check-network.mjs"
+fi
+
 # Take a non-blocking host-level lock before touching any port or starting
 # any build. This wrapper documents supporting macOS and Windows Bash
 # environments too (docs/e2e-security-boundary.md), where the stock shell is
@@ -248,6 +257,9 @@ fi
 # target cannot forward CLI arguments.
 if [ -n "${E2E_GREP:-}" ]; then
   SAFE_ENV+=("E2E_GREP=$E2E_GREP")
+fi
+if [ -n "${E2E_NETWORK_MODE:-}" ]; then
+  SAFE_ENV+=("E2E_NETWORK_MODE=$E2E_NETWORK_MODE")
 fi
 
 # The E2E target itself is deliberately uncached: replaying a green test run

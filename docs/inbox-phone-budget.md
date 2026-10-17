@@ -71,6 +71,65 @@ The maintainer owns this on-demand signal and acts on misses under #2201.
 Required E2E remains the semantic interaction gate; machine-dependent lab
 percentiles do not replace or weaken required merge checks.
 
+### Hosts with unrelated network-interface turnover
+
+Chromium can abort a loopback request with `ERR_NETWORK_CHANGED` when another
+workload changes a host interface (#2843). The probe preserves these errors and
+partial samples; a retry or successful incomplete cohort is not qualification.
+For an isolated series on a prepared Linux systemd host, put the **entire**
+normal helper, including Firebase, the Console and Chromium, in one
+`PrivateNetwork=yes` unit. Isolating only the browser separates it from the
+server's loopback interface and cannot work.
+
+Opt in with `E2E_NETWORK_MODE=loopback`. The normal helper checks the current
+namespace before taking its host lock, allocating its temporary HOME, building,
+or touching ports. It refuses unless `/proc/self/net/dev` contains only `lo`
+(including unconfigured interfaces) and that interface has a loopback address.
+The direct measurement probe also checks the boundary and records its namespace
+identity. The external supervisor creates the namespace; this option never
+changes networking, invokes sudo, or silently falls back to the host. Default
+host/CI execution is unchanged.
+
+Prepare the checkout normally with `./tools/setup-worktree.sh` on the ordinary
+network and use a host with the matching Playwright browser and its system
+libraries already installed through the owning prerequisite path in
+[`e2e-reliability.md`](e2e-reliability.md). The helper's browser preflight never
+downloads or repairs a missing browser. Run
+`E2E_GREP='@smoke' ./tools/e2e-local.sh` on the ordinary network to qualify that
+setup and populate durable emulator/tool caches; keep its result separate from
+the measured cohort. Each invocation uses a fresh temporary Nx L1 cache, so
+that run does **not** retain a reusable production-build L1 for the isolated
+run. Budget the normal production build again on a cache miss. The private
+namespace cannot download missing tools or reach the remote Nx cache;
+missing prerequisites and build failures still fail normally. Do not disable
+plugins, hooks, browser checks or cache guards to make an offline run succeed.
+
+After qualifying CPU, memory, storage and overlap for the complete phase on one
+supported host, launch from its dedicated worktree. This example uses a 2 CPU,
+4 GiB, no-swap, 30-minute envelope; qualify it against that host's current
+capacity and required reserves before use. Use a unique unit name for each
+attempt and retain the unit's actual exit and accounting with the full artifact.
+
+```sh
+node_bin="$(dirname "$(readlink -f "$(command -v node)")")"
+sudo systemd-run --unit=lcars-inbox-phone-UNIQUE \
+  --property="User=$(id -un)" --property=PrivateNetwork=yes \
+  --property=CPUQuota=200% --property=MemoryMax=4G \
+  --property=MemorySwapMax=0 --property=RuntimeMaxSec=1800 \
+  --property=TimeoutStopSec=15 --property=KillMode=control-group \
+  --working-directory="$PWD" \
+  --setenv="PATH=$node_bin:$PATH" \
+  --setenv=E2E_NETWORK_MODE=loopback \
+  --setenv='E2E_GREP=records cold and warm decision readiness' \
+  --wait --pipe "$PWD/tools/e2e-local.sh"
+```
+
+All 30 cold and 30 warm samples, real browser-error rejection and fixture/server
+cleanup still apply. Record the unit's `PrivateNetwork` setting and compare the
+artifact's `environment.network.namespace` with a process in that unit. A
+passing isolated cohort qualifies this execution boundary; it does not identify
+which historical interface or request triggered the original host failure.
+
 ## Production instrumentation handoff
 
 Qualification requires opt-in/privacy-reviewed production measurements of the
