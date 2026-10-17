@@ -2,16 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getAuthoritativeQueueItems } from './authoritative-queue';
 
-const { getWatchedRepos, listOpenGithubAnchorProjectionPage } = vi.hoisted(
-  () => ({
+const { getWatchedRepos, listOpenGithubAnchorProjectionPage, listRuns } =
+  vi.hoisted(() => ({
     listOpenGithubAnchorProjectionPage: vi.fn(),
+    listRuns: vi.fn(),
     getWatchedRepos: vi.fn(() => [{ owner: 'jlapenna', name: 'agent-lcars' }]),
-  }),
-);
+  }));
 
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: () => ({
-    store: { listOpenGithubAnchorProjectionPage },
+    store: { listOpenGithubAnchorProjectionPage, listRuns },
   }),
 }));
 
@@ -20,6 +20,7 @@ vi.mock('./github-client', () => ({ getWatchedRepos }));
 describe('getAuthoritativeQueueItems', () => {
   beforeEach(() => {
     listOpenGithubAnchorProjectionPage.mockReset();
+    listRuns.mockReset().mockResolvedValue([]);
     getWatchedRepos.mockReset();
     getWatchedRepos.mockReturnValue([
       { owner: 'jlapenna', name: 'agent-lcars' },
@@ -220,5 +221,56 @@ describe('getAuthoritativeQueueItems', () => {
       limit: 200,
       cursor,
     });
+  });
+});
+
+it('shows only the current parked run summary, never an older handoff after new work starts', async () => {
+  const actions = [
+    { text: 'Run the check', command: 'verify --target prod' },
+    { text: 'Reply with the result' },
+  ];
+  listOpenGithubAnchorProjectionPage.mockResolvedValue({
+    projections: [
+      {
+        anchor: { repo: 'jlapenna/agent-lcars', issue: 42 },
+        kind: 'issue',
+        state: 'open',
+        title: 'Need help',
+        body: '',
+        url: 'https://github.com/jlapenna/agent-lcars/issues/42',
+        labels: ['status:needs-human'],
+        assigneeLogins: [],
+        sourceUpdatedAt: '2026-10-17T00:00:00Z',
+        observedAt: '2026-10-17T00:00:00Z',
+      },
+    ],
+  });
+  const parked = {
+    runId: 'jlapenna/agent-lcars#42/r1',
+    createdAt: '2026-10-17T00:00:00Z',
+    state: 'finished',
+    result: { summary: 'park', humanNeededActions: actions },
+  };
+  listRuns.mockResolvedValue([parked]);
+  expect(
+    (await getAuthoritativeQueueItems()).items[0].humanNeededActions,
+  ).toEqual(actions);
+  listRuns.mockResolvedValue([
+    parked,
+    {
+      ...parked,
+      runId: 'jlapenna/agent-lcars#42/r2',
+      createdAt: '2026-10-17T01:00:00Z',
+      state: 'running',
+      result: undefined,
+    },
+  ]);
+  expect(
+    (await getAuthoritativeQueueItems()).items[0].humanNeededActions,
+  ).toBeUndefined();
+  listRuns.mockRejectedValue(new Error('datastore temporarily unavailable'));
+  expect((await getAuthoritativeQueueItems()).items[0]).toMatchObject({
+    number: 42,
+    actionTypes: ['needs-human'],
   });
 });

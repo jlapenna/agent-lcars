@@ -16,7 +16,8 @@ import {
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
-import { deriveItemState } from '@agent-lcars/work/derive';
+import { itemViewSchema } from '@agent-lcars/work';
+import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1203,6 +1204,265 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(deriveItemState(task!.task, runs)).toBe('parked');
   });
 
+  it('persists a human-needed summary through authenticated completion and the Work read schema', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('human-summary'),
+      now: NOW,
+    });
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const { token, workId } = claimed.json as { token: string; workId: string };
+    const actions = [
+      { text: 'Inspect production', command: 'check --prod' },
+      { text: 'Reply with the result to resume.' },
+    ];
+    vi.stubEnv(
+      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
+      'https://summary.example.test/v1/chat/completions',
+    );
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({ actions }) } }],
+          }),
+        ),
+      ),
+    );
+    try {
+      const completed = await call(
+        { store, orchestrator, now, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        {
+          outcome: 'park',
+          message: 'Run `check --prod`, then reply with the result to resume.',
+          outcomeReference: null,
+        },
+      );
+      expect(completed.status).toBe(200);
+      const stored = await store.readRun(runId);
+      expect(stored?.result?.humanNeededActions).toEqual(actions);
+      const view = toItemView({
+        workId,
+        task: (await store.readTask({ workId }))!.task,
+        runs: await store.listRuns({ workId }),
+      });
+      expect(
+        itemViewSchema.parse(view).runs[0].result?.humanNeededActions,
+      ).toEqual(actions);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(['lease', 'startup'] as const)(
+    'skips optional summarization near the effective %s deadline and settles the original park',
+    async (deadlineKind) => {
+      const f = fixture();
+      const runId = await seedQueuedRun(f.store, f.orchestrator, {
+        workId: wid(`summary-near-${deadlineKind}`),
+        now: NOW,
+      });
+      const claimed = await call(
+        { ...f, ...context, principal: executorPrincipal(['claude']) },
+        'POST',
+        '/runs/claim',
+        { runner: 'runner-1' },
+      );
+      expect(claimed.status).toBe(200);
+      const { token } = claimed.json as { token: string };
+      const run = (await f.store.readRun(runId))!;
+      const versioned = (await f.store.readTask(run.task))!;
+      const deadline = new Date(f.now().getTime() + 4_000).toISOString();
+      await f.store.apply({
+        decision: {
+          task: versioned.task,
+          run: {
+            ...run,
+            ...(deadlineKind === 'lease'
+              ? { leaseExpiresAt: deadline }
+              : { queue: { ...run.queue!, startDeadlineAt: deadline } }),
+          },
+          outbox: [],
+        },
+        expectedRevision: versioned.revision,
+      });
+      vi.stubEnv(
+        'AGENT_LCARS_HANDOFF_SUMMARY_URL',
+        'https://summary.example.test',
+      );
+      vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
+      vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
+      const fetchSummary = vi.fn();
+      vi.stubGlobal('fetch', fetchSummary);
+      try {
+        const message = 'Grant access, then redispatch to resume.';
+        const completed = await call(
+          { ...f, ...context, bearerToken: token },
+          'POST',
+          runPath(runId, '/complete'),
+          { outcome: 'park', outcomeReference: null, message },
+        );
+        expect(completed.status).toBe(200);
+        expect(fetchSummary).not.toHaveBeenCalled();
+        const stored = await f.store.readRun(runId);
+        expect(stored?.state).toBe('finished');
+        expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
+      } finally {
+        vi.unstubAllGlobals();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
+  it('times out the optional provider before completion authority expires and settles the original park', async () => {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('summary-timeout'),
+      now: NOW,
+    });
+    const claimed = await call(
+      { ...f, ...context, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claimed.status).toBe(200);
+    const { token } = claimed.json as { token: string };
+    const run = (await f.store.readRun(runId))!;
+    // Only 40 ms are available for optional work, leaving 5 s for settlement.
+    const completionTime = Date.parse(runRecoveryDeadline(run)!) - 5_040;
+    f.setNow(new Date(completionTime).toISOString());
+    vi.stubEnv(
+      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
+      'https://summary.example.test',
+    );
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
+    const fetchSummary = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal!;
+          signal.addEventListener(
+            'abort',
+            () => {
+              f.setNow(new Date(completionTime + 40).toISOString());
+              reject(signal.reason);
+            },
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', fetchSummary);
+    try {
+      const message = 'Grant access, then redispatch to resume.';
+      const completed = await call(
+        { ...f, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        { outcome: 'park', outcomeReference: null, message },
+      );
+      expect(fetchSummary).toHaveBeenCalledOnce();
+      expect(completed.status).toBe(200);
+      const stored = await f.store.readRun(runId);
+      expect(stored?.state).toBe('finished');
+      expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  }, 2_000);
+
+  it('settles an oversized chunked provider response without persisting a summary', async () => {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('summary-oversized'),
+      now: NOW,
+    });
+    const claimed = await call(
+      { ...f, ...context, principal: executorPrincipal(['claude']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    expect(claimed.status).toBe(200);
+    const { token } = claimed.json as { token: string };
+    const cancel = vi.fn();
+    const encoded = new TextEncoder().encode(
+      JSON.stringify({
+        ignored: 'x'.repeat(70_000),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                actions: [
+                  { text: 'Grant access.' },
+                  { text: 'Redispatch to resume.' },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    let offset = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (offset === encoded.length) {
+            controller.close();
+            return;
+          }
+          const end = Math.min(encoded.length, offset + 1024);
+          controller.enqueue(encoded.subarray(offset, end));
+          offset = end;
+        },
+        cancel,
+      },
+      { highWaterMark: 0 },
+    );
+    vi.stubEnv(
+      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
+      'https://summary.example.test',
+    );
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body)));
+    try {
+      const message = 'Grant access, then redispatch to resume.';
+      const completed = await call(
+        { ...f, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        { outcome: 'park', outcomeReference: null, message },
+      );
+      expect(completed.status).toBe(200);
+      expect(cancel).toHaveBeenCalledOnce();
+      const stored = await f.store.readRun(runId);
+      expect(stored?.state).toBe('finished');
+      expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("carries the agent's final message onto the stored result", async () => {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
@@ -1309,6 +1569,101 @@ describe('claim -> brief -> heartbeat -> complete', () => {
       expect(deriveItemState(task!.task, runs)).toBe(state);
     },
   );
+});
+
+describe('report deliverable across a provider fallback', () => {
+  // The opt-in lives on the stored spec, not the run, so a fallback
+  // successor on another provider must still settle a report, never a PR.
+  it('settles the successor report done after the first provider hits its limit', async () => {
+    const store = new MemoryStore();
+    let instant = NOW;
+    const now = () => new Date(instant);
+    const orchestrator = new Orchestrator(
+      store,
+      { now: () => instant },
+      {
+        pipelines: ['opencode', 'claude'],
+        allowedPipelines: () => ['opencode', 'claude'],
+      },
+    );
+    const workId = wid('report-fallback');
+    const outcome = await orchestrator.request({
+      taskId: { workId },
+      requestId: workId,
+      pipeline: 'opencode',
+      providerFallback: {
+        principal: 'user:operator',
+        allowedPipelines: ['claude'],
+      },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 'Audit',
+          description: 'Read-only audit',
+          pipeline: 'opencode',
+          fallbackPipelines: ['claude'],
+          deliverable: 'report',
+          target: { repo: 'jlapenna/agent-lcars' },
+        },
+      },
+      params: { mode: 'implement' },
+    });
+    if ('refused' in outcome || outcome.run === undefined)
+      throw new Error('unexpected refusal seeding the report item');
+    await store.enqueueRun({ runId: outcome.run.runId, now: NOW });
+    await orchestrator.confirmDispatch(outcome.run.runId);
+    const ctx = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      principal: executorPrincipal(['opencode', 'claude']),
+    };
+
+    const first = await call(ctx, 'POST', '/runs/claim', { runner: 'r1' });
+    expect(first.status).toBe(200);
+    const firstClaim = first.json as { runId: string; token: string };
+    expect(firstClaim.runId).toBe(outcome.run.runId);
+    const limited = await call(
+      { ...ctx, bearerToken: firstClaim.token },
+      'POST',
+      runPath(firstClaim.runId, '/complete'),
+      {
+        outcome: 'provider-limit',
+        outcomeReference: null,
+        message: 'usage limit reached',
+      },
+    );
+    expect(limited.status).toBe(200);
+
+    const successor = await store.readActiveRun({ workId });
+    expect(successor?.pipeline).toBe('claude');
+    if (successor === undefined) throw new Error('missing fallback successor');
+    await store.enqueueRun({ runId: successor.runId, now: NOW });
+    instant = '2026-08-26T10:01:00.000Z';
+
+    const second = await call(ctx, 'POST', '/runs/claim', { runner: 'r2' });
+    expect(second.status).toBe(200);
+    const secondClaim = second.json as { runId: string; token: string };
+    expect(secondClaim.runId).toBe(successor.runId);
+    const reported = await call(
+      { ...ctx, bearerToken: secondClaim.token },
+      'POST',
+      runPath(secondClaim.runId, '/complete'),
+      { outcome: 'report', outcomeReference: null, message: '# Findings' },
+    );
+    expect(reported.status).toBe(200);
+
+    expect((await store.readRun(successor.runId))?.result).toMatchObject({
+      ok: true,
+      summary: 'report',
+      message: '# Findings',
+    });
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(runs.map((run) => run.pipeline)).toEqual(['opencode', 'claude']);
+    expect(deriveItemState(task!.task, runs)).toBe('done');
+  });
 });
 
 describe.each([

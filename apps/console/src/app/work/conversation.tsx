@@ -1,6 +1,7 @@
 import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Badge, Code, Group, Stack, Text } from '@mantine/core';
 
+import { HumanNeededSummary } from '../human-needed-summary';
 import { ProviderFallbackSummary } from './provider-fallback-summary';
 import { resultRefs } from './result-refs';
 import { safeHttpUrl } from './safe-url';
@@ -124,6 +125,9 @@ export function Conversation({
                 principal={humanPrincipal}
                 channel={humanChannel}
               />
+            )}
+            {run.result?.summary === 'park' && (
+              <HumanNeededSummary actions={run.result.humanNeededActions} />
             )}
             {run.result?.message !== undefined && (
               <AgentTurn

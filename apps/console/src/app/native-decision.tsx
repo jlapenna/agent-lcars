@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { DecisionWaiting } from './decision-waiting';
+import { HumanNeededSummary } from './human-needed-summary';
 import {
   nativeCardText,
   nativeCardTime,
@@ -150,6 +151,11 @@ export function NativeDecisionDetail({
             : work.state}{' '}
         · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
+      {work.state === 'parked' && (
+        <HumanNeededSummary
+          actions={work.runs.at(-1)?.result?.humanNeededActions}
+        />
+      )}
       {card.question ?? (
         <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {nativeCardText(card)}

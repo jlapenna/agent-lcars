@@ -1,3 +1,4 @@
+import type { HumanNeededActions } from '@agent-lcars/dispatch-contracts';
 import { parseTerminalQuickTaskBody } from '@agent-lcars/dispatch-contracts';
 import type { GithubAnchorProjection } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
@@ -47,6 +48,7 @@ export interface ActionItem {
   actionTypes: ActionType[];
   labels: string[];
   assigneeLogins: string[];
+  humanNeededActions?: HumanNeededActions;
   lastCommentBody?: string;
   lastCommentUrl?: string;
   lastCommentAuthor?: string;

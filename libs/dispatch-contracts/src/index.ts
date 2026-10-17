@@ -6,6 +6,10 @@
  */
 
 export {
+  type HumanNeededActions,
+  humanNeededActionsSchema,
+} from './human-needed-actions';
+export {
   formatAttemptId,
   formatClaimMarker,
   parseRunGeneration,

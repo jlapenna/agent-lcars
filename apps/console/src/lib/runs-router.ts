@@ -47,6 +47,7 @@ import type {
   DispatchTokenProvider,
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
+import { summarizeHumanNeeded } from './human-needed-summary';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
   readyDeliveryBinding,
@@ -1013,18 +1014,24 @@ export const runsRouter = os.router({
     const target = anchorTarget(run, task);
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
-    const result = toRunResult(
-      target.repo,
-      input.outcome,
-      input.outcomeReference,
-      input.message,
+    const result = await summarizeHumanNeeded(
+      toRunResult(
+        target.repo,
+        input.outcome,
+        input.outcomeReference,
+        input.message,
+        {
+          issue: target.issue,
+          mode: run.params?.mode,
+          report:
+            isWorkAnchor(run.task) &&
+            workPayloadSchema.safeParse(task?.work).data?.spec.deliverable ===
+              'report',
+        },
+      ),
       {
-        issue: target.issue,
-        mode: run.params?.mode,
-        report:
-          isWorkAnchor(run.task) &&
-          workPayloadSchema.safeParse(task?.work).data?.spec.deliverable ===
-            'report',
+        deadline: Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt),
+        now: context.now,
       },
     );
     const deliveryCorrection =

@@ -1,4 +1,5 @@
 import {
+  humanNeededActionsSchema,
   providerRoutingSchema,
   runPlacementSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -73,6 +74,8 @@ const runResultSchema = z.strictObject({
   /** The agent's final message for this round, e.g. its question when it
    *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
   message: z.string().max(16_384).optional(),
+  /** Optional LLM reading aid derived by Console from this parked message. */
+  humanNeededActions: humanNeededActionsSchema.optional(),
 });
 
 const deliveryBindingSchema = z.strictObject({

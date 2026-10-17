@@ -8,6 +8,7 @@ Use this index to retrieve the smallest current contract for a task.
 
 | Need                                                               | Canonical document                                                             |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| Human-needed handoff summaries and LLM configuration               | [`human-needed-summaries.md`](human-needed-summaries.md)                       |
 | Dispatch ownership and failure routing                             | [`lifecycle-systems.md`](lifecycle-systems.md)                                 |
 | Application/deployment/Homelab boundary                            | [`deployment-boundary.md`](deployment-boundary.md)                             |
 | Work API access and parked-item cleanup                            | [`../OPERATIONS.md`](../OPERATIONS.md)                                         |

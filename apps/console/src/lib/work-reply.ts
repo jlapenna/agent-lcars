@@ -226,6 +226,14 @@ export async function requestReply(
     return { ok: false, code: 'FORBIDDEN', message: forbidden };
 
   const activeRun = runs.find((run) => run.runId === task.task.activeRunId);
+  // Only settled execution with unfinished delivery is a false busy signal.
+  // Keep other derived-running barriers, including a lost run whose automatic
+  // retry budget remains, and let the transaction recheck live ownership.
+  const settledDeliveryWaiting =
+    task.task.activeRunId === undefined &&
+    latest?.state === 'finished' &&
+    task.task.delivery !== undefined &&
+    task.task.delivery.state !== 'complete';
   const replaceQueuedRunId =
     request.pipeline !== undefined &&
     activeRun?.queue?.state === 'queued' &&
@@ -235,7 +243,11 @@ export async function requestReply(
   // An explicit provider switch may replace queued work, but never an
   // executing conversation. The transaction rechecks this exact run and
   // its claim state so a concurrent executor or newer request wins safely.
-  if (state === 'running' && replaceQueuedRunId === undefined)
+  if (
+    state === 'running' &&
+    !settledDeliveryWaiting &&
+    replaceQueuedRunId === undefined
+  )
     return { ok: false, code: 'CONFLICT', message: 'task-busy' };
 
   // Cross-CLI resume is meaningless: a Codex thread cannot continue a
