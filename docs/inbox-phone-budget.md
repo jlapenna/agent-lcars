@@ -108,11 +108,13 @@ After qualifying CPU, memory, storage and overlap for the complete phase on one
 supported host, launch from its dedicated worktree. This example uses a 2 CPU,
 4 GiB, no-swap, 30-minute envelope; qualify it against that host's current
 capacity and required reserves before use. Use a unique unit name for each
-attempt and retain the unit's actual exit and accounting with the full artifact.
+attempt and retain the unit's actual exit and accounting with the full artifact:
+`--wait` prints them on exit, and `--collect` then unloads the unit so a failed
+attempt does not linger in `systemctl --failed`.
 
 ```sh
 node_bin="$(dirname "$(readlink -f "$(command -v node)")")"
-sudo systemd-run --unit=lcars-inbox-phone-UNIQUE \
+sudo systemd-run --unit=lcars-inbox-phone-UNIQUE --collect \
   --property="User=$(id -un)" --property=PrivateNetwork=yes \
   --property=CPUQuota=200% --property=MemoryMax=4G \
   --property=MemorySwapMax=0 --property=RuntimeMaxSec=1800 \
