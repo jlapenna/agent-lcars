@@ -517,6 +517,70 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_cached_streak_window_expires_at_scrape_time(self):
+        # homelab#2653 review: a cached streak must still age out of the
+        # window as the clock moves, with no database change or refresh.
+        repository = "jlapenna/homelab"
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        for i, (offset, conclusion) in enumerate(
+            ((0, "success"), (100, "failure"), (200, "cancelled"), (300, "failure")),
+            start=1,
+        ):
+            self.database.upsert_run(
+                repository,
+                workflow_run(
+                    id=i,
+                    conclusion=conclusion,
+                    created_at=(start + timedelta(seconds=offset)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                ),
+            )
+        created = start.timestamp()
+        window = exporter.CONSECUTIVE_FAILURE_WINDOW_SECONDS
+        collector = exporter.DatabaseMetrics(self.database)
+        with patch.object(exporter.time, "time", return_value=created + window):
+            collector.refresh()
+        registry = CollectorRegistry()
+        registry.register(collector)
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+
+        def scrape(elapsed):
+            with (
+                patch.object(
+                    self.database, "rows", side_effect=AssertionError("scrape ran SQL")
+                ),
+                patch.object(exporter.time, "time", return_value=created + elapsed),
+            ):
+                return generate_latest(registry).decode()
+
+        # The cutoff is inclusive: the success created exactly a window ago
+        # still bounds the streak.
+        at_cutoff = scrape(window)
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 2.0", at_cutoff
+        )
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures_complete{labels} 1.0",
+            at_cutoff,
+        )
+        success_expired = scrape(window + 50)
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 2.0", success_expired
+        )
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures_complete{labels} 0.0",
+            success_expired,
+        )
+        # The cancelled run neither counts nor breaks the streak.
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 1.0",
+            scrape(window + 250),
+        )
+        self.assertNotIn(
+            "github_actions_workflow_consecutive_failures{", scrape(window + 350)
+        )
+
     def test_consecutive_failures_without_a_stored_success_are_marked_incomplete(self):
         # A freshly backfilled database may hold only the tail of a longer
         # streak. The count is still reported (two observed failures are two
