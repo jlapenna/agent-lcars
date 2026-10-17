@@ -216,17 +216,46 @@ readiness before the supervisor starts its workload: validate the accounting
 paths/counters and record a successful baseline and first sample. Do not assume
 `io.stat` exists in a user cgroup. Identify and validate the supported required
 measurement before execution, or stop with a setup failure. Record the method,
-filesystem identities, observed paths, baseline, sample interval and stop limit;
-include owned outputs, temporary files and caches in the declared scope.
+filesystem identities, observed paths, baseline, sample interval, stop limit
+and the qualified per-sample cost; include owned outputs, temporary files and
+caches in the declared scope. Qualify a usable sample before the workload
+starts: a required sample must fit its own finite timeout on the selected
+paths, measured once against them. If a selected path cannot be observed
+within that bound, stop with the setup failure or use an existing supported
+facility; do not discover the overflow mid-phase.
 
 Before claiming cache or store isolation, query the actual paths with the
 pinned package manager in the worktree's command environment. An exported
-setting alone does not prove selection. Include the resulting paths in
-filesystem accounting; ordinary author setup may use the supported shared
-store. If a review requires an owned store, use supported explicit
-configuration and verify selection before installation. Record setup and
+setting alone does not prove selection. Filesystem accounting traverses
+only the consumer paths the phase actually selects, resolved with the
+package manager and phase tools — the store path `pnpm store path`
+reports, the cache directories the selected tools use, and the phase's
+owned outputs and temporary roots — rather than an unrelated cache
+ancestor or a store the phase never selects. Sampling a whole cache root
+such as a home `~/.cache` draws in unrelated applications and makes
+observer latency, CPU and time grow with total cache size instead of the
+workload. An exactly selected path may still be shared: the selected pnpm
+store can hold entries from other consumers, so selection bounds what the
+observer walks, not what that path can grow to. The finite per-sample
+qualification above is what contains that cost; a selected path that
+cannot be sampled within its own timeout is a setup failure or an
+existing supported facility, never a reason to widen the walk. Include
+the resulting paths in filesystem accounting; ordinary author setup may
+use the supported shared store. If a review requires an owned store, use
+supported explicit configuration and verify selection before installation.
+Record setup and
 observer exits separately: a postsetup assertion does not erase successful
 installation or justify reinstalling an unchanged worktree.
+
+Recorded case: in #2880 a `du --summarize` observer selected the shared
+pnpm store together with the whole home cache root; publication had
+exited 0 with the remote SHA verified when the sample exceeded its 40 s
+timeout, and the supervising phase then exited 1. The home cache root was
+the selection the phase never made; the selected shared store still
+needed the per-sample qualification above because other consumers can
+grow it. Keep the completed publication receipt and the failed observer
+receipt as separate records. #2520's setup made the same
+whole-cache-root selection and traversed unrelated paths.
 
 Propagate startup and later measurement failures to the supervisor. A required
 monitor exiting unexpectedly, including exit 0, fails the phase and stops only
@@ -240,14 +269,24 @@ Use the actual supervisor, with isolated accounting probes and inert children;
 do not replace it with a test implementation or add tests that mirror this text.
 
 A monitor inside the supervised unit is charged to the same memory limit as its
-workload, so size `MemoryMax` for both together. Keep the monitor's memory
-bounded and independent of cache size. Do not keep a set of every inode across
+workload, so size `MemoryMax` for both together. Charge the observer's CPU,
+memory and elapsed time to the complete declared phase when qualifying its
+envelope. Keep the monitor's memory and per-sample walk bounded and
+independent of cache size. Do not keep a set of every inode across
 shared pnpm, Go or other caches on each sample: that memory grows with the
 caches, not the workload. In homelab#2674, such a walker reached 1.6 GiB and
 was OOM-killed under 1–2 GiB caps. The caps were meant for the build, and the
-kills fired the controller's `MemcgOOMKill` alert. Run a large accounting walk
+kills fired the controller's `MemcgOOMKill` alert. Walk only the actual
+selected consumer paths, resolved as above: that keeps the walk off
+unrelated caches, and because a selected shared path can still grow from
+other consumers, the finite per-sample qualification above is what bounds
+its cost. Run a large accounting walk
 outside the workload's cgroup with its own limit, or bound it. A monitor kill
-fails the phase. It is not evidence about the workload's memory need.
+fails the phase. It is not evidence about the workload's memory need. When
+the phase explicitly requires a storage ceiling, retain the supported
+attributable allocation accounting or actual quota above; consumer-path
+selection with its per-sample qualification bounds observer cost and never
+relaxes that requirement.
 
 Shared filesystem free-byte samples measure net filesystem activity.
 Concurrent releases can mask an owned workload's allocation, so these samples
@@ -260,7 +299,10 @@ peak or enforce a hard disk quota; cumulative IO bytes differ from allocated
 disk growth.
 If a required guard failed, preserve that failure and distinguish any valid
 source/test/commit evidence from unproven resource enforcement. Do not rerun a
-completed operation to erase its original receipt.
+completed operation to erase its original receipt. When the guard fails after
+its workload already completed successfully, the failure still stands: keep
+the workload's valid completion evidence and the guard's numeric failure
+receipt as two records, and do not republish to reconcile them.
 
 ### Qualify the supervised child environment
 
