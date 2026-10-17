@@ -213,6 +213,25 @@ describe('declared native report (#2845 bridge to #2810 intent: report)', () => 
     }
   });
 
+  it('settles an opted-in item only as a report, park or no-op', () => {
+    expect(
+      toRunResult('octo/example', 'park', null, 'Blocked on access', report).ok,
+    ).toBe(true);
+    expect(
+      toRunResult('octo/example', 'no-op', null, undefined, report).ok,
+    ).toBe(true);
+    for (const [outcome, reference] of [
+      ['pull-request', { kind: 'pull-request', number: 12 }],
+      ['merged-deliverable', { kind: 'pull-request', number: 12 }],
+      ['unknown-success', null],
+    ] as const) {
+      expect(
+        toRunResult('octo/example', outcome, reference, '# Findings', report)
+          .ok,
+      ).toBe(false);
+    }
+  });
+
   it('refuses a blank or missing report message', () => {
     for (const message of [undefined, '', ' \n\t ', 42]) {
       expect(

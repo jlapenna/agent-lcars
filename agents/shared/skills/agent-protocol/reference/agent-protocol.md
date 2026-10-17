@@ -259,7 +259,9 @@ branch on the reference format:
   findings are the deliverable. Make no PR, commit or GitHub write; record
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` with the attempt claim in
   the same private outcome file, then end with the complete report (at most
-  16,000 characters) as the final response. The item settles done, not
+  16,384 characters; a longer one is refused, never truncated) as the final
+  response. Only a report, park or no-op settles such an item; a PR fails it.
+  The item settles done, not
   parked. Only the stored opt-in enables this; never infer it from the task
   text. It is a temporary bridge to the unified-dataflow design's
   `intent: report` (#2810), whose verification phase removes the field and

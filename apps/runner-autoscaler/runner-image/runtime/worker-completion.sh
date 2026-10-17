@@ -13,8 +13,27 @@ monotonic_seconds() {
   printf '%s\n' "${uptime%%.*}"
 }
 
+# A report's final message is its deliverable (#2845). It is usable only when
+# nonblank and at most 16384 UTF-16 code units: the Work API's own Zod/JS
+# string-length message contract, inclusive. Capture files are read within a
+# 65536-byte envelope (16384 BMP units need at most 49152 UTF-8 bytes); a
+# larger file already overflows, so it is refused rather than truncated.
+report_message_usable() {
+  [ -f "${1:-}" ] || return 1
+  node -e '
+const fs = require("fs");
+const file = process.argv[1];
+if (fs.statSync(file).size > 65536) process.exit(1);
+const text = fs.readFileSync(file, "utf8");
+process.exit(text.trim() !== "" && text.length <= 16384 ? 0 : 1);
+' "$1"
+}
+
+# The optional third argument names the round's final-message file. Given
+# one, a report record settles the round only with a usable message, so an
+# unusable report still earns the same-session correction.
 worker_completion_needed() {
-  local agent_exit="$1" deadline="$2" remaining probe_dir probe_exit
+  local agent_exit="$1" deadline="$2" message_file="${3:-}" remaining probe_dir probe_exit
   [ "$agent_exit" -eq 0 ] || return 1
   if worker_control_failed; then return 1; fi
   remaining=$((deadline - $(monotonic_seconds)))
@@ -25,7 +44,10 @@ worker_completion_needed() {
     for result in "${results[@]}"; do
       if printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
         "$result" "$ATTEMPT_ID" "$ATTEMPT_ID" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
-        return 1
+        if [ "$result" != report ] || [ -z "$message_file" ] ||
+          report_message_usable "$message_file"; then
+          return 1
+        fi
       fi
     done
   fi

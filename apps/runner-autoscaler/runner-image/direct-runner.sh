@@ -601,9 +601,9 @@ write. When the report is finished, write these two lines to
 <!-- agent-result:v1:report:$ATTEMPT_ID -->
 <!-- attempt-claim:$ATTEMPT_ID -->
 
-Then end with the complete report as your final response (at most 12000
-characters and under 16 KB): that response is the deliverable, and a
-longer one is refused.
+Then end with the complete report as your final response (at most 16384
+characters): that response is the deliverable, and a longer one is
+refused, never truncated.
 A finished report is not a park. Park only for a real blocker."
     # Only the last round's final message is kept, so a correction round must
     # repeat the report rather than acknowledge the record.
@@ -827,7 +827,7 @@ if [ "$PIPELINE" = "claude" ]; then
   run_claude_round "$AGENT_PROMPT" "${RESUME_FLAG[@]}"
   AGENT_EXIT=$?
   set -e
-  if worker_completion_needed "$AGENT_EXIT" "$CLAUDE_DEADLINE" && worker_authorize_correction; then
+  if worker_completion_needed "$AGENT_EXIT" "$CLAUDE_DEADLINE" "$LAST_MESSAGE_FILE" && worker_authorize_correction; then
     set +e
     run_claude_round "$WORKER_COMPLETION_PROMPT" --resume "$CLAUDE_WORKER_SESSION"
     AGENT_EXIT=$?
@@ -1016,7 +1016,7 @@ CURLCFG
     mapfile -t codex_threads < <(sort -u "$CODEX_THREAD_FILE")
     if [ "${#codex_threads[@]}" -eq 1 ]; then CODEX_CONTINUATION_SESSION="${codex_threads[0]}"; fi
   fi
-  if [ -n "$CODEX_CONTINUATION_SESSION" ] && [ ! -s "$CODEX_FAILURE_MESSAGES" ] && worker_completion_needed "$AGENT_EXIT" "$CODEX_DEADLINE" && worker_authorize_correction; then
+  if [ -n "$CODEX_CONTINUATION_SESSION" ] && [ ! -s "$CODEX_FAILURE_MESSAGES" ] && worker_completion_needed "$AGENT_EXIT" "$CODEX_DEADLINE" "$CODEX_LAST_MESSAGE_FILE" && worker_authorize_correction; then
     set +e
     run_codex_round "$WORKER_COMPLETION_PROMPT" resume "$CODEX_CONTINUATION_SESSION"
     AGENT_EXIT=$?
@@ -1331,14 +1331,13 @@ AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || 
 # message (#2537); they are never task or tool output, so quoted text in a
 # transcript cannot forge them.
 PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
-# A report's message is its deliverable: a blank one delivered nothing, and
-# one reaching the 16384-byte capture may already be cut (the tail above, or
-# OpenCode's extractor, which caps its head at the same size), so refuse it.
+# A report's message is its deliverable: send it whole, or refuse it when it
+# is blank or overflows the message contract (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
-  if [ -z "${AGENT_MESSAGE//[[:space:]]/}" ]; then
-    OUTCOME=no-deliverable
-  elif [ "$(wc -c < "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || echo 0)" -ge 16384 ]; then
-    echo "::error::Report final message reaches the 16384-byte capture; refusing a possibly truncated report" >&2
+  if report_message_usable "${LAST_MESSAGE_FILE:-}"; then
+    AGENT_MESSAGE="$(cat "$LAST_MESSAGE_FILE")"
+  else
+    echo "::error::Report final message is blank or exceeds 16384 characters; refusing it" >&2
     OUTCOME=no-deliverable
   fi
 fi

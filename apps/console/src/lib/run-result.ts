@@ -12,6 +12,12 @@ const OK_OUTCOMES: ReadonlySet<string> = new Set([
   'unknown-success',
 ]);
 
+const REPORT_ITEM_OUTCOMES: ReadonlySet<string> = new Set([
+  'report',
+  'park',
+  'no-op',
+]);
+
 type ArtifactReference = ReturnType<typeof outcomeReferenceSchema.parse>;
 interface ReferenceContext {
   /** Immutable GitHub anchor, absent for native work. */
@@ -82,13 +88,17 @@ export function toRunResult(
     typeof message === 'string' && message.length > 0
       ? message.slice(0, 16_384)
       : undefined;
-  // Temporary bridge to #2810's `intent: report`: success only for an item
-  // that opted in, with a nonblank message. Anything else is a failed round.
+  // Temporary bridge to #2810's `intent: report`: a report succeeds only for
+  // an item that opted in, with a nonblank message, and an opted-in
+  // read-only item succeeds only as a report, park or no-op -- never as a PR
+  // or other artifact. Anything else is a failed round.
   const ok =
     typeof outcome === 'string' &&
     OK_OUTCOMES.has(outcome) &&
-    (outcome !== 'report' ||
-      (context?.report === true && (finalMessage?.trim() ?? '') !== ''));
+    (context?.report === true
+      ? REPORT_ITEM_OUTCOMES.has(outcome) &&
+        (outcome !== 'report' || (finalMessage?.trim() ?? '') !== '')
+      : outcome !== 'report');
   return {
     ok,
     ...(summary === undefined ? {} : { summary }),

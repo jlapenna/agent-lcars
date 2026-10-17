@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+REAL_NODE="$(command -v node)"
+export REAL_NODE
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../../.." && pwd)"
@@ -716,6 +718,9 @@ FAKE
   # invalid for the requested-resume contract.
 cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
+# Inline programs (the report message-length check) are real logic, not a
+# sidecar to stub: run them on the host's own Node.
+if [ "${1:-}" = -e ]; then exec "$REAL_NODE" "$@"; fi
 echo "$@" >> "$NODE_ARGS_LOG"
 # The live polling sidecar is retired (docs/hooks-telemetry-design.md,
 # phase 3). Any `runner sidecar` call leaves a suite-wide marker that the
@@ -1880,21 +1885,38 @@ jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < 
   fail "opencode native report: report was not completed ($(cat "$COMPLETE_LOG"))"
 echo "scenario opencode-native-report: OK"
 
-# OpenCode's extractor caps the head at exactly the capture size, so a
-# message at that size is treated as possibly truncated.
+# The message contract is <=16384 JavaScript string units, inclusive, not
+# bytes: an exact-boundary ASCII report and a multi-byte CJK report settle
+# whole, while one supplementary character past the boundary is refused.
 export FAKE_OPENCODE_LAST_MESSAGE="# Title$(printf '%*s' 16377 '' | tr ' ' x)"
-run_scenario opencode-native-report-capped opencode
+run_scenario opencode-native-report-boundary opencode
 unset FAKE_OPENCODE_LAST_MESSAGE
-jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "opencode native report capped: a capped report settled ($(cat "$COMPLETE_LOG"))"
-echo "scenario opencode-native-report-capped: OK"
-export FAKE_CODEX_LAST_MESSAGE="x"
+jq -e '.outcome == "report" and (.message | length) == 16384 and (.message | startswith("# Title"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report boundary: an exact-limit report was refused or cut ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+echo "scenario opencode-native-report-boundary: OK"
 
 export FAKE_CODEX_LAST_MESSAGE=$' \n '
 run_scenario codex-native-report-blank codex
 jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report blank: a blank message settled a report ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-blank: OK"
+
+cjk="# 報告$(python3 -c 'print("監" * 5997, end="")')"
+export FAKE_CODEX_LAST_MESSAGE="$cjk"
+run_scenario codex-native-report-cjk codex
+jq -e --arg cjk "$cjk" '.outcome == "report" and .message == $cjk' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report cjk: a 6000-character, 18000-byte report was refused or cut"
+echo "scenario codex-native-report-cjk: OK"
+
+export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192, end="")')"
+run_scenario codex-native-report-surrogate-boundary codex
+jq -e '.outcome == "report" and (.message | length) == 8192' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report surrogate boundary: 16384 UTF-16 units were refused"
+export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192 + "x", end="")')"
+run_scenario codex-native-report-surrogate-overflow codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report surrogate overflow: 16385 UTF-16 units settled"
+echo "scenario codex-native-report-surrogate: OK"
 
 unset FAKE_SPEC_EXTRA
 export FAKE_CODEX_LAST_MESSAGE='# Audit findings'
@@ -2343,6 +2365,21 @@ for provider in claude codex opencode; do
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
   grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
 done
+
+# A report record whose message is unusable still earns the correction.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CLAUDE_TIMEOUT_SECONDS=5
+run_scenario claude-native-report-blank-correction claude
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_SPEC_EXTRA
+unset FAKE_CLOCK FAKE_WORKER_ELAPSED CLAUDE_TIMEOUT_SECONDS
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] ||
+  fail "claude native report blank: an unusable report skipped its correction round"
+grep -Fq 'repeat' "$CLAUDE_ARGS_LOG" ||
+  fail "claude native report blank: correction did not ask to repeat the report"
+jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "claude native report blank: a blank report settled ($(cat "$COMPLETE_LOG"))"
+echo "scenario claude-native-report-blank-correction: OK"
 
 export FAKE_GH_LOOKUP_FAIL=1
 run_scenario lookup-failure

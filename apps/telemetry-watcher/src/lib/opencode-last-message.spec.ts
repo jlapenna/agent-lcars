@@ -122,6 +122,24 @@ describe('extractLastAssistantText', () => {
     );
   });
 
+  it('keeps a whole maximal Work message in its UTF-8 envelope', () => {
+    // 16,384 JavaScript string units of three-byte text is 49,152 bytes.
+    const maximal = '監'.repeat(16_384);
+    const file = writeExport(
+      JSON.stringify({
+        info: { id: 'ses_1' },
+        messages: [
+          {
+            info: { role: 'assistant' },
+            parts: [{ type: 'text', text: maximal }],
+          },
+        ],
+      }),
+    );
+
+    expect(extractLastAssistantText(file)).toBe(maximal);
+  });
+
   it('supports an injected readFile for in-memory fixtures', () => {
     const readFile = (filePath: string) => {
       expect(filePath).toBe('virtual-path.json');
