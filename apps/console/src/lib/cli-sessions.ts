@@ -143,6 +143,10 @@ export interface CliSessionsResult {
  * A store-level failure (e.g. no telemetry infra reachable) degrades to an
  * empty list rather than crashing the dashboard.
  *
+ * `exhaustive` is for fleet readouts: use the wider owner window and the
+ * store maximum, restrict the query to CLI docs, and skip the render cap. A
+ * full store page is disclosed as incomplete, never reported as an exact count.
+ *
  * `repo` is for the anchor-owner query (`anchor-owner.ts`), where a session
  * missing from the list reads as "nobody is working this". It reads only
  * that repository's `source: 'cli'` docs, filtered in Firestore on the
@@ -158,10 +162,16 @@ export interface CliSessionsResult {
  */
 export async function getCliSessions({
   repo,
-}: { repo?: SessionRepository } = {}): Promise<CliSessionsResult> {
+  exhaustive = false,
+}: {
+  repo?: SessionRepository;
+  exhaustive?: boolean;
+} = {}): Promise<CliSessionsResult> {
   const now = new Date();
   const windowHours =
-    repo === undefined ? ACTIVE_WINDOW_HOURS : OWNER_WINDOW_HOURS;
+    repo === undefined && !exhaustive
+      ? ACTIVE_WINDOW_HOURS
+      : OWNER_WINDOW_HOURS;
   const activeSince = new Date(
     now.getTime() - windowHours * 60 * 60 * 1000,
   ).toISOString();
@@ -172,7 +182,17 @@ export async function getCliSessions({
     const firestore = await getAgentTelemetryReaderFirestore();
     let recentDocs: SessionDoc[];
     if (repo === undefined) {
-      recentDocs = await listSessionDocs(firestore, { activeSince });
+      recentDocs = await listSessionDocs(firestore, {
+        activeSince,
+        ...(exhaustive
+          ? { source: 'cli' as const, limit: MAX_LIST_LIMIT }
+          : {}),
+      });
+      if (exhaustive && recentDocs.length >= MAX_LIST_LIMIT) {
+        warnings.push(
+          `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+        );
+      }
     } else {
       const pages = await Promise.all(
         repoSpellings(repo).map((spelling) =>
@@ -216,7 +236,7 @@ export async function getCliSessions({
   const capped = [
     ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
     ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
-  ].slice(0, repo === undefined ? MAX_SESSIONS : undefined);
+  ].slice(0, repo === undefined && !exhaustive ? MAX_SESSIONS : undefined);
 
   const sessions = capped.map(([doc, session]) => {
     const pr = prFromDeliverables(doc);

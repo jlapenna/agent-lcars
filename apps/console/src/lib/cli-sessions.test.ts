@@ -61,6 +61,35 @@ describe('getCliSessions', () => {
     expect(cutoffAgeHours).toBeCloseTo(24, 1);
   });
 
+  it('reads uncapped CLI activity for fleet totals and discloses a full page', async () => {
+    (listSessionDocs as Mock).mockResolvedValue(
+      Array.from({ length: MAX_SESSIONS + 9 }, (_, index) =>
+        makeCliDoc({ sessionId: `s-${index}` }),
+      ),
+    );
+    const result = await getCliSessions({ exhaustive: true });
+    expect(result.sessions).toHaveLength(MAX_SESSIONS + 9);
+    expect(result.warnings).toEqual([]);
+    expect(listSessionDocs).toHaveBeenCalledWith(undefined, {
+      source: 'cli',
+      limit: MAX_LIST_LIMIT,
+      activeSince: expect.any(String),
+    });
+    const { activeSince } = (listSessionDocs as Mock).mock.calls[0][1];
+    expect((Date.now() - Date.parse(activeSince)) / 3_600_000).toBeCloseTo(
+      OWNER_WINDOW_HOURS,
+      1,
+    );
+    (listSessionDocs as Mock).mockResolvedValue(
+      Array.from({ length: MAX_LIST_LIMIT }, (_, index) =>
+        makeCliDoc({ sessionId: `s-${index}` }),
+      ),
+    );
+    expect((await getCliSessions({ exhaustive: true })).warnings).toEqual([
+      `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+    ]);
+  });
+
   it('does not infer a PR from any active session branch', async () => {
     (listSessionDocs as Mock).mockResolvedValue([
       makeCliDoc({ sessionId: 'session-a', branch: 'feat/alpha' }),

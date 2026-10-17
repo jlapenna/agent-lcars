@@ -226,7 +226,7 @@ async function IndexBody({
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
-    getCliSessions(),
+    getCliSessions({ exhaustive: true }),
     getRunnerSessionsByRunId(),
     getParkedWork(repoFilterKey, stoppedCursor),
     getNativeInboxEvidence(async () => {
@@ -388,6 +388,8 @@ async function IndexBody({
     fleetReadoutInput({
       activity,
       liveRuns: filteredActivity.liveRuns,
+      cliSessions:
+        cliSessionWarnings.length === 0 ? filteredCliSessions : undefined,
       repo: repoFilterKey,
       autoscaler,
       spendArchive,

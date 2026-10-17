@@ -1,6 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 
 import { getAutoscalerStatuses } from '../lib/autoscaler-status';
+import { getCliSessions } from '../lib/cli-sessions';
 import { getCachedAgentActivity } from '../lib/dashboard-data';
 import { repoKey } from '../lib/github-client';
 import {
@@ -39,23 +40,42 @@ export const SPEND_READ_FAILED =
 export async function loadFleetReadouts(
   repo?: string,
 ): Promise<{ readouts: ConsoleReadout[]; warnings: string[] }> {
-  const [{ data: activity }, autoscaler, spendArchive] = await Promise.all([
-    getCachedAgentActivity(),
-    getAutoscalerStatuses(),
-    getSessionArchive(parseSessionArchiveQuery({ days: '1', repo }), {
-      includeSpend: true,
-    }).catch((error: unknown) => {
-      logger.error('agent-lcars: spend readout unavailable:', error);
-      return undefined;
-    }),
-  ]);
+  const [{ data: activity }, autoscaler, spendArchive, cli] = await Promise.all(
+    [
+      getCachedAgentActivity(),
+      getAutoscalerStatuses(),
+      getSessionArchive(parseSessionArchiveQuery({ days: '1', repo }), {
+        includeSpend: true,
+      }).catch((error: unknown) => {
+        logger.error('agent-lcars: spend readout unavailable:', error);
+        return undefined;
+      }),
+      getCliSessions({ exhaustive: true }),
+    ],
+  );
   const liveRuns = repo
     ? activity.liveRuns.filter((run) => repoKey(run.repo) === repo)
     : activity.liveRuns;
   return {
     readouts: bridgeReadouts(
-      fleetReadoutInput({ activity, liveRuns, repo, autoscaler, spendArchive }),
+      fleetReadoutInput({
+        activity,
+        liveRuns,
+        repo,
+        autoscaler,
+        spendArchive,
+        cliSessions:
+          cli.warnings.length === 0
+            ? cli.sessions.filter(
+                (session) =>
+                  !repo || (session.repo && repoKey(session.repo) === repo),
+              )
+            : undefined,
+      }),
     ),
-    warnings: fleetReadoutWarnings({ activity, autoscaler, spendArchive }),
+    warnings: [
+      ...fleetReadoutWarnings({ activity, autoscaler, spendArchive }),
+      ...cli.warnings,
+    ],
   };
 }
