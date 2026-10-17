@@ -413,10 +413,26 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
       expired || Date.now() >= deadlineAt ? 'diagnostic-deadline' : stage;
     // Incomplete evidence never masquerades as a successful profile or sample.
   } finally {
+    let closeError;
+    const contextClosed = context?.close().catch((error) => {
+      closeError = error;
+    });
+    if (contextClosed) {
+      // Race context cleanup against the remaining diagnostic budget: a
+      // stalled renderer close must not outlive the diagnostic window into
+      // the whole-run timeout; outer browser cleanup still owns the browser.
+      let cleanupTimer;
+      const budget = new Promise((resolve) => {
+        cleanupTimer = setTimeout(
+          resolve,
+          Math.max(0, deadlineAt - Date.now()),
+        );
+      });
+      await Promise.race([contextClosed, budget]);
+      clearTimeout(cleanupTimer);
+    }
     clearTimeout(timer);
-    try {
-      await context?.close();
-    } catch {
+    if (closeError) {
       artifact.status = 'incomplete';
       artifact.failureStage = 'context-cleanup';
     }
