@@ -105,8 +105,9 @@ which reached about 5s per scrape at 130k runs and pushed scrapes past
 Prometheus's 10s timeout (homelab#2653), so the poll loop rebuilds a snapshot
 once per cycle and scrapes render it. Stored data only changes when the poller
 writes, so the snapshot is as fresh as the database; queue ages are still
-computed at scrape time. A snapshot query failure stops the process, as a
-failed scrape did before, rather than serving stale history silently.
+computed at scrape time. A snapshot query failure exits the process (Docker
+restarts it; a persistent failure shows as `up=0`, as a failed scrape did)
+rather than serving stale history silently.
 
 Point container healthchecks at `/healthz`, never at `/metrics`. prometheus_client
 serves the metrics payload on _every_ GET path for backwards compatibility, so a

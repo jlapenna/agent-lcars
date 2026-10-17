@@ -702,12 +702,22 @@ class GitHubActionsExporterTests(unittest.TestCase):
             patch.object(
                 self.database, "rows", side_effect=AssertionError("scrape ran SQL")
             ),
+            patch.object(
+                self.database,
+                "histogram_rows",
+                side_effect=AssertionError("scrape ran SQL"),
+            ),
             patch.object(exporter.time, "time", return_value=created_at + 100),
         ):
             first = generate_latest(registry).decode()
         with (
             patch.object(
                 self.database, "rows", side_effect=AssertionError("scrape ran SQL")
+            ),
+            patch.object(
+                self.database,
+                "histogram_rows",
+                side_effect=AssertionError("scrape ran SQL"),
             ),
             patch.object(exporter.time, "time", return_value=created_at + 160),
         ):
