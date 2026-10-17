@@ -44,12 +44,22 @@ authorization, never the direct `e2e-run` target.
 `HOME`, the Nx daemon and Nx dotenv auto-loading disabled, and an explicit
 allowlist. That list contains the build-time Firebase/Auth dummy values,
 Playwright's browser location, the safe suite-selection control (`E2E_GREP`),
-and the caller's
+the network-boundary control (`E2E_NETWORK_MODE`), and the caller's
 conventional Corepack and Firebase emulator cache paths. Keeping
 `COREPACK_HOME` and `FIREBASE_EMULATORS_PATH` at those two derived locations
 lets already installed package-manager and emulator distributions work offline
 without exposing the rest of the caller's home as process configuration;
 ambient cache overrides are not trusted.
+
+`E2E_NETWORK_MODE` accepts `host` (the unchanged default) or `loopback`. The
+`loopback` mode requires an existing Linux network namespace with only the
+loopback interface; it refuses before acquiring the host lock or starting
+tooling when that boundary is absent. The preflight receives only `PATH` and
+the selected mode in an empty environment, so ambient `NODE_OPTIONS` and
+provider credentials cannot configure it. The helper does not create a
+namespace or change host networking. Use the supported external
+`PrivateNetwork` launch in [the phone lab guide](inbox-phone-budget.md#hosts-with-unrelated-network-interface-turnover)
+to place the app, emulators, and browser in the same namespace.
 
 Playwright's browser cache is also derived from the caller's home using the
 platform default (`~/.cache/ms-playwright` on Linux,
