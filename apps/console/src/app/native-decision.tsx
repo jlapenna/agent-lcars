@@ -6,7 +6,11 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { DecisionWaiting } from './decision-waiting';
-import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
+import {
+  nativeCardText,
+  nativeCardTime,
+  type NativeDecisionCard,
+} from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
 import { replyAdmissionMessage } from './reply-admission-message';
@@ -26,11 +30,13 @@ export function NativeDecisionRow({
   onSnooze?: () => void;
 }) {
   const { work } = card;
+  const report = card.kind === 'report';
+  const reason = report ? 'report-ready' : 'needs-human';
   return (
     <div
       className="queue-item-row"
       data-selected={selected ? '' : undefined}
-      data-reason="needs-human"
+      data-reason={reason}
       data-testid={`queue-row-${work.id}`}
     >
       <Link
@@ -41,38 +47,42 @@ export function NativeDecisionRow({
         onClick={onNavigate}
       >
         <div className="queue-item-row__text">
-          <div className="ops-inbox__kind">
-            {actionTypeMeta('needs-human').label}
-          </div>
+          <div className="ops-inbox__kind">{actionTypeMeta(reason).label}</div>
           <span className="ops-inbox__title queue-item-row__title">
             {work.spec.title}
           </span>
           <span className="queue-item-row__question">
-            {nativeDecisionQuestion(work)}
+            {nativeCardText(card)}
           </span>
           <div className="ops-inbox__meta">
             <span className="ops-ref">
               {work.spec.target.repo} / {work.id}
             </span>
             <span>{work.spec.pipeline}</span>
-            <DecisionWaiting since={work.updatedAt} />
+            {report ? (
+              <span>
+                settled <RelativeTime iso={nativeCardTime(card)} />
+              </span>
+            ) : (
+              <DecisionWaiting since={work.updatedAt} />
+            )}
           </div>
         </div>
         <span
           className="ops-row-action queue-item-row__respond"
           aria-hidden="true"
         >
-          Respond
+          {report ? 'Read' : 'Respond'}
         </span>
       </Link>
       {onSnooze && (
         <Button
           variant="subtle"
           size="compact-xs"
-          aria-label={`Snooze ${work.spec.title}`}
+          aria-label={`${report ? 'Dismiss' : 'Snooze'} ${work.spec.title}`}
           onClick={onSnooze}
         >
-          Snooze
+          {report ? 'Dismiss' : 'Snooze'}
         </Button>
       )}
     </div>
@@ -133,12 +143,16 @@ export function NativeDecisionDetail({
         {work.spec.target.repo} / {work.id}
       </Text>
       <Text size="sm" c="dimmed">
-        {work.state === 'parked' ? 'Human needed' : work.state} ·{' '}
-        <RelativeTime iso={work.updatedAt} />
+        {work.state === 'parked'
+          ? 'Human needed'
+          : card.kind === 'report'
+            ? 'Report ready'
+            : work.state}{' '}
+        · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
       {card.question ?? (
         <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-          {nativeDecisionQuestion(work)}
+          {nativeCardText(card)}
         </Text>
       )}
       <Anchor component={Link} href={`/work/${work.anchor.workId}`}>
@@ -148,8 +162,14 @@ export function NativeDecisionDetail({
         <>
           <Textarea
             style={{ width: '100%' }}
-            label="Reply to the agent"
-            placeholder="Reply to the agent..."
+            label={
+              card.kind === 'report' ? 'Ask a follow-up' : 'Reply to the agent'
+            }
+            placeholder={
+              card.kind === 'report'
+                ? 'Ask about this report...'
+                : 'Reply to the agent...'
+            }
             value={text}
             onChange={(event) => setText(event.currentTarget.value)}
             autosize
@@ -163,7 +183,7 @@ export function NativeDecisionDetail({
             Reply
           </Button>
         </>
-      ) : work.state === 'parked' ? (
+      ) : work.state === 'parked' || card.kind === 'report' ? (
         <Text size="sm" c="dimmed">
           Reply requires a Work operator grant for this pipeline.
         </Text>

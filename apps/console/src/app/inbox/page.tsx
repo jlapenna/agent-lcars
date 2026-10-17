@@ -94,7 +94,7 @@ async function InboxBody({
     : undefined;
   const decisionCards = [
     ...queueView.yourQueue.map(toCard),
-    ...nativeCards.filter((card) => card.work.state === 'parked'),
+    ...nativeCards.filter((card) => card.queued),
   ].filter((card) => matchesFilter(inboxCardMetadata(card).repo));
 
   const dataAsOf = oldestFetchedAt(itemsFetchedAt, activityFetchedAt);

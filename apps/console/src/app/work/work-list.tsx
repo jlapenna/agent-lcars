@@ -90,9 +90,12 @@ function PriorityMark({ item }: { item: ItemView }) {
 }
 
 function StateMark({ item }: { item: ItemView }) {
+  // A done report has no PR or link to show; say what the result is.
+  const report =
+    item.state === 'done' && item.runs.at(-1)?.result?.summary === 'report';
   return (
     <span className="work-state" data-tone={STATE_TONE[item.state]}>
-      {item.state}
+      {report ? 'done · report' : item.state}
     </span>
   );
 }
