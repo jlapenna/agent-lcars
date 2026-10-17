@@ -59,6 +59,11 @@ const swcHelpersEsmInclude = path
 // holds. See build-workers.cjs for the order and the rejection rules (#2493).
 const buildWorkers = resolveConsoleBuildWorkers();
 
+// GitHub Actions sets CI=true; tools/e2e-local.sh normalizes it to CI=1 for
+// the hermetic E2E build. project.json's `ciBuild` input hashes this same
+// predicate, so CI and local outputs never share a cache entry.
+const ciBuild = ['1', 'true'].includes(process.env.CI ?? '');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -127,8 +132,8 @@ const nextConfig = {
     // output) and server source maps (37 MiB; .next/standalone, which deploys
     // and E2E serve, never carries them). Local builds keep both for
     // rebuild speed and debugging. Same change as Sprinkles' frontends.
-    turbopackFileSystemCacheForBuild: process.env.CI !== 'true',
-    turbopackSourceMaps: process.env.CI !== 'true',
+    turbopackFileSystemCacheForBuild: !ciBuild,
+    turbopackSourceMaps: !ciBuild,
     // Screenshot evidence accepts a 10 MiB file. Server Actions default to
     // 1 MiB; leave room for the multipart envelope and validated JSON intent.
     serverActions: { bodySizeLimit: '11mb' },

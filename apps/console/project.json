@@ -7,6 +7,11 @@
       {
         "runtime": "node -p \"JSON.stringify([process.platform, process.arch, process.versions.modules, process.platform === 'linux' ? process.report.getReport().header.glibcVersionRuntime || 'musl' : ''])\""
       }
+    ],
+    "ciBuild": [
+      {
+        "runtime": "node -p \"['1', 'true'].includes(process.env.CI || '')\""
+      }
     ]
   },
   "sourceRoot": "apps/console/src",
@@ -57,7 +62,7 @@
       "executor": "@nx/next:build",
       "outputs": ["{options.outputPath}/*"],
       "defaultConfiguration": "production",
-      "inputs": ["production", "^production", "nativePlatform"],
+      "inputs": ["production", "^production", "nativePlatform", "ciBuild"],
       "options": {
         "outputPath": "dist/apps/console",
         "tsConfig": "apps/console/tsconfig.json",
@@ -77,7 +82,7 @@
     "bundle": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
-      "inputs": ["production", "^production", "nativePlatform"],
+      "inputs": ["production", "^production", "nativePlatform", "ciBuild"],
       "options": {
         "commands": [
           "mkdir -p dist/apps/console/.next/standalone/dist/apps/console/.next dist/apps/console/.next/standalone/apps/console",
