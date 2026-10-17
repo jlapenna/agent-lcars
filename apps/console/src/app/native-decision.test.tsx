@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
+import { within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { inboxCardSignature, type NativeDecisionCard } from './inbox-card';
@@ -195,4 +196,42 @@ describe('native decision Reply', () => {
     );
     expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
   });
+});
+
+it('shows copyable command-first summary bullets beside the complete handoff, and hides them after resume', () => {
+  const actions = [
+    { text: 'Inspect the deployment.', command: 'check --production' },
+    { text: 'Send the output back to resume.' },
+  ];
+  const summarized: NativeDecisionCard = {
+    ...card,
+    work: {
+      ...card.work,
+      runs: [
+        {
+          ...card.work.runs[0],
+          result: { ...card.work.runs[0].result!, humanNeededActions: actions },
+        },
+      ],
+    },
+  };
+  const { rerender } = render(
+    <MantineProvider>
+      <NativeDecisionDetail card={summarized} />
+    </MantineProvider>,
+  );
+  const summary = screen.getByRole('region', { name: 'Human work summary' });
+  expect(within(summary).getAllByRole('listitem')).toHaveLength(2);
+  expect(within(summary).getByText('check --production')).toBeVisible();
+  expect(screen.getByText('Which storage should I use?')).toBeVisible();
+  rerender(
+    <MantineProvider>
+      <NativeDecisionDetail
+        card={{ ...summarized, work: { ...summarized.work, state: 'running' } }}
+      />
+    </MantineProvider>,
+  );
+  expect(
+    screen.queryByRole('region', { name: 'Human work summary' }),
+  ).toBeNull();
 });

@@ -41,6 +41,7 @@ import {
   replyToItem,
 } from './actions';
 import { githubIssueUrl } from './format';
+import { HumanNeededSummary } from './human-needed-summary';
 import { ItemOverflowMenu } from './item-overflow-menu';
 import {
   actionTypeMeta,
@@ -657,6 +658,9 @@ export function ActionItemCard({
           </Text>
         )}
 
+        {item.actionTypes.includes('needs-human') && (
+          <HumanNeededSummary actions={item.humanNeededActions} />
+        )}
         {item.lastCommentBody && item.lastCommentUrl && (
           <ExpandableMarkdown
             body={item.lastCommentBody}

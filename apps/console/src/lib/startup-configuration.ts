@@ -7,6 +7,7 @@ import {
   validateDeploymentIdentity,
 } from './deployment';
 import { createDispatchTokenProvider } from './github-app-tokens';
+import { handoffSummaryConfig } from './human-needed-summary';
 import { validateOutcomeWebhooks } from './outcome-webhook';
 import { parseWorkGrants } from './work-grants';
 
@@ -26,6 +27,7 @@ export function validateStartupConfiguration(): void {
   controlPlaneRepositories();
   parseWorkGrants(process.env['AGENT_LCARS_WORK_GRANTS']);
   validateOutcomeWebhooks();
+  handoffSummaryConfig();
 
   for (const name of [
     'AGENT_LCARS_APP_CLIENT_ID',
