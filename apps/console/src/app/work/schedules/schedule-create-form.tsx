@@ -117,7 +117,21 @@ export function ScheduleCreateForm({
         const [err] = await create({
           id,
           cron,
-          spec: { title, description, pipeline, priority, target: { repo } },
+          spec: {
+            ...initial?.spec,
+            ...(initial?.spec?.fallbackPipelines === undefined
+              ? {}
+              : {
+                  fallbackPipelines: initial.spec.fallbackPipelines.filter(
+                    (fallback) => fallback !== pipeline,
+                  ),
+                }),
+            title,
+            description,
+            pipeline,
+            priority,
+            target: { repo },
+          },
           enabled,
         });
         if (err) {
