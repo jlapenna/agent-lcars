@@ -3991,6 +3991,13 @@ td.costs-repo-spend__num {
   border-bottom: 0;
 }
 
+/* The row's text column truncates its title rather than widening the row
+   past a narrow phone. */
+.parked-work-row > .mantine-Stack-root {
+  min-width: 0;
+  flex: 1 1 12rem;
+}
+
 /* Action-first Bridge rows: the result or task action has a stable right
    edge on desktop, then becomes a full-width tap target on phones. */
 .operations-panel__intro {
