@@ -14,6 +14,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('ref-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Nx project partition for the two parallel Full verification shards
+  # (#2082). The console shard runs exactly these projects; the workspace
+  # shard runs every other project (`--all --exclude` of the same list), so
+  # together they run the one `test typecheck build test-race` task set the
+  # single job used to. Each shard keeps the lane's 2 CPU / 6 GiB envelope.
+  NX_CONSOLE_SHARD_PROJECTS: '@agent-lcars/console,@agent-lcars/console-e2e'
+
 jobs:
   terraform:
     name: repository-owned Terraform
@@ -93,8 +101,14 @@ jobs:
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$sha/bin/check-schedules.mjs"
           node "$RUNNER_TEMP/check-schedules.mjs" --list
 
+  # Full verification is two parallel jobs on the same lane and envelope
+  # (#2082). One serial job spent p50 14 / p90 19 min, about 4.5 min of it in
+  # contracts, 3.5-11 min in `nx run-many`, and 3 min in emulator/runtime
+  # smokes. Each shard runs one Nx project partition plus a balanced share of
+  # the non-Nx checks. Replaying 10-14..10-17 arrivals, a third shard queued
+  # behind lane capacity and lost p90, so keep two. `Verify` requires both.
   verify-full:
-    name: Full verification
+    name: Full verification (workspace)
     # Self-hosted for everything trusted (push to main, workflow_dispatch,
     # and a same-repo PR branch -- opening one already
     # requires write access to this repo); ubuntu-latest only for a
@@ -367,7 +381,7 @@ jobs:
       - name: Check circular dependencies
         run: pnpm lint:circular
 
-      - name: Test, typecheck, and build
+      - name: Test, typecheck, and build (all but the console partition)
         env:
           NODE_OPTIONS: --max-old-space-size=6144
           NX_MAX_PARALLEL: 2
@@ -379,7 +393,69 @@ jobs:
           # CGO_ENABLED='0' even now that gcc is actually installed).
           # Force it rather than trust the cached auto-detection.
           CGO_ENABLED: '1'
-        run: ./tools/nx run-many -t test typecheck build test-race --all --parallel=2
+        run: >-
+          ./tools/nx run-many -t test typecheck build test-race --all
+          --exclude="$NX_CONSOLE_SHARD_PROJECTS" --parallel=2
+
+      - name: Stop live CI log stream
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/ci-log-stream
+        with:
+          mode: stop
+
+  verify-full-console:
+    name: Full verification (console)
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-ci' }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Start live CI log stream
+        continue-on-error: true
+        uses: ./.github/actions/ci-log-stream
+        with:
+          mode: start
+          loki-url: ${{ vars.CI_LOG_LOKI_URL }}
+
+      - uses: ./.github/actions/setup-nx-remote-cache
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
+
+      # Nx's Go plugin reads apps/runner-autoscaler/go.mod to build the
+      # project graph even when this partition runs no Go task.
+      - name: Detect baked Go
+        id: go-tooling
+        shell: bash
+        run: |
+          expected_go_version="$(sed -nE 's/^go ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' apps/runner-autoscaler/go.mod)"
+          go_ready=false
+          if command -v go >/dev/null 2>&1 && \
+            [[ "$(go env GOVERSION)" == "go${expected_go_version}" ]]; then
+            go_ready=true
+          fi
+          echo "go_ready=$go_ready" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v7
+        if: steps.go-tooling.outputs.go_ready != 'true'
+        with:
+          go-version-file: apps/runner-autoscaler/go.mod
+          cache-dependency-path: apps/runner-autoscaler/go.mod
+          cache: false
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - name: Test, typecheck, and build (console partition)
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+          NX_MAX_PARALLEL: 2
+        run: >-
+          ./tools/nx run-many -t test typecheck build test-race
+          --projects="$NX_CONSOLE_SHARD_PROJECTS" --parallel=2
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
       # emulator; ubuntu-latest (the fork-PR carve-out above) still
@@ -444,7 +520,7 @@ jobs:
   # draft. A draft success cannot survive readiness as unearned full proof.
   verify:
     name: Verify
-    needs: [verify-full, runner-labels, schedules]
+    needs: [verify-full, verify-full-console, runner-labels, schedules]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -452,11 +528,18 @@ jobs:
       - name: Require full verification
         env:
           VERIFY_FULL_RESULT: ${{ needs.verify-full.result }}
+          VERIFY_FULL_CONSOLE_RESULT: ${{ needs.verify-full-console.result }}
         run: |
+          status=0
           if [ "$VERIFY_FULL_RESULT" != 'success' ]; then
-            echo "::error::Full verification concluded '$VERIFY_FULL_RESULT'."
-            exit 1
+            echo "::error::Full verification (workspace) concluded '$VERIFY_FULL_RESULT'."
+            status=1
           fi
+          if [ "$VERIFY_FULL_CONSOLE_RESULT" != 'success' ]; then
+            echo "::error::Full verification (console) concluded '$VERIFY_FULL_CONSOLE_RESULT'."
+            status=1
+          fi
+          exit "$status"
 
       - name: Require valid runner label combinations
         env:

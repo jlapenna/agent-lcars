@@ -121,7 +121,7 @@ emits nothing subscribable, so keep at most a daily `schedule` backstop plus
 
 ## Live CI logs
 
-The internal `ci-log-stream` action makes the long `Full verification` job
+The internal `ci-log-stream` action makes the long `Full verification` jobs
 observable before GitHub publishes its completed log archive. On trusted fleet
 runners it tails the runner's already-secret-masked rotating page logs and
 pushes them directly to Loki; GitHub-hosted fork jobs cleanly no-op.
