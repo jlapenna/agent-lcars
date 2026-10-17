@@ -44,9 +44,10 @@ Both `agent-lcars` installation `150568943` and `agent-lcars-autoscaler`
 installation `154210710` use "All repositories" on jlapenna. Each App's own
 installation token observed 35 repositories, including `labels`, on 2026-10-12;
 the temporary tokens were revoked. The maintainer confirmed that scope. The
-model now lists 37: `herdr-overview` (created 2026-10-14) and
+model now lists 38: `herdr-overview` (created 2026-10-14) and
 `herdr-auto-title` (a fork created 2026-10-15) were each reconciled from the
-`FleetIamContractDrift` alert on 2026-10-15.
+`FleetIamContractDrift` alert on 2026-10-15, and `server` (a fork created
+2026-10-16) on 2026-10-16.
 The complete observed lists remain in the IAM model, so a newly created
 repository still produces a change for the monitoring owner to reconcile.
 
