@@ -637,3 +637,9 @@ you did not actually manage to set.
 [`index.md`](index.md#13-cross-repo-credential-agent-optioncross-repo).
 Read it only when your dispatch brief reports `crossRepo: true`, or a task
 needs you to read a watched repository other than your anchor's own.
+
+## 14. Homelab host facts (`lcars investigate`)
+
+**Situational** — moved to
+[`index.md`](index.md#14-homelab-host-facts-lcars-investigate).
+Read it when your anchor needs a Homelab host fact you cannot observe.
