@@ -627,12 +627,15 @@ test.describe('responsive decision inbox', () => {
 
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(10);
+    await expect(choices).toHaveCount(11);
     await expect(
       page.getByRole('menuitem', { name: 'All reasons' }),
     ).toHaveAttribute('aria-current', 'true');
     await expect(
       page.getByRole('menuitem', { name: 'Ready for agent' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('menuitem', { name: 'Report ready' }),
     ).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(filter).toBeFocused();
