@@ -476,15 +476,29 @@ monitor; do not retain the implementation executor solely waiting for them.
 The authenticated finalizer verifies the exact marker, head, ready state,
 protected target and squash arming before accepting this waiting handoff. It
 settles execution through normal credential cleanup and positive physical
-retirement. Already merged initial handoffs still require independent exact-head
-GitHub review, resolved threads and exact protected landing before acceptance.
-Only when the authoritative read proves the run's own exact attempt-marked,
-ready, open PR in its target repository, with an established protected target
-policy, that merely has no auto-merge arm yet (for example, a repository
-workflow arms it after the executor exits) does an initial pull-request result
-settle without durable delivery ownership. Every other refusal, unreadable
-evidence, non-squash arm, unqualified merged PR, correction and
-merged-deliverable claim fails closed.
+retirement. Already merged initial handoffs with independent exact-head GitHub
+review, resolved threads and exact protected landing follow the normal delivery
+path. Two narrow exceptions settle an initial ordinary pull-request result
+without durable delivery ownership. Both require authoritative reads proving the
+run's own exact attempt-marked, ready PR in its stored target repository with an
+established protected target policy:
+
+- The PR is open and merely has no auto-merge arm yet (for example, a repository
+  workflow arms it after the executor exits).
+- The PR already merged without independent approval, but exact protected merge
+  proof shows actively enforced, passing `pull_request` and
+  `required_status_checks` evaluations, an unchanged authoritative reread and no
+  unresolved threads or changes requested.
+
+These are initial-result settlement exceptions, not a review bypass before
+publication or arming, and do not change ordinary independently reviewed merged
+handoffs. Unreadable or malformed evidence, wrong identities, markers or target,
+failed or missing protection, and non-squash arms remain refused. These exceptions
+never admit corrections, foreign delivery ownership, or merged-deliverable claims;
+those require the normal fully qualified delivery binding. The semantic owners are
+[`readyDeliveryBinding`](../../../../../apps/console/src/lib/ready-delivery.ts)
+and the initial-result fence in
+[`runs-router.ts`](../../../../../apps/console/src/lib/runs-router.ts).
 Without the advertised capability, continue the existing delivery path. The
 baked runner propagates only the serving Console’s version into the brief;
 repository content cannot enable it.
