@@ -221,6 +221,16 @@ failure must terminate the owned child while an unrelated witness stays alive.
 Use the actual supervisor, with isolated accounting probes and inert children;
 do not replace it with a test implementation or add tests that mirror this text.
 
+A monitor inside the supervised unit is charged to the same memory limit as its
+workload, so size `MemoryMax` for both together. Keep the monitor's memory
+bounded and independent of cache size. Do not keep a set of every inode across
+shared pnpm, Go or other caches on each sample: that memory grows with the
+caches, not the workload. In homelab#2674, such a walker reached 1.6 GiB and
+was OOM-killed under 1–2 GiB caps. The caps were meant for the build, and the
+kills fired the controller's `MemcgOOMKill` alert. Run a large accounting walk
+outside the workload's cgroup with its own limit, or bound it. A monitor kill
+fails the phase. It is not evidence about the workload's memory need.
+
 Shared filesystem free-byte samples measure net filesystem activity.
 Concurrent releases can mask an owned workload's allocation, so these samples
 cannot alone enforce or prove its storage ceiling. If a phase requires that
