@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 
 import {
   decidedRun,
-  isLive,
   isRefusal,
   isWorkAnchor,
   type OperationalIntervention,
@@ -227,12 +226,14 @@ export async function requestReply(
     return { ok: false, code: 'FORBIDDEN', message: forbidden };
 
   const activeRun = runs.find((run) => run.runId === task.task.activeRunId);
-  // Mirror the orchestrator's atomic guard (`requestRun` in `decide.ts`): only a
-  // *live* run holds the lock. `deriveItemState` reports `running` for a
-  // finished run whose delivery is still `waiting`, but that settlement leaves
-  // no live run -- an authenticated reply must reach the transaction, which
-  // admits it while the delivery stays untouched.
-  const liveActiveRun = activeRun !== undefined && isLive(activeRun.state);
+  // Only settled execution with unfinished delivery is a false busy signal.
+  // Keep other derived-running barriers, including a lost run whose automatic
+  // retry budget remains, and let the transaction recheck live ownership.
+  const settledDeliveryWaiting =
+    task.task.activeRunId === undefined &&
+    latest?.state === 'finished' &&
+    task.task.delivery !== undefined &&
+    task.task.delivery.state !== 'complete';
   const replaceQueuedRunId =
     request.pipeline !== undefined &&
     activeRun?.queue?.state === 'queued' &&
@@ -242,7 +243,11 @@ export async function requestReply(
   // An explicit provider switch may replace queued work, but never an
   // executing conversation. The transaction rechecks this exact run and
   // its claim state so a concurrent executor or newer request wins safely.
-  if (liveActiveRun && replaceQueuedRunId === undefined)
+  if (
+    state === 'running' &&
+    !settledDeliveryWaiting &&
+    replaceQueuedRunId === undefined
+  )
     return { ok: false, code: 'CONFLICT', message: 'task-busy' };
 
   // Cross-CLI resume is meaningless: a Codex thread cannot continue a

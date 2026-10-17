@@ -480,6 +480,7 @@ describe('requestReply', () => {
     });
     const admitted = await store.readActiveRun(ANCHOR);
     expect(admitted?.runId).toBe(`${REPO}#42/r2`);
+    expect(admitted?.pipeline).toBe('opencode');
     // The exact human turn is preserved and ordinary OpenCode resume is chosen.
     expect(admitted?.params).toMatchObject({
       mode: 'reply',
@@ -489,17 +490,19 @@ describe('requestReply', () => {
       replyRef:
         'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
       resumeSessionId: 'sess-oc-1',
+      resumeTranscriptGcsUri: 'gs://b/runs/r1/opencode/sess-oc-1.export.json',
     });
     // The immutable Work is untouched and the waiting delivery is carried
     // forward -- the reply must neither rewrite Work nor forge a fresh delivery.
     expect((await store.readTask(ANCHOR))?.task.work).toEqual(first.task.work);
+    expect((await store.readRun(run.runId))?.delivery).toEqual(delivery);
     expect((await store.readTask(ANCHOR))?.task.delivery).toMatchObject({
       state: 'waiting',
       runId: run.runId,
     });
   });
 
-  it('still refuses a reply while an actual claimed run of the same provider is executing', async () => {
+  it('still refuses a reply while a same-provider queued run is live', async () => {
     const { store, orchestrator, context } = fixture();
     const first = await orchestrator.request({
       taskId: ANCHOR,
