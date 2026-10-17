@@ -242,9 +242,12 @@ async function SessionsBody({
         </Group>
         <div data-testid="sessions-archive-content">
           {view === 'by-issue' ? (
-            <IssueGroupedSessions groups={groupSessionsByIssue(rows)} />
+            <IssueGroupedSessions
+              groups={groupSessionsByIssue(rows)}
+              find={filters.q}
+            />
           ) : (
-            <SessionTable rows={rows} />
+            <SessionTable rows={rows} find={filters.q} />
           )}
         </div>
       </Card>

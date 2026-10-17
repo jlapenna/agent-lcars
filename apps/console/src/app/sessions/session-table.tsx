@@ -33,6 +33,24 @@ import { SessionStatusLine } from '../session-status-line';
  * shows, re-laid-out rather than truncated. Both branches render
  * unconditionally (CSS media queries via Mantine's visibleFrom/hiddenFrom).
  */
+/** The table keeps a session on one row: its latest PRs, the rest counted.
+ * A long-running CLI session can reference dozens; its page lists them all. */
+const TABLE_PR_LIMIT = 3;
+
+/** The latest PRs, plus any the active FIND matched, so a search for an
+ * older PR still shows the link it matched. */
+function tablePrs<T extends { number: number }>(
+  prs: readonly T[],
+  find: string | undefined,
+): T[] {
+  const q = find?.toLowerCase();
+  return prs.filter(
+    (pr, i) =>
+      i >= prs.length - TABLE_PR_LIMIT ||
+      (q !== undefined && q !== '' && `#${pr.number}`.includes(q)),
+  );
+}
+
 function SessionCard({ row }: { row: SessionRow }) {
   const latestPr = row.prUrls.at(-1);
   const earlierPrCount = Math.max(0, row.prUrls.length - 1);
@@ -197,8 +215,11 @@ function SessionRef({ row }: { row: SessionRow }) {
 export function SessionTable({
   rows,
   fixedColumns = false,
+  find,
 }: {
   rows: SessionRow[];
+  /** The active FIND, so a matched older PR stays among the shown links. */
+  find?: string;
   /** The by-issue view's group tables: fixed shared columns that fit the
    * panel rather than scrolling, so one header strip aligns with all. */
   fixedColumns?: boolean;
@@ -300,7 +321,7 @@ export function SessionTable({
                   </span>
                   {row.prUrls.length > 0 && (
                     <Group gap={6} wrap="wrap" className="session-prs">
-                      {row.prUrls.map((pr) => (
+                      {tablePrs(row.prUrls, find).map((pr) => (
                         <Anchor
                           key={pr.number}
                           href={pr.url}
@@ -311,6 +332,15 @@ export function SessionTable({
                           PR #{pr.number}
                         </Anchor>
                       ))}
+                      {row.prUrls.length >
+                        tablePrs(row.prUrls, find).length && (
+                        <Text span size="xs" c="dimmed">
+                          +
+                          {row.prUrls.length -
+                            tablePrs(row.prUrls, find).length}{' '}
+                          earlier
+                        </Text>
+                      )}
                     </Group>
                   )}
                 </TableTd>

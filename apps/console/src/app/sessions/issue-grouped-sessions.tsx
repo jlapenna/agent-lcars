@@ -70,8 +70,11 @@ function GroupHeading({ group }: { group: IssueSessionGroup }) {
  */
 export function IssueGroupedSessions({
   groups,
+  find,
 }: {
   groups: IssueSessionGroup[];
+  /** The active FIND, passed to each group's table. */
+  find?: string;
 }) {
   if (groups.length === 0) {
     return (
@@ -118,12 +121,12 @@ export function IssueGroupedSessions({
               <NoIssueSessionGroup
                 sessionCount={<SessionCountLabel group={group} />}
               >
-                <SessionTable rows={group.sessions} fixedColumns />
+                <SessionTable rows={group.sessions} fixedColumns find={find} />
               </NoIssueSessionGroup>
             ) : (
               <>
                 <GroupHeading group={group} />
-                <SessionTable rows={group.sessions} fixedColumns />
+                <SessionTable rows={group.sessions} fixedColumns find={find} />
               </>
             )}
           </Stack>
