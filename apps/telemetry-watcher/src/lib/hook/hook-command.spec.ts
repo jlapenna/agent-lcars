@@ -643,6 +643,10 @@ describe('Codex child publication ownership (#2669)', () => {
       2,
       0,
       {
+        ...input[3],
+        payload: { ...input[3].payload, thread_id: parentId },
+      },
+      {
         type: 'event_msg',
         timestamp: input[0].timestamp,
         payload: {
@@ -818,6 +822,57 @@ describe('Codex child publication ownership (#2669)', () => {
         'skipped-subagent',
       );
       expect(spooledEvents(home)).toEqual([]);
+      expect(d.spawnFlusher).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    ['independent', 'forked'].flatMap((kind) =>
+      [parentId, undefined].flatMap((threadId) =>
+        ['before usage', 'after usage', 'after publication'].map(
+          (position) => ({
+            kind,
+            threadId,
+            position,
+          }),
+        ),
+      ),
+    ),
+  )(
+    'refuses mixed $kind usage ($threadId) $position',
+    async ({ kind, threadId, position }) => {
+      const home = tempHome();
+      const input = rows();
+      if (kind === 'independent') {
+        delete input[0].payload.forked_from_id;
+        input.splice(1, 2);
+      }
+      const usageIndex = input.findIndex(
+        (row) => row.type === 'token_usage_record',
+      );
+      const mixedUsage = structuredClone(input[usageIndex]);
+      if (threadId) mixedUsage.payload.thread_id = threadId;
+      else delete mixedUsage.payload.thread_id;
+      input.splice(
+        position === 'before usage'
+          ? usageIndex
+          : position === 'after usage'
+            ? usageIndex + 1
+            : input.length,
+        0,
+        mixedUsage,
+      );
+      const d = childDeps(home, input, 'SubagentStop');
+      expect((await executeHookCommand(['codex'], d)).action).toBe(
+        'skipped-subagent',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+      expect(
+        readHookSessionState(path.join(home, STATE_DIR), childId),
+      ).toBeUndefined();
+      expect(
+        readHookSessionState(path.join(home, STATE_DIR), parentId),
+      ).toBeUndefined();
       expect(d.spawnFlusher).not.toHaveBeenCalled();
     },
   );

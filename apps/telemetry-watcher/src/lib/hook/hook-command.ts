@@ -338,10 +338,8 @@ function reduceCodexChildTranscript(
         payload.thread_id !== sessionId
       )
         return undefined;
-      if (
-        row?.type === 'token_usage_record' &&
-        payload?.thread_id === sessionId
-      ) {
+      if (row?.type === 'token_usage_record') {
+        if (payload?.thread_id !== sessionId) return undefined;
         const total = payload?.thread_token_usage;
         const input = total?.input_tokens;
         const output = total?.output_tokens;
