@@ -578,7 +578,7 @@ export function QuickTaskDialog({
           )}
           <Checkbox
             label="Read-only report"
-            description="The agent changes nothing; its final message is the result."
+            description="Asks for findings, not changes; the final message is the result."
             checked={readOnlyReport}
             onChange={(e) => setReadOnlyReport(e.currentTarget.checked)}
           />
