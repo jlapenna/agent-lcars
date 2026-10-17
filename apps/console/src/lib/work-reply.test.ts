@@ -6,6 +6,7 @@ import {
   Orchestrator,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
+import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkContext } from './work-mint';
@@ -401,6 +402,132 @@ describe('requestReply', () => {
       reply: 'Use Firestore.',
       replyChannel: 'github',
       replyPrincipal: 'github:jlapenna',
+    });
+  });
+
+  it('admits an authorized OpenCode reply after a settled OpenCode run whose PR delivery is still waiting', async () => {
+    const { store, orchestrator, context } = fixture({
+      principal: { ...operator, pipelines: ['codex', 'opencode'] },
+      sessionDocsForRuns: async () => [
+        sessionDoc({
+          sessionId: 'sess-oc-1',
+          agent: 'opencode',
+          intentId: RUN_1,
+          transcriptGcsUri: 'gs://b/runs/r1/opencode/sess-oc-1.jsonl',
+          resumeGcsUri: 'gs://b/runs/r1/opencode/sess-oc-1.export.json',
+        }),
+      ],
+    });
+    // #2890's shape: the immutable Work was opened as Codex, but the current
+    // routing -- and the newest run -- is OpenCode. `requestRun` never rechecks
+    // a run's pipeline against the immutable spec, so this is the honest state.
+    const first = await orchestrator.request({
+      taskId: ANCHOR,
+      requestId: 'first',
+      pipeline: 'opencode',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec: { ...spec, pipeline: 'codex' },
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const run = decidedRun(first);
+    // Finish successfully with no `park` summary: the run settled and its
+    // `activeRunId` cleared, but the PR it opened has not merged, so the
+    // delivery binding stays `waiting` -- which still derives item `running`.
+    await orchestrator.report(run.runId, { ok: true });
+    const settled = await store.readTask(ANCHOR);
+    if (settled === undefined) throw new Error('settled task missing');
+    expect(settled.task.activeRunId).toBeUndefined();
+
+    const delivery = {
+      runId: run.runId,
+      repo: REPO,
+      number: 42,
+      baseRef: 'main',
+      head: '0'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: NOW,
+    };
+    await store.apply({
+      expectedRevision: settled.revision,
+      decision: {
+        task: { ...settled.task, delivery },
+        run: { ...(await store.readRun(run.runId))!, delivery },
+        outbox: [],
+      },
+    });
+    expect(
+      deriveItemState(
+        { ...settled.task, delivery },
+        await store.listRuns(ANCHOR),
+      ),
+    ).toBe('running');
+
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text: 'Also cover the merged follow-up.',
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
+    });
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      resumed: true,
+      runId: `${REPO}#42/r2`,
+    });
+    const admitted = await store.readActiveRun(ANCHOR);
+    expect(admitted?.runId).toBe(`${REPO}#42/r2`);
+    expect(admitted?.pipeline).toBe('opencode');
+    // The exact human turn is preserved and ordinary OpenCode resume is chosen.
+    expect(admitted?.params).toMatchObject({
+      mode: 'reply',
+      reply: 'Also cover the merged follow-up.',
+      replyChannel: 'github',
+      replyPrincipal: 'github:jlapenna',
+      replyRef:
+        'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
+      resumeSessionId: 'sess-oc-1',
+      resumeTranscriptGcsUri: 'gs://b/runs/r1/opencode/sess-oc-1.export.json',
+    });
+    // The immutable Work is untouched and the waiting delivery is carried
+    // forward -- the reply must neither rewrite Work nor forge a fresh delivery.
+    expect((await store.readTask(ANCHOR))?.task.work).toEqual(first.task.work);
+    expect((await store.readRun(run.runId))?.delivery).toEqual(delivery);
+    expect((await store.readTask(ANCHOR))?.task.delivery).toMatchObject({
+      state: 'waiting',
+      runId: run.runId,
+    });
+  });
+
+  it('still refuses a reply while a same-provider queued run is live', async () => {
+    const { store, orchestrator, context } = fixture();
+    const first = await orchestrator.request({
+      taskId: ANCHOR,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec,
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const old = decidedRun(first);
+    await store.enqueueRun({ runId: old.runId, now: NOW });
+    await orchestrator.confirmDispatch(old.runId);
+    expect(
+      await requestReply(context, {
+        task: ANCHOR,
+        text: 'Continue now.',
+        channel: 'github',
+        principal: 'github:jlapenna',
+        ref: 'comment-busy-1',
+      }),
+    ).toMatchObject({ ok: false, code: 'CONFLICT', message: 'task-busy' });
+    expect(await store.readActiveRun(ANCHOR)).toMatchObject({
+      runId: old.runId,
     });
   });
 
