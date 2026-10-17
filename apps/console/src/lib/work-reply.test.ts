@@ -6,6 +6,7 @@ import {
   Orchestrator,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
+import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkContext } from './work-mint';
@@ -401,6 +402,73 @@ describe('requestReply', () => {
       reply: 'Use Firestore.',
       replyChannel: 'github',
       replyPrincipal: 'github:jlapenna',
+    });
+  });
+
+  it('admits an authenticated reply once the run finished, even while its delivery is still waiting', async () => {
+    const { store, orchestrator, context } = fixture();
+    const first = await orchestrator.request({
+      taskId: ANCHOR,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: {
+        origin: { principal: 'github:jlapenna', channel: 'github' },
+        spec,
+      },
+    });
+    if (isRefusal(first)) throw new Error(first.reason);
+    const run = decidedRun(first);
+    // Finish successfully with no `park` summary: this is #2890's measured
+    // state -- the run settled, `activeRunId` cleared, but the PR it opened has
+    // not merged, so the delivery binding is frozen at `waiting`.
+    await orchestrator.report(run.runId, { ok: true });
+    const settled = await store.readTask(ANCHOR);
+    if (settled === undefined) throw new Error('settled task missing');
+    expect(settled.task.activeRunId).toBeUndefined();
+
+    const delivery = {
+      runId: run.runId,
+      repo: REPO,
+      number: 42,
+      baseRef: 'main',
+      head: '0'.repeat(40),
+      state: 'waiting' as const,
+      runtimeGate: 'none' as const,
+      observedAt: NOW,
+    };
+    await store.apply({
+      expectedRevision: settled.revision,
+      decision: {
+        task: { ...settled.task, delivery },
+        run: { ...(await store.readRun(run.runId))!, delivery },
+        outbox: [],
+      },
+    });
+
+    const runs = await store.listRuns(ANCHOR);
+    expect(deriveItemState({ ...settled.task, delivery }, runs)).toBe(
+      'running',
+    );
+
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text: 'Also cover the merged follow-up.',
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
+    });
+
+    expect(outcome).toMatchObject({ ok: true, runId: `${REPO}#42/r2` });
+    const admitted = await store.readActiveRun(ANCHOR);
+    expect(admitted?.runId).toBe(`${REPO}#42/r2`);
+    expect(admitted?.params).toMatchObject({
+      mode: 'reply',
+      replyPrincipal: 'github:jlapenna',
+    });
+    // Carried forward, never reset: the reply must not forge a fresh delivery.
+    expect((await store.readTask(ANCHOR))?.task.delivery).toMatchObject({
+      state: 'waiting',
+      runId: run.runId,
     });
   });
 
