@@ -43,8 +43,8 @@ describe('required verification proof across draft readiness', () => {
         .map((step) => step.run?.replace(/\s+/gu, ' ').trim() ?? '')
         .filter((run) => run.includes('nx run-many -t test'));
     const targets = './tools/nx run-many -t test typecheck build test-race';
-    expect(workflow.env.NX_CONSOLE_SHARD_PROJECTS).toMatch(
-      /@agent-lcars\/console/u,
+    expect(workflow.env.NX_CONSOLE_SHARD_PROJECTS).toBe(
+      '@agent-lcars/console,@agent-lcars/console-e2e',
     );
     expect(runMany('verify-full')).toEqual([
       `${targets} --all --exclude="$NX_CONSOLE_SHARD_PROJECTS" --parallel=2`,
