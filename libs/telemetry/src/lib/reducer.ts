@@ -1,3 +1,4 @@
+import { ClaudeBackgroundPublications } from './claude-background-publication';
 import {
   findDeliverables,
   findQualifiedPRs,
@@ -48,7 +49,11 @@ interface SessionState {
   result?: SessionResult;
   // Bash tool_use id -> command, so a later tool_result can be checked
   // against isDeliverableCommand before its output is scanned.
-  pendingBashCommands: Map<string, string>;
+  pendingBashCommands: Map<
+    string,
+    { command: string; assistantUuid?: string; isSidechain: boolean }
+  >;
+  backgroundPublications: ClaudeBackgroundPublications;
 }
 
 function createState(sessionId: string, host?: string): SessionState {
@@ -71,6 +76,7 @@ function createState(sessionId: string, host?: string): SessionState {
     prNumbers: new Set(),
     commitShas: new Set(),
     pendingBashCommands: new Map(),
+    backgroundPublications: new ClaudeBackgroundPublications(sessionId),
   };
 }
 
@@ -91,6 +97,7 @@ function applyMessage(
   message: Record<string, unknown>,
   isSidechain: boolean,
   timestamp: string | undefined,
+  raw: Record<string, unknown>,
 ) {
   const role = asString(message['role']);
   const model = asString(message['model']);
@@ -119,18 +126,45 @@ function applyMessage(
 
       if (blockType === 'tool_result') {
         const toolUseId = asString(record['tool_use_id']);
-        const command = toolUseId && state.pendingBashCommands.get(toolUseId);
+        const pending = toolUseId && state.pendingBashCommands.get(toolUseId);
+        let command = pending && pending.command;
+        let output = record['content'];
         if (toolUseId) state.pendingBashCommands.delete(toolUseId);
+        if (
+          command &&
+          pending &&
+          toolUseId &&
+          !pending.isSidechain &&
+          !isSidechain
+        ) {
+          if (
+            isDeliverableCommand(command) &&
+            state.backgroundPublications.start(
+              raw,
+              toolUseId,
+              command,
+              pending.assistantUuid,
+            )
+          )
+            continue;
+          const completed = state.backgroundPublications.finish(
+            raw,
+            command,
+            record,
+            pending.assistantUuid,
+          );
+          if (completed) ({ command, output } = completed);
+        }
         if (command && isDeliverableCommand(command)) {
-          const found = findDeliverables(record['content']);
+          const found = findDeliverables(output);
           if (record['is_error'] !== true)
-            for (const pr of findQualifiedPRs(record['content']))
+            for (const pr of findQualifiedPRs(output))
               state.publicationCandidates.set(
                 `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
                 pr,
               );
           if (record['is_error'] !== true && isPRPublicationCommand(command))
-            for (const pr of findQualifiedPRs(record['content']))
+            for (const pr of findQualifiedPRs(output))
               state.qualifiedPRs.set(
                 `${pr.repo.owner}/${pr.repo.name}#${pr.number}`,
                 pr,
@@ -191,7 +225,12 @@ function applyMessage(
         const input = asRecord(record['input']);
         const command = input && asString(input['command']);
         if (id && command) {
-          state.pendingBashCommands.set(id, command);
+          state.pendingBashCommands.set(id, {
+            command,
+            assistantUuid:
+              raw['type'] === 'assistant' ? asString(raw['uuid']) : undefined,
+            isSidechain,
+          });
         }
       }
     }
@@ -203,6 +242,7 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
   applyTimestamp(state, timestamp);
 
   const isSidechain = asBoolean(raw['isSidechain']) ?? false;
+  state.backgroundPublications.observe(raw);
   if (
     raw['type'] === 'bridge-session' &&
     !isSidechain &&
@@ -271,7 +311,7 @@ function applyLine(state: SessionState, raw: Record<string, unknown>) {
 
   const message = asRecord(raw['message']);
   if (message) {
-    applyMessage(state, message, isSidechain, timestamp);
+    applyMessage(state, message, isSidechain, timestamp, raw);
   }
 }
 
