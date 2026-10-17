@@ -23,8 +23,10 @@ discard useful delivery to replay the dated smokes recorded below.
   human's or another agent's claim. An empty queue is not a reason to invent work.
 - Choose the deliverable honestly: default PR delivery for an implementation,
   and `deliverable: report` only when the outcome is findings rather than a
-  change. A report item settles `done` on the worker's final message and must
-  not be forced into a PR.
+  change. A report item settles only on its private
+  `<!-- agent-result:v1:report:$ATTEMPT_ID -->` outcome record **and** the complete
+  final findings (at most 16,384 characters; oversize is refused, not truncated) —
+  a final message alone is insufficient, and a PR fails a report item.
 - Preserve provider choice, owner/collision checks, the pipeline's supported job
   sizing and priority, and every operational approval boundary. Choose the
   pipeline the work needs; do not raise priority or invent oversized jobs.
@@ -54,12 +56,13 @@ successful dispatch or a worker exit alone does not prove the work was delivered
 | Admission                      | `PUT /items/{id}` returns `201` with the item view and `runs[0].runId` = `work:<id>/r1`; state reaches `running` once the authoritative drain dispatches                                                                                                                                                               |
 | Provider execution             | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required.                                                                          |
 | PR publication (native `done`) | the run settles `state: done` with a `pull-request` result summary and `result.ref` = the PR URL, and the fleet-login PR references `Work: work:<id>`. This records the PR was **published** — independently of whether it ever merged.                                                                                |
-| Protected landing              | observe required CI and the protected merge **on the PR itself** (its checks, `deliveryBinding.state` reaching `complete`, and the merge commit). Native `state: done` does not imply this step happened; the item can be `done` while the PR is still open or failing checks.                                         |
+| Protected landing              | observe required CI and the protected merge **on the PR itself** — the required checks going green and the merge commit landing on the base branch. Native `state: done` does not imply this step happened; the item can be `done` while the PR is still open or failing checks.                                       |
 | Report completion              | a `deliverable: report` item settles only on the private `<!-- agent-result:v1:report:$ATTEMPT_ID -->` outcome record **and** the complete final findings in the same round (at most 16,384 characters; a longer one is refused, never truncated). A bare final message is insufficient, and a PR fails a report item. |
 
 So on the PR path read `state: done` + `result.ref` as "PR published," then watch
 required CI and the protected merge on the PR itself; on the report path read the
 report record plus full findings as "delivered," with nothing to land.
+
 `POST /items/{id}/cancel` after the item is `done` returns `409`.
 
 ## 1. Create the item
