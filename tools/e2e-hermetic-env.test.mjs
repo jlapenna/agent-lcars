@@ -80,6 +80,12 @@ test('an unsupported network mode refuses before acquiring the host lock or star
     path.join(os.tmpdir(), 'lcars-e2e-network-'),
   );
   const lock = path.join(directory, 'must-not-be-acquired');
+  const preload = path.join(directory, 'must-not-load.cjs');
+  const witness = path.join(directory, 'preload-ran');
+  fs.writeFileSync(
+    preload,
+    `require('node:fs').writeFileSync(${JSON.stringify(witness)}, 'loaded');`,
+  );
   try {
     const result = spawnSync(e2eLocal, [], {
       cwd: root,
@@ -88,11 +94,13 @@ test('an unsupported network mode refuses before acquiring the host lock or star
         ...process.env,
         E2E_NETWORK_MODE: 'unsupported',
         E2E_LOCAL_LOCK_FILE: lock,
+        NODE_OPTIONS: `--require=${preload}`,
       },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.match(result.stderr, /E2E_NETWORK_MODE must be host or loopback/u);
     assert.equal(fs.existsSync(lock), false);
+    assert.equal(fs.existsSync(witness), false);
     assert.equal(result.stdout, '');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

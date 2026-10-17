@@ -80,7 +80,8 @@ fi
 # The caller creates the namespace for this whole process tree, never just
 # Chromium: the app, emulators and browser must share its loopback interface.
 if [ "${E2E_NETWORK_MODE:-host}" != "host" ]; then
-  node "$ROOT/tools/e2e/check-network.mjs"
+  env -i "PATH=$PATH" "E2E_NETWORK_MODE=$E2E_NETWORK_MODE" \
+    node "$ROOT/tools/e2e/check-network.mjs"
 fi
 
 # Take a non-blocking host-level lock before touching any port or starting
