@@ -7309,3 +7309,335 @@ describe('reply recovery preserves incomplete delivery output requirements', () 
     );
   });
 });
+
+/** The #2520 decision table (budget split, bound, fences) is unit-tested in
+ *  `orchestrator.spec.ts`. This loop owns what nothing else does: the
+ *  executor's exact `disruption` attestation surviving the production JSON
+ *  HTTP boundary -- the percent-encoded native run id, `contract.ts`'s strict
+ *  exit schema, and `runs-router.ts`'s forwarding of `input.disruption` into
+ *  `executorExited` -- and landing in real `FirestoreStore` records, settling
+ *  exactly once even when a restarted runner replays or races its own report.
+ *  A route that dropped the `disruption` field on the floor (the exact
+ *  regression this guards) would keep every orchestrator unit test green
+ *  while every attested preemption here degraded to a charged ordinary loss. */
+for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
+  describe.skipIf(
+    backend === 'FirestoreStore' &&
+      process.env.FIRESTORE_EMULATOR_HOST === undefined,
+  )(`${backend}: scheduler-disruption recovery at the exit route`, () => {
+    const PREEMPTED_AT = '2026-08-26T10:03:00.000Z';
+    const RECOVERY_NOTE =
+      'scheduler preemption before provider start (job job-uid-1, pod pod-uid-1)';
+    const evidence = (at: string, jobUid = 'job-uid-1') => ({
+      kind: 'scheduler-preemption' as const,
+      jobUid,
+      podUid: 'pod-uid-1',
+      observedAt: at,
+    });
+
+    function backendFixture(label: string) {
+      const options = {
+        projectId: 'demo-orchestrator',
+        databaseId: '(default)',
+        collectionPrefix: `disruption-${label}-${crypto.randomUUID()}-`,
+        emulatorHost: process.env.FIRESTORE_EMULATOR_HOST!,
+      };
+      const store: OrchestratorStore =
+        backend === 'MemoryStore'
+          ? new MemoryStore()
+          : new FirestoreStore(options);
+      let now = NOW;
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      return {
+        store,
+        orchestrator,
+        /** Reading the settled state back through a second store client
+         *  proves the committed decision is the persisted record, not
+         *  whatever the routing call happened to hold in memory. */
+        reopened: () =>
+          backend === 'MemoryStore' ? store : new FirestoreStore(options),
+        now: () => new Date(now),
+        setNow: (next: string) => {
+          now = next;
+        },
+        ctx: (extra: Record<string, unknown> = {}) => ({
+          store,
+          orchestrator,
+          now: () => new Date(now),
+          ...context,
+          principal: executorPrincipal(['opencode']),
+          ...extra,
+        }),
+      };
+    }
+
+    /** Seeds a native OpenCode Work run and claims it through the real
+     *  `claim` route, so the disruption report carries exactly the binding
+     *  the executor actually holds. */
+    async function claimedNativeRun(
+      f: ReturnType<typeof backendFixture>,
+      label: string,
+      placementAware = false,
+    ) {
+      const workId = wid(`disruption-${label}`);
+      const runId = await seedQueuedRun(f.store, f.orchestrator, {
+        workId,
+        pipeline: 'opencode',
+        now: NOW,
+        params: { mode: 'implement', context: 'scheduler-disruption fixture' },
+      });
+      const claimed = await call(
+        f.ctx(),
+        'POST',
+        '/runs/claim',
+        placementAware
+          ? { runner: 'runner-1', placementAware: true }
+          : { runner: 'runner-1' },
+      );
+      expect(claimed.status).toBe(200);
+      const { runId: claimedRunId, token } = claimed.json as {
+        runId: string;
+        token: string;
+      };
+      expect(claimedRunId).toBe(runId);
+      return { workId, runId, token, claimFingerprint: hashRunToken(token) };
+    }
+
+    /** Reads the committed loss, task budget, and successor out of the
+     *  reopened store: attested recoveries leave a note, charge
+     *  `schedulerDisruptions` only, and never touch `consecutiveLost`;
+     *  anything else is the ordinary counted loss. */
+    async function settledLoss(
+      f: ReturnType<typeof backendFixture>,
+      claim: { workId: string; runId: string },
+    ) {
+      const fresh = f.reopened();
+      const run = (await fresh.readRun(claim.runId))!;
+      const task = (await fresh.readTask({ workId: claim.workId }))!.task;
+      const runs = await fresh.listRuns(run.task);
+      const successor = runs.find((r) => r.requestId === `retry:${run.runId}`);
+      return { fresh, run, task, runs, successor };
+    }
+
+    async function pendingDispatchEntries(
+      f: ReturnType<typeof backendFixture>,
+      fresh: OrchestratorStore,
+      runId: string,
+    ) {
+      f.setNow('2026-08-26T12:00:00.000Z');
+      const leased = await fresh.claimPendingOutbox({
+        limit: 25,
+        now: '2026-08-26T12:00:00.000Z',
+        leaseExpiresAt: '2026-08-26T13:00:00.000Z',
+      });
+      return leased.filter(
+        (entry) => entry.kind === 'dispatch-run' && entry.runId === runId,
+      );
+    }
+
+    it('recovers a placement-attested preemption through real HTTP into persisted state', async () => {
+      const f = backendFixture('recover');
+      const claim = await claimedNativeRun(f, 'recover', true);
+      f.setNow('2026-08-26T10:10:00.000Z');
+      expect(
+        (
+          await call(
+            f.ctx(),
+            'POST',
+            runPath(claim.runId, '/startup-placement'),
+            {
+              runner: 'runner-1',
+              claimFingerprint: claim.claimFingerprint,
+              jobUid: 'job-uid-1',
+              observedAt: '2026-08-26T10:10:00.000Z',
+              placed: true,
+            },
+          )
+        ).status,
+      ).toBe(200);
+
+      f.setNow('2026-08-26T10:11:00.000Z');
+      const exit = await call(f.ctx(), 'POST', runPath(claim.runId, '/exit'), {
+        runner: 'runner-1',
+        claimFingerprint: claim.claimFingerprint,
+        disruption: evidence('2026-08-26T10:11:00.000Z'),
+      });
+      expect(exit).toEqual({
+        status: 200,
+        json: { runId: claim.runId, state: 'lost' },
+      });
+
+      const { fresh, run, task, runs, successor } = await settledLoss(f, claim);
+      expect(run.state).toBe('lost');
+      expect(run.events.filter((event) => event.to === 'lost')).toEqual([
+        expect.objectContaining({
+          to: 'lost',
+          by: 'executor',
+          note: RECOVERY_NOTE,
+        }),
+      ]);
+      // The whole point of #2520 through the boundary that carries it: an
+      // attested preemption charges the scheduler budget, not execution.
+      expect(task).toMatchObject({
+        consecutiveLost: 0,
+        schedulerDisruptions: 1,
+      });
+      expect(runs).toHaveLength(2);
+      expect(successor).toMatchObject({
+        requestSource: 'auto-retry',
+        pipeline: 'opencode',
+        params: { mode: 'implement', context: 'scheduler-disruption fixture' },
+      });
+      expect(successor!.task).toEqual(run.task);
+      expect(
+        await pendingDispatchEntries(f, fresh, successor!.runId),
+      ).toHaveLength(1);
+    });
+
+    it('charges one disruption exactly once across a raced and replayed report', async () => {
+      const f = backendFixture('once');
+      const claim = await claimedNativeRun(f, 'once');
+      f.setNow(PREEMPTED_AT);
+      const body = {
+        runner: 'runner-1',
+        claimFingerprint: claim.claimFingerprint,
+        disruption: evidence(PREEMPTED_AT),
+      };
+      const lostAnswer = {
+        status: 200,
+        json: { runId: claim.runId, state: 'lost' },
+      };
+      const raced = await Promise.all(
+        [0, 1, 2].map(() =>
+          call(f.ctx(), 'POST', runPath(claim.runId, '/exit'), body),
+        ),
+      );
+      expect(raced).toEqual([lostAnswer, lostAnswer, lostAnswer]);
+      // A restarted runner re-reading its own ledger and re-reporting the
+      // same attestation is answered, not double-charged.
+      expect(
+        await call(f.ctx(), 'POST', runPath(claim.runId, '/exit'), body),
+      ).toEqual(lostAnswer);
+
+      const { fresh, run, task, runs, successor } = await settledLoss(f, claim);
+      expect(run.events.filter((event) => event.to === 'lost')).toHaveLength(1);
+      expect(task).toMatchObject({
+        consecutiveLost: 0,
+        schedulerDisruptions: 1,
+      });
+      expect(runs.filter((r) => r.requestId.startsWith('retry:'))).toHaveLength(
+        1,
+      );
+      expect(
+        await pendingDispatchEntries(f, fresh, successor!.runId),
+      ).toHaveLength(1);
+    });
+
+    it('refuses a disrupted exit under the wrong claim fingerprint without touching state', async () => {
+      const f = backendFixture('fingerprint');
+      const claim = await claimedNativeRun(f, 'fingerprint');
+      f.setNow(PREEMPTED_AT);
+      const before = await f.store.readRun(claim.runId);
+
+      const response = await call(
+        f.ctx(),
+        'POST',
+        runPath(claim.runId, '/exit'),
+        {
+          runner: 'runner-1',
+          claimFingerprint: hashRunToken(mintRunToken()),
+          disruption: evidence(PREEMPTED_AT),
+        },
+      );
+
+      expect(response.status).toBe(403);
+      const fresh = f.reopened();
+      expect(await fresh.readRun(claim.runId)).toEqual(before);
+      const task = (await fresh.readTask({ workId: claim.workId }))!.task;
+      expect(task.consecutiveLost).toBe(0);
+      expect(task.schedulerDisruptions ?? 0).toBe(0);
+      expect(await fresh.listRuns({ workId: claim.workId })).toHaveLength(1);
+    });
+
+    /** The fences keep recovery provider-honest: once the provider process
+     *  was seen starting, or the attestation names a Job the placement
+     *  observer never recorded, the loss is ordinary -- counted -- and only
+     *  retried on the execution budget. */
+    async function expectOrdinaryLoss(
+      f: ReturnType<typeof backendFixture>,
+      claim: { workId: string; runId: string; claimFingerprint: string },
+      disruption: ReturnType<typeof evidence>,
+    ) {
+      const exit = await call(f.ctx(), 'POST', runPath(claim.runId, '/exit'), {
+        runner: 'runner-1',
+        claimFingerprint: claim.claimFingerprint,
+        disruption,
+      });
+      expect(exit).toEqual({
+        status: 200,
+        json: { runId: claim.runId, state: 'lost' },
+      });
+      const { run, task, successor } = await settledLoss(f, claim);
+      expect(run.events.at(-1)).toMatchObject({ to: 'lost', by: 'executor' });
+      expect(run.events.at(-1)!.note).toBeUndefined();
+      expect(task).toMatchObject({ consecutiveLost: 1 });
+      expect(task.schedulerDisruptions ?? 0).toBe(0);
+      expect(successor).toBeDefined();
+    }
+
+    it('charges an attested preemption as ordinary loss once the provider process started', async () => {
+      const f = backendFixture('provider-start');
+      const claim = await claimedNativeRun(f, 'provider-start');
+      f.setNow('2026-08-26T10:01:00.000Z');
+      expect(
+        (
+          await call(
+            {
+              store: f.store,
+              orchestrator: f.orchestrator,
+              now: f.now,
+              ...context,
+              bearerToken: claim.token,
+            },
+            'POST',
+            runPath(claim.runId, '/heartbeat'),
+            { providerProcessStarted: true },
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (await f.store.readRun(claim.runId))!.queue?.providerProcessStartedAt,
+      ).toBe('2026-08-26T10:01:00.000Z');
+      f.setNow(PREEMPTED_AT);
+      await expectOrdinaryLoss(f, claim, evidence(PREEMPTED_AT));
+    });
+
+    it('charges an attestation naming a Job the placement observer never recorded', async () => {
+      const f = backendFixture('job-uid');
+      const claim = await claimedNativeRun(f, 'job-uid', true);
+      f.setNow('2026-08-26T10:10:00.000Z');
+      expect(
+        (
+          await call(
+            f.ctx(),
+            'POST',
+            runPath(claim.runId, '/startup-placement'),
+            {
+              runner: 'runner-1',
+              claimFingerprint: claim.claimFingerprint,
+              jobUid: 'job-uid-1',
+              observedAt: '2026-08-26T10:10:00.000Z',
+              placed: true,
+            },
+          )
+        ).status,
+      ).toBe(200);
+      f.setNow('2026-08-26T10:11:00.000Z');
+      await expectOrdinaryLoss(
+        f,
+        claim,
+        evidence('2026-08-26T10:11:00.000Z', 'job-uid-999'),
+      );
+    });
+  });
+}
