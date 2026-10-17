@@ -87,6 +87,35 @@ RUN groupadd -g 1002 runner \
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
 
+# The seeded pnpm store and metadata cache, pinned in pnpm's global config the
+# same way as the JIT runner image (see its Dockerfile for why neither
+# PNPM_STORE_DIR nor a project .npmrc is honored). pnpm hard-links from this
+# lower layer only when the checkout is on the same filesystem, so the
+# agent-lcars-e2e lane keeps /home/runner/_work in the container's writable
+# layer rather than a separate emptyDir (homelab deploy_k3s.yml); with
+# overlayfs metacopy those links copy up metadata only. On a separate mount
+# pnpm still reuses the seed but copies package files.
+#
+# These layers sit before every step that changes with package.json, and the
+# destination's ancestors get fixed mtimes, because BuildKit writes ancestor
+# directory headers into each COPY layer: otherwise an unchanged ~1.6 GiB seed
+# gets a new digest and is stored again on every publish (the JIT image's
+# 2026-10-15 registry churn).
+RUN install -d -o runner -g runner /home/runner/.local/share/pnpm/store \
+      /home/runner/.cache/pnpm /home/runner/.config/pnpm \
+    && chown runner:runner /home/runner/.local /home/runner/.local/share \
+      /home/runner/.cache /home/runner/.config \
+    && printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
+      > /home/runner/.config/pnpm/config.yaml \
+    && chown runner:runner /home/runner/.config/pnpm/config.yaml \
+    && touch -d @0 /home/runner /home/runner/.local /home/runner/.local/share \
+      /home/runner/.local/share/pnpm /home/runner/.cache /home/runner/.config \
+      /home/runner/.config/pnpm /home/runner/.config/pnpm/config.yaml
+COPY --from=pnpm-store-seed --chown=runner:runner \
+    /pnpm-store/ /home/runner/.local/share/pnpm/store/
+COPY --from=pnpm-store-seed --chown=runner:runner \
+    /pnpm-cache/ /home/runner/.cache/pnpm/
+
 # The sandbox supplies system npm and the runner payload supplies two more npm
 # copies under its Actions Node runtimes. Repair every inherited node-tar copy
 # so the dedicated Playwright image does not retain CVE-2026-59873.
@@ -97,7 +126,7 @@ RUN bash /tmp/repair-node-tar.sh && rm /tmp/repair-node-tar.sh
 COPY apps/runner-autoscaler/runner-image/externals-health.sh /usr/local/lib/agent-lcars/externals-health.sh
 RUN chmod +r /usr/local/lib/agent-lcars/externals-health.sh
 
-# Nothing else is INSTALLED here apart from the pnpm seed at the end.
+# Nothing else is INSTALLED here apart from the pnpm seed above.
 # tools/e2e/Dockerfile already bakes the JRE
 # (Firebase emulators) and `corepack enable`; Node ships in the Playwright
 # base underneath it. The sandbox deliberately leaves pnpm's version to
@@ -125,24 +154,6 @@ RUN cd /usr/local/share/agent-lcars-corepack \
   && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack install --global \
     "$(node -p 'require("./package.json").packageManager')" \
   && COREPACK_ENABLE_NETWORK=0 pnpm --version
-
-# The seeded store and metadata cache, pinned in pnpm's global config the same
-# way as the JIT runner image (see its Dockerfile for why neither
-# PNPM_STORE_DIR nor a project .npmrc is honored). pnpm hard-links from this
-# lower layer only when the checkout is on the same filesystem, so the
-# agent-lcars-e2e lane keeps /home/runner/_work in the container's writable
-# layer rather than a separate emptyDir (homelab deploy_k3s.yml); with
-# overlayfs metacopy those links copy up metadata only. On a separate mount
-# pnpm still reuses the seed but copies package files.
-RUN mkdir -p /home/runner/.local/share/pnpm/store /home/runner/.cache/pnpm \
-      /home/runner/.config/pnpm
-COPY --from=pnpm-store-seed --chown=runner:runner \
-    /pnpm-store/ /home/runner/.local/share/pnpm/store/
-COPY --from=pnpm-store-seed --chown=runner:runner \
-    /pnpm-cache/ /home/runner/.cache/pnpm/
-RUN printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
-      > /home/runner/.config/pnpm/config.yaml
-
 WORKDIR /home/runner
 
 ENTRYPOINT ["/entrypoint.sh"]
