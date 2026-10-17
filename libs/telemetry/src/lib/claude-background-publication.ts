@@ -65,20 +65,7 @@ export class ClaudeBackgroundPublications {
   }
 
   observe(raw: Record<string, unknown>): void {
-    const origin = asRecord(raw['origin']);
-    const message = asRecord(raw['message']);
-    if (
-      raw['type'] !== 'user' ||
-      raw['isSidechain'] !== false ||
-      raw['promptSource'] !== 'system' ||
-      raw['turnOrigin'] !== 'task_notification' ||
-      origin?.['kind'] !== 'task-notification' ||
-      origin['producer'] !== 'session-task' ||
-      !asString(origin['runId']) ||
-      message?.['role'] !== 'user'
-    )
-      return;
-    const content = asString(message['content']);
+    const content = providerTaskNotification(raw);
     if (!content || content.length > 16_384) return;
     const fields =
       /^<task-notification>\n<task-id>([A-Za-z0-9_-]{1,128})<\/task-id>\n<tool-use-id>([A-Za-z0-9_-]{1,128})<\/tool-use-id>\n<output-file>([^\n<>]{1,4096})<\/output-file>\n<status>([a-z]+)<\/status>\n<summary>[^\n<>]{1,2048} \(exit code (-?[0-9]{1,3})\)<\/summary>\n<\/task-notification>$/u.exec(
@@ -154,4 +141,46 @@ export class ClaudeBackgroundPublications {
       return undefined;
     return { command: task.command, output };
   }
+}
+
+/** The provider's own task-notification text, from either delivery shape:
+ * a system turn (the session was idle) or a queued-command attachment (the
+ * completion arrived mid-turn). Human-queued prompts and copies elsewhere in
+ * the transcript carry no session-task origin and are never accepted. */
+function providerTaskNotification(
+  raw: Record<string, unknown>,
+): string | undefined {
+  if (raw['isSidechain'] !== false) return undefined;
+  if (raw['type'] === 'user') {
+    const origin = asRecord(raw['origin']);
+    const message = asRecord(raw['message']);
+    if (
+      raw['promptSource'] !== 'system' ||
+      raw['turnOrigin'] !== 'task_notification' ||
+      !isSessionTaskOrigin(origin) ||
+      !asString(origin?.['runId']) ||
+      message?.['role'] !== 'user'
+    )
+      return undefined;
+    return asString(message['content']);
+  }
+  if (raw['type'] === 'attachment') {
+    const attachment = asRecord(raw['attachment']);
+    if (
+      attachment?.['type'] !== 'queued_command' ||
+      attachment['commandMode'] !== 'task-notification' ||
+      !isSessionTaskOrigin(asRecord(attachment['origin'])) ||
+      !asString(attachment['runId'])
+    )
+      return undefined;
+    return asString(attachment['prompt']);
+  }
+  return undefined;
+}
+
+function isSessionTaskOrigin(origin: Record<string, unknown> | undefined) {
+  return (
+    origin?.['kind'] === 'task-notification' &&
+    origin['producer'] === 'session-task'
+  );
 }
