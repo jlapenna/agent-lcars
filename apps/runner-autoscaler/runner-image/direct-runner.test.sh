@@ -632,6 +632,21 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = session ] && [ "${3:-}" = list ]; then
   printf '%s\n' "$sessions"
   exit 0
 fi
+# Raw session export: the runner reads a report's final message from it
+# before the completion check. Its last assistant text is the round's
+# FAKE_OPENCODE_EXPORT_TEXT, defaulting to the message finalize captures.
+if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
+  echo "export ${3:-}" >> "$OPENCODE_SEQUENCE_LOG"
+  if [ "${FAKE_OPENCODE_EXPORT_FAIL:-}" = 1 ]; then exit 1; fi
+  jq -n --arg id "${3:-}" --arg text "${FAKE_OPENCODE_EXPORT_TEXT-${FAKE_OPENCODE_LAST_MESSAGE:-}}" '{
+    info: {id: $id},
+    messages: [
+      {info: {role: "user"}, parts: [{type: "text", text: "prompt"}]},
+      {info: {role: "assistant"}, parts: [{type: "text", text: $text}, {type: "tool"}]}
+    ]
+  }'
+  exit 0
+fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
@@ -1880,10 +1895,40 @@ unset FAKE_CODEX_LAST_MESSAGE
 
 export FAKE_OPENCODE_LAST_MESSAGE='# OpenCode findings'
 run_scenario opencode-native-report opencode
-unset FAKE_OPENCODE_LAST_MESSAGE
 jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "opencode native report: report was not completed ($(cat "$COMPLETE_LOG"))"
+grep -Fxq 'export sess_1' "$OPENCODE_SEQUENCE_LOG" ||
+  fail "opencode native report: the round's message was not read before the completion check ($(cat "$OPENCODE_SEQUENCE_LOG"))"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode native report: a usable report earned a correction round"
+[ "$(cat "$OPENCODE_LAST_MESSAGE_PRECHECK_LOG")" = absent ] ||
+  fail "opencode native report: the pre-check wrote finalize's message file"
 echo "scenario opencode-native-report: OK"
+
+# A report record whose round ended without a usable message earns the same
+# correction as Claude and Codex; the corrected round's report settles.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_OPENCODE_EXPORT_TEXT=$' \n '
+export FAKE_CLOCK=1 FAKE_OPENCODE_ELAPSED=1 OPENCODE_TIMEOUT_SECONDS=5
+run_scenario opencode-native-report-blank-correction opencode
+unset FAKE_OPENCODE_EXPORT_TEXT FAKE_CLOCK FAKE_OPENCODE_ELAPSED OPENCODE_TIMEOUT_SECONDS
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 2 ] ||
+  fail "opencode native report blank: an unusable report skipped its correction round"
+grep -q -- 'run --model homelab/default --session ses_new_1 --auto Continue the same authorized task.*repeated as your final response' "$OPENCODE_ARGS_LOG" ||
+  fail "opencode native report blank: correction did not continue the round's session asking for the report ($(cat "$OPENCODE_ARGS_LOG"))"
+jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report blank: the corrected report did not settle ($(cat "$COMPLETE_LOG"))"
+echo "scenario opencode-native-report-blank-correction: OK"
+
+# An unreadable export cannot judge the message; the record decides as
+# before and finalize's capture remains authoritative.
+export FAKE_OPENCODE_EXPORT_FAIL=1
+run_scenario opencode-native-report-export-failure opencode
+unset FAKE_OPENCODE_EXPORT_FAIL FAKE_BRIEF_NO_RESUME FAKE_OPENCODE_LAST_MESSAGE
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "opencode native report export failure: an unjudged report earned a correction round"
+jq -e '.outcome == "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report export failure: finalize's report did not settle ($(cat "$COMPLETE_LOG"))"
+echo "scenario opencode-native-report-export-failure: OK"
 
 # The message contract is <=16384 JavaScript string units, inclusive, not
 # bytes: an exact-boundary ASCII report and a multi-byte CJK report settle

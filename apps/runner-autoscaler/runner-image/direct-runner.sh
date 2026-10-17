@@ -1207,30 +1207,72 @@ else
   # have completed its lookups and explicitly recorded NO_DELIVERABLE=1;
   # lookup failures, non-zero provider exits, exact native park/no-op records,
   # ambiguous fresh-session discovery, and exhausted time never retry.
-  OPENCODE_CONTINUATION_SESSION=''
-  if worker_completion_needed "$AGENT_EXIT" "$OPENCODE_DEADLINE"; then
+  opencode_round_session() {
     if [ -n "$RESUME_SESSION_ID" ]; then
-      OPENCODE_CONTINUATION_SESSION="$RESUME_SESSION_ID"
-    else
-      opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
-      opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
-      if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
-        timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
-        "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
-        jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
-        jq -r --arg directory "$PWD" '
-            .[]
-            | select((.id | type) == "string")
-            | select(.id | test("^[A-Za-z0-9._:-]+$"))
-            | select(.directory == $directory)
-            | .id
-          ' "$opencode_after_json" | sort -u > "$opencode_after_sessions"
-        mapfile -t new_opencode_sessions < <(comm -13 "$OPENCODE_BASELINE_SESSIONS" "$opencode_after_sessions")
-        if [ "${#new_opencode_sessions[@]}" -eq 1 ]; then
-          OPENCODE_CONTINUATION_SESSION="${new_opencode_sessions[0]}"
-        fi
+      printf '%s\n' "$RESUME_SESSION_ID"
+      return
+    fi
+    opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
+    opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
+    if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+      timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+      "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
+      jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
+      jq -r --arg directory "$PWD" '
+          .[]
+          | select((.id | type) == "string")
+          | select(.id | test("^[A-Za-z0-9._:-]+$"))
+          | select(.directory == $directory)
+          | .id
+        ' "$opencode_after_json" | sort -u > "$opencode_after_sessions"
+      mapfile -t new_opencode_sessions < <(comm -13 "$OPENCODE_BASELINE_SESSIONS" "$opencode_after_sessions")
+      if [ "${#new_opencode_sessions[@]}" -eq 1 ]; then
+        printf '%s\n' "${new_opencode_sessions[0]}"
       fi
     fi
+  }
+
+  # A report's final message is its deliverable (#2845), but OpenCode's is
+  # otherwise captured only by the sidecar finalize pass, after this decision.
+  # Read it from the round's own raw export -- the same last assistant text
+  # part opencode-last-message.ts selects -- so an unusable report earns the
+  # correction Claude and Codex get. The export is file-backed and bounded
+  # like the sidecar's (OpenCode truncates large exports on a pipe). A failed
+  # export leaves the record alone deciding, as before; finalize still
+  # captures the authoritative message.
+  OPENCODE_ROUND_SESSION=''
+  OPENCODE_REPORT_MESSAGE_FILE=''
+  if [ "${REPORT_DELIVERABLE:-}" = 1 ] && [ "$AGENT_EXIT" -eq 0 ]; then
+    OPENCODE_ROUND_SESSION="$(opencode_round_session)"
+    opencode_report_export="$RUNNER_TEMP/opencode-report-export.json"
+    if [ -n "$OPENCODE_ROUND_SESSION" ] &&
+      ( ulimit -f 32768
+        exec env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+          timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
+          "$OPENCODE_BIN" --pure export "$OPENCODE_ROUND_SESSION" ) > "$opencode_report_export" 2>/dev/null &&
+      jq -j '
+          if (.messages | type) == "array" then
+            [.messages[]
+              | objects
+              | select((.info | objects | .role) == "assistant")
+              | .parts
+              | arrays
+              | .[]
+              | objects
+              | select(.type == "text" and (.text | type) == "string")
+              | .text] | last // empty
+          else error("export has no messages") end
+        ' "$opencode_report_export" > "$RUNNER_TEMP/opencode-report-message.txt" 2>/dev/null; then
+      OPENCODE_REPORT_MESSAGE_FILE="$RUNNER_TEMP/opencode-report-message.txt"
+    else
+      echo "::warning::could not read the OpenCode report message before the completion check; the report record alone decides" >&2
+    fi
+    rm -f "$opencode_report_export"
+  fi
+
+  OPENCODE_CONTINUATION_SESSION=''
+  if worker_completion_needed "$AGENT_EXIT" "$OPENCODE_DEADLINE" ${OPENCODE_REPORT_MESSAGE_FILE:+"$OPENCODE_REPORT_MESSAGE_FILE"}; then
+    OPENCODE_CONTINUATION_SESSION="${OPENCODE_ROUND_SESSION:-$(opencode_round_session)}"
   fi
 
   if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
