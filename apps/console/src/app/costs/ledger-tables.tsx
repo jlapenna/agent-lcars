@@ -20,8 +20,8 @@ import type {
   WeekLedgerRow,
 } from '../../lib/session-ledger';
 import { RepoBadge } from '../agent-activity-panel';
-import { Eyebrow } from '../eyebrow';
 import { formatCost } from '../format';
+import { OpsPanel } from '../ops-primitives';
 
 /** Cost cell contents for a ledger row - `~$1.23` when the total includes
  * at least one published-rate estimate (see LedgerTotals.costEstimated's
@@ -302,25 +302,31 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
   return (
     <Stack gap={0} data-testid="session-ledger">
       <div className="costs-ledger-grid">
-        <section className="costs-ledger-section" aria-labelledby="by-issue">
-          <div className="costs-ledger-section__heading" id="by-issue">
-            <Eyebrow>By issue</Eyebrow>
-          </div>
+        <OpsPanel
+          title="By issue"
+          count={ledger.byIssue.length}
+          meta="sessions · turns · cost"
+          className="costs-ledger-section"
+          aria-label="By issue"
+        >
           <IssueLedgerTable rows={byIssue} />
           <IssueLedgerTableCompact rows={byIssue} />
           <TruncationNote
             shown={byIssue.length}
             total={ledger.byIssue.length}
           />
-        </section>
-        <section className="costs-ledger-section" aria-labelledby="by-week">
-          <div className="costs-ledger-section__heading" id="by-week">
-            <Eyebrow>By week</Eyebrow>
-          </div>
+        </OpsPanel>
+        <OpsPanel
+          title="By week"
+          count={ledger.byWeek.length}
+          meta="ISO weeks"
+          className="costs-ledger-section"
+          aria-label="By week"
+        >
           <WeekLedgerTable rows={byWeek} />
           <WeekLedgerTableCompact rows={byWeek} />
           <TruncationNote shown={byWeek.length} total={ledger.byWeek.length} />
-        </section>
+        </OpsPanel>
       </div>
       <Text size="xs" c="dimmed" className="costs-ledger-note">
         Costs use recorded spend when available; <code>est.</code> uses

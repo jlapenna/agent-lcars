@@ -1,5 +1,5 @@
 import type { WorkSummary } from '@agent-lcars/work/derive';
-import { Anchor, Card, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Group, Stack, Text } from '@mantine/core';
 
 import { BridgePaneLink } from './bridge-pane-link';
 import {
@@ -8,6 +8,7 @@ import {
   parkedWorkKey,
 } from './bridge-selection';
 import { formatRelativeTime } from './format';
+import { OpsPanel } from './ops-primitives';
 import { type WorkAction, WorkActions } from './work/work-actions';
 
 /** The item's own full page - the conversation transcript and complete runs
@@ -72,18 +73,14 @@ export function ParkedWorkPanel({
   if (parked.length === 0 && !hasMoreTasks && !firstPageHref && !error)
     return null;
   return (
-    <Card
-      withBorder
-      padding="md"
-      mb="xl"
-      component="section"
+    <OpsPanel
+      title="Stopped work"
+      count={parked.length}
+      meta="parked or failed native work"
       aria-label="Stopped work"
-      className="lcars-panel"
+      className="operations-panel"
       data-testid="parked-work-panel"
     >
-      <Title order={3} size="h5">
-        Stopped work ({parked.length})
-      </Title>
       {parked.length === 0 && !error ? (
         <Text size="sm" c="dimmed" mt="xs">
           No stopped work on this page of up to 200 tasks.
@@ -171,6 +168,6 @@ export function ParkedWorkPanel({
           Older tasks may contain stopped work.
         </Text>
       )}
-    </Card>
+    </OpsPanel>
   );
 }

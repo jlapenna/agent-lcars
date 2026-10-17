@@ -123,11 +123,9 @@ describe('Decision Inbox and Bridge surfaces', () => {
     expect(
       screen.getByRole('heading', { name: 'Waiting on Deploy' }),
     ).toBeTruthy();
-    expect(
-      screen.getByText(
-        '2 items · Waiting for the next deploy before verification can continue.',
-      ),
-    ).toBeTruthy();
+    expect(screen.getByTestId('waiting-on-deploy')).toHaveTextContent(
+      'Waiting on Deploy2Waiting for the next deploy before verification can continue.',
+    );
   });
 
   it('gives every parked item one direct, accurately labelled action', () => {
@@ -168,11 +166,9 @@ describe('Decision Inbox and Bridge surfaces', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Blocked' })).toBeTruthy();
-    expect(
-      screen.getByText(
-        '1 item · Waiting on an external dependency or prerequisite; nothing to decide yet.',
-      ),
-    ).toBeTruthy();
+    expect(screen.getByTestId('blocked-work')).toHaveTextContent(
+      'Blocked1Waiting on an external dependency or prerequisite; nothing to decide yet.',
+    );
     expect(screen.getByTestId('blocked-item-9')).toBeTruthy();
     expect(screen.getByTestId('deploy-wait-item-2')).toBeTruthy();
   });

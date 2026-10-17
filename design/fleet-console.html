@@ -725,6 +725,44 @@ function costsPanel() {
     <table><thead><tr><th>Repository</th><th class="num">Today</th><th>7 days</th><th class="num">Sessions · 7d</th><th class="num">Per session</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }
 
+/* ---- Bridge wait sections and the Costs ledger ---- */
+const WAITS = {
+  stopped: [{ title: 'Decide the retention window for archived agent transcripts', meta: 'supersprinklesracing/sprinkles · lost · failed 1 hour ago', act: 'Redispatch' }],
+  deploy: [['Issue', 'homelab', 2122, 'Laforge: agent worktrees fill and wear the 256GB root NVMe'], ['Issue', 'homelab', 2409, 'OpenClaw investigator agent on top of the probe broker'], ['PR', 'agent-lcars', 2611, 'telemetry: settle the session-end flush']],
+  blocked: [['Issue', 'homelab', 1790, 'nightly backup chain (off-site, USB, both checks)'], ['Issue', 'homelab', 1601, 'Prepare Pike for whole-unit RMA']],
+};
+function stoppedPanel() {
+  const rows = WAITS.stopped.map((w) => `<div class="op-row"><div><div class="t">${w.title}</div><div class="line">${w.meta}</div></div>
+    <div class="acts"><button class="btn btn-secondary btn-sm" type="button">${w.act}</button><button class="btn btn-secondary btn-sm" type="button">Cancel</button></div></div>`).join('');
+  return `<section class="panel" data-od-id="panel-stopped-work"><div><div class="panel-head"><h2>Stopped work</h2><span class="count">${WAITS.stopped.length}</span><span class="meta">parked or failed native work</span></div><div class="ops-rows">${rows}</div></div></section>`;
+}
+function waitPanel(id, title, meta, rows) {
+  const r = rows.map((w) => `<div class="op-row"><div class="line" style="margin:0"><span class="tag badge">${w[0]}</span><span class="tag">${w[1]}</span><span class="t">#${w[2]} ${w[3]}</span></div>
+    <div class="acts"><a class="btn btn-secondary btn-sm" href="#">Open ${w[0] === 'PR' ? 'PR' : 'issue'} ↗</a></div></div>`).join('');
+  return `<section class="panel" data-od-id="panel-${id}"><div><div class="panel-head"><h2>${title}</h2><span class="count">${rows.length}</span><span class="meta">${meta}</span></div><div class="ops-rows">${r}</div></div></section>`;
+}
+const BREAKDOWNS = [
+  ['By pipeline', 'Pipeline', [['claude', 117, '$0.00', '$2,960.26', 4, '0 · 222 unqualified', '— est. partial'], ['codex', 60, '$0.00', '$0.00', 60, '2 · 744 unqualified', '— partial'], ['opencode', 23, '$0.00', '$0.00', 0, '0', '—']]],
+  ['By requested model', 'Requested model', [['claude-opus-5-5', 78, '$0.00', '$2,949.24', 0, '0 · 203 unqualified', '— est. partial'], ['claude-sonnet-5-5', 34, '$0.00', '$9.91', 0, '0 · 17 unqualified', '— est. partial'], ['gpt-6.1-sol', 56, '$0.00', '$0.00', 56, '2 · 742 unqualified', '— partial']]],
+  ['By resolved model', 'Resolved model', [['unknown', 200, '$0.00', '$2,960.26', 64, '2 · 966 unqualified', '$1,480.13 est. partial']]],
+];
+function ledgerPanels() {
+  const breakdown = ([title, label, rows]) => `<section class="panel" aria-label="${title}"><div><div class="panel-head"><h2>${title}</h2><span class="count">${rows.length}</span><span class="meta">reported · estimated · per merged PR</span></div>
+    <table><thead><tr><th>${label}</th><th class="num">Sessions</th><th class="num">Reported</th><th class="num">Estimated</th><th class="num">Unpriced</th><th>Merged PRs</th><th class="num">Cost / merged PR</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr><td class="mono">${r[0]}</td><td class="num">${r[1]}</td><td class="num">${r[2]}</td><td class="num">${r[3]}</td><td class="num">${r[4]}</td><td class="mono" style="font-size:12px">${r[5]}</td><td class="num">${r[6]}</td></tr>`).join('')}</tbody></table></div></section>`;
+  const issues = [['no issue', 139, 14823, '837,340,213', '~ $2,951.00'], ['GitHub #2536', 1, 52, '723,541', '~ $1.70'], ['GitHub #1389', 1, 26, '444,338', '~ $1.11']];
+  const weeks = [['2026-W42', 180, 6070, '208,297,025', '~ $902.58'], ['2026-W41', 18, 9171, '643,670,241', '~ $2,056.57']];
+  const tbl = (head, rows) => `<table><thead><tr>${head.map((h, i) => `<th class="${i ? 'num' : ''}">${h}</th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c, i) => `<td class="${i ? 'num' : 'mono'}" ${i ? '' : 'style="white-space:nowrap;font-size:13px"'}>${i === 4 ? `${c} <span class="est">est.</span>` : c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+  return `<section class="panel" aria-label="Spend summary" data-od-id="panel-spend-summary"><div><div class="panel-head"><h2>Known session spend</h2><span class="count">$2,960.26</span><span class="meta">includes estimates</span></div>
+      <div style="padding-top:10px;display:grid;gap:4px;font-size:13px"><div>Reported $0.00 · estimated $2,960.26 · 64 unpriced sessions · incomplete archive</div><div>$1,480.13 per merged deliverable (includes estimates) · 2 merged PRs · 0 unmerged · 2 unknown · 966 unqualified references</div><div>No budget configured</div>
+      <div class="dim" style="font-size:12px">Whole cumulative spend of sessions active in the selected window, including failed attempts and sessions without PRs. This is not billed spend incurred during that window.</div></div></div></section>
+    ${BREAKDOWNS.map(breakdown).join('')}
+    <section class="panel" aria-label="Deliverable attribution" data-od-id="panel-deliverables"><div><div class="panel-head"><h2>Deliverable attribution</h2><span class="count">2</span><span class="meta">known cost split across publication references</span></div>
+      <div class="ops-rows">${[['jlapenna/agent-lcars#2282', 'unknown · 1 sessions · reported $0.00 · estimated $0.00 · 0.33 unpriced session shares'], ['jlapenna/homelab#2632', 'merged · 1 sessions · reported $0.00 · estimated $0.00 · 1 unpriced session shares']].map((d) => `<div class="op-row"><div><a href="#">GitHub ${d[0]}</a><div class="line">${d[1]}</div></div></div>`).join('')}</div></div></section>
+    <div class="cols"><section class="panel" aria-label="By issue"><div><div class="panel-head"><h2>By issue</h2><span class="count">53</span><span class="meta">sessions · turns · cost</span></div>${tbl(['Issue', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], issues)}<div class="empty-note">Showing 3 of 53</div></div></section>
+    <section class="panel" aria-label="By week"><div><div class="panel-head"><h2>By week</h2><span class="count">2</span><span class="meta">ISO weeks</span></div>${tbl(['Week', 'Sessions', 'Turns', 'Cost-weighted tokens', 'Cost'], weeks)}</div></section></div>`;
+}
+
 /* ---- Toolbars: every control applies on change; filters fold on phones ---- */
 const repoSelect = () => `<select class="field" aria-label="Repository" data-od-id="filter-repo"><option>All repositories (${REPOS.length})</option>${REPOS.map((r) => `<option>${r}</option>`).join('')}</select>`;
 const agentSelect = (agents) => `<select class="field" aria-label="Agent" data-od-id="filter-agent"><option>All agents</option>${agents.map((a) => `<option>${a}</option>`).join('')}</select>`;
@@ -740,7 +778,7 @@ const ARCHIVE_WINDOWS = ['1h', '24h', '7d', '14d', '30d', '90d'];
 const VIEWS = {
   /* No repository select on the Bridge: its panels summarise the whole fleet. */
   deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 5 decisions</a>',
-    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
+    body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}${stoppedPanel()}${waitPanel('waiting-on-deploy', 'Waiting on deploy', 'Waiting for the next deploy before verification can continue.', WAITS.deploy)}${waitPanel('blocked', 'Blocked', 'Waiting on an external dependency or prerequisite; nothing to decide yet.', WAITS.blocked)}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
   inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), asof], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => inboxPanel(true) },
   agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
     body: () => `${agentsReadouts()}<div class="alert" role="alert" data-od-id="queue-health-alert">A run has been queued for 11m 0s — the runner autoscaler may not be supplying runners.</div>${runsPanel(true)}${cliPanel()}${donePanel()}${claimedPanel()}` },
@@ -749,7 +787,7 @@ const VIEWS = {
   work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id')],
     primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}` },
   sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [more(SOURCE)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], body: () => sessionsPanel() },
-  costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}` },
+  costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}${ledgerPanels()}` },
 };
 
 function renderMenu(d) {

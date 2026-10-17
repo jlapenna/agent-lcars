@@ -17,27 +17,31 @@ import {
   type SessionSpend,
   type SpendBreakdown,
 } from '../../lib/session-spend';
-import { Eyebrow } from '../eyebrow';
 import { formatCost } from '../format';
+import { OpsPanel } from '../ops-primitives';
 
 const money = (value: number | undefined) =>
   value === undefined ? '—' : formatCost(value);
 
 function Breakdown({
   title,
-  id,
+  label,
   rows,
 }: {
   title: string;
-  id: string;
+  /** The identity column's header: what one row is. */
+  label: string;
   rows: SpendBreakdown[];
 }) {
   const shown = rows.slice(0, 15);
   return (
-    <section className="costs-ledger-section" aria-labelledby={id}>
-      <div className="costs-ledger-section__heading" id={id}>
-        <Eyebrow>{title}</Eyebrow>
-      </div>
+    <OpsPanel
+      title={title}
+      count={rows.length}
+      meta="reported · estimated · per merged PR"
+      className="costs-ledger-section"
+      aria-label={title}
+    >
       <TableScrollContainer
         minWidth={600}
         visibleFrom="sm"
@@ -46,7 +50,7 @@ function Breakdown({
         <Table verticalSpacing="xs" fz="sm" className="costs-ledger-table">
           <TableThead>
             <TableTr>
-              <TableTh>{title}</TableTh>
+              <TableTh>{label}</TableTh>
               <TableTh>Sessions</TableTh>
               <TableTh>Reported</TableTh>
               <TableTh>Estimated</TableTh>
@@ -125,7 +129,7 @@ function Breakdown({
           Showing {shown.length} of {rows.length}; summary includes all groups.
         </Text>
       )}
-    </section>
+    </OpsPanel>
   );
 }
 
@@ -138,11 +142,13 @@ export function SpendBreakdowns({
 }) {
   return (
     <Stack gap="md" data-testid="spend-breakdowns">
-      <section aria-label="Spend summary">
-        <Text fw={600}>
-          Known session spend: {money(spend.totals.costUsd)}
-          {spend.totals.costEstimated ? ' (includes estimates)' : ''}
-        </Text>
+      <OpsPanel
+        title="Known session spend"
+        count={money(spend.totals.costUsd)}
+        meta={spend.totals.costEstimated ? 'includes estimates' : undefined}
+        className="costs-spend-summary"
+        aria-label="Spend summary"
+      >
         <Text size="sm">
           Reported {money(spend.totals.reportedCostUsd)} · estimated{' '}
           {money(spend.totals.estimatedCostUsd)} ·{' '}
@@ -172,29 +178,32 @@ export function SpendBreakdowns({
           regardless of merge date. Legacy number-only references are excluded
           from the denominator. PR counts across groups overlap.
         </Text>
-      </section>
+      </OpsPanel>
       {/* One column: seven-column tables need the full panel width. */}
       <div className="costs-ledger-grid costs-ledger-grid--stacked">
         <Breakdown
           title="By pipeline"
-          id="by-pipeline"
+          label="Pipeline"
           rows={spend.byPipeline}
         />
         <Breakdown
           title="By requested model"
-          id="by-requested-model"
+          label="Requested model"
           rows={spend.byRequestedModel}
         />
         <Breakdown
           title="By resolved model"
-          id="by-resolved-model"
+          label="Resolved model"
           rows={spend.byResolvedModel}
         />
       </div>
-      <section aria-label="Deliverable attribution">
-        <div className="costs-ledger-section__heading">
-          <Eyebrow>Deliverable attribution</Eyebrow>
-        </div>
+      <OpsPanel
+        title="Deliverable attribution"
+        count={spend.deliverables.length}
+        meta="known cost split across publication references"
+        className="costs-ledger-section costs-deliverables"
+        aria-label="Deliverable attribution"
+      >
         <Text size="xs" c="dimmed">
           Each session's known cost is split equally across its unique qualified
           publication references, including unmerged and unknown PRs. Without
@@ -235,7 +244,7 @@ export function SpendBreakdowns({
             deliverables.
           </Text>
         )}
-      </section>
+      </OpsPanel>
     </Stack>
   );
 }

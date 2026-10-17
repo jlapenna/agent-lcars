@@ -28,7 +28,9 @@ Decisions the prototype already carries:
   the page made completed.
 - Panels the first drawing lacked are drawn in its language: Agents' fleet
   snapshot, CLI sessions and Claimed but idle; Shuttlebay's provider
-  admission; Work's recent work; Sessions' by-issue groups.
+  admission; Work's recent work; Sessions' by-issue groups; the Bridge's
+  Stopped work, Waiting on deploy and Blocked; the Costs ledger (spend
+  summary, breakdowns, deliverable attribution, by issue and by week).
 
 The written rules are [`../docs/console-design-system.md`](../docs/console-design-system.md)
 and the token source of truth is `apps/console/src/app/theme.ts`.

@@ -2191,28 +2191,10 @@ td.costs-repo-spend__num {
   min-width: 0;
 }
 
-.costs-ledger-section__heading {
-  position: relative;
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
-  background: var(--lcars-surface);
-}
-
-.costs-ledger-section__heading::before {
-  content: '';
-  position: absolute;
-  inset-block: 0;
-  left: 0;
-  width: var(--lcars-spine-width);
-  background: var(--lcars-accent);
-}
-
-.costs-ledger-section__heading::after {
-  display: none;
+/* The deliverables panel sits outside the ledger grid; it keeps the same
+   inset from the frame's edge. */
+[data-testid='spend-breakdowns'] > .costs-deliverables {
+  margin: 0 16px;
 }
 
 .costs-ledger-scroll {
@@ -3581,18 +3563,10 @@ td.costs-repo-spend__num {
   }
 
   .costs-ledger-grid {
-    display: block;
-    padding: 0;
-  }
-
-  .costs-ledger-section + .costs-ledger-section {
-    border-left: 0;
-    border-top: 12px solid var(--lcars-hairline);
-  }
-
-  .costs-ledger-section__heading {
-    min-height: 48px;
-    padding-inline: 16px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 16px 12px;
   }
 
   .costs-ledger-mobile-list {
@@ -3615,13 +3589,9 @@ td.costs-repo-spend__num {
     background: var(--lcars-surface);
   }
 
-  .costs-ledger-mobile-row::before {
-    content: '';
-    position: absolute;
-    inset-block: 8px;
-    left: 0;
-    width: var(--lcars-spine-width);
-    background: var(--lcars-accent);
+  /* Rows sit inside a spined panel; a bar per row would double the spine. */
+  .costs-ledger-mobile-row {
+    padding-inline: 0;
   }
 
   .costs-ledger-mobile-row__identity a {

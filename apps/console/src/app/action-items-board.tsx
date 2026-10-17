@@ -1,4 +1,4 @@
-import { Badge, Card, Group, Stack } from '@mantine/core';
+import { Badge, Group, Stack } from '@mantine/core';
 import type { ReactNode } from 'react';
 
 import { getWatchedRepos } from '../lib/github-client';
@@ -12,9 +12,9 @@ import {
   itemKey,
 } from './bridge-selection';
 import type { InboxCard } from './inbox-card';
+import { OpsPanel } from './ops-primitives';
 import { QueueWorkspace } from './queue-workspace';
 import { renderInboxCardMarkdown } from './render-card-markdown';
-import { SectionHeading } from './section-heading';
 import type { ReplyAction } from './work/work-actions';
 
 export type { BoardCard } from './board-card';
@@ -89,18 +89,13 @@ function IdleItemsSection({
   if (cards.length === 0) return null;
 
   return (
-    <Card
-      withBorder
-      padding="md"
-      mb="xl"
-      className={`lcars-panel ${className}`}
+    <OpsPanel
+      title={title}
+      count={cards.length}
+      meta={description}
+      className={`operations-panel ${className}`}
       data-testid={testId}
     >
-      <SectionHeading
-        title={title}
-        count={cards.length}
-        description={description}
-      />
       <Stack gap={0}>
         {cards.map(({ item }) => (
           <div
@@ -156,7 +151,7 @@ function IdleItemsSection({
           </div>
         ))}
       </Stack>
-    </Card>
+    </OpsPanel>
   );
 }
 
