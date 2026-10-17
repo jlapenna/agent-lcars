@@ -113,6 +113,51 @@ describe('human-needed summarization', () => {
     expect(await summarizeHumanNeeded(result)).toBe(result);
   });
 
+  it.each(['single chunk', 'multiple chunks'])(
+    'cancels an oversized response (%s) and preserves the original handoff',
+    async (shape) => {
+      const cancel = vi.fn();
+      const encoded = new TextEncoder().encode(
+        JSON.stringify({
+          ignored: 'x'.repeat(65_536),
+          choices: [{ message: { content: JSON.stringify({ actions }) } }],
+        }),
+      );
+      let offset = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const end = Math.min(
+            encoded.length,
+            offset + (shape === 'single chunk' ? encoded.length : 1024),
+          );
+          controller.enqueue(encoded.subarray(offset, end));
+          offset = end;
+          // Leave unread data available so cancellation is observable.
+        },
+        cancel,
+      });
+      fetchMock.mockResolvedValue(new Response(body));
+      expect(await summarizeHumanNeeded(result)).toBe(result);
+      expect(cancel).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('rejects extra choices instead of accepting only the first', async () => {
+    const choice = { message: { content: JSON.stringify({ actions }) } };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ choices: [choice, choice] })),
+    );
+    expect(await summarizeHumanNeeded(result)).toBe(result);
+  });
+
+  it('cancels an HTTP error body without reading it', async () => {
+    const cancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel });
+    fetchMock.mockResolvedValue(new Response(body, { status: 503 }));
+    expect(await summarizeHumanNeeded(result)).toBe(result);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it('fails startup configuration for incomplete or insecure endpoint settings', () => {
     expect(() =>
       handoffSummaryConfig({ AGENT_LCARS_HANDOFF_SUMMARY_MODEL: 'model' }),

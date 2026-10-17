@@ -1029,6 +1029,10 @@ export const runsRouter = os.router({
               'report',
         },
       ),
+      {
+        deadline: Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt),
+        now: context.now,
+      },
     );
     const deliveryCorrection =
       run.params?.deliveryPredecessor !== undefined ||

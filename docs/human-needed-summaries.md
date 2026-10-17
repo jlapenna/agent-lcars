@@ -30,8 +30,12 @@ put secret values in application configuration or Terraform.
 
 The request sends only the bounded final handoff message (up to 16 KiB),
 requests JSON with a 1,200-token output cap, permits no tools or redirects,
-and has an eight-second timeout with no retry. Non-park outcomes make no LLM
-call. Invalid output, invented commands, timeout and upstream failure all
+and allows at most eight seconds with no retry. The timeout is shortened to
+leave five seconds before the effective run deadline for settlement; with five
+seconds or less remaining, Console skips the optional call. The streamed response
+is capped at 64 KiB before decoding or JSON parsing, and must contain exactly
+one choice. Unread response data is canceled on failure. Non-park outcomes make
+no LLM call. Invalid output, invented commands, timeout and upstream failure all
 preserve normal completion and the complete original message. The log records
 only that the optional summary was unavailable, never its contents or upstream
 error body. Failed summaries are not regenerated on page refresh.

@@ -8,8 +8,41 @@ import { z } from 'zod';
 const responseSchema = z.object({
   choices: z
     .array(z.object({ message: z.object({ content: z.string().max(16_384) }) }))
-    .min(1),
+    .length(1),
 });
+
+// Bound the wire body before UTF-8 decoding or either JSON parse, including
+// ignored provider fields. The requested token limit is not a trust boundary.
+const MAX_RESPONSE_BYTES = 65_536;
+const MAX_SUMMARY_MS = 8_000;
+const SETTLEMENT_HEADROOM_MS = 5_000;
+
+async function readSummaryResponse(response: Response): Promise<unknown> {
+  if (!response.body) throw new Error('summary endpoint returned no body');
+  const reader = response.body.getReader();
+  try {
+    if (!response.ok) throw new Error('summary endpoint refused');
+    const bytes = new Uint8Array(MAX_RESPONSE_BYTES);
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) {
+        throw new Error('summary response exceeded byte limit');
+      }
+      bytes.set(value, size - value.byteLength);
+    }
+    return JSON.parse(
+      new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)),
+    );
+  } finally {
+    // Cancel unread data on HTTP refusal, overflow, decoding or read failure.
+    // Do not await a potentially slow upstream cancellation before settlement.
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
 
 /** Optional server-only OpenAI-compatible chat endpoint. No worker credentials
  * are reused, and neither endpoint nor model can be selected by task content. */
@@ -39,19 +72,32 @@ export function handoffSummaryConfig(env = process.env) {
  * No tools, command execution, task mutation or background work is permitted. */
 export async function summarizeHumanNeeded(
   result: RunResult,
+  authority?: { deadline: number; now: () => Date },
 ): Promise<RunResult> {
   const message = result.message;
   if (result.summary !== 'park' || !message?.trim()) return result;
   try {
     const config = handoffSummaryConfig();
     if (!config) return result;
+    // Use the same effective deadline as completion authentication, with time
+    // left for the settlement transaction. A summary must not consume the last
+    // seconds of a live claim; commit-time authorization remains authoritative.
+    const timeoutMs = authority
+      ? Math.min(
+          MAX_SUMMARY_MS,
+          authority.deadline -
+            authority.now().getTime() -
+            SETTLEMENT_HEADROOM_MS,
+        )
+      : MAX_SUMMARY_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return result;
     const response = await fetch(config.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
       },
-      signal: AbortSignal.timeout(8_000),
+      signal: AbortSignal.timeout(Math.floor(timeoutMs)),
       redirect: 'error',
       body: JSON.stringify({
         model: config.model,
@@ -67,8 +113,7 @@ export async function summarizeHumanNeeded(
         ],
       }),
     });
-    if (!response.ok) throw new Error('summary endpoint refused');
-    const payload = responseSchema.parse(await response.json());
+    const payload = responseSchema.parse(await readSummaryResponse(response));
     const actions = humanNeededActionsSchema.parse(
       JSON.parse(payload.choices[0].message.content).actions,
     );
