@@ -55,7 +55,13 @@ export function NativeDecisionRow({
               {work.spec.target.repo} / {work.id}
             </span>
             <span>{work.spec.pipeline}</span>
-            <DecisionWaiting since={work.updatedAt} />
+            {report ? (
+              <span>
+                settled <RelativeTime iso={work.updatedAt} />
+              </span>
+            ) : (
+              <DecisionWaiting since={work.updatedAt} />
+            )}
           </div>
         </div>
         <span

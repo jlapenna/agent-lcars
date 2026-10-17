@@ -284,9 +284,13 @@ export function QueueWorkspace({
   }, [activityWindow, agent, cards, filter, isSnoozed, search, sort]);
 
   const cardsByKey = new Map(cards.map((card) => [inboxCardKey(card), card]));
+  // A native item absent from `cards` waits on no one (a dismissed report
+  // outlives its Inbox window), so its snooze has nothing left to restore.
   const snoozedItems = Object.entries(entries).filter(([key, entry]) => {
     const card = cardsByKey.get(key);
-    return !card || entry.signature === inboxCardSignature(card);
+    return card
+      ? entry.signature === inboxCardSignature(card)
+      : !key.startsWith('work:');
   });
   const legacyAnchors = cards
     .flatMap((card) => {
@@ -326,7 +330,12 @@ export function QueueWorkspace({
   const onReplyDraftChange = (hasDraft: boolean) =>
     setDraftCard(hasDraft ? selectedCard : undefined);
   const explicitDetail = selectedItemKey !== undefined;
-  const oldestCard = visibleCards.reduce<InboxCard | undefined>(
+  // A report is read, not answered: it has no decision SLA and is never the
+  // oldest decision to respond to.
+  const decisionCards = visibleCards.filter(
+    (card) => !('work' in card) || card.kind === 'decision',
+  );
+  const oldestCard = decisionCards.reduce<InboxCard | undefined>(
     (oldest, card) =>
       !oldest ||
       inboxCardMetadata(card).updatedAt < inboxCardMetadata(oldest).updatedAt
@@ -597,7 +606,7 @@ export function QueueWorkspace({
             <span className="ops-panel__count">{visibleCards.length}</span>
             <span className="ops-panel__meta">
               <DecisionSlaMeta
-                waitingSince={visibleCards.map(
+                waitingSince={decisionCards.map(
                   (card) => inboxCardMetadata(card).waitingSince,
                 )}
               />
