@@ -119,23 +119,29 @@ describe('human-needed summarization', () => {
       const cancel = vi.fn();
       const encoded = new TextEncoder().encode(
         JSON.stringify({
-          ignored: 'x'.repeat(65_536),
+          ignored: 'x'.repeat(70_000),
           choices: [{ message: { content: JSON.stringify({ actions }) } }],
         }),
       );
       let offset = 0;
-      const body = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          const end = Math.min(
-            encoded.length,
-            offset + (shape === 'single chunk' ? encoded.length : 1024),
-          );
-          controller.enqueue(encoded.subarray(offset, end));
-          offset = end;
-          // Leave unread data available so cancellation is observable.
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (offset === encoded.length) {
+              controller.close();
+              return;
+            }
+            const end = Math.min(
+              encoded.length,
+              offset + (shape === 'single chunk' ? encoded.length : 1024),
+            );
+            controller.enqueue(encoded.subarray(offset, end));
+            offset = end;
+          },
+          cancel,
         },
-        cancel,
-      });
+        { highWaterMark: 0 },
+      );
       fetchMock.mockResolvedValue(new Response(body));
       expect(await summarizeHumanNeeded(result)).toBe(result);
       expect(cancel).toHaveBeenCalledOnce();

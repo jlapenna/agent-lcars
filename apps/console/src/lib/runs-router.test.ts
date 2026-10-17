@@ -1404,12 +1404,39 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(claimed.status).toBe(200);
     const { token } = claimed.json as { token: string };
     const cancel = vi.fn();
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.enqueue(new TextEncoder().encode('x'.repeat(1024)));
+    const encoded = new TextEncoder().encode(
+      JSON.stringify({
+        ignored: 'x'.repeat(70_000),
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                actions: [
+                  { text: 'Grant access.' },
+                  { text: 'Redispatch to resume.' },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    );
+    let offset = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (offset === encoded.length) {
+            controller.close();
+            return;
+          }
+          const end = Math.min(encoded.length, offset + 1024);
+          controller.enqueue(encoded.subarray(offset, end));
+          offset = end;
+        },
+        cancel,
       },
-      cancel,
-    });
+      { highWaterMark: 0 },
+    );
     vi.stubEnv(
       'AGENT_LCARS_HANDOFF_SUMMARY_URL',
       'https://summary.example.test',
