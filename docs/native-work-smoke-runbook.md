@@ -8,49 +8,72 @@ no hosted provider workflow, raw-GitHub runner, or console-specific fallback
 is supported. The dated sections below are historical evidence only, not
 operational instructions.
 
-## Safety rules
+This runbook drives that route on **real useful work**, per
+[Development proof uses real work](testing-policy.md#development-proof-uses-real-work):
+exercise the normal intake, dispatch, execution, and delivery paths with a
+genuine outcome. Do not invent a no-op task, disposable README edit, or
+throwaway PR to manufacture a green run or telemetry, and do not close or
+discard useful delivery to replay the dated smokes recorded below.
 
-- The smoke change is a one-line README edit under a "Native work smoke"
-  heading. The PR it produces is **closed, never merged** -- and because a
-  PR authored by a fleet bot login squash-auto-merges the moment `Verify` is
-  green (`.github/workflows/agent-automerge.yml`), the item description must
-  say **open a DRAFT pull request** (a draft is never armed). The 2026-10-02
-  claude and codex smokes omitted that and merged before they could be
-  closed (reverted in #2100).
-- Create the item with the `work-create.yml` workflow (or a signed-in console
-  session). Do not mint personal service-account tokens or add IAM bindings
-  for a smoke.
-- Submit one smoke item at a time. Intake accepts work into the durable queue;
+## Select the work
+
+- Pick a genuinely useful, currently unowned issue or task through the normal
+  intake. Inspect the trackers, check current ownership and recent delivery
+  evidence, and choose work within the authorized scope; do not collide with a
+  human's or another agent's claim. An empty queue is not a reason to invent work.
+- Choose the deliverable honestly: default PR delivery for an implementation,
+  and `deliverable: report` only when the outcome is findings rather than a
+  change. A report item settles `done` on the worker's final message and must
+  not be forced into a PR.
+- Preserve provider choice, owner/collision checks, the pipeline's supported job
+  sizing and priority, and every operational approval boundary. Choose the
+  pipeline the work needs; do not raise priority or invent oversized jobs.
+- Create the item through the existing supported intake — `work-create.yml` for
+  a plain implementation item, or a signed-in console session when you need
+  `deliverable: report` or a non-default priority. Do not mint personal
+  service-account tokens or add IAM bindings.
+- Submit one item at a time. Intake accepts work into the durable queue;
   QueueExecutor reserves fleet capacity before claiming a run.
-- Cancel through `POST /api/work/v1/items/{id}/cancel`, which is what the
-  console's own Cancel button calls (`work-actions.tsx` -> `workRouter.cancel`).
-  The separate runs-view cancel path that could not settle a native run is
-  gone with #1530 and the native run-history refactor (#1611).
+- Cancel only through `POST /api/work/v1/items/{id}/cancel` (the console's Cancel
+  button, `work-actions.tsx` → `workRouter.cancel`); the runs-view cancel path
+  that could not settle a native run is gone (#1530, #1611). Cancel useful
+  delivery only when it is genuinely no longer wanted, never to end a run sooner.
 - Anything that fails is a finding on #1502 with the run URL — fix forward,
   never paper over it.
 
-## Contract under test
+## What each phase proves (separate observations)
 
-| Step              | Expected                                                                                                                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PUT /items/{id}` | `201` with the item view; `runs[0].runId` = `work:<id>/r1`, state `running` once the authoritative drain dispatches                                                                  |
-| Run               | `GET /items/{id}` and the console show the native Run id and lifecycle state; no GitHub Actions run or title marker is required                                                      |
-| Execution         | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work` and `html_url: https://lcars.jlapenna.net/work/<id>` |
-| Deliverable       | a PR by the fleet login references `Work: work:<id>`; the Task/Run record carries the resulting outcome and PR reference                                                             |
-| Settlement        | `GET /items/{id}` shows `state: done`, `runs[0].result.ref` = the PR URL, and the session listed under the item                                                                      |
-| Cancel after done | `POST /items/{id}/cancel` → `409`                                                                                                                                                    |
+Admission, provider execution, publication, landing, and accepted completion
+are distinct — one passing does not imply the next. Record the item id, the
+actual path exercised, and the useful result; a successful dispatch or a worker
+exit alone does not prove the work was delivered.
+
+| Observation           | What you actually look at                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admission             | `PUT /items/{id}` returns `201` with the item view and `runs[0].runId` = `work:<id>/r1`; state reaches `running` once the authoritative drain dispatches                                                                                      |
+| Provider execution    | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required. |
+| Source/PR publication | an implementation item's fleet-login PR references `Work: work:<id>`; a report item instead carries `agent-result:v1:report` findings, not a PR                                                                                               |
+| Protected landing     | the PR passes required CI and lands through normal protected delivery; a report item has nothing to land                                                                                                                                      |
+| Accepted completion   | `GET /items/{id}` shows `state: done` with the PR or report recorded; normal delivery and cleanup then apply — follow them rather than force-close                                                                                            |
+
+`POST /items/{id}/cancel` after the item is `done` returns `409`.
 
 ## 1. Create the item
 
+Use real work selected above. For an implementation item on the default PR path:
+
 ```bash
 gh workflow run work-create.yml \
-  -f title='Native work smoke: add a line to README' \
-  -f description='Append one line to README.md under a new "Native work smoke" heading: the ISO date of this run. Open a DRAFT pull request (gh pr create --draft); do not mark it ready and do not merge.' \
-  -f repo=jlapenna/agent-lcars -f pipeline=claude
+  -f title='<real task title>' \
+  -f description='<what to do, referencing the real issue or task>' \
+  -f repo=<owner/repo> -f pipeline=<claude|codex|opencode>
 gh run watch "$(gh run list --workflow work-create.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-The step summary names the item id and its first run.
+`work-create.yml`'s `create` action sends a plain implementation spec (default
+PR delivery). For a `deliverable: report` item or a non-default priority, create
+it through a signed-in console session, which exposes those fields. The step
+summary names the item id and its first run.
 
 ## 2. Follow the run
 
@@ -65,21 +88,27 @@ Poll the item until its native Run reaches a terminal state, or open
 and its session history are authoritative; direct workers do not create a
 GitHub Actions run to watch.
 
-## 3. Check the item
+## 3. Confirm the useful outcome
 
 ```bash
 gh workflow run work-create.yml -f action=get -f id=<id>
 ```
 
 The run's step summary shows `state`, and each run's `runId`, `state`, and
-`result` (or open `https://lcars.jlapenna.net/work/<id>` signed in).
+`result` (or open `https://lcars.jlapenna.net/work/<id>` signed in). Confirm the
+actual deliverable against the phase table above — a landed PR for an
+implementation, the stored report for a findings item — then let normal delivery
+and cleanup take their course. Do not close useful delivery to end the run
+sooner; the dated smokes below were evidence for their own fixes, not a delivery
+contract to copy.
 
-## 4. Close the PR, confirm cancel is refused
+## Narrow synthetic canaries
 
-```bash
-gh pr close <pr-number> --comment "Native work smoke — evidence only, not merged."
-gh workflow run work-create.yml -f action=cancel -f id=<id>   # step log: -> 409
-```
+Fixtures, mocks, deterministic regression tests, and narrowly scoped synthetic
+canaries still belong where they protect a specific contract or safely exercise
+a failure — label their evidence as a supplement, not as real-work acceptance of
+the full workflow. Do not manufacture a production task, delay, retry, cancel,
+or provider event to verify a documentation change such as this one.
 
 ## Historical evidence (pre-cutover; non-executable)
 
