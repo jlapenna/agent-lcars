@@ -1,7 +1,9 @@
 import {
+  FirestoreStore,
   MemoryScheduleStore,
   MemoryStore,
   Orchestrator,
+  type OrchestratorStore,
   type Run,
 } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
@@ -23,8 +25,8 @@ const spec = {
   target: { repo: REPO },
 };
 
-function fixture() {
-  const store = new MemoryStore();
+function fixture(store: OrchestratorStore = new MemoryStore()) {
+  let now = NOW;
   let grants: WorkGrant[] = [
     {
       principal: 'user:operator',
@@ -35,7 +37,7 @@ function fixture() {
   ];
   const orchestrator = new Orchestrator(
     store,
-    { now: () => NOW },
+    { now: () => now },
     {
       pipelines: ['claude', 'codex', 'opencode'],
       allowedPipelines: (task, run) =>
@@ -61,22 +63,30 @@ function fixture() {
     cliSessions: async () => ({ sessions: [], warnings: [] }),
     scheduleStore: new MemoryScheduleStore(),
     grants: () => grants,
-    now: () => new Date(NOW),
+    now: () => new Date(now),
   };
   return {
     store,
     orchestrator,
     context,
+    advanceMinutes(minutes: number) {
+      now = new Date(Date.parse(NOW) + minutes * 60_000).toISOString();
+    },
     revoke(next: WorkGrant[]) {
       grants = next;
     },
   };
 }
 
-async function post(context: WorkContext, path: string, body: unknown) {
+async function post(
+  context: WorkContext,
+  path: string,
+  body: unknown,
+  id = ID,
+) {
   const { response } = await createWorkHandler().handle(
     new Request(
-      `https://lcars.test/api/work/v1${path === '/items' ? `/items/${ID}` : path}`,
+      `https://lcars.test/api/work/v1${path === '/items' ? `/items/${id}` : path}`,
       {
         method: path === '/items' ? 'PUT' : 'POST',
         headers: { 'content-type': 'application/json' },
@@ -393,3 +403,157 @@ describe('provider fallback at the authenticated Work boundary', () => {
     );
   });
 });
+
+const emulatorHost = process.env['FIRESTORE_EMULATOR_HOST'];
+if (process.env['REQUIRE_FIRESTORE_EMULATOR'] === '1' && !emulatorHost)
+  throw new Error(
+    'Maintenance fallback contract requires the Firestore emulator',
+  );
+
+let maintenanceCollection = 0;
+const maintenanceStores: { name: string; create: () => OrchestratorStore }[] = [
+  { name: 'MemoryStore', create: () => new MemoryStore() },
+  ...(emulatorHost === undefined
+    ? []
+    : [
+        {
+          name: 'FirestoreStore (emulator)',
+          create: () =>
+            new FirestoreStore({
+              projectId: 'demo-orchestrator',
+              databaseId: '(default)',
+              emulatorHost,
+              collectionPrefix: `maintenance2334-${Date.now()}-${++maintenanceCollection}-`,
+            }),
+        },
+      ]),
+];
+
+describe.each(maintenanceStores)(
+  'bounded maintenance HTTP fallback: $name',
+  ({ create }) => {
+    it('advances past a full batch of revoked alternatives to a later authorized intent', async () => {
+      const f = fixture(create());
+      f.advanceMinutes(14);
+      // Seed an isolated contract cooldown through the normal report path.
+      // No provider is invoked and this is not a production limit event.
+      expect((await post(f.context, '/items', { id: ID, spec })).status).toBe(
+        201,
+      );
+      const limited = (await f.store.readActiveRun({ workId: ID }))!;
+      await f.orchestrator.report(limited.runId, {
+        ok: false,
+        summary: 'provider-limit',
+      });
+      const older: Run[] = [];
+      for (let index = 0; index < 30; index++) {
+        const id = `${ID.slice(0, 24)}${String(index).padStart(2, '0')}`;
+        expect(
+          (
+            await post(
+              f.context,
+              '/items',
+              {
+                id,
+                spec: { ...spec, fallbackPipelines: ['codex'] },
+              },
+              id,
+            )
+          ).status,
+        ).toBe(201);
+        const run = (await f.store.readActiveRun({ workId: id }))!;
+        await f.store.enqueueRun({
+          runId: run.runId,
+          now: f.context.now().toISOString(),
+        });
+        older.push(run);
+      }
+      // 02:15 UTC is a minute-slot boundary for these 31 candidates. The
+      // first default batch therefore visits exactly the 30 older refusals.
+      // The cooldown was recorded only one minute earlier and remains active.
+      f.advanceMinutes(15);
+      const laterId = `${ID.slice(0, 24)}99`;
+      expect(
+        (
+          await post(
+            f.context,
+            '/items',
+            {
+              id: laterId,
+              spec: { ...spec, fallbackPipelines: ['opencode'] },
+            },
+            laterId,
+          )
+        ).status,
+      ).toBe(201);
+      const later = (await f.store.readActiveRun({ workId: laterId }))!;
+      await f.store.enqueueRun({
+        runId: later.runId,
+        now: f.context.now().toISOString(),
+      });
+      f.revoke([
+        {
+          principal: 'user:operator',
+          subjects: ['github:operator'],
+          pipelines: ['claude', 'opencode'],
+          scopes: ['work.operator'],
+        },
+      ]);
+      const cron: WorkContext = {
+        ...f.context,
+        principal: {
+          principal: 'svc:maintenance',
+          subject: 'maintenance@example.iam.gserviceaccount.com',
+          via: 'google',
+          pipelines: ['claude', 'codex', 'opencode'],
+          scopes: new Set(['work.cron']),
+        },
+      };
+      let transactions = 0;
+      const transact = f.store.transactRun.bind(f.store);
+      f.store.transactRun = async (input) => {
+        transactions++;
+        return transact(input);
+      };
+      const rerouted: unknown[] = [];
+      for (let pass = 0; pass < 2; pass++) {
+        const before = transactions;
+        const response = await post(cron, '/maintenance/tick', {});
+        expect(response.status).toBe(200);
+        const body = await response.json();
+        rerouted.push(...body.rerouted);
+        expect(transactions - before).toBeLessThanOrEqual(30);
+        if (pass === 0) {
+          expect(body.rerouted).toEqual([]);
+          expect(transactions - before).toBe(30);
+          expect(
+            await f.store.readActiveRun({ workId: laterId }),
+          ).toMatchObject({
+            runId: later.runId,
+            pipeline: 'claude',
+          });
+          expect(await f.store.listRuns({ workId: laterId })).toHaveLength(1);
+        }
+      }
+      expect(rerouted).toEqual([
+        {
+          fromRunId: later.runId,
+          newRunId: later.runId.replace('/r1', '/r2'),
+        },
+      ]);
+      expect(await f.store.readActiveRun({ workId: laterId })).toMatchObject({
+        pipeline: 'opencode',
+        providerFallback: { fromRunId: later.runId },
+      });
+      expect(await f.store.listRuns({ workId: laterId })).toHaveLength(2);
+      for (const run of older) {
+        expect(await f.store.listRuns(run.task)).toHaveLength(1);
+        expect(await f.store.readActiveRun(run.task)).toMatchObject({
+          runId: run.runId,
+          pipeline: 'claude',
+          queue: { state: 'queued' },
+        });
+      }
+    });
+  },
+);
