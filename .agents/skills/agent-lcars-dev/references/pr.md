@@ -249,15 +249,34 @@
    assuming `--auto` will ever land the merge — a queued auto-merge gives
    no error and no signal that it's stuck on this.
 
-7. After verifying the merge, follow the shared
+7. Before reporting task completion, follow the shared
    [worktree-hygiene workflow](https://github.com/jlapenna/repo-tools/blob/main/plugins/repo-tools/skills/worktree-hygiene/SKILL.md)
-   for task cleanup. Invoke the primary checkout's already-installed shared CLI
-   directly for audit and apply. If dependencies need materializing or updating,
-   synchronize the clean primary and run normal setup as a separately
-   resource-qualified phase; do not bootstrap dependencies during cleanup.
-   From outside the target worktree, audit with
-   `<primary-path>/node_modules/.bin/repo-prune-merged-worktrees --repo <primary-path> --base origin/main <worktree-path>`;
-   add `--delete` only for the completed task. The shared command owns merge,
-   PR, cleanliness, lock and process checks and local branch deletion. Keep
-   any refused target and investigate its reason. Synchronize the clean primary
-   checkout as specified in this skill before updating its installed tooling.
+   for your own checkout. Record its absolute path, owning primary and branch,
+   and stop your own watchers and servers. Invoke the already-installed current
+   managed shared CLI from a stable location outside that checkout. Resolve
+   `repo-prune-merged-worktrees` and its real package location, and verify its
+   helper bytes against the reviewed managed installation implementing the
+   current shared workflow. `PATH` precedence or the package's internal `0.0.0`
+   version alone is not release evidence. This repository's dependency pin can
+   lag that workflow: neither an installed primary `node_modules` CLI nor its
+   matching lockfile alone proves it is current. Never select the soon-to-be-removed
+   checkout's own `node_modules` CLI. If no current managed installation is ready,
+   use its owning installation workflow as a separately resource-qualified phase
+   before cleanup; do not bootstrap during removal.
+
+   Record the verified executable's absolute path and invoke that exact path in
+   every audit and apply call; do not resolve `PATH` again during removal. Use
+   the recorded absolute primary and target checkout paths too.
+
+   Set an outside working directory on **every** exec call, for example `/tmp`;
+   a preceding shell's `cd` does not persist. From there, audit with
+   `<verified-cli-path> --repo <absolute-primary-path> --base origin/main <absolute-worktree-path>`;
+   add `--delete` only for that audited task. Verify both the directory and its
+   `git worktree list --porcelain` registration are gone. Your own cwd is a
+   condition to fix, not a cleanup blocker. The shared command owns merge, PR,
+   cleanliness, lock and process checks and local branch deletion. Keep foreign
+   sessions and every genuine refusal with their exact
+   paths and reasons; never force them away. If your task ends unmerged, follow
+   the shared authorized parking procedure, preserving private working files,
+   index/staged objects and committed history; do not call it merged or discard
+   its state. Synchronize the clean primary as specified in this skill.

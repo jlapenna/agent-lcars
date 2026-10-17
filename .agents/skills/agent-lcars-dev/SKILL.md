@@ -53,6 +53,17 @@ These override any default behavior:
   using the primary as their cwd do not block this narrow fast-forward; if it is unsafe to update, report that
   it remains behind rather than stashing, resetting, or switching branches.
 
+  **Clean up your own task checkout before reporting completion**, including
+  when the task ends unmerged. Record its absolute path, owning primary and
+  branch; stop your own watchers and servers; then follow the shared
+  [worktree-hygiene workflow](https://github.com/jlapenna/repo-tools/blob/main/plugins/repo-tools/skills/worktree-hygiene/SKILL.md)
+  through the [PR cleanup procedure](references/pr.md). Set an outside working
+  directory on every cleanup exec call: an earlier shell's `cd` does not persist.
+  Your own cwd is a condition to fix, not a reason to retain a completed
+  checkout. Verify both its directory and Git registration are gone. Preserve
+  foreign owners and every real refusal; use the shared authorized recovery
+  procedure for unmerged work rather than calling it landed or discarding it.
+
 - **Push early — the heavy gate runs on CI, not your workstation.** The
   pre-push hook runs the fast layer (`format:check`, affected
   `lint`/`typecheck`) locally; it deliberately does **not** run the
