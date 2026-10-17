@@ -211,6 +211,16 @@ does not provide an owned disk quota or a filesystem-monitor readiness handshake
 An unavailable required guard is a setup gate, not a reason to invent a wrapper
 or bypass verification.
 
+Launch each such transient unit with `--collect` (`CollectMode=inactive-or-failed`)
+alongside `--wait`. Without it, a unit that ends in failure stays loaded in
+`systemctl --failed` indefinitely and masks real service failures in the
+host's health signal; homelab#2685 recorded 19 such residues from one day of
+agent verification. `--collect` does not hide the outcome: `systemd-run --wait`
+still exits with the unit's status and prints its result, main-process exit,
+runtime, CPU time and memory peak, and the unit's journal stays available via
+`journalctl -u <unit>`. Record that summary in the phase receipt before the
+unit is unloaded; do not rely on `systemctl status` afterwards.
+
 A resource monitor declared as a required guard for that phase must prove
 readiness before the supervisor starts its workload: validate the accounting
 paths/counters and record a successful baseline and first sample. Do not assume
