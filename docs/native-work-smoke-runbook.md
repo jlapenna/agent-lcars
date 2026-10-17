@@ -43,19 +43,23 @@ discard useful delivery to replay the dated smokes recorded below.
 
 ## What each phase proves (separate observations)
 
-Admission, provider execution, publication, landing, and accepted completion
-are distinct — one passing does not imply the next. Record the item id, the
-actual path exercised, and the useful result; a successful dispatch or a worker
-exit alone does not prove the work was delivered.
+Admission, provider execution, publication, landing, and report completion are
+distinct — one passing does not imply the next. Native `state: done` records that
+the run finished and its deliverable was **published**; it does not mean the PR
+merged. Record the item id, the actual path exercised, and the useful result; a
+successful dispatch or a worker exit alone does not prove the work was delivered.
 
-| Observation           | What you actually look at                                                                                                                                                                                                                     |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Admission             | `PUT /items/{id}` returns `201` with the item view and `runs[0].runId` = `work:<id>/r1`; state reaches `running` once the authoritative drain dispatches                                                                                      |
-| Provider execution    | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required. |
-| Source/PR publication | an implementation item's fleet-login PR references `Work: work:<id>`; a report item instead carries `agent-result:v1:report` findings, not a PR                                                                                               |
-| Protected landing     | the PR passes required CI and lands through normal protected delivery; a report item has nothing to land                                                                                                                                      |
-| Accepted completion   | `GET /items/{id}` shows `state: done` with the PR or report recorded; normal delivery and cleanup then apply — follow them rather than force-close                                                                                            |
+| Observation                    | What you actually look at                                                                                                                                                                                                                                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admission                      | `PUT /items/{id}` returns `201` with the item view and `runs[0].runId` = `work:<id>/r1`; state reaches `running` once the authoritative drain dispatches                                                                                                                                                               |
+| Provider execution             | the direct worker claims the native Run and records session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required.                                                                          |
+| PR publication (native `done`) | the run settles `state: done` with a `pull-request` result summary and `result.ref` = the PR URL, and the fleet-login PR references `Work: work:<id>`. This records the PR was **published** — independently of whether it ever merged.                                                                                |
+| Protected landing              | observe required CI and the protected merge **on the PR itself** (its checks, `deliveryBinding.state` reaching `complete`, and the merge commit). Native `state: done` does not imply this step happened; the item can be `done` while the PR is still open or failing checks.                                         |
+| Report completion              | a `deliverable: report` item settles only on the private `<!-- agent-result:v1:report:$ATTEMPT_ID -->` outcome record **and** the complete final findings in the same round (at most 16,384 characters; a longer one is refused, never truncated). A bare final message is insufficient, and a PR fails a report item. |
 
+So on the PR path read `state: done` + `result.ref` as "PR published," then watch
+required CI and the protected merge on the PR itself; on the report path read the
+report record plus full findings as "delivered," with nothing to land.
 `POST /items/{id}/cancel` after the item is `done` returns `409`.
 
 ## 1. Create the item
@@ -88,19 +92,28 @@ Poll the item until its native Run reaches a terminal state, or open
 and its session history are authoritative; direct workers do not create a
 GitHub Actions run to watch.
 
-## 3. Confirm the useful outcome
+## 3. Confirm the useful outcome — publication is not landing
 
 ```bash
 gh workflow run work-create.yml -f action=get -f id=<id>
 ```
 
 The run's step summary shows `state`, and each run's `runId`, `state`, and
-`result` (or open `https://lcars.jlapenna.net/work/<id>` signed in). Confirm the
-actual deliverable against the phase table above — a landed PR for an
-implementation, the stored report for a findings item — then let normal delivery
-and cleanup take their course. Do not close useful delivery to end the run
-sooner; the dated smokes below were evidence for their own fixes, not a delivery
-contract to copy.
+`result` (or open `https://lcars.jlapenna.net/work/<id>` signed in). Read them by
+path, not as one green light:
+
+- **Implementation (PR) path:** native `state: done` with a `pull-request` result
+  summary and `result.ref` = the PR URL records the PR was **published**. That is
+  not landing — confirm required CI and the protected merge on the PR itself
+  before treating the work as accepted.
+- **Report path:** confirm the private
+  `<!-- agent-result:v1:report:$ATTEMPT_ID -->` outcome record **and** the complete
+  final findings (at most 16,384 characters; oversize is refused, not truncated).
+  A bare final message settles nothing, and a PR fails a report item.
+
+Then let normal delivery and cleanup take their course. Do not close useful
+delivery to end the run sooner; the dated smokes below were evidence for their own
+fixes, not a delivery contract to copy.
 
 ## Narrow synthetic canaries
 
