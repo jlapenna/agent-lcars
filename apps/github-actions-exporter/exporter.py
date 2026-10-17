@@ -1341,31 +1341,103 @@ class Database:
 
 
 class DatabaseMetrics:
+    """Serve stored history from a snapshot the poll loop rebuilds (homelab#2653).
+
+    The aggregations below scan the whole retained history: 130k runs and 340k
+    jobs took about 5s of SQL per scrape on 2026-10-17, serialized on the
+    database lock with the poller's writes and with any concurrent scrape, so
+    scrapes straddled Prometheus's 10s timeout and kept growing with history.
+    The stored history only changes when the poller writes, so the poll loop
+    calls refresh() once per cycle and a scrape only renders the last snapshot.
+    Queue ages are still computed at scrape time so they keep advancing.
+    """
+
     def __init__(self, database: Database) -> None:
         self.database = database
+        self._snapshot: (
+            tuple[
+                list[Any],
+                list[tuple[list[str], float]],
+                dict[tuple[str, str], list[tuple[float, bool]]],
+            ]
+            | None
+        ) = None
+
+    def refresh(self) -> None:
+        """Run the history aggregations and replace the snapshot scrapes serve."""
+        families = list(self._history_families())
+        placeholders = ",".join("?" for _ in QUEUED_STATUSES)
+        oldest_queued = [
+            (
+                [row["repository"], row["workflow"], row["name"], row["runs_on"]],
+                float(row["oldest"]),
+            )
+            for row in self.database.rows(
+                f"""
+                SELECT repository, workflow, name, runs_on, MIN(created_at) AS oldest
+                FROM jobs
+                WHERE status IN ({placeholders}) AND created_at IS NOT NULL
+                GROUP BY repository, workflow, name, runs_on
+                """,
+                QUEUED_STATUSES,
+            )
+        ]
+        self._snapshot = (families, oldest_queued, self._decisive_runs())
 
     def collect(self):
-        workflow_runs = CounterMetricFamily(
-            "github_actions_workflow_runs",
-            "Completed GitHub Actions workflow runs.",
-            labels=("repository", "workflow", "event", "conclusion"),
+        if self._snapshot is None:
+            self.refresh()
+        families, oldest_queued_rows, decisive_runs = self._snapshot
+        yield from families
+        yield from self._consecutive_failures(decisive_runs, time.time())
+
+        oldest_queued = GaugeMetricFamily(
+            "github_actions_job_oldest_queued_seconds",
+            "Age in seconds of the oldest currently queued job. runs_on is the fleet label the job targets, empty for GitHub-hosted jobs (agent-lcars#1699).",
+            labels=("repository", "workflow", "job", "runs_on"),
         )
+        now = time.time()
+        for labels, oldest in oldest_queued_rows:
+            oldest_queued.add_metric(labels, max(0, now - oldest))
+        yield oldest_queued
+
+    def _decisive_runs(self) -> dict[tuple[str, str], list[tuple[float, bool]]]:
+        """Each workflow's decisive runs inside the window, newest first.
+
+        The window expires the oldest runs first, so runs older than a
+        workflow's newest success can never affect its streak and are not
+        kept. collect() applies the expiry against the scrape-time clock, so
+        a cached streak still ages out between refreshes (homelab#2653).
+        """
+        runs: dict[tuple[str, str], list[tuple[float, bool]]] = {}
+        settled: set[tuple[str, str]] = set()
         for row in self.database.rows(
             """
-            SELECT repository, workflow, event,
-                   COALESCE(conclusion, 'unknown') AS conclusion,
-                   COUNT(*) AS total
+            SELECT repository, workflow, conclusion, created_at
             FROM workflow_runs
             WHERE status = 'completed'
-            GROUP BY repository, workflow, event, COALESCE(conclusion, 'unknown')
-            """
+              AND event != 'pull_request'
+              AND conclusion IN ('success', 'failure', 'timed_out',
+                                 'action_required', 'startup_failure')
+              AND created_at >= ?
+            ORDER BY repository, workflow,
+                     COALESCE(created_at, 0) DESC, id DESC, run_attempt DESC
+            """,
+            (time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,),
         ):
-            workflow_runs.add_metric(
-                [row["repository"], row["workflow"], row["event"], row["conclusion"]],
-                float(row["total"]),
-            )
-        yield workflow_runs
+            key = (row["repository"], row["workflow"])
+            if key in settled:
+                continue
+            success = row["conclusion"] == "success"
+            runs.setdefault(key, []).append((float(row["created_at"]), success))
+            if success:
+                settled.add(key)
+        return runs
 
+    @staticmethod
+    def _consecutive_failures(
+        decisive_runs: dict[tuple[str, str], list[tuple[float, bool]]], now: float
+    ):
         # The most recent decisive (success/failure-class, non-pull_request)
         # runs of each workflow that did not succeed, counted back from the
         # latest until the first success, over runs created in the last
@@ -1395,48 +1467,41 @@ class DatabaseMetrics:
             "1 when the consecutive-failure count is bounded by a stored success (or is 0); 0 when it is a lower bound because stored history ends before the last success.",
             labels=("repository", "workflow"),
         )
-        for row in self.database.rows(
-            """
-            WITH ordered AS (
-                SELECT repository, workflow, conclusion,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY repository, workflow
-                           ORDER BY COALESCE(created_at, 0) DESC, id DESC, run_attempt DESC
-                       ) AS rn
-                FROM workflow_runs
-                WHERE status = 'completed'
-                  AND event != 'pull_request'
-                  AND conclusion IN ('success', 'failure', 'timed_out',
-                                     'action_required', 'startup_failure')
-                  AND created_at >= ?
-            ),
-            first_success AS (
-                SELECT repository, workflow, MIN(rn) AS rn
-                FROM ordered
-                WHERE conclusion = 'success'
-                GROUP BY repository, workflow
-            )
-            SELECT o.repository, o.workflow,
-                   SUM(CASE WHEN o.conclusion != 'success'
-                                 AND (s.rn IS NULL OR o.rn < s.rn)
-                            THEN 1 ELSE 0 END) AS streak,
-                   MAX(CASE WHEN s.rn IS NULL THEN 0 ELSE 1 END) AS bounded
-            FROM ordered o
-            LEFT JOIN first_success s
-                   ON s.repository = o.repository AND s.workflow = o.workflow
-            GROUP BY o.repository, o.workflow
-            """,
-            (time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,),
-        ):
-            consecutive_failures.add_metric(
-                [row["repository"], row["workflow"]], float(row["streak"])
-            )
+        cutoff = now - CONSECUTIVE_FAILURE_WINDOW_SECONDS
+        for (repository, workflow), runs in decisive_runs.items():
+            live = [success for created_at, success in runs if created_at >= cutoff]
+            if not live:
+                continue
+            bounded = any(live)
+            streak = live.index(True) if bounded else len(live)
+            consecutive_failures.add_metric([repository, workflow], float(streak))
             consecutive_failures_complete.add_metric(
-                [row["repository"], row["workflow"]],
-                1.0 if row["bounded"] or row["streak"] == 0 else 0.0,
+                [repository, workflow], 1.0 if bounded or streak == 0 else 0.0
             )
         yield consecutive_failures
         yield consecutive_failures_complete
+
+    def _history_families(self):
+        workflow_runs = CounterMetricFamily(
+            "github_actions_workflow_runs",
+            "Completed GitHub Actions workflow runs.",
+            labels=("repository", "workflow", "event", "conclusion"),
+        )
+        for row in self.database.rows(
+            """
+            SELECT repository, workflow, event,
+                   COALESCE(conclusion, 'unknown') AS conclusion,
+                   COUNT(*) AS total
+            FROM workflow_runs
+            WHERE status = 'completed'
+            GROUP BY repository, workflow, event, COALESCE(conclusion, 'unknown')
+            """
+        ):
+            workflow_runs.add_metric(
+                [row["repository"], row["workflow"], row["event"], row["conclusion"]],
+                float(row["total"]),
+            )
+        yield workflow_runs
 
         jobs = CounterMetricFamily(
             "github_actions_jobs",
@@ -1532,28 +1597,6 @@ class DatabaseMetrics:
                 float(row["total"]),
             )
         yield current_jobs
-
-        oldest_queued = GaugeMetricFamily(
-            "github_actions_job_oldest_queued_seconds",
-            "Age in seconds of the oldest currently queued job. runs_on is the fleet label the job targets, empty for GitHub-hosted jobs (agent-lcars#1699).",
-            labels=("repository", "workflow", "job", "runs_on"),
-        )
-        placeholders = ",".join("?" for _ in QUEUED_STATUSES)
-        now = time.time()
-        for row in self.database.rows(
-            f"""
-            SELECT repository, workflow, name, runs_on, MIN(created_at) AS oldest
-            FROM jobs
-            WHERE status IN ({placeholders}) AND created_at IS NOT NULL
-            GROUP BY repository, workflow, name, runs_on
-            """,
-            QUEUED_STATUSES,
-        ):
-            oldest_queued.add_metric(
-                [row["repository"], row["workflow"], row["name"], row["runs_on"]],
-                max(0, now - float(row["oldest"])),
-            )
-        yield oldest_queued
 
         yield from self._histogram(
             "github_actions_workflow_duration_seconds",
@@ -1802,10 +1845,11 @@ class Poller:
                 self.state.poll_errors.labels(repository, "refresh").inc()
                 LOGGER.exception("failed to refresh %s", repository)
 
-    def run_forever(self) -> None:
+    def run_forever(self, after_refresh: Callable[[], None]) -> None:
         while True:
             started = time.monotonic()
             self.refresh_all()
+            after_refresh()
             elapsed = time.monotonic() - started
             time.sleep(max(1, self.config.poll_interval_seconds - elapsed))
 
@@ -1860,7 +1904,9 @@ def main() -> None:
     database = Database(config.database_path)
     with ExitStack() as resources:
         resources.callback(database.close)
-        registry.register(DatabaseMetrics(database))
+        metrics = DatabaseMetrics(database)
+        metrics.refresh()
+        registry.register(metrics)
         api = GitHubAPI(config, state)
         resources.callback(api.close)
         poller = Poller(config, database, api, state)
@@ -1879,7 +1925,7 @@ def main() -> None:
             config.port,
             ", ".join(config.repositories),
         )
-        poller.run_forever()
+        poller.run_forever(metrics.refresh)
 
 
 if __name__ == "__main__":

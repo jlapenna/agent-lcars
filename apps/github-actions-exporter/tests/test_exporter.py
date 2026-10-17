@@ -517,6 +517,71 @@ class GitHubActionsExporterTests(unittest.TestCase):
             self.metrics(),
         )
 
+    def test_cached_streak_window_expires_at_scrape_time(self):
+        # homelab#2653 review: a cached streak must still age out of the
+        # window as the clock moves, with no database change or refresh.
+        repository = "jlapenna/homelab"
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        for i, (offset, conclusion) in enumerate(
+            ((0, "success"), (100, "failure"), (200, "cancelled"), (300, "failure")),
+            start=1,
+        ):
+            self.database.upsert_run(
+                repository,
+                workflow_run(
+                    id=i,
+                    conclusion=conclusion,
+                    created_at=(start + timedelta(seconds=offset)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                ),
+            )
+        created = start.timestamp()
+        window = exporter.CONSECUTIVE_FAILURE_WINDOW_SECONDS
+        collector = exporter.DatabaseMetrics(self.database)
+        with patch.object(exporter.time, "time", return_value=created + window):
+            collector.refresh()
+        registry = CollectorRegistry()
+        registry.register(collector)
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+
+        def scrape(elapsed):
+            with (
+                patch.object(
+                    self.database, "rows", side_effect=AssertionError("scrape ran SQL")
+                ),
+                patch.object(exporter.time, "time", return_value=created + elapsed),
+            ):
+                return generate_latest(registry).decode()
+
+        # The cutoff is inclusive: the success created exactly a window ago
+        # still bounds the streak. The cancelled run between the two failures
+        # neither counts nor breaks it, so the streak is 2.
+        at_cutoff = scrape(window)
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 2.0", at_cutoff
+        )
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures_complete{labels} 1.0",
+            at_cutoff,
+        )
+        success_expired = scrape(window + 50)
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 2.0", success_expired
+        )
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures_complete{labels} 0.0",
+            success_expired,
+        )
+        # The older failure has expired too.
+        self.assertIn(
+            f"github_actions_workflow_consecutive_failures{labels} 1.0",
+            scrape(window + 250),
+        )
+        self.assertNotIn(
+            "github_actions_workflow_consecutive_failures{", scrape(window + 350)
+        )
+
     def test_consecutive_failures_without_a_stored_success_are_marked_incomplete(self):
         # A freshly backfilled database may hold only the tail of a longer
         # streak. The count is still reported (two observed failures are two
@@ -679,6 +744,68 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
         self.assertIn("github_actions_job_oldest_queued_seconds", metrics)
+
+    def test_scrape_renders_the_last_refresh_without_querying_history(self):
+        # homelab#2653: whole-history SQL on every scrape outgrew the 10s
+        # scrape timeout. A scrape must only render what refresh() stored.
+        run = workflow_run(
+            status="in_progress", conclusion=None, updated_at="2026-08-05T04:19:30Z"
+        )
+        job = workflow_job(
+            status="queued", conclusion=None, started_at=None, completed_at=None
+        )
+        self.database.upsert_run("jlapenna/homelab", run)
+        self.database.upsert_jobs("jlapenna/homelab", run, [job])
+        collector = exporter.DatabaseMetrics(self.database)
+        collector.refresh()
+        registry = CollectorRegistry()
+        registry.register(collector)
+        created_at = exporter.parse_timestamp(job["created_at"])
+        oldest = 'github_actions_job_oldest_queued_seconds{job="repository validation",repository="jlapenna/homelab",runs_on="",workflow="validate"}'
+
+        with (
+            patch.object(
+                self.database, "rows", side_effect=AssertionError("scrape ran SQL")
+            ),
+            patch.object(
+                self.database,
+                "histogram_rows",
+                side_effect=AssertionError("scrape ran SQL"),
+            ),
+            patch.object(exporter.time, "time", return_value=created_at + 100),
+        ):
+            first = generate_latest(registry).decode()
+        with (
+            patch.object(
+                self.database, "rows", side_effect=AssertionError("scrape ran SQL")
+            ),
+            patch.object(
+                self.database,
+                "histogram_rows",
+                side_effect=AssertionError("scrape ran SQL"),
+            ),
+            patch.object(exporter.time, "time", return_value=created_at + 160),
+        ):
+            later = generate_latest(registry).decode()
+
+        self.assertIn(
+            'github_actions_workflow_runs_current{repository="jlapenna/homelab",status="in_progress",workflow="validate"} 1.0',
+            first,
+        )
+        # Queue age keeps advancing between refreshes.
+        self.assertIn(f"{oldest} 100.0", first)
+        self.assertIn(f"{oldest} 160.0", later)
+
+        completed = workflow_run(updated_at="2026-08-05T04:25:00Z")
+        self.database.upsert_run("jlapenna/homelab", completed)
+        self.database.upsert_jobs("jlapenna/homelab", completed, [workflow_job()])
+        self.assertIn(
+            "github_actions_workflow_runs_current{", generate_latest(registry).decode()
+        )
+        collector.refresh()
+        refreshed = generate_latest(registry).decode()
+        self.assertNotIn("github_actions_workflow_runs_current{", refreshed)
+        self.assertNotIn("github_actions_job_oldest_queued_seconds{", refreshed)
 
     def test_completed_run_does_not_finalize_or_export_active_job_snapshot(self):
         run = workflow_run()
@@ -1655,6 +1782,8 @@ class MainTests(unittest.TestCase):
     def test_startup_failure_closes_database_and_api_session(self):
         database = Mock()
         database.last_success_at.return_value = None
+        database.rows.return_value = []
+        database.histogram_rows.return_value = []
         api = Mock()
         config = exporter.Config(
             credentials=exporter.StaticCredentials("test"),
@@ -1676,6 +1805,8 @@ class MainTests(unittest.TestCase):
     def test_runtime_failure_stops_metrics_server_and_closes_resources(self):
         database = Mock()
         database.last_success_at.return_value = None
+        database.rows.return_value = []
+        database.histogram_rows.return_value = []
         api = Mock()
         poller = Mock()
         poller.run_forever.side_effect = RuntimeError("polling stopped")
@@ -1792,7 +1923,7 @@ class HealthEndpointServingTests(unittest.TestCase):
 
         seen = {}
 
-        def probe_then_stop():
+        def probe_then_stop(after_refresh):
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{port}{exporter.HEALTH_PATH}", timeout=5
             ) as response:
