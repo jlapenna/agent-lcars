@@ -229,12 +229,17 @@ func exitClaimKey(runID, fingerprint string) string { return runID + "\x00" + fi
 // accepted terminal result may still have cleanup debt, and a claimant refusal
 // is not evidence that this receipt may release.
 func (r *runExitReporter) settleTerminated(ctx context.Context, runID, runner, fingerprint string) error {
+	return r.settleTerminatedWithDisruption(ctx, runID, runner, fingerprint, nil)
+}
+
+func (r *runExitReporter) settleTerminatedWithDisruption(ctx context.Context, runID, runner, fingerprint string, disruption *exitDisruption) error {
 	if r == nil || runID == "" || runner == "" || fingerprint == "" {
 		return fmt.Errorf("receipt exit authority unavailable")
 	}
-	// Retirement has no disruption attestation: it needs the ordinary logical
-	// settlement of this receipt, whatever removed the worker.
-	state, err := r.postContext(ctx, runID, runner, fingerprint, nil)
+	// Preserve the observed cause even when retirement wins the race with the
+	// asynchronous inventory observer. The server still fences provider start,
+	// original claim, Job UID, receipt time, and the separate recovery budget.
+	state, err := r.postContext(ctx, runID, runner, fingerprint, disruption)
 	if err != nil {
 		return err
 	}

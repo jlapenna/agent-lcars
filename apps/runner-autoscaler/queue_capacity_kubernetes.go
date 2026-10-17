@@ -547,8 +547,19 @@ func physicalReceiptWorkersEnded(j *batch.Job, pods []core.Pod) (bool, bool) {
 		}
 		observed++
 		never = false
-		if p.Status.Reason == "NodeLost" || p.DeletionTimestamp != nil || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) || len(p.Status.ContainerStatuses) == 0 {
+		if p.Status.Reason == "NodeLost" || p.DeletionTimestamp != nil || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) {
 			return false, false
+		}
+		// A terminal scheduler-preempted Pod can have no runtime exit because
+		// its sole worker never started. Reuse the exact UID/cause attestation,
+		// with no auxiliary containers or execution history to leave behind.
+		if queueJobTerminal(*j) && p.Status.Phase == core.PodFailed &&
+			len(p.Spec.Containers) == 1 && p.Spec.Containers[0].Name == directRunnerContainer &&
+			len(p.Spec.InitContainers) == 0 && len(p.Spec.EphemeralContainers) == 0 &&
+			len(p.Status.InitContainerStatuses) == 0 && len(p.Status.EphemeralContainerStatuses) == 0 &&
+			(len(p.Status.ContainerStatuses) == 0 || (len(p.Status.ContainerStatuses) == 1 && p.Status.ContainerStatuses[0].Name == directRunnerContainer)) &&
+			schedulerPreemption(*j, pods) != nil {
+			continue
 		}
 		// Terminal Pod phase can include synthesized unknown container exits.
 		// Require complete, positive runtime evidence for every declared worker.
@@ -643,7 +654,7 @@ func (q *kubernetesQueue) retireReceipt(ctx context.Context, r capacityReceipt, 
 	// Keep the exact inert UID/resourceVersion barrier before attempting
 	// logical exit. A refusal or lost reply retains physical occupancy and
 	// retries on the next complete recovery observation.
-	if err := q.settleReceiptClaim(ctx, r, check, never); err != nil {
+	if err := q.settleReceiptClaim(ctx, r, check, never, schedulerPreemption(*check, pods)); err != nil {
 		return err
 	}
 	release := map[string]any{"action": "release", "fence": r.capacityFence, "recoveryNonce": n, "barrierUid": string(check.UID), "barrierRunId": r.RunID, "barrierNonce": r.Nonce, "resourceVersion": check.ResourceVersion, "jobName": check.Name, "evidence": "uid-rv-inert-job-and-owned-pods", "inert": true, "physicalWorkersEnded": true, "neverStarted": never, "originalJobUid": r.JobUID}
@@ -678,7 +689,7 @@ func (q *kubernetesQueue) quiesceReceipts(ctx context.Context) error {
 // annotation. When that Secret is unavailable or quarantined, only the
 // authenticated exact-claim projection can prove the original claim live or
 // already settled. Transport failure and foreign/replaced identities fail closed.
-func (q *kubernetesQueue) settleReceiptClaim(ctx context.Context, r capacityReceipt, j *batch.Job, never bool) error {
+func (q *kubernetesQueue) settleReceiptClaim(ctx context.Context, r capacityReceipt, j *batch.Job, never bool, disruption *exitDisruption) error {
 	fingerprint := j.Annotations[queueClaimAnnotation]
 	// A credential-free absence barrier cannot have launched a worker.
 	if never && r.JobUID == "" && r.SecretUID == "" && r.Worker == nil && fingerprint == "" {
@@ -690,7 +701,7 @@ func (q *kubernetesQueue) settleReceiptClaim(ctx context.Context, r capacityRece
 		if fingerprint != "" && fingerprint != original {
 			return fmt.Errorf("receipt original claim fingerprint conflict")
 		}
-		return q.exits.settleTerminated(ctx, r.RunID, r.Runner, original)
+		return q.exits.settleTerminatedWithDisruption(ctx, r.RunID, r.Runner, original, disruption)
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
 		return err
@@ -705,5 +716,5 @@ func (q *kubernetesQueue) settleReceiptClaim(ctx context.Context, r capacityRece
 	if settled {
 		return nil // Final release still checks unresolved backend cleanup debt.
 	}
-	return q.exits.settleTerminated(ctx, r.RunID, r.Runner, fingerprint)
+	return q.exits.settleTerminatedWithDisruption(ctx, r.RunID, r.Runner, fingerprint, disruption)
 }
