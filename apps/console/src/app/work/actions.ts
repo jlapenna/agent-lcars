@@ -39,6 +39,7 @@ const evidenceIntentSchema = z.strictObject({
   pipeline: z.enum(['claude', 'codex', 'opencode']),
   priority: workSpecSchema.shape.priority,
   fallbackPipelines: fallbackPipelinesSchema.optional(),
+  deliverable: workSpecSchema.shape.deliverable,
   description: z.string().min(1),
   source: z.strictObject({
     route: z.string(),
@@ -164,6 +165,9 @@ async function createItemWithEvidenceUnsafe(form: FormData) {
     ...(intent.fallbackPipelines === undefined
       ? {}
       : { fallbackPipelines: intent.fallbackPipelines }),
+    ...(intent.deliverable === undefined
+      ? {}
+      : { deliverable: intent.deliverable }),
     target: { repo: `${repository.owner}/${repository.name}` },
   });
   const capabilityReason = forbiddenReason(principal, spec);

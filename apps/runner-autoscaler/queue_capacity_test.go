@@ -1148,3 +1148,158 @@ func TestReceiptDeadlineResumesAfterAttemptedReceipt(t *testing.T) {
 		t.Fatalf("deadline starved later receipt: %v", attempts)
 	}
 }
+
+// Retirement can be the first observer of a failed Job. It must preserve the
+// pre-start scheduler cause before releasing the exact receipt, even when the
+// immutable Secret has already disappeared and claim authority is projected.
+func TestReceiptRetirementPreservesSchedulerPreemption(t *testing.T) {
+	for _, authority := range []string{"secret", "projection", "exit-refused"} {
+		t.Run(authority, func(t *testing.T) {
+			q, r, ops := receiptFixture(t)
+			r.Producers = []capacityProducer{{ProducerID: "original", Subject: "subject", Stopped: true}}
+			j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.UID = "original-job"
+			j.ResourceVersion = "1"
+			j.Generation = 2
+			j.Spec.Suspend = ptr(false)
+			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue}}
+			r.JobUID = string(j.UID)
+			p := disruptedPod("original-pod", string(j.UID), true, schedulerPreemptionReason, nil)
+			p.OwnerReferences[0].Name = j.Name
+			p.OwnerReferences[0].APIVersion = "batch/v1"
+			p.Spec = *j.Spec.Template.Spec.DeepCopy()
+			p.Status.Phase = core.PodFailed
+			r.Worker = &capacityWorker{Generation: 1, PodUID: string(p.UID), JobUID: r.JobUID, Active: true}
+			k := q.client.(*fake.Clientset)
+			if err = k.Tracker().Add(j); err != nil {
+				t.Fatal(err)
+			}
+			if authority == "secret" {
+				secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, Namespace: q.config.Namespace, UID: "original-secret", OwnerReferences: p.OwnerReferences}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("original-token")}}
+				r.SecretUID = string(secret.UID)
+				if err = k.Tracker().Add(secret); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				q.claimSettled = func(_ context.Context, runID, runner, fingerprint string) (bool, error) {
+					if runID != r.RunID || runner != r.Runner || fingerprint != queueClaimFingerprint("original-token") {
+						t.Error("claim authority changed")
+					}
+					return false, nil
+				}
+			}
+			reports := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				reports++
+				var body struct {
+					Runner           string          `json:"runner"`
+					ClaimFingerprint string          `json:"claimFingerprint"`
+					Disruption       *exitDisruption `json:"disruption"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body.Runner != r.Runner || body.ClaimFingerprint != queueClaimFingerprint("original-token") || req.Header.Get("Authorization") != "Bearer google-id-token" {
+					t.Error("original exit authority changed")
+				}
+				d := body.Disruption
+				if d == nil || d.JobUID != r.JobUID || d.PodUID != string(p.UID) || d.Kind != schedulerPreemptionKind || d.ObservedAt != "2026-08-15T12:00:00Z" {
+					t.Errorf("lost disruption receipt: %+v", d)
+				}
+				for _, op := range *ops {
+					if op["action"] == "release" {
+						t.Error("capacity released before logical exit")
+					}
+				}
+				if authority == "exit-refused" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				fmt.Fprint(w, `{"state":"lost"}`)
+			}))
+			defer server.Close()
+			q.exits = testExitReporter(server.URL)
+			err = q.retireReceipt(context.Background(), *r, "recovery-nonce-123456", j, []core.Pod{*p})
+			if (err != nil) != (authority == "exit-refused") {
+				t.Fatalf("retirement error=%v", err)
+			}
+			if reports != 1 {
+				t.Fatalf("exit reports=%d", reports)
+			}
+			released := false
+			for _, op := range *ops {
+				if op["action"] == "release" {
+					released = true
+				}
+			}
+			if released != (authority != "exit-refused") {
+				t.Fatal("receipt release ignored logical exit result")
+			}
+			barrier, getErr := k.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
+			if getErr != nil || barrier.UID != j.UID || barrier.Spec.Suspend == nil || !*barrier.Spec.Suspend || barrier.Annotations[queueBarrierAnnotation] != r.Nonce {
+				t.Fatal("exact inert barrier lost", getErr)
+			}
+		})
+	}
+}
+
+func TestReceiptPreemptionRetirementRejectsAmbiguousNonexecution(t *testing.T) {
+	for _, kind := range []string{"eligible", "running", "deleting", "not-terminal", "node-lost", "other-cause", "executed", "history", "restart", "container-id", "started", "init", "ephemeral", "extra-container", "extra-status", "other-pod", "replacement-uid"} {
+		t.Run(kind, func(t *testing.T) {
+			j := queueJob("original-job")
+			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue}}
+			p := disruptedPod("original-pod", "original-job", true, schedulerPreemptionReason, nil)
+			p.Status.Phase = core.PodFailed
+			p.OwnerReferences[0].APIVersion = "batch/v1"
+			p.Spec.Containers = []core.Container{{Name: directRunnerContainer}}
+			pods := []core.Pod{*p}
+			status := core.ContainerStatus{Name: directRunnerContainer}
+			switch kind {
+			case "running":
+				p.Status.Phase = core.PodRunning
+			case "deleting":
+				at := meta.Now()
+				p.DeletionTimestamp = &at
+			case "not-terminal":
+				j.Status.Conditions = nil
+			case "node-lost":
+				p.Status.Reason = "NodeLost"
+			case "other-cause":
+				p.Status.Conditions[0].Reason = "EvictionByEvictionAPI"
+			case "executed":
+				status.State.Terminated = &core.ContainerStateTerminated{Reason: "ContainerStatusUnknown"}
+			case "history":
+				status.LastTerminationState.Terminated = &core.ContainerStateTerminated{}
+			case "restart":
+				status.RestartCount = 1
+			case "container-id":
+				status.ContainerID = "containerd://executed"
+			case "started":
+				status.Started = ptr(true)
+			case "init":
+				p.Spec.InitContainers = []core.Container{{Name: "setup"}}
+			case "ephemeral":
+				p.Spec.EphemeralContainers = []core.EphemeralContainer{{EphemeralContainerCommon: core.EphemeralContainerCommon{Name: "debug"}}}
+			case "extra-container":
+				p.Spec.Containers = append(p.Spec.Containers, core.Container{Name: "sidecar"})
+			case "extra-status":
+				p.Status.ContainerStatuses = []core.ContainerStatus{{Name: "unknown"}}
+			case "other-pod":
+				pods = append(pods, *disruptedPod("second-pod", "original-job", true, schedulerPreemptionReason, nil))
+			case "replacement-uid":
+				j.UID = "replacement-job"
+			}
+			if kind == "executed" || kind == "history" || kind == "restart" || kind == "container-id" || kind == "started" {
+				p.Status.ContainerStatuses = []core.ContainerStatus{status}
+			}
+			pods[0] = *p
+			ended, never := physicalReceiptWorkersEnded(&j, pods)
+			if ended != (kind == "eligible") || never {
+				t.Fatalf("ended=%v never=%v", ended, never)
+			}
+		})
+	}
+}

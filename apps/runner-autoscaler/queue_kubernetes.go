@@ -342,6 +342,16 @@ const (
 // active-deadline deletion), a container that ran at all, or a Pod owned by a
 // different Job all answer nil, leaving the ordinary terminal loss.
 func schedulerPreemption(j batch.Job, pods []core.Pod) *exitDisruption {
+	// A second owned Pod makes single-attempt nonexecution ambiguous.
+	owned := 0
+	for _, pod := range pods {
+		if podOwnedByJob(&pod, &j) {
+			owned++
+		}
+	}
+	if owned != 1 || j.UID == "" {
+		return nil
+	}
 	for _, pod := range pods {
 		if !podOwnedByJob(&pod, &j) {
 			continue
@@ -350,7 +360,7 @@ func schedulerPreemption(j batch.Job, pods []core.Pod) *exitDisruption {
 		if cond == nil || cond.Reason != schedulerPreemptionReason {
 			continue
 		}
-		if !containerNeverStarted(&pod, directRunnerContainer) {
+		if pod.UID == "" || !containerNeverStarted(&pod, directRunnerContainer) {
 			continue
 		}
 		at := cond.LastTransitionTime
@@ -400,7 +410,9 @@ func containerNeverStarted(pod *core.Pod, name string) bool {
 		if cs.Name != name {
 			continue
 		}
-		return cs.State.Terminated == nil && cs.State.Running == nil
+		return cs.State.Terminated == nil && cs.State.Running == nil &&
+			cs.LastTerminationState.Terminated == nil && cs.LastTerminationState.Running == nil &&
+			cs.RestartCount == 0 && cs.ContainerID == "" && (cs.Started == nil || !*cs.Started)
 	}
 	return true
 }

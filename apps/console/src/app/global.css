@@ -1342,8 +1342,10 @@ body:has(.console-header:not([data-streaming-fallback]))
     display: inline-flex;
   }
 
+  /* A 12rem basis: Find takes its own row rather than shrinking to its
+     label beside the window control. */
   .console-toolbar__search {
-    flex: 1 1 0;
+    flex: 1 1 12rem;
     width: auto;
   }
 
@@ -4988,5 +4990,11 @@ td.costs-repo-spend__num {
   .queue-item-row__link {
     min-height: 44px;
     padding: 10px 6px 10px 0;
+  }
+
+  /* The selection bar is drawn inside the row; the selected row's text
+     steps in past it rather than running under it. */
+  .queue-item-row[data-selected] .queue-item-row__link {
+    padding-left: 12px;
   }
 }

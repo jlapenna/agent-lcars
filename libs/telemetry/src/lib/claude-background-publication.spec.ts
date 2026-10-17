@@ -355,3 +355,92 @@ describe('native Claude background publication', () => {
     ).toBeUndefined();
   });
 });
+
+// Sanitized native mid-turn delivery: when the task completes while the
+// session is busy, the provider records its notification as a queued-command
+// attachment instead of a system turn (~1 in 3 observed completions).
+type AttachmentRow = BaseRow & {
+  type: string;
+  attachment: {
+    type: string;
+    prompt: string;
+    commandMode: string;
+    origin: { kind: string; producer: string };
+    runId?: string;
+  };
+};
+function midTurn() {
+  const rows = fixture();
+  const completion = rows[2];
+  const attachment: AttachmentRow = {
+    type: 'attachment',
+    sessionId: completion.sessionId,
+    isSidechain: false,
+    uuid: completion.uuid,
+    timestamp: completion.timestamp,
+    attachment: {
+      type: 'queued_command',
+      prompt: completion.message.content,
+      commandMode: 'task-notification',
+      origin: { kind: 'task-notification', producer: 'session-task' },
+      runId: 'native-run-1',
+    },
+  };
+  return [rows[0], rows[1], attachment, rows[3], rows[4]] as const;
+}
+
+describe('native Claude background publication completed mid-turn', () => {
+  it('recovers the publication from the queued-command notification', () => {
+    expect(reduce([...midTurn()]).deliverables.publicationCandidates).toEqual(
+      published,
+    );
+  });
+
+  it.each([
+    [
+      'human-queued prompt',
+      (a: AttachmentRow) => {
+        a.attachment.commandMode = 'prompt';
+      },
+    ],
+    [
+      'human origin',
+      (a: AttachmentRow) => {
+        a.attachment.origin = { kind: 'human', producer: 'session-task' };
+      },
+    ],
+    [
+      'missing run',
+      (a: AttachmentRow) => {
+        Reflect.deleteProperty(a.attachment, 'runId');
+      },
+    ],
+    [
+      'other attachment',
+      (a: AttachmentRow) => {
+        a.attachment.type = 'edited_text_file';
+      },
+    ],
+    [
+      'sidechain attachment',
+      (a: AttachmentRow) => {
+        a.isSidechain = true;
+      },
+    ],
+    [
+      'failed task',
+      (a: AttachmentRow) => {
+        a.attachment.prompt = a.attachment.prompt.replace(
+          'exit code 0',
+          'exit code 1',
+        );
+      },
+    ],
+  ] as const)('excludes %s', (_name, change) => {
+    const rows = midTurn();
+    change(rows[2]);
+    expect(
+      reduce([...rows]).deliverables.publicationCandidates,
+    ).toBeUndefined();
+  });
+});

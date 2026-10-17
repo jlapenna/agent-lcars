@@ -122,6 +122,28 @@ describe('New work creation', () => {
     ).toBeUndefined();
   });
 
+  it('opts only the ticked task into a read-only report', async () => {
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Read-only report/u }),
+    );
+    fireEvent.change(screen.getByLabelText('Description'), {
+      target: { value: 'Audit the retry paths' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(1));
+    expect((createItem as Mock).mock.calls[0][0].spec.deliverable).toBe(
+      'report',
+    );
+    await submit('Fix what the audit found');
+    await waitFor(() => expect(createItem).toHaveBeenCalledTimes(2));
+    expect(
+      (createItem as Mock).mock.calls[1][0].spec.deliverable,
+    ).toBeUndefined();
+  });
+
   it('keeps source context in the native item description', async () => {
     renderButton();
     await submit('Investigate this screen');
@@ -264,5 +286,41 @@ describe('New work creation', () => {
     expect(wireIntent).not.toHaveProperty('file');
     expect(wireIntent.priority).toBe('normal');
     expect(createItem).not.toHaveBeenCalled();
+  });
+
+  it('sends a report opt-in but never the tracking-issue choice with evidence', async () => {
+    (createItemWithEvidence as Mock).mockResolvedValue([
+      undefined,
+      { id: 'created' },
+    ]);
+    (createTrackingIssue as Mock).mockResolvedValue([
+      undefined,
+      { number: 7, url: 'https://github.com/o/r/issues/7' },
+    ]);
+    renderButton();
+    fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.change(await screen.findByLabelText('Description'), {
+      target: { value: 'Audit this screen' },
+    });
+    fireEvent.change(screen.getByLabelText('Screenshot file'), {
+      target: {
+        files: [new File(['image'], 'screen.png', { type: 'image/png' })],
+      },
+    });
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Read-only report/u }),
+    );
+    fireEvent.click(screen.getByLabelText(/File a GitHub issue/u));
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() => expect(createTrackingIssue).toHaveBeenCalledTimes(1));
+    const submitted = (createItemWithEvidence as Mock).mock
+      .calls[0][0] as FormData;
+    const wireIntent = JSON.parse(submitted.get('intent') as string) as Record<
+      string,
+      unknown
+    >;
+    expect(wireIntent.deliverable).toBe('report');
+    expect(wireIntent).not.toHaveProperty('fileGithubIssue');
   });
 });

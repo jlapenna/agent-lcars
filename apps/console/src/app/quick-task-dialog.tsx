@@ -85,6 +85,7 @@ interface QuickTaskSubmission {
   pipeline: AgentPipeline;
   priority: QueuePriority;
   fallbackPipelines?: AgentPipeline[];
+  deliverable?: 'report';
   description: string;
   source: QuickTaskSourceContext;
   file?: File;
@@ -145,6 +146,7 @@ export function QuickTaskDialog({
     [],
   );
   const [fileGithubIssue, setFileGithubIssue] = useState(false);
+  const [readOnlyReport, setReadOnlyReport] = useState(false);
   const submitInFlightRef = useRef(false);
 
   // The modal is closed during hydration, so applying browser-local defaults
@@ -304,7 +306,13 @@ export function QuickTaskDialog({
     try {
       const [error] = request.file
         ? await (async () => {
-            const { file, ...intent } = request;
+            // The tracking-issue choice runs after creation in this browser;
+            // the strict evidence intent rejects it as an unknown key.
+            const {
+              file,
+              fileGithubIssue: _fileGithubIssue,
+              ...intent
+            } = request;
             if (!file) throw new Error('Work evidence is unavailable');
             const form = new FormData();
             form.set('intent', JSON.stringify(intent));
@@ -321,6 +329,9 @@ export function QuickTaskDialog({
                 ...(request.fallbackPipelines === undefined
                   ? {}
                   : { fallbackPipelines: request.fallbackPipelines }),
+                ...(request.deliverable === undefined
+                  ? {}
+                  : { deliverable: request.deliverable }),
                 description: composeQuickTaskIssueBody(
                   {
                     description: request.description,
@@ -429,6 +440,7 @@ export function QuickTaskDialog({
                 supportedPipelines.includes(candidate),
             ),
           }),
+      ...(readOnlyReport ? { deliverable: 'report' } : {}),
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
@@ -437,6 +449,7 @@ export function QuickTaskDialog({
     setDescription('');
     setPriority('normal');
     setFallbackPipelines([]);
+    setReadOnlyReport(false);
     setScreenshot(null);
     setFileGithubIssue(false);
     setSource(emptySourceContext());
@@ -563,6 +576,12 @@ export function QuickTaskDialog({
               {lowInformationGuidance} You can still file this task as-is.
             </Text>
           )}
+          <Checkbox
+            label="Read-only report"
+            description="Asks for findings, not changes; the final message is the result."
+            checked={readOnlyReport}
+            onChange={(e) => setReadOnlyReport(e.currentTarget.checked)}
+          />
           <QuickTaskScreenshotField
             value={screenshot ?? undefined}
             onChange={(file) => setScreenshot(file ?? null)}
