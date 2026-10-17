@@ -515,27 +515,25 @@ describe.each(maintenanceStores)(
         transactions++;
         return transact(input);
       };
-      const rerouted: unknown[] = [];
-      for (let pass = 0; pass < 2; pass++) {
+      async function tick() {
         const before = transactions;
         const response = await post(cron, '/maintenance/tick', {});
         expect(response.status).toBe(200);
         const body = await response.json();
-        rerouted.push(...body.rerouted);
-        expect(transactions - before).toBeLessThanOrEqual(30);
-        if (pass === 0) {
-          expect(body.rerouted).toEqual([]);
-          expect(transactions - before).toBe(30);
-          expect(
-            await f.store.readActiveRun({ workId: laterId }),
-          ).toMatchObject({
-            runId: later.runId,
-            pipeline: 'claude',
-          });
-          expect(await f.store.listRuns({ workId: laterId })).toHaveLength(1);
-        }
+        const attempted = transactions - before;
+        expect(attempted).toBeLessThanOrEqual(30);
+        return { body, attempted };
       }
-      expect(rerouted).toEqual([
+      const first = await tick();
+      expect(first.body.rerouted).toEqual([]);
+      expect(first.attempted).toBe(30);
+      expect(await f.store.readActiveRun({ workId: laterId })).toMatchObject({
+        runId: later.runId,
+        pipeline: 'claude',
+      });
+      expect(await f.store.listRuns({ workId: laterId })).toHaveLength(1);
+      const second = await tick();
+      expect(second.body.rerouted).toEqual([
         {
           fromRunId: later.runId,
           newRunId: later.runId.replace('/r1', '/r2'),
