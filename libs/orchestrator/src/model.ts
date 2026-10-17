@@ -1,4 +1,5 @@
 import {
+  humanNeededActionsSchema,
   providerRoutingSchema,
   QUEUE_PRIORITIES,
   runPlacementSchema,
@@ -254,6 +255,8 @@ export const runResultSchema = z.strictObject({
    * orchestrator, exactly like `summary` and `ref`.
    */
   message: z.string().max(16_384).optional(),
+  /** Optional LLM reading aid derived by Console from this parked message. */
+  humanNeededActions: humanNeededActionsSchema.optional(),
 });
 export type RunResult = z.infer<typeof runResultSchema>;
 

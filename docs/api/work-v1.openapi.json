@@ -515,6 +515,28 @@
                                 "message": {
                                   "type": "string",
                                   "maxLength": 16384
+                                },
+                                "humanNeededActions": {
+                                  "minItems": 2,
+                                  "maxItems": 3,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "text": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 400
+                                      },
+                                      "command": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 2000
+                                      }
+                                    },
+                                    "required": ["text"],
+                                    "additionalProperties": false
+                                  }
                                 }
                               },
                               "required": ["ok"],
@@ -1400,6 +1422,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],
@@ -1975,6 +2019,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],
@@ -2556,6 +2622,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],
@@ -3196,6 +3284,28 @@
                                     "message": {
                                       "type": "string",
                                       "maxLength": 16384
+                                    },
+                                    "humanNeededActions": {
+                                      "minItems": 2,
+                                      "maxItems": 3,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "text": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 400
+                                          },
+                                          "command": {
+                                            "type": "string",
+                                            "minLength": 1,
+                                            "maxLength": 2000
+                                          }
+                                        },
+                                        "required": ["text"],
+                                        "additionalProperties": false
+                                      }
                                     }
                                   },
                                   "required": ["ok"],
@@ -3762,6 +3872,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],
@@ -4363,6 +4495,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],
@@ -5012,6 +5166,28 @@
                               "message": {
                                 "type": "string",
                                 "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": ["ok"],

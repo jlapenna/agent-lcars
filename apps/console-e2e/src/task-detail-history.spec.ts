@@ -77,6 +77,11 @@ for (const journey of journeys) {
     await page.goto(detailPath);
     const history = page.getByTestId('task-detail-history');
     await expect(history).toBeVisible();
+    await expect(
+      history
+        .getByRole('region', { name: 'Human work summary' })
+        .getByRole('listitem'),
+    ).toHaveCount(2);
     await expect(history.getByTestId('task-detail-provenance')).toContainText(
       'parked',
     );

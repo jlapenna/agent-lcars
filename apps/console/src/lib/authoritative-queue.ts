@@ -1,5 +1,8 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
+import { latestRun } from '@agent-lcars/work/derive';
+
 import {
   actionItemFromGithubAnchorProjection,
   type ActionItemsResult,
@@ -46,7 +49,29 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
       ? [actionItemFromGithubAnchorProjection(anchor, repository)]
       : [];
   });
+  const items = await Promise.all(
+    selected.map(async (item) => {
+      if (!item.actionTypes.includes('needs-human')) return item;
+      try {
+        const run = latestRun(
+          await store.listRuns({
+            repo: `${item.repo.owner}/${item.repo.name}`,
+            issue: item.number,
+          }),
+        );
+        return run?.state === 'finished' &&
+          run.result?.summary === 'park' &&
+          run.result.humanNeededActions
+          ? { ...item, humanNeededActions: run.result.humanNeededActions }
+          : item;
+      } catch {
+        // Optional reading aids must not hide an otherwise readable decision.
+        logger.warn('agent-lcars: human-needed summary read unavailable');
+        return item;
+      }
+    }),
+  );
   return {
-    items: sortActionItems(selected),
+    items: sortActionItems(items),
   };
 }

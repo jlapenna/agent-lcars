@@ -376,6 +376,12 @@ export async function seedPopulatedE2eOrchestratorFixtures(
         ok: true,
         summary: 'park',
         message: 'Should native decisions use Firestore or GitHub?',
+        // Deterministic summary fixture: browser evidence for rendering, not
+        // evidence that a live LLM endpoint was invoked.
+        humanNeededActions: [
+          { text: 'Choose Firestore or GitHub for native decisions.' },
+          { text: 'Reply with the storage choice to resume the agent.' },
+        ],
       },
     });
     if (!nativeOnly) {
@@ -426,6 +432,10 @@ export async function seedPopulatedE2eOrchestratorFixtures(
         ok: true,
         summary: 'park',
         message: 'Which retention window?',
+        humanNeededActions: [
+          { text: 'Choose the retention window.' },
+          { text: 'Reply with the chosen window to resume the agent.' },
+        ],
       };
   }
   const anchors = nativeOnly ? [] : populatedGithubAnchorProjections();

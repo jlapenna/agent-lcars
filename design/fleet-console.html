@@ -604,6 +604,11 @@ function inboxPanel(full) {
   return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
     <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
     <ul class="inbox">${items}</ul>
+    ${full ? `<section aria-label="Selected human decision" style="margin-top:16px;border-top:1px solid var(--hairline);padding-top:12px">
+      <h3>Human work · AI summary</h3>
+      <ul><li>Inspect the affected deployment: <code>kubectl rollout status deployment/console -n agent-lcars</code></li><li>Reply with the result to resume the agent.</li></ul>
+      <details><summary>Full handoff</summary><p>The agent needs the production rollout state before continuing. Run <code>kubectl rollout status deployment/console -n agent-lcars</code>, then reply with the result.</p></details>
+    </section>` : ''}
   </div></section>`;
 }
 
