@@ -1,5 +1,6 @@
 import type { AgentActivity } from '../lib/agent-activity';
 import type { AutoscalerStatusResult } from '../lib/autoscaler-status';
+import type { CliSession } from '../lib/cli-sessions';
 import { runCountHistory } from '../lib/run-history';
 import { fleetRunnerHistory } from '../lib/runner-history';
 import type { SessionArchiveResult } from '../lib/session-archive';
@@ -24,6 +25,9 @@ export interface BridgeReadoutInput {
     elapsedSeconds: number;
   }[];
   liveRunsAvailable: boolean;
+  /** Complete, scoped CLI telemetry; undefined means unavailable. Live and
+   * idle sessions both represent processes still running on local hosts. */
+  cliSessions?: readonly Pick<CliSession, 'sessionId' | 'agent' | 'liveness'>[];
   /** Authoritative lifecycle counts in the same scope as `liveRuns`;
    * undefined when the read failed. */
   queue?: { queued: number; claimed: number; running: number };
@@ -66,6 +70,7 @@ export function fleetReadoutInput({
   repo,
   autoscaler,
   spendArchive,
+  cliSessions,
   now = Date.now(),
 }: {
   activity: Pick<AgentActivity, 'fleet' | 'queue' | 'runHistory'>;
@@ -74,6 +79,7 @@ export function fleetReadoutInput({
   /** That scope (`owner/name`), which the run history is narrowed to. */
   repo?: string;
   now?: number;
+  cliSessions?: BridgeReadoutInput['cliSessions'];
   autoscaler: Pick<AutoscalerStatusResult, 'lanes' | 'lanesIncomplete'>;
   spendArchive?: Pick<SessionArchiveResult, 'spend' | 'spendByRepository'>;
 }): BridgeReadoutInput {
@@ -87,6 +93,7 @@ export function fleetReadoutInput({
       capacity: activity.fleet?.capacity,
     },
     liveRuns,
+    cliSessions,
     liveRunsAvailable: activity.queue !== undefined,
     // Same scope as the runs: a repository filter narrows the counts too.
     queue: activity.queue && {
@@ -167,6 +174,18 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
   for (const run of runningRuns) {
     byPipeline.set(run.pipeline, (byPipeline.get(run.pipeline) ?? 0) + 1);
   }
+  const activeCli = new Map(
+    input.cliSessions
+      ?.filter(
+        (session) => session.liveness === 'live' || session.liveness === 'idle',
+      )
+      .map((session) => [session.sessionId, session]),
+  );
+  for (const session of activeCli.values()) {
+    byPipeline.set(session.agent, (byPipeline.get(session.agent) ?? 0) + 1);
+  }
+  const runningAvailable =
+    input.liveRunsAvailable && input.cliSessions !== undefined;
   const queuedRuns = input.liveRuns.filter((run) => run.status === 'queued');
   const oldestQueued = Math.max(0, ...queuedRuns.map((r) => r.elapsedSeconds));
   const spend = input.spendToday?.costUsd;
@@ -220,14 +239,16 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
     {
       id: 'running',
       label: 'Agents running',
-      value: input.liveRunsAvailable ? runningRuns.length : UNAVAILABLE,
-      detail: input.liveRunsAvailable
+      value: runningAvailable
+        ? runningRuns.length + activeCli.size
+        : UNAVAILABLE,
+      detail: runningAvailable
         ? [...byPipeline]
             .map(([pipeline, count]) => `${pipeline} ${count}`)
             .join(' · ') || 'none running'
         : 'unavailable',
       spark: {
-        label: 'Running agents, last 30 minutes',
+        label: 'Dispatched agents running, last 30 minutes',
         values: input.history?.running,
       },
     },

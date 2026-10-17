@@ -17,6 +17,7 @@ const healthy: BridgeReadoutInput = {
     { pipeline: 'codex', status: 'queued', elapsedSeconds: 1_080 },
   ],
   liveRunsAvailable: true,
+  cliSessions: [],
   queue: { queued: 1, claimed: 2, running: 3 },
   spendToday: { costUsd: 38.42, estimated: false, partial: false },
 };
@@ -54,6 +55,41 @@ describe('bridgeReadouts', () => {
     });
     // The cost budget is window-scoped, so today is never shown as a share.
     expect(r['spend']?.detail).toBe('since 00:00 UTC · no daily budget');
+  });
+
+  it('includes local processes without counting ended, stale or duplicate sessions', () => {
+    const sessions = [
+      ...Array.from({ length: 9 }, (_, index) => ({
+        sessionId: `local-${index}`,
+        agent: 'codex' as const,
+        liveness: index === 0 ? ('idle' as const) : ('live' as const),
+      })),
+      {
+        sessionId: 'ended',
+        agent: 'codex' as const,
+        liveness: 'ended' as const,
+      },
+      {
+        sessionId: 'stale',
+        agent: 'codex' as const,
+        liveness: 'stale' as const,
+      },
+    ];
+    const r = byId({ ...healthy, cliSessions: [...sessions, sessions[0]!] });
+    expect(r['running']).toMatchObject({
+      value: 12,
+      detail: 'claude 2 · codex 10',
+    });
+    expect(r['queue']?.value).toBe(3);
+    expect(
+      byId({ ...healthy, cliSessions: undefined })['running'],
+    ).toMatchObject({
+      value: '—',
+      detail: 'unavailable',
+    });
+    expect(
+      byId({ ...healthy, liveRunsAvailable: false })['running']?.value,
+    ).toBe('—');
   });
 
   it('marks a spend total the archive limit truncated as a lower bound', () => {
