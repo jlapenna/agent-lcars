@@ -113,6 +113,26 @@ describe('SessionTable', () => {
     expect(screen.getByText('+4 earlier')).toBeTruthy();
   });
 
+  it('keeps a PR the active FIND matched among the shown links', () => {
+    render(
+      <MantineProvider>
+        <SessionTable
+          rows={[
+            makeRow({
+              prUrls: [1, 2, 3, 4, 5].map((n) => ({
+                number: n,
+                url: `https://github.com/o/r/pull/${n}`,
+              })),
+            }),
+          ]}
+          find="#1"
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getAllByRole('link', { name: 'PR #1' })).toHaveLength(1);
+    expect(screen.getByText('+1 earlier')).toBeTruthy();
+  });
+
   it('shows the host for a CLI session in the table column', () => {
     renderTable([makeRow({ source: 'cli', host: 'joes-workstation' })]);
     expect(screen.getByText('joes-workstation')).toBeTruthy();
