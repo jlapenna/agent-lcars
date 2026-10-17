@@ -2134,13 +2134,14 @@ td.costs-repo-spend__num {
   white-space: nowrap;
 }
 
-/* Below desktop the table has no room for the bar: keep its value. */
+/* Below desktop the table has no room for the bar: keep its value. The
+   phone rows keep theirs. */
 @media (max-width: 63.99em) {
-  .costs-repo-spend__bar {
+  .costs-repo-spend__week .costs-repo-spend__bar {
     grid-template-columns: auto;
   }
 
-  .costs-repo-spend__meter {
+  .costs-repo-spend__week .costs-repo-spend__meter {
     display: none;
   }
 
@@ -3518,7 +3519,7 @@ td.costs-repo-spend__num {
     > .mantine-Stack-root
     > .mantine-Group-root:first-child {
     min-height: 48px;
-    padding: 4px 16px;
+    padding: 4px 0;
     border-bottom: 1px solid var(--mantine-color-default-border);
   }
 

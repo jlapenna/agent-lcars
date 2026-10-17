@@ -116,6 +116,12 @@ test.describe('/costs workspace @smoke', () => {
     await expect(page.getByTestId('ledger-week-row-compact')).toBeVisible();
     await expect(page.getByTestId('spend-breakdowns')).toBeVisible();
     await expect(page.getByRole('list', { name: 'By pipeline' })).toBeVisible();
+    // Repository spend reflows into rows that keep the seven-day meter.
+    const repos = page.getByRole('list', { name: 'Spend by repository' });
+    await expect(repos).toBeVisible();
+    await expect(
+      repos.getByRole('img', { name: /of the largest repository/ }).first(),
+    ).toBeVisible();
     await expectMobileBridgeHeader(header);
 
     await page.getByRole('button', { name: 'More console options' }).click();
