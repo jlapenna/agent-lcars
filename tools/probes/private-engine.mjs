@@ -1,17 +1,14 @@
 #!/usr/bin/env node
-// Task-owned Docker engine for qualification on a shared host (#2848).
+// Retired task-owned Docker qualification facility (#2848).
 //
 // Any dockerd that shares the host network namespace manages host links:
 // with --bridge=none it deletes the host's docker0 at startup
 // (moby daemon_unix.go configureNetworking -> removeDefaultBridgeInterface),
 // and with any other bridge setting it creates or reconfigures host links.
 // Private data/exec roots, sockets and mount namespaces do not change that.
-// This launcher therefore starts dockerd only inside a fresh network and
-// mount namespace and proves the isolation before the daemon binary runs.
-import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// The CLI now refuses all launches. Keep the original isolation guard only
+// for the incident regression; its exports do not authorize engine startup.
+import { join } from 'node:path';
 
 export const ISOLATION_REFUSED = 97;
 
@@ -71,21 +68,11 @@ export function privateEngineCommand(
   ];
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [rootArg, ...extra] = process.argv.slice(2);
-  // A unix socket path is limited to 108 bytes.
-  if (!rootArg || extra.length || resolve(rootArg).length > 80)
-    throw new Error('usage: private-engine.mjs <new-short-root-directory>');
-  if (process.getuid() !== 0)
-    throw new Error('private-engine must run as root');
-  const root = resolve(rootArg);
-  mkdirSync(root, { mode: 0o700 }); // Never reuse another engine's state.
-  writeFileSync(join(root, 'daemon.json'), '{}\n');
-  const [binary, ...args] = privateEngineCommand(root);
-  const child = spawn(binary, args, { stdio: 'inherit' });
-  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'])
-    process.on(signal, () => child.kill('SIGTERM'));
-  child.on('exit', (code, signal) => {
-    process.exitCode = code ?? (signal ? 1 : 0);
-  });
+// The facility is retired. Keep the isolation guard available to its safety
+// regression, but never start a private engine from this command.
+if (import.meta.main) {
+  console.error(
+    'private-engine: retired after #2848; use the owner-managed supported native qualification lane',
+  );
+  process.exitCode = ISOLATION_REFUSED;
 }
