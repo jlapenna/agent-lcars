@@ -8,7 +8,10 @@ import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { expect, it } from 'vitest';
 
-import { type CodexAuthLease } from '../../apps/console/src/lib/codex-auth-store';
+import type {
+  CodexAuthStore,
+  CodexOwnedLease,
+} from '../../apps/console/src/lib/codex-auth-store';
 import { drainOutbox } from '../../apps/console/src/lib/orchestrator-dispatch';
 import {
   hashRunToken,
@@ -92,7 +95,14 @@ it('settles exact native failure payloads without human assignment or PARK', asy
       tokenHash: hashRunToken(token),
     });
     const calls: { url: string; body: string }[] = [];
-    const releasedLeases: [CodexAuthLease, string][] = [];
+    const ownedLease: CodexOwnedLease = {
+      runId,
+      repository: taskId.repo,
+      expiresAt: new Date(Date.parse(instant) + 60_000).toISOString(),
+      generation: '11',
+      claimFingerprint: hashRunToken(token),
+    };
+    const releasedLeases: Parameters<CodexAuthStore['releaseLease']>[] = [];
     const tokens = { tokenFor: async () => 'local-fixture-only' };
     const drain = () =>
       drainOutbox({
@@ -128,15 +138,8 @@ it('settles exact native failure payloads without human assignment or PARK', asy
                 'Credential reads are outside this qualification',
               );
             },
-            readLease: async () => ({
-              runId,
-              repository: taskId.repo,
-              expiresAt: new Date(
-                Date.parse(instant) + 3_600_000,
-              ).toISOString(),
-              generation: '1',
-              claimFingerprint: hashRunToken(token),
-            }),
+            readLease: async () =>
+              report.provider === 'codex' ? ownedLease : undefined,
             createLease: async () => undefined,
             takeLease: async () => undefined,
             replace: async () => {
@@ -165,21 +168,9 @@ it('settles exact native failure payloads without human assignment or PARK', asy
       },
     );
     expect(response?.status, await response?.text()).toBe(200);
-    if (report.provider === 'codex') {
-      expect(releasedLeases).toHaveLength(1);
-      const release = releasedLeases[0];
-      if (release === undefined)
-        throw new Error('Codex completion must release its owned lease');
-      const [lease, operationId] = release;
-      expect(lease).toMatchObject({
-        runId,
-        repository: taskId.repo,
-        claimFingerprint: hashRunToken(token),
-      });
-      expect(operationId).toEqual(expect.any(String));
-    } else {
-      expect(releasedLeases).toEqual([]);
-    }
+    expect(releasedLeases).toEqual(
+      report.provider === 'codex' ? [[ownedLease, expect.any(String)]] : [],
+    );
     expect(await store.readRun(runId)).toMatchObject({
       state: 'finished',
       result: { ok: false, summary: 'worker-control-failed' },
