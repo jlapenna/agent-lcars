@@ -267,7 +267,10 @@ branch on the reference format:
   the same private outcome file, then end with the complete report (at most
   16,384 characters; a longer one is refused, never truncated) as the final
   response. Only a report, park or no-op settles such an item; a PR fails it.
-  The item settles done, not
+  A reply that follows up on a delivered report gets a direct,
+  self-contained answer as that final response, not a redone report; a reply
+  that answers a parked question finishes the full report. The item settles
+  done, not
   parked. Only the stored opt-in enables this; never infer it from the task
   text. It is a temporary bridge to the unified-dataflow design's
   `intent: report` (#2810), whose verification phase removes the field and

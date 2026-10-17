@@ -1872,6 +1872,9 @@ run_scenario codex-native-report codex
 [ "$rc" -eq 0 ] || fail "codex native report: expected exit 0, got $rc"
 grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG" ||
   fail "codex native report: prompt did not describe the report deliverable ($(cat "$CODEX_ARGS_LOG"))"
+if grep -Fq 'answer that follow-up directly' "$CODEX_ARGS_LOG"; then
+  fail "codex native report: a first round was told to answer a follow-up"
+fi
 jq -e '.outcome == "report" and .outcomeReference == null and (.message | contains("# Audit findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report: report was not completed with its message ($(cat "$COMPLETE_LOG"))"
 jq -e '.requested_results == ["report", "park", "no-op"]' "$scenario_runner_temp/agent-dispatch/context.json" >/dev/null ||
@@ -1980,6 +1983,24 @@ fi
 jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report unopted: an unopted item settled a report ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-unopted: OK"
+
+# A reply on a delivered report asks for a scoped, self-contained answer
+# rather than a whole new report; the answer is still the report record's
+# final message.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report FAKE_MODE=reply
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_REPLY='Explain finding 3 in more detail'
+export FAKE_CODEX_LAST_MESSAGE='Finding 3 means the retry path skips the lease check.'
+run_scenario codex-native-report-followup codex
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_MODE FAKE_SPEC_EXTRA FAKE_REPLY FAKE_CODEX_LAST_MESSAGE
+for expected in 'Explain finding 3 in more detail' 'answer that follow-up directly' \
+  'make it self-contained' 'finish the full' 'or your complete answer to a follow-up'; do
+  grep -Fq "$expected" "$CODEX_ARGS_LOG" ||
+    fail "codex native report follow-up: prompt lacks '$expected' ($(cat "$CODEX_ARGS_LOG"))"
+done
+jq -e '.outcome == "report" and (.message | contains("Finding 3 means"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report follow-up: the answer did not settle as the report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-followup: OK"
 
 # The QueueExecutor adapter must enforce the two-hour OpenCode bound
 # locally. A short override makes this regression deterministic without
