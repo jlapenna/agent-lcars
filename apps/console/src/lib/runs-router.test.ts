@@ -1249,6 +1249,66 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(task).toBeDefined();
     expect(deriveItemState(task!.task, runs)).toBe('parked');
   });
+
+  // #2845: temporary bridge to #2810's `intent: report`. Only the stored,
+  // immutable opt-in makes a report a success; it is never a park.
+  it.each([
+    { deliverable: 'report', message: '# Findings', ok: true, state: 'done' },
+    {
+      deliverable: undefined,
+      message: '# Findings',
+      ok: false,
+      state: 'failed',
+    },
+    { deliverable: 'report', message: ' \n ', ok: false, state: 'failed' },
+  ])(
+    'settles report with deliverable=$deliverable as $state',
+    async ({ deliverable, message, ok, state }) => {
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid(`work-report-${state}-${deliverable ?? 'none'}`),
+        now: NOW,
+        spec: {
+          title: 't',
+          description: 'd',
+          pipeline: 'claude',
+          ...(deliverable === undefined ? {} : { deliverable }),
+          target: { repo: 'jlapenna/agent-lcars' },
+        },
+      });
+      const claimed = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          principal: executorPrincipal(['claude']),
+        },
+        'POST',
+        '/runs/claim',
+        { runner: 'runner-1' },
+      );
+      expect(claimed.status).toBe(200);
+      const { token, workId } = claimed.json as {
+        token: string;
+        workId: string;
+      };
+      const complete = await call(
+        { store, orchestrator, now, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        { outcome: 'report', outcomeReference: null, message },
+      );
+      expect(complete.status).toBe(200);
+
+      const settled = await store.readRun(runId);
+      expect(settled?.result).toMatchObject({ ok, summary: 'report' });
+      expect(settled?.result?.ref).toBeUndefined();
+      const task = await store.readTask({ workId });
+      const runs = await store.listRuns({ workId });
+      expect(deriveItemState(task!.task, runs)).toBe(state);
+    },
+  );
 });
 
 describe.each([

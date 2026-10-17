@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+REAL_NODE="$(command -v node)"
+export REAL_NODE
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$here/../../.." && pwd)"
@@ -269,11 +271,11 @@ case "$url" in
 JSON
     elif [ "${FAKE_BRIEF_NO_RESUME:-}" = "1" ]; then
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}${FAKE_SPEC_EXTRA:-}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1"}
 JSON
     else
       cat <<JSON
-{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
+{"id":"01DIRECTRUNNERTESTFIXTURE1","spec":{"title":"t","description":"d","pipeline":"${FAKE_PIPELINE:-claude}","target":{"repo":"octo/example"}${FAKE_SPEC_EXTRA:-}}$brief_pipeline,"mode":"${FAKE_MODE:-implement}","reply":"${FAKE_REPLY:-}","replyChannel":"${FAKE_REPLY_CHANNEL:-}","replyPrincipal":"${FAKE_REPLY_PRINCIPAL:-}","anchor":{"type":"work","id":"01DIRECTRUNNERTESTFIXTURE1","title":"t","body":"d","target_repo":"octo/example","html_url":"https://lcars.test/work/01DIRECTRUNNERTESTFIXTURE1"},"attemptId":"g1:work:01DIRECTRUNNERTESTFIXTURE1/r1","generation":1,"intentId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","resume":{"sessionId":"sess_1","transcriptGcsUri":"gs://bucket/runs/x/claude-code/sess_1.jsonl"}}
 JSON
     fi
     ;;
@@ -649,6 +651,10 @@ if [ "${FAKE_OPENCODE_NATIVE_PARK:-}" = 1 ]; then
     "<!-- agent-result:v1:park:${ATTEMPT_ID} -->" \
     "<!-- attempt-claim:${ATTEMPT_ID} -->" > "$NATIVE_WORK_OUTCOME_FILE"
 fi
+if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
+  printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
+    "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
+fi
 if [ "${FAKE_OPENCODE_CREATE_AMBIGUOUS_SESSIONS:-}" = 1 ]; then
   printf '[{"id":"ses_new_1","directory":"%s"},{"id":"ses_new_2","directory":"%s"}]\n' "$PWD" "$PWD" > "$OPENCODE_FAKE_SESSIONS_FILE"
 elif [ ! -f "$OPENCODE_FAKE_SESSIONS_FILE" ] || [ "$(cat "$OPENCODE_FAKE_SESSIONS_FILE")" = '[]' ]; then
@@ -712,6 +718,9 @@ FAKE
   # invalid for the requested-resume contract.
 cat > "$bindir/node" <<'FAKE'
 #!/usr/bin/env bash
+# Inline programs (the report message-length check) are real logic, not a
+# sidecar to stub: run them on the host's own Node.
+if [ "${1:-}" = -e ]; then exec "$REAL_NODE" "$@"; fi
 echo "$@" >> "$NODE_ARGS_LOG"
 # The live polling sidecar is retired (docs/hooks-telemetry-design.md,
 # phase 3). Any `runner sidecar` call leaves a suite-wide marker that the
@@ -1837,6 +1846,89 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
 
 echo "scenario codex-native-park: OK"
 
+# Temporary #2845 bridge to #2810's `intent: report`: only a native item
+# whose stored spec opts into `deliverable: report` may settle a report, and
+# its nonblank final message is the deliverable, with no GitHub reference.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_CODEX_LAST_MESSAGE='# Audit findings'
+run_scenario codex-native-report codex
+[ "$rc" -eq 0 ] || fail "codex native report: expected exit 0, got $rc"
+grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG" ||
+  fail "codex native report: prompt did not describe the report deliverable ($(cat "$CODEX_ARGS_LOG"))"
+jq -e '.outcome == "report" and .outcomeReference == null and (.message | contains("# Audit findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report: report was not completed with its message ($(cat "$COMPLETE_LOG"))"
+jq -e '.requested_results == ["report", "park", "no-op"]' "$scenario_runner_temp/agent-dispatch/context.json" >/dev/null ||
+  fail "codex native report: brief still offered a PR result ($(cat "$scenario_runner_temp/agent-dispatch/context.json"))"
+echo "scenario codex-native-report: OK"
+
+# A provider stop after the record is a provider failure, not the report.
+export FAKE_CODEX_LAST_MESSAGE="You've hit your weekly limit · resets Sep 13, 12am (UTC)"
+run_scenario codex-native-report-limit codex
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report limit: limit text settled as a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-limit: OK"
+
+# The message capture keeps only the tail; an oversized report is refused
+# rather than settled without its head.
+export FAKE_CODEX_LAST_MESSAGE="# Title$(printf '%*s' 16400 '' | tr ' ' x)"
+run_scenario codex-native-report-oversized codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report oversized: a truncated report settled ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-oversized: OK"
+unset FAKE_CODEX_LAST_MESSAGE
+
+export FAKE_OPENCODE_LAST_MESSAGE='# OpenCode findings'
+run_scenario opencode-native-report opencode
+unset FAKE_OPENCODE_LAST_MESSAGE
+jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report: report was not completed ($(cat "$COMPLETE_LOG"))"
+echo "scenario opencode-native-report: OK"
+
+# The message contract is <=16384 JavaScript string units, inclusive, not
+# bytes: an exact-boundary ASCII report and a multi-byte CJK report settle
+# whole, while one supplementary character past the boundary is refused.
+export FAKE_OPENCODE_LAST_MESSAGE="# Title$(printf '%*s' 16377 '' | tr ' ' x)"
+run_scenario opencode-native-report-boundary opencode
+unset FAKE_OPENCODE_LAST_MESSAGE
+jq -e '.outcome == "report" and (.message | length) == 16384 and (.message | startswith("# Title"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report boundary: an exact-limit report was refused or cut ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+echo "scenario opencode-native-report-boundary: OK"
+
+export FAKE_CODEX_LAST_MESSAGE=$' \n '
+run_scenario codex-native-report-blank codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report blank: a blank message settled a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-blank: OK"
+
+cjk="# 報告$(python3 -c 'print("監" * 5997, end="")')"
+export FAKE_CODEX_LAST_MESSAGE="$cjk"
+run_scenario codex-native-report-cjk codex
+jq -e --arg cjk "$cjk" '.outcome == "report" and .message == $cjk' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report cjk: a 6000-character, 18000-byte report was refused or cut"
+echo "scenario codex-native-report-cjk: OK"
+
+export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192, end="")')"
+run_scenario codex-native-report-surrogate-boundary codex
+jq -e '.outcome == "report" and (.message | length) == 8192' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report surrogate boundary: 16384 UTF-16 units were refused"
+export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192 + "x", end="")')"
+run_scenario codex-native-report-surrogate-overflow codex
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report surrogate overflow: 16385 UTF-16 units settled"
+echo "scenario codex-native-report-surrogate: OK"
+
+unset FAKE_SPEC_EXTRA
+export FAKE_CODEX_LAST_MESSAGE='# Audit findings'
+run_scenario codex-native-report-unopted codex
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_CODEX_LAST_MESSAGE
+if grep -Fq 'deliverable: report' "$CODEX_ARGS_LOG"; then
+  fail "codex native report unopted: prompt offered a report without the opt-in"
+fi
+jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report unopted: an unopted item settled a report ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-unopted: OK"
+
 # The QueueExecutor adapter must enforce the two-hour OpenCode bound
 # locally. A short override makes this regression deterministic without
 # waiting two hours: timeout sends TERM to the trusted CLI, then the runner
@@ -2273,6 +2365,21 @@ for provider in claude codex opencode; do
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
   grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
 done
+
+# A report record whose message is unusable still earns the correction.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=report
+export FAKE_SPEC_EXTRA=',"deliverable":"report"'
+export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CLAUDE_TIMEOUT_SECONDS=5
+run_scenario claude-native-report-blank-correction claude
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_SPEC_EXTRA
+unset FAKE_CLOCK FAKE_WORKER_ELAPSED CLAUDE_TIMEOUT_SECONDS
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] ||
+  fail "claude native report blank: an unusable report skipped its correction round"
+grep -Fq 'repeat' "$CLAUDE_ARGS_LOG" ||
+  fail "claude native report blank: correction did not ask to repeat the report"
+jq -e '.outcome == "no-deliverable"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "claude native report blank: a blank report settled ($(cat "$COMPLETE_LOG"))"
+echo "scenario claude-native-report-blank-correction: OK"
 
 export FAKE_GH_LOOKUP_FAIL=1
 run_scenario lookup-failure

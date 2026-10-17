@@ -85,6 +85,20 @@ accepting either from CLI input. Invalid input, busy work, and denied grants
 exit nonzero. Authentication uses the bearer transport described above;
 a failed bearer never falls back to a console cookie.
 
+## Report deliverable
+
+Read-only work whose result is findings, not a change, opts in at creation
+with the immutable `WorkSpec.deliverable: 'report'`
+(`lcars work create ... --deliverable report`). The worker's final message is
+the report: the direct runner accepts its marker-bound `report` record only
+for an opted-in native item, the Console completion boundary re-checks the
+stored opt-in and requires a nonblank message, and the run settles
+`summary: 'report'` with the item `done`, not `parked`. Without the opt-in a
+read-only audit can only park. This is a temporary bridge to the unified
+dataflow design's `intent: report`
+([spec](../../docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md));
+its verification phase removes the field and the marker path together.
+
 ## Priority
 
 `WorkSpec.priority` accepts `urgent`, `normal`, or `background`; omitted

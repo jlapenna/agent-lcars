@@ -18,6 +18,7 @@ const OUTCOMES = [
   'review',
   'park',
   'no-op',
+  'report',
   'provider-limit',
   'provider-capacity',
   'runner-failed',

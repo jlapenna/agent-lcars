@@ -863,6 +863,7 @@ describe('durable lifecycle metric accounting', () => {
     const runs = [
       'park',
       'no-op',
+      'report',
       'provider-limit',
       'pull-request',
       'merged-deliverable',
@@ -883,6 +884,7 @@ describe('durable lifecycle metric accounting', () => {
     for (const outcome of [
       'park',
       'no-op',
+      'report',
       'provider-limit',
       'pull-request',
       'merged-deliverable',
@@ -892,10 +894,10 @@ describe('durable lifecycle metric accounting', () => {
         `lcars_product_reported_outcome_window{pipeline="claude",outcome="${outcome}"} 1\n`,
       );
     expect(text).toContain(
-      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 6\n',
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 7\n',
     );
     expect(text).toContain(
-      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="useful_outcome"} 6\n',
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="useful_outcome"} 7\n',
     );
   });
   it('does not count outbox claims or expired lease recovery as delivery failures', () => {

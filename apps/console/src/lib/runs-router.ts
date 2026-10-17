@@ -1018,7 +1018,14 @@ export const runsRouter = os.router({
       input.outcome,
       input.outcomeReference,
       input.message,
-      { issue: target.issue, mode: run.params?.mode },
+      {
+        issue: target.issue,
+        mode: run.params?.mode,
+        report:
+          isWorkAnchor(run.task) &&
+          workPayloadSchema.safeParse(task?.work).data?.spec.deliverable ===
+            'report',
+      },
     );
     const deliveryCorrection =
       run.params?.deliveryPredecessor !== undefined ||

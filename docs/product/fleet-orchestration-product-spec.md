@@ -235,7 +235,7 @@ rule wins:
 
 - **Success** (`OK_OUTCOMES` in `apps/console/src/lib/run-result.ts`):
   `pull-request`, `merged-deliverable`, `comment`, `review`, `no-op`, `park`,
-  `unknown-success`.
+  `report` (only for an opted-in native report item), `unknown-success`.
 - **Failure** (emitted by
   `apps/runner-autoscaler/runner-image/direct-runner.sh`): `no-deliverable`,
   `agent-timeout`, `agent-failed`, `verification-failed`, `provider-limit`,

@@ -1,12 +1,13 @@
 import * as fs from 'fs';
 
 /**
- * Bound applied to the extracted text, matching `toRunResult`'s own
- * 16,384-byte cap on the message the console ultimately renders
- * (`apps/console/src/lib/run-result.ts`) — there is no reason to carry more
- * than the console will ever keep.
+ * UTF-8 envelope for the extracted text. The Work API message contract is
+ * 16,384 JavaScript string units, which can take up to 49,152 UTF-8 bytes;
+ * this envelope keeps every valid message whole so the direct runner can
+ * measure a report exactly (#2845). Anything cut here already overflows.
+ * Other outcomes still send only the runner's 16,384-byte tail.
  */
-export const OPENCODE_LAST_MESSAGE_MAX_BYTES = 16_384;
+export const OPENCODE_LAST_MESSAGE_MAX_BYTES = 65_536;
 
 function boundUtf8Bytes(text: string, maxBytes: number): string {
   const buffer = Buffer.from(text, 'utf8');
