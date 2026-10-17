@@ -7,7 +7,7 @@ every provider, and a headless run that never touches CI reruns should not
 pay for the section about them (agent-lcars#1210).
 
 Section numbers match the main file exactly — cross-references to §8, §10,
-and §13 from any repo still resolve to these.
+§13, and §14 from any repo still resolve to these.
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
@@ -111,3 +111,38 @@ have it, adding the label after the fact does nothing for the run already in
 flight: either add `agent-option:cross-repo` to the anchor _before_ (or in
 the same GitHub operation as) the triggering `agent:*`/`review:*` label, or
 redispatch after adding it.
+
+## 14. Homelab host facts (`lcars investigate`)
+
+Dispatch pods have no SSH or production reach. When your anchor needs a
+Homelab host fact (disk usage, systemd unit or timer state, journal lines,
+container state or logs, a Prometheus value), ask the Homelab investigator
+instead of parking:
+
+```bash
+lcars investigate --request-id backup-timer-1 \
+  --question 'Is backup.timer active on homelab, and when did it last run?' \
+  [--context '<what you already observed>']
+```
+
+- It uses your run's own `LCARS_RUN_ID`/`LCARS_RUN_TOKEN`; no other credential
+  exists or is needed. Each run gets **three** requests and one at a time, so
+  ask one specific, answerable question per request. Questions are capped at
+  4 KiB and context at 16 KiB (`--question-file`/`--context-file` read longer
+  text from files); never put secrets in either.
+- `--request-id` is an idempotency key: reuse it only to re-send the same
+  question and context; use a new key for a new question.
+- Success prints one JSON object on stdout. Cite a finding by its evidence
+  `id`, `host`, `probe` and `ts`; those come from real catalogued probe runs.
+  `could_not_answer` entries (`no-probe-exists:`, `needs-mutation:`,
+  `needs-human:`) say what it could not observe.
+- Failure prints `investigate failed: <code>` on stderr and exits non-zero.
+  `investigation-unavailable` and `investigator-unavailable` mean the gateway
+  is not serving; `unauthorized` or `worker-fenced` mean your run is no longer
+  current — stop rather than retry. The client never retries; do not loop.
+- If the investigator cannot answer, park (§4) or proceed as before, and quote
+  the failure code or `could_not_answer` reason so the human knows what is
+  missing. Never treat a failed or partial investigation as an observed fact.
+
+The wire contract is `libs/work/src/investigation-contract.ts`; operator
+notes are in `OPERATIONS.md` (Worker investigation client).

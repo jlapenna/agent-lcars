@@ -153,6 +153,12 @@ an approval a trusted instruction requires), or an auto-merge arming failure
 missing deliverable does not establish that blocker. Preserve the
 execution diagnosis instead of inventing a human handoff.
 
+A Homelab host fact you cannot observe (disk, unit or timer state, journal,
+container, metric) is not yet a blocker: ask the investigator first with
+`lcars investigate` ([§14](index.md#14-homelab-host-facts-lcars-investigate)).
+Park only if it cannot answer, and quote its failure code or
+`could_not_answer` reason.
+
 A judgement call is not a blocker. The maintainer is usually unavailable and
 expects agents to decide: interpreting acceptance criteria, waiving a
 precondition that can no longer be met (a baseline lost to retention), choosing

@@ -333,6 +333,27 @@ describe('lcars investigate', () => {
     expect(f.calls).toHaveLength(2);
     expect(f.out).toEqual([]);
   });
+  it.each([
+    [404, 'text/plain; charset=utf-8', 'Not Found'],
+    [502, 'text/plain', ''],
+    [500, 'application/json', '{}'],
+  ])(
+    'reports an edge %i (%s) as investigation-unavailable',
+    async (status, type, text) => {
+      const f = fixture();
+      f.state.gateway = () =>
+        new Response(text || null, {
+          status,
+          headers: { 'content-type': type },
+        });
+      expect(await executeInvestigateCommand(args, f.deps)).toEqual({
+        ok: false,
+      });
+      expect(f.calls).toHaveLength(2);
+      expect(f.out).toEqual([]);
+      expect(f.err).toEqual(['investigate failed: investigation-unavailable']);
+    },
+  );
   it('returns only a safe typed error and never retries an in-progress request', async () => {
     const f = fixture();
     f.state.gateway = () =>
