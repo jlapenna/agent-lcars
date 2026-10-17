@@ -19,11 +19,18 @@ content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
 
-The image also carries pnpm's registry-metadata cache from the same fetch
-(`~/.cache/pnpm/v11/metadata`). pnpm 11 verifies every locked package against
-its supply-chain policies on each install and caches the metadata it reads;
-without the baked cache each job re-downloaded and re-wrote about 590 MiB of
-it (#2082).
+The image also carries pnpm's registry-metadata mirror from the same fetch.
+pnpm 11 verifies every locked package against its supply-chain policies on
+each install and caches the metadata it reads; without the baked cache each
+job re-downloaded and re-wrote about 590 MiB of it (#2082). pnpm >= 11.28.5
+reads that mirror from `~/.cache/pnpm/v12/metadata` (pnpm/pnpm#13512 moved it
+there from `v11/metadata`, which newer pnpm never reads again); earlier pnpm 11
+reads `~/.cache/pnpm/v11/metadata`. Each fleet fetch writes the mirror its own
+pin reads, the seed stage requires the mirror of every fleet pin to exist, and
+the final image copies the whole cache, so `v11/metadata` ships only while a
+fleet pin below 11.28.5 still writes it (#2902). Consumers that copy one
+mirror directory out of this seed (supersprinklesracing/sprinkles'
+`tools/e2e-runner`) must copy the one their pinned pnpm reads.
 
 Each `fleet/*/package.json` `packageManager` pin is also the image's list of
 pnpm releases to serve offline. Fetching makes Corepack download each one; the
@@ -44,8 +51,8 @@ Dockerfile's own `pnpm-store-seed` stage, so a seed the publisher cannot
 build fails before merge instead of blocking every later runner-image
 publication. The stage carries git because a consumer may lock a git-hosted
 package (`type: git`), which pnpm clones.
-Every listed repository must use pnpm 11 (the `v11` store layout); the
-seed test fails otherwise.
+Every listed repository must use pnpm 11 (the `v11` content-store layout);
+the seed test fails otherwise.
 
 Homelab's canonical publisher measures every `pnpm*-store-content` target
 before promotion and refuses a combined compressed seed above 1.5 GiB per

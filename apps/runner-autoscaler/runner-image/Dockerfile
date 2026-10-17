@@ -148,8 +148,10 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # lockfiles, build cache, and any credentials cannot reach a job image.
 #
 # Corepack resolves each directory's own pnpm version. Every fleet consumer
-# uses pnpm 11, whose store layout is v11 (layouts are major-version
-# specific). The release-age policy is each consumer's to enforce on its own
+# uses pnpm 11, whose content-store layout is v11 (layouts are major-version
+# specific). Its registry-metadata mirror is not: pnpm 11.28.5 moved it from
+# <cacheDir>/v11/metadata to <cacheDir>/v12/metadata (pnpm/pnpm#13512), and
+# pnpm >= 11.28.5 never reads v11/metadata again. The release-age policy is each consumer's to enforce on its own
 # installs; the seed only pre-fetches lockfiles those repositories already
 # accepted, so a package published hours before a refresh must not fail the
 # image build. Keep the copy below as a distinct final-image layer to make
@@ -181,8 +183,7 @@ RUN set -eu; \
           --config.minimum-release-age=0 --store-dir /pnpm-store \
           --config.cache-dir=/pnpm-cache); \
     done; \
-    rm -f /pnpm-cache/lockfile-verified.jsonl; \
-    test -d /pnpm-cache/v11/metadata
+    rm -f /pnpm-cache/lockfile-verified.jsonl
 # The fetches above made Corepack download every fleet-pinned pnpm into
 # /root/.cache/node/corepack. Record which ones, so the final image can ship
 # that cache to the runner user and prove each pin resolves offline: a job's
@@ -191,6 +192,22 @@ RUN set -eu; \
 RUN node -e 'for (const f of process.argv.slice(1)) console.log(require(`/seed/${f}`).packageManager)' \
       */package.json | sort -u > /fleet-pnpm-pins; \
     test -s /fleet-pnpm-pins
+# Each fetch mirrors registry metadata under the directory its own pnpm reads
+# back: v12/metadata from pnpm >= 11.28.5, v11/metadata from earlier pnpm 11
+# (#2902). Require the mirror of every fleet pin, so a seed that would make a
+# job re-download its ~590 MiB of metadata fails here instead of shipping. The
+# whole cache is copied below, so v11/metadata ships only while a fleet pin
+# below 11.28.5 still writes it.
+RUN set -eu; \
+    while read -r pin; do \
+      version="${pin#pnpm@}"; version="${version%%+*}"; \
+      mirror=v11; \
+      [ "$(printf '%s\n' 11.28.5 "$version" | sort -V | head -n 1)" = 11.28.5 ] && mirror=v12; \
+      test -d "/pnpm-cache/$mirror/metadata" || { \
+        echo "fleet pin $pin wrote no registry-metadata mirror at /pnpm-cache/$mirror/metadata" >&2; \
+        exit 1; }; \
+    done < /fleet-pnpm-pins; \
+    test -d /pnpm-cache/v12/metadata
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual
