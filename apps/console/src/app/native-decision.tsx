@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { DecisionWaiting } from './decision-waiting';
+import { HumanNeededSummary } from './human-needed-summary';
 import { type NativeDecisionCard, nativeDecisionQuestion } from './inbox-card';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
@@ -136,6 +137,11 @@ export function NativeDecisionDetail({
         {work.state === 'parked' ? 'Human needed' : work.state} ·{' '}
         <RelativeTime iso={work.updatedAt} />
       </Text>
+      {work.state === 'parked' && (
+        <HumanNeededSummary
+          actions={work.runs.at(-1)?.result?.humanNeededActions}
+        />
+      )}
       {card.question ?? (
         <Text style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
           {nativeDecisionQuestion(work)}

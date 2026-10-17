@@ -16,7 +16,8 @@ import {
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
-import { deriveItemState } from '@agent-lcars/work/derive';
+import { itemViewSchema } from '@agent-lcars/work';
+import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1201,6 +1202,73 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     const runs = await store.listRuns({ workId });
     expect(task).toBeDefined();
     expect(deriveItemState(task!.task, runs)).toBe('parked');
+  });
+
+  it('persists a human-needed summary through authenticated completion and the Work read schema', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('human-summary'),
+      now: NOW,
+    });
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const { token, workId } = claimed.json as { token: string; workId: string };
+    const actions = [
+      { text: 'Inspect production', command: 'check --prod' },
+      { text: 'Reply with the result to resume.' },
+    ];
+    vi.stubEnv(
+      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
+      'https://summary.example.test/v1/chat/completions',
+    );
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify({ actions }) } }],
+          }),
+        ),
+      ),
+    );
+    try {
+      const completed = await call(
+        { store, orchestrator, now, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        {
+          outcome: 'park',
+          message: 'Run `check --prod`, then reply with the result to resume.',
+          outcomeReference: null,
+        },
+      );
+      expect(completed.status).toBe(200);
+      const stored = await store.readRun(runId);
+      expect(stored?.result?.humanNeededActions).toEqual(actions);
+      const view = toItemView({
+        workId,
+        task: (await store.readTask({ workId }))!.task,
+        runs: await store.listRuns({ workId }),
+      });
+      expect(
+        itemViewSchema.parse(view).runs[0].result?.humanNeededActions,
+      ).toEqual(actions);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
   });
 
   it("carries the agent's final message onto the stored result", async () => {
