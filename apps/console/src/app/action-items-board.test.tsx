@@ -3,11 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import {
-  type BoardCard,
-  BridgeSections,
-  DecisionInbox,
-} from './action-items-board';
+import { type BoardCard, BridgeSections } from './action-items-board';
+import { DecisionInbox } from './decision-inbox';
 
 // This suite exercises the board's tiering only - ActionItemCard and
 // RetriggerButton pull in the 'use server' actions module (auth, firestore,
