@@ -777,7 +777,7 @@ body:has(.console-header:not([data-streaming-fallback]))
 }
 
 /* The hairline goes under the whole head. A heading followed by its own
-   description line (SectionHeading) draws it under that line instead. A
+   description line draws it under that line instead. A
    panel whose content is wrapped in a Stack (Operations, the Agents columns)
    has its head as that Stack's first child. */
 :is(.lcars-panel, .lcars-panel > .mantine-Stack-root:first-child)
@@ -3566,32 +3566,27 @@ td.costs-repo-spend__num {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 24px;
-    padding: 16px 12px;
+    padding: 16px;
   }
 
   .costs-ledger-mobile-list {
     display: block;
   }
 
+  /* Rows sit inside a spined panel, so they draw no bar of their own. */
   .costs-ledger-mobile-row {
-    position: relative;
     display: flex;
     min-height: 68px;
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 10px 16px;
+    padding: 10px 0;
     border-bottom: 1px solid var(--lcars-hairline);
     background: var(--lcars-surface);
   }
 
   .costs-ledger-mobile-row:nth-child(even) {
     background: var(--lcars-surface);
-  }
-
-  /* Rows sit inside a spined panel; a bar per row would double the spine. */
-  .costs-ledger-mobile-row {
-    padding-inline: 0;
   }
 
   .costs-ledger-mobile-row__identity a {

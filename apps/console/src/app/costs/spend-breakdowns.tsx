@@ -149,7 +149,7 @@ export function SpendBreakdowns({
         className="costs-spend-summary"
         aria-label="Spend summary"
       >
-        <Text size="sm">
+        <Text size="sm" mt="xs">
           Reported {money(spend.totals.reportedCostUsd)} · estimated{' '}
           {money(spend.totals.estimatedCostUsd)} ·{' '}
           {spend.totals.unpricedSessions} unpriced sessions
