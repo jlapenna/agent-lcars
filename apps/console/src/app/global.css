@@ -1342,8 +1342,10 @@ body:has(.console-header:not([data-streaming-fallback]))
     display: inline-flex;
   }
 
+  /* A 12rem basis: Find takes its own row rather than shrinking to its
+     label beside the window control. */
   .console-toolbar__search {
-    flex: 1 1 0;
+    flex: 1 1 12rem;
     width: auto;
   }
 

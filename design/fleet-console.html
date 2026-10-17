@@ -184,6 +184,12 @@ details.more > summary { list-style: none; cursor: pointer; }
 details.more > summary::-webkit-details-marker { display: none; }
 details.more[open] .more-panel { position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; display: grid; gap: 8px; padding: 10px; background: var(--surface-raised); border: 1px solid var(--hairline); width: 240px; }
 .asof { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+.phone-only { display: none; }
+/* Keyboard hints only where a hover-capable pointer is present. */
+@media not ((hover: hover) and (pointer: fine)) { .kbd-hint { display: none; } }
+.compact-link { display: none; font-size: 14px; white-space: nowrap; }
+/* The Inbox's phone meta line sits on the list it describes, sharing its edge. */
+.list-meta { justify-content: space-between; align-items: baseline; padding: 0 12px 8px; border-bottom: 1px solid var(--hairline); margin-bottom: 12px; font-size: 12px; color: var(--ink-dim); }
 .toolbar .push { margin-left: auto; }
 .fold-toggle { display: none; }
 .fold-group { display: contents; }
@@ -341,6 +347,7 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .readout:nth-child(n) { border-left: 1px solid var(--hairline); padding-left: 16px; }
   .readout:first-child { border-left: 0; padding-left: 4px; }
   .refresh-label { display: none; }
+  .compact-link { display: inline; }
   .cost-7d { width: auto; }
   .cost-bar { grid-template-columns: minmax(40px, 1fr) auto; }
   .cost-bar .meter { min-width: 40px; }
@@ -366,9 +373,11 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .fold-group { display: none; }
   .toolbar:has(.fold-toggle input:checked) .fold-group { display: contents; }
   .toolbar > *, select.field { max-width: 100%; }
-  .search { width: 100%; }
-  .asof { width: 100%; }
-  .toolbar .push { margin-left: 0; }
+  .search { flex: 1 1 12rem; width: auto; }
+  .asof { width: auto; }
+  .desk-only { display: none; }
+  .toolbar .push.wrap-start { margin-left: 0; }
+  .phone-only { display: flex; }
   .content { padding: 16px 0 0; gap: 24px; }
   .content > .readouts, .content > .alert { margin: 0 12px; }
   .readouts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -593,7 +602,7 @@ function inboxPanel(full) {
     <div class="acts"><button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>${full ? kebab('Decision actions') : ''}</div>
   </li>`).join('');
   return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
-    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? ' · j/k to move · / to search' : ''}</span></div>
+    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
     <ul class="inbox">${items}</ul>
   </div></section>`;
 }
@@ -779,12 +788,12 @@ const VIEWS = {
   /* No repository select on the Bridge: its panels summarise the whole fleet. */
   deck: { warn: true, folded: [agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, session id'), asof], primary: '<a class="btn btn-primary push" href="#inbox" data-od-id="primary-action">Review 5 decisions</a>',
     body: () => `${readouts()}<div class="cols"><div class="stack">${runsPanel(false)}${donePanel()}${stoppedPanel()}${waitPanel('waiting-on-deploy', 'Waiting on deploy', 'Waiting for the next deploy before verification can continue.', WAITS.deploy)}${waitPanel('blocked', 'Blocked', 'Waiting on an external dependency or prerequisite; nothing to decide yet.', WAITS.blocked)}</div><div class="stack">${inboxPanel(false)}${fleetPanel()}${cliPanel()}</div></div>` },
-  inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), asof], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => inboxPanel(true) },
+  inbox: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, #, author, label', true), '<span class="asof desk-only">Data as of just now</span>'], primary: '<button class="btn btn-primary push wrap-start" type="button" data-od-id="primary-action">Respond to oldest</button>', body: () => `<div><div class="list-meta phone-only"><span class="eyebrow">4 repos</span><span>Updated just now</span></div>${inboxPanel(true)}</div>` },
   agents: { folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('issue, PR, run id'), asof],
     body: () => `${agentsReadouts()}<div class="alert" role="alert" data-od-id="queue-health-alert">A run has been queued for 11m 0s — the runner autoscaler may not be supplying runners.</div>${runsPanel(true)}${cliPanel()}${donePanel()}${claimedPanel()}` },
   shuttlebay: { warn: true, folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['30m', '1h', '24h', '7d'], '30m', ['1h', '24h', '7d']), '<span class="tb-note">Runner telemetry keeps the last 30 minutes</span>', find('runner lane')],
     body: () => `<div class="cols"><div class="stack">${runnersPanel()}${admissionPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
-  work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id')],
+  work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p))], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id'), '<a class="compact-link" href="#work">Schedules →</a>'],
     primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}` },
   sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [more(SOURCE)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], body: () => sessionsPanel() },
   costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}${ledgerPanels()}` },
