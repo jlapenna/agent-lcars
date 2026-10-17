@@ -100,8 +100,11 @@ homelab operation. Select:
 - `github-actions-exporter` for its Dockerfile, `exporter.py`, or
   `requirements.lock`.
 - `e2e` and `e2e-runner` together when `tools/e2e/Dockerfile` changes.
-- `e2e-runner` alone for `tools/e2e-runner/**` or `package.json` changes
-  (its runner user's Corepack cache bakes the `packageManager` pnpm).
+- `e2e-runner` alone for `tools/e2e-runner/**`, `package.json`, or
+  `apps/runner-autoscaler/runner-image/pnpm-seed/fleet/jlapenna__agent-lcars/**`
+  changes (its runner user's Corepack cache bakes the `packageManager` pnpm,
+  and its pnpm store is seeded from this repository's weekly lockfile
+  snapshot, #2082).
 
 The E2E sandbox tag is content-addressed. Do not select `e2e` for unrelated
 changes: its `df-<hash>` tag must continue to identify the Dockerfile that
