@@ -132,6 +132,24 @@ describe('createItemWithEvidence', () => {
     },
   );
 
+  it('carries a report opt-in into the native spec', async () => {
+    await createItemWithEvidence(form({ ...intent, deliverable: 'report' }));
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spec: expect.objectContaining({ deliverable: 'report' }),
+      }),
+    );
+  });
+
+  it('rejects an unknown deliverable before evidence storage or native creation', async () => {
+    const [error] = await createItemWithEvidence(
+      form({ ...intent, deliverable: 'pull-request' }),
+    );
+    expect(error?.code).toBe('BAD_REQUEST');
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
   it('rejects unknown priority before evidence storage or native creation', async () => {
     expect(
       (

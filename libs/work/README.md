@@ -89,7 +89,8 @@ a failed bearer never falls back to a console cookie.
 
 Read-only work whose result is findings, not a change, opts in at creation
 with the immutable `WorkSpec.deliverable: 'report'`
-(`lcars work create ... --deliverable report`). The worker's final message is
+(`lcars work create ... --deliverable report`, or Quick Task's "Read-only
+report" checkbox). The worker's final message is
 the report: the direct runner accepts its marker-bound `report` record only
 for an opted-in native item, the Console completion boundary re-checks the
 stored opt-in and requires a nonblank message, and the run settles
