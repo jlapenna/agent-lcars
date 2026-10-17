@@ -66,6 +66,24 @@ the rest.
 
 ## Bounded local verification
 
+The host preflight below qualifies a new local workload outside an already
+admitted runner allocation. Ordinary serial commands wholly inside a normally
+admitted CI/native allocation count the agent, setup, commands, stores, caches,
+logs, temporary files and outputs once within its complete envelope. The
+platform deployment/admission owner retains supported one-host sizing,
+host/service reserves and placement. The worker checks its allocation/run
+identity, available limits, selected paths, duration and total workload demand;
+it does not repeat the host audit before each contained command. Normal hooks,
+Nx isolation/cache and platform guards still apply.
+
+A declared Kubernetes ephemeral-storage request/limit is a platform storage
+budget, not proof of a hard filesystem quota, an observed peak or actual
+accounting/enforcement. Explicit stronger task/lane accounting, quota or monitor
+requirements remain binding. Hold for changed allocation/ownership, work outside
+the allocation, unknown workload fit or a known missing platform guard; request
+an exact [bounded operator evidence handoff](../../debug-agent-run/references/evidence-handoff.md)
+for a genuinely missing prerequisite without changing privileges or host controls.
+
 Size each local phase for one eligible runner after host/service reserves and
 record the selected CPU, memory, storage, accelerator and time bounds before
 starting it.
