@@ -260,8 +260,9 @@ function reduceTranscript(
 }
 
 /** Codex fork rollouts can carry the parent's metadata and history before
- * their own thread begins. Only the identity-matched child suffix
- * and its explicit thread counter belong to the child's summary. Missing or
+ * their own thread begins. Independent children start at their own metadata;
+ * forks start at the identity-matched child suffix. Only explicit child
+ * thread counters belong to the child's summary. Missing or
  * ambiguous ownership remains uncollected rather than billed as a new session. */
 function reduceCodexChildTranscript(
   deps: HookCommandDependencies,
@@ -306,10 +307,15 @@ function reduceCodexChildTranscript(
           !isSafeIdentifier(parent) ||
           parent === sessionId ||
           parent !== expectedParentId ||
-          payload?.forked_from_id !== parent
+          (payload?.forked_from_id !== undefined &&
+            payload.forked_from_id !== parent)
         )
           return undefined;
         parentId = parent;
+        // A child spawned without inherited history has no fork marker or
+        // initial thread_settings_applied event. Its exact session metadata
+        // starts ownership; any later foreign metadata still fails closed.
+        ownThread = payload.forked_from_id === undefined;
         ownedLines.push(line);
         continue;
       }
@@ -325,6 +331,12 @@ function reduceCodexChildTranscript(
         ownThread = true;
       }
       if (row?.type === 'session_meta' && payload?.id !== sessionId)
+        return undefined;
+      if (
+        row?.type === 'event_msg' &&
+        payload?.type === 'thread_settings_applied' &&
+        payload.thread_id !== sessionId
+      )
         return undefined;
       if (
         row?.type === 'token_usage_record' &&
