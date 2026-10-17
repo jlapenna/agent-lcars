@@ -246,6 +246,26 @@ PR or issue should be modified by multiple canaries.
 | `recovery-exhausted`   | Bounded repair ends as infrastructure failure, no human assignment                            |
 | `authorized-exception` | A specific trusted-policy exception works without relaxing unrelated restrictions             |
 
+### Task-owned engine on a shared host
+
+Qualification never starts a Docker daemon in a host's network namespace. A
+dockerd there manages host links regardless of private data/exec roots,
+sockets or mount namespaces: with `--bridge=none` it deletes the host's
+`docker0` at startup, which removed Homelab's production default bridge
+during #2181 ([#2848](https://github.com/jlapenna/agent-lcars/issues/2848)).
+When a task needs its own engine, start it only through
+`tools/probes/private-engine.mjs <new-root>` as root. It runs dockerd under
+`unshare --net --mount`, refuses (exit 97) before the daemon binary runs unless
+its network namespace differs from PID 1's and contains only `lo`, and hides
+the host's `/run/containerd` and `/run/docker` so the engine manages its own
+containerd. `tools/probes/private-engine.test.mjs` is the required safety
+invariant. The engine has no external network: load images through its socket
+(`docker save … | /usr/bin/docker -H unix://<root>/docker.sock load`; Homelab's
+`/usr/local/bin/docker` wrapper demotes root and cannot reach it), bound
+each container with `--cpus`/`--memory`, and size engine plus containers to
+one supported lane. Record host `docker0` (ifindex, MAC, address) and the
+production container set before and after, and remove the root on exit.
+
 ### Historical image qualification evidence
 
 `tools/probes/in-runner-image.mjs` runs the native probes as the image job
