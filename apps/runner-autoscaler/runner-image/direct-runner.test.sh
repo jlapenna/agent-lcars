@@ -638,6 +638,7 @@ fi
 if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
   echo "export ${3:-}" >> "$OPENCODE_SEQUENCE_LOG"
   if [ "${FAKE_OPENCODE_EXPORT_FAIL:-}" = 1 ]; then exit 1; fi
+  if [ "${FAKE_OPENCODE_EXPORT_EMPTY:-}" = 1 ]; then exit 0; fi
   jq -n --arg id "${3:-}" --arg text "${FAKE_OPENCODE_EXPORT_TEXT-${FAKE_OPENCODE_LAST_MESSAGE:-}}" '{
     info: {id: $id},
     messages: [
@@ -1919,15 +1920,21 @@ jq -e '.outcome == "report" and (.message | contains("# OpenCode findings"))' < 
   fail "opencode native report blank: the corrected report did not settle ($(cat "$COMPLETE_LOG"))"
 echo "scenario opencode-native-report-blank-correction: OK"
 
-# An unreadable export cannot judge the message; the record decides as
-# before and finalize's capture remains authoritative.
-export FAKE_OPENCODE_EXPORT_FAIL=1
-run_scenario opencode-native-report-export-failure opencode
-unset FAKE_OPENCODE_EXPORT_FAIL FAKE_BRIEF_NO_RESUME FAKE_OPENCODE_LAST_MESSAGE
-[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
-  fail "opencode native report export failure: an unjudged report earned a correction round"
-jq -e '.outcome == "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "opencode native report export failure: finalize's report did not settle ($(cat "$COMPLETE_LOG"))"
+# An unreadable export -- a failed command or an empty one -- cannot judge
+# the message; the record decides as before and finalize's capture remains
+# authoritative.
+for export_fault in FAIL EMPTY; do
+  export "FAKE_OPENCODE_EXPORT_$export_fault=1"
+  run_scenario "opencode-native-report-export-${export_fault,,}" opencode
+  unset "FAKE_OPENCODE_EXPORT_$export_fault"
+  grep -Fxq 'export ses_new_1' "$OPENCODE_SEQUENCE_LOG" ||
+    fail "opencode native report export $export_fault: the pre-check never read the round ($(cat "$OPENCODE_SEQUENCE_LOG"))"
+  [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+    fail "opencode native report export $export_fault: an unjudged report earned a correction round"
+  jq -e '.outcome == "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+    fail "opencode native report export $export_fault: finalize's report did not settle ($(cat "$COMPLETE_LOG"))"
+done
+unset FAKE_BRIEF_NO_RESUME FAKE_OPENCODE_LAST_MESSAGE
 echo "scenario opencode-native-report-export-failure: OK"
 
 # The message contract is <=16384 JavaScript string units, inclusive, not

@@ -1241,17 +1241,20 @@ else
   # export leaves the record alone deciding, as before; finalize still
   # captures the authoritative message.
   OPENCODE_ROUND_SESSION=''
+  OPENCODE_ROUND_SESSION_LOOKED_UP=''
   OPENCODE_REPORT_MESSAGE_FILE=''
   if [ "${REPORT_DELIVERABLE:-}" = 1 ] && [ "$AGENT_EXIT" -eq 0 ]; then
     OPENCODE_ROUND_SESSION="$(opencode_round_session)"
+    OPENCODE_ROUND_SESSION_LOOKED_UP=1
     opencode_report_export="$RUNNER_TEMP/opencode-report-export.json"
     if [ -n "$OPENCODE_ROUND_SESSION" ] &&
       ( ulimit -f 32768
         exec env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
           timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
           "$OPENCODE_BIN" --pure export "$OPENCODE_ROUND_SESSION" ) > "$opencode_report_export" 2>/dev/null &&
-      jq -j '
-          if (.messages | type) == "array" then
+      jq -j -n '
+          [inputs] | if length != 1 then error("export is not one JSON value") else .[0] end
+          | if (.messages | type) == "array" then
             [.messages[]
               | objects
               | select((.info | objects | .role) == "assistant")
@@ -1272,7 +1275,11 @@ else
 
   OPENCODE_CONTINUATION_SESSION=''
   if worker_completion_needed "$AGENT_EXIT" "$OPENCODE_DEADLINE" ${OPENCODE_REPORT_MESSAGE_FILE:+"$OPENCODE_REPORT_MESSAGE_FILE"}; then
-    OPENCODE_CONTINUATION_SESSION="${OPENCODE_ROUND_SESSION:-$(opencode_round_session)}"
+    if [ -n "$OPENCODE_ROUND_SESSION_LOOKED_UP" ]; then
+      OPENCODE_CONTINUATION_SESSION="$OPENCODE_ROUND_SESSION"
+    else
+      OPENCODE_CONTINUATION_SESSION="$(opencode_round_session)"
+    fi
   fi
 
   if [ -n "$OPENCODE_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((OPENCODE_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
