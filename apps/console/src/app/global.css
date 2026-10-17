@@ -1886,20 +1886,12 @@ td.sessions-table__num {
   margin-top: 2px;
 }
 
+/* Rows sit inside the Sessions panel's spine, so they draw no bar. */
 .session-mobile-row {
   position: relative;
-  padding: 14px 16px;
+  padding: 14px 0;
   border-bottom: 1px solid var(--mantine-color-default-border);
   background: var(--lcars-surface);
-}
-
-.session-mobile-row::before {
-  content: '';
-  position: absolute;
-  inset-block: 0;
-  left: 0;
-  width: var(--lcars-spine-width);
-  background: var(--lcars-accent);
 }
 
 .session-card__title > span {
@@ -2155,6 +2147,18 @@ td.costs-repo-spend__num {
   .costs-repo-spend__week {
     width: auto;
   }
+}
+
+/* Phones read each repository as one row, as the mockup reflows tables. */
+.costs-repo-spend__card {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--lcars-hairline);
+}
+
+.costs-repo-spend__card:last-child {
+  border-bottom: 0;
 }
 
 .costs-repo-spend__meter {

@@ -1,6 +1,7 @@
 import {
   Card,
   Group,
+  Stack,
   Table,
   TableScrollContainer,
   TableTbody,
@@ -39,6 +40,25 @@ function RepoName({ repo }: { repo: string }) {
   );
 }
 
+type RepositoryRow = RepositorySpend['rows'][number];
+
+/** The seven-day share as a meter beside its amount. */
+function SevenDayBar({ row, max }: { row: RepositoryRow; max: number }) {
+  const share = max > 0 ? (row.sevenDayUsd / max) * 100 : 0;
+  return (
+    <div className="costs-repo-spend__bar">
+      <div
+        className="costs-repo-spend__meter"
+        role="img"
+        aria-label={`${Math.round(share)}% of the largest repository`}
+      >
+        <i style={{ width: `${share}%` }} />
+      </div>
+      <span>{money(row.sevenDayUsd, row.estimated)}</span>
+    </div>
+  );
+}
+
 export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
   const max = Math.max(0, ...spend.rows.map((row) => row.sevenDayUsd));
   const unavailable = spend.sevenDayUnavailable;
@@ -73,7 +93,7 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
           No sessions with activity in the last seven days.
         </Text>
       ) : (
-        <TableScrollContainer minWidth={560}>
+        <TableScrollContainer minWidth={560} visibleFrom="sm">
           <Table highlightOnHover verticalSpacing="xs" fz="sm">
             <TableThead>
               <TableTr>
@@ -98,26 +118,7 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
                       : money(row.todayUsd, row.estimated)}
                   </TableTd>
                   <TableTd className="costs-repo-spend__week">
-                    {unavailable ? (
-                      '—'
-                    ) : (
-                      <div className="costs-repo-spend__bar">
-                        <div
-                          className="costs-repo-spend__meter"
-                          role="img"
-                          aria-label={`${Math.round(
-                            max > 0 ? (row.sevenDayUsd / max) * 100 : 0,
-                          )}% of the largest repository`}
-                        >
-                          <i
-                            style={{
-                              width: `${max > 0 ? (row.sevenDayUsd / max) * 100 : 0}%`,
-                            }}
-                          />
-                        </div>
-                        <span>{money(row.sevenDayUsd, row.estimated)}</span>
-                      </div>
-                    )}
+                    {unavailable ? '—' : <SevenDayBar row={row} max={max} />}
                   </TableTd>
                   <TableTd className="costs-repo-spend__num">
                     {unavailable ? '—' : row.sessions7d}
@@ -138,6 +139,37 @@ export function SpendByRepository({ spend }: { spend: RepositorySpend }) {
             </TableTbody>
           </Table>
         </TableScrollContainer>
+      )}
+      {spend.rows.length > 0 && (
+        <Stack
+          gap={0}
+          hiddenFrom="sm"
+          role="list"
+          aria-label="Spend by repository"
+          className="costs-repo-spend__cards"
+        >
+          {spend.rows.map((row) => (
+            <article
+              key={row.repo}
+              role="listitem"
+              className="costs-repo-spend__card"
+            >
+              <span className="costs-repo-spend__repo">
+                <RepoName repo={row.repo} />
+              </span>
+              {unavailable ? null : <SevenDayBar row={row} max={max} />}
+              <Text size="xs" c="dimmed">
+                today{' '}
+                {spend.todayUnavailable
+                  ? '—'
+                  : money(row.todayUsd, row.estimated)}
+                {unavailable
+                  ? ' · seven-day figures unavailable'
+                  : ` · ${row.sessions7d} sessions${row.unpriced > 0 ? ` (${row.unpriced} unpriced)` : ''} · ${money(row.perSessionUsd, row.estimated)} / session`}
+              </Text>
+            </article>
+          ))}
+        </Stack>
       )}
     </Card>
   );
