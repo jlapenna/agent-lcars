@@ -1,5 +1,5 @@
 import type { ItemView } from '@agent-lcars/work/derive';
-import { Anchor, Code, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Code, Group, Stack, Text } from '@mantine/core';
 
 import { HumanNeededSummary } from '../human-needed-summary';
 import { ProviderFallbackSummary } from './provider-fallback-summary';
@@ -42,21 +42,33 @@ function HumanTurn({
 
 function AgentTurn({
   message,
+  report,
   resultRef,
   sessionId,
   canViewSessions,
 }: {
   message: string;
+  /** The message is the round's deliverable, not commentary on one. */
+  report: boolean;
   resultRef: string[];
   sessionId: string | undefined;
   canViewSessions: boolean;
 }) {
   return (
     <Stack gap={2} data-testid="agent-turn">
-      <Text size="xs" c="dimmed">
-        agent
+      <Group gap="xs">
+        <Text size="xs" c="dimmed">
+          agent
+        </Text>
+        {report && (
+          <Badge size="xs" color="teal" variant="light">
+            Report
+          </Badge>
+        )}
+      </Group>
+      <Text style={report ? { whiteSpace: 'pre-wrap' } : undefined}>
+        {message}
       </Text>
-      <Text>{message}</Text>
       <Group gap="xs">
         <>
           {resultRef.map((value) => (
@@ -120,6 +132,7 @@ export function Conversation({
             {run.result?.message !== undefined && (
               <AgentTurn
                 message={run.result.message}
+                report={run.result.summary === 'report'}
                 resultRef={resultRefs(run.result)}
                 sessionId={session?.sessionId}
                 canViewSessions={canViewSessions}

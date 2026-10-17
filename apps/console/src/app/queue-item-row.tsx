@@ -1,6 +1,6 @@
 'use client';
 
-import { Loader, Tooltip } from '@mantine/core';
+import { Loader } from '@mantine/core';
 import Link from 'next/link';
 import type { MouseEvent } from 'react';
 
@@ -64,11 +64,12 @@ export function QueueItemRow({
       >
         <div className="queue-item-row__text">
           <div className="ops-inbox__kind">{reason?.label ?? 'Decision'}</div>
-          <Tooltip label={item.title} multiline maw={320} openDelay={300}>
-            <span className="ops-inbox__title queue-item-row__title">
-              {item.title}
-            </span>
-          </Tooltip>
+          <span
+            className="ops-inbox__title queue-item-row__title"
+            title={item.title}
+          >
+            {item.title}
+          </span>
           <div className="ops-inbox__meta">
             <span className="ops-ref">
               {repoDisplayName(item.repo)} {item.kind === 'pr' ? 'PR ' : ''}#
@@ -78,15 +79,14 @@ export function QueueItemRow({
             <DecisionWaiting since={item.decisionSince ?? item.updatedAt} />
             {item.author && <span>by {item.author}</span>}
             {item.ciRunning && (
-              <Tooltip label="CI running" openDelay={300}>
-                <span
-                  className="queue-row-signal"
-                  role="status"
-                  aria-label="CI running"
-                >
-                  <span aria-hidden="true" />
-                </span>
-              </Tooltip>
+              <span
+                className="queue-row-signal"
+                role="status"
+                aria-label="CI running"
+                title="CI running"
+              >
+                <span aria-hidden="true" />
+              </span>
             )}
             {hiddenLabels.length > 0 && (
               <span

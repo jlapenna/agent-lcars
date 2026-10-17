@@ -1571,6 +1571,101 @@ describe('claim -> brief -> heartbeat -> complete', () => {
   );
 });
 
+describe('report deliverable across a provider fallback', () => {
+  // The opt-in lives on the stored spec, not the run, so a fallback
+  // successor on another provider must still settle a report, never a PR.
+  it('settles the successor report done after the first provider hits its limit', async () => {
+    const store = new MemoryStore();
+    let instant = NOW;
+    const now = () => new Date(instant);
+    const orchestrator = new Orchestrator(
+      store,
+      { now: () => instant },
+      {
+        pipelines: ['opencode', 'claude'],
+        allowedPipelines: () => ['opencode', 'claude'],
+      },
+    );
+    const workId = wid('report-fallback');
+    const outcome = await orchestrator.request({
+      taskId: { workId },
+      requestId: workId,
+      pipeline: 'opencode',
+      providerFallback: {
+        principal: 'user:operator',
+        allowedPipelines: ['claude'],
+      },
+      work: {
+        origin: { principal: 'user:jlapenna', channel: 'api' },
+        spec: {
+          title: 'Audit',
+          description: 'Read-only audit',
+          pipeline: 'opencode',
+          fallbackPipelines: ['claude'],
+          deliverable: 'report',
+          target: { repo: 'jlapenna/agent-lcars' },
+        },
+      },
+      params: { mode: 'implement' },
+    });
+    if ('refused' in outcome || outcome.run === undefined)
+      throw new Error('unexpected refusal seeding the report item');
+    await store.enqueueRun({ runId: outcome.run.runId, now: NOW });
+    await orchestrator.confirmDispatch(outcome.run.runId);
+    const ctx = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      principal: executorPrincipal(['opencode', 'claude']),
+    };
+
+    const first = await call(ctx, 'POST', '/runs/claim', { runner: 'r1' });
+    expect(first.status).toBe(200);
+    const firstClaim = first.json as { runId: string; token: string };
+    expect(firstClaim.runId).toBe(outcome.run.runId);
+    const limited = await call(
+      { ...ctx, bearerToken: firstClaim.token },
+      'POST',
+      runPath(firstClaim.runId, '/complete'),
+      {
+        outcome: 'provider-limit',
+        outcomeReference: null,
+        message: 'usage limit reached',
+      },
+    );
+    expect(limited.status).toBe(200);
+
+    const successor = await store.readActiveRun({ workId });
+    expect(successor?.pipeline).toBe('claude');
+    if (successor === undefined) throw new Error('missing fallback successor');
+    await store.enqueueRun({ runId: successor.runId, now: NOW });
+    instant = '2026-08-26T10:01:00.000Z';
+
+    const second = await call(ctx, 'POST', '/runs/claim', { runner: 'r2' });
+    expect(second.status).toBe(200);
+    const secondClaim = second.json as { runId: string; token: string };
+    expect(secondClaim.runId).toBe(successor.runId);
+    const reported = await call(
+      { ...ctx, bearerToken: secondClaim.token },
+      'POST',
+      runPath(secondClaim.runId, '/complete'),
+      { outcome: 'report', outcomeReference: null, message: '# Findings' },
+    );
+    expect(reported.status).toBe(200);
+
+    expect((await store.readRun(successor.runId))?.result).toMatchObject({
+      ok: true,
+      summary: 'report',
+      message: '# Findings',
+    });
+    const task = await store.readTask({ workId });
+    const runs = await store.listRuns({ workId });
+    expect(runs.map((run) => run.pipeline)).toEqual(['opencode', 'claude']);
+    expect(deriveItemState(task!.task, runs)).toBe('done');
+  });
+});
+
 describe.each([
   { repo: 'octo/example', issue: 42 },
   { workId: wid('brief-identity') },

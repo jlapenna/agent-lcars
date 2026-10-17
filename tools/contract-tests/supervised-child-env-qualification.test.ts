@@ -160,7 +160,11 @@ async function fixture(): Promise<Phase> {
     directory,
     script,
     witness,
-    qualifiedPath: [...bins, emptyBin].join(path.delimiter),
+    // Standard utilities come after the selected toolchain. A real pnpm
+    // launcher may be a shell script (pnpm/action-setup invokes dirname, sed,
+    // and uname); those resolve from the system bins only when present, while
+    // the qualified bins stay first so Node/pnpm precedence is preserved.
+    qualifiedPath: [...bins, '/usr/bin', '/bin', emptyBin].join(path.delimiter),
     nodeOnlyPath: nodeOnlyBin,
     expectedNodePath,
     expectedPnpmPath,
@@ -293,7 +297,10 @@ it.runIf(supervisorAvailable).each(phaseCases)(
     const phase = await fixture();
     try {
       const outcome = await supervised(phase, phase[testCase.key]);
-      expect(outcome.exit).toBe(testCase.exit);
+      expect(
+        outcome.exit,
+        `${testCase.label} supervised child:\n${outcome.stdout}\n${outcome.stderr}`,
+      ).toBe(testCase.exit);
       expect(await exists(phase.witness)).toBe(testCase.witness);
       expect(reportedToolchain(outcome)).toEqual(
         expectedToolchain(phase, testCase),
@@ -314,7 +321,10 @@ it.each(phaseCases)(
     const phase = await fixture();
     try {
       const outcome = await childEnvironment(phase, phase[testCase.key]);
-      expect(outcome.exit).toBe(testCase.exit);
+      expect(
+        outcome.exit,
+        `${testCase.label} direct child:\n${outcome.stdout}\n${outcome.stderr}`,
+      ).toBe(testCase.exit);
       expect(await exists(phase.witness)).toBe(testCase.witness);
       expect(reportedToolchain(outcome)).toEqual(
         expectedToolchain(phase, testCase),

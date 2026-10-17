@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
 import type { BoardCard } from './board-card';
+import { readDecisionSnoozes, snoozeDecision } from './decision-snooze-actions';
 import {
   type InboxCard,
   inboxCardSignature,
@@ -154,6 +155,8 @@ describe('queueSelectionHref', () => {
 });
 
 const nativeCard: NativeDecisionCard = {
+  kind: 'decision',
+  queued: true,
   canReply: true,
   work: {
     id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -453,7 +456,7 @@ describe('QueueWorkspace', () => {
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(10);
+    ).toHaveLength(11);
     expect(
       within(menu).getByRole('menuitem', {
         name: 'All reasons',
@@ -726,5 +729,88 @@ describe('parseQueueFilter / parseQueueSort', () => {
     expect(parseQueueSort('newest')).toBe('newest');
     expect(parseQueueSort('nonsense')).toBe('priority');
     expect(parseQueueSort(null)).toBe('priority');
+  });
+});
+
+describe('QueueWorkspace native reports', () => {
+  const report: NativeDecisionCard = {
+    ...nativeCard,
+    kind: 'report',
+    work: {
+      ...nativeCard.work,
+      state: 'done',
+      runs: nativeCard.work.runs.map((run) => ({
+        ...run,
+        result: { ok: true, summary: 'report', message: 'Findings' },
+      })),
+    },
+  };
+
+  it.each([
+    ['row', 'Dismiss Choose storage'],
+    ['detail', 'Dismiss report'],
+  ])(
+    'dismisses a report from the %s past its Inbox window without asking how long',
+    async (_surface, name) => {
+      vi.mocked(snoozeDecision).mockClear();
+      render(
+        <MantineProvider>
+          <QueueWorkspace
+            cards={[report]}
+            watchedRepos={[]}
+            replyToWorkItem={vi.fn()}
+          />
+        </MantineProvider>,
+      );
+      fireEvent.click(screen.getByRole('button', { name }));
+      await waitFor(() =>
+        expect(snoozeDecision).toHaveBeenCalledWith({
+          anchor: report.work.id,
+          signature: inboxCardSignature(report),
+          minutes: 10_080,
+        }),
+      );
+      expect(screen.queryByRole('dialog')).toBeNull();
+    },
+  );
+
+  it('keeps a days-old report out of the decision SLA and the oldest-decision jump', () => {
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[report]}
+          watchedRepos={[]}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.queryByText(/over SLA/u)).toBeNull();
+    expect(screen.getByText(/^settled/u)).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /oldest/iu })).toBeNull();
+  });
+
+  it('drops a dismissed report that has aged out of the Inbox from Snoozed', async () => {
+    const future = '2099-01-01T00:00:00.000Z';
+    vi.mocked(readDecisionSnoozes).mockResolvedValueOnce({
+      ok: true,
+      entries: {
+        [report.work.id]: {
+          signature: 'r1|2026-10-09T00:30:00Z|report',
+          snoozedAt: '2026-10-09T01:00:00.000Z',
+          expiresAt: future,
+        },
+      },
+    });
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[]}
+          watchedRepos={[]}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    await waitFor(() => expect(readDecisionSnoozes).toHaveBeenCalled());
+    expect(screen.queryByText(/Snoozed \(/u)).toBeNull();
   });
 });

@@ -18,7 +18,10 @@ export type ActionType =
    *  The label contract keeps it distinct from `needs-human`: nobody has a
    *  decision to make here, so it is never by itself a reason to be in the
    *  Inbox, and a fleet claim on it is deliberate parking, not staleness. */
-  | 'blocked';
+  | 'blocked'
+  /** A finished native read-only report (#2845): an Inbox entry to read,
+   *  not a decision. No GitHub item carries it. */
+  | 'report-ready';
 
 export type MergeableState =
   'clean' | 'dirty' | 'blocked' | 'unstable' | 'behind' | 'draft' | 'unknown';
@@ -87,6 +90,7 @@ const ACTION_PRIORITY: Record<ActionType, number> = {
   'silent-error': 1,
   'post-deploy-action': 2,
   blocked: 2,
+  'report-ready': 2,
 };
 
 const LABELS_SHOWN_AS_ACTION_TYPES = new Set([

@@ -95,7 +95,9 @@ the report: the direct runner accepts its marker-bound `report` record only
 for an opted-in native item, the Console completion boundary re-checks the
 stored opt-in and requires a nonblank message, and the run settles
 `summary: 'report'` with the item `done`, not `parked`. Without the opt-in a
-read-only audit can only park. This is a temporary bridge to the unified
+read-only audit can only park. A finished report is listed in the Inbox as
+"Report ready" for seven days after it settles, with a follow-up reply;
+Dismiss hides it for that whole window. This is a temporary bridge to the unified
 dataflow design's `intent: report`
 ([spec](../../docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md));
 its verification phase removes the field and the marker path together.

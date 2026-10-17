@@ -4,17 +4,24 @@ import { logger } from '@agent-lcars/logging';
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
 import { toWorkSummary } from '@agent-lcars/work/derive';
 
-import type { NativeDecisionCard } from '../app/inbox-card';
+import {
+  type NativeDecisionCard,
+  nativeReportRun,
+  REPORT_INBOX_WINDOW_MS,
+} from '../app/inbox-card';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
 
 /** Scan bounded datastore pages so older human decisions never disappear
  * behind newer completed work. GitHub parks use their existing projection,
- * giving an anchor represented by both a task and a label exactly one row. */
+ * giving an anchor represented by both a task and a label exactly one row.
+ * A report that settled within REPORT_INBOX_WINDOW_MS is listed too; older
+ * ones stay readable from Work. */
 export async function getNativeInboxCards(
   store: OrchestratorStore,
   principal: WorkPrincipal | undefined,
   selectedItemKey?: string,
+  now = Date.now(),
 ): Promise<NativeDecisionCard[]> {
   const cards: NativeDecisionCard[] = [];
   let cursor: string | undefined;
@@ -29,15 +36,22 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
+      const report = nativeReportRun(work);
+      const freshReport =
+        report !== undefined &&
+        now - Date.parse(report.updatedAt) <= REPORT_INBOX_WINDOW_MS;
       if (
         !('workId' in work.anchor) ||
-        (work.state !== 'parked' && work.id !== selectedItemKey)
+        (work.state !== 'parked' && !freshReport && work.id !== selectedItemKey)
       )
         continue;
       cards.push({
         work: { ...work, anchor: work.anchor },
+        kind: report ? 'report' : 'decision',
+        queued: work.state === 'parked' || freshReport,
+        // A follow-up on a report starts a new round, as a reply to a park does.
         canReply:
-          work.state === 'parked' &&
+          (work.state === 'parked' || report !== undefined) &&
           principal?.scopes.has('work.operator') === true &&
           forbiddenReason(principal, {
             ...work.spec,

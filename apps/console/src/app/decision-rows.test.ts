@@ -53,3 +53,39 @@ describe('decisionRows', () => {
     expect(rows[2]?.agent).toBeUndefined();
   });
 });
+
+it('reads a native report as a report, after every decision', () => {
+  const native = (kind: 'decision' | 'report', id: string) => ({
+    kind,
+    queued: true,
+    canReply: true,
+    work: {
+      id,
+      anchor: { workId: id.slice('work:'.length) },
+      state: kind === 'report' ? 'done' : 'parked',
+      updatedAt: '2026-10-13T00:00:00Z',
+      spec: {
+        title: 'Audit',
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      },
+      runs: [
+        {
+          result: {
+            ok: true,
+            summary: kind === 'report' ? 'report' : 'park',
+            message: 'text',
+          },
+        },
+      ],
+    },
+  });
+  const rows = decisionRows([
+    native('report', 'work:A'),
+    native('decision', 'work:B'),
+  ] as unknown as InboxCard[]);
+  expect(rows.map((row) => [row.key, row.reason])).toEqual([
+    ['work:B', 'Human needed'],
+    ['work:A', 'Report ready'],
+  ]);
+});

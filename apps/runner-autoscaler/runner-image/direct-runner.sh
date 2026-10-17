@@ -591,6 +591,26 @@ the result kind):
 Use no-op instead of park only when the requested result already exists. Do
 not create that file for a pull-request outcome."
   if [ "$REPORT_DELIVERABLE" = 1 ]; then
+    report_final='the complete report'
+    report_followup=''
+    # A reply round's final message replaces the report the requester reads.
+    # Only a resumed agent holds the earlier conversation, so only it can
+    # tell a delivered report from a parked question and answer a follow-up
+    # alone; a fresh session rebuilds the report around the reply.
+    if [ "$MODE" = reply ] && [ -n "$REPLY" ] && [ -n "$RESUME_SESSION_ID" ]; then
+      report_final='the complete report, or your complete answer to a follow-up,'
+      report_followup="
+This round follows a human reply. If you already delivered the report and
+the reply asks about it, answer that follow-up directly instead of redoing
+the whole report. Your final response replaces the report the requester
+reads, so make it self-contained: the answer, plus any earlier finding it
+changes. If the reply answers a question you parked on, finish the full
+report."
+    elif [ "$MODE" = reply ]; then
+      report_followup="
+This round follows a human reply in the brief, without the earlier
+conversation. Produce the full report and address the reply within it."
+    fi
     NATIVE_WORK_INSTRUCTIONS="$NATIVE_WORK_INSTRUCTIONS
 
 This item declares deliverable: report, which overrides the commit, push,
@@ -601,13 +621,13 @@ write. When the report is finished, write these two lines to
 <!-- agent-result:v1:report:$ATTEMPT_ID -->
 <!-- attempt-claim:$ATTEMPT_ID -->
 
-Then end with the complete report as your final response (at most 16384
+Then end with $report_final as your final response (at most 16384
 characters): that response is the deliverable, and a longer one is
 refused, never truncated.
-A finished report is not a park. Park only for a real blocker."
+A finished report is not a park. Park only for a real blocker.$report_followup"
     # Only the last round's final message is kept, so a correction round must
     # repeat the report rather than acknowledge the record.
-    WORKER_COMPLETION_PROMPT="$WORKER_COMPLETION_PROMPT For this report item, write the report record and end with the complete report repeated as your final response; only that final response is kept."
+    WORKER_COMPLETION_PROMPT="$WORKER_COMPLETION_PROMPT For this report item, write the report record and end with $report_final repeated as your final response; only that final response is kept."
   fi
 fi
 

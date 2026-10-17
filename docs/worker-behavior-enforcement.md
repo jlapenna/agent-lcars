@@ -19,8 +19,20 @@ dispatches.
 | ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification | Ready-head CI and independent review for changed live contracts                                                                            |
 | Isolated image   | Historical ledger binds observed CLIs, baked modules/helpers/runner and harness hashes                  | Current candidate must rerun every native and setup-negative case; changed bytes invalidate historical evidence                            |
-| Real dispatch    | Normal Codex review of #2029 proves scoped execution-mode separation and delivery                       | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
+| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                              | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
 | Activation       | Default is off; no deployment or selector mutation is performed here                                    | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+
+The [2026-10-17 useful-work receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6228476076)
+binds Claude CLI 2.1.302, Work `01M53SRA2AE75PY9PAWNA9MT1S/r1`, its actual
+ARM64 Pod and normal published image index
+`sha256:6769b237e7164419c71b734aba3d7d39bb09d40bcc0dfcd7d264b26cd07acb8e`
+to source `6a3cc432ae4a8b3d5fbcf44a8683a68f862e17c5`. The useful report finished
+`done` / `report` / `ok:true` with policy off. It qualifies that provider execution,
+not enabled-policy behavior, the native/setup/failure-consumer suites, another
+provider or a later candidate image. The private-engine incident and its recovery
+are separately owned by #2848; replacing that retired facility is not a provider
+graduation prerequisite when an existing supported native carrier can perform
+the qualification.
 
 The source inventory contains 78 Claude, 79 Codex and 81 OpenCode native
 observations, plus three setup-negative cases per provider. Inventory lives in
@@ -246,25 +258,32 @@ PR or issue should be modified by multiple canaries.
 | `recovery-exhausted`   | Bounded repair ends as infrastructure failure, no human assignment                            |
 | `authorized-exception` | A specific trusted-policy exception works without relaxing unrelated restrictions             |
 
-### Task-owned engine on a shared host
+### Retired task-owned engine facility
 
-Qualification never starts a Docker daemon in a host's network namespace. A
-dockerd there manages host links regardless of private data/exec roots,
-sockets or mount namespaces: with `--bridge=none` it deletes the host's
-`docker0` at startup, which removed Homelab's production default bridge
-during #2181 ([#2848](https://github.com/jlapenna/agent-lcars/issues/2848)).
-When a task needs its own engine, start it only through
-`tools/probes/private-engine.mjs <new-root>` as root. It runs dockerd under
-`unshare --net --mount`, refuses (exit 97) before the daemon binary runs unless
-its network namespace differs from PID 1's and contains only `lo`, and hides
-the host's `/run/containerd` and `/run/docker` so the engine manages its own
-containerd. `tools/probes/private-engine.test.mjs` is the required safety
-invariant. The engine has no external network: load images through its socket
-(`docker save … | /usr/bin/docker -H unix://<root>/docker.sock load`; Homelab's
-`/usr/local/bin/docker` wrapper demotes root and cannot reach it), bound
-each container with `--cpus`/`--memory`, and size engine plus containers to
-one supported lane. Record host `docker0` (ifindex, MAC, address) and the
-production container set before and after, and remove the root on exit.
+The private Docker-engine qualification facility is retired after
+[#2848](https://github.com/jlapenna/agent-lcars/issues/2848).
+`tools/probes/private-engine.mjs` refuses every CLI invocation with exit 97,
+before creating engine state or starting a child. Do not launch a task-owned
+daemon, alter host bridges or policy, or grant privileges to continue qualification.
+The exported namespace guard and its stand-in regression remain as prevention
+evidence; they do not authorize use of the retired facility.
+
+A dockerd in a host's network namespace manages host links regardless of private
+data/exec roots, sockets or mount namespaces: `--bridge=none` deletes the host's
+`docker0` at startup. The original host recovery and incident record are separate
+from provider qualification. Completing them does not require graduating a new
+engine facility or a provider.
+
+Use the existing supported isolated runner/qualification path through its owning
+operator. A normally admitted native Job can execute
+`tools/probes/in-runner-image.mjs` inside its candidate image without another
+Docker daemon. Bind the Job/Pod, immutable image manifest/config, source and actual
+CLI version; retain all native/setup-negative reports and run their failure
+consumer as described in the [qualification artifact](worker-policy-rollout.md).
+The operator must qualify one complete supported allocation, ownership, fixture
+isolation, evidence retention and cleanup before execution. Keep production
+`LCARS_WORKER_POLICY_PROVIDERS` unchanged; offline qualification and useful
+policy-enabled dispatch acceptance remain independent gates under #2181.
 
 ### Historical image qualification evidence
 
