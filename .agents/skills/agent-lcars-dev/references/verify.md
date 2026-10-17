@@ -212,23 +212,32 @@ setting alone does not prove selection. Filesystem accounting traverses
 only the consumer paths the phase actually selects, resolved with the
 package manager and phase tools — the store path `pnpm store path`
 reports, the cache directories the selected tools use, and the phase's
-owned outputs and temporary roots — so the observer's cost scales with the
-declared phase. Sampling a whole cache root or shared store draws in
-unrelated applications and makes observer latency, CPU and time grow with
-total cache size instead of the workload. Include the resulting paths in
-filesystem accounting; ordinary author setup may use the supported shared
-store. If a review requires an owned store, use supported explicit
-configuration and verify selection before installation. Record setup and
+owned outputs and temporary roots — rather than an unrelated cache
+ancestor or a store the phase never selects. Sampling a whole cache root
+such as a home `~/.cache` draws in unrelated applications and makes
+observer latency, CPU and time grow with total cache size instead of the
+workload. An exactly selected path may still be shared: the selected pnpm
+store can hold entries from other consumers, so selection bounds what the
+observer walks, not what that path can grow to. The finite per-sample
+qualification above is what contains that cost; a selected path that
+cannot be sampled within its own timeout is a setup failure or an
+existing supported facility, never a reason to widen the walk. Include
+the resulting paths in filesystem accounting; ordinary author setup may
+use the supported shared store. If a review requires an owned store, use
+supported explicit configuration and verify selection before installation.
+Record setup and
 observer exits separately: a postsetup assertion does not erase successful
 installation or justify reinstalling an unchanged worktree.
 
-Recorded case: in #2880 a `du --summarize` observer sampled the shared
-pnpm store together with the home cache root; publication had exited 0
-with the remote SHA verified when the sample exceeded its 40 s timeout,
-and the supervising phase then exited 1. Keep the completed publication
-receipt and the failed observer receipt as separate records. #2520's
-setup made the same whole-cache-root selection and traversed unrelated
-paths.
+Recorded case: in #2880 a `du --summarize` observer selected the shared
+pnpm store together with the whole home cache root; publication had
+exited 0 with the remote SHA verified when the sample exceeded its 40 s
+timeout, and the supervising phase then exited 1. The home cache root was
+the selection the phase never made; the selected shared store still
+needed the per-sample qualification above because other consumers can
+grow it. Keep the completed publication receipt and the failed observer
+receipt as separate records. #2520's setup made the same
+whole-cache-root selection and traversed unrelated paths.
 
 Propagate startup and later measurement failures to the supervisor. A required
 monitor exiting unexpectedly, including exit 0, fails the phase and stops only
@@ -250,14 +259,16 @@ shared pnpm, Go or other caches on each sample: that memory grows with the
 caches, not the workload. In homelab#2674, such a walker reached 1.6 GiB and
 was OOM-killed under 1–2 GiB caps. The caps were meant for the build, and the
 kills fired the controller's `MemcgOOMKill` alert. Walk only the actual
-selected consumer paths, resolved as above, so the observer's cost stays
-proportional to the phase's own paths rather than to unrelated cache growth.
-Run a large accounting walk
+selected consumer paths, resolved as above: that keeps the walk off
+unrelated caches, and because a selected shared path can still grow from
+other consumers, the finite per-sample qualification above is what bounds
+its cost. Run a large accounting walk
 outside the workload's cgroup with its own limit, or bound it. A monitor kill
 fails the phase. It is not evidence about the workload's memory need. When
 the phase explicitly requires a storage ceiling, retain the supported
 attributable allocation accounting or actual quota above; consumer-path
-selection bounds observer cost and never relaxes that requirement.
+selection with its per-sample qualification bounds observer cost and never
+relaxes that requirement.
 
 Shared filesystem free-byte samples measure net filesystem activity.
 Concurrent releases can mask an owned workload's allocation, so these samples
