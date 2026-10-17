@@ -153,6 +153,12 @@ an approval a trusted instruction requires), or an auto-merge arming failure
 missing deliverable does not establish that blocker. Preserve the
 execution diagnosis instead of inventing a human handoff.
 
+A Homelab host fact you cannot observe (disk, unit or timer state, journal,
+container, metric) is not yet a blocker: ask the investigator first with
+`lcars investigate` ([§14](index.md#14-homelab-host-facts-lcars-investigate)).
+Park only if it cannot answer, and quote its failure code or
+`could_not_answer` reason.
+
 A judgement call is not a blocker. The maintainer is usually unavailable and
 expects agents to decide: interpreting acceptance criteria, waiving a
 precondition that can no longer be met (a baseline lost to retention), choosing
@@ -631,3 +637,9 @@ you did not actually manage to set.
 [`index.md`](index.md#13-cross-repo-credential-agent-optioncross-repo).
 Read it only when your dispatch brief reports `crossRepo: true`, or a task
 needs you to read a watched repository other than your anchor's own.
+
+## 14. Homelab host facts (`lcars investigate`)
+
+**Situational** — moved to
+[`index.md`](index.md#14-homelab-host-facts-lcars-investigate).
+Read it when your anchor needs a Homelab host fact you cannot observe.

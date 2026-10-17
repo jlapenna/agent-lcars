@@ -296,6 +296,20 @@ export async function executeInvestigateCommand(
         signal: controller.signal,
       });
       if (answer.status !== 200) {
+        // A status outside the gateway's typed set, or a non-JSON body, comes
+        // from the edge (route not adopted, upstream down), not the gateway
+        // contract: report it as unavailable rather than a contract violation.
+        if (
+          !errorsByStatus[answer.status] ||
+          answer.headers
+            .get('content-type')
+            ?.split(';')[0]
+            .trim()
+            .toLowerCase() !== 'application/json'
+        ) {
+          void answer.body?.cancel().catch(() => undefined);
+          throw new Error('investigation-unavailable');
+        }
         const parsedError = investigationErrorSchema.safeParse(
           await body(answer, INVESTIGATION_ERROR_MAX_BYTES, controller.signal),
         );
