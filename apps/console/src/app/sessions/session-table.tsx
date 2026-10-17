@@ -33,6 +33,10 @@ import { SessionStatusLine } from '../session-status-line';
  * shows, re-laid-out rather than truncated. Both branches render
  * unconditionally (CSS media queries via Mantine's visibleFrom/hiddenFrom).
  */
+/** The table keeps a session on one row: its latest PRs, the rest counted.
+ * A long-running CLI session can reference dozens; its page lists them all. */
+const TABLE_PR_LIMIT = 3;
+
 function SessionCard({ row }: { row: SessionRow }) {
   const latestPr = row.prUrls.at(-1);
   const earlierPrCount = Math.max(0, row.prUrls.length - 1);
@@ -300,7 +304,7 @@ export function SessionTable({
                   </span>
                   {row.prUrls.length > 0 && (
                     <Group gap={6} wrap="wrap" className="session-prs">
-                      {row.prUrls.map((pr) => (
+                      {row.prUrls.slice(-TABLE_PR_LIMIT).map((pr) => (
                         <Anchor
                           key={pr.number}
                           href={pr.url}
@@ -311,6 +315,11 @@ export function SessionTable({
                           PR #{pr.number}
                         </Anchor>
                       ))}
+                      {row.prUrls.length > TABLE_PR_LIMIT && (
+                        <Text span size="xs" c="dimmed">
+                          +{row.prUrls.length - TABLE_PR_LIMIT} earlier
+                        </Text>
+                      )}
                     </Group>
                   )}
                 </TableTd>

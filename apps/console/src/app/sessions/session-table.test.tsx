@@ -74,7 +74,7 @@ describe('SessionTable', () => {
     expect(screen.queryByText('#42')).toBeNull();
   });
 
-  it('keeps every PR in the desktop table but only the latest on the phone card', () => {
+  it('keeps a short PR list whole in the table but only the latest on the phone card', () => {
     renderTable([
       makeRow({
         prUrls: [
@@ -94,6 +94,23 @@ describe('SessionTable', () => {
       expect(link.getAttribute('href')).toBe('https://github.com/o/r/pull/20');
     }
     expect(screen.getByText('+1 earlier')).toBeTruthy();
+  });
+
+  it('keeps a long PR list to the latest three in the table', () => {
+    renderTable([
+      makeRow({
+        prUrls: [1, 2, 3, 4, 5].map((n) => ({
+          number: n,
+          url: `https://github.com/o/r/pull/${n}`,
+        })),
+      }),
+    ]);
+    // Table: #3-#5 and "+2 earlier"; phone card: #5 and "+4 earlier".
+    expect(screen.queryByRole('link', { name: 'PR #2' })).toBeNull();
+    expect(screen.getAllByRole('link', { name: 'PR #3' })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: 'PR #5' })).toHaveLength(2);
+    expect(screen.getByText('+2 earlier')).toBeTruthy();
+    expect(screen.getByText('+4 earlier')).toBeTruthy();
   });
 
   it('shows the host for a CLI session in the table column', () => {
