@@ -8,9 +8,9 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
-  LAUNCH_TIMEOUT_MS,
   browserFailureReason,
   checkBrowser,
+  LAUNCH_TIMEOUT_MS,
 } from './e2e/check-browser.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,6 +74,30 @@ function runThroughE2eBoundary(
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
+
+test('an unsupported network mode refuses before acquiring the host lock or starting tooling', () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'lcars-e2e-network-'),
+  );
+  const lock = path.join(directory, 'must-not-be-acquired');
+  try {
+    const result = spawnSync(e2eLocal, [], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        E2E_NETWORK_MODE: 'unsupported',
+        E2E_LOCAL_LOCK_FILE: lock,
+      },
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /E2E_NETWORK_MODE must be host or loopback/u);
+    assert.equal(fs.existsSync(lock), false);
+    assert.equal(result.stdout, '');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('ambient credentials cannot cross the E2E boundary', () => {
   const sentinel = 'sentinel-value-that-must-not-appear';

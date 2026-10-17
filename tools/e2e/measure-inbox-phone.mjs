@@ -8,6 +8,8 @@ import { parseArgs } from 'node:util';
 
 import { chromium } from '@playwright/test';
 
+import { checkNetworkBoundary } from './check-network.mjs';
+
 const PROFILE = {
   viewport: { width: 390, height: 844 },
   deviceScaleFactor: 2,
@@ -229,6 +231,7 @@ export async function measure(options) {
   let browser;
   let deadline;
   try {
+    report.environment.network = checkNetworkBoundary();
     report.sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
       encoding: 'utf8',
     }).trim();
