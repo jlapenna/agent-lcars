@@ -73,7 +73,16 @@ grep -Fqx '          --config.minimum-release-age=0 --store-dir /pnpm-store \' "
 # pnpm's registry-metadata cache ships with the store (#2082), minus the seed's
 # own lockfile-verification record.
 grep -Fqx '          --config.cache-dir=/pnpm-cache); \' "$dockerfile"
-grep -Fqx '    rm -f /pnpm-cache/lockfile-verified.jsonl; \' "$dockerfile"
+grep -Fqx '    rm -f /pnpm-cache/lockfile-verified.jsonl' "$dockerfile"
+# pnpm >= 11.28.5 reads its registry-metadata mirror from v12/metadata, not
+# v11/metadata (pnpm/pnpm#13512, #2902). The seed stage must require the mirror
+# of every fleet pin and never ship a seed that lacks the current one.
+grep -Fqx '    done < /fleet-pnpm-pins; \' "$dockerfile"
+grep -Fqx '    test -d /pnpm-cache/v12/metadata' "$dockerfile"
+if grep -Fqx '    test -d /pnpm-cache/v11/metadata' "$dockerfile"; then
+  echo 'the seed stage must not require v11/metadata: pnpm >= 11.28.5 writes v12/metadata (#2902)' >&2
+  exit 1
+fi
 grep -Fqx '    /pnpm-cache/ /home/runner/.cache/pnpm/' "$dockerfile"
 grep -Fqx 'COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
