@@ -117,7 +117,14 @@ export function ScheduleCreateForm({
         const [err] = await create({
           id,
           cron,
-          spec: { title, description, pipeline, priority, target: { repo } },
+          spec: {
+            ...initial?.spec,
+            title,
+            description,
+            pipeline,
+            priority,
+            target: { repo },
+          },
           enabled,
         });
         if (err) {

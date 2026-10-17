@@ -1,6 +1,17 @@
+import {
+  MemoryScheduleStore,
+  MemoryStore,
+  Orchestrator,
+} from '@agent-lcars/orchestrator';
+import type { WorkSpec } from '@agent-lcars/work';
 import { MantineProvider } from '@mantine/core';
+import { call } from '@orpc/server';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+
+import { controlPlaneRepository } from '@/lib/deployment';
+import { scheduleRouter } from '@/lib/schedule-router';
+import type { WorkContext } from '@/lib/work-mint';
 
 import { ScheduleCreateForm } from './schedule-create-form';
 
@@ -18,6 +29,119 @@ function renderForm(create = vi.fn()) {
 }
 
 describe('ScheduleCreateForm', () => {
+  it.each<
+    Pick<WorkSpec, 'fallbackPipelines' | 'deliveryRuntime' | 'deliverable'>
+  >([
+    {
+      fallbackPipelines: ['codex'],
+      deliveryRuntime: 'none',
+      deliverable: 'report',
+    },
+    {},
+  ])(
+    'persists unedited schedule policies through an edit: %j',
+    async (policies) => {
+      const id = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+      const now = new Date('2026-08-27T10:22:00.000Z');
+      const spec: WorkSpec = {
+        title: 'Scheduled report',
+        description: 'Original instructions',
+        pipeline: 'claude',
+        priority: 'background',
+        target: { repo: controlPlaneRepository() },
+        ...policies,
+      };
+      const initial = {
+        id,
+        cron: '0 3 * * *',
+        enabled: true,
+        revision: 7,
+        spec,
+      };
+      const scheduleStore = new MemoryScheduleStore();
+      await scheduleStore.mutateSchedule(id, () => ({
+        scheduleId: id,
+        cron: initial.cron,
+        enabled: initial.enabled,
+        revision: initial.revision,
+        spec,
+        createdBy: 'user:jlapenna',
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      }));
+      const store = new MemoryStore();
+      const context: WorkContext = {
+        principal: {
+          principal: 'user:jlapenna',
+          subject: 'github:jlapenna',
+          scopes: new Set(['work.operator']),
+          pipelines: ['claude', 'codex'],
+          via: 'session',
+        },
+        runtime: {
+          store,
+          orchestrator: new Orchestrator(store, {
+            now: () => now.toISOString(),
+          }),
+          drain: vi.fn(),
+        },
+        sessionsFor: vi.fn(),
+        getSessionDoc: vi.fn(),
+        sessionDocsForRuns: vi.fn(),
+        cliSessions: vi.fn(),
+        scheduleStore,
+        grants: () => [
+          {
+            principal: 'user:jlapenna',
+            subjects: ['github:jlapenna'],
+            pipelines: ['claude', 'codex'],
+          },
+        ],
+        now: () => now,
+      };
+      const onSaved = vi.fn();
+      render(
+        <MantineProvider>
+          <ScheduleCreateForm
+            initial={initial}
+            defaultRepo={spec.target.repo}
+            create={async (input) => [
+              null,
+              await call(
+                scheduleRouter.update,
+                {
+                  ...input,
+                  id,
+                  expectedRevision: initial.revision,
+                },
+                { context },
+              ),
+            ]}
+            onSaved={onSaved}
+          />
+        </MantineProvider>,
+      );
+      fireEvent.change(screen.getByLabelText(/^Title/), {
+        target: { value: 'Edited report' },
+      });
+      fireEvent.change(screen.getByLabelText(/^Description/), {
+        target: { value: 'Updated instructions' },
+      });
+      fireEvent.change(screen.getByLabelText(/Cron/), {
+        target: { value: '0 5 * * *' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+      const saved = await scheduleStore.readSchedule(id);
+      expect(saved).toMatchObject({ cron: '0 5 * * *', revision: 8 });
+      expect(saved?.spec).toStrictEqual({
+        ...spec,
+        title: 'Edited report',
+        description: 'Updated instructions',
+      });
+    },
+  );
+
   it('allows an explicitly background schedule', async () => {
     const create = renderForm(vi.fn().mockResolvedValue([null, { id: 'X' }]));
     fireEvent.change(screen.getByLabelText(/^Title/), {
