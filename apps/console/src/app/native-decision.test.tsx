@@ -8,11 +8,17 @@ import {
 } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { inboxCardSignature, type NativeDecisionCard } from './inbox-card';
-import { NativeDecisionDetail } from './native-decision';
+import {
+  inboxCardMetadata,
+  inboxCardSignature,
+  type NativeDecisionCard,
+} from './inbox-card';
+import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 const card: NativeDecisionCard = {
+  kind: 'decision',
+  queued: true,
   canReply: true,
   work: {
     id: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
@@ -194,5 +200,102 @@ describe('native decision Reply', () => {
       `/work/${card.work.anchor.workId}`,
     );
     expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull();
+  });
+});
+
+const report: NativeDecisionCard = {
+  ...card,
+  kind: 'report',
+  work: {
+    ...card.work,
+    state: 'done',
+    runs: [
+      {
+        ...card.work.runs[0],
+        result: {
+          ok: true,
+          summary: 'report',
+          message: '# Findings\n\nAll clear.',
+        },
+      },
+    ],
+  },
+};
+
+describe('native report card', () => {
+  it('binds its snooze to the report run, not later item bookkeeping', () => {
+    const before = inboxCardSignature(report);
+    expect(
+      inboxCardSignature({
+        ...report,
+        work: { ...report.work, updatedAt: '2026-10-10T00:00:00Z' },
+      }),
+    ).toBe(before);
+    expect(
+      inboxCardSignature({
+        ...report,
+        work: {
+          ...report.work,
+          runs: [...report.work.runs, { ...report.work.runs[0], runId: 'r2' }],
+        },
+      }),
+    ).not.toBe(before);
+    expect(before).not.toBe(inboxCardSignature(card));
+  });
+
+  it('dates a report by its run, not by a later edit of the item', () => {
+    const edited = {
+      ...report,
+      work: { ...report.work, updatedAt: '2026-10-12T00:00:00Z' },
+    };
+    const settled = report.work.runs[0].updatedAt;
+    expect(inboxCardMetadata(edited)).toMatchObject({
+      updatedAt: settled,
+      waitingSince: settled,
+    });
+    expect(inboxCardMetadata({ ...card, work: edited.work }).updatedAt).toBe(
+      '2026-10-12T00:00:00Z',
+    );
+  });
+
+  it('files under Report ready, ranked below decisions, searchable by its text', () => {
+    const meta = inboxCardMetadata(report);
+    expect(meta.actionTypes).toEqual(['report-ready']);
+    expect(meta.rank).toBeGreaterThan(inboxCardMetadata(card).rank);
+    expect(meta.search).toContain('All clear.');
+  });
+
+  it('reads as a report to dismiss, never as a human decision', () => {
+    const onSnooze = vi.fn();
+    render(
+      <MantineProvider>
+        <NativeDecisionRow
+          card={report}
+          href="/inbox?item=x"
+          selected={false}
+          onNavigate={vi.fn()}
+          onSnooze={onSnooze}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByText('Report ready')).toBeTruthy();
+    expect(screen.queryByText('Human needed')).toBeNull();
+    expect(screen.getByText(/All clear\./u)).toBeTruthy();
+    expect(screen.getByText('Read')).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Dismiss Choose storage' }),
+    );
+    expect(onSnooze).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers a follow-up on the report in the detail pane', () => {
+    render(
+      <MantineProvider>
+        <NativeDecisionDetail card={report} replyToWorkItem={vi.fn()} />
+      </MantineProvider>,
+    );
+    expect(screen.getByText(/Report ready/u)).toBeTruthy();
+    expect(screen.getByLabelText('Ask a follow-up')).toBeTruthy();
+    expect(screen.queryByText(/Agent parked without a question/u)).toBeNull();
   });
 });

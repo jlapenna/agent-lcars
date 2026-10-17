@@ -33,6 +33,7 @@ import {
   inboxCardKey,
   inboxCardMetadata,
   inboxCardSignature,
+  REPORT_DISMISS_MINUTES,
 } from './inbox-card';
 import { InboxMobileCommandDeck } from './inbox-mobile-command-deck';
 import { NativeDecisionDetail, NativeDecisionRow } from './native-decision';
@@ -164,6 +165,17 @@ export function QueueWorkspace({
     importLegacy,
   } = useDecisionSnoozes();
   const [snoozeCard, setSnoozeCard] = useState<InboxCard>();
+  // A report has nothing to come back to: Dismiss snoozes it past its Inbox
+  // window instead of asking how long; Unsnooze under "Snoozed" restores it.
+  const snoozeOrDismiss = (card: InboxCard) => {
+    if ('work' in card && card.kind === 'report')
+      void snooze({
+        anchor: inboxCardKey(card),
+        signature: inboxCardSignature(card),
+        minutes: REPORT_DISMISS_MINUTES,
+      });
+    else setSnoozeCard(card);
+  };
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keyboardNavigated = useRef(false);
@@ -272,9 +284,13 @@ export function QueueWorkspace({
   }, [activityWindow, agent, cards, filter, isSnoozed, search, sort]);
 
   const cardsByKey = new Map(cards.map((card) => [inboxCardKey(card), card]));
+  // A native item absent from `cards` waits on no one (a dismissed report
+  // outlives its Inbox window), so its snooze has nothing left to restore.
   const snoozedItems = Object.entries(entries).filter(([key, entry]) => {
     const card = cardsByKey.get(key);
-    return !card || entry.signature === inboxCardSignature(card);
+    return card
+      ? entry.signature === inboxCardSignature(card)
+      : !key.startsWith('work:');
   });
   const legacyAnchors = cards
     .flatMap((card) => {
@@ -314,7 +330,12 @@ export function QueueWorkspace({
   const onReplyDraftChange = (hasDraft: boolean) =>
     setDraftCard(hasDraft ? selectedCard : undefined);
   const explicitDetail = selectedItemKey !== undefined;
-  const oldestCard = visibleCards.reduce<InboxCard | undefined>(
+  // A report is read, not answered: it has no decision SLA and is never the
+  // oldest decision to respond to.
+  const decisionCards = visibleCards.filter(
+    (card) => !('work' in card) || card.kind === 'decision',
+  );
+  const oldestCard = decisionCards.reduce<InboxCard | undefined>(
     (oldest, card) =>
       !oldest ||
       inboxCardMetadata(card).updatedAt < inboxCardMetadata(oldest).updatedAt
@@ -585,7 +606,7 @@ export function QueueWorkspace({
             <span className="ops-panel__count">{visibleCards.length}</span>
             <span className="ops-panel__meta">
               <DecisionSlaMeta
-                waitingSince={visibleCards.map(
+                waitingSince={decisionCards.map(
                   (card) => inboxCardMetadata(card).waitingSince,
                 )}
               />
@@ -669,7 +690,7 @@ export function QueueWorkspace({
                         inboxCardKey(selectedCard) === key
                       }
                       onNavigate={() => setLoadingItemKey(key)}
-                      onSnooze={() => setSnoozeCard(card)}
+                      onSnooze={() => snoozeOrDismiss(card)}
                     />
                   );
                 return (
@@ -769,9 +790,11 @@ export function QueueWorkspace({
                 size="compact-xs"
                 variant="subtle"
                 disabled={pending}
-                onClick={() => setSnoozeCard(selectedCard)}
+                onClick={() => snoozeOrDismiss(selectedCard)}
               >
-                Snooze decision
+                {selectedCard.kind === 'report'
+                  ? 'Dismiss report'
+                  : 'Snooze decision'}
               </Button>
               <NativeDecisionDetail
                 key={selectedCard.work.id}

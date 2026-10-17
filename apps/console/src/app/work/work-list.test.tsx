@@ -174,6 +174,28 @@ describe('WorkList', () => {
     }
   });
 
+  it('names a done report as the result it is', () => {
+    renderList([
+      {
+        ...item,
+        state: 'done',
+        runs: [
+          {
+            runId: 'work:x/r1',
+            state: 'finished',
+            pipeline: 'claude',
+            createdAt: '2026-08-26T10:00:00.000Z',
+            updatedAt: '2026-08-26T10:05:00.000Z',
+            result: { ok: true, summary: 'report', message: '# Findings' },
+          },
+        ],
+      },
+      { ...item, id: '01J5Z3K9QX8F0N2B4V6C8D1E3H', state: 'done' },
+    ]);
+    expect(screen.getAllByText('done · report').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('done').length).toBeGreaterThan(0);
+  });
+
   it('shows an empty state', () => {
     renderList([]);
     expect(screen.getByText(/No work items yet/)).toBeInTheDocument();

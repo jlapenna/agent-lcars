@@ -47,7 +47,7 @@ async function seed(
   if ('refused' in admitted) throw new Error(admitted.reason);
   await orchestrator.confirmDispatch(admitted.run.runId);
   await orchestrator.report(admitted.run.runId, {
-    ok: summary === 'park' || summary === 'done',
+    ok: summary === 'park' || summary === 'done' || summary === 'report',
     summary,
     message: 'Which storage should I use?',
   });
@@ -125,5 +125,48 @@ describe('native human decisions', () => {
       work: { id: `work:${ID}`, state: 'running' },
       canReply: false,
     });
+  });
+});
+
+describe('native reports', () => {
+  const at = '2026-10-01T00:00:00Z';
+  const day = 86_400_000;
+
+  it('lists a fresh report as a queued report card that accepts a follow-up', async () => {
+    const store = new MemoryStore();
+    await seed(store, { workId: ID }, 'report', at);
+    const cards = await getNativeInboxCards(
+      store,
+      operator,
+      undefined,
+      Date.parse(at) + day,
+    );
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      kind: 'report',
+      queued: true,
+      canReply: true,
+      work: { state: 'done' },
+    });
+  });
+
+  it('drops a report older than the Inbox window but keeps it readable when selected', async () => {
+    const store = new MemoryStore();
+    await seed(store, { workId: ID }, 'report', at);
+    const later = Date.parse(at) + 8 * day;
+    expect(
+      await getNativeInboxCards(store, operator, undefined, later),
+    ).toEqual([]);
+    expect(
+      await getNativeInboxCards(store, operator, `work:${ID}`, later),
+    ).toMatchObject([{ kind: 'report', queued: false }]);
+  });
+
+  it('never lists an ordinary done item', async () => {
+    const store = new MemoryStore();
+    await seed(store, { workId: ID }, 'done', at);
+    expect(
+      await getNativeInboxCards(store, operator, undefined, Date.parse(at)),
+    ).toEqual([]);
   });
 });
