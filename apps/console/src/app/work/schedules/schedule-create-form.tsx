@@ -119,6 +119,13 @@ export function ScheduleCreateForm({
           cron,
           spec: {
             ...initial?.spec,
+            ...(initial?.spec?.fallbackPipelines === undefined
+              ? {}
+              : {
+                  fallbackPipelines: initial.spec.fallbackPipelines.filter(
+                    (fallback) => fallback !== pipeline,
+                  ),
+                }),
             title,
             description,
             pipeline,

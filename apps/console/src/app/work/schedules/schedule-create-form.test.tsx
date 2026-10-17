@@ -29,18 +29,58 @@ function renderForm(create = vi.fn()) {
 }
 
 describe('ScheduleCreateForm', () => {
-  it.each<
-    Pick<WorkSpec, 'fallbackPipelines' | 'deliveryRuntime' | 'deliverable'>
-  >([
+  it.each<{
+    policies: Pick<
+      WorkSpec,
+      'fallbackPipelines' | 'deliveryRuntime' | 'deliverable'
+    >;
+    pipeline: WorkSpec['pipeline'];
+    expectedPolicies: Pick<
+      WorkSpec,
+      'fallbackPipelines' | 'deliveryRuntime' | 'deliverable'
+    >;
+  }>([
     {
-      fallbackPipelines: ['codex'],
-      deliveryRuntime: 'none',
-      deliverable: 'report',
+      policies: {
+        fallbackPipelines: ['codex'],
+        deliveryRuntime: 'none',
+        deliverable: 'report',
+      },
+      pipeline: 'claude',
+      expectedPolicies: {
+        fallbackPipelines: ['codex'],
+        deliveryRuntime: 'none',
+        deliverable: 'report',
+      },
     },
-    {},
+    { policies: {}, pipeline: 'claude', expectedPolicies: {} },
+    {
+      policies: {
+        fallbackPipelines: ['codex'],
+        deliveryRuntime: 'none',
+        deliverable: 'report',
+      },
+      pipeline: 'codex',
+      expectedPolicies: {
+        fallbackPipelines: [],
+        deliveryRuntime: 'none',
+        deliverable: 'report',
+      },
+    },
+    {
+      policies: { fallbackPipelines: ['codex', 'opencode'] },
+      pipeline: 'codex',
+      expectedPolicies: { fallbackPipelines: ['opencode'] },
+    },
+    { policies: {}, pipeline: 'codex', expectedPolicies: {} },
+    {
+      policies: { fallbackPipelines: ['opencode', 'codex'] },
+      pipeline: 'claude',
+      expectedPolicies: { fallbackPipelines: ['opencode', 'codex'] },
+    },
   ])(
-    'persists unedited schedule policies through an edit: %j',
-    async (policies) => {
+    'persists compatible unedited policies through an edit: %j',
+    async ({ policies, pipeline, expectedPolicies }) => {
       const id = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
       const now = new Date('2026-08-27T10:22:00.000Z');
       const spec: WorkSpec = {
@@ -51,6 +91,7 @@ describe('ScheduleCreateForm', () => {
         target: { repo: controlPlaneRepository() },
         ...policies,
       };
+      const originalSpec = structuredClone(spec);
       const initial = {
         id,
         cron: '0 3 * * *',
@@ -130,15 +171,22 @@ describe('ScheduleCreateForm', () => {
       fireEvent.change(screen.getByLabelText(/Cron/), {
         target: { value: '0 5 * * *' },
       });
+      if (pipeline !== spec.pipeline) {
+        fireEvent.click(screen.getByRole('combobox', { name: 'Pipeline' }));
+        fireEvent.click(await screen.findByRole('option', { name: pipeline }));
+      }
       fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
       await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
       const saved = await scheduleStore.readSchedule(id);
       expect(saved).toMatchObject({ cron: '0 5 * * *', revision: 8 });
       expect(saved?.spec).toStrictEqual({
         ...spec,
+        ...expectedPolicies,
+        pipeline,
         title: 'Edited report',
         description: 'Updated instructions',
       });
+      expect(initial.spec).toStrictEqual(originalSpec);
     },
   );
 
