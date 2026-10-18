@@ -514,6 +514,89 @@ test('phase metadata records invocation, deadline, exit, and env keys only', asy
   );
 });
 
+test('an unknown termination reports nested retirement unknown and retention incomplete', async () => {
+  const killed = preparedRunRoot();
+  const base = phaseDeps({ runRoot: killed });
+  const exitCode = await executeInRunnerPhases(killed, {
+    ...base,
+    runProcess: async (binary, args, cwd, env, timeout, recording) => {
+      if (args.some((a) => String(a).includes('in-runner-image'))) {
+        // Killing the wrapper's group never certifies the provider group the
+        // driver started inside it: no self-reported exit, partial bytes only.
+        writeFileSync(join(killed, 'fixtures/live-writer.txt'), 'partial');
+        writeFileSync(recording.stdoutPath, '{"obs');
+        return {
+          code: null,
+          stdout: '{"obs',
+          stderr: '',
+          timedOut: true,
+          diagnostics: { durationMs: 5, closeSignal: 'SIGKILL' },
+          recording: {
+            error: null,
+            stdoutPath: recording.stdoutPath,
+            stderrPath: recording.stderrPath,
+            stdoutBytes: 5,
+            stderrBytes: 0,
+          },
+        };
+      }
+      return base.runProcess(binary, args, cwd, env, timeout, recording);
+    },
+  });
+  assert.equal(exitCode, 1);
+  const qualification = JSON.parse(
+    readFileSync(join(killed, 'qualification.json'), 'utf8'),
+  );
+  assert.equal(qualification.nestedRetirement, 'unknown');
+  assert.ok(
+    qualification.unknowns.includes('nested-retirement-unknown: native'),
+    JSON.stringify(qualification.unknowns),
+  );
+  for (const flag of [
+    'localProbePassed',
+    'durableCollectionComplete',
+    'qualificationAccepted',
+    'cleanupAuthorized',
+    'graduated',
+    'activationAuthorized',
+  ])
+    assert.equal(qualification[flag], false, flag);
+  const index = JSON.parse(readFileSync(join(killed, 'index.json'), 'utf8'));
+  assert.equal(index.nestedRetirement, 'unknown');
+  assert.equal(index.retention, 'incomplete');
+  // Nothing is deleted on the way to that verdict.
+  assert.equal(
+    readFileSync(join(killed, 'fixtures/live-writer.txt'), 'utf8'),
+    'partial',
+  );
+  assert.equal(
+    readFileSync(join(killed, 'logs/native.stdout.bin'), 'utf8'),
+    '{"obs',
+  );
+  // A phase that reported its own exit does not inherit the unknown verdict.
+  const clean = preparedRunRoot();
+  await executeInRunnerPhases(clean, phaseDeps({ runRoot: clean }));
+  const cleanIndex = JSON.parse(
+    readFileSync(join(clean, 'index.json'), 'utf8'),
+  );
+  assert.equal(cleanIndex.nestedRetirement, 'confirmed');
+  assert.equal(cleanIndex.retention, 'complete');
+});
+
+test('unknown nested retirement cannot certify retention even when every pointer is retained', () => {
+  const root = ownedScratch();
+  mkdirSync(join(root, 'fixtures'));
+  symlinkSync(
+    '/opt/agent-tools/bin/worker-policy.cjs',
+    join(root, 'fixtures/baked-link'),
+  );
+  const retained = { retainedRoots: ['/opt/agent-tools'] };
+  assert.equal(indexRoot(root, retained).retention, 'complete');
+  const unknown = indexRoot(root, { ...retained, nestedRetirement: 'unknown' });
+  assert.equal(unknown.retention, 'incomplete');
+  assert.equal(unknown.externalPointers[0].retained, true);
+});
+
 test('root indexing keeps links as pointers and never follows external targets', () => {
   const root = ownedScratch();
   const inside = join(root, 'fixtures');

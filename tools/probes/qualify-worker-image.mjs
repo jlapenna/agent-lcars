@@ -701,6 +701,9 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
   let evaluated = null;
   let stopped = null;
   let localProbePassed = false;
+  // A phase killed from outside never reports its own exit, and killing this
+  // wrapper's process group cannot certify the driver's nested provider group.
+  let nestedRetirement = 'confirmed';
   const remainingMs = () =>
     Date.parse(intent.providerClock.expiresAt) - Date.now();
   const succeeded = (result) =>
@@ -728,6 +731,10 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
       durationMs: result.diagnostics?.durationMs ?? null,
       recording: result.recording ?? null,
     });
+    if (result.code === null || result.timedOut) {
+      nestedRetirement = 'unknown';
+      unknowns.push('nested-retirement-unknown: ' + name);
+    }
     return result;
   }
   try {
@@ -873,6 +880,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
           activationAuthorized: false,
           offlineEvaluation: evaluated,
           stopped,
+          nestedRetirement,
           unknowns,
           provenance: {
             provider: intent.provider,
@@ -891,12 +899,12 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
     writeFileSync(
       join(runRoot, 'index.json'),
       JSON.stringify(
-        indexRoot(
-          runRoot,
-          defaultCollectBakedInputs === deps.collectBakedInputs
+        indexRoot(runRoot, {
+          ...(defaultCollectBakedInputs === deps.collectBakedInputs
             ? { retainedRoots: [BAKED_BIN, BAKED_RUNTIME, BAKED_RUNNER] }
-            : {},
-        ),
+            : {}),
+          nestedRetirement,
+        }),
       ),
     );
     const exitCode = localProbePassed ? 0 : 1;
@@ -914,7 +922,10 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
 
 // Every run-root entry by role with dev/ino/UID; external symlink targets are
 // explicit pointers, never silently followed or ignored.
-export function indexRoot(runRoot, { retainedRoots = [] } = {}) {
+export function indexRoot(
+  runRoot,
+  { retainedRoots = [], nestedRetirement = 'confirmed' } = {},
+) {
   const entries = [];
   const externalPointers = [];
   const walk = (directory) => {
@@ -966,9 +977,14 @@ export function indexRoot(runRoot, { retainedRoots = [] } = {}) {
   walk(runRoot);
   return {
     root: runRoot,
-    retention: externalPointers.every((pointer) => pointer.retained)
-      ? 'complete'
-      : 'incomplete',
+    nestedRetirement,
+    // Unknown nested termination means fixture writers may still be live: the
+    // data stays preserved but retention cannot be certified.
+    retention:
+      nestedRetirement === 'confirmed' &&
+      externalPointers.every((pointer) => pointer.retained)
+        ? 'complete'
+        : 'incomplete',
     externalPointers,
     entries,
   };
