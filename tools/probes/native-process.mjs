@@ -1,6 +1,6 @@
 // Diagnostic evidence for native qualification, never a timeout exemption.
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeSync } from 'node:fs';
 
 function read(path) {
   try {
@@ -27,8 +27,127 @@ function resources(pid) {
   };
 }
 
-export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
-  return new Promise((done) => {
+// Optional full-output recording for the in-runner qualification caller:
+// exclusive 0600 files hold every byte actually emitted, while the in-memory
+// tails below stay exactly as before. An open/write/cap/close failure is
+// reported in the summary so the caller can refuse success; the default
+// pipe-only path is untouched.
+const fileIo = { openSync, writeSync, closeSync };
+
+export function openRecorder(recording, io = fileIo) {
+  const limit = Number.isSafeInteger(recording?.maxBytes)
+    ? recording.maxBytes
+    : Number.POSITIVE_INFINITY;
+  const state = {
+    fds: {},
+    bytes: { stdout: 0, stderr: 0 },
+    failure: null,
+    summary: null,
+  };
+  try {
+    state.fds.stdout = io.openSync(recording.stdoutPath, 'wx', 0o600);
+    state.fds.stderr = io.openSync(recording.stderrPath, 'wx', 0o600);
+  } catch (error) {
+    state.failure = 'recording-open-failed: ' + (error?.message ?? error);
+  }
+  return {
+    openFailure: () => state.failure,
+    write(stream, chunk) {
+      const fd = state.fds[stream];
+      if (fd === undefined || state.failure) return;
+      if (state.bytes[stream] + chunk.length > limit) {
+        state.failure = 'recording-cap-exceeded: ' + stream;
+        return;
+      }
+      // writeSync may accept only part of a chunk; a byte-count-blind loop
+      // would silently drop the remainder while still counting it. Keep
+      // writing from the advancing offset and refuse any stalled progress.
+      let offset = 0;
+      while (offset < chunk.length) {
+        let written;
+        try {
+          written = io.writeSync(fd, chunk, offset);
+        } catch (error) {
+          state.failure =
+            'recording-write-failed: ' + (error?.message ?? error);
+          return;
+        }
+        if (!Number.isInteger(written) || written <= 0) {
+          state.failure = 'recording-write-stalled: ' + stream;
+          return;
+        }
+        offset += written;
+        state.bytes[stream] += written;
+      }
+    },
+    close() {
+      // One settlement only: a spawn 'error' and a later 'close' both reach
+      // here, so descriptors must not be closed twice.
+      if (state.summary) return state.summary;
+      for (const fd of Object.values(state.fds)) {
+        try {
+          io.closeSync(fd);
+        } catch (error) {
+          state.failure ??=
+            'recording-close-failed: ' + (error?.message ?? error);
+        }
+      }
+      state.fds = {};
+      state.summary = {
+        stdoutPath: recording.stdoutPath,
+        stderrPath: recording.stderrPath,
+        stdoutBytes: state.bytes.stdout,
+        stderrBytes: state.bytes.stderr,
+        error: state.failure,
+      };
+      return state.summary;
+    },
+  };
+}
+
+export const defaultProcessDeps = { spawn, io: fileIo };
+
+export function runNativeProcess(
+  binary,
+  args,
+  cwd,
+  env,
+  timeout = 60000,
+  recording = null,
+) {
+  return runChildProcess(
+    defaultProcessDeps,
+    binary,
+    args,
+    cwd,
+    env,
+    timeout,
+    recording,
+  );
+}
+
+// Bounded local seam for the recorder fault controls: the production path
+// above always passes defaultProcessDeps, so the spawn/recorder wiring is
+// exercised unchanged while a test can force write and close faults.
+export function runChildProcess(
+  deps,
+  binary,
+  args,
+  cwd,
+  env,
+  timeout = 60000,
+  recording = null,
+) {
+  return new Promise((resolve) => {
+    // A spawn 'error' and a subsequent 'close' must settle exactly once so
+    // the recording sink is closed a single time.
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const recorder = recording ? openRecorder(recording, deps.io) : null;
     const start = performance.now();
     const elapsed = () => Math.round(performance.now() - start);
     const diagnostics = {
@@ -39,7 +158,20 @@ export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
       exit: null,
       before: resources(),
     };
-    const child = spawn(binary, args, {
+    if (recorder?.openFailure()) {
+      // Nothing is spawned until both recording sinks exist under the
+      // caller's exclusive files.
+      done({
+        code: null,
+        stdout: '',
+        stderr: '',
+        timedOut: false,
+        diagnostics,
+        recording: recorder.close(),
+      });
+      return;
+    }
+    const child = deps.spawn(binary, args, {
       cwd,
       env,
       detached: true,
@@ -65,10 +197,12 @@ export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
     );
     child.stdout.on('data', (chunk) => {
       diagnostics.firstStdoutMs ??= elapsed();
+      recorder?.write('stdout', chunk);
       stdout = (stdout + chunk).slice(-1000000);
     });
     child.stderr.on('data', (chunk) => {
       diagnostics.firstStderrMs ??= elapsed();
+      recorder?.write('stderr', chunk);
       stderr = (stderr + chunk).slice(-1000000);
     });
     child.on('exit', (code, signal) => {
@@ -86,6 +220,7 @@ export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
         stderr: error.message,
         timedOut,
         diagnostics,
+        ...(recorder ? { recording: recorder.close() } : {}),
       });
     });
     child.on('close', (code, signal) => {
@@ -93,7 +228,14 @@ export function runNativeProcess(binary, args, cwd, env, timeout = 60000) {
       diagnostics.durationMs = elapsed();
       diagnostics.closeSignal = signal;
       diagnostics.after = resources();
-      done({ code, stdout, stderr, timedOut, diagnostics });
+      done({
+        code,
+        stdout,
+        stderr,
+        timedOut,
+        diagnostics,
+        ...(recorder ? { recording: recorder.close() } : {}),
+      });
     });
   });
 }

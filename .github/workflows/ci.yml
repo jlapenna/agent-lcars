@@ -330,6 +330,9 @@ jobs:
       - name: Test private engine never shares the host network (#2848)
         run: node --test tools/probes/private-engine.test.mjs
 
+      - name: Test in-runner qualification recording seams (#2181)
+        run: node --test tools/probes/qualify-worker-image.test.mjs
+
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs tools/e2e/run-console-emulators.test.mjs
 

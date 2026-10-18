@@ -52,6 +52,108 @@ direct runner differs from the checkout — no copies enter the image. Retain it
 bundle the same way; see the partial 2026-10-18 in-job Codex observation in
 [worker-behavior-enforcement](worker-behavior-enforcement.md#current-qualification-boundary).
 
+Inside that allocated Job, one deterministic command replaces manual phase
+sequencing:
+
+```bash
+node tools/probes/qualify-worker-image.mjs --in-runner codex \
+  /run/lcars-qualification/allocation-receipt.json \
+  /run/lcars-qualification/source-contract.json /tmp/qualification-runs
+```
+
+The receipt is the Root-authenticated allocation record (provider, inspected
+image ID, run ID, hostname/arch, UID 1001, cgroup CPU/memory actuals, canonical
+provider start/expiry); the contract is the approved source/artifact binding
+(source commit, provider version, the fourteen baked module/helper/runner
+hashes, and the complete current probe-harness and failure-consumer hashes).
+The trusted allocation owner must provision both inputs as root-owned regular
+files, with no group/other write permission, under root-owned directories with
+no group/other write permission (for example `/run/lcars-qualification`). Symlink
+components and runner-writable ancestors, including `/tmp`, are refused. The
+runner must not create its own approvals: root provisioning attests the inspected
+image identity and approved source; the command does not independently inspect
+the container image. This source change does not provision or qualify a Job.
+Receipt and contract are opened through pinned directory descriptors, checked
+before use, and each read once; parsing, SHA-256 identity and retained
+child copies use those same bytes even if the input paths are later replaced.
+The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
+clock or hash. It claims `<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the
+SHA-256 of `lcars-run:v1:<run-id>` truncated to 32 hex characters: the canonical
+run id contains `:` and `/`, which a basename must never smuggle as a path
+separator. A repeated invocation against that root can only re-read
+a validated terminal outcome, never start a second entry. Reread requires an
+owned non-symlink directory and regular owned journals/completion objects,
+current provider/run/image identity, exact receipt/contract and input digests,
+the original admitted monotonic deadline, consistent phase/qualification/status
+records and the final inventory. Missing, malformed, stale or contradictory
+evidence refuses without adopting, overwriting or deleting the existing root.
+Every invocation, including a completed reread, still requires an unexpired
+allocation receipt before any writer or spawn. The stored deadline is never
+renewed. A validated failed run stays failed. Inside the original provider clock
+the detached child first verifies the approved Git HEAD, source hashes, and a
+clean committed checkout with Git status, covering transitive setup/install
+inputs without a separate path list. Any staged, modified, deleted, or
+nonignored untracked source refuses before setup. Only untracked evidence
+inside this exclusively claimed run root is exempt; tracked changes there
+still refuse. Normal Git ignores continue to cover generated dependencies and
+cache outputs. The child then runs setup first — `tools/setup-worktree.sh` once, then the
+baked CLI version once, the full native suite once,
+the setup-negative suite once (both through the unchanged driver with `TMPDIR`
+set to the run's owned `fixtures/` root and `LCARS_PROBE_KEEP_EVIDENCE=1`), the
+existing `evaluateImageEvidence` binding, and exactly one genuine typed failure
+consumer. It stops at the first failure and never repeats a phase.
+
+The run root keeps every journal (`intent.json`, `child.json` with PID and
+proc birth, `phases.json` with per-phase invocation, deadline, exit and
+recording stats, raw `*.stdout.bin`/`*.stderr.bin` logs), `expected.json`, both
+raw image reports, `qualification.json`, the fourteen retained baked input
+files under `retained/baked/`, complete fleet-tools and runtime directory targets
+under `retained/fleet-tools/` and `retained/runtime/`, all fixture descendants under `fixtures/`
+(never filtered by name), and `index.json` — every root entry's dev/ino/UID/
+mode/size/role, including symlink lstat identity and textual target. Directory
+pointers are certified only after their complete target copy succeeds. Copied
+symlinks retain their original absolute target meaning so relocation cannot
+misclassify an escaping relative pointer as owned; escaping
+links in either copy still make retention incomplete. Advertised scenario diagnostic and nested evidence paths must be inside the
+run root; an outside or malformed pointer stops the run before evaluation,
+with the complete recorded report preserved. Absent optional pointers are
+allowed. Filesystem links escaping the root still use the retained-copy
+classification above. `index.json`
+also carries `nestedRetirement`. Killing the wrapper's process group cannot
+certify that the provider group its driver started has stopped, so any phase
+that did not report its own exit — timeout, signal, or spawn failure — records
+`nestedRetirement: "unknown"` in `index.json` and `qualification.json`, names
+the phase in `qualification.json.unknowns`, and forces
+`retention: "incomplete"` even when every pointer is otherwise retained. Only a
+phase that reported its own exit leaves it `"confirmed"`. Unknown nested
+retirement is an evidence-retention statement, not operator retirement
+permission: every preserved file stays, and acceptance and cleanup stay the
+separate operator gate below.
+Completion finalization creates an exclusive 0600 `.status.pending` and
+`index.json`, inventories both final inodes/UIDs/modes/byte sizes (mapping the
+pending inode to `status.json`), and fixes the index's own byte size within at
+most four serialization passes. The index binds status bytes and identity/
+completion journals with SHA-256. Staged status also binds a canonical semantic
+digest of retention, external pointers, nested retirement and per-link retained
+flags, produced with the actual collected roots. Finalization rechecks it after
+the inventory walk and immediately before publication; completed reread compares
+the stored digest without reconstructing roots from untrusted retained labels. Its explicit `selfContentHash` exclusion
+applies only to `index.json` content, avoiding a circular self-hash; its final
+self metadata is still exact. After flushing the staged status and final index,
+an atomic rename publishes `status.json` last. Failure or interruption before
+publication retains incomplete evidence without a visible successful status;
+there is no retry, overwrite or cleanup of that root.
+For a passing run, the original monotonic provider deadline is checked again
+after the final inventory walk, immediately before that rename. Expiry during
+the walk leaves the index and staged evidence intact without publishing status.
+
+`qualification.json` separates the local probe outcome from acceptance:
+`localProbePassed` reports the measured result, while
+`durableCollectionComplete`, `qualificationAccepted`, `cleanupAuthorized`,
+`graduated` and `activationAuthorized` stay `false` until the operator
+separately collects the bundle, performs semantic review and Root ACK — the
+same remaining gates as the Docker route, whose interface is unchanged.
+
 The full native suite and all setup-negative cases must pass exactly once;
 missing, duplicated, failed, partial, wrong-user or mixed-artifact observations
 fail. The host output includes `expected.json`, `qualification.json`, both raw
