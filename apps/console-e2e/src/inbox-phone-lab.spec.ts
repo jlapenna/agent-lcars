@@ -55,6 +55,26 @@ test.describe('Inbox phone measurement artifact', () => {
       const diagnostic = JSON.parse(await readFile(cpuProfile, 'utf8'));
       expect(diagnostic.status).toBe('complete');
       expect(diagnostic.excludedFromBudget).toBe(true);
+      const exploratory = JSON.parse(
+        await readFile(cpuProfile + '.exploratory.json', 'utf8'),
+      );
+      expect(diagnostic.navigationBarrier).toBe('load');
+      expect(exploratory.navigationBarrier).toBe('domcontentloaded');
+      for (const extra of [diagnostic, exploratory]) {
+        expect(extra.status).toBe('complete');
+        expect(extra.excludedFromBudget).toBe(true);
+        for (const name of [
+          'primaryCommitMs',
+          'handlerEntryMs',
+          'openConfirmReturnMs',
+          'dialogInsertionObservedMs',
+        ])
+          expect(Number.isFinite(extra.inputBoundaries[name])).toBe(true);
+        expect(
+          extra.inputBoundaries.openConfirmReturnMs,
+        ).toBeGreaterThanOrEqual(extra.inputBoundaries.handlerEntryMs);
+      }
+
       expect(diagnostic.cpuProfile.samples.length).toBeGreaterThan(0);
       expect(diagnostic.sources.length).toBeGreaterThan(0);
       for (const sample of report.samples) {
@@ -126,6 +146,17 @@ test.describe('Inbox phone measurement artifact', () => {
       } catch (attachmentError) {
         // Missing diagnostic must not mask the real lab failure.
         cpuAttachmentFailure = attachmentError;
+      }
+      try {
+        await testInfo.attach(
+          'Exploratory earlier-barrier input diagnostic (excluded)',
+          {
+            path: cpuProfile + '.exploratory.json',
+            contentType: 'application/json',
+          },
+        );
+      } catch (attachmentError) {
+        cpuAttachmentFailure ??= attachmentError;
       }
       await resetCliSessions();
     }

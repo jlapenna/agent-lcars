@@ -84,12 +84,18 @@ async function seed(origin) {
     throw new Error(`Lab fixture seed failed: HTTP ${response.status}.`);
 }
 
-async function milestone(page, origin, active, phase) {
+async function milestone(
+  page,
+  origin,
+  active,
+  phase,
+  navigationBarrier = 'load',
+) {
   // These checkpoints explain the existing journey; none relax its load
   // barrier or replace the real primary-action confirmation with markup.
   active.stage = `${phase}.document-load`;
   const response = await page.goto(`${origin}${ITEM_PATH}`, {
-    waitUntil: 'load',
+    waitUntil: navigationBarrier,
     timeout: SAMPLE_TIMEOUT_MS,
   });
   if (!response?.ok()) throw new Error('Inbox navigation failed.');
@@ -254,15 +260,46 @@ const installPageDiagnostics = () => {
 // Profiler overhead makes this unsuitable for p95. Only generated public chunk
 // code and selected private build manifests are retained; never headers,
 // application response bodies, storage, cookies, arbitrary URLs or source-map contents.
-async function captureColdProfile(browser, options, report, runDeadlineAt) {
+// Only extra excluded contexts install this bounded timestamp recorder.
+const installInputBoundaryDiagnostics = () => {
+  const diagnostic = window.__inboxPhoneDiagnostics;
+  const allowed = new Set([
+    'primaryCommitMs',
+    'handlerEntryMs',
+    'openConfirmReturnMs',
+  ]);
+  diagnostic.inputBoundaries = {};
+  diagnostic.recordPrimaryBoundary = (name) => {
+    if (allowed.has(name) && diagnostic.inputBoundaries[name] === undefined)
+      diagnostic.inputBoundaries[name] = performance.now();
+  };
+  const observer = new MutationObserver(() => {
+    const dialog = [...document.querySelectorAll('[role="dialog"]')].find(
+      (node) => node.textContent?.includes('Rebase #9003?'),
+    );
+    if (!dialog) return;
+    diagnostic.inputBoundaries.dialogInsertionObservedMs = performance.now();
+    observer.disconnect();
+  });
+  observer.observe(document, { childList: true, subtree: true });
+};
+
+async function captureColdProfile(
+  browser,
+  options,
+  report,
+  runDeadlineAt,
+  navigationBarrier = 'load',
+) {
   const maxBytes = 8 * 1024 * 1024;
   const sha = (value) => createHash('sha256').update(value).digest('hex');
   const artifact = {
     schemaVersion: 1,
     status: 'incomplete',
     excludedFromBudget: true,
+    navigationBarrier,
     scope:
-      'one extra cold navigation through confirmation and Cancel cleanup; profiling overhead included',
+      'one extra cold navigation through real confirmation and Cancel; profiler/marker overhead, not an earliest-readiness or p95 claim',
     sourceRevision: report.sourceRevision,
     browserVersion: report.browserVersion,
     environment: report.environment,
@@ -301,7 +338,10 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
     assertDeadline();
     const page = await context.newPage();
     page.setDefaultTimeout(SAMPLE_TIMEOUT_MS);
-    await page.addInitScript(installPageDiagnostics);
+    // One init script guarantees recorder order before any application code.
+    await page.addInitScript({
+      content: `(${installPageDiagnostics.toString()})();(${installInputBoundaryDiagnostics.toString()})();`,
+    });
     const cdp = await context.newCDPSession(page);
     const scripts = new Map();
     cdp.on('Debugger.scriptParsed', ({ scriptId, url, hash, length }) => {
@@ -381,6 +421,10 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
       options.origin,
       { stage },
       'profiled',
+      navigationBarrier,
+    );
+    artifact.inputBoundaries = await page.evaluate(
+      () => window.__inboxPhoneDiagnostics.inputBoundaries,
     );
     artifact.clockBridge.checkpoints.afterJourney = await readClock();
     artifact.navigationClock = await page.evaluate(() => ({
@@ -500,6 +544,7 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
     artifact.sourceBindings = {};
     for (const file of [
       'tools/e2e/measure-inbox-phone.mjs',
+      'apps/console/src/app/action-item-card.tsx',
       'apps/console-e2e/src/inbox-phone-lab.spec.ts',
       'apps/console/next.config.js',
       'pnpm-lock.yaml',
@@ -810,6 +855,26 @@ export async function measure(options) {
           report,
           runDeadlineAt,
         );
+        // A separate fresh cold context after all60 samples and the first
+        // diagnostic. It attempts a real click earlier; not a revised SLA row.
+        try {
+          report.exploratoryInputDiagnostic = await captureColdProfile(
+            browser,
+            {
+              ...options,
+              cpuProfileOut: options.cpuProfileOut + '.exploratory.json',
+            },
+            report,
+            runDeadlineAt,
+            'domcontentloaded',
+          );
+        } catch {
+          report.exploratoryInputDiagnostic = {
+            status: 'incomplete',
+            excludedFromBudget: true,
+            failureStage: 'exploratory-artifact-write',
+          };
+        }
       } catch {
         report.cpuProfileDiagnostic = {
           status: 'incomplete',

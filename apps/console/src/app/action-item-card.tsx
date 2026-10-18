@@ -61,6 +61,21 @@ import { UnstickPrsButton } from './unstick-prs-button';
 // only, and never reaches the Server Action.
 const NO_REPLY_TARGET = 'none';
 
+// Temporary report-only hook. Absent in all normal/budget contexts; no app data.
+function recordPhonePrimaryBoundary(name: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    const diagnostic = window as Window & {
+      __inboxPhoneDiagnostics?: {
+        recordPrimaryBoundary?: (name: string) => void;
+      };
+    };
+    diagnostic.__inboxPhoneDiagnostics?.recordPrimaryBoundary?.(name);
+  } catch {
+    // A supplementary recorder must never change the real action's behavior.
+  }
+}
+
 const TRUNCATION_THRESHOLD = 400;
 const COLLAPSED_HEIGHT = 120;
 
@@ -391,8 +406,9 @@ export function ActionItemCard({
     });
   };
 
-  const confirmRebase = () =>
-    modals.openConfirmModal({
+  const confirmRebase = () => {
+    recordPhonePrimaryBoundary('handlerEntryMs');
+    const modalId = modals.openConfirmModal({
       title: `Rebase #${item.number}?`,
       children: (
         <Text size="sm">
@@ -405,6 +421,9 @@ export function ActionItemCard({
       confirmProps: { color: 'red' },
       onConfirm: handleRebase,
     });
+    recordPhonePrimaryBoundary('openConfirmReturnMs');
+    return modalId;
+  };
 
   // item.draft is belt-and-suspenders here too, same reasoning as
   // mergeDisabled - 'behind' itself is exactly what this button is FOR, so
@@ -808,6 +827,10 @@ export function ActionItemCard({
               color={workspace ? 'orange' : 'dark'}
               className={workspace ? 'queue-primary-action' : undefined}
               disabled={rebaseDisabled}
+              ref={(node) => {
+                if (node?.closest('.queue-workspace__detail'))
+                  recordPhonePrimaryBoundary('primaryCommitMs');
+              }}
               loading={isPending}
               title={item.draft ? MERGEABLE_WARNINGS.draft : undefined}
               onClick={confirmRebase}
