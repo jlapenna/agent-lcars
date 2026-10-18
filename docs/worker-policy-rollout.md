@@ -66,14 +66,18 @@ provider start/expiry); the contract is the approved source/artifact binding
 (source commit, provider version, the fourteen baked module/helper/runner
 hashes, and the complete current probe-harness and failure-consumer hashes).
 The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
-clock or hash — and on any dirty owning input (the setup scripts it is about to
-execute, the probe harness, and the failure-consumer files) before claiming
-`<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the
+clock or hash. It claims `<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the
 SHA-256 of `lcars-run:v1:<run-id>` truncated to 32 hex characters: the canonical
 run id contains `:` and `/`, which a basename must never smuggle as a path
 separator. A repeated invocation against that root can only re-read
 `status.json`, never start a second entry. Inside the original provider clock
-the detached child runs setup first — `tools/setup-worktree.sh` once, then the
+the detached child first verifies the approved Git HEAD, source hashes, and a
+clean committed checkout with Git status, covering transitive setup/install
+inputs without a separate path list. Any staged, modified, deleted, or
+nonignored untracked source refuses before setup. Only untracked evidence
+inside this exclusively claimed run root is exempt; tracked changes there
+still refuse. Normal Git ignores continue to cover generated dependencies and
+cache outputs. The child then runs setup first — `tools/setup-worktree.sh` once, then the
 baked CLI version once, the full native suite once,
 the setup-negative suite once (both through the unchanged driver with `TMPDIR`
 set to the run's owned `fixtures/` root and `LCARS_PROBE_KEEP_EVIDENCE=1`), the

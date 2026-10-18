@@ -18,9 +18,9 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { Readable } from 'node:stream';
 import { hostname, tmpdir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -38,7 +38,6 @@ import {
   hostScenarioArgs,
   hostVersionArgs,
   indexRoot,
-  owningInputPaths,
   sourceDriftFailures,
   superviseInRunnerRun,
 } from './qualify-worker-image.mjs';
@@ -854,29 +853,23 @@ function git(repo, args) {
   return result.stdout;
 }
 
-test('the owned setup and harness scripts are part of the bound inputs', () => {
-  const owned = new Set(owningInputPaths(repoSource));
-  assert.ok(owned.has('tools/setup-worktree.sh'));
-  assert.ok(owned.has('tools/setup-git-hooks.sh'));
-  assert.ok(owned.has('tools/probes/in-runner-image.mjs'));
-  for (const [, [sourcePath]] of Object.entries(bakedInputMap(repoSource)))
-    assert.ok(owned.has(relative(repoSource, sourcePath)), sourcePath);
-});
-
-test('a dirty owning setup input is refused, and restored clean is accepted', () => {
+test('Git rejects transitive setup changes and accepts only restored source', () => {
   const root = ownedScratch();
   const repo = join(root, 'repo');
   mkdirSync(join(repo, 'tools'), { recursive: true });
   git(repo, ['init', '-q']);
   git(repo, ['config', 'user.email', 'probe@example.invalid']);
   git(repo, ['config', 'user.name', 'probe']);
-  const setupPath = join(repo, 'tools/setup-worktree.sh');
-  writeFileSync(setupPath, '#!/bin/bash\npnpm install\n');
-  writeFileSync(join(repo, 'tools/setup-git-hooks.sh'), '#!/bin/bash\n');
+  writeFileSync(
+    join(repo, 'tools/setup-worktree.sh'),
+    '#!/bin/bash\nsource tools/nx-native-file-cache.sh\npnpm install\n',
+  );
+  const transitive = join(repo, 'tools/nx-native-file-cache.sh');
+  const original =
+    '#!/bin/bash\nexport NX_NATIVE_FILE_CACHE_DIRECTORY=/tmp/nx\n';
+  writeFileSync(transitive, original);
   git(repo, ['add', '-A']);
   git(repo, ['commit', '-qm', 'base']);
-  const paths = ['tools/setup-worktree.sh', 'tools/setup-git-hooks.sh'];
-  // A real contract: HEAD and every source-side baked hash already match.
   const contract = {
     sourceCommit: git(repo, ['rev-parse', 'HEAD']).trim(),
     bakedHashes: Object.fromEntries(
@@ -886,41 +879,65 @@ test('a dirty owning setup input is refused, and restored clean is accepted', ()
       ]),
     ),
   };
+  // Evidence is created after the exclusive claim, before the source check.
+  const runRoot = join(repo, 'qualification-runs/run-owned');
+  mkdirSync(runRoot, { recursive: true });
+  writeFileSync(join(runRoot, 'intent.json'), '{}');
   const seam = {
     readHead: () => contract.sourceCommit,
     hash: hashFile,
-    dirty: (owned) => dirtyOwningInputFailures(owned, { cwd: repo }),
-    paths,
+    dirty: () => dirtyOwningInputFailures({ cwd: repo, runRoot }),
   };
-  assert.deepEqual(dirtyOwningInputFailures(paths, { cwd: repo }), []);
   assert.deepEqual(sourceDriftFailures(contract, seam), []);
-  // The exact dirty setup script the lifecycle is about to execute.
-  writeFileSync(setupPath, '#!/bin/bash\npnpm install; curl evil\n');
-  assert.deepEqual(dirtyOwningInputFailures(paths, { cwd: repo }), [
-    'owning-input-dirty: tools/setup-worktree.sh',
-  ]);
+  writeFileSync(transitive, original + 'echo changed\n');
   assert.deepEqual(sourceDriftFailures(contract, seam), [
-    'owning-input-dirty: tools/setup-worktree.sh',
+    'owning-input-dirty: tools/nx-native-file-cache.sh',
   ]);
-  // A deleted or unstaged owned input fails closed too.
-  git(repo, ['rm', '-q', '-f', 'tools/setup-git-hooks.sh']);
-  assert.ok(
-    sourceDriftFailures(contract, seam).includes(
-      'owning-input-dirty: tools/setup-git-hooks.sh',
-    ),
-  );
-  git(repo, ['restore', '--source=HEAD', '--staged', '--worktree', '--', '.']);
+  git(repo, ['add', 'tools/nx-native-file-cache.sh']);
+  assert.deepEqual(sourceDriftFailures(contract, seam), [
+    'owning-input-dirty: tools/nx-native-file-cache.sh',
+  ]);
+  git(repo, [
+    'restore',
+    '--source=HEAD',
+    '--staged',
+    '--worktree',
+    '--',
+    'tools',
+  ]);
   assert.deepEqual(sourceDriftFailures(contract, seam), []);
+  // A previously unlisted install hook must be committed too.
+  const untracked = join(repo, '.pnpmfile.cjs');
+  writeFileSync(untracked, 'module.exports = { hooks: {} };\n');
+  assert.deepEqual(sourceDriftFailures(contract, seam), [
+    'owning-input-dirty: .pnpmfile.cjs',
+  ]);
+  rmSync(untracked);
+  git(repo, ['rm', '-q', 'tools/nx-native-file-cache.sh']);
+  assert.deepEqual(sourceDriftFailures(contract, seam), [
+    'owning-input-dirty: tools/nx-native-file-cache.sh',
+  ]);
+  git(repo, [
+    'restore',
+    '--source=HEAD',
+    '--staged',
+    '--worktree',
+    '--',
+    'tools',
+  ]);
+  assert.deepEqual(sourceDriftFailures(contract, seam), []);
+  // The exemption is not permission to stage evidence or other source.
+  git(repo, ['add', 'qualification-runs']);
+  assert.deepEqual(sourceDriftFailures(contract, seam), [
+    'owning-input-dirty: qualification-runs/run-owned/intent.json',
+  ]);
 });
 
-test('an unavailable status read or an empty input list fails closed', () => {
-  assert.deepEqual(dirtyOwningInputFailures([]), ['owning-inputs-unavailable']);
-  assert.deepEqual(
-    dirtyOwningInputFailures(['tools/setup-worktree.sh'], {
-      status: () => null,
-    }),
-    ['owning-inputs-status-unavailable'],
-  );
+test('an unavailable or malformed Git status refuses the run', () => {
+  for (const output of [null, undefined, '?? unterminated'])
+    assert.deepEqual(dirtyOwningInputFailures({ status: () => output }), [
+      'owning-inputs-status-unavailable',
+    ]);
 });
 
 test('a spawn error and close settle the recording sink exactly once', async () => {
@@ -1007,9 +1024,9 @@ test('a zero-progress write is refused instead of counted as recorded', async ()
   const stdoutPath = join(root, 'stalled.stdout.bin');
   let calls = 0;
   const { closes, io } = countedIo({
-    writeSync(fd, chunk, offset = 0) {
+    writeSync(...args) {
       calls += 1;
-      assert.equal(offset, 0);
+      assert.equal(args[2], 0);
       return 0;
     },
   });
@@ -1066,8 +1083,16 @@ test('error then close settles once and closes each descriptor once', async () =
   const settlements = [];
   const child = new EventEmitter();
   child.pid = 4242;
-  child.stdout = new Readable({ read() {} });
-  child.stderr = new Readable({ read() {} });
+  child.stdout = new Readable({
+    read() {
+      // This spawn-error fixture never produces stream data.
+    },
+  });
+  child.stderr = new Readable({
+    read() {
+      // This spawn-error fixture never produces stream data.
+    },
+  });
   const result = await runChildProcess(
     {
       io,
