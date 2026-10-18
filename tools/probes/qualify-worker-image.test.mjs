@@ -28,6 +28,7 @@ import { driverEnvironment } from './in-runner-image.mjs';
 import { runChildProcess, runNativeProcess } from './native-process.mjs';
 import { artifactHashes } from './qualification-evidence.mjs';
 import {
+  admitProviderDeadline,
   allocationFailures,
   bakedInputMap,
   claimRunRoot,
@@ -38,6 +39,8 @@ import {
   hostScenarioArgs,
   hostVersionArgs,
   indexRoot,
+  PHASE_STREAM_MAX_BYTES,
+  readMonotonicClock,
   sourceDriftFailures,
   superviseInRunnerRun,
 } from './qualify-worker-image.mjs';
@@ -378,6 +381,11 @@ function preparedRunRoot() {
     join(runRoot, 'intent.json'),
     JSON.stringify({
       provider: 'codex',
+      monotonicDeadline: admitProviderDeadline(
+        { expiresAt: new Date(Date.now() + 3600000).toISOString() },
+        Date.now(),
+        readMonotonicClock(),
+      ),
       runId: 'run-1',
       imageId,
       providerClock: {
@@ -1152,4 +1160,247 @@ test('a successful scenario is parsed from the complete record, not its tail', a
     readFileSync(join(runRoot, 'logs/native.stdout.bin'), 'utf8'),
     report,
   );
+});
+
+for (const wallStep of [-86400000, 86400000]) {
+  test(`admitted budget survives wall step ${wallStep} and charges child startup`, async () => {
+    const root = ownedScratch();
+    const { receipt, contract } = syntheticAllocation();
+    const wall = Date.now();
+    receipt.expiresAt = new Date(wall + 20000).toISOString();
+    const receiptPath = join(root, 'receipt.json');
+    const contractPath = join(root, 'contract.json');
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    writeFileSync(contractPath, JSON.stringify(contract));
+    const bootId = readMonotonicClock().bootId;
+    let mono = 100000;
+    const readClock = () => ({ bootId, nowMs: mono });
+    const originalNow = Date.now;
+    const budgets = [];
+    const base = phaseDeps();
+    const supervisor = supervisorDeps([]);
+    let runRoot;
+    try {
+      const result = await superviseInRunnerRun(
+        {
+          provider: 'codex',
+          receiptPath,
+          contractPath,
+          outputPath: join(root, 'out'),
+        },
+        {
+          ...supervisor,
+          readMonotonicClock: readClock,
+          readRunFacts: () => ({ ...supervisor.readRunFacts(), nowMs: wall }),
+          spawnChild: (path) => {
+            runRoot = path;
+            // Real handoff seam: admission has already serialized its deadline.
+            // Child startup costs five seconds; neither process renews the budget.
+            mono += 5000;
+            Date.now = () => wall + wallStep;
+            return {
+              pid: 4242,
+              birth: {},
+              wait: async () => ({
+                code: await executeInRunnerPhases(path, {
+                  ...base,
+                  readMonotonicClock: readClock,
+                  evaluate: (...args) => {
+                    mono += 1000;
+                    return base.evaluate(...args);
+                  },
+                  runProcess: async (...args) => {
+                    budgets.push(args[4]);
+                    assert.equal(args[5].maxBytes, 64 * 1024 * 1024);
+                    mono += 1000;
+                    return base.runProcess(...args);
+                  },
+                }),
+              }),
+            };
+          },
+        },
+      );
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(budgets, [15000, 14000, 13000, 12000, 10000]);
+      const intent = JSON.parse(readFileSync(join(runRoot, 'intent.json')));
+      assert.equal(intent.monotonicDeadline.deadlineMs, 120000);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+}
+
+test('expired or invalid transferred clocks refuse before any phase and retain failure evidence', async () => {
+  const clock = readMonotonicClock();
+  assert.throws(
+    () =>
+      admitProviderDeadline(
+        { expiresAt: new Date(1000).toISOString() },
+        1000,
+        clock,
+      ),
+    /expired/,
+  );
+  assert.throws(
+    () => admitProviderDeadline({ expiresAt: 'invalid' }, 1000, clock),
+    /invalid/,
+  );
+  assert.throws(
+    () =>
+      admitProviderDeadline(
+        { expiresAt: new Date(2000).toISOString() },
+        NaN,
+        clock,
+      ),
+    /invalid/,
+  );
+  for (const change of [
+    { nowMs: 2000 },
+    { nowMs: 999 },
+    { bootId: '00000000-0000-0000-0000-000000000000' },
+    { nowMs: NaN },
+  ]) {
+    const runRoot = preparedRunRoot();
+    const path = join(runRoot, 'intent.json');
+    const intent = JSON.parse(readFileSync(path));
+    intent.monotonicDeadline = {
+      bootId: clock.bootId,
+      admittedAtMs: 1000,
+      deadlineMs: 2000,
+    };
+    writeFileSync(path, JSON.stringify(intent));
+    let calls = 0;
+    const code = await executeInRunnerPhases(runRoot, {
+      ...phaseDeps(),
+      readMonotonicClock: () => ({
+        bootId: clock.bootId,
+        nowMs: 1000,
+        ...change,
+      }),
+      runProcess: async () => {
+        calls++;
+        throw new Error('must not spawn');
+      },
+    });
+    assert.equal(code, 1);
+    assert.equal(calls, 0);
+    const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json')));
+    assert.match(phases.stopped, /provider-clock-(expired|invalid)/);
+    assert.deepEqual(phases.phases, []);
+    assert.equal(
+      JSON.parse(readFileSync(join(runRoot, 'qualification.json')))
+        .qualificationAccepted,
+      false,
+    );
+  }
+});
+
+test('production setup cap preserves exact prefix and stops the lifecycle on overflow', async () => {
+  const runRoot = preparedRunRoot();
+  let calls = 0;
+  const code = await executeInRunnerPhases(runRoot, {
+    ...phaseDeps(),
+    runProcess: async (_binary, _args, cwd, env, timeout, recording) => {
+      calls++;
+      assert.equal(recording.maxBytes, PHASE_STREAM_MAX_BYTES);
+      assert.equal(recording.maxBytes, 64 * 1024 * 1024);
+      // Exercise the actual recorder with production options, without setup or
+      // provider execution. Both streams exceed the bound independently.
+      return runNativeProcess(
+        process.execPath,
+        [
+          '-e',
+          `
+        const fs = require('node:fs');
+        const chunk = Buffer.alloc(1024 * 1024, 120);
+        for (let i = 0; i < 65; i++) {
+          fs.writeSync(1, chunk);
+          fs.writeSync(2, chunk);
+        }
+      `,
+        ],
+        cwd,
+        env,
+        timeout,
+        recording,
+      );
+    },
+  });
+  assert.equal(code, 1);
+  assert.equal(calls, 1);
+  const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json')));
+  assert.equal(phases.stopped, 'setup-phase-failed');
+  assert.equal(phases.phases.length, 1);
+  assert.match(phases.phases[0].recording.error, /recording-cap-exceeded/);
+  for (const stream of ['stdout', 'stderr']) {
+    const bytes = readFileSync(join(runRoot, 'logs', `setup.${stream}.bin`));
+    assert.equal(bytes.length, PHASE_STREAM_MAX_BYTES);
+    assert.equal(bytes.equals(Buffer.alloc(PHASE_STREAM_MAX_BYTES, 120)), true);
+  }
+  const qualification = JSON.parse(
+    readFileSync(join(runRoot, 'qualification.json')),
+  );
+  for (const key of [
+    'localProbePassed',
+    'durableCollectionComplete',
+    'qualificationAccepted',
+    'cleanupAuthorized',
+    'graduated',
+    'activationAuthorized',
+  ])
+    assert.equal(qualification[key], false);
+  assert.ok(
+    qualification.unknowns.includes(
+      'partial-run: phases after the stop were never attempted',
+    ),
+  );
+  const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
+  assert.ok(
+    index.entries.some(
+      (entry) =>
+        entry.path === 'logs/setup.stdout.bin' &&
+        entry.size === PHASE_STREAM_MAX_BYTES,
+    ),
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(runRoot, 'status.json'))).exitCode,
+    1,
+  );
+});
+
+test('elapsed monotonic budget stops later phases and cannot become a late success', async () => {
+  for (const expireAt of [1, 4, 5]) {
+    const runRoot = preparedRunRoot();
+    const path = join(runRoot, 'intent.json');
+    const intent = JSON.parse(readFileSync(path));
+    const bootId = readMonotonicClock().bootId;
+    intent.monotonicDeadline = {
+      bootId,
+      admittedAtMs: 1000,
+      deadlineMs: 21000,
+    };
+    writeFileSync(path, JSON.stringify(intent));
+    let nowMs = 1000;
+    let calls = 0;
+    const base = phaseDeps();
+    const code = await executeInRunnerPhases(runRoot, {
+      ...base,
+      readMonotonicClock: () => ({ bootId, nowMs }),
+      runProcess: async (...args) => {
+        calls++;
+        const result = await base.runProcess(...args);
+        if (calls === expireAt) nowMs = 21000;
+        return result;
+      },
+    });
+    assert.equal(code, 1);
+    assert.equal(calls, expireAt);
+    const qualification = JSON.parse(
+      readFileSync(join(runRoot, 'qualification.json')),
+    );
+    assert.equal(qualification.stopped, 'provider-clock-expired');
+    assert.equal(qualification.localProbePassed, false);
+    assert.equal(qualification.cleanupAuthorized, false);
+  }
 });

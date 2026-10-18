@@ -444,8 +444,57 @@ function procBirth(pid) {
   }
 }
 
+// hrtime is system-monotonic on Linux, shared across processes on one boot.
+// Bind the serialized deadline to that boot; process-relative clocks cannot
+// safely transfer a deadline from the supervisor to its child.
+export function readMonotonicClock() {
+  return {
+    bootId: readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(),
+    nowMs: Number(process.hrtime.bigint()) / 1e6,
+  };
+}
+
+function validClock(clock) {
+  return (
+    /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(clock?.bootId ?? '') &&
+    Number.isFinite(clock?.nowMs) &&
+    clock.nowMs >= 0
+  );
+}
+
+export function admitProviderDeadline(receipt, wallNowMs, clock) {
+  const remaining = Date.parse(receipt?.expiresAt) - wallNowMs;
+  if (
+    !validClock(clock) ||
+    !Number.isFinite(wallNowMs) ||
+    !Number.isFinite(remaining) ||
+    remaining <= 0
+  )
+    throw new Error('provider-clock-expired-or-invalid');
+  const deadlineMs = clock.nowMs + remaining;
+  if (!Number.isFinite(deadlineMs)) throw new Error('provider-clock-invalid');
+  return { bootId: clock.bootId, admittedAtMs: clock.nowMs, deadlineMs };
+}
+
+function remainingProviderMs(deadline, clock) {
+  if (
+    !validClock(clock) ||
+    deadline?.bootId !== clock.bootId ||
+    !Number.isFinite(deadline?.admittedAtMs) ||
+    deadline.admittedAtMs < 0 ||
+    !Number.isFinite(deadline?.deadlineMs) ||
+    deadline.deadlineMs <= deadline.admittedAtMs ||
+    clock.nowMs < deadline.admittedAtMs
+  )
+    throw new PhaseFailure('provider-clock-invalid');
+  const remaining = deadline.deadlineMs - clock.nowMs;
+  if (remaining <= 0) throw new PhaseFailure('provider-clock-expired');
+  return remaining;
+}
+
 export const defaultSupervisorDeps = {
   readRunFacts,
+  readMonotonicClock,
   artifactHashes,
   hashFile,
   spawnChild(runRoot) {
@@ -493,15 +542,18 @@ export async function superviseInRunnerRun(
   if (!receipt) throw new Error('Allocation receipt is missing or malformed');
   const contract = readJson(resolve(contractPath));
   if (!contract) throw new Error('Source contract is missing or malformed');
+  const clock = (deps.readMonotonicClock ?? readMonotonicClock)();
+  const actual = deps.readRunFacts();
   const failures = allocationFailures({
     provider,
     receipt,
     contract,
-    actual: deps.readRunFacts(),
+    actual,
     sourceHashes: deps.artifactHashes(source),
   });
   if (failures.length)
     throw new Error('Qualification allocation refused: ' + failures.join(', '));
+  const monotonicDeadline = admitProviderDeadline(receipt, actual.nowMs, clock);
   const output = resolve(outputPath);
   // A status re-read targets the same output; single-entry is enforced by
   // the exclusive run-root claim below.
@@ -522,6 +574,7 @@ export async function superviseInRunnerRun(
     runId: receipt.runId,
     imageId: receipt.imageId,
     claimedAt: new Date().toISOString(),
+    monotonicDeadline,
     providerClock: {
       startedAt: receipt.startedAt,
       expiresAt: receipt.expiresAt,
@@ -565,6 +618,9 @@ export async function superviseInRunnerRun(
 
 // --- in-runner child phases --------------------------------------------------
 
+// Five production phases, two streams each: at most 640 MiB of raw phase
+// streams. This does not cap fixture bytes, copied inputs or derived reports.
+export const PHASE_STREAM_MAX_BYTES = 64 * 1024 * 1024;
 export const VERSION_TIMEOUT_MS = 30000;
 export const SETUP_TIMEOUT_MS = 10 * 60000;
 export const SCENARIO_TIMEOUT_MS = 50 * 60000;
@@ -669,6 +725,7 @@ export function sourceDriftFailures(
 }
 
 export const defaultChildDeps = {
+  readMonotonicClock,
   runProcess: runNativeProcess,
   evaluate: evaluateImageEvidence,
   collectBakedInputs: defaultCollectBakedInputs,
@@ -692,7 +749,10 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
   // wrapper's process group cannot certify the driver's nested provider group.
   let nestedRetirement = 'confirmed';
   const remainingMs = () =>
-    Date.parse(intent.providerClock.expiresAt) - Date.now();
+    remainingProviderMs(
+      intent.monotonicDeadline,
+      (deps.readMonotonicClock ?? readMonotonicClock)(),
+    );
   const succeeded = (result) =>
     result.code === 0 &&
     !result.timedOut &&
@@ -704,6 +764,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
     const result = await deps.runProcess(binary, args, cwd, env, bounded, {
       stdoutPath: join(runRoot, 'logs', name + '.stdout.bin'),
       stderrPath: join(runRoot, 'logs', name + '.stderr.bin'),
+      maxBytes: PHASE_STREAM_MAX_BYTES,
     });
     phases.push({
       phase: name,
@@ -820,6 +881,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
           owned: typeof pointer === 'string' && containedPath(runRoot, pointer),
         });
     }
+    remainingMs();
     evaluated = deps.evaluate(
       expected,
       reports.native,
@@ -844,6 +906,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
       },
       timeout: CONSUMER_TIMEOUT_MS,
     });
+    remainingMs();
     localProbePassed = evaluated.offlinePassed && succeeded(consumer);
     if (!localProbePassed) throw new PhaseFailure('local-probe-did-not-pass');
   } catch (error) {
