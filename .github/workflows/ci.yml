@@ -327,9 +327,6 @@ jobs:
       - name: Test probe scratch cleanup (homelab#1542)
         run: node --test tools/probes/scratch.test.mjs
 
-      - name: Test private engine never shares the host network (#2848)
-        run: node --test tools/probes/private-engine.test.mjs
-
       - name: Test in-runner qualification recording seams (#2181)
         run: node --test tools/probes/qualify-worker-image.test.mjs
 

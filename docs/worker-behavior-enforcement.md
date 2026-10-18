@@ -295,33 +295,6 @@ PR or issue should be modified by multiple canaries.
 | `recovery-exhausted`   | Bounded repair ends as infrastructure failure, no human assignment                            |
 | `authorized-exception` | A specific trusted-policy exception works without relaxing unrelated restrictions             |
 
-### Retired task-owned engine facility
-
-The private Docker-engine qualification facility is retired after
-[#2848](https://github.com/jlapenna/agent-lcars/issues/2848).
-`tools/probes/private-engine.mjs` refuses every CLI invocation with exit 97,
-before creating engine state or starting a child. Do not launch a task-owned
-daemon, alter host bridges or policy, or grant privileges to continue qualification.
-The exported namespace guard and its stand-in regression remain as prevention
-evidence; they do not authorize use of the retired facility.
-
-A dockerd in a host's network namespace manages host links regardless of private
-data/exec roots, sockets or mount namespaces: `--bridge=none` deletes the host's
-`docker0` at startup. The original host recovery and incident record are separate
-from provider qualification. Completing them does not require graduating a new
-engine facility or a provider.
-
-Use the existing supported isolated runner/qualification path through its owning
-operator. A normally admitted native Job can execute
-`tools/probes/in-runner-image.mjs` inside its candidate image without another
-Docker daemon. Bind the Job/Pod, immutable image manifest/config, source and actual
-CLI version; retain all native/setup-negative reports and run their failure
-consumer as described in the [qualification artifact](worker-policy-rollout.md).
-The operator must qualify one complete supported allocation, ownership, fixture
-isolation, evidence retention and cleanup before execution. Keep production
-`LCARS_WORKER_POLICY_PROVIDERS` unchanged; offline qualification and useful
-policy-enabled dispatch acceptance remain independent gates under #2181.
-
 ### Historical image qualification evidence
 
 `tools/probes/in-runner-image.mjs` runs the native probes as the image job
