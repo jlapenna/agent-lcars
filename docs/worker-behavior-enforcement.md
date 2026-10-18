@@ -50,6 +50,24 @@ runner-local directories are temporary; the committed record does not claim
 an inspected image identity, complete durable fixture bundles or a live dispatch.
 Current candidate-image qualification and failure consumption remain open.
 
+The 2026-10-18 in-job Codex observation closes part of that gap for Codex only.
+Inside admitted Work `01M5666ND109DH80NVB9AN2WRQ/r2` (UID 1001, 2 CPU/6Gi/24Gi
+equal requests and limits, ARM64 node, source `0a100485a47a9fe44ae6161360fb8ea4396bb990`),
+`tools/probes/in-runner-image.mjs` measured the actual running image
+`docker-registry.lan.jlapenna.net/homelab-runner@sha256:2e0cf0c1310626fe52cb8d47cd1d74808c6fb0b64d62b03feedbda2234ebf564`
+(inspected Pod imageID; manifest/config distinction unverified) with baked CLI
+`codex-cli 0.163.0`. All 79 native and 3 setup-negative Codex cases passed
+exactly once against image-baked handlers with a clean 40-input inventory
+matching every approved group digest; the evaluator returned
+`offlinePassed: true, graduated: false, activationAuthorized: false`, and the
+protected failure consumer passed the actual native payload through the
+production route/outbox. The complete untrimmed bundle (both scratch
+directories, raw reports, evaluator/consumer outputs and binding records) is
+retained as private asset `652145397` on draft release `416141863`, server
+digest-verified. This binds Codex on that exact image and source only: Claude
+and OpenCode current-image suites remain unrun, and useful policy-enabled
+dispatch and maintainer-approved activation remain open gates.
+
 The native fixture uses one monotonic budget across initial execution,
 correction, explicit resume and failure finalization. Its 30/60-second limits
 and denial assertions are unchanged. The source run exposed a separate fixture
