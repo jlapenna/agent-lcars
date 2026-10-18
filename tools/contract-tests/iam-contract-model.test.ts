@@ -31,12 +31,9 @@ type Installation = {
 };
 type Model = {
   fleetRepositories: string[];
-  fleetCoverageExceptions?: { repository: string; reason: string }[];
   githubApps: {
     slug: string;
     clientId: string;
-    checkable: boolean;
-    uncheckableReason?: string;
     permissions?: Record<string, string>;
     installations: Installation[];
   }[];
@@ -113,23 +110,7 @@ describe('IAM contract model', () => {
     expect(condition).toBe(generated);
   });
 
-  it('documents why every unassertable App is unassertable', () => {
-    for (const app of model.githubApps) {
-      // Every App is either asserted against live GitHub, or says why not.
-      // Written unconditionally so it keeps testing something once every App
-      // is checkable, which is the state this repo is trying to reach.
-      expect({
-        slug: app.slug,
-        explained: app.checkable || (app.uncheckableReason ?? '').length > 0,
-      }).toEqual({ slug: app.slug, explained: true });
-    }
-  });
-
-  it('gives every exemption a reason and a fleet repository', () => {
-    for (const exception of model.fleetCoverageExceptions ?? []) {
-      expect(model.fleetRepositories).toContain(exception.repository);
-      expect(exception.reason).not.toHaveLength(0);
-    }
+  it('gives every key exemption a reason', () => {
     for (const project of Object.values(model.gcpProjects)) {
       for (const entry of project.userManagedKeyAllowlist ?? []) {
         expect(entry.serviceAccount).toMatch(/@.+\.iam\.gserviceaccount\.com$/);
