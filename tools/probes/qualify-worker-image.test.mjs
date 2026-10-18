@@ -6,9 +6,11 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
+  chmodSync,
   closeSync,
   cpSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -46,6 +48,7 @@ import {
   hostVersionArgs,
   indexRoot,
   PHASE_STREAM_MAX_BYTES,
+  readApprovedInput,
   readMonotonicClock,
   runRootBasename,
   sourceDriftFailures,
@@ -282,6 +285,9 @@ function syntheticAllocation() {
 function supervisorDeps(spawns) {
   const { receipt } = syntheticAllocation();
   return {
+    // Synthetic allocation fixtures are runner-owned; approval provenance is
+    // exercised separately through the production reader below.
+    readApprovedInput: readFileSync,
     readRunFacts: () => ({
       uid: receipt.uid,
       hostname: receipt.hostname,
@@ -2149,4 +2155,94 @@ test('expired receipt refuses completed reread before writes or another child', 
   );
   assert.equal(r.spawns.length, 1);
   assert.deepEqual(snapshot(r.root), before);
+});
+
+test('approval reader accepts an actual protected root-owned regular file', () => {
+  assert.deepEqual(
+    readApprovedInput('/etc/passwd'),
+    readFileSync('/etc/passwd'),
+  );
+});
+
+test('approval reader refuses runner-controlled inputs and symlink paths', () => {
+  const root = ownedScratch();
+  const file = join(root, 'approval.json');
+  writeFileSync(file, '{}');
+  chmodSync(file, 0o444);
+  const link = join(root, 'approval-link');
+  symlinkSync('/etc/passwd', link);
+  for (const path of [file, link, root, '/etc'])
+    assert.throws(() => readApprovedInput(path));
+  // Even a protected root-owned target cannot be approved through a symlink.
+  assert.throws(() => readApprovedInput('/proc/self/root/etc/passwd'));
+});
+
+test('untrusted receipt or contract refuses before output creation or child spawn', async () => {
+  const root = ownedScratch();
+  const file = join(root, 'untrusted.json');
+  writeFileSync(file, JSON.stringify(syntheticAllocation().receipt));
+  const spawns = [];
+  for (const [receiptPath, contractPath] of [
+    [file, '/etc/passwd'],
+    ['/etc/passwd', file],
+  ]) {
+    const outputPath = join(root, 'must-not-exist');
+    await assert.rejects(
+      superviseInRunnerRun(
+        { provider: 'codex', receiptPath, contractPath, outputPath },
+        { ...supervisorDeps(spawns), readApprovedInput },
+      ),
+      /qualification-approval-untrusted/,
+    );
+    assert.equal(existsSync(outputPath), false);
+  }
+  assert.deepEqual(spawns, []);
+});
+
+test('approval metadata faults refuse protected-file bytes before they are read', () => {
+  // Actual descriptors and protected bytes, with only kernel metadata faulted.
+  // These controls distinguish ownership, write bits and regular-file guards.
+  for (const fault of [
+    (s) => {
+      s.uid = 1001;
+    },
+    (s) => {
+      s.mode |= 0o020;
+    },
+    (s) => {
+      s.mode |= 0o002;
+    },
+    (s) => {
+      s.isFile = () => false;
+    },
+  ]) {
+    let reads = 0;
+    let opens = 0;
+    let closes = 0;
+    assert.throws(
+      () =>
+        readApprovedInput('/etc/passwd', {
+          openSync: (...args) => {
+            opens++;
+            return openSync(...args);
+          },
+          closeSync: (fd) => {
+            closes++;
+            closeSync(fd);
+          },
+          fstatSync: (fd) => {
+            const stat = fstatSync(fd);
+            if (stat.isFile()) fault(stat);
+            return stat;
+          },
+          readFileSync: (...args) => {
+            reads++;
+            return readFileSync(...args);
+          },
+        }),
+      /qualification-approval-untrusted/,
+    );
+    assert.equal(reads, 0);
+    assert.equal(closes, opens);
+  }
 });

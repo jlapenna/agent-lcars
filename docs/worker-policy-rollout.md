@@ -57,7 +57,8 @@ sequencing:
 
 ```bash
 node tools/probes/qualify-worker-image.mjs --in-runner codex \
-  /tmp/allocation-receipt.json /tmp/source-contract.json /tmp/qualification-runs
+  /run/lcars-qualification/allocation-receipt.json \
+  /run/lcars-qualification/source-contract.json /tmp/qualification-runs
 ```
 
 The receipt is the Root-authenticated allocation record (provider, inspected
@@ -65,7 +66,15 @@ image ID, run ID, hostname/arch, UID 1001, cgroup CPU/memory actuals, canonical
 provider start/expiry); the contract is the approved source/artifact binding
 (source commit, provider version, the fourteen baked module/helper/runner
 hashes, and the complete current probe-harness and failure-consumer hashes).
-Receipt and contract are each read once; parsing, SHA-256 identity and retained
+The trusted allocation owner must provision both inputs as root-owned regular
+files, with no group/other write permission, under root-owned directories with
+no group/other write permission (for example `/run/lcars-qualification`). Symlink
+components and runner-writable ancestors, including `/tmp`, are refused. The
+runner must not create its own approvals: root provisioning attests the inspected
+image identity and approved source; the command does not independently inspect
+the container image. This source change does not provision or qualify a Job.
+Receipt and contract are opened through pinned directory descriptors, checked
+before use, and each read once; parsing, SHA-256 identity and retained
 child copies use those same bytes even if the input paths are later replaced.
 The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
 clock or hash. It claims `<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the

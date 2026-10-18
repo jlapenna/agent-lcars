@@ -5,7 +5,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   closeSync,
+  constants,
   cpSync,
+  fstatSync,
   fsyncSync,
   ftruncateSync,
   lstatSync,
@@ -496,7 +498,66 @@ function remainingProviderMs(deadline, clock) {
   return remaining;
 }
 
+// Root provisions these approvals outside the runner's writable namespace.
+// Traverse pinned directory descriptors: neither symlinks nor replacement of a
+// runner-writable parent may turn an arbitrary CLI path into an approval.
+export function readApprovedInput(
+  inputPath,
+  io = {
+    openSync,
+    fstatSync,
+    readFileSync,
+    closeSync,
+  },
+) {
+  const parts = resolve(inputPath).split(sep).filter(Boolean);
+  let parent = io.openSync('/', constants.O_RDONLY | constants.O_DIRECTORY);
+  try {
+    for (const [index, part] of parts.entries()) {
+      const directory = index < parts.length - 1;
+      const fd = io.openSync(
+        '/proc/self/fd/' + parent + '/' + part,
+        constants.O_RDONLY |
+          constants.O_NOFOLLOW |
+          constants.O_NONBLOCK |
+          (directory ? constants.O_DIRECTORY : 0),
+      );
+      let accepted = false;
+      try {
+        const stat = io.fstatSync(fd);
+        if (
+          stat.uid !== 0 ||
+          (stat.mode & 0o022) !== 0 ||
+          (directory ? !stat.isDirectory() : !stat.isFile())
+        )
+          throw new Error('qualification-approval-untrusted: ' + inputPath);
+        accepted = true;
+        if (!directory) {
+          const bytes = io.readFileSync(fd);
+          const after = io.fstatSync(fd);
+          if (
+            stat.size !== bytes.length ||
+            stat.size !== after.size ||
+            stat.mtimeMs !== after.mtimeMs ||
+            stat.ctimeMs !== after.ctimeMs
+          )
+            throw new Error('qualification-approval-changed: ' + inputPath);
+          return bytes;
+        }
+      } finally {
+        if (!directory || !accepted) io.closeSync(fd);
+      }
+      io.closeSync(parent);
+      parent = fd;
+    }
+    throw new Error('qualification-approval-not-file: ' + inputPath);
+  } finally {
+    io.closeSync(parent);
+  }
+}
+
 export const defaultSupervisorDeps = {
+  readApprovedInput,
   readRunFacts,
   readMonotonicClock,
   artifactHashes,
@@ -543,8 +604,9 @@ export async function superviseInRunnerRun(
   deps = defaultSupervisorDeps,
 ) {
   // Capture once: validation, identity and child copies share these exact bytes.
-  const receiptBytes = readFileSync(resolve(receiptPath));
-  const contractBytes = readFileSync(resolve(contractPath));
+  const readApproval = deps.readApprovedInput ?? readApprovedInput;
+  const receiptBytes = readApproval(receiptPath);
+  const contractBytes = readApproval(contractPath);
   const receipt = JSON.parse(receiptBytes.toString('utf8'));
   if (!receipt) throw new Error('Allocation receipt is missing or malformed');
   const contract = JSON.parse(contractBytes.toString('utf8'));
