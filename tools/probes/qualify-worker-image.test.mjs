@@ -3,24 +3,29 @@
 // subprocesses in owned scratch. Passing fixtures never claim to qualify a
 // real provider suite.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
+import { Readable } from 'node:stream';
 import { hostname, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { driverEnvironment } from './in-runner-image.mjs';
-import { runNativeProcess } from './native-process.mjs';
+import { runChildProcess, runNativeProcess } from './native-process.mjs';
 import { artifactHashes } from './qualification-evidence.mjs';
 import {
   allocationFailures,
@@ -766,6 +771,161 @@ test('a spawn error and close settle the recording sink exactly once', async () 
   assert.equal(result.recording.error, null);
   assert.equal(readFileSync(recording.stdoutPath, 'utf8'), '');
   assert.equal(readFileSync(recording.stderrPath, 'utf8'), '');
+});
+
+// Bounded recorder seam: real exclusive files and real descriptors, with only
+// writeSync/closeSync wrapped so the original defects (return value ignored,
+// non-idempotent close) are forced rather than assumed.
+function countedIo(overrides = {}) {
+  const closes = [];
+  const opened = [];
+  return {
+    closes,
+    opened,
+    io: {
+      openSync(path, flag, mode) {
+        const fd = openSync(path, flag, mode);
+        opened.push({ path, fd });
+        return fd;
+      },
+      closeSync(fd) {
+        closes.push(fd);
+        closeSync(fd);
+      },
+      ...overrides,
+    },
+  };
+}
+
+test('a forced partial write still records every byte exactly once', async () => {
+  const root = ownedScratch();
+  const stdoutPath = join(root, 'partial.stdout.bin');
+  const writes = [];
+  const { closes, opened, io } = countedIo({
+    // Commit one byte per call: a byte-count-blind recorder would count the
+    // whole chunk while only the first byte ever reached the file.
+    writeSync(fd, chunk, offset = 0) {
+      writes.push(offset);
+      return writeSync(fd, chunk, offset, 1);
+    },
+  });
+  const result = await runChildProcess(
+    { spawn, io },
+    process.execPath,
+    ['-e', "process.stdout.write('abcdefghij')"],
+    root,
+    { PATH: process.env.PATH },
+    10000,
+    { stdoutPath, stderrPath: join(root, 'partial.stderr.bin') },
+  );
+  assert.equal(result.code, 0);
+  assert.equal(result.recording.error, null);
+  assert.equal(result.recording.stdoutBytes, 10);
+  assert.equal(readFileSync(stdoutPath, 'utf8'), 'abcdefghij');
+  assert.deepEqual(writes, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(result.stdout, 'abcdefghij');
+  assert.deepEqual(
+    [...closes].sort((a, b) => a - b),
+    opened.map((entry) => entry.fd).sort((a, b) => a - b),
+  );
+  assert.equal(opened.length, 2);
+});
+
+test('a zero-progress write is refused instead of counted as recorded', async () => {
+  const root = ownedScratch();
+  const stdoutPath = join(root, 'stalled.stdout.bin');
+  let calls = 0;
+  const { closes, io } = countedIo({
+    writeSync(fd, chunk, offset = 0) {
+      calls += 1;
+      assert.equal(offset, 0);
+      return 0;
+    },
+  });
+  const result = await runChildProcess(
+    { spawn, io },
+    process.execPath,
+    ['-e', "process.stdout.write('never-recorded')"],
+    root,
+    { PATH: process.env.PATH },
+    10000,
+    { stdoutPath, stderrPath: join(root, 'stalled.stderr.bin') },
+  );
+  assert.equal(calls, 1);
+  assert.equal(result.recording.error, 'recording-write-stalled: stdout');
+  assert.equal(result.recording.stdoutBytes, 0);
+  assert.equal(readFileSync(stdoutPath, 'utf8'), '');
+  // Success is refused at the caller predicate, not merely reported.
+  assert.equal(result.code === 0 && result.recording.error === null, false);
+  assert.equal(new Set(closes).size, 2);
+});
+
+test('a throwing write keeps the partial bytes and reports the exact fault', async () => {
+  const root = ownedScratch();
+  const stdoutPath = join(root, 'throwing.stdout.bin');
+  const { io } = countedIo({
+    writeSync(fd, chunk, offset = 0) {
+      if (offset > 0)
+        throw Object.assign(new Error('ENOSPC: no space left on device'), {
+          code: 'ENOSPC',
+        });
+      return writeSync(fd, chunk, offset, 2);
+    },
+  });
+  const result = await runChildProcess(
+    { spawn, io },
+    process.execPath,
+    ['-e', "process.stdout.write('abcdefghijkl')"],
+    root,
+    { PATH: process.env.PATH },
+    10000,
+    { stdoutPath, stderrPath: join(root, 'throwing.stderr.bin') },
+  );
+  assert.equal(
+    result.recording.error,
+    'recording-write-failed: ENOSPC: no space left on device',
+  );
+  assert.equal(result.recording.stdoutBytes, 2);
+  assert.equal(readFileSync(stdoutPath, 'utf8'), 'ab');
+});
+
+test('error then close settles once and closes each descriptor once', async () => {
+  const root = ownedScratch();
+  const { closes, io } = countedIo();
+  const settlements = [];
+  const child = new EventEmitter();
+  child.pid = 4242;
+  child.stdout = new Readable({ read() {} });
+  child.stderr = new Readable({ read() {} });
+  const result = await runChildProcess(
+    {
+      io,
+      spawn: () => {
+        queueMicrotask(() => {
+          child.emit('error', new Error('spawn EPIPE'));
+          child.emit('close', 0, null);
+        });
+        return child;
+      },
+    },
+    'ignored',
+    [],
+    root,
+    { PATH: process.env.PATH },
+    10000,
+    {
+      stdoutPath: join(root, 'once.stdout.bin'),
+      stderrPath: join(root, 'once.stderr.bin'),
+    },
+  );
+  settlements.push(result);
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].diagnostics.spawnError, 'unknown');
+  assert.equal(settlements[0].code, null);
+  // One settlement means one close pass: two closes per descriptor is the
+  // original double-close defect.
+  assert.equal(closes.length, 2);
+  assert.equal(new Set(closes).size, 2);
 });
 
 test('a successful scenario is parsed from the complete record, not its tail', async () => {

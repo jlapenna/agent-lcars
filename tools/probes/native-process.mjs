@@ -32,7 +32,9 @@ function resources(pid) {
 // tails below stay exactly as before. An open/write/cap/close failure is
 // reported in the summary so the caller can refuse success; the default
 // pipe-only path is untouched.
-function openRecorder(recording) {
+const fileIo = { openSync, writeSync, closeSync };
+
+export function openRecorder(recording, io = fileIo) {
   const limit = Number.isSafeInteger(recording?.maxBytes)
     ? recording.maxBytes
     : Number.POSITIVE_INFINITY;
@@ -43,8 +45,8 @@ function openRecorder(recording) {
     summary: null,
   };
   try {
-    state.fds.stdout = openSync(recording.stdoutPath, 'wx', 0o600);
-    state.fds.stderr = openSync(recording.stderrPath, 'wx', 0o600);
+    state.fds.stdout = io.openSync(recording.stdoutPath, 'wx', 0o600);
+    state.fds.stderr = io.openSync(recording.stderrPath, 'wx', 0o600);
   } catch (error) {
     state.failure = 'recording-open-failed: ' + (error?.message ?? error);
   }
@@ -64,7 +66,7 @@ function openRecorder(recording) {
       while (offset < chunk.length) {
         let written;
         try {
-          written = writeSync(fd, chunk, offset);
+          written = io.writeSync(fd, chunk, offset);
         } catch (error) {
           state.failure =
             'recording-write-failed: ' + (error?.message ?? error);
@@ -84,7 +86,7 @@ function openRecorder(recording) {
       if (state.summary) return state.summary;
       for (const fd of Object.values(state.fds)) {
         try {
-          closeSync(fd);
+          io.closeSync(fd);
         } catch (error) {
           state.failure ??=
             'recording-close-failed: ' + (error?.message ?? error);
@@ -103,7 +105,32 @@ function openRecorder(recording) {
   };
 }
 
+export const defaultProcessDeps = { spawn, io: fileIo };
+
 export function runNativeProcess(
+  binary,
+  args,
+  cwd,
+  env,
+  timeout = 60000,
+  recording = null,
+) {
+  return runChildProcess(
+    defaultProcessDeps,
+    binary,
+    args,
+    cwd,
+    env,
+    timeout,
+    recording,
+  );
+}
+
+// Bounded local seam for the recorder fault controls: the production path
+// above always passes defaultProcessDeps, so the spawn/recorder wiring is
+// exercised unchanged while a test can force write and close faults.
+export function runChildProcess(
+  deps,
   binary,
   args,
   cwd,
@@ -120,7 +147,7 @@ export function runNativeProcess(
       settled = true;
       resolve(value);
     };
-    const recorder = recording ? openRecorder(recording) : null;
+    const recorder = recording ? openRecorder(recording, deps.io) : null;
     const start = performance.now();
     const elapsed = () => Math.round(performance.now() - start);
     const diagnostics = {
@@ -144,7 +171,7 @@ export function runNativeProcess(
       });
       return;
     }
-    const child = spawn(binary, args, {
+    const child = deps.spawn(binary, args, {
       cwd,
       env,
       detached: true,
