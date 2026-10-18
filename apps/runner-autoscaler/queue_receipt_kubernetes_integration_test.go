@@ -43,6 +43,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -56,6 +57,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -174,10 +176,11 @@ func (a *receiptFault) requireFinished(t *testing.T, status int) {
 }
 
 type receiptFaultTransport struct {
-	base      http.RoundTripper
-	mu        sync.Mutex
-	armed     []*receiptFault
-	onCreated func(*batch.Job) error
+	base        http.RoundTripper
+	mu          sync.Mutex
+	armed       []*receiptFault
+	onCreated   func(*batch.Job) error
+	lastJobRead *batch.Job
 }
 
 func (f *receiptFaultTransport) reset() {
@@ -235,6 +238,26 @@ func (f *receiptFaultTransport) take(req *http.Request) *receiptFault {
 	return nil
 }
 
+// clearJobRead requires this reconciliation to supply its own GET witness;
+// it deliberately leaves armed request faults unchanged.
+func (f *receiptFaultTransport) clearJobRead() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastJobRead = nil
+}
+
+// observedJobRead freezes the exact successful GET response the production
+// caller received, before a later controller status update can advance its RV.
+func (f *receiptFaultTransport) observedJobRead(t *testing.T, namespace, name string) *batch.Job {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lastJobRead == nil || f.lastJobRead.Namespace != namespace || f.lastJobRead.Name != name || f.lastJobRead.ResourceVersion == "" {
+		t.Fatal("the production caller has no exact observed Job version")
+	}
+	return f.lastJobRead.DeepCopy()
+}
+
 func (f *receiptFaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	fault := f.take(req)
 	if fault != nil {
@@ -274,6 +297,23 @@ func (f *receiptFaultTransport) RoundTrip(req *http.Request) (*http.Response, er
 		if err := f.onCreated(&created); err != nil {
 			return nil, err
 		}
+	}
+	parts := strings.Split(strings.Trim(req.URL.Path, "/"), "/")
+	if req.Method == http.MethodGet && resp.StatusCode == http.StatusOK && len(parts) == 7 && parts[0] == "apis" && parts[1] == "batch" && parts[2] == "v1" && parts[3] == "namespaces" && parts[5] == "jobs" {
+		// Observe the existing response only; issue no additional API request.
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+		resp.Body.Close()
+		if readErr != nil || len(raw) > 1<<20 {
+			return nil, fmt.Errorf("observed Job response unreadable or oversized: %v", readErr)
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		var observed batch.Job
+		if err := json.Unmarshal(raw, &observed); err != nil {
+			return nil, fmt.Errorf("observed Job response cannot bind its version: %w", err)
+		}
+		f.mu.Lock()
+		f.lastJobRead = observed.DeepCopy()
+		f.mu.Unlock()
 	}
 	if fault == nil || !fault.lose || resp.StatusCode != http.StatusCreated {
 		return resp, nil // Held late Create must receive the real AlreadyExists.
@@ -835,6 +875,17 @@ func receiptFenceSuspendedJob(t *testing.T, q *kubernetesQueue, r capacityReceip
 	return job
 }
 
+// Controller-owned status and managed fields may change resourceVersion
+// without changing the same inert Job. Keep identity, full spec and receipt
+// metadata exact; compare protocol RVs to the response actually observed.
+func receiptFenceSameJob(before, after *batch.Job) bool {
+	return before != nil && after != nil && before.UID != "" && before.UID == after.UID &&
+		before.Name == after.Name && before.Namespace == after.Namespace &&
+		before.Generation == after.Generation && after.ResourceVersion != "" && after.DeletionTimestamp == nil &&
+		reflect.DeepEqual(before.Spec, after.Spec) && reflect.DeepEqual(before.Annotations, after.Annotations) &&
+		reflect.DeepEqual(before.Labels, after.Labels)
+}
+
 func receiptFenceOwnedPods(ctx context.Context, t *testing.T, q *kubernetesQueue, j *batch.Job) []core.Pod {
 	t.Helper()
 	pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
@@ -1035,7 +1086,7 @@ func receiptKubernetesWriteFences(ctx context.Context, t *testing.T, q *kubernet
 			t.Fatalf("the late create must collide with the installed barrier, got %v", got.err)
 		}
 		after, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, desired.Name, meta.GetOptions{})
-		if err != nil || after.UID != tombstone.UID || after.ResourceVersion != tombstone.ResourceVersion {
+		if err != nil || !receiptFenceSameJob(tombstone, after) || after.Annotations[queueBarrierAnnotation] != r.Nonce || after.Spec.Suspend == nil || !*after.Spec.Suspend || queueJobAttempted(after) {
 			t.Fatalf("the late create displaced the barrier: %v %+v", err, after)
 		}
 		if pods := receiptFenceOwnedPods(ctx, t, q, after); len(pods) != 0 {
@@ -1078,11 +1129,24 @@ func receiptKubernetesWriteFences(ctx context.Context, t *testing.T, q *kubernet
 		}
 		own.ownJob(t, job)
 		r.JobUID = string(job.UID)
-		stale := job.DeepCopy()
-		// A real server-side replacement moves the identity the barrier write
-		// was planned against.
-		job.Annotations["agent-lcars.receipt-fence-probe"] = "replacement"
-		replaced, err := q.client.BatchV1().Jobs(q.config.Namespace).Update(ctx, job, meta.UpdateOptions{})
+		var stale, replaced *batch.Job
+		// Build the intentional stale write from the exact pre-update version.
+		// A controller status conflict during fixture preparation is retried
+		// under this same context; production retireReceipt still gets stale.
+		err = retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+			current, getErr := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			if !receiptFenceSameJob(job, current) {
+				return fmt.Errorf("the controlled fixture changed before its stale-write update")
+			}
+			stale = current.DeepCopy()
+			current.Annotations["agent-lcars.receipt-fence-probe"] = "replacement"
+			var updateErr error
+			replaced, updateErr = q.client.BatchV1().Jobs(q.config.Namespace).Update(ctx, current, meta.UpdateOptions{})
+			return updateErr
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1093,7 +1157,7 @@ func receiptKubernetesWriteFences(ctx context.Context, t *testing.T, q *kubernet
 			t.Fatalf("a stale retirement barrier must be refused, got %v", err)
 		}
 		after, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
-		if err != nil || after.ResourceVersion != replaced.ResourceVersion || after.Annotations[queueBarrierAnnotation] != "" {
+		if err != nil || !receiptFenceSameJob(replaced, after) || after.Annotations["agent-lcars.receipt-fence-probe"] != "replacement" || after.Annotations[queueBarrierAnnotation] != "" {
 			t.Fatalf("the refused barrier did not preserve the server replacement: %v %+v", err, after)
 		}
 		if after.Spec.Suspend == nil || !*after.Spec.Suspend {
@@ -1273,6 +1337,9 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	if err = q.reconcileReceipts(ctx); err == nil {
 		t.Fatal("a refused logical exit released capacity")
 	}
+	if api.count("exit") == 0 {
+		t.Fatal("the refused logical-exit fault was never exercised")
+	}
 	if api.count("release") != 0 {
 		t.Fatal("a refused logical exit released capacity")
 	}
@@ -1288,18 +1355,20 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	}
 	api.setRetirement(nil)
 
-	// A lost logical exit preserves the same UID/resourceVersion barrier.
-	barrierRV := barrier.ResourceVersion
+	// A lost logical exit preserves the same inert UID/spec/receipt barrier.
 	api.reset()
 	api.setExit(func(int) (int, string, bool) { return 0, "", true })
 	if err = q.reconcileReceipts(ctx); err == nil {
 		t.Fatal("a lost logical exit released capacity")
 	}
+	if api.count("exit") == 0 {
+		t.Fatal("the lost logical-exit fault was never exercised")
+	}
 	if api.count("release") != 0 {
 		t.Fatal("a lost logical exit released capacity")
 	}
 	held, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
-	if err != nil || held.UID != barrier.UID || held.ResourceVersion != barrierRV || held.Annotations[queueBarrierAnnotation] != r.Nonce || held.Spec.Suspend == nil || !*held.Spec.Suspend {
+	if err != nil || !receiptFenceSameJob(barrier, held) || held.Annotations[queueBarrierAnnotation] != r.Nonce || held.Spec.Suspend == nil || !*held.Spec.Suspend {
 		t.Fatalf("a lost logical exit did not preserve the exact barrier: %v %+v", err, held)
 	}
 
@@ -1308,6 +1377,7 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	api.setExit(nil)
 	api.setReleaseStatus(http.StatusConflict)
 	api.setReceipts(worker)
+	faults.clearJobRead()
 	if err = q.reconcileReceipts(ctx); err == nil {
 		t.Fatal("a release409 was treated as accepted retirement")
 	}
@@ -1315,12 +1385,13 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	if len(refused) != 1 || api.acceptedReleaseCount() != 0 {
 		t.Fatalf("release409 must have exactly one refused request and no accepted release: %v", refused)
 	}
+	refusedObservation := faults.observedJobRead(t, q.config.Namespace, job.Name)
 	refusedBarrier, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	failedRelease := refused[0]
-	if refusedBarrier.UID != barrier.UID || failedRelease["barrierUid"] != string(refusedBarrier.UID) || failedRelease["resourceVersion"] != refusedBarrier.ResourceVersion || failedRelease["barrierNonce"] != r.Nonce || failedRelease["barrierRunId"] != r.RunID || failedRelease["jobName"] != refusedBarrier.Name || refusedBarrier.Annotations[queueBarrierAnnotation] != r.Nonce || refusedBarrier.Spec.Suspend == nil || !*refusedBarrier.Spec.Suspend {
+	if refusedBarrier.UID != barrier.UID || !receiptFenceSameJob(refusedObservation, refusedBarrier) || failedRelease["barrierUid"] != string(refusedObservation.UID) || failedRelease["resourceVersion"] != refusedObservation.ResourceVersion || failedRelease["barrierNonce"] != r.Nonce || failedRelease["barrierRunId"] != r.RunID || failedRelease["jobName"] != refusedBarrier.Name || refusedBarrier.Annotations[queueBarrierAnnotation] != r.Nonce || refusedBarrier.Spec.Suspend == nil || !*refusedBarrier.Spec.Suspend {
 		t.Fatalf("release409 did not retain the exact requested UID/resourceVersion barrier: request=%v object=%+v", failedRelease, refusedBarrier)
 	}
 	if q.verifiedReceiptBarriers[job.Name] != "" {
@@ -1332,6 +1403,7 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	api.setReleaseStatus(http.StatusOK)
 	api.setExit(nil)
 	api.setReceipts(worker)
+	faults.clearJobRead()
 	if err = q.reconcileReceipts(ctx); err != nil {
 		t.Fatalf("restored codex retirement failed: %v", err)
 	}
@@ -1340,11 +1412,12 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 		t.Fatalf("expected exactly one release, got %v", releases)
 	}
 	release := releases[0]
+	releasedObservation := faults.observedJobRead(t, q.config.Namespace, job.Name)
 	final, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if release["barrierUid"] != string(final.UID) || release["resourceVersion"] != final.ResourceVersion || release["barrierNonce"] != r.Nonce || release["barrierRunId"] != r.RunID || release["jobName"] != final.Name {
+	if !receiptFenceSameJob(releasedObservation, final) || release["barrierUid"] != string(releasedObservation.UID) || release["resourceVersion"] != releasedObservation.ResourceVersion || release["barrierNonce"] != r.Nonce || release["barrierRunId"] != r.RunID || release["jobName"] != final.Name {
 		t.Fatalf("the release did not carry the actual inert barrier: %v", release)
 	}
 	exitIdx, releaseIdx := -1, -1
