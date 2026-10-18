@@ -389,13 +389,26 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
       artifact.clockBridge.reason = 'missing-or-invalid-metrics';
     } else {
       const { startTime, endTime, samples, timeDeltas } = artifact.cpuProfile;
+      let sampleTimestamp = startTime;
       const sampleTimesCoherent =
         Array.isArray(samples) &&
         Array.isArray(timeDeltas) &&
         timeDeltas.length === samples.length &&
-        timeDeltas.every((delta) => Number.isFinite(delta) && delta >= 0) &&
+        timeDeltas.every((delta) => {
+          if (!Number.isSafeInteger(delta)) return false;
+          sampleTimestamp += delta;
+          return sampleTimestamp >= startTime && sampleTimestamp <= endTime;
+        }) &&
         timeDeltas.reduce((total, delta) => total + delta, 0) <=
           endTime - startTime;
+      // Signed deltas can describe out-of-order samples. Preserve them and
+      // report sample-order quality separately from the clock-domain bridge.
+      artifact.profileSampleOrder = {
+        negativeDeltaCount: Array.isArray(timeDeltas)
+          ? timeDeltas.filter((delta) => Number.isFinite(delta) && delta < 0)
+              .length
+          : null,
+      };
       const lowerNowMs =
         (afterJourney.Timestamp - afterJourney.NavigationStart) * 1_000;
       const upperNowMs =
