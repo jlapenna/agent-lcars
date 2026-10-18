@@ -44,6 +44,14 @@ enter the container. Fixture storage is the container's `/tmp`; record Docker
 storage/host identity with the release evidence and investigate contention
 instead of extending deadlines.
 
+The same native suites can instead be measured from inside one normal admitted
+LCARS Job with `tools/probes/in-runner-image.mjs`, which refuses to run as root,
+requires the inspected `sha256:` image ID supplied by an operator allocation
+receipt, and fails closed when any image-baked module, runtime helper or the
+direct runner differs from the checkout — no copies enter the image. Retain its
+bundle the same way; see the partial 2026-10-18 in-job Codex observation in
+[worker-behavior-enforcement](worker-behavior-enforcement.md#current-qualification-boundary).
+
 The full native suite and all setup-negative cases must pass exactly once;
 missing, duplicated, failed, partial, wrong-user or mixed-artifact observations
 fail. The host output includes `expected.json`, `qualification.json`, both raw
