@@ -2002,10 +2002,11 @@ func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDe
 			return req, nil
 		}
 		var got batch.Job
-		if json.Unmarshal(raw, &got) != nil || got.UID != current.UID || got.ResourceVersion == "" || got.Spec.Suspend == nil || *got.Spec.Suspend {
+		if json.Unmarshal(raw, &got) != nil || got.Kind != "Job" || got.APIVersion != "batch/v1" || got.UID != current.UID || got.ResourceVersion == "" || got.Spec.Suspend == nil || *got.Spec.Suspend {
 			return nil, fmt.Errorf("foreign unsuspend")
 		}
 		expected := current.DeepCopy()
+		expected.TypeMeta = got.TypeMeta
 		expected.Spec.Suspend = ptr(false)
 		expected.Spec.Template.Annotations[queueJobUIDAnnotation] = string(current.UID)
 		// Do not infer a stable controller status RV. The real Update still carries
