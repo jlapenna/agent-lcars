@@ -1296,78 +1296,97 @@ test('expired or invalid transferred clocks refuse before any phase and retain f
   }
 });
 
-test('production setup cap preserves exact prefix and stops the lifecycle on overflow', async () => {
-  const runRoot = preparedRunRoot();
-  let calls = 0;
-  const code = await executeInRunnerPhases(runRoot, {
-    ...phaseDeps(),
-    runProcess: async (_binary, _args, cwd, env, timeout, recording) => {
-      calls++;
-      assert.equal(recording.maxBytes, PHASE_STREAM_MAX_BYTES);
-      assert.equal(recording.maxBytes, 64 * 1024 * 1024);
-      // Exercise the actual recorder with production options, without setup or
-      // provider execution. Both streams exceed the bound independently.
-      return runNativeProcess(
-        process.execPath,
-        [
-          '-e',
-          `
+for (const overflowStream of ['stdout', 'stderr']) {
+  test(`production setup ${overflowStream} cap preserves exact prefix and stops the lifecycle on overflow`, async () => {
+    const runRoot = preparedRunRoot();
+    let calls = 0;
+    const code = await executeInRunnerPhases(runRoot, {
+      ...phaseDeps(),
+      runProcess: async (_binary, _args, cwd, env, timeout, recording) => {
+        calls++;
+        assert.equal(recording.maxBytes, PHASE_STREAM_MAX_BYTES);
+        assert.equal(recording.maxBytes, 64 * 1024 * 1024);
+        // Exercise the actual recorder with production options, without setup or
+        // provider execution. Keep the other stream quiet to avoid pipe-order assumptions.
+        const result = await runNativeProcess(
+          process.execPath,
+          [
+            '-e',
+            `
         const fs = require('node:fs');
         const chunk = Buffer.alloc(1024 * 1024, 120);
         for (let i = 0; i < 65; i++) {
-          fs.writeSync(1, chunk);
-          fs.writeSync(2, chunk);
+          let offset = 0;
+          while (offset < chunk.length) {
+            offset += fs.writeSync(${overflowStream === 'stdout' ? 1 : 2}, chunk, offset, chunk.length - offset);
+          }
         }
       `,
-        ],
-        cwd,
-        env,
-        timeout,
-        recording,
+          ],
+          cwd,
+          env,
+          timeout,
+          recording,
+        );
+        assert.equal(result.code, 0);
+        assert.equal(result.timedOut, false);
+        assert.equal(
+          result.recording.error,
+          `recording-cap-exceeded: ${overflowStream}`,
+        );
+        return result;
+      },
+    });
+    assert.equal(code, 1);
+    assert.equal(calls, 1);
+    const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json')));
+    assert.equal(phases.stopped, 'setup-phase-failed');
+    assert.equal(phases.phases.length, 1);
+    assert.equal(
+      phases.phases[0].recording.error,
+      `recording-cap-exceeded: ${overflowStream}`,
+    );
+    for (const stream of ['stdout', 'stderr']) {
+      const bytes = readFileSync(join(runRoot, 'logs', `setup.${stream}.bin`));
+      if (stream === overflowStream) {
+        assert.ok(bytes.length > 0 && bytes.length <= PHASE_STREAM_MAX_BYTES);
+        assert.equal(bytes.equals(Buffer.alloc(bytes.length, 120)), true);
+      } else {
+        assert.equal(bytes.length, 0);
+      }
+      assert.equal(phases.phases[0].recording[`${stream}Bytes`], bytes.length);
+      const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
+      assert.ok(
+        index.entries.some(
+          (entry) =>
+            entry.path === `logs/setup.${stream}.bin` &&
+            entry.size === bytes.length,
+        ),
       );
-    },
+    }
+    const qualification = JSON.parse(
+      readFileSync(join(runRoot, 'qualification.json')),
+    );
+    for (const key of [
+      'localProbePassed',
+      'durableCollectionComplete',
+      'qualificationAccepted',
+      'cleanupAuthorized',
+      'graduated',
+      'activationAuthorized',
+    ])
+      assert.equal(qualification[key], false);
+    assert.ok(
+      qualification.unknowns.includes(
+        'partial-run: phases after the stop were never attempted',
+      ),
+    );
+    assert.equal(
+      JSON.parse(readFileSync(join(runRoot, 'status.json'))).exitCode,
+      1,
+    );
   });
-  assert.equal(code, 1);
-  assert.equal(calls, 1);
-  const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json')));
-  assert.equal(phases.stopped, 'setup-phase-failed');
-  assert.equal(phases.phases.length, 1);
-  assert.match(phases.phases[0].recording.error, /recording-cap-exceeded/);
-  for (const stream of ['stdout', 'stderr']) {
-    const bytes = readFileSync(join(runRoot, 'logs', `setup.${stream}.bin`));
-    assert.equal(bytes.length, PHASE_STREAM_MAX_BYTES);
-    assert.equal(bytes.equals(Buffer.alloc(PHASE_STREAM_MAX_BYTES, 120)), true);
-  }
-  const qualification = JSON.parse(
-    readFileSync(join(runRoot, 'qualification.json')),
-  );
-  for (const key of [
-    'localProbePassed',
-    'durableCollectionComplete',
-    'qualificationAccepted',
-    'cleanupAuthorized',
-    'graduated',
-    'activationAuthorized',
-  ])
-    assert.equal(qualification[key], false);
-  assert.ok(
-    qualification.unknowns.includes(
-      'partial-run: phases after the stop were never attempted',
-    ),
-  );
-  const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
-  assert.ok(
-    index.entries.some(
-      (entry) =>
-        entry.path === 'logs/setup.stdout.bin' &&
-        entry.size === PHASE_STREAM_MAX_BYTES,
-    ),
-  );
-  assert.equal(
-    JSON.parse(readFileSync(join(runRoot, 'status.json'))).exitCode,
-    1,
-  );
-});
+}
 
 test('elapsed monotonic budget stops later phases and cannot become a late success', async () => {
   for (const expireAt of [1, 4, 5]) {
