@@ -567,25 +567,22 @@ Five sub-projects. The first is the foundation; the other four are
 independent of each other and can run in parallel worktrees. Status as of
 2026-09-04:
 
-1. **Reply primitive and Claude round-trip** — **shipped** (#1769, plan
-   `2026-09-04-resumable-conversations-1-reply-primitive.md`).
+1. **Reply primitive and Claude round-trip** — **shipped** (#1769).
    `requestReply`, the reply route, `Run.result.message`, the reply
    prompt, `REPLY` no longer forced empty, Claude final-message capture,
    console reply box and conversation view. The park state fix this line
    also named shipped separately as #1759 (with #1765 for the quick-task
    badge's own copy of the same bug). **Proof 1 outstanding.**
-2. **GitHub implicit replies** — **shipped** (#1773, plan
-   `…-2-github-replies.md`). An ordinary `OWNER`/`MEMBER` comment on a
+2. **GitHub implicit replies** — **shipped** (#1773). An ordinary `OWNER`/`MEMBER` comment on a
    parked anchor resumes the session, gated per repository by
    `AGENT_LCARS_IMPLICIT_REPLY_REPOS`, **declared empty**: the behavior is
    off until a maintainer sets it. The outcome comment carries
    `result.message`. **Enabling the allowlist and proof 2 outstanding.**
-3. **Codex continuity** — **shipped** (#1774, plan `…-3-codex.md`).
+3. **Codex continuity** — **shipped** (#1774).
    Rollout restore, `codex exec resume`, `-o` capture, and `codex` in
    `RESUMABLE_PIPELINES`. No `fleet-tools` adapter was added; the session
    page's note was narrowed instead. **Proof 3 outstanding.**
-4. **OpenCode continuity** — **shipped** (plan
-   `…-4-opencode.md`). Decision 3 was decided by the maintainer on
+4. **OpenCode continuity** — **shipped**. Decision 3 was decided by the maintainer on
    2026-09-04: archive the raw export, same treatment as Claude's and
    Codex's raw archives. `resumeGcsUri`, the raw-export capture and
    upload beside the sanitized artifact, `opencode import`, `--session`,

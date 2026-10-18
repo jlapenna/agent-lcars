@@ -73,9 +73,7 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   qualification remain separate gates.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state:
-  [failed-work audit, 2026-09-11](failed-work-audit-2026-09-11.md),
-  [scale-set Support evidence](scale-set-support-evidence.md) (#1716),
-  [setup-invariant audit](setup-invariant-audit.md) (#2033), and the
+  [scale-set Support evidence](scale-set-support-evidence.md) (#1716) and the
   [2026-10-09 worker-policy source evidence](worker-policy-source-evidence-2026-10-09.json)
   read through [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md).
   The smoke runbooks above also carry dated historical sections below their
