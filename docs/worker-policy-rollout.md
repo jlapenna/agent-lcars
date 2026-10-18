@@ -70,7 +70,13 @@ clock or hash. It claims `<runs>/run-<32-hex>` exclusively with `intent.json`. T
 SHA-256 of `lcars-run:v1:<run-id>` truncated to 32 hex characters: the canonical
 run id contains `:` and `/`, which a basename must never smuggle as a path
 separator. A repeated invocation against that root can only re-read
-`status.json`, never start a second entry. Inside the original provider clock
+a validated terminal outcome, never start a second entry. Reread requires an
+owned non-symlink directory and regular owned journals/completion objects,
+current provider/run/image identity, exact receipt/contract and input digests,
+the original admitted monotonic deadline, consistent phase/qualification/status
+records and the final inventory. Missing, malformed, stale or contradictory
+evidence refuses without adopting, overwriting or deleting the existing root.
+A validated failed run stays failed. Inside the original provider clock
 the detached child first verifies the approved Git HEAD, source hashes, and a
 clean committed checkout with Git status, covering transitive setup/install
 inputs without a separate path list. Any staged, modified, deleted, or
@@ -102,7 +108,16 @@ phase that reported its own exit leaves it `"confirmed"`. Unknown nested
 retirement is an evidence-retention statement, not operator retirement
 permission: every preserved file stays, and acceptance and cleanup stay the
 separate operator gate below.
-`status.json` is written last.
+Completion finalization creates an exclusive 0600 `.status.pending` and
+`index.json`, inventories both final inodes/UIDs/modes/byte sizes (mapping the
+pending inode to `status.json`), and fixes the index's own byte size within at
+most four serialization passes. The index binds status bytes and identity/
+completion journals with SHA-256. Its explicit `selfContentHash` exclusion
+applies only to `index.json` content, avoiding a circular self-hash; its final
+self metadata is still exact. After flushing the staged status and final index,
+an atomic rename publishes `status.json` last. Failure or interruption before
+publication retains incomplete evidence without a visible successful status;
+there is no retry, overwrite or cleanup of that root.
 
 `qualification.json` separates the local probe outcome from acceptance:
 `localProbePassed` reports the measured result, while

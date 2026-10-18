@@ -6,13 +6,17 @@ import { createHash } from 'node:crypto';
 import {
   closeSync,
   cpSync,
+  fsyncSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -553,27 +557,38 @@ export async function superviseInRunnerRun(
   });
   if (failures.length)
     throw new Error('Qualification allocation refused: ' + failures.join(', '));
-  const monotonicDeadline = admitProviderDeadline(receipt, actual.nowMs, clock);
   const output = resolve(outputPath);
+  // Validate new admission before claiming anything; a reread below uses only
+  // the stored deadline and never writes or transfers this fresh candidate.
+  const monotonicDeadline = admitProviderDeadline(receipt, actual.nowMs, clock);
   // A status re-read targets the same output; single-entry is enforced by
   // the exclusive run-root claim below.
   mkdirSync(output, { recursive: true });
   const { claimed, runRoot } = claimRunRoot(output, receipt.runId);
-  const status = readJson(join(runRoot, 'status.json'));
-  if (!claimed)
+  if (!claimed) {
+    const status = rereadCompletedRun(runRoot, {
+      provider,
+      receipt,
+      receiptPath: resolve(receiptPath),
+      contractPath: resolve(contractPath),
+      artifactHashes: deps.artifactHashes(source),
+      clock,
+    });
     return {
       claimed: false,
       runRoot,
-      exitCode: status?.exitCode ?? 1,
+      exitCode: status.exitCode,
       child: readJson(join(runRoot, 'child.json')),
       status,
     };
+  }
   const intent = {
     schema: 'lcars-in-runner-qualification-v1',
     provider,
     runId: receipt.runId,
     imageId: receipt.imageId,
     claimedAt: new Date().toISOString(),
+    admittedWallMs: actual.nowMs,
     monotonicDeadline,
     providerClock: {
       startedAt: receipt.startedAt,
@@ -929,6 +944,14 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
     stopped = error?.message ?? String(error);
     unknowns.push('partial-run: phases after the stop were never attempted');
   } finally {
+    if (localProbePassed) {
+      try {
+        remainingMs();
+      } catch (error) {
+        localProbePassed = false;
+        stopped = error.message;
+      }
+    }
     writeFileSync(
       join(runRoot, 'phases.json'),
       JSON.stringify({ intent, phases, externalChecks, stopped }, null, 2),
@@ -962,26 +985,276 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
         2,
       ),
     );
-    writeFileSync(
-      join(runRoot, 'index.json'),
-      JSON.stringify(
-        indexRoot(runRoot, {
-          retainedRoots,
-          nestedRetirement,
-        }),
-      ),
-    );
-    const exitCode = localProbePassed ? 0 : 1;
-    writeFileSync(
-      join(runRoot, 'status.json'),
-      JSON.stringify({
-        exitCode,
+    finalizeRun(
+      runRoot,
+      {
+        exitCode: localProbePassed ? 0 : 1,
         stopped,
         finishedAt: new Date().toISOString(),
-      }),
+        finishedClock: (deps.readMonotonicClock ?? readMonotonicClock)(),
+      },
+      { retainedRoots, nestedRetirement },
+      {
+        renameSync,
+        beforePublish: () => {
+          if (localProbePassed) remainingMs();
+        },
+      },
     );
   }
   return localProbePassed ? 0 : 1;
+}
+
+// index.json cannot hash itself. Its final metadata is nevertheless exact;
+// status and the identity/completion journals are content-bound by the index.
+const COMPLETION_HASH_PATHS = new Set([
+  'status.json',
+  'intent.json',
+  'receipt.json',
+  'contract.json',
+  'child.json',
+  'phases.json',
+  'qualification.json',
+  'expected.json',
+  'native.report.json',
+  'setup-negative.report.json',
+]);
+
+function ownedStat(path, directory = false) {
+  const stat = lstatSync(path);
+  if (
+    stat.uid !== process.getuid() ||
+    !(directory ? stat.isDirectory() : stat.isFile())
+  )
+    throw new Error('run-artifact-not-owned-regular: ' + path);
+  return stat;
+}
+
+// Status becomes visible only after the index has its final bytes and inode.
+// Rename preserves the staged status inode. Fixed-point sizing is bounded by
+// four passes (only the decimal digit count of the index size can change).
+export function finalizeRun(
+  runRoot,
+  status,
+  options = {},
+  io = { renameSync },
+) {
+  ownedStat(runRoot, true);
+  const pending = join(runRoot, '.status.pending');
+  const statusPath = join(runRoot, 'status.json');
+  try {
+    lstatSync(statusPath);
+    throw new Error('completion-already-exists');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const statusFd = openSync(pending, 'wx', 0o600);
+  try {
+    writeFileSync(statusFd, JSON.stringify(status));
+    fsyncSync(statusFd);
+  } finally {
+    closeSync(statusFd);
+  }
+  const indexPath = join(runRoot, 'index.json');
+  const fd = openSync(indexPath, 'wx', 0o600);
+  try {
+    const index = indexRoot(runRoot, options);
+    const pendingEntry = index.entries.find(
+      (e) => e.path === '.status.pending',
+    );
+    Object.assign(pendingEntry, {
+      path: 'status.json',
+      role: 'index',
+      sha256: hashFile(pending),
+    });
+    index.entries.sort((a, b) => a.path.localeCompare(b.path, 'en'));
+    index.selfContentHash = 'excluded:index.json';
+    const self = index.entries.find((e) => e.path === 'index.json');
+    let bytes;
+    let stable = false;
+    for (let pass = 0; pass < 4; pass++) {
+      bytes = Buffer.from(JSON.stringify(index));
+      if (self.size === bytes.length) {
+        stable = true;
+        break;
+      }
+      self.size = bytes.length;
+    }
+    if (!stable) throw new Error('completion-index-size-unstable');
+    // Do not replace index.json: its recorded inode must remain the final one.
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = writeSync(
+        fd,
+        bytes,
+        offset,
+        bytes.length - offset,
+        offset,
+      );
+      if (written <= 0) throw new Error('completion-index-write-stalled');
+      offset += written;
+    }
+    ftruncateSync(fd, bytes.length);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  // Any failure before this point retains an incomplete root with no status.
+  io.beforePublish?.();
+  io.renameSync(pending, statusPath);
+}
+
+function rereadCompletedRun(runRoot, expected) {
+  const refuse = () => {
+    throw new Error('existing-run-unverified-or-incomplete');
+  };
+  try {
+    ownedStat(runRoot, true);
+    const names = [
+      'intent.json',
+      'receipt.json',
+      'contract.json',
+      'child.json',
+      'phases.json',
+      'qualification.json',
+      'index.json',
+      'status.json',
+    ];
+    for (const name of names) ownedStat(join(runRoot, name));
+    const read = (name) => readJson(join(runRoot, name + '.json'));
+    const intent = read('intent');
+    const journal = read('phases');
+    const qualification = read('qualification');
+    const index = read('index');
+    const status = read('status');
+    const child = read('child');
+    const same = (a, b) =>
+      JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
+    if (
+      !intent ||
+      !journal ||
+      !qualification ||
+      !index ||
+      !status ||
+      !Number.isSafeInteger(child?.pid) ||
+      child.pid <= 0 ||
+      !/^[0-9]+$/.test(child.birth?.procStarttime ?? '') ||
+      typeof child.entryScript !== 'string' ||
+      !child.entryScript.startsWith('/') ||
+      !Number.isFinite(Date.parse(child.startedAt)) ||
+      intent.schema !== 'lcars-in-runner-qualification-v1' ||
+      intent.provider !== expected.provider ||
+      intent.runId !== expected.receipt.runId ||
+      intent.imageId !== expected.receipt.imageId ||
+      intent.receiptSha !== hashFile(expected.receiptPath) ||
+      intent.contractSha !== hashFile(expected.contractPath) ||
+      hashFile(join(runRoot, 'receipt.json')) !== intent.receiptSha ||
+      hashFile(join(runRoot, 'contract.json')) !== intent.contractSha ||
+      !same(intent.artifactHashes, expected.artifactHashes) ||
+      !same(intent.providerClock, {
+        startedAt: expected.receipt.startedAt,
+        expiresAt: expected.receipt.expiresAt,
+      }) ||
+      !same(journal.intent, intent)
+    )
+      refuse();
+    // Validate the stored deadline without admitting a replacement or requiring
+    // a completed run to be still live. It must belong to this boot and past.
+    const deadline = intent.monotonicDeadline;
+    if (
+      !validClock(expected.clock) ||
+      deadline?.bootId !== expected.clock.bootId ||
+      !Number.isFinite(deadline?.admittedAtMs) ||
+      deadline.admittedAtMs < 0 ||
+      deadline.admittedAtMs > expected.clock.nowMs ||
+      !Number.isFinite(deadline?.deadlineMs) ||
+      deadline.deadlineMs <= deadline.admittedAtMs ||
+      !Number.isFinite(intent.admittedWallMs) ||
+      intent.admittedWallMs < Date.parse(expected.receipt.startedAt) ||
+      intent.admittedWallMs >= Date.parse(expected.receipt.expiresAt) ||
+      deadline.deadlineMs !==
+        deadline.admittedAtMs +
+          (Date.parse(expected.receipt.expiresAt) - intent.admittedWallMs)
+    )
+      refuse();
+    if (
+      ![0, 1].includes(status.exitCode) ||
+      !Number.isFinite(Date.parse(status.finishedAt)) ||
+      qualification.schema !== intent.schema ||
+      qualification.localProbePassed !== (status.exitCode === 0) ||
+      status.stopped !== qualification.stopped ||
+      status.stopped !== journal.stopped ||
+      !same(qualification.provenance, {
+        provider: intent.provider,
+        imageId: intent.imageId,
+        receiptSha: intent.receiptSha,
+        contractSha: intent.contractSha,
+        providerClock: intent.providerClock,
+        expected: read('expected'),
+      }) ||
+      [
+        'durableCollectionComplete',
+        'qualificationAccepted',
+        'cleanupAuthorized',
+        'graduated',
+        'activationAuthorized',
+      ].some((key) => qualification[key] !== false) ||
+      !Array.isArray(journal.phases) ||
+      !Array.isArray(journal.externalChecks) ||
+      !Array.isArray(qualification.unknowns) ||
+      !Array.isArray(index.entries) ||
+      index.root !== runRoot ||
+      index.selfContentHash !== 'excluded:index.json'
+    )
+      refuse();
+    if (status.exitCode === 0) {
+      remainingProviderMs(deadline, status.finishedClock);
+      for (const name of [
+        'expected.json',
+        'native.report.json',
+        'setup-negative.report.json',
+      ])
+        ownedStat(join(runRoot, name));
+    }
+    if (
+      status.exitCode === 0 &&
+      (status.stopped !== null ||
+        qualification.offlineEvaluation?.offlinePassed !== true ||
+        qualification.nestedRetirement !== 'confirmed' ||
+        !same(
+          journal.phases.map((p) => p.phase),
+          ['setup', 'version', 'native', 'setup-negative', 'failure-consumer'],
+        ) ||
+        journal.phases.some(
+          (p) =>
+            p.exitCode !== 0 ||
+            p.timedOut ||
+            p.spawnError ||
+            p.recording?.error,
+        ))
+    )
+      refuse();
+    if (status.exitCode === 1 && typeof status.stopped !== 'string') refuse();
+    const actual = indexRoot(runRoot, {
+      nestedRetirement: index.nestedRetirement,
+    });
+    // Compare all filesystem metadata and bound journal/status content. Symlink
+    // retention labels remain evidence, not permission to follow their targets.
+    const comparable = (entries) =>
+      entries
+        .map(({ retained, ...entry }) => entry)
+        .sort((a, b) => a.path.localeCompare(b.path, 'en'));
+    if (
+      !same(comparable(index.entries), comparable(actual.entries)) ||
+      index.nestedRetirement !== qualification.nestedRetirement
+    )
+      refuse();
+    return status;
+  } catch (error) {
+    throw new Error('existing-run-unverified-or-incomplete: ' + error.message, {
+      cause: error,
+    });
+  }
 }
 
 // Every run-root entry by role with dev/ino/UID; external symlink targets are
@@ -1034,6 +1307,9 @@ export function indexRoot(
         uid: stat.uid,
         mode: stat.mode & 0o777,
         size: stat.size,
+        ...(stat.isFile() && COMPLETION_HASH_PATHS.has(rel)
+          ? { sha256: hashFile(path) }
+          : {}),
       });
       if (stat.isDirectory()) walk(path);
     }

@@ -7,11 +7,15 @@ import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   closeSync,
+  cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -36,12 +40,14 @@ import {
   defaultCollectBakedInputs,
   dirtyOwningInputFailures,
   executeInRunnerPhases,
+  finalizeRun,
   hashFile,
   hostScenarioArgs,
   hostVersionArgs,
   indexRoot,
   PHASE_STREAM_MAX_BYTES,
   readMonotonicClock,
+  runRootBasename,
   sourceDriftFailures,
   superviseInRunnerRun,
 } from './qualify-worker-image.mjs';
@@ -325,22 +331,24 @@ test('the exclusive run-root claim is deterministic and single-entry', async () 
     join(first.runRoot, 'status.json'),
     JSON.stringify({ exitCode: 1 }),
   );
-  const rerun = await superviseInRunnerRun(
-    { provider: 'codex', receiptPath, contractPath, outputPath: output },
-    deps,
+  await assert.rejects(
+    superviseInRunnerRun(
+      { provider: 'codex', receiptPath, contractPath, outputPath: output },
+      deps,
+    ),
+    /existing-run-unverified-or-incomplete/,
   );
-  assert.equal(rerun.claimed, false);
-  assert.equal(rerun.exitCode, 1);
   assert.equal(spawns.length, 1);
-  // Transport ambiguity: a claimed run with no status still never respawns.
+  // Transport ambiguity: a claimed run with no status is a refusal, not a
+  // terminal failure journal or permission to respawn.
   rmSync(join(first.runRoot, 'status.json'));
-  const ambiguous = await superviseInRunnerRun(
-    { provider: 'codex', receiptPath, contractPath, outputPath: output },
-    deps,
+  await assert.rejects(
+    superviseInRunnerRun(
+      { provider: 'codex', receiptPath, contractPath, outputPath: output },
+      deps,
+    ),
+    /existing-run-unverified-or-incomplete/,
   );
-  assert.equal(ambiguous.claimed, false);
-  assert.equal(ambiguous.exitCode, 1);
-  assert.equal(ambiguous.status, null);
   assert.equal(spawns.length, 1);
 });
 
@@ -1485,4 +1493,383 @@ test('elapsed monotonic budget stops later phases and cannot become a late succe
     assert.equal(qualification.localProbePassed, false);
     assert.equal(qualification.cleanupAuthorized, false);
   }
+});
+
+// Drive the real supervisor claim, child journal and finalizer over real files.
+// Only provider phase execution/evaluation is synthetic; no qualification runs.
+async function completedRun({ failure = false } = {}) {
+  const root = ownedScratch();
+  const { receipt, contract } = syntheticAllocation();
+  const receiptPath = join(root, 'receipt.json');
+  const contractPath = join(root, 'contract.json');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  writeFileSync(contractPath, JSON.stringify(contract));
+  const spawns = [];
+  const deps = supervisorDeps(spawns);
+  deps.spawnChild = (path) => {
+    spawns.push(path);
+    return {
+      pid: 4242,
+      birth: { procStarttime: '12345' },
+      wait: async () => ({
+        code: await executeInRunnerPhases(
+          path,
+          phaseDeps(
+            failure ? { native: 'fixtures-then-garbage', runRoot: path } : {},
+          ),
+        ),
+      }),
+    };
+  };
+  const args = {
+    provider: 'codex',
+    receiptPath,
+    contractPath,
+    outputPath: join(root, 'out'),
+  };
+  const result = await superviseInRunnerRun(args, deps);
+  assert.equal(result.exitCode, failure ? 1 : 0);
+  return {
+    root,
+    args,
+    deps,
+    spawns,
+    runRoot: result.runRoot,
+    receipt,
+    contract,
+  };
+}
+
+for (const failure of [false, true]) {
+  test(`matching completed ${failure ? 'failed' : 'passing'} run rereads without another child or deadline renewal`, async () => {
+    const run = await completedRun({ failure });
+    const intent = readFileSync(join(run.runRoot, 'intent.json'));
+    const result = await superviseInRunnerRun(run.args, run.deps);
+    assert.equal(result.claimed, false);
+    assert.equal(result.exitCode, failure ? 1 : 0);
+    assert.equal(run.spawns.length, 1);
+    assert.deepEqual(readFileSync(join(run.runRoot, 'intent.json')), intent);
+  });
+}
+
+// A rejected reread must not modify, adopt or clean the original evidence.
+function snapshot(root) {
+  const entries = [];
+  function walk(path) {
+    for (const name of readdirSync(path).sort()) {
+      const file = join(path, name);
+      const stat = lstatSync(file);
+      entries.push([
+        file,
+        stat.ino,
+        stat.uid,
+        stat.mode,
+        stat.size,
+        stat.isFile() ? readFileSync(file).toString('base64') : null,
+      ]);
+      if (stat.isDirectory()) walk(file);
+    }
+  }
+  walk(root);
+  return entries;
+}
+
+const editJson = (path, change) => {
+  const value = JSON.parse(readFileSync(path));
+  change(value);
+  writeFileSync(path, JSON.stringify(value));
+};
+
+const rereadMutations = {
+  'current provider drift': (r) => {
+    r.args.provider = 'claude';
+    editJson(r.args.receiptPath, (o) => {
+      o.provider = 'claude';
+    });
+    editJson(r.args.contractPath, (o) => {
+      o.provider = 'claude';
+    });
+  },
+  'stored run identity drift': (r) =>
+    editJson(join(r.runRoot, 'intent.json'), (o) => {
+      o.runId += 'other';
+    }),
+  'current actual run drift': (r) => {
+    const facts = r.deps.readRunFacts;
+    r.deps.readRunFacts = () => ({
+      ...facts(),
+      runId: canonicalRunId() + 'other',
+    });
+  },
+  'current immutable image drift': (r) => {
+    editJson(r.args.receiptPath, (o) => {
+      o.imageId = 'sha256:' + 'f'.repeat(64);
+    });
+    editJson(r.args.contractPath, (o) => {
+      o.imageId = 'sha256:' + 'f'.repeat(64);
+    });
+  },
+  'current allocation receipt drift': (r) =>
+    editJson(r.args.receiptPath, (o) => {
+      o.allocation = 'different';
+    }),
+  'current source contract drift': (r) =>
+    editJson(r.args.contractPath, (o) => {
+      o.sourceCommit = 'f'.repeat(40);
+    }),
+  'current contract baked input drift': (r) =>
+    editJson(r.args.contractPath, (o) => {
+      o.bakedHashes[Object.keys(o.bakedHashes)[0]] = 'f'.repeat(64);
+    }),
+  'current harness input drift': (r) => {
+    const hashes = r.deps.artifactHashes(repoSource);
+    r.deps.artifactHashes = () => ({
+      ...hashes,
+      probeHashes: { ...hashes.probeHashes, unexpected: 'f'.repeat(64) },
+    });
+  },
+  'copied receipt mismatch': (r) =>
+    editJson(join(r.runRoot, 'receipt.json'), (o) => {
+      o.allocation = 'different';
+    }),
+  'symlinked journal': (r) => {
+    const original = join(r.runRoot, 'intent.json');
+    renameSync(original, join(r.root, 'foreign-intent.json'));
+    symlinkSync(join(r.root, 'foreign-intent.json'), original);
+  },
+  'symlinked completion': (r) => {
+    const original = join(r.runRoot, 'status.json');
+    renameSync(original, join(r.root, 'foreign-status.json'));
+    symlinkSync(join(r.root, 'foreign-status.json'), original);
+  },
+  'malformed journal': (r) =>
+    writeFileSync(join(r.runRoot, 'phases.json'), '{'),
+  'missing journal': (r) => rmSync(join(r.runRoot, 'phases.json')),
+  'unfinished journal with status zero': (r) =>
+    editJson(join(r.runRoot, 'phases.json'), (o) => {
+      o.phases.pop();
+    }),
+  'failed journal with status zero': (r) =>
+    editJson(join(r.runRoot, 'phases.json'), (o) => {
+      o.phases[0].exitCode = 1;
+    }),
+  'contradictory qualification': (r) =>
+    editJson(join(r.runRoot, 'qualification.json'), (o) => {
+      o.localProbePassed = false;
+    }),
+  'malformed terminal status': (r) =>
+    writeFileSync(join(r.runRoot, 'status.json'), '{'),
+  'missing terminal status': (r) => rmSync(join(r.runRoot, 'status.json')),
+  'status byte drift at identical length': (r) => {
+    const file = join(r.runRoot, 'status.json');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace('exitCode":0', 'exitCode":1'),
+    );
+  },
+  'index identity mismatch': (r) =>
+    editJson(join(r.runRoot, 'index.json'), (o) => {
+      o.entries.find((e) => e.path === 'status.json').ino++;
+    }),
+  'symlinked existing run root': (r) => {
+    const foreign = join(r.root, 'foreign-root');
+    renameSync(r.runRoot, foreign);
+    symlinkSync(foreign, r.runRoot);
+  },
+};
+for (const [name, mutate] of Object.entries(rereadMutations)) {
+  test(`completed reread refuses ${name} and preserves evidence without spawning`, async () => {
+    const r = await completedRun();
+    mutate(r);
+    const before = snapshot(r.root);
+    await assert.rejects(
+      superviseInRunnerRun(r.args, r.deps),
+      /refused|existing-run-unverified/,
+    );
+    assert.equal(r.spawns.length, 1);
+    assert.deepEqual(snapshot(r.root), before);
+  });
+}
+
+test('status-zero-only precreated root cannot be adopted', async () => {
+  const root = ownedScratch();
+  const { receipt, contract } = syntheticAllocation();
+  const receiptPath = join(root, 'receipt.json');
+  const contractPath = join(root, 'contract.json');
+  writeFileSync(receiptPath, JSON.stringify(receipt));
+  writeFileSync(contractPath, JSON.stringify(contract));
+  const outputPath = join(root, 'out');
+  mkdirSync(outputPath);
+  const runRoot = join(outputPath, runRootBasename(receipt.runId));
+  mkdirSync(runRoot);
+  writeFileSync(join(runRoot, 'status.json'), '{"exitCode":0}');
+  const before = snapshot(root);
+  const spawns = [];
+  await assert.rejects(
+    superviseInRunnerRun(
+      { provider: 'codex', receiptPath, contractPath, outputPath },
+      supervisorDeps(spawns),
+    ),
+    /existing-run-unverified/,
+  );
+  assert.equal(spawns.length, 0);
+  assert.deepEqual(snapshot(root), before);
+});
+
+test('a real directory owned by another caller UID refuses completed reuse', async (t) => {
+  const r = await completedRun();
+  const uid = lstatSync(r.runRoot).uid;
+  // Simulate the caller identity only; the filesystem metadata remains real.
+  // No privileged chown or skipped ownership test is required on UID 1001 CI.
+  t.mock.method(process, 'getuid', () => uid + 1);
+  await assert.rejects(
+    superviseInRunnerRun(r.args, r.deps),
+    /run-artifact-not-owned-regular/,
+  );
+  assert.equal(r.spawns.length, 1);
+});
+
+test('final completion inventory matches both real finalized objects and status bytes', async () => {
+  const r = await completedRun();
+  const index = JSON.parse(readFileSync(join(r.runRoot, 'index.json')));
+  const actual = indexRoot(r.runRoot);
+  assert.deepEqual(
+    index.entries,
+    actual.entries.sort((a, b) => a.path.localeCompare(b.path, 'en')),
+  );
+  for (const name of ['index.json', 'status.json']) {
+    const entry = index.entries.find((e) => e.path === name);
+    const stat = lstatSync(join(r.runRoot, name));
+    assert.deepEqual(
+      [entry.ino, entry.uid, entry.mode, entry.size],
+      [stat.ino, stat.uid, stat.mode & 0o777, stat.size],
+    );
+  }
+  assert.equal(
+    index.entries.find((e) => e.path === 'status.json').sha256,
+    hashFile(join(r.runRoot, 'status.json')),
+  );
+  assert.equal(index.selfContentHash, 'excluded:index.json');
+  assert.equal(
+    index.entries.find((e) => e.path === 'index.json').sha256,
+    undefined,
+  );
+  for (const name of [
+    'intent.json',
+    'child.json',
+    'receipt.json',
+    'contract.json',
+    'phases.json',
+    'qualification.json',
+    'expected.json',
+    'native.report.json',
+    'setup-negative.report.json',
+    'logs/setup.stdout.bin',
+  ]) {
+    assert.ok(
+      index.entries.some((e) => e.path === name),
+      name,
+    );
+  }
+  assert.equal(existsSync(join(r.runRoot, '.status.pending')), false);
+});
+
+test('interrupted finalization preserves staged evidence without publishing status success', () => {
+  const root = ownedScratch();
+  writeFileSync(join(root, 'raw-evidence'), 'keep');
+  assert.throws(
+    () =>
+      finalizeRun(
+        root,
+        { exitCode: 0 },
+        {},
+        {
+          renameSync: () => {
+            throw new Error('forced-publish-interruption');
+          },
+        },
+      ),
+    /forced-publish-interruption/,
+  );
+  assert.equal(existsSync(join(root, 'status.json')), false);
+  assert.equal(readFileSync(join(root, 'raw-evidence'), 'utf8'), 'keep');
+  assert.ok(existsSync(join(root, '.status.pending')));
+  assert.ok(existsSync(join(root, 'index.json')));
+  assert.throws(() => finalizeRun(root, { exitCode: 0 }), /EEXIST/);
+  assert.equal(existsSync(join(root, 'status.json')), false);
+});
+
+test('preexisting completion object refuses finalization without overwriting it', () => {
+  const root = ownedScratch();
+  const foreign = join(ownedScratch(), 'foreign');
+  writeFileSync(foreign, 'preserve');
+  symlinkSync(foreign, join(root, 'index.json'));
+  assert.throws(() => finalizeRun(root, { exitCode: 0 }), /EEXIST/);
+  assert.equal(readFileSync(foreign, 'utf8'), 'preserve');
+  assert.equal(existsSync(join(root, 'status.json')), false);
+});
+
+test('a deadline refusal at final publication leaves the finalized inventory incomplete', () => {
+  const root = ownedScratch();
+  writeFileSync(join(root, 'raw-evidence'), 'keep');
+  assert.throws(
+    () =>
+      finalizeRun(
+        root,
+        { exitCode: 0 },
+        {},
+        {
+          renameSync,
+          beforePublish: () => {
+            throw new Error('provider-clock-expired');
+          },
+        },
+      ),
+    /provider-clock-expired/,
+  );
+  assert.equal(existsSync(join(root, 'status.json')), false);
+  assert.equal(readFileSync(join(root, 'raw-evidence'), 'utf8'), 'keep');
+  assert.ok(existsSync(join(root, 'index.json')));
+  assert.ok(existsSync(join(root, '.status.pending')));
+});
+
+for (const defect of ['unfinished', 'failed']) {
+  test(`even a freshly inventoried ${defect} phase journal cannot become success`, async () => {
+    const r = await completedRun();
+    editJson(join(r.runRoot, 'phases.json'), (journal) => {
+      if (defect === 'unfinished') journal.phases.pop();
+      else journal.phases[0].exitCode = 1;
+    });
+    const status = JSON.parse(readFileSync(join(r.runRoot, 'status.json')));
+    rmSync(join(r.runRoot, 'status.json'));
+    rmSync(join(r.runRoot, 'index.json'));
+    finalizeRun(r.runRoot, status);
+    const before = snapshot(r.root);
+    await assert.rejects(
+      superviseInRunnerRun(r.args, r.deps),
+      /existing-run-unverified/,
+    );
+    assert.equal(r.spawns.length, 1);
+    assert.deepEqual(snapshot(r.root), before);
+  });
+}
+
+test('a different currently admitted run cannot adopt a copied completed root', async () => {
+  const r = await completedRun();
+  const runId = canonicalRunId().replace('/r2', '/r3');
+  assert.notEqual(runId, r.receipt.runId);
+  editJson(r.args.receiptPath, (receipt) => {
+    receipt.runId = runId;
+  });
+  const facts = r.deps.readRunFacts;
+  r.deps.readRunFacts = () => ({ ...facts(), runId });
+  const copied = join(r.args.outputPath, runRootBasename(runId));
+  cpSync(r.runRoot, copied, { recursive: true });
+  const before = snapshot(r.root);
+  await assert.rejects(
+    superviseInRunnerRun(r.args, r.deps),
+    /existing-run-unverified/,
+  );
+  assert.equal(r.spawns.length, 1);
+  assert.deepEqual(snapshot(r.root), before);
 });
