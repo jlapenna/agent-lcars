@@ -6,6 +6,19 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Runner image Go toolchain; must equal apps/runner-autoscaler/go.mod's go directive (toolchain-health.test.sh)",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/"
+      ],
+      "matchStrings": ["ARG GO_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version",
+      "versioningTemplate": "semver"
+    }
+  ],
   "packageRules": [
     {
       "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
@@ -54,6 +67,19 @@
       "matchPackageNames": ["mcr.microsoft.com/playwright"],
       "matchUpdateTypes": ["digest"],
       "minimumGroupSize": 1
+    },
+    {
+      "description": "The runner image's Go toolchain (ARG GO_VERSION) and apps/runner-autoscaler/go.mod's go directive move together: runner-image/toolchain-health.test.sh fails CI when they differ. The dockerfile manager resolves golang:${GO_VERSION}-bookworm through the ARG and keeps proposing a -bookworm tag, but its replace string never occurs in the file, so every grouped PR (#2907, #2917, #2920) listed the bump without changing the Dockerfile and the dashboard kept it pending. Read the ARG through the customManagers entry instead, and let the go directive bump (go-mod-directive versioning treats it as a range, so without rangeStrategy bump it is never proposed), so both land in one grouped PR.",
+      "matchFileNames": ["apps/runner-autoscaler/runner-image/Dockerfile"],
+      "matchManagers": ["dockerfile"],
+      "matchDepNames": ["golang"],
+      "enabled": false
+    },
+    {
+      "description": "Bump apps/runner-autoscaler/go.mod's go directive together with the runner image's ARG GO_VERSION (see the rule above).",
+      "matchFileNames": ["apps/runner-autoscaler/go.mod"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
     }
   ],
   "vulnerabilityAlerts": {
