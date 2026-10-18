@@ -76,6 +76,28 @@ test.describe('Inbox phone measurement artifact', () => {
         for (const value of Object.values(sample.mainThreadMs)) {
           expect(value).toBeGreaterThanOrEqual(0);
         }
+        for (const value of [
+          sample.fetchStartMs,
+          sample.connectStartMs,
+          sample.secureConnectionStartMs,
+          sample.connectEndMs,
+          sample.requestStartMs,
+          sample.documentDecodedBytes,
+        ])
+          expect(Number.isFinite(value) && value >= 0).toBe(true);
+        expect(typeof sample.nextHopProtocol).toBe('string');
+        for (const entry of sample.resources) {
+          for (const value of [
+            entry.fetchStartMs,
+            entry.connectStartMs,
+            entry.secureConnectionStartMs,
+            entry.connectEndMs,
+            entry.requestStartMs,
+            entry.decodedBytes,
+          ])
+            expect(Number.isFinite(value) && value >= 0).toBe(true);
+          expect(typeof entry.nextHopProtocol).toBe('string');
+        }
       }
     } catch (error) {
       primaryFailure = error;
