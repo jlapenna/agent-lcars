@@ -35,6 +35,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,9 +45,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -176,11 +181,13 @@ func (a *receiptFault) requireFinished(t *testing.T, status int) {
 }
 
 type receiptFaultTransport struct {
-	base        http.RoundTripper
-	mu          sync.Mutex
-	armed       []*receiptFault
-	onCreated   func(*batch.Job) error
-	lastJobRead *batch.Job
+	base          http.RoundTripper
+	mu            sync.Mutex
+	armed         []*receiptFault
+	onCreated     func(*batch.Job) error
+	lastJobRead   *batch.Job
+	beforeRequest func(*http.Request) (*http.Request, error)
+	afterResponse func(*http.Request, *http.Response) (*http.Response, error)
 }
 
 func (f *receiptFaultTransport) reset() {
@@ -259,6 +266,13 @@ func (f *receiptFaultTransport) observedJobRead(t *testing.T, namespace, name st
 }
 
 func (f *receiptFaultTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if f.beforeRequest != nil {
+		var err error
+		req, err = f.beforeRequest(req)
+		if err != nil {
+			return nil, err
+		}
+	}
 	fault := f.take(req)
 	if fault != nil {
 		close(fault.entered)
@@ -314,6 +328,12 @@ func (f *receiptFaultTransport) RoundTrip(req *http.Request) (*http.Response, er
 		f.mu.Lock()
 		f.lastJobRead = observed.DeepCopy()
 		f.mu.Unlock()
+	}
+	if f.afterResponse != nil {
+		resp, err = f.afterResponse(req, resp)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if fault == nil || !fault.lose || resp.StatusCode != http.StatusCreated {
 		return resp, nil // Held late Create must receive the real AlreadyExists.
@@ -651,7 +671,12 @@ func (o *receiptOwnership) cleanupObjects(ctx context.Context) bool {
 			ok = false
 			continue
 		}
-		preconditions := meta.Preconditions{UID: &uid}
+		if current.ResourceVersion == "" {
+			o.t.Errorf("owned Secret has no observed resourceVersion: %s", name)
+			ok = false
+			continue
+		}
+		preconditions := meta.Preconditions{UID: &uid, ResourceVersion: &current.ResourceVersion}
 		if err := o.q.client.CoreV1().Secrets(o.rt.namespace).Delete(ctx, name, meta.DeleteOptions{Preconditions: &preconditions}); err != nil && !apierrors.IsNotFound(err) {
 			o.t.Errorf("cleanup delete refused for owned Secret %s uid=%s; retaining it: %v", name, uid, err)
 			ok = false
@@ -698,6 +723,12 @@ func (o *receiptOwnership) cleanupObjects(ctx context.Context) bool {
 // only. Every qualification is re-read under the shared logical deadline
 // before writes; independent cleanup covers ordinary test failures only.
 func receiptFenceQueue(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime) (*kubernetesQueue, *receiptWorkAPI, *receiptFaultTransport, *receiptOwnership) {
+	return receiptFenceQueueEndpoint(ctx, t, rt, "", "", true)
+}
+
+// Only the subprocess family supplies an already-owned parent loopback endpoint.
+// Child cleanup is parent-owned because SIGKILL cannot run t.Cleanup.
+func receiptFenceQueueEndpoint(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, endpoint, invocation string, cleanup bool) (*kubernetesQueue, *receiptWorkAPI, *receiptFaultTransport, *receiptOwnership) {
 	t.Helper()
 	faults := &receiptFaultTransport{}
 	// An omitted namespace in an existing context must not synthesize default.
@@ -800,7 +831,12 @@ func receiptFenceQueue(ctx context.Context, t *testing.T, rt receiptKubernetesRu
 		t.Fatal("qualified node selector has no existing Ready schedulable node without untolerated hard taints")
 	}
 
-	api := newReceiptWorkAPI(t, rt.namespace)
+	var api *receiptWorkAPI
+	if endpoint == "" {
+		api = newReceiptWorkAPI(t, rt.namespace)
+	} else {
+		api = &receiptWorkAPI{server: &httptest.Server{URL: endpoint}}
+	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	pool := receiptFencePool
 	q := &kubernetesQueue{
@@ -815,17 +851,22 @@ func receiptFenceQueue(ctx context.Context, t *testing.T, rt receiptKubernetesRu
 		verifyRun: func(context.Context, string, string) error { return nil },
 	}
 	idToken := func() (string, error) { return receiptFixtureSubject, nil }
-	q.capacity = &queueCapacityClient{config: pool, namespace: rt.namespace, maxConcurrent: 2, consoleURL: api.server.URL, idToken: idToken, producerID: newCapacityIdentity(), registered: true}
+	q.capacity = &queueCapacityClient{config: pool, namespace: rt.namespace, maxConcurrent: 2, consoleURL: api.server.URL, idToken: idToken, producerID: newCapacityIdentity(), registered: endpoint == ""}
 	q.exits = newRunExitReporter(api.server.URL, receiptFixtureRunner, idToken, logger)
 	q.claimSettled = queueClaimStatus(api.server.URL, idToken)
 
-	var invocation [16]byte
-	if _, err := rand.Read(invocation[:]); err != nil {
-		t.Fatalf("creating a fresh suite identity: %v", err)
+	if invocation == "" {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			t.Fatal(err)
+		}
+		invocation = fmt.Sprintf("%x", nonce)
 	}
-	own := &receiptOwnership{t: t, rt: rt, q: q, jobs: map[string]types.UID{}, secrets: map[string]types.UID{}, invocation: fmt.Sprintf("%x", invocation)}
+	own := &receiptOwnership{t: t, rt: rt, q: q, jobs: map[string]types.UID{}, secrets: map[string]types.UID{}, invocation: invocation}
 	faults.onCreated = own.recordCreated
-	t.Cleanup(own.cleanup)
+	if cleanup {
+		t.Cleanup(own.cleanup)
+	}
 	return q, api, faults, own
 }
 
@@ -929,7 +970,8 @@ func receiptFenceWorker(r capacityReceipt, pod core.Pod, generation int, active 
 	return c
 }
 
-// Both families share180s logical time and one independent 120s cleanup.
+// All families, including actual controller death/restart, share180s logical
+// time and one independent120s cleanup. No process/case resets either clock.
 // Run with an outer go test -timeout420s; that is slack, not an extended proof.
 func TestReceiptKubernetes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
@@ -946,9 +988,13 @@ func TestReceiptKubernetes(t *testing.T) {
 	if !own.cleanupObjects(ctx) {
 		return
 	}
-	t.Run("RestoredCodexRetirement", func(t *testing.T) {
-		receiptKubernetesRestoredCodexRetirement(ctx, t, q, api, faults, own)
-	})
+	if !t.Run("RestoredCodexRetirement", func(t *testing.T) { receiptKubernetesRestoredCodexRetirement(ctx, t, q, api, faults, own) }) {
+		return
+	}
+	if !own.cleanupObjects(ctx) {
+		return
+	}
+	t.Run("ControllerProcessDeath", func(t *testing.T) { receiptKubernetesProcessDeath(ctx, t, rt, q, own) })
 }
 
 func receiptKubernetesWriteFences(ctx context.Context, t *testing.T, q *kubernetesQueue, api *receiptWorkAPI, faults *receiptFaultTransport, own *receiptOwnership) {
@@ -1446,6 +1492,1102 @@ func receiptKubernetesRestoredCodexRetirement(ctx context.Context, t *testing.T,
 	for _, p := range receiptFenceOwnedPods(ctx, t, q, final) {
 		if p.Status.Phase != core.PodSucceeded && p.Status.Phase != core.PodFailed {
 			t.Fatalf("release left a %s Pod running", p.Status.Phase)
+		}
+	}
+}
+
+// Process-death coverage uses THIS executable, a surviving parent Work API and
+// actual authenticated Kubernetes responses. Only this family modifies outgoing
+// fixture Jobs: Command/Args and activeDeadlineSeconds. It never starts a provider.
+const receiptDeathChildEnv = "LCARS_RECEIPT_K8S_PROCESS_CHILD"
+const receiptDeathFrameLimit = 64 << 10
+const receiptDeathSubject = receiptFixtureSubject
+
+type receiptDeathConfig struct {
+	Invocation   string    `json:"invocation"`
+	RunID        string    `json:"runId"`
+	NamespaceUID string    `json:"namespaceUID"`
+	API          string    `json:"api"`
+	Checkpoint   string    `json:"checkpoint"`
+	Successor    bool      `json:"successor"`
+	Deadline     time.Time `json:"deadline"`
+}
+type receiptDeathFrame struct {
+	Kind       string           `json:"kind"`
+	Status     int              `json:"status,omitempty"`
+	Namespace  string           `json:"namespace,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	UID        types.UID        `json:"uid,omitempty"`
+	RV         string           `json:"rv,omitempty"`
+	RunID      string           `json:"runId"`
+	Producer   string           `json:"producer"`
+	JobUID     types.UID        `json:"jobUID,omitempty"`
+	Immutable  bool             `json:"immutable,omitempty"`
+	TokenHash  string           `json:"tokenHash,omitempty"`
+	Suspend    bool             `json:"suspend,omitempty"`
+	Generation int64            `json:"generation,omitempty"`
+	Checkpoint bool             `json:"checkpoint,omitempty"`
+	Outcome    queuePollOutcome `json:"outcome,omitempty"`
+	Error      string           `json:"error,omitempty"`
+}
+
+// LimitReader bounds allocation BEFORE JSON parsing, including a missing newline.
+// Each physical pipe record is newline delimited and bounded; no raw Secret data.
+func receiptDeathReadFrame(r io.Reader) (receiptDeathFrame, error) {
+	var f receiptDeathFrame
+	var b []byte
+	one := make([]byte, 1)
+	for len(b) <= receiptDeathFrameLimit {
+		n, err := r.Read(one)
+		if n == 1 {
+			if one[0] == '\n' {
+				if len(b) == 0 {
+					return f, fmt.Errorf("empty frame")
+				}
+				if err := json.Unmarshal(b, &f); err != nil {
+					return f, err
+				}
+				return f, nil
+			}
+			b = append(b, one[0])
+		}
+		if err != nil {
+			if err == io.EOF && len(b) == 0 {
+				return f, io.EOF
+			}
+			return f, fmt.Errorf("truncated frame: %w", err)
+		}
+	}
+	return f, fmt.Errorf("frame exceeds %d bytes", receiptDeathFrameLimit)
+}
+func receiptDeathWrite(w io.Writer, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if len(b) > receiptDeathFrameLimit {
+		return fmt.Errorf("oversized IPC frame")
+	}
+	b = append(b, '\n')
+	n, err := w.Write(b)
+	if err == nil && n != len(b) {
+		err = io.ErrShortWrite
+	}
+	return err
+}
+func receiptDeathTokenHash() string {
+	h := sha256.Sum256([]byte(receiptFixtureToken))
+	return hex.EncodeToString(h[:])
+}
+func receiptDeathKilled(ps *os.ProcessState) bool {
+	if ps == nil {
+		return false
+	}
+	w, ok := ps.Sys().(syscall.WaitStatus)
+	return ok && w.Signaled() && w.Signal() == syscall.SIGKILL
+}
+
+type receiptDeathOutput struct {
+	mu       sync.Mutex
+	b        []byte
+	overflow bool
+}
+
+func (w *receiptDeathOutput) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := len(p)
+	remaining := (1 << 20) - len(w.b)
+	if len(p) > remaining {
+		p = p[:remaining]
+		w.overflow = true
+	}
+	w.b = append(w.b, p...)
+	return n, nil
+}
+func (w *receiptDeathOutput) snapshot() (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return string(w.b), w.overflow
+}
+
+// Parent API state survives both executables. It models only the contract under
+// test: unresolved original authority cannot authorize a new producer or release.
+// Its exact refusal is asserted, not accepted as an arbitrary "safe" error.
+type receiptDeathAPI struct {
+	server          *httptest.Server
+	mu              sync.Mutex
+	ctx             context.Context
+	ns              string
+	r               capacityReceipt
+	checkpoint      string
+	claimed         bool
+	producer        string
+	requestID       string
+	registered      map[string]bool
+	pending         map[string]bool
+	resolved        map[string]bool
+	actions         []string
+	violations      []string
+	refusedRecovery int
+	recoverers      []string
+	claims          int
+	releases        int
+	claimEntered    chan struct{}
+	claimOnce       sync.Once
+}
+
+func newReceiptDeathAPI(ctx context.Context, t *testing.T, ns string, r capacityReceipt, checkpoint string) *receiptDeathAPI {
+	a := &receiptDeathAPI{ctx: ctx, ns: ns, r: r, checkpoint: checkpoint, registered: map[string]bool{}, pending: map[string]bool{}, resolved: map[string]bool{}, claimEntered: make(chan struct{})}
+	a.server = httptest.NewServer(http.HandlerFunc(a.serve))
+	t.Cleanup(a.server.Close)
+	return a
+}
+func (a *receiptDeathAPI) violate(w http.ResponseWriter, why string) {
+	a.violations = append(a.violations, why)
+	http.Error(w, "invalid controlled transition", http.StatusConflict)
+}
+func (a *receiptDeathAPI) serve(w http.ResponseWriter, req *http.Request) {
+	if req.Header.Get("Authorization") != "Bearer "+receiptDeathSubject {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if req.Method == http.MethodGet && req.URL.Path == "/api/work/v1/runs/capacity" {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		receipts := []capacityReceipt{}
+		if a.claimed {
+			r := a.r
+			r.Producers = []capacityProducer{{ProducerID: a.producer, Subject: receiptDeathSubject, PendingWrites: []string{}}}
+			for id := range a.pending {
+				r.Producers[0].PendingWrites = append(r.Producers[0].PendingWrites, id)
+			}
+			receipts = append(receipts, r)
+		}
+		a.actions = append(a.actions, "inventory")
+		json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": receiptFencePool.PoolID, "cluster": receiptFencePool.Cluster, "namespace": a.ns, "version": receiptFencePool.Version, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": receipts})
+		return
+	}
+	var x struct {
+		Action         string        `json:"action"`
+		ProducerID     string        `json:"producerId"`
+		ClaimRequestID string        `json:"claimRequestId"`
+		Runner         string        `json:"runner"`
+		Version        int           `json:"capacityVersion"`
+		Fence          capacityFence `json:"fence"`
+		Nonce          string        `json:"recoveryNonce"`
+		Operation      string        `json:"operationId"`
+		Resolved       bool          `json:"resolved"`
+		JobUID         string        `json:"jobUid"`
+		JobName        string        `json:"jobName"`
+		SecretUID      string        `json:"secretUid"`
+		SecretHash     string        `json:"secretTokenHash"`
+		Owned          bool          `json:"owned"`
+	}
+	dec := json.NewDecoder(io.LimitReader(req.Body, receiptDeathFrameLimit+1))
+	if err := dec.Decode(&x); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if req.Method == http.MethodPost && req.URL.Path == "/api/work/v1/runs/claim" {
+		if !a.registered[x.ProducerID] || x.ClaimRequestID == "" || x.Runner != receiptFixtureRunner || x.Version != receiptFencePool.Version {
+			a.violate(w, "claim identity")
+			return
+		}
+		if a.claimed {
+			a.violate(w, "duplicate claim")
+			return
+		}
+		a.claimed = true
+		a.claims++
+		a.producer = x.ProducerID
+		a.requestID = x.ClaimRequestID
+		a.actions = append(a.actions, "claim")
+		if a.checkpoint == "claim" {
+			a.claimOnce.Do(func() { close(a.claimEntered) })
+			a.mu.Unlock()
+			select {
+			case <-req.Context().Done():
+			case <-a.ctx.Done():
+			}
+			a.mu.Lock()
+			return
+		}
+		json.NewEncoder(w).Encode(capacityClaimReply{Kind: "claim", Receipt: &a.r.capacityFence, RunID: a.r.RunID, JobName: a.r.JobName, Pipeline: a.r.Pipeline, Token: receiptFixtureToken})
+		return
+	}
+	if req.Method != http.MethodPost || req.URL.Path != "/api/work/v1/runs/capacity" {
+		a.violate(w, "unexpected path or method")
+		return
+	}
+	a.actions = append(a.actions, x.Action)
+	if x.Action == "register" {
+		if x.ProducerID == "" || a.registered[x.ProducerID] {
+			a.violate(w, "duplicate/empty register")
+			return
+		}
+		a.registered[x.ProducerID] = true
+		json.NewEncoder(w).Encode(capacityReply{OK: true})
+		return
+	}
+	if !a.claimed || x.Fence != a.r.capacityFence {
+		a.violate(w, "foreign fence")
+		return
+	}
+	switch x.Action {
+	case "recover":
+		// A new producer cannot drain the original claim or pending Kubernetes RPC.
+		// Its nonce is exact inventory metadata, not a reconstructed old credential.
+		a.recoverers = append(a.recoverers, x.Nonce)
+		if a.r.Recovery != nil && x.Nonce != a.r.Recovery.Nonce {
+			a.violate(w, "recovery nonce changed")
+			return
+		}
+		// Original recovery happens before any write; successor recovery follows
+		// registration of a distinct incarnation, with original producer still live.
+		if len(a.registered) > 1 {
+			if a.checkpoint == "" || a.producer == "" || !a.registered[a.producer] || a.requestID == "" || (a.checkpoint != "claim" && len(a.pending) == 0) {
+				a.violate(w, "refusal lacks actual unresolved original authority")
+				return
+			}
+			a.refusedRecovery++
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"reason": "original-producer-authority-unresolved"})
+			return
+		}
+		if x.Nonce == "" {
+			a.violate(w, "empty nonce")
+			return
+		}
+		if a.r.Recovery == nil {
+			a.r.Recovery = &struct {
+				Nonce string `json:"nonce"`
+			}{Nonce: x.Nonce}
+		}
+	case "operation":
+		if x.ProducerID != a.producer || !a.registered[x.ProducerID] || a.r.Recovery == nil || x.Nonce != a.r.Recovery.Nonce || x.Operation == "" {
+			a.violate(w, "operation authority")
+			return
+		}
+		if x.Resolved {
+			if !a.pending[x.Operation] || a.resolved[x.Operation] {
+				a.violate(w, "unbegun/duplicate resolution")
+				return
+			}
+			delete(a.pending, x.Operation)
+			a.resolved[x.Operation] = true
+		} else {
+			if a.pending[x.Operation] || a.resolved[x.Operation] {
+				a.violate(w, "duplicate operation")
+				return
+			}
+			a.pending[x.Operation] = true
+		}
+	case "bind":
+		if a.r.Recovery == nil || x.Nonce != a.r.Recovery.Nonce || !x.Owned || x.JobName != a.r.JobName || x.JobUID == "" || (a.r.JobUID != "" && a.r.JobUID != x.JobUID) {
+			a.violate(w, "bind original Job")
+			return
+		}
+		a.r.JobUID = x.JobUID
+		if x.SecretUID != "" {
+			if x.SecretHash != receiptDeathTokenHash() || (a.r.SecretUID != "" && a.r.SecretUID != x.SecretUID) {
+				a.violate(w, "bind original Secret")
+				return
+			}
+			a.r.SecretUID = x.SecretUID
+		}
+	default:
+		if x.Action == "release" {
+			a.releases++
+		}
+		a.violate(w, "unapproved action: "+x.Action)
+		return
+	}
+	json.NewEncoder(w).Encode(capacityReply{OK: true})
+}
+
+// This child entrypoint is excluded by the normal exact parent selector. With
+// no inherited parent control pipes it skips BEFORE resolving a target/client.
+func TestReceiptKubernetesProcessChild(t *testing.T) {
+	if os.Getenv(receiptDeathChildEnv) != "1" {
+		t.Skip("no parent IPC binding; no Kubernetes access")
+	}
+	in, out := os.NewFile(3, "receipt-parent-config"), os.NewFile(4, "receipt-child-events")
+	if in == nil || out == nil {
+		t.Fatal("missing inherited parent pipes")
+	}
+	defer in.Close()
+	defer out.Close()
+	var spec receiptDeathConfig
+	raw, err := io.ReadAll(io.LimitReader(in, receiptDeathFrameLimit+1))
+	if err != nil || len(raw) > receiptDeathFrameLimit || json.Unmarshal(raw, &spec) != nil {
+		t.Fatal("invalid bounded parent config")
+	}
+	if spec.Invocation == "" || !strings.HasPrefix(spec.RunID, "work:receipt-fence-"+spec.Invocation+"-") || !strings.HasSuffix(spec.RunID, "/r1") || spec.NamespaceUID == "" {
+		t.Fatal("unbound invocation")
+	}
+	u, err := url.Parse(spec.API)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Hostname() != "127.0.0.1" {
+		t.Fatal("parent API must be exact loopback")
+	}
+	if _, err := strconv.Atoi(u.Port()); err != nil {
+		t.Fatal("parent API port absent")
+	}
+	remaining := time.Until(spec.Deadline)
+	if remaining <= 0 || remaining > 180*time.Second {
+		t.Fatal("invalid shared deadline")
+	}
+	if spec.Checkpoint != "" && spec.Checkpoint != "claim" && spec.Checkpoint != "job" && spec.Checkpoint != "secret" && spec.Checkpoint != "unsuspend" {
+		t.Fatal("unknown checkpoint")
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), spec.Deadline)
+	defer cancel()
+	rt := receiptKubernetesRuntimeFromEnv(t)
+	if rt.namespaceUID != spec.NamespaceUID {
+		t.Fatal("parent namespace UID drift")
+	}
+	q, _, faults, _ := receiptFenceQueueEndpoint(ctx, t, rt, spec.API, spec.Invocation, false)
+	send := func(f receiptDeathFrame) {
+		f.RunID = spec.RunID
+		f.Producer = q.capacity.producerID
+		if err := receiptDeathWrite(out, f); err != nil {
+			t.Fatalf("bounded child IPC: %v", err)
+		}
+	}
+	send(receiptDeathFrame{Kind: "hello"})
+	faults.beforeRequest = func(req *http.Request) (*http.Request, error) { return receiptDeathInertRequest(req, q, spec) }
+	faults.afterResponse = func(req *http.Request, resp *http.Response) (*http.Response, error) {
+		jobsPath := "/apis/batch/v1/namespaces/" + rt.namespace + "/jobs"
+		secretsPath := "/api/v1/namespaces/" + rt.namespace + "/secrets"
+		kind := ""
+		if req.Method == http.MethodPost && req.URL.Path == jobsPath && resp.StatusCode == http.StatusCreated {
+			kind = "job"
+		}
+		if req.Method == http.MethodPost && req.URL.Path == secretsPath && resp.StatusCode == http.StatusCreated {
+			kind = "secret"
+		}
+		if req.Method == http.MethodPut && req.URL.Path == jobsPath+"/"+queueJobName(spec.RunID) && resp.StatusCode == http.StatusOK {
+			kind = "unsuspend"
+		}
+		if kind == "" {
+			return resp, nil
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+		resp.Body.Close()
+		if err != nil || len(b) > 1<<20 {
+			return nil, fmt.Errorf("accepted response exceeds bound")
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(b))
+		f := receiptDeathFrame{Kind: kind, Status: resp.StatusCode, Checkpoint: !spec.Successor && spec.Checkpoint == kind}
+		if kind == "secret" {
+			var s core.Secret
+			if json.Unmarshal(b, &s) != nil || s.Immutable == nil || !*s.Immutable {
+				return nil, fmt.Errorf("invalid accepted Secret")
+			}
+			refs := s.OwnerReferences
+			if len(refs) != 1 || refs[0].Kind != "Job" || refs[0].Controller == nil || !*refs[0].Controller {
+				return nil, fmt.Errorf("foreign accepted Secret owner")
+			}
+			hash := sha256.Sum256(s.Data["run-token"])
+			f.Namespace = s.Namespace
+			f.Name = s.Name
+			f.UID = s.UID
+			f.RV = s.ResourceVersion
+			f.JobUID = refs[0].UID
+			f.Immutable = true
+			f.TokenHash = hex.EncodeToString(hash[:])
+		} else {
+			var j batch.Job
+			if json.Unmarshal(b, &j) != nil || j.Spec.Suspend == nil {
+				return nil, fmt.Errorf("invalid accepted Job")
+			}
+			f.Namespace = j.Namespace
+			f.Name = j.Name
+			f.UID = j.UID
+			f.RV = j.ResourceVersion
+			f.Suspend = *j.Spec.Suspend
+			f.Generation = j.Generation
+		}
+		send(f)
+		if f.Checkpoint {
+			<-ctx.Done()
+			resp.Body.Close()
+			return nil, ctx.Err()
+		}
+		if kind == "secret" {
+			// Let the controller's initial suspended-status write settle BEFORE the
+			// production resume GET/CAS. This is an actual status observation under
+			// the same deadline, not an RV equality assumption or an Update retry.
+			for {
+				current, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, queueJobName(spec.RunID), meta.GetOptions{})
+				if err != nil {
+					return nil, err
+				}
+				suspended := false
+				for _, condition := range current.Status.Conditions {
+					if condition.Type == batch.JobSuspended && condition.Status == core.ConditionTrue {
+						suspended = true
+					}
+				}
+				if suspended {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		}
+		return resp, nil
+	}
+	if spec.Successor {
+		err := q.reconcileReceipts(ctx)
+		f := receiptDeathFrame{Kind: "done"}
+		if err != nil {
+			f.Error = err.Error()
+		}
+		send(f)
+		return
+	}
+	outcome, pollErr := pollOnceWithOutcome(queueExecutorConfig{capacity: q.capacity, runnerName: receiptFixtureRunner, consoleURL: spec.API, reserve: func() (*directRunnerReservation, error) { return q.reserve(ctx) }})
+	f := receiptDeathFrame{Kind: "done", Outcome: outcome}
+	if pollErr != nil {
+		f.Error = pollErr.Error()
+	}
+	send(f)
+}
+
+func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDeathConfig) (*http.Request, error) {
+	if req.Method == http.MethodGet {
+		return req, nil
+	}
+	jp := "/apis/batch/v1/namespaces/" + q.config.Namespace + "/jobs"
+	sp := "/api/v1/namespaces/" + q.config.Namespace + "/secrets"
+	if (req.Method == http.MethodPost && req.URL.Path == sp) || (req.Method == http.MethodPut && req.URL.Path == jp+"/"+queueJobName(s.RunID)) {
+		if req.GetBody == nil {
+			return nil, fmt.Errorf("unreadable child write")
+		}
+		rc, err := req.GetBody()
+		if err != nil {
+			return nil, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(rc, (1<<20)+1))
+		rc.Close()
+		if err != nil || len(raw) > 1<<20 {
+			return nil, fmt.Errorf("unbounded child write")
+		}
+		current, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(req.Context(), queueJobName(s.RunID), meta.GetOptions{})
+		if err != nil {
+			return nil, err
+		}
+		var fence capacityFence
+		if json.Unmarshal([]byte(current.Annotations[queueReceiptAnnotation]), &fence) != nil || !fence.valid(receiptFencePool.PoolID, s.RunID) || current.UID == "" || current.DeletionTimestamp != nil {
+			return nil, fmt.Errorf("write without original Job")
+		}
+		if req.Method == http.MethodPost {
+			var got core.Secret
+			if json.Unmarshal(raw, &got) != nil || got.Kind != "Secret" || got.APIVersion != "v1" {
+				return nil, fmt.Errorf("unexpected Secret shape")
+			}
+			expected := receiptFenceSecret(q, current)
+			expected.TypeMeta = got.TypeMeta
+			eb, _ := json.Marshal(expected)
+			gb, _ := json.Marshal(got)
+			if !bytes.Equal(eb, gb) {
+				return nil, fmt.Errorf("immutable fixture Secret drift")
+			}
+			return req, nil
+		}
+		var got batch.Job
+		if json.Unmarshal(raw, &got) != nil || got.UID != current.UID || got.ResourceVersion == "" || got.Spec.Suspend == nil || *got.Spec.Suspend {
+			return nil, fmt.Errorf("foreign unsuspend")
+		}
+		expected := current.DeepCopy()
+		expected.Spec.Suspend = ptr(false)
+		expected.Spec.Template.Annotations[queueJobUIDAnnotation] = string(current.UID)
+		// Do not infer a stable controller status RV. The real Update still carries
+		// its original nonempty RV; the apiserver alone decides that CAS.
+		expected.ResourceVersion = ""
+		got.ResourceVersion = ""
+		expected.Status = batch.JobStatus{}
+		got.Status = batch.JobStatus{}
+		expected.ManagedFields = nil
+		got.ManagedFields = nil
+		eb, _ := json.Marshal(expected)
+		gb, _ := json.Marshal(got)
+		if !bytes.Equal(eb, gb) {
+			return nil, fmt.Errorf("unsuspend changed inert original topology")
+		}
+		c := got.Spec.Template.Spec.Containers
+		if len(c) != 1 || !reflect.DeepEqual(c[0].Command, []string{"/bin/sh", "-c", "sleep 15; exit 0"}) || len(c[0].Args) != 0 || got.Spec.ActiveDeadlineSeconds == nil || *got.Spec.ActiveDeadlineSeconds != 120 {
+			return nil, fmt.Errorf("unsuspend escaped bounded inert fixture")
+		}
+		return req, nil
+	}
+	if req.Method != http.MethodPost || req.URL.Path != jp || req.GetBody == nil {
+		return nil, fmt.Errorf("unexpected child Kubernetes write")
+	}
+	r, err := req.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	b, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
+	r.Close()
+	if err != nil || len(b) > 1<<20 {
+		return nil, fmt.Errorf("unbounded desired Job")
+	}
+	var got batch.Job
+	if json.Unmarshal(b, &got) != nil {
+		return nil, fmt.Errorf("invalid desired Job")
+	}
+	var fence capacityFence
+	if json.Unmarshal([]byte(got.Annotations[queueReceiptAnnotation]), &fence) != nil || !fence.valid(receiptFencePool.PoolID, s.RunID) {
+		return nil, fmt.Errorf("unbound desired receipt")
+	}
+	expected, err := q.job(directRunnerLaunch{runID: s.RunID, runToken: receiptFixtureToken, pipeline: "codex", consoleURL: s.API, runner: receiptFixtureRunner, receipt: &fence})
+	if err != nil {
+		return nil, err
+	}
+	if got.Kind != "Job" || got.APIVersion != "batch/v1" {
+		return nil, fmt.Errorf("unexpected Job API kind")
+	}
+	expected.TypeMeta = got.TypeMeta
+	eb, err := json.Marshal(expected)
+	if err != nil {
+		return nil, err
+	}
+	gb, err := json.Marshal(got)
+	if err != nil || !bytes.Equal(eb, gb) {
+		return nil, fmt.Errorf("production desired Job shape drift; no fixture rewrite")
+	}
+	got.Spec.Template.Spec.Containers[0].Command = []string{"/bin/sh", "-c", "sleep 15; exit 0"}
+	got.Spec.Template.Spec.Containers[0].Args = nil
+	got.Spec.ActiveDeadlineSeconds = ptr(int64(120))
+	b, err = json.Marshal(got)
+	if err != nil {
+		return nil, err
+	}
+	copy := req.Clone(req.Context())
+	copy.Body = io.NopCloser(bytes.NewReader(b))
+	copy.ContentLength = int64(len(b))
+	copy.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }
+	return copy, nil
+}
+
+type receiptDeathRead struct {
+	frame receiptDeathFrame
+	err   error
+}
+type receiptDeathChild struct {
+	cmd                 *exec.Cmd
+	events              chan receiptDeathRead
+	waited              chan struct{}
+	waitErr             error
+	stdout, stderr      *receiptDeathOutput
+	input, eventsReader *os.File
+}
+
+func receiptDeathStart(ctx context.Context, t *testing.T, own *receiptOwnership, s receiptDeathConfig) *receiptDeathChild {
+	t.Helper()
+	if ctx.Err() != nil {
+		t.Fatal(ctx.Err())
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgRead, cfgWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventRead, eventWrite, err := os.Pipe()
+	if err != nil {
+		cfgRead.Close()
+		cfgWrite.Close()
+		t.Fatal(err)
+	}
+	remaining := time.Until(s.Deadline)
+	if remaining <= 0 {
+		cfgRead.Close()
+		cfgWrite.Close()
+		eventRead.Close()
+		eventWrite.Close()
+		t.Fatal("shared deadline elapsed")
+	}
+	c := &receiptDeathChild{cmd: exec.Command(exe, "-test.run=^TestReceiptKubernetesProcessChild$", "-test.v", "-test.timeout="+remaining.String()), events: make(chan receiptDeathRead, 33), waited: make(chan struct{}), stdout: &receiptDeathOutput{}, stderr: &receiptDeathOutput{}, input: cfgWrite, eventsReader: eventRead}
+	c.cmd.ExtraFiles = []*os.File{cfgRead, eventWrite}
+	c.cmd.Stdout = c.stdout
+	c.cmd.Stderr = c.stderr
+	// Pass qualification paths/identity, never whole environment or credential bytes.
+	for _, key := range []string{"PATH", "HOME", "LCARS_RECEIPT_K8S_KUBECONFIG", "LCARS_RECEIPT_K8S_KUBECONTEXT", "LCARS_RECEIPT_K8S_NAMESPACE", "LCARS_RECEIPT_K8S_NAMESPACE_UID", "LCARS_RECEIPT_K8S_LABELS", "LCARS_RECEIPT_K8S_NODE_SELECTOR", "LCARS_RECEIPT_K8S_IMAGE", "LCARS_RECEIPT_K8S_SERVICE_ACCOUNT", "LCARS_RECEIPT_K8S_FIXTURE_SECRET"} {
+		if v, ok := os.LookupEnv(key); ok {
+			c.cmd.Env = append(c.cmd.Env, key+"="+v)
+		}
+	}
+	c.cmd.Env = append(c.cmd.Env, receiptDeathChildEnv+"=1")
+	if err := c.cmd.Start(); err != nil {
+		cfgRead.Close()
+		cfgWrite.Close()
+		eventRead.Close()
+		eventWrite.Close()
+		t.Fatal(err)
+	}
+	cfgRead.Close()
+	eventWrite.Close()
+	go func() { c.waitErr = c.cmd.Wait(); close(c.waited) }()
+	t.Cleanup(func() { c.cleanup(t, own) })
+	// Config is small and bounded; pipe write also gets the shared absolute limit.
+	if err := cfgWrite.SetWriteDeadline(s.Deadline); err != nil {
+		c.stop(t, own.cleanupContext())
+		t.Fatal(err)
+	}
+	if err := receiptDeathWrite(cfgWrite, s); err != nil {
+		c.stop(t, own.cleanupContext())
+		t.Fatal(err)
+	}
+	cfgWrite.Close()
+	go func() {
+		defer close(c.events)
+		for n := 0; n < 32; n++ {
+			f, err := receiptDeathReadFrame(eventRead)
+			if err != nil {
+				if err == io.EOF {
+					return
+				}
+				c.events <- receiptDeathRead{err: err}
+				return
+			}
+			c.events <- receiptDeathRead{frame: f}
+		}
+		c.events <- receiptDeathRead{err: fmt.Errorf("more than32 IPC frames")}
+	}()
+	return c
+}
+
+// Expected checkpoint joining uses remaining logical time. Only ordinary failure
+// cleanup starts the single independent allowance; normal case completion does
+// not consume that future failure budget.
+func (c *receiptDeathChild) cleanup(t *testing.T, own *receiptOwnership) {
+	select {
+	case <-c.waited:
+		c.input.Close()
+		c.eventsReader.Close()
+		return
+	default:
+		c.stop(t, own.cleanupContext())
+	}
+}
+func (c *receiptDeathChild) stop(t *testing.T, ctx context.Context) {
+	t.Helper()
+	select {
+	case <-c.waited:
+	default:
+		if err := c.cmd.Process.Kill(); err != nil && err != os.ErrProcessDone {
+			t.Errorf("owned child kill: %v", err)
+		}
+	}
+	select {
+	case <-c.waited:
+	case <-ctx.Done():
+		t.Errorf("owned child PID%d could not be reaped within remaining budget: %v", c.cmd.Process.Pid, ctx.Err())
+	}
+	c.input.Close()
+	c.eventsReader.Close()
+}
+func receiptDeathFrameIdentity(f receiptDeathFrame, s receiptDeathConfig) error {
+	if f.RunID != s.RunID || f.Producer == "" {
+		return fmt.Errorf("foreign frame run/producer")
+	}
+	switch f.Kind {
+	case "hello", "done":
+		return nil
+	case "job", "secret", "unsuspend":
+	default:
+		return fmt.Errorf("unknown frame kind")
+	}
+	if f.Namespace == "" || f.Name != queueJobName(s.RunID) || f.UID == "" || f.RV == "" {
+		return fmt.Errorf("incomplete object frame")
+	}
+	if (f.Kind == "job" || f.Kind == "secret") && f.Status != http.StatusCreated {
+		return fmt.Errorf("no accepted201 ownership")
+	}
+	if f.Kind == "unsuspend" && f.Status != http.StatusOK {
+		return fmt.Errorf("no accepted200 witness")
+	}
+	return nil
+}
+func receiptDeathRecord(ctx context.Context, t *testing.T, q *kubernetesQueue, own *receiptOwnership, s receiptDeathConfig, f receiptDeathFrame, seen map[string]receiptDeathFrame) {
+	t.Helper()
+	if err := receiptDeathFrameIdentity(f, s); err != nil {
+		t.Fatal(err)
+	}
+	if f.Namespace != q.config.Namespace {
+		t.Fatal("frame namespace mismatch")
+	}
+	ns, err := q.client.CoreV1().Namespaces().Get(ctx, q.config.Namespace, meta.GetOptions{})
+	if err != nil || string(ns.UID) != own.rt.namespaceUID || ns.DeletionTimestamp != nil {
+		t.Fatal("original accepted-response namespace UID drift")
+	}
+	for key, value := range own.rt.qualifications {
+		if ns.Labels[key] != value {
+			t.Fatal("accepted-response namespace qualification changed")
+		}
+	}
+	t.Logf("actual accepted response kind=%s status=%d namespace=%s name=%s uid=%s rv=%s originalJobUID=%s suspend=%t generation=%d", f.Kind, f.Status, f.Namespace, f.Name, f.UID, f.RV, f.JobUID, f.Suspend, f.Generation)
+	if previous, ok := seen[f.Kind]; ok {
+		t.Fatalf("duplicate/conflicting accepted response: oldUID%s newUID%s", previous.UID, f.UID)
+	}
+	if f.Kind == "secret" {
+		j, ok := seen["job"]
+		if !ok || f.JobUID != j.UID || !f.Immutable || f.TokenHash != receiptDeathTokenHash() {
+			t.Fatal("accepted Secret lacks original owner/immutable token hash")
+		}
+		actual, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, f.Name, meta.GetOptions{})
+		if err != nil || actual.UID != f.UID || actual.Immutable == nil || !*actual.Immutable {
+			t.Fatalf("accepted Secret UID corroboration: %v", err)
+		}
+		hash := sha256.Sum256(actual.Data["run-token"])
+		if hex.EncodeToString(hash[:]) != f.TokenHash {
+			t.Fatal("accepted Secret hash changed")
+		}
+		owned := false
+		for _, o := range actual.OwnerReferences {
+			owned = owned || (o.Controller != nil && *o.Controller && o.Kind == "Job" && o.UID == f.JobUID)
+		}
+		if !owned {
+			t.Fatal("accepted Secret owner changed")
+		}
+		own.ownSecret(actual)
+	} else {
+		actual, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(ctx, f.Name, meta.GetOptions{})
+		if err != nil || actual.UID != f.UID || actual.Namespace != f.Namespace || actual.Annotations[queueRunAnnotation] != s.RunID {
+			t.Fatalf("accepted Job UID corroboration: %v", err)
+		}
+		if f.Kind == "job" {
+			if !f.Suspend || f.Generation != 1 {
+				t.Fatal("accepted original Job was not generation1 suspended")
+			}
+			if err := own.recordCreated(actual); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			j, ok := seen["job"]
+			if !ok || j.UID != f.UID || f.Suspend || f.Generation < 2 || actual.Spec.Suspend == nil || *actual.Spec.Suspend {
+				t.Fatal("accepted unsuspend changed original identity")
+			}
+		}
+	}
+	seen[f.Kind] = f
+}
+
+// Returns only after the exact child is reaped. Checkpoint=true can never be
+// satisfied by normal exit, an unentered arm or a synthetic cancellation.
+func receiptDeathRun(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, q *kubernetesQueue, own *receiptOwnership, a *receiptDeathAPI, s receiptDeathConfig, kill bool) (string, receiptDeathFrame, map[string]receiptDeathFrame) {
+	t.Helper()
+	c := receiptDeathStart(ctx, t, own, s)
+	defer c.cleanup(t, own)
+	seen := map[string]receiptDeathFrame{}
+	producer := ""
+	var done receiptDeathFrame
+	claimArm := false
+	claimSignal := a.claimEntered
+	for {
+		if kill && s.Checkpoint == "claim" && claimArm && producer != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("shared logical deadline during actual child: %v", ctx.Err())
+		case <-claimSignal:
+			claimArm = true
+			claimSignal = nil
+		case event, ok := <-c.events:
+			if !ok {
+				if kill {
+					t.Fatal("child exited without exact armed checkpoint")
+				}
+				goto joined
+			}
+			if event.err != nil {
+				t.Fatalf("bounded child IPC: %v", event.err)
+			}
+			f := event.frame
+			if err := receiptDeathFrameIdentity(f, s); err != nil {
+				t.Fatal(err)
+			}
+			if f.Kind == "hello" {
+				if producer != "" {
+					t.Fatal("duplicate child hello")
+				}
+				producer = f.Producer
+				continue
+			}
+			if producer == "" || producer != f.Producer {
+				t.Fatal("child producer changed or no hello")
+			}
+			if f.Kind == "done" {
+				if done.Kind != "" {
+					t.Fatal("duplicate completion frame")
+				}
+				done = f
+				if kill {
+					t.Fatal("normal completion cannot satisfy SIGKILL checkpoint")
+				}
+				continue
+			}
+			receiptDeathRecord(ctx, t, q, own, s, f, seen)
+			if f.Checkpoint {
+				if !kill || s.Checkpoint != f.Kind {
+					t.Fatal("unrequested checkpoint")
+				}
+				goto killed
+			}
+		}
+	}
+killed:
+	if !kill {
+		t.Fatal("unexpected kill path")
+	}
+	c.stop(t, ctx)
+	if !receiptDeathKilled(c.cmd.ProcessState) {
+		t.Fatal("armed child did not end specifically by SIGKILL")
+	}
+	t.Logf("checkpoint=%s originalProducer=%s pid=%d actualSIGKILL=true reaped=true", s.Checkpoint, producer, c.cmd.Process.Pid)
+	if _, over := c.stdout.snapshot(); over {
+		t.Fatal("child stdout overflow")
+	}
+	if _, over := c.stderr.snapshot(); over {
+		t.Fatal("child stderr overflow")
+	}
+	return producer, done, seen
+joined:
+	select {
+	case <-c.waited:
+	case <-ctx.Done():
+		t.Fatal("child did not join within logical deadline")
+	}
+	if c.waitErr != nil || done.Kind != "done" || producer == "" {
+		text, _ := c.stderr.snapshot()
+		t.Fatalf("normal child completion missing/failed: %v %q", c.waitErr, text)
+	}
+	if receiptDeathKilled(c.cmd.ProcessState) {
+		t.Fatal("normal completion was killed")
+	}
+	if _, over := c.stdout.snapshot(); over {
+		t.Fatal("child stdout overflow")
+	}
+	if _, over := c.stderr.snapshot(); over {
+		t.Fatal("child stderr overflow")
+	}
+	return producer, done, seen
+}
+func receiptDeathSnapshot(a *receiptDeathAPI) (capacityReceipt, int, int, int, int, int, []string, []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	raw, _ := json.Marshal(a.r)
+	var r capacityReceipt
+	json.Unmarshal(raw, &r)
+	return r, a.claims, len(a.pending), len(a.resolved), a.releases, a.refusedRecovery, append([]string{}, a.actions...), append([]string{}, a.violations...)
+}
+func receiptDeathControls(t *testing.T) {
+	t.Helper()
+	for name, b := range map[string][]byte{"truncated": []byte(`{"kind":"hello"}`), "malformed": []byte("{\n"), "oversize": append(bytes.Repeat([]byte{'x'}, receiptDeathFrameLimit+1), '\n')} {
+		if _, err := receiptDeathReadFrame(bytes.NewReader(b)); err == nil {
+			t.Fatalf("%s IPC control accepted", name)
+		}
+	}
+	s := receiptDeathConfig{RunID: "work:receipt-fence-control/r1"}
+	for _, f := range []receiptDeathFrame{{Kind: "hello", RunID: "foreign", Producer: "p"}, {Kind: "job", RunID: s.RunID, Producer: "p", Name: queueJobName(s.RunID), Status: 201, RV: "1"}, {Kind: "job", RunID: s.RunID, Producer: "p", Name: queueJobName(s.RunID), Status: 409, UID: "uid", RV: "1", Namespace: "ns"}} {
+		if receiptDeathFrameIdentity(f, s) == nil {
+			t.Fatal("foreign/missingUID/non201 ownership accepted")
+		}
+	}
+	if receiptDeathKilled(nil) {
+		t.Fatal("missing process status is not a SIGKILL")
+	}
+}
+func receiptDeathUnboundChild(ctx context.Context, t *testing.T) {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, exe, "-test.run=^TestReceiptKubernetesProcessChild$", "-test.v")
+	// Intentionally no child-mode environment or inherited config/events pipes.
+	out := &receiptDeathOutput{}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("unbound child did not refuse cleanly: %v", err)
+	}
+	text, overflow := out.snapshot()
+	if overflow || !strings.Contains(text, "no parent IPC binding; no Kubernetes access") || !strings.Contains(text, "SKIP") || receiptDeathKilled(cmd.ProcessState) {
+		t.Fatal("unbound child was not actually skipped before client setup")
+	}
+}
+func receiptDeathInertControls(ctx context.Context, t *testing.T, q *kubernetesQueue, own *receiptOwnership) {
+	t.Helper()
+	r := receiptFenceNewReceipt(own, "wire-control")
+	spec := receiptDeathConfig{RunID: r.RunID, API: q.capacity.consoleURL}
+	desired, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: receiptFixtureToken, pipeline: "codex", consoleURL: spec.API, runner: receiptFixtureRunner, receipt: &r.capacityFence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired.Kind = "Job"
+	desired.APIVersion = "batch/v1"
+	jp := "http://127.0.0.1/apis/batch/v1/namespaces/" + q.config.Namespace + "/jobs"
+	request := func(j *batch.Job, path string) *http.Request {
+		b, err := json.Marshal(j)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	if _, err := receiptDeathInertRequest(request(desired, jp), q, spec); err != nil {
+		t.Fatalf("exact production desired shape refused: %v", err)
+	}
+	changed := desired.DeepCopy()
+	changed.Spec.Template.Spec.Containers = append(changed.Spec.Template.Spec.Containers, changed.Spec.Template.Spec.Containers[0])
+	if _, err := receiptDeathInertRequest(request(changed, jp), q, spec); err == nil {
+		t.Fatal("extra container bypassed inert rewrite fence")
+	}
+	if _, err := receiptDeathInertRequest(request(desired, jp+"-foreign"), q, spec); err == nil {
+		t.Fatal("foreign write path accepted")
+	}
+}
+func receiptKubernetesProcessDeath(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, q *kubernetesQueue, own *receiptOwnership) {
+	t.Helper()
+	receiptDeathControls(t)
+	receiptDeathUnboundChild(ctx, t)
+	receiptDeathInertControls(ctx, t, q, own)
+	for _, checkpoint := range []string{"", "claim", "job", "secret", "unsuspend"} {
+		name := checkpoint
+		if name == "" {
+			name = "baseline"
+		}
+		if !t.Run(name, func(t *testing.T) {
+			if ctx.Err() != nil {
+				t.Fatal(ctx.Err())
+			}
+			r := receiptFenceNewReceipt(own, "process-"+name)
+			r.State = "claimed"
+			receiptFenceRequireAbsent(ctx, t, q, r.JobName)
+			if _, err := q.client.CoreV1().Secrets(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("original exact Secret not absent: %v", err)
+			}
+			a := newReceiptDeathAPI(ctx, t, rt.namespace, r, checkpoint)
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("missing shared deadline")
+			}
+			s := receiptDeathConfig{Invocation: own.invocation, RunID: r.RunID, NamespaceUID: rt.namespaceUID, API: a.server.URL, Checkpoint: checkpoint, Deadline: dl}
+			original, done, seen := receiptDeathRun(ctx, t, rt, q, own, a, s, checkpoint != "")
+			actual, claims, pending, resolved, releases, refused, _, violations := receiptDeathSnapshot(a)
+			a.mu.Lock()
+			oldProducer, requestID := a.producer, a.requestID
+			registered := len(a.registered)
+			a.mu.Unlock()
+			if original == "" || oldProducer != original || requestID == "" || registered != 1 || claims != 1 || releases != 0 || refused != 0 || len(violations) != 0 {
+				t.Fatalf("original production claim ledger mismatch: producer=%t registered=%d claims=%d pending=%d resolved=%d violations=%v", oldProducer == original, registered, claims, pending, resolved, violations)
+			}
+			t.Logf("production claim checkpoint=%s producer=%s claimRequestId=%s claims=%d pending=%d resolved=%d", name, original, requestID, claims, pending, resolved)
+			wantPending, wantResolved := 1, 0
+			switch checkpoint {
+			case "":
+				wantPending, wantResolved = 0, 3
+			case "claim":
+				wantPending, wantResolved = 0, 0
+			case "secret":
+				wantResolved = 1
+			case "unsuspend":
+				wantResolved = 2
+			}
+			if pending != wantPending || resolved != wantResolved {
+				t.Fatalf("exact original write ledger changed: pending%d/%d resolved%d/%d", pending, wantPending, resolved, wantResolved)
+			}
+			var before *batch.Job
+			if checkpoint != "claim" {
+				before, _ = q.client.BatchV1().Jobs(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{})
+				if before == nil || seen["job"].UID != before.UID || !receiptJobMatches(before, actual) {
+					t.Fatal("original accepted Job absent or changed")
+				}
+				if checkpoint == "" || checkpoint == "unsuspend" {
+					if _, ok := seen["unsuspend"]; !ok || before.Spec.Suspend == nil || *before.Spec.Suspend {
+						t.Fatal("no actual accepted unsuspend")
+					}
+					receiptFenceWaitPods(ctx, t, q, before, func(ps []core.Pod) bool { return len(ps) == 1 && ps[0].Status.Phase == core.PodRunning }, "one real inert running Pod")
+				} else {
+					if before.Spec.Suspend == nil || !*before.Spec.Suspend || len(receiptFenceOwnedPods(ctx, t, q, before)) != 0 {
+						t.Fatal("suspended original unexpectedly ran")
+					}
+				}
+			}
+			if checkpoint == "" {
+				if done.Outcome != queuePollOutcomeClaimed || done.Error != "" || len(seen) != 3 || actual.SecretUID == "" {
+					t.Fatalf("baseline did not complete production launch: %+v", done)
+				}
+			} else {
+				successor := s
+				successor.Successor = true
+				successor.Checkpoint = ""
+				fresh, answer, recoverySeen := receiptDeathRun(ctx, t, rt, q, own, a, successor, false)
+				after, c, p, res, rel, held, actions, bad := receiptDeathSnapshot(a)
+				if fresh == original || answer.Error != "capacity returned HTTP 409" || len(recoverySeen) != 0 || c != claims || p != pending || res != resolved || rel != 0 || held != 1 || len(bad) != 0 || !reflect.DeepEqual(after, actual) {
+					t.Fatalf("successor did not preserve exact unresolved authority: error=%q distinct=%t claims%d pending%d resolved%d releases%d held%d actions=%v bad=%v", answer.Error, fresh != original, c, p, res, rel, held, actions, bad)
+				}
+				a.mu.Lock()
+				newRegistered := a.registered[fresh] && len(a.registered) == 2
+				lastNonce := ""
+				if len(a.recoverers) > 0 {
+					lastNonce = a.recoverers[len(a.recoverers)-1]
+				}
+				a.mu.Unlock()
+				if !newRegistered || lastNonce == "" || (actual.Recovery != nil && lastNonce != actual.Recovery.Nonce) {
+					t.Fatal("fresh producer did not reconcile authoritative inventory nonce")
+				}
+				if checkpoint == "claim" {
+					receiptFenceRequireAbsent(ctx, t, q, r.JobName)
+					if _, err := q.client.CoreV1().Secrets(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+						t.Fatal("unreplied claim minted a Secret")
+					}
+				} else {
+					afterJob, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{})
+					if err != nil || !receiptFenceSameJob(before, afterJob) {
+						t.Fatalf("successor changed/restarted original Job: %v", err)
+					}
+				}
+			}
+			if f, ok := seen["secret"]; ok {
+				secret, err := q.client.CoreV1().Secrets(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{})
+				job, jobErr := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{})
+				if err != nil || jobErr != nil || secret.UID != f.UID || !receiptSecretMatches(secret, job, actual) {
+					t.Fatalf("original owned immutable Secret changed after recovery: %v / %v", err, jobErr)
+				}
+				hash := sha256.Sum256(secret.Data["run-token"])
+				if hex.EncodeToString(hash[:]) != f.TokenHash {
+					t.Fatal("reconciliation changed original token hash")
+				}
+			} else if _, err := q.client.CoreV1().Secrets(rt.namespace).Get(ctx, r.JobName, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("unknown claim/create fabricated a new Secret: %v", err)
+			}
+			if before != nil && checkpoint != "" && checkpoint != "unsuspend" && len(receiptFenceOwnedPods(ctx, t, q, before)) != 0 {
+				t.Fatal("reconciliation launched a suspended ambiguous attempt")
+			}
+			// Finish exact-owned cleanup before the next case, preserving one Pod and
+			// eight-Job namespace quotas. No new per-case logical/cleanup allowance.
+			if !own.cleanupObjects(ctx) {
+				t.Fatal("previous owned case did not retire")
+			}
+			own.forget(r.JobName)
+		}) {
+			return
 		}
 	}
 }
