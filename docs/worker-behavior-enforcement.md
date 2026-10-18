@@ -50,23 +50,42 @@ runner-local directories are temporary; the committed record does not claim
 an inspected image identity, complete durable fixture bundles or a live dispatch.
 Current candidate-image qualification and failure consumption remain open.
 
-The 2026-10-18 in-job Codex observation closes part of that gap for Codex only.
-Inside admitted Work `01M5666ND109DH80NVB9AN2WRQ/r2` (UID 1001, 2 CPU/6Gi/24Gi
-equal requests and limits, ARM64 node, source `0a100485a47a9fe44ae6161360fb8ea4396bb990`),
-`tools/probes/in-runner-image.mjs` measured the actual running image
+The 2026-10-18 in-job Codex run adds partial observations, not complete
+qualification evidence. Work `01M5666ND109DH80NVB9AN2WRQ/r2` ran as UID 1001
+with equal 2 CPU/6Gi/24Gi requests and limits on ARM64, at source
+`0a100485a47a9fe44ae6161360fb8ea4396bb990`. The allocation's inspected Pod
+imageID was
 `docker-registry.lan.jlapenna.net/homelab-runner@sha256:2e0cf0c1310626fe52cb8d47cd1d74808c6fb0b64d62b03feedbda2234ebf564`
-(inspected Pod imageID; manifest/config distinction unverified) with baked CLI
-`codex-cli 0.163.0`. All 79 native and 3 setup-negative Codex cases passed
-exactly once against image-baked handlers with a clean 40-input inventory
-matching every approved group digest; the evaluator returned
+(manifest/config distinction unverified), with CLI `codex-cli 0.163.0`.
+Native logs record both wrappers returning exit 0 and reporting 79 native and
+3 setup-negative cases passing against image-baked handlers. The complete
+40-input group checks matched, the evaluator reported
 `offlinePassed: true, graduated: false, activationAuthorized: false`, and the
-protected failure consumer passed the actual native payload through the
-production route/outbox. The complete untrimmed bundle (both scratch
-directories, raw reports, evaluator/consumer outputs and binding records) is
-retained as private asset `652145397` on draft release `416141863`, server
-digest-verified. This binds Codex on that exact image and source only: Claude
-and OpenCode current-image suites remain unrun, and useful policy-enabled
-dispatch and maintainer-approved activation remain open gates.
+correctly invoked failure consumer passed one test using the native report.
+Earlier consumer invocations failed; the final passing log overwrote the
+complete failed consumer log, while their actual tool outputs remain in the
+normal private provider archive. These are in-process consumer checks of the
+production code paths, not live production dispatch evidence.
+
+The probe commands inherited the outer environment and HOME instead of the
+required `env -i` and isolated HOME boundary. Isolation is therefore
+unqualified; the reported behavioral passes do not retrospectively prove it.
+The uploaded partial bundle is asset `652145397` on draft release `416141863`,
+133302 bytes with reported server digest
+`sha256:2bd9cd8c1f77206c4c912178792683f0b478e043ac3dde8d1df0040b03725249`.
+It contains the two wrapper diagnostic directories but omits the separate
+`nativeReport.evidenceDirectory` fixture/dependency trees, the required phase
+and exit records, and version stderr. It is not a complete untrimmed bundle;
+independent semantic verification and the complete private raw/index export
+were not established. The omitted in-Pod evidence was not recovered before
+the exact Job and Pod became absent, so full retention remains unqualified.
+
+The canonical provider clock starts at `2026-10-18T01:31:01.740Z`; the run
+finished at `2026-10-18T01:45:28.068Z`. Its uploaded local binding record's
+`01:30:58Z` start is not that canonical timestamp. No successful suite was
+rerun to replace this history. Complete current-image qualification remains
+open, as do Claude/OpenCode current-image suites, useful policy-enabled
+dispatch and activation. No graduation or activation is authorized.
 
 The native fixture uses one monotonic budget across initial execution,
 correction, explicit resume and failure finalization. Its 30/60-second limits
