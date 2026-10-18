@@ -101,6 +101,7 @@ async function milestone(
   if (!response?.ok()) throw new Error('Inbox navigation failed.');
   if (new URL(page.url()).pathname !== '/inbox')
     throw new Error('Inbox redirected.');
+  active.recordCheckpoint?.('navigation-returned');
   const documentLoadObservedMs = await page.evaluate(() => performance.now());
   active.stage = `${phase}.decision-content`;
   const detail = page.locator('.queue-workspace__detail');
@@ -109,6 +110,7 @@ async function milestone(
       exact: true,
     })
     .waitFor();
+  active.recordCheckpoint?.('decision-content-visible');
   const clickRequestedMs = await page.evaluate(() => performance.now());
   active.stage = `${phase}.primary-action`;
   // This must invoke the real hydrated primary-action handler, not merely
@@ -116,9 +118,11 @@ async function milestone(
   await detail
     .getByRole('button', { name: 'Approve & Rebase', exact: true })
     .click();
+  active.recordCheckpoint?.('primary-click-returned');
   const dialog = page.getByRole('dialog', { name: 'Rebase #9003?' });
   active.stage = `${phase}.confirmation`;
   await dialog.waitFor();
+  active.recordCheckpoint?.('confirmation-visible');
   const measured = await page.evaluate(() => {
     const navigation = performance.getEntriesByType('navigation')[0];
     const resources = performance.getEntriesByType('resource');
@@ -167,6 +171,7 @@ async function milestone(
     throw new Error('Primary click diagnostic was not captured.');
   active.stage = `${phase}.cancel`;
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+  active.recordCheckpoint?.('cancel-returned');
   return { documentLoadObservedMs, clickRequestedMs, ...measured };
 }
 
@@ -275,7 +280,9 @@ const installInputBoundaryDiagnostics = () => {
   };
   const observer = new MutationObserver(() => {
     const dialog = [...document.querySelectorAll('[role="dialog"]')].find(
-      (node) => node.textContent?.includes('Rebase #9003?'),
+      (node) =>
+        node.getAttribute('aria-label') === 'Rebase #9003?' ||
+        node.textContent?.includes('Rebase #9003?'),
     );
     if (!dialog) return;
     diagnostic.inputBoundaries.dialogInsertionObservedMs = performance.now();
@@ -308,12 +315,116 @@ async function captureColdProfile(
     manifests: [],
   };
   let context;
+  let page;
   let stage = 'setup';
-  const deadlineAt = Math.min(runDeadlineAt, Date.now() + SAMPLE_TIMEOUT_MS);
+  const attemptStartedAtMs = Date.now();
+  const deadlineAt = Math.min(
+    runDeadlineAt,
+    attemptStartedAtMs + SAMPLE_TIMEOUT_MS,
+  );
+  artifact.attemptStartedAtMs = attemptStartedAtMs;
+  artifact.deadlineAtMs = deadlineAt;
+  const progress = {
+    stage: 'not-started',
+    completedCheckpoints: [],
+    recordCheckpoint(name) {
+      const completedAtMs = Date.now();
+      if (completedAtMs < deadlineAt && this.completedCheckpoints.length < 5)
+        this.completedCheckpoints.push({ name, completedAtMs });
+    },
+  };
+  const retainProgress = (key = 'milestoneProgress') => {
+    if (key === 'deadlineMilestoneProgress' && artifact[key]) return;
+    artifact[key] = {
+      stage: progress.stage,
+      completedCheckpoints: [...progress.completedCheckpoints],
+    };
+  };
+  let snapshotOpen = true;
+  const partialSnapshot = async () => {
+    if (
+      !snapshotOpen ||
+      artifact.status === 'complete' ||
+      Date.now() >= deadlineAt
+    )
+      return;
+    const observation = {
+      status: 'pending',
+      requestedAtMs: Date.now(),
+      milestoneStage: progress.stage,
+    };
+    artifact.partialObservation = observation;
+    if (!page) {
+      observation.status = 'unavailable';
+      observation.reason = 'page-not-created';
+      return;
+    }
+    try {
+      const value = await page.evaluate(() => {
+        const diagnostic = window.__inboxPhoneDiagnostics;
+        const navigation = performance.getEntriesByType('navigation')[0];
+        const marks = {};
+        for (const name of [
+          'primaryCommitMs',
+          'handlerEntryMs',
+          'openConfirmReturnMs',
+          'dialogInsertionObservedMs',
+        ]) {
+          const value = diagnostic?.inputBoundaries?.[name];
+          if (Number.isFinite(value) && value >= 0) marks[name] = value;
+        }
+        const primary = document.querySelector(
+          '.queue-workspace__detail .queue-primary-action',
+        );
+        return {
+          nowMs: performance.now(),
+          readyState: document.readyState,
+          marks,
+          capturedClickMs: Number.isFinite(diagnostic?.clickMs)
+            ? diagnostic.clickMs
+            : null,
+          primaryPresent: Boolean(primary),
+          primaryDisabled: primary?.disabled ?? null,
+          matchingDialogPresent: [
+            ...document.querySelectorAll('[role="dialog"]'),
+          ].some(
+            (node) =>
+              node.getAttribute('aria-label') === 'Rebase #9003?' ||
+              node.textContent?.includes('Rebase #9003?'),
+          ),
+          navigation: navigation
+            ? {
+                domContentLoadedMs: navigation.domContentLoadedEventEnd,
+                loadEventMs: navigation.loadEventEnd,
+              }
+            : null,
+        };
+      });
+      const completedAtMs = Date.now();
+      if (snapshotOpen && completedAtMs < deadlineAt) {
+        observation.status = 'observed';
+        observation.completedAtMs = completedAtMs;
+        observation.value = value;
+      }
+    } catch {
+      if (snapshotOpen) {
+        observation.status = 'unavailable';
+        observation.reason = 'page-observation-failed';
+      }
+    }
+  };
+  // ONE best-effort read before the original hard close, never an added wait.
+  const snapshotTimer = setTimeout(
+    () => {
+      void partialSnapshot();
+    },
+    Math.max(0, deadlineAt - Date.now() - 500),
+  );
   let expired = false;
   const assertDeadline = () => {
     if (expired || Date.now() >= deadlineAt) {
       expired = true;
+      retainProgress('deadlineMilestoneProgress');
       stage = 'diagnostic-deadline';
       throw Error('Diagnostic deadline exceeded');
     }
@@ -321,11 +432,35 @@ async function captureColdProfile(
   const timer = setTimeout(
     () => {
       expired = true;
+      retainProgress('deadlineMilestoneProgress');
+      snapshotOpen = false;
+      if (
+        !artifact.partialObservation ||
+        artifact.partialObservation.status === 'pending'
+      )
+        artifact.partialObservation = {
+          ...artifact.partialObservation,
+          status: 'unavailable',
+          reason: 'snapshot-not-completed-before-close',
+          milestoneStage: progress.stage,
+        };
       void context?.close().catch(() => undefined);
     },
     Math.max(0, deadlineAt - Date.now()),
   );
   try {
+    stage = 'source-binding';
+    artifact.sourceBindings = {};
+    for (const file of [
+      'tools/e2e/measure-inbox-phone.mjs',
+      'apps/console/src/app/action-item-card.tsx',
+      'apps/console-e2e/src/inbox-phone-lab.spec.ts',
+      'apps/console/next.config.js',
+      'pnpm-lock.yaml',
+    ])
+      artifact.sourceBindings[file] = sha(await readFile(file));
+    assertDeadline();
+    stage = 'setup';
     context = await browser.newContext({
       viewport: PROFILE.viewport,
       deviceScaleFactor: PROFILE.deviceScaleFactor,
@@ -336,7 +471,7 @@ async function captureColdProfile(
       extraHTTPHeaders: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
     });
     assertDeadline();
-    const page = await context.newPage();
+    page = await context.newPage();
     page.setDefaultTimeout(SAMPLE_TIMEOUT_MS);
     // One init script guarantees recorder order before any application code.
     await page.addInitScript({
@@ -419,10 +554,11 @@ async function captureColdProfile(
     artifact.journey = await milestone(
       page,
       options.origin,
-      { stage },
+      progress,
       'profiled',
       navigationBarrier,
     );
+    retainProgress();
     artifact.inputBoundaries = await page.evaluate(
       () => window.__inboxPhoneDiagnostics.inputBoundaries,
     );
@@ -541,15 +677,6 @@ async function captureColdProfile(
         source: data.toString('utf8'),
       });
     }
-    artifact.sourceBindings = {};
-    for (const file of [
-      'tools/e2e/measure-inbox-phone.mjs',
-      'apps/console/src/app/action-item-card.tsx',
-      'apps/console-e2e/src/inbox-phone-lab.spec.ts',
-      'apps/console/next.config.js',
-      'pnpm-lock.yaml',
-    ])
-      artifact.sourceBindings[file] = sha(await readFile(file));
     assertDeadline();
     artifact.completedAtMs = Date.now();
     artifact.deadlineAtMs = deadlineAt;
@@ -559,6 +686,14 @@ async function captureColdProfile(
       expired || Date.now() >= deadlineAt ? 'diagnostic-deadline' : stage;
     // Incomplete evidence never masquerades as a successful profile or sample.
   } finally {
+    retainProgress();
+    snapshotOpen = false;
+    clearTimeout(snapshotTimer);
+    if (artifact.partialObservation?.status === 'pending') {
+      artifact.partialObservation.status = 'unavailable';
+      artifact.partialObservation.reason =
+        'snapshot-not-completed-before-close';
+    }
     let closeError;
     const contextClosed = context?.close().catch((error) => {
       closeError = error;
@@ -603,17 +738,27 @@ async function captureColdProfile(
   if (artifact.status === 'complete' && (expired || Date.now() >= deadlineAt)) {
     artifact.status = 'incomplete';
     artifact.failureStage = 'diagnostic-deadline';
-    // This is the private file just created successfully by this capture.
-    await writeFile(
-      options.cpuProfileOut,
-      JSON.stringify({
+    // Never leave a stale complete file after a deadline or cap refusal.
+    let lateText = JSON.stringify(artifact, null, 2);
+    if (Buffer.byteLength(lateText) + 1 > maxBytes) {
+      artifact.failureStage = 'artifact-size-cap';
+      lateText = JSON.stringify({
         schemaVersion: 1,
         status: 'incomplete',
         excludedFromBudget: true,
-        failureStage: 'diagnostic-deadline',
+        failureStage: 'artifact-size-cap',
         sourceRevision: report.sourceRevision,
-      }) + '\n',
-    );
+        navigationBarrier,
+        sourceBindings: artifact.sourceBindings,
+        attemptStartedAtMs,
+        deadlineAtMs: deadlineAt,
+        milestoneProgress: artifact.milestoneProgress,
+        deadlineMilestoneProgress: artifact.deadlineMilestoneProgress,
+        partialObservation: artifact.partialObservation,
+      });
+    }
+    // This is the private file just created successfully by this capture.
+    await writeFile(options.cpuProfileOut, lateText + '\n');
   }
   return {
     status: artifact.status,
