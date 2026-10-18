@@ -226,6 +226,9 @@ async function runHostQualification([provider, imageId, outputPath, ...extra]) {
 // --- in-runner allocation binding ---------------------------------------------
 
 export const RUNNER_UID = 1001;
+export const EXPECTED_CPU_CORES = 2;
+export const EXPECTED_MEMORY_BYTES = 6442450944;
+export const RUN_ID_RE = /^work:[0-9A-HJKMNP-TV-Z]{26}\/r[1-9][0-9]*$/;
 export const BAKED_BIN = '/opt/agent-tools/bin';
 export const BAKED_RUNTIME = '/usr/local/lib/agent-lcars/runtime';
 export const BAKED_RUNNER = '/usr/local/lib/agent-lcars/direct-runner.sh';
@@ -296,6 +299,7 @@ export function readRunFacts(cgroupRoot = '/sys/fs/cgroup') {
     uid: process.getuid(),
     hostname: hostname(),
     arch: process.arch,
+    runId: process.env.LCARS_RUN_ID ?? null,
     cpuCores,
     memoryBytes,
     nowMs: Date.now(),
@@ -334,18 +338,24 @@ export function allocationFailures({
   if (!IMAGE_RE.test(receipt?.imageId ?? '')) failures.push('receipt-image-id');
   if (contract?.imageId !== receipt?.imageId)
     failures.push('contract-image-mismatch');
-  if (!/^(?!\.+$)[A-Za-z0-9._-]{1,80}$/.test(receipt?.runId ?? ''))
-    failures.push('receipt-run-id');
+  const runId = receipt?.runId ?? '';
+  if (!RUN_ID_RE.test(runId)) failures.push('receipt-run-id-not-canonical');
+  if (!RUN_ID_RE.test(actual?.runId ?? '') || actual.runId !== runId)
+    failures.push('run-id-not-bound');
   if (receipt?.uid !== RUNNER_UID || actual.uid !== RUNNER_UID)
     failures.push('uid-not-runner');
   if (!receipt?.hostname || actual.hostname !== receipt.hostname)
     failures.push('hostname-mismatch');
   if (!receipt?.arch || actual.arch !== receipt.arch)
     failures.push('arch-mismatch');
-  if (actual.cpuCores !== receipt?.cpuCores)
-    failures.push('cgroup-cpu-mismatch');
-  if (actual.memoryBytes !== receipt?.memoryBytes)
-    failures.push('cgroup-memory-mismatch');
+  if (actual.cpuCores !== EXPECTED_CPU_CORES)
+    failures.push('cgroup-cpu-actual');
+  if (receipt?.cpuCores !== EXPECTED_CPU_CORES)
+    failures.push('cgroup-cpu-receipt');
+  if (actual.memoryBytes !== EXPECTED_MEMORY_BYTES)
+    failures.push('cgroup-memory-actual');
+  if (receipt?.memoryBytes !== EXPECTED_MEMORY_BYTES)
+    failures.push('cgroup-memory-receipt');
   const startedAt = receipt?.startedAt;
   const expiresAt = receipt?.expiresAt;
   const started = Date.parse(startedAt ?? '');
@@ -390,8 +400,17 @@ export function allocationFailures({
   return failures;
 }
 
+// The canonical run id contains ':' and '/'; a directory basename must not
+// smuggle a path separator, so the run root is a fixed safe encoding of it.
+export const runRootBasename = (runId) =>
+  'run-' +
+  createHash('sha256')
+    .update('lcars-run:v1:' + runId)
+    .digest('hex')
+    .slice(0, 32);
+
 export function claimRunRoot(output, runId) {
-  const runRoot = join(output, runId);
+  const runRoot = join(output, runRootBasename(runId));
   try {
     mkdirSync(runRoot);
     return { claimed: true, runRoot };
@@ -547,6 +566,7 @@ export async function superviseInRunnerRun(
 // --- in-runner child phases --------------------------------------------------
 
 export const VERSION_TIMEOUT_MS = 30000;
+export const SETUP_TIMEOUT_MS = 10 * 60000;
 export const SCENARIO_TIMEOUT_MS = 50 * 60000;
 export const CONSUMER_TIMEOUT_MS = 30 * 60000;
 
@@ -566,10 +586,47 @@ export function defaultCollectBakedInputs(contract, runRoot) {
   return { roots: [BAKED_BIN, BAKED_RUNTIME, BAKED_RUNNER], captured };
 }
 
+// Approved source identity is confirmed against the actual checkout before
+// any probe runs: real Git HEAD plus every source-side baked input must match
+// the contract. Baked-only hashes alone do not cover source drift.
+export function readGitHead() {
+  const result = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: source,
+    encoding: 'utf8',
+    timeout: 30000,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error || result.status !== 0) return null;
+  return result.stdout.trim();
+}
+
+export function sourceDriftFailures(
+  contract,
+  { readHead = readGitHead, hash = hashFile } = {},
+) {
+  const failures = [];
+  const head = readHead();
+  if (!/^[a-f0-9]{40}$/.test(head ?? ''))
+    failures.push('source-head-unavailable');
+  else if (head !== contract?.sourceCommit) failures.push('source-head-drift');
+  for (const [name, [sourcePath]] of Object.entries(bakedInputMap(source))) {
+    let actual = null;
+    try {
+      actual = hash(sourcePath);
+    } catch {
+      /* source input missing */
+    }
+    if (actual !== contract?.bakedHashes?.[name])
+      failures.push('source-input-drift: ' + name);
+  }
+  return failures;
+}
+
 export const defaultChildDeps = {
   runProcess: runNativeProcess,
   evaluate: evaluateImageEvidence,
   collectBakedInputs: defaultCollectBakedInputs,
+  verifySourceContract: (contract) => sourceDriftFailures(contract),
 };
 
 export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
@@ -614,7 +671,18 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
     return result;
   }
   try {
+    const drift = deps.verifySourceContract(contract);
+    if (drift.length)
+      throw new PhaseFailure('source-drift: ' + drift.join(', '));
     deps.collectBakedInputs(contract, runRoot);
+    const setup = await runPhase('setup', {
+      binary: '/bin/bash',
+      args: [join(source, 'tools/setup-worktree.sh')],
+      cwd: source,
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      timeout: SETUP_TIMEOUT_MS,
+    });
+    if (!succeeded(setup)) throw new PhaseFailure('setup-phase-failed');
     const version = await runPhase('version', {
       binary: '/bin/bash',
       args: [
@@ -669,14 +737,20 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
         ),
         timeout: SCENARIO_TIMEOUT_MS,
       });
+      if (!succeeded(result))
+        throw new PhaseFailure('scenario-failed: ' + scenario);
+      // The in-memory result.stdout tail is a diagnostic bound, not the
+      // answer: a valid report larger than the tail would be rejected there.
+      // Evaluate the complete owned recorded stdout the process actually wrote.
+      const recorded = result.recording?.stdoutPath;
+      if (typeof recorded !== 'string' || !containedPath(runRoot, recorded))
+        throw new PhaseFailure('scenario-record-missing: ' + scenario);
       let report;
       try {
-        report = JSON.parse(result.stdout);
+        report = JSON.parse(readFileSync(recorded, 'utf8'));
       } catch {
         throw new PhaseFailure('malformed-report: ' + scenario);
       }
-      if (!succeeded(result))
-        throw new PhaseFailure('scenario-failed: ' + scenario);
       reports[scenario] = report;
       writeFileSync(
         join(runRoot, scenario + '.report.json'),
@@ -774,8 +848,8 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
         finishedAt: new Date().toISOString(),
       }),
     );
-    return exitCode;
   }
+  return localProbePassed ? 0 : 1;
 }
 
 // Every run-root entry by role with dev/ino/UID; external symlink targets are

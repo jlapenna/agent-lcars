@@ -36,7 +36,12 @@ function openRecorder(recording) {
   const limit = Number.isSafeInteger(recording?.maxBytes)
     ? recording.maxBytes
     : Number.POSITIVE_INFINITY;
-  const state = { fds: {}, bytes: { stdout: 0, stderr: 0 }, failure: null };
+  const state = {
+    fds: {},
+    bytes: { stdout: 0, stderr: 0 },
+    failure: null,
+    summary: null,
+  };
   try {
     state.fds.stdout = openSync(recording.stdoutPath, 'wx', 0o600);
     state.fds.stderr = openSync(recording.stderrPath, 'wx', 0o600);
@@ -46,20 +51,38 @@ function openRecorder(recording) {
   return {
     openFailure: () => state.failure,
     write(stream, chunk) {
-      if (state.fds[stream] === undefined || state.failure) return;
+      const fd = state.fds[stream];
+      if (fd === undefined || state.failure) return;
       if (state.bytes[stream] + chunk.length > limit) {
         state.failure = 'recording-cap-exceeded: ' + stream;
         return;
       }
-      try {
-        writeSync(state.fds[stream], chunk);
-        state.bytes[stream] += chunk.length;
-      } catch (error) {
-        state.failure = 'recording-write-failed: ' + (error?.message ?? error);
+      // writeSync may accept only part of a chunk; a byte-count-blind loop
+      // would silently drop the remainder while still counting it. Keep
+      // writing from the advancing offset and refuse any stalled progress.
+      let offset = 0;
+      while (offset < chunk.length) {
+        let written;
+        try {
+          written = writeSync(fd, chunk, offset);
+        } catch (error) {
+          state.failure =
+            'recording-write-failed: ' + (error?.message ?? error);
+          return;
+        }
+        if (!Number.isInteger(written) || written <= 0) {
+          state.failure = 'recording-write-stalled: ' + stream;
+          return;
+        }
+        offset += written;
+        state.bytes[stream] += written;
       }
     },
     close() {
-      for (const [stream, fd] of Object.entries(state.fds)) {
+      // One settlement only: a spawn 'error' and a later 'close' both reach
+      // here, so descriptors must not be closed twice.
+      if (state.summary) return state.summary;
+      for (const fd of Object.values(state.fds)) {
         try {
           closeSync(fd);
         } catch (error) {
@@ -67,13 +90,15 @@ function openRecorder(recording) {
             'recording-close-failed: ' + (error?.message ?? error);
         }
       }
-      return {
+      state.fds = {};
+      state.summary = {
         stdoutPath: recording.stdoutPath,
         stderrPath: recording.stderrPath,
         stdoutBytes: state.bytes.stdout,
         stderrBytes: state.bytes.stderr,
         error: state.failure,
       };
+      return state.summary;
     },
   };
 }
@@ -86,7 +111,15 @@ export function runNativeProcess(
   timeout = 60000,
   recording = null,
 ) {
-  return new Promise((done) => {
+  return new Promise((resolve) => {
+    // A spawn 'error' and a subsequent 'close' must settle exactly once so
+    // the recording sink is closed a single time.
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const recorder = recording ? openRecorder(recording) : null;
     const start = performance.now();
     const elapsed = () => Math.round(performance.now() - start);

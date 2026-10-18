@@ -1,7 +1,7 @@
+/* eslint-disable vitest/no-import-node-test -- Verify runs this probe helper test directly with node --test. */
 // Behavioral coverage for the in-runner qualification seams: real small
 // subprocesses in owned scratch. Passing fixtures never claim to qualify a
 // real provider suite.
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
@@ -15,23 +15,26 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { driverEnvironment } from './in-runner-image.mjs';
+import { runNativeProcess } from './native-process.mjs';
 import { artifactHashes } from './qualification-evidence.mjs';
 import {
+  allocationFailures,
   bakedInputMap,
+  claimRunRoot,
   consumerHashes,
   executeInRunnerPhases,
   hashFile,
   hostScenarioArgs,
   hostVersionArgs,
   indexRoot,
+  sourceDriftFailures,
   superviseInRunnerRun,
 } from './qualify-worker-image.mjs';
-
-import { runNativeProcess } from './native-process.mjs';
-import { driverEnvironment } from './in-runner-image.mjs';
 
 function ownedScratch() {
   const root = mkdtempSync(join(tmpdir(), 'lcars-qual-test-'));
@@ -227,6 +230,8 @@ test('createProbeScratch roots under the forwarded owned TMPDIR', () => {
 
 const repoSource = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+const canonicalRunId = () => 'work:01M57H2E8XVTC6YJMPKEET8R7Z/r2';
+
 function syntheticAllocation() {
   const imageId = 'sha256:' + 'a'.repeat(64);
   const contract = {
@@ -246,7 +251,7 @@ function syntheticAllocation() {
   const receipt = {
     provider: 'codex',
     imageId,
-    runId: 'run-claim-1',
+    runId: canonicalRunId(),
     uid: 1001,
     hostname: hostname(),
     arch: process.arch,
@@ -265,6 +270,7 @@ function supervisorDeps(spawns) {
       uid: receipt.uid,
       hostname: receipt.hostname,
       arch: receipt.arch,
+      runId: receipt.runId,
       cpuCores: receipt.cpuCores,
       memoryBytes: receipt.memoryBytes,
       nowMs: Date.now(),
@@ -381,37 +387,53 @@ function preparedRunRoot() {
   return runRoot;
 }
 
-const ok = (stdout, code = 0) => ({
-  code,
-  stdout,
-  stderr: '',
-  timedOut: false,
-  diagnostics: { durationMs: 5 },
-  recording: { error: null },
-});
+// Mirror the real recorder: emit every byte to the owned recording file and
+// report it, so the child parses the complete recorded stdout, never a tail.
+function emit(recording, stdout, code = 0) {
+  if (recording?.stdoutPath) writeFileSync(recording.stdoutPath, stdout);
+  if (recording?.stderrPath) writeFileSync(recording.stderrPath, '');
+  return {
+    code,
+    stdout,
+    stderr: '',
+    timedOut: false,
+    diagnostics: { durationMs: 5 },
+    recording: {
+      error: null,
+      stdoutPath: recording?.stdoutPath,
+      stderrPath: recording?.stderrPath,
+      stdoutBytes: stdout.length,
+      stderrBytes: 0,
+    },
+  };
+}
 
 function phaseDeps({
-  native = ok('{"observations":[]}'),
+  native = JSON.stringify({ observations: [] }),
   runRoot = '/unused',
 } = {}) {
   return {
     collectBakedInputs: () => ({ roots: [], captured: [] }),
+    verifySourceContract: () => [],
     evaluate: () => ({ offlinePassed: true, failures: [] }),
-    runProcess: async (binary, args, cwd, env, timeout, recording) => {
-      if (binary === '/bin/bash') return ok('/usr/local/bin/codex\n9.9.9\n');
+    runProcess: async (binary, args, _cwd, _env, _timeout, recording) => {
+      if (binary === '/bin/bash')
+        return emit(recording, '/usr/bin/codex\n9.9.9\n');
       if (args.some((a) => String(a).includes('vitest')))
-        return ok('consumer ok');
+        return emit(recording, 'consumer ok');
       if (args.some((a) => String(a) === 'setup-negative'))
-        return ok(JSON.stringify({ observations: [{ mode: 'x' }] }));
+        return emit(
+          recording,
+          JSON.stringify({ observations: [{ mode: 'x' }] }),
+        );
       if (args.some((a) => String(a).includes('in-runner-image'))) {
         if (native === 'fixtures-then-garbage') {
           writeFileSync(join(runRoot, 'fixtures/kept.txt'), 'kept');
-          writeFileSync(join(recording.stdoutPath), 'not-json-at-all');
-          native = ok('not-json-at-all');
+          return emit(recording, 'not-json-at-all');
         }
-        return native;
+        return emit(recording, native);
       }
-      return ok('');
+      return emit(recording, '');
     },
   };
 }
@@ -441,7 +463,7 @@ test('a malformed report stops at first failure and retains all partial data', a
   const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json'), 'utf8'));
   assert.deepEqual(
     phases.phases.map((entry) => entry.phase),
-    ['version', 'native'],
+    ['setup', 'version', 'native'],
   );
   assert.equal(existsSync(join(runRoot, 'setup-negative.report.json')), false);
   assert.equal(
@@ -460,6 +482,7 @@ test('phase metadata records invocation, deadline, exit, and env keys only', asy
   const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json'), 'utf8'));
   const names = phases.phases.map((entry) => entry.phase);
   assert.deepEqual(names, [
+    'setup',
     'version',
     'native',
     'setup-negative',
@@ -572,4 +595,205 @@ test('both CLI usages fail closed without touching Docker', () => {
   });
   assert.equal(runner.status, 1);
   assert.match(runner.stderr, /--in-runner <provider>/);
+});
+
+test('the canonical run id is bound to the current run and a safe run root', () => {
+  const runId = canonicalRunId();
+  const actual = {
+    uid: 1001,
+    hostname: hostname(),
+    arch: process.arch,
+    runId,
+    cpuCores: 2,
+    memoryBytes: 6 * 1024 * 1024 * 1024,
+    nowMs: Date.now(),
+  };
+  const { contract, receipt } = syntheticAllocation();
+  const sourceHashes = artifactHashes(repoSource);
+  assert.deepEqual(
+    allocationFailures({
+      provider: 'codex',
+      receipt,
+      contract,
+      actual,
+      sourceHashes,
+    }),
+    [],
+  );
+  assert.ok(
+    allocationFailures({
+      provider: 'codex',
+      receipt: { ...receipt, runId: 'not-a-work-run' },
+      contract,
+      actual: { ...actual, runId: 'not-a-work-run' },
+      sourceHashes,
+    }).includes('receipt-run-id-not-canonical'),
+  );
+  assert.ok(
+    allocationFailures({
+      provider: 'codex',
+      receipt,
+      contract,
+      actual: { ...actual, runId: canonicalRunId() + 'x' },
+      sourceHashes,
+    }).includes('run-id-not-bound'),
+  );
+  const output = ownedScratch();
+  const claimed = claimRunRoot(output, runId);
+  assert.match(basename(claimed.runRoot), /^run-[0-9a-f]{32}$/);
+  assert.ok(!basename(claimed.runRoot).includes('/'));
+});
+
+test('unknown or wrong actual allocation values fail closed', () => {
+  const { contract, receipt } = syntheticAllocation();
+  const actual = {
+    uid: 1001,
+    hostname: hostname(),
+    arch: process.arch,
+    runId: canonicalRunId(),
+    cpuCores: null,
+    memoryBytes: null,
+    nowMs: Date.now(),
+  };
+  const failures = allocationFailures({
+    provider: 'codex',
+    receipt,
+    contract,
+    actual,
+    sourceHashes: artifactHashes(repoSource),
+  });
+  assert.ok(failures.includes('cgroup-cpu-actual'));
+  assert.ok(failures.includes('cgroup-memory-actual'));
+});
+
+test('a failing setup phase stops before the version and probe phases', async () => {
+  const runRoot = preparedRunRoot();
+  const base = phaseDeps();
+  const code = await executeInRunnerPhases(runRoot, {
+    ...base,
+    runProcess: async (...call) =>
+      call[1].some((arg) => String(arg).includes('setup-worktree.sh'))
+        ? emit(call[5], 'setup boom', 7)
+        : base.runProcess(...call),
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(runRoot, 'phases.json'), 'utf8')).phases.map(
+      (phase) => phase.phase,
+    ),
+    ['setup'],
+  );
+  assert.match(
+    JSON.parse(readFileSync(join(runRoot, 'qualification.json'), 'utf8'))
+      .stopped,
+    /setup-phase-failed/,
+  );
+});
+
+test('source drift is caught before any probe phase', async () => {
+  const runRoot = preparedRunRoot();
+  const base = phaseDeps();
+  const code = await executeInRunnerPhases(runRoot, {
+    ...base,
+    verifySourceContract: () => ['source-head-drift'],
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(
+    JSON.parse(readFileSync(join(runRoot, 'phases.json'), 'utf8')).phases,
+    [],
+  );
+  assert.match(
+    JSON.parse(readFileSync(join(runRoot, 'qualification.json'), 'utf8'))
+      .stopped,
+    /source-drift: source-head-drift/,
+  );
+});
+
+test('source drift compares HEAD and every source-side baked input', () => {
+  const wanted = Object.keys(bakedInputMap(repoSource));
+  const contract = {
+    sourceCommit: 'a'.repeat(40),
+    bakedHashes: Object.fromEntries(
+      wanted.map((name) => [name, 'c'.repeat(64)]),
+    ),
+  };
+  const hash = (path) => {
+    const entry = Object.entries(bakedInputMap(repoSource)).find(
+      ([, [sourcePath]]) => sourcePath === path,
+    );
+    return entry ? contract.bakedHashes[entry[0]] : null;
+  };
+  assert.deepEqual(
+    sourceDriftFailures(contract, { readHead: () => 'a'.repeat(40), hash }),
+    [],
+  );
+  assert.ok(
+    sourceDriftFailures(contract, {
+      readHead: () => 'b'.repeat(40),
+      hash,
+    }).includes('source-head-drift'),
+  );
+  assert.ok(
+    sourceDriftFailures(contract, {
+      readHead: () => null,
+      hash,
+    }).includes('source-head-unavailable'),
+  );
+  assert.ok(
+    sourceDriftFailures(contract, {
+      readHead: () => 'a'.repeat(40),
+      hash: () => 'd'.repeat(64),
+    }).includes('source-input-drift: ' + wanted[0]),
+  );
+});
+
+test('a spawn error and close settle the recording sink exactly once', async () => {
+  const root = ownedScratch();
+  const recording = {
+    stdoutPath: join(root, 'spawn.stdout.bin'),
+    stderrPath: join(root, 'spawn.stderr.bin'),
+  };
+  const result = await runNativeProcess(
+    join(root, 'not-a-real-binary'),
+    [],
+    root,
+    { PATH: process.env.PATH },
+    1000,
+    recording,
+  );
+  assert.equal(result.code, null);
+  assert.equal(result.diagnostics.spawnError, 'ENOENT');
+  assert.equal(result.recording.error, null);
+  assert.equal(readFileSync(recording.stdoutPath, 'utf8'), '');
+  assert.equal(readFileSync(recording.stderrPath, 'utf8'), '');
+});
+
+test('a successful scenario is parsed from the complete record, not its tail', async () => {
+  const runRoot = preparedRunRoot();
+  const report = JSON.stringify({
+    observations: [],
+    pad: 'x'.repeat(1_000_005),
+  });
+  assert.ok(report.length > 1_000_000);
+  const base = phaseDeps({ native: report, runRoot });
+  const code = await executeInRunnerPhases(runRoot, {
+    ...base,
+    runProcess: async (...call) => {
+      const result = await base.runProcess(...call);
+      const args = call[1];
+      if (
+        args.some((arg) => String(arg).includes('in-runner-image')) &&
+        !args.some((arg) => String(arg) === 'setup-negative')
+      ) {
+        result.stdout = result.stdout.slice(1);
+        assert.throws(() => JSON.parse(result.stdout));
+      }
+      return result;
+    },
+  });
+  assert.equal(code, 0);
+  assert.equal(
+    readFileSync(join(runRoot, 'logs/native.stdout.bin'), 'utf8'),
+    report,
+  );
 });
