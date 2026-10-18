@@ -93,9 +93,7 @@ model, credential documentation and genuine consumer verification together.
 `jlapenna/labels` is covered by both jlapenna installations; its source
 onboarding uses GitHub-hosted CI and adds no ARC lane.
 
-The complete observed repository lists remain modelled deliberately: new
-repository access still produces drift for the Homelab IAM monitoring owner
-to reconcile. A model merge alone does not prove live convergence. GitHub App
+A model merge alone does not prove live convergence. GitHub App
 membership does not widen the Terraform-owned WIF `fleetRepositories` list
 or its provider condition; that remains a separate authorization boundary.
 
