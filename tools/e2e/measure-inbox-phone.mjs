@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +32,7 @@ export function labOptions(args, env = process.env) {
       origin: { type: 'string' },
       samples: { type: 'string', default: '30' },
       out: { type: 'string' },
+      'cpu-profile-out': { type: 'string' },
     },
   });
   const origin = new URL(values.origin ?? '');
@@ -58,7 +60,14 @@ export function labOptions(args, env = process.env) {
   }
   if (!values.out)
     throw new Error('Provide --out for the measurement artifact.');
-  return { origin: origin.origin, samples, out: path.resolve(values.out) };
+  return {
+    origin: origin.origin,
+    samples,
+    out: path.resolve(values.out),
+    cpuProfileOut: values['cpu-profile-out']
+      ? path.resolve(values['cpu-profile-out'])
+      : undefined,
+  };
 }
 
 const percentile = (values, quantile) =>
@@ -191,6 +200,282 @@ async function failedPageObservation(page) {
   }
 }
 
+const installPageDiagnostics = () => {
+  const diagnostics = {
+    clickMs: null,
+    longTasks: [],
+    longTasksTruncated: false,
+  };
+  window.__inboxPhoneDiagnostics = diagnostics;
+  diagnostics.collect = (entries) => {
+    for (const entry of entries) {
+      if (diagnostics.longTasks.length < 200)
+        diagnostics.longTasks.push({
+          startMs: entry.startTime,
+          durationMs: entry.duration,
+        });
+      else diagnostics.longTasksTruncated = true;
+    }
+  };
+  diagnostics.observer = new PerformanceObserver((list) =>
+    diagnostics.collect(list.getEntries()),
+  );
+  diagnostics.observer.observe({ type: 'longtask', buffered: true });
+  document.addEventListener(
+    'click',
+    (event) => {
+      const button =
+        event.target instanceof Element ? event.target.closest('button') : null;
+      if (
+        button?.textContent?.trim() === 'Approve & Rebase' &&
+        button.closest('.queue-workspace__detail')
+      )
+        diagnostics.clickMs = performance.now();
+    },
+    { capture: true },
+  );
+};
+
+// One extra diagnostic journey AFTER the untouched budget samples. Debugger/
+// Profiler overhead makes this unsuitable for p95. Only generated public chunk
+// code and selected private build manifests are retained; never headers,
+// application response bodies, storage, cookies, arbitrary URLs or source-map contents.
+async function captureColdProfile(browser, options, report, runDeadlineAt) {
+  const maxBytes = 8 * 1024 * 1024;
+  const sha = (value) => createHash('sha256').update(value).digest('hex');
+  const artifact = {
+    schemaVersion: 1,
+    status: 'incomplete',
+    excludedFromBudget: true,
+    scope:
+      'one extra cold navigation through confirmation and Cancel cleanup; profiling overhead included',
+    sourceRevision: report.sourceRevision,
+    browserVersion: report.browserVersion,
+    environment: report.environment,
+    profile: PROFILE,
+    sources: [],
+    manifests: [],
+  };
+  let context;
+  let stage = 'setup';
+  const deadlineAt = Math.min(runDeadlineAt, Date.now() + SAMPLE_TIMEOUT_MS);
+  let expired = false;
+  const assertDeadline = () => {
+    if (expired || Date.now() >= deadlineAt) {
+      expired = true;
+      stage = 'diagnostic-deadline';
+      throw Error('Diagnostic deadline exceeded');
+    }
+  };
+  const timer = setTimeout(
+    () => {
+      expired = true;
+      void context?.close().catch(() => undefined);
+    },
+    Math.max(0, deadlineAt - Date.now()),
+  );
+  try {
+    context = await browser.newContext({
+      viewport: PROFILE.viewport,
+      deviceScaleFactor: PROFILE.deviceScaleFactor,
+      isMobile: true,
+      hasTouch: true,
+      reducedMotion: 'reduce',
+      serviceWorkers: 'block',
+      extraHTTPHeaders: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+    });
+    assertDeadline();
+    const page = await context.newPage();
+    page.setDefaultTimeout(SAMPLE_TIMEOUT_MS);
+    await page.addInitScript(installPageDiagnostics);
+    const cdp = await context.newCDPSession(page);
+    const scripts = new Map();
+    cdp.on('Debugger.scriptParsed', ({ scriptId, url, hash, length }) => {
+      try {
+        const parsed = new URL(url);
+        if (
+          parsed.origin === options.origin &&
+          !parsed.search &&
+          !parsed.hash &&
+          /^\/_next\/static\/chunks\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.js$/.test(
+            parsed.pathname,
+          )
+        ) {
+          scripts.set(scriptId, {
+            scriptId,
+            path: parsed.pathname,
+            cdpHash: hash,
+            length,
+          });
+        }
+      } catch {
+        /* Ignore inline, extension and non-static scripts. */
+      }
+    });
+    await cdp.send('Network.enable');
+    await cdp.send('Emulation.setCPUThrottlingRate', {
+      rate: PROFILE.cpuSlowdown,
+    });
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: PROFILE.latencyMs,
+      downloadThroughput: PROFILE.downloadBytesPerSecond,
+      uploadThroughput: PROFILE.uploadBytesPerSecond,
+    });
+    await cdp.send('Network.clearBrowserCache');
+    await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
+    await cdp.send('Debugger.enable', { maxScriptsCacheSize: maxBytes });
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 1_000 });
+    stage = 'profiled-cold';
+    artifact.profileStartedWallTimeMs = Date.now();
+    await cdp.send('Profiler.start');
+    artifact.journey = await milestone(
+      page,
+      options.origin,
+      { stage },
+      'profiled',
+    );
+    artifact.navigationClock = await page.evaluate(() => ({
+      timeOriginMs: performance.timeOrigin,
+      nowMs: performance.now(),
+    }));
+    artifact.cpuProfile = (await cdp.send('Profiler.stop')).profile;
+    artifact.profileEndedWallTimeMs = Date.now();
+    if (!artifact.cpuProfile.samples?.length) throw Error('Empty profile');
+    for (const node of artifact.cpuProfile.nodes)
+      node.callFrame.url = diagnosticPath(node.callFrame.url, options.origin);
+    stage = 'source-binding';
+    if (scripts.size > 32) throw Error('Script count exceeds bounded capture');
+    const next = path.resolve('dist/apps/console/.next');
+    const append = (collection, value) => {
+      collection.push(value);
+      if (Buffer.byteLength(JSON.stringify(artifact)) > maxBytes) {
+        collection.pop();
+        throw Error('Artifact cap exceeded');
+      }
+    };
+    for (const metadata of scripts.values()) {
+      if (
+        !Number.isInteger(metadata.length) ||
+        metadata.length > 2 * 1024 * 1024
+      )
+        throw Error('Script exceeds bounded capture');
+      const { scriptSource } = await cdp.send('Debugger.getScriptSource', {
+        scriptId: metadata.scriptId,
+      });
+      const file = path.join(next, metadata.path.slice('/_next/'.length));
+      const generated = await readFile(file);
+      const browserSHA256 = sha(scriptSource);
+      if (browserSHA256 !== sha(generated))
+        throw Error('Browser/build source mismatch');
+      append(artifact.sources, {
+        ...metadata,
+        sha256: browserSHA256,
+        source: scriptSource,
+      });
+    }
+    if (!artifact.sources.length) throw Error('No matching generated scripts');
+    const captured = new Set(artifact.sources.map((entry) => entry.scriptId));
+    for (const node of artifact.cpuProfile.nodes) {
+      if (
+        node.callFrame.url.startsWith('/_next/static/chunks/') &&
+        !captured.has(node.callFrame.scriptId)
+      )
+        throw Error('Profile script has no exact matching generated source');
+    }
+    for (const file of [
+      'BUILD_ID',
+      'server/app/inbox/page_client-reference-manifest.js',
+      'server/app/inbox/page/build-manifest.json',
+    ]) {
+      const data = await readFile(path.join(next, file));
+      append(artifact.manifests, {
+        path: file,
+        sha256: sha(data),
+        source: data.toString('utf8'),
+      });
+    }
+    artifact.sourceBindings = {};
+    for (const file of [
+      'tools/e2e/measure-inbox-phone.mjs',
+      'apps/console-e2e/src/inbox-phone-lab.spec.ts',
+      'apps/console/next.config.js',
+      'pnpm-lock.yaml',
+    ])
+      artifact.sourceBindings[file] = sha(await readFile(file));
+    assertDeadline();
+    artifact.completedAtMs = Date.now();
+    artifact.deadlineAtMs = deadlineAt;
+    artifact.status = 'complete';
+  } catch {
+    artifact.failureStage =
+      expired || Date.now() >= deadlineAt ? 'diagnostic-deadline' : stage;
+    // Incomplete evidence never masquerades as a successful profile or sample.
+  } finally {
+    let closeError;
+    const contextClosed = context?.close().catch((error) => {
+      closeError = error;
+    });
+    if (contextClosed) {
+      // Race context cleanup against the remaining diagnostic budget: a
+      // stalled renderer close must not outlive the diagnostic window into
+      // the whole-run timeout; outer browser cleanup still owns the browser.
+      let cleanupTimer;
+      const budget = new Promise((resolve) => {
+        cleanupTimer = setTimeout(
+          resolve,
+          Math.max(0, deadlineAt - Date.now()),
+        );
+      });
+      await Promise.race([contextClosed, budget]);
+      clearTimeout(cleanupTimer);
+    }
+    clearTimeout(timer);
+    if (closeError) {
+      artifact.status = 'incomplete';
+      artifact.failureStage = 'context-cleanup';
+    }
+  }
+  if (expired || Date.now() >= deadlineAt) {
+    artifact.status = 'incomplete';
+    artifact.failureStage = 'diagnostic-deadline';
+  }
+  let text = JSON.stringify(artifact, null, 2);
+  if (Buffer.byteLength(text) + 1 > maxBytes) {
+    artifact.status = 'incomplete';
+    text = JSON.stringify({
+      schemaVersion: 1,
+      status: 'incomplete',
+      excludedFromBudget: true,
+      failureStage: 'artifact-size-cap',
+      sourceRevision: report.sourceRevision,
+      maxBytes,
+    });
+  }
+  await writeFile(options.cpuProfileOut, text + '\n', { flag: 'wx' });
+  if (artifact.status === 'complete' && (expired || Date.now() >= deadlineAt)) {
+    artifact.status = 'incomplete';
+    artifact.failureStage = 'diagnostic-deadline';
+    // This is the private file just created successfully by this capture.
+    await writeFile(
+      options.cpuProfileOut,
+      JSON.stringify({
+        schemaVersion: 1,
+        status: 'incomplete',
+        excludedFromBudget: true,
+        failureStage: 'diagnostic-deadline',
+        sourceRevision: report.sourceRevision,
+      }) + '\n',
+    );
+  }
+  return {
+    status: artifact.status,
+    out: options.cpuProfileOut,
+    excludedFromBudget: true,
+  };
+}
+
 export async function measure(options) {
   const report = {
     schemaVersion: 3,
@@ -230,6 +515,7 @@ export async function measure(options) {
   };
   let browser;
   let deadline;
+  let runDeadlineAt;
   try {
     report.environment.network = checkNetworkBoundary();
     report.sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -241,8 +527,10 @@ export async function measure(options) {
         : {}),
     });
     report.browserVersion = browser.version();
+    runDeadlineAt = Date.now() + RUN_TIMEOUT_MS;
     deadline = setTimeout(() => {
-      report.error = 'Measurement exceeded its whole-run deadline';
+      if (!options.cpuProfileOut || !report.summary)
+        report.error = 'Measurement exceeded its whole-run deadline';
       void browser.close().catch((error) => {
         report.cleanupError = error.message;
       });
@@ -311,43 +599,7 @@ export async function measure(options) {
           page.on('crash', () => {
             browserErrors.crashed = true;
           });
-          await page.addInitScript(() => {
-            const diagnostics = {
-              clickMs: null,
-              longTasks: [],
-              longTasksTruncated: false,
-            };
-            window.__inboxPhoneDiagnostics = diagnostics;
-            diagnostics.collect = (entries) => {
-              for (const entry of entries) {
-                if (diagnostics.longTasks.length < 200)
-                  diagnostics.longTasks.push({
-                    startMs: entry.startTime,
-                    durationMs: entry.duration,
-                  });
-                else diagnostics.longTasksTruncated = true;
-              }
-            };
-            diagnostics.observer = new PerformanceObserver((list) =>
-              diagnostics.collect(list.getEntries()),
-            );
-            diagnostics.observer.observe({ type: 'longtask', buffered: true });
-            document.addEventListener(
-              'click',
-              (event) => {
-                const button =
-                  event.target instanceof Element
-                    ? event.target.closest('button')
-                    : null;
-                if (
-                  button?.textContent?.trim() === 'Approve & Rebase' &&
-                  button.closest('.queue-workspace__detail')
-                )
-                  diagnostics.clickMs = performance.now();
-              },
-              { capture: true },
-            );
-          });
+          await page.addInitScript(installPageDiagnostics);
           const errors = [];
           page.on('pageerror', (error) => {
             browserErrors.page++;
@@ -449,6 +701,22 @@ export async function measure(options) {
         ];
       }),
     );
+    if (options.cpuProfileOut) {
+      try {
+        report.cpuProfileDiagnostic = await captureColdProfile(
+          browser,
+          options,
+          report,
+          runDeadlineAt,
+        );
+      } catch {
+        report.cpuProfileDiagnostic = {
+          status: 'incomplete',
+          excludedFromBudget: true,
+          failureStage: 'artifact-write',
+        };
+      }
+    }
   } catch (error) {
     report.error =
       error instanceof Error ? error.message : 'Measurement failed';
@@ -465,7 +733,11 @@ export async function measure(options) {
         error instanceof Error ? error.message : 'Browser cleanup failed';
       report.error ??= report.cleanupError;
     }
-    if (report.error) delete report.summary;
+    if (report.error) {
+      if (options.cpuProfileOut && report.summary)
+        report.completedCohortSummary = report.summary;
+      delete report.summary;
+    }
     await writeFile(options.out, `${JSON.stringify(report, null, 2)}\n`, {
       flag: 'wx',
     });

@@ -22,7 +22,11 @@ test.describe('Inbox phone measurement artifact', () => {
     // ceilings. This selected serial lab needs longer than ordinary journeys.
     test.setTimeout(16 * 60_000);
     const out = testInfo.outputPath('inbox-phone-lab.json');
+    const cpuProfile = testInfo.outputPath('inbox-phone-cpu-profile.json');
     await resetCliSessions();
+    let primaryFailure: unknown;
+    let labAttachmentFailure: unknown;
+    let cpuAttachmentFailure: unknown;
     try {
       const { stdout } = await promisify(execFile)(
         process.execPath,
@@ -34,6 +38,8 @@ test.describe('Inbox phone measurement artifact', () => {
           '30',
           '--out',
           out,
+          '--cpu-profile-out',
+          cpuProfile,
         ],
         { timeout: 15.5 * 60_000, maxBuffer: 1024 * 1024 },
       );
@@ -45,6 +51,12 @@ test.describe('Inbox phone measurement artifact', () => {
         expect(report.summary[cache].n).toBe(30);
         expect(report.summary[cache].p95Ms).toBeGreaterThan(0);
       }
+      // Separate diagnostic, never a 61st budget sample or p95 input.
+      const diagnostic = JSON.parse(await readFile(cpuProfile, 'utf8'));
+      expect(diagnostic.status).toBe('complete');
+      expect(diagnostic.excludedFromBudget).toBe(true);
+      expect(diagnostic.cpuProfile.samples.length).toBeGreaterThan(0);
+      expect(diagnostic.sources.length).toBeGreaterThan(0);
       for (const sample of report.samples) {
         expect(sample.loadEventMs).toBeGreaterThan(0);
         expect(sample.documentTransferBytes).toBeGreaterThanOrEqual(0);
@@ -65,6 +77,8 @@ test.describe('Inbox phone measurement artifact', () => {
           expect(value).toBeGreaterThanOrEqual(0);
         }
       }
+    } catch (error) {
+      primaryFailure = error;
     } finally {
       // Preserve partial diagnostics too. Attachment failure must not bypass
       // fixture cleanup, and a failed probe never acquires a passing summary.
@@ -76,10 +90,28 @@ test.describe('Inbox phone measurement artifact', () => {
             contentType: 'application/json',
           },
         );
-      } finally {
-        await resetCliSessions();
+      } catch (attachmentError) {
+        labAttachmentFailure = attachmentError;
       }
+      try {
+        await testInfo.attach(
+          'Inbox cold CPU diagnostic (excluded from budget)',
+          {
+            path: cpuProfile,
+            contentType: 'application/json',
+          },
+        );
+      } catch (attachmentError) {
+        // Missing diagnostic must not mask the real lab failure.
+        cpuAttachmentFailure = attachmentError;
+      }
+      await resetCliSessions();
     }
+    // No throw inside finally: the real lab failure is reported first, and
+    // the optional diagnostic attachment never masks it.
+    const pendingFailure =
+      labAttachmentFailure ?? primaryFailure ?? cpuAttachmentFailure;
+    if (pendingFailure) throw pendingFailure;
   });
   test('retains a real load-blocking request before cleanup and keeps normal measurement functional', async () => {
     test.setTimeout(60_000);

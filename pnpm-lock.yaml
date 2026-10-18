@@ -112,8 +112,8 @@ importers:
         specifier: ^8.0.1
         version: 8.0.3(supports-color@8.1.1)
       '@jlapenna/repo-tools':
-        specifier: github:jlapenna/repo-tools#v2.0.9
-        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/58f68d8f52127156d8f55bdeb70a8f0d2c2e9ea1(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))(supports-color@8.1.1)(typescript@6.0.3)
+        specifier: github:jlapenna/repo-tools#v2.0.10
+        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/1bea711529cbe3d0e2eab77a95bacc1f2b4e7523(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))(supports-color@8.1.1)(typescript@6.0.3)
       '@naxodev/gonx':
         specifier: 4.1.2
         version: 4.1.2(@nx/devkit@23.3.0(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23))))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))
@@ -1765,10 +1765,10 @@ packages:
       vitest:
         optional: true
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/58f68d8f52127156d8f55bdeb70a8f0d2c2e9ea1':
-    resolution: {gitHosted: true, integrity: sha512-L77UigVnu1oBQ19ewvp1u/SKgPDnNmLlm7JMb+qbvxu7Q8jHNUozc1wt9woJUqftltpJ00ZBXiC/cXR1jXFZ5A==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/58f68d8f52127156d8f55bdeb70a8f0d2c2e9ea1}
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/1bea711529cbe3d0e2eab77a95bacc1f2b4e7523':
+    resolution: {gitHosted: true, integrity: sha512-nBf5FhLx+05DEul7z8i1sKIy5JEVMCR+X87hUpY+5R8mfXOadXwZvghj0r95OltghmFGOCPEWp/I3mJEHDi0FQ==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/1bea711529cbe3d0e2eab77a95bacc1f2b4e7523}
     version: 0.0.0
-    engines: {node: '24', pnpm: 11.28.5}
+    engines: {node: '24', pnpm: 11.28.6}
     hasBin: true
 
   '@jridgewell/gen-mapping@0.3.13':
@@ -10570,7 +10570,7 @@ snapshots:
       '@testing-library/react': 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       vitest: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@24.19.2)(@vitest/coverage-v8@5.0.5)(jsdom@26.1.0(supports-color@8.1.1))(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(less@4.5.1)(sass-embedded@1.99.0)(sass@1.99.0)(sugarss@5.0.1(postcss@8.5.28))(terser@5.48.0)(tsx@4.23.15)(yaml@2.9.1))
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/58f68d8f52127156d8f55bdeb70a8f0d2c2e9ea1(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))(supports-color@8.1.1)(typescript@6.0.3)':
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/1bea711529cbe3d0e2eab77a95bacc1f2b4e7523(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))(supports-color@8.1.1)(typescript@6.0.3)':
     dependencies:
       '@nx/devkit': 23.3.0(nx@23.3.0(@swc-node/register@1.12.1(@swc/core@1.16.18(@swc/helpers@0.5.23))(@swc/types@0.1.28)(supports-color@8.1.1)(typescript@6.0.3))(@swc/core@1.16.18(@swc/helpers@0.5.23)))
       '@typescript-eslint/utils': 8.71.2(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
