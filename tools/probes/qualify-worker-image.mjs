@@ -542,9 +542,14 @@ export async function superviseInRunnerRun(
   { provider, receiptPath, contractPath, outputPath },
   deps = defaultSupervisorDeps,
 ) {
-  const receipt = readJson(resolve(receiptPath));
+  // Capture once: validation, identity and child copies share these exact bytes.
+  const receiptBytes = readFileSync(resolve(receiptPath));
+  const contractBytes = readFileSync(resolve(contractPath));
+  const receipt = JSON.parse(receiptBytes.toString('utf8'));
   if (!receipt) throw new Error('Allocation receipt is missing or malformed');
-  const contract = readJson(resolve(contractPath));
+  const contract = JSON.parse(contractBytes.toString('utf8'));
+  const receiptSha = createHash('sha256').update(receiptBytes).digest('hex');
+  const contractSha = createHash('sha256').update(contractBytes).digest('hex');
   if (!contract) throw new Error('Source contract is missing or malformed');
   const clock = (deps.readMonotonicClock ?? readMonotonicClock)();
   const actual = deps.readRunFacts();
@@ -569,8 +574,8 @@ export async function superviseInRunnerRun(
     const status = rereadCompletedRun(runRoot, {
       provider,
       receipt,
-      receiptPath: resolve(receiptPath),
-      contractPath: resolve(contractPath),
+      receiptSha,
+      contractSha,
       artifactHashes: deps.artifactHashes(source),
       clock,
     });
@@ -594,13 +599,19 @@ export async function superviseInRunnerRun(
       startedAt: receipt.startedAt,
       expiresAt: receipt.expiresAt,
     },
-    receiptSha: deps.hashFile(resolve(receiptPath)),
-    contractSha: deps.hashFile(resolve(contractPath)),
+    receiptSha,
+    contractSha,
     artifactHashes: deps.artifactHashes(source),
   };
   writeFileSync(join(runRoot, 'intent.json'), JSON.stringify(intent, null, 2));
-  cpSync(resolve(receiptPath), join(runRoot, 'receipt.json'));
-  cpSync(resolve(contractPath), join(runRoot, 'contract.json'));
+  writeFileSync(join(runRoot, 'receipt.json'), receiptBytes, {
+    flag: 'wx',
+    mode: 0o600,
+  });
+  writeFileSync(join(runRoot, 'contract.json'), contractBytes, {
+    flag: 'wx',
+    mode: 0o600,
+  });
   mkdirSync(join(runRoot, 'logs'));
   mkdirSync(join(runRoot, 'fixtures'));
   mkdirSync(join(runRoot, 'retained'));
@@ -646,7 +657,11 @@ class PhaseFailure extends Error {}
 export function defaultCollectBakedInputs(
   contract,
   runRoot,
-  { inputs = bakedInputMap(source), toolsRoot = dirname(BAKED_BIN) } = {},
+  {
+    inputs = bakedInputMap(source),
+    toolsRoot = dirname(BAKED_BIN),
+    runtimeRoot = '/usr/local/lib/agent-lcars/runtime',
+  } = {},
 ) {
   const captured = [];
   for (const [name, [, bakedPath]] of Object.entries(inputs)) {
@@ -660,14 +675,24 @@ export function defaultCollectBakedInputs(
   }
   // Scenarios link the entire fleet-tools package, not just its bin directory.
   // Preserve the actual target before certifying that external pointer. Links
-  // within the copy remain links so indexing can still refuse outside targets.
+  // within the copy remain links, resolved to their original absolute targets,
+  // so relocation cannot turn an escaping relative link into an owned pointer.
   cpSync(toolsRoot, join(runRoot, 'retained', 'fleet-tools'), {
     recursive: true,
     dereference: false,
-    verbatimSymlinks: true,
+    verbatimSymlinks: false,
+  });
+  cpSync(runtimeRoot, join(runRoot, 'retained', 'runtime'), {
+    recursive: true,
+    dereference: false,
+    verbatimSymlinks: false,
   });
   return {
-    roots: [toolsRoot, ...Object.values(inputs).map(([, path]) => path)],
+    roots: [
+      toolsRoot,
+      runtimeRoot,
+      ...Object.values(inputs).map(([, path]) => path),
+    ],
     captured,
   };
 }
@@ -1146,8 +1171,8 @@ function rereadCompletedRun(runRoot, expected) {
       intent.provider !== expected.provider ||
       intent.runId !== expected.receipt.runId ||
       intent.imageId !== expected.receipt.imageId ||
-      intent.receiptSha !== hashFile(expected.receiptPath) ||
-      intent.contractSha !== hashFile(expected.contractPath) ||
+      intent.receiptSha !== expected.receiptSha ||
+      intent.contractSha !== expected.contractSha ||
       hashFile(join(runRoot, 'receipt.json')) !== intent.receiptSha ||
       hashFile(join(runRoot, 'contract.json')) !== intent.contractSha ||
       !same(intent.artifactHashes, expected.artifactHashes) ||
@@ -1276,7 +1301,23 @@ export function indexRoot(
         const owned = containedPath(runRoot, resolved);
         const retained =
           !owned && retainedRoots.some((root) => containedPath(root, resolved));
-        entries.push({ path: rel, type: 'link', target, owned, retained });
+        entries.push({
+          path: rel,
+          type: 'link',
+          target,
+          owned,
+          retained,
+          dev: stat.dev,
+          ino: stat.ino,
+          uid: stat.uid,
+          mode: stat.mode & 0o777,
+          size: stat.size,
+          role: rel.startsWith('fixtures/')
+            ? 'fixture'
+            : rel.startsWith('retained/')
+              ? 'retained'
+              : 'entry',
+        });
         if (!owned)
           externalPointers.push({ path: rel, target, retained: retained });
         continue;

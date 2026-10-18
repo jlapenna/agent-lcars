@@ -605,6 +605,10 @@ test('fleet-tools directory pointers are retained only after copying the complet
   mkdirSync(join(toolsRoot, 'bin'), { recursive: true });
   writeFileSync(join(toolsRoot, 'bin/worker-policy.cjs'), 'policy');
   writeFileSync(join(toolsRoot, 'package.json'), '{"name":"fleet-tools"}');
+  const runtimeRoot = join(root, 'runtime');
+  mkdirSync(runtimeRoot);
+  writeFileSync(join(runtimeRoot, 'helper.sh'), 'runtime-helper');
+  writeFileSync(join(runtimeRoot, 'package.json'), '{"name":"runtime"}');
   const inputs = {
     'worker-policy.cjs': ['/unused', join(toolsRoot, 'bin/worker-policy.cjs')],
   };
@@ -615,10 +619,15 @@ test('fleet-tools directory pointers are retained only after copying the complet
   };
   const runRoot = preparedRunRoot();
   symlinkSync(toolsRoot, join(runRoot, 'fixtures/fleet-tools'));
+  symlinkSync(runtimeRoot, join(runRoot, 'fixtures/runtime'));
   assert.equal(indexRoot(runRoot).retention, 'incomplete');
   const deps = phaseDeps();
   deps.collectBakedInputs = () =>
-    defaultCollectBakedInputs(contract, runRoot, { inputs, toolsRoot });
+    defaultCollectBakedInputs(contract, runRoot, {
+      inputs,
+      toolsRoot,
+      runtimeRoot,
+    });
   assert.equal(await executeInRunnerPhases(runRoot, deps), 0);
   const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
   assert.equal(index.retention, 'complete');
@@ -629,16 +638,40 @@ test('fleet-tools directory pointers are retained only after copying the complet
       readFileSync(join(toolsRoot, path)),
     );
 
+  for (const path of ['helper.sh', 'package.json'])
+    assert.deepEqual(
+      readFileSync(join(runRoot, 'retained/runtime', path)),
+      readFileSync(join(runtimeRoot, path)),
+    );
+  assert.equal(
+    index.externalPointers.find((p) => p.path === 'fixtures/runtime').retained,
+    true,
+  );
+  symlinkSync('/unretained-runtime', join(runtimeRoot, 'outside-link'));
+  writeFileSync(join(root, 'unretained'), 'never copied');
+  symlinkSync('../unretained', join(runtimeRoot, 'relative-escape'));
   symlinkSync('/unretained-target', join(toolsRoot, 'outside-link'));
   const externalRoot = preparedRunRoot();
   const external = defaultCollectBakedInputs(contract, externalRoot, {
     inputs,
     toolsRoot,
+    runtimeRoot,
   });
   const externalIndex = indexRoot(externalRoot, {
     retainedRoots: external.roots,
   });
   assert.equal(externalIndex.retention, 'incomplete');
+  const escape = externalIndex.externalPointers.find(
+    (p) => p.path === 'retained/runtime/relative-escape',
+  );
+  assert.equal(escape.target, join(root, 'unretained'));
+  assert.equal(escape.retained, false);
+  assert.equal(
+    externalIndex.externalPointers.find(
+      (p) => p.path === 'retained/runtime/outside-link',
+    ).retained,
+    false,
+  );
   assert.equal(
     externalIndex.externalPointers.find(
       (pointer) => pointer.path === 'retained/fleet-tools/outside-link',
@@ -659,6 +692,27 @@ test('fleet-tools directory pointers are retained only after copying the complet
   const failedIndex = JSON.parse(readFileSync(join(failedRoot, 'index.json')));
   assert.equal(failedIndex.retention, 'incomplete');
   assert.equal(failedIndex.externalPointers[0].retained, false);
+  const missingRuntime = preparedRunRoot();
+  symlinkSync(runtimeRoot, join(missingRuntime, 'fixtures/runtime'));
+  const missingDeps = phaseDeps();
+  missingDeps.collectBakedInputs = () =>
+    defaultCollectBakedInputs(contract, missingRuntime, {
+      inputs,
+      toolsRoot,
+      runtimeRoot: join(root, 'missing-runtime'),
+    });
+  missingDeps.runProcess = () =>
+    assert.fail('no phase after runtime copy failure');
+  assert.equal(await executeInRunnerPhases(missingRuntime, missingDeps), 1);
+  const missingIndex = JSON.parse(
+    readFileSync(join(missingRuntime, 'index.json')),
+  );
+  assert.equal(missingIndex.retention, 'incomplete');
+  assert.equal(
+    missingIndex.externalPointers.find((p) => p.path === 'fixtures/runtime')
+      .retained,
+    false,
+  );
 });
 
 test('unknown nested retirement cannot certify retention even when every pointer is retained', () => {
@@ -1497,7 +1551,7 @@ test('elapsed monotonic budget stops later phases and cannot become a late succe
 
 // Drive the real supervisor claim, child journal and finalizer over real files.
 // Only provider phase execution/evaluation is synthetic; no qualification runs.
-async function completedRun({ failure = false } = {}) {
+async function completedRun({ failure = false, link = false } = {}) {
   const root = ownedScratch();
   const { receipt, contract } = syntheticAllocation();
   const receiptPath = join(root, 'receipt.json');
@@ -1508,6 +1562,7 @@ async function completedRun({ failure = false } = {}) {
   const deps = supervisorDeps(spawns);
   deps.spawnChild = (path) => {
     spawns.push(path);
+    if (link) symlinkSync('/outside', join(path, 'fixtures/link'));
     return {
       pid: 4242,
       birth: { procStarttime: '12345' },
@@ -1872,4 +1927,82 @@ test('a different currently admitted run cannot adopt a copied completed root', 
   );
   assert.equal(r.spawns.length, 1);
   assert.deepEqual(snapshot(r.root), before);
+});
+
+test('supervisor validates, hashes and retains one input snapshot despite path replacement', async () => {
+  const root = ownedScratch();
+  const { receipt, contract } = syntheticAllocation();
+  const receiptPath = join(root, 'receipt.json');
+  const contractPath = join(root, 'contract.json');
+  const receiptBytes = JSON.stringify(receipt);
+  const contractBytes = JSON.stringify(contract);
+  writeFileSync(receiptPath, receiptBytes);
+  writeFileSync(contractPath, contractBytes);
+  const spawns = [];
+  const deps = supervisorDeps(spawns);
+  const facts = deps.readRunFacts;
+  deps.readRunFacts = () => {
+    // Real replacement after capture, before admission/hash/copy.
+    writeFileSync(receiptPath + '.new', '{"runId":"unapproved"}');
+    renameSync(receiptPath + '.new', receiptPath);
+    writeFileSync(contractPath + '.new', '{"sourceCommit":"unapproved"}');
+    renameSync(contractPath + '.new', contractPath);
+    return facts();
+  };
+  const result = await superviseInRunnerRun(
+    {
+      provider: 'codex',
+      receiptPath,
+      contractPath,
+      outputPath: join(root, 'out'),
+    },
+    deps,
+  );
+  assert.equal(spawns.length, 1);
+  assert.equal(
+    readFileSync(join(result.runRoot, 'receipt.json'), 'utf8'),
+    receiptBytes,
+  );
+  assert.equal(
+    readFileSync(join(result.runRoot, 'contract.json'), 'utf8'),
+    contractBytes,
+  );
+  const intent = JSON.parse(readFileSync(join(result.runRoot, 'intent.json')));
+  assert.equal(
+    intent.receiptSha,
+    hashFile(join(result.runRoot, 'receipt.json')),
+  );
+  assert.equal(
+    intent.contractSha,
+    hashFile(join(result.runRoot, 'contract.json')),
+  );
+  assert.equal(intent.runId, receipt.runId);
+});
+
+test('link inventory binds lstat identity and detects replacement with the same target', async () => {
+  const run = await completedRun({ link: true });
+  await superviseInRunnerRun(run.args, run.deps);
+  const path = join(run.runRoot, 'fixtures/link');
+  const entry = indexRoot(run.runRoot).entries.find(
+    (e) => e.path === 'fixtures/link',
+  );
+  const stat = lstatSync(path);
+  for (const field of ['dev', 'ino', 'uid', 'size'])
+    assert.equal(entry[field], stat[field]);
+  assert.equal(entry.mode, stat.mode & 0o777);
+  assert.equal(entry.role, 'fixture');
+  // Keep the old inode allocated so replacement cannot reuse it.
+  renameSync(path, path + '.old');
+  symlinkSync('/outside', path);
+  const replacement = indexRoot(run.runRoot).entries.find(
+    (e) => e.path === 'fixtures/link',
+  );
+  assert.equal(replacement.target, entry.target);
+  assert.notEqual(replacement.ino, entry.ino);
+  rmSync(path + '.old');
+  await assert.rejects(
+    superviseInRunnerRun(run.args, run.deps),
+    /existing-run-unverified-or-incomplete/,
+  );
+  assert.equal(run.spawns.length, 1);
 });

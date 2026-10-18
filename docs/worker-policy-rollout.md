@@ -65,6 +65,8 @@ image ID, run ID, hostname/arch, UID 1001, cgroup CPU/memory actuals, canonical
 provider start/expiry); the contract is the approved source/artifact binding
 (source commit, provider version, the fourteen baked module/helper/runner
 hashes, and the complete current probe-harness and failure-consumer hashes).
+Receipt and contract are each read once; parsing, SHA-256 identity and retained
+child copies use those same bytes even if the input paths are later replaced.
 The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
 clock or hash. It claims `<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the
 SHA-256 of `lcars-run:v1:<run-id>` truncated to 32 hex characters: the canonical
@@ -94,9 +96,14 @@ The run root keeps every journal (`intent.json`, `child.json` with PID and
 proc birth, `phases.json` with per-phase invocation, deadline, exit and
 recording stats, raw `*.stdout.bin`/`*.stderr.bin` logs), `expected.json`, both
 raw image reports, `qualification.json`, the fourteen retained baked input
-files under `retained/baked/`, all fixture descendants under `fixtures/`
+files under `retained/baked/`, complete fleet-tools and runtime directory targets
+under `retained/fleet-tools/` and `retained/runtime/`, all fixture descendants under `fixtures/`
 (never filtered by name), and `index.json` — every root entry's dev/ino/UID/
-mode/role. A diagnostic pointer outside the root is retained via those copies
+mode/size/role, including symlink lstat identity and textual target. Directory
+pointers are certified only after their complete target copy succeeds. Copied
+symlinks retain their original absolute target meaning so relocation cannot
+misclassify an escaping relative pointer as owned; escaping
+links in either copy still make retention incomplete. A diagnostic pointer outside the root is retained via those copies
 or marks `retention: "incomplete"`; nothing is silently ignored. `index.json`
 also carries `nestedRetirement`. Killing the wrapper's process group cannot
 certify that the provider group its driver started has stopped, so any phase
