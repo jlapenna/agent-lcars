@@ -992,12 +992,18 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
       for (const pointer of [
         report.diagnosticsDirectory,
         report.nativeReport?.evidenceDirectory,
-      ])
-        externalChecks.push({
-          phase: scenario,
-          pointer,
-          owned: typeof pointer === 'string' && containedPath(runRoot, pointer),
-        });
+      ]) {
+        // Optional fields may be absent; any advertised diagnostic location
+        // must belong to this run so the final inventory can retain it.
+        if (pointer === undefined) continue;
+        const owned =
+          typeof pointer === 'string' &&
+          pointer.length > 0 &&
+          containedPath(runRoot, pointer);
+        externalChecks.push({ phase: scenario, pointer, owned });
+        if (!owned)
+          throw new PhaseFailure('diagnostic-pointer-outside-run: ' + scenario);
+      }
     }
     remainingMs();
     evaluated = deps.evaluate(

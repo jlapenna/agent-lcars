@@ -505,6 +505,103 @@ test('a malformed report stops at first failure and retains all partial data', a
   );
 });
 
+// Exercise the real recorded-report boundary in both scenarios. The evaluator
+// would otherwise accept these reports, even with missing external diagnostics.
+for (const scenario of ['native', 'setup-negative']) {
+  for (const field of ['diagnosticsDirectory', 'evidenceDirectory']) {
+    test(`${scenario} rejects an external ${field} before evaluation`, async () => {
+      const runRoot = preparedRunRoot();
+      const outside = join(ownedScratch(), 'unretained');
+      const report =
+        field === 'diagnosticsDirectory'
+          ? { diagnosticsDirectory: outside }
+          : { nativeReport: { evidenceDirectory: outside } };
+      const base = phaseDeps();
+      let evaluations = 0;
+      const code = await executeInRunnerPhases(runRoot, {
+        ...base,
+        evaluate: () => {
+          evaluations++;
+          return { offlinePassed: true, failures: [] };
+        },
+        runProcess: async (...call) => {
+          const args = call[1];
+          const isScenario = args.some((arg) =>
+            String(arg).includes('in-runner-image'),
+          );
+          const actualScenario = args.includes('setup-negative')
+            ? 'setup-negative'
+            : 'native';
+          return isScenario && actualScenario === scenario
+            ? emit(call[5], JSON.stringify(report))
+            : base.runProcess(...call);
+        },
+      });
+      assert.equal(code, 1);
+      assert.equal(evaluations, 0);
+      assert.deepEqual(
+        JSON.parse(readFileSync(join(runRoot, scenario + '.report.json'))),
+        report,
+      );
+      assert.deepEqual(
+        JSON.parse(
+          readFileSync(join(runRoot, 'logs', scenario + '.stdout.bin')),
+        ),
+        report,
+      );
+      const phases = JSON.parse(readFileSync(join(runRoot, 'phases.json')));
+      assert.equal(phases.phases.at(-1).phase, scenario);
+      assert.deepEqual(phases.externalChecks, [
+        { phase: scenario, pointer: outside, owned: false },
+      ]);
+      const qualification = JSON.parse(
+        readFileSync(join(runRoot, 'qualification.json')),
+      );
+      assert.equal(qualification.localProbePassed, false);
+      assert.equal(qualification.qualificationAccepted, false);
+      assert.equal(qualification.cleanupAuthorized, false);
+      assert.match(qualification.stopped, /diagnostic-pointer-outside-run/);
+      assert.equal(
+        JSON.parse(readFileSync(join(runRoot, 'status.json'))).exitCode,
+        1,
+      );
+    });
+  }
+}
+
+test('owned diagnostic and nested evidence pointers allow successful completion', async () => {
+  const runRoot = preparedRunRoot();
+  const diagnostics = join(runRoot, 'fixtures', 'diagnostics');
+  mkdirSync(diagnostics);
+  writeFileSync(join(diagnostics, 'kept.txt'), 'diagnostics');
+  const report = {
+    diagnosticsDirectory: diagnostics,
+    nativeReport: { evidenceDirectory: diagnostics },
+  };
+  const base = phaseDeps();
+  assert.equal(
+    await executeInRunnerPhases(runRoot, {
+      ...base,
+      runProcess: async (...call) =>
+        call[1].some((arg) => String(arg).includes('in-runner-image'))
+          ? emit(call[5], JSON.stringify(report))
+          : base.runProcess(...call),
+    }),
+    0,
+  );
+  const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
+  assert.equal(index.retention, 'complete');
+  assert.ok(
+    index.entries.some(
+      (entry) => entry.path === 'fixtures/diagnostics/kept.txt',
+    ),
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(runRoot, 'status.json'))).exitCode,
+    0,
+  );
+});
+
 test('phase metadata records invocation, deadline, exit, and env keys only', async () => {
   const runRoot = preparedRunRoot();
   await executeInRunnerPhases(runRoot, phaseDeps());

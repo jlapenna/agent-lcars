@@ -114,8 +114,11 @@ mode/size/role, including symlink lstat identity and textual target. Directory
 pointers are certified only after their complete target copy succeeds. Copied
 symlinks retain their original absolute target meaning so relocation cannot
 misclassify an escaping relative pointer as owned; escaping
-links in either copy still make retention incomplete. A diagnostic pointer outside the root is retained via those copies
-or marks `retention: "incomplete"`; nothing is silently ignored. `index.json`
+links in either copy still make retention incomplete. Advertised scenario diagnostic and nested evidence paths must be inside the
+run root; an outside or malformed pointer stops the run before evaluation,
+with the complete recorded report preserved. Absent optional pointers are
+allowed. Filesystem links escaping the root still use the retained-copy
+classification above. `index.json`
 also carries `nestedRetirement`. Killing the wrapper's process group cannot
 certify that the provider group its driver started has stopped, so any phase
 that did not report its own exit — timeout, signal, or spawn failure — records
