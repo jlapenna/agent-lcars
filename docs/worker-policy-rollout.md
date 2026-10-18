@@ -78,7 +78,9 @@ current provider/run/image identity, exact receipt/contract and input digests,
 the original admitted monotonic deadline, consistent phase/qualification/status
 records and the final inventory. Missing, malformed, stale or contradictory
 evidence refuses without adopting, overwriting or deleting the existing root.
-A validated failed run stays failed. Inside the original provider clock
+Every invocation, including a completed reread, still requires an unexpired
+allocation receipt before any writer or spawn. The stored deadline is never
+renewed. A validated failed run stays failed. Inside the original provider clock
 the detached child first verifies the approved Git HEAD, source hashes, and a
 clean committed checkout with Git status, covering transitive setup/install
 inputs without a separate path list. Any staged, modified, deleted, or
@@ -119,7 +121,11 @@ Completion finalization creates an exclusive 0600 `.status.pending` and
 `index.json`, inventories both final inodes/UIDs/modes/byte sizes (mapping the
 pending inode to `status.json`), and fixes the index's own byte size within at
 most four serialization passes. The index binds status bytes and identity/
-completion journals with SHA-256. Its explicit `selfContentHash` exclusion
+completion journals with SHA-256. Staged status also binds a canonical semantic
+digest of retention, external pointers, nested retirement and per-link retained
+flags, produced with the actual collected roots. Finalization rechecks it after
+the inventory walk and immediately before publication; completed reread compares
+the stored digest without reconstructing roots from untrusted retained labels. Its explicit `selfContentHash` exclusion
 applies only to `index.json` content, avoiding a circular self-hash; its final
 self metadata is still exact. After flushing the staged status and final index,
 an atomic rename publishes `status.json` last. Failure or interruption before

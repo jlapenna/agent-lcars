@@ -1551,7 +1551,11 @@ test('elapsed monotonic budget stops later phases and cannot become a late succe
 
 // Drive the real supervisor claim, child journal and finalizer over real files.
 // Only provider phase execution/evaluation is synthetic; no qualification runs.
-async function completedRun({ failure = false, link = false } = {}) {
+async function completedRun({
+  failure = false,
+  link = false,
+  retained = false,
+} = {}) {
   const root = ownedScratch();
   const { receipt, contract } = syntheticAllocation();
   const receiptPath = join(root, 'receipt.json');
@@ -1566,14 +1570,24 @@ async function completedRun({ failure = false, link = false } = {}) {
     return {
       pid: 4242,
       birth: { procStarttime: '12345' },
-      wait: async () => ({
-        code: await executeInRunnerPhases(
-          path,
-          phaseDeps(
-            failure ? { native: 'fixtures-then-garbage', runRoot: path } : {},
-          ),
-        ),
-      }),
+      wait: async () => {
+        const phases = phaseDeps(
+          failure ? { native: 'fixtures-then-garbage', runRoot: path } : {},
+        );
+        if (retained) {
+          const target = join(root, 'collected-target');
+          mkdirSync(target);
+          writeFileSync(join(target, 'package.json'), '{}');
+          phases.collectBakedInputs = () => {
+            const copy = join(path, 'retained/target');
+            mkdirSync(copy);
+            writeFileSync(join(copy, 'package.json'), '{}');
+            return { roots: [target], captured: [] };
+          };
+          symlinkSync(target, join(path, 'fixtures/retained'));
+        }
+        return { code: await executeInRunnerPhases(path, phases) };
+      },
     };
   };
   const args = {
@@ -2005,4 +2019,81 @@ test('link inventory binds lstat identity and detects replacement with the same 
     /existing-run-unverified-or-incomplete/,
   );
   assert.equal(run.spawns.length, 1);
+});
+
+for (const failure of [false, true]) {
+  for (const retained of [false, true]) {
+    test(`semantic reread preserves ${retained ? 'complete retained' : 'incomplete pointer'} ${failure ? 'failure' : 'success'}`, async () => {
+      const r = await completedRun({ failure, retained, link: !retained });
+      const index = JSON.parse(readFileSync(join(r.runRoot, 'index.json')));
+      assert.equal(index.retention, retained ? 'complete' : 'incomplete');
+      const before = snapshot(r.root);
+      const result = await superviseInRunnerRun(r.args, r.deps);
+      assert.equal(result.exitCode, failure ? 1 : 0);
+      assert.equal(r.spawns.length, 1);
+      assert.deepEqual(snapshot(r.root), before);
+    });
+  }
+}
+
+for (const field of ['retention', 'externalPointers', 'retained']) {
+  test(`same inode and size ${field} semantic tampering refuses without writes`, async () => {
+    const r = await completedRun({ retained: true });
+    const path = join(r.runRoot, 'index.json');
+    const original = readFileSync(path, 'utf8');
+    const index = JSON.parse(original);
+    if (field === 'retention') index.retention = 'tampered';
+    else if (field === 'externalPointers')
+      index.externalPointers[0].target =
+        index.externalPointers[0].target.replace('collected', 'corrupted');
+    else index.entries.find((e) => e.type === 'link').retained = null;
+    const changed = JSON.stringify(index);
+    assert.equal(changed.length, original.length);
+    const inode = lstatSync(path).ino;
+    writeFileSync(path, changed);
+    assert.equal(lstatSync(path).ino, inode);
+    const before = snapshot(r.root);
+    await assert.rejects(
+      superviseInRunnerRun(r.args, r.deps),
+      /existing-run-unverified/,
+    );
+    assert.equal(r.spawns.length, 1);
+    assert.deepEqual(snapshot(r.root), before);
+  });
+}
+
+test('semantic change immediately before publication preserves evidence with no status', () => {
+  const root = ownedScratch();
+  assert.throws(
+    () =>
+      finalizeRun(
+        root,
+        { exitCode: 0 },
+        {},
+        {
+          renameSync,
+          beforePublish: () => symlinkSync('/outside', join(root, 'late-link')),
+        },
+      ),
+    /completion-index-semantics-changed/,
+  );
+  assert.equal(existsSync(join(root, 'status.json')), false);
+  assert.ok(lstatSync(join(root, 'late-link')).isSymbolicLink());
+  assert.ok(existsSync(join(root, '.status.pending')));
+});
+
+test('expired receipt refuses completed reread before writes or another child', async () => {
+  const r = await completedRun({ retained: true });
+  const facts = r.deps.readRunFacts();
+  r.deps.readRunFacts = () => ({
+    ...facts,
+    nowMs: Date.parse(r.receipt.expiresAt) + 1,
+  });
+  const before = snapshot(r.root);
+  await assert.rejects(
+    superviseInRunnerRun(r.args, r.deps),
+    /allocation refused|expired/,
+  );
+  assert.equal(r.spawns.length, 1);
+  assert.deepEqual(snapshot(r.root), before);
 });

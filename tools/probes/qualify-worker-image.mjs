@@ -1055,6 +1055,24 @@ function ownedStat(path, directory = false) {
   return stat;
 }
 
+// Bind the verdict produced with the collector's actual roots, without trusting
+// retained labels to reconstruct those roots during a completed reread.
+function indexSemanticsSHA256(index) {
+  const byPath = (entries) =>
+    [...entries].sort((a, b) => a.path.localeCompare(b.path, 'en'));
+  const semantics = {
+    retention: index.retention,
+    externalPointers: byPath(index.externalPointers),
+    nestedRetirement: index.nestedRetirement,
+    links: byPath(index.entries.filter((entry) => entry.type === 'link')).map(
+      ({ path, retained }) => ({ path, retained }),
+    ),
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(sorted(semantics)))
+    .digest('hex');
+}
+
 // Status becomes visible only after the index has its final bytes and inode.
 // Rename preserves the staged status inode. Fixed-point sizing is bounded by
 // four passes (only the decimal digit count of the index size can change).
@@ -1073,9 +1091,13 @@ export function finalizeRun(
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
+  const semanticsSHA = indexSemanticsSHA256(indexRoot(runRoot, options));
   const statusFd = openSync(pending, 'wx', 0o600);
   try {
-    writeFileSync(statusFd, JSON.stringify(status));
+    writeFileSync(
+      statusFd,
+      JSON.stringify({ ...status, indexSemanticsSHA256: semanticsSHA }),
+    );
     fsyncSync(statusFd);
   } finally {
     closeSync(statusFd);
@@ -1084,6 +1106,8 @@ export function finalizeRun(
   const fd = openSync(indexPath, 'wx', 0o600);
   try {
     const index = indexRoot(runRoot, options);
+    if (indexSemanticsSHA256(index) !== semanticsSHA)
+      throw new Error('completion-index-semantics-changed');
     const pendingEntry = index.entries.find(
       (e) => e.path === '.status.pending',
     );
@@ -1126,6 +1150,8 @@ export function finalizeRun(
   }
   // Any failure before this point retains an incomplete root with no status.
   io.beforePublish?.();
+  if (indexSemanticsSHA256(indexRoot(runRoot, options)) !== semanticsSHA)
+    throw new Error('completion-index-semantics-changed');
   io.renameSync(pending, statusPath);
 }
 
@@ -1183,8 +1209,8 @@ function rereadCompletedRun(runRoot, expected) {
       !same(journal.intent, intent)
     )
       refuse();
-    // Validate the stored deadline without admitting a replacement or requiring
-    // a completed run to be still live. It must belong to this boot and past.
+    // Admission above still requires a live receipt. Verify the original stored
+    // deadline here without renewing or transferring a replacement clock.
     const deadline = intent.monotonicDeadline;
     if (
       !validClock(expected.clock) ||
@@ -1271,7 +1297,8 @@ function rereadCompletedRun(runRoot, expected) {
         .sort((a, b) => a.path.localeCompare(b.path, 'en'));
     if (
       !same(comparable(index.entries), comparable(actual.entries)) ||
-      index.nestedRetirement !== qualification.nestedRetirement
+      index.nestedRetirement !== qualification.nestedRetirement ||
+      status.indexSemanticsSHA256 !== indexSemanticsSHA256(index)
     )
       refuse();
     return status;
