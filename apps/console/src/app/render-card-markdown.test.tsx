@@ -2,10 +2,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import type { ActionItem } from '../lib/action-items';
-import type { NativeDecisionCard } from './inbox-card';
+import type { BoardCard } from './board-card';
+import { inboxCardKey, type NativeDecisionCard } from './inbox-card';
 import {
   renderCardMarkdown,
   renderInboxCardMarkdown,
+  renderInboxListMarkdown,
 } from './render-card-markdown';
 
 const item: ActionItem = {
@@ -92,5 +94,63 @@ describe('server-rendered native decision question', () => {
     expect(html).toContain('<strong>Pick one</strong>');
     expect(html).toContain('<li>a</li>');
     expect(html).not.toContain('<script>');
+  });
+});
+
+describe('queue-list Markdown separation (#2201)', () => {
+  const native: NativeDecisionCard = {
+    canReply: true,
+    queued: true,
+    kind: 'decision',
+    work: {
+      id: 'work:9',
+      anchor: { workId: '9' },
+      state: 'parked',
+      createdAt: '2026-10-09T00:00:00Z',
+      updatedAt: '2026-10-09T00:30:00Z',
+      origin: { principal: 'user:maintainer', channel: 'console' },
+      spec: { title: 'T', pipeline: 'claude', target: { repo: 'o/r' } },
+      runs: [
+        {
+          runId: 'r1',
+          state: 'finished',
+          pipeline: 'claude',
+          createdAt: '2026-10-09T00:00:00Z',
+          updatedAt: '2026-10-09T00:30:00Z',
+          result: { ok: true, summary: 'park', message: '**Pick one**' },
+        },
+      ],
+    },
+  } as unknown as NativeDecisionCard;
+  const board: BoardCard = {
+    item: { ...item, body: 'Hidden **body**' },
+  };
+  const nativeKey = inboxCardKey(native);
+  const boardKey = inboxCardKey(board);
+  const question = (card: NativeDecisionCard) =>
+    card.question ? renderToStaticMarkup(card.question) : undefined;
+
+  it('renders Markdown for every card while browsing with no selection', () => {
+    const [nativeOut, boardOut] = renderInboxListMarkdown([native, board]);
+    expect(question(nativeOut as NativeDecisionCard)).toContain(
+      '<strong>Pick one</strong>',
+    );
+    expect(renderToStaticMarkup((boardOut as BoardCard).description)).toContain(
+      '<strong>body</strong>',
+    );
+  });
+
+  it('attaches Markdown only to the selected decision, leaving hidden rows plain', () => {
+    const selectedNative = renderInboxListMarkdown([native, board], nativeKey);
+    expect(question(selectedNative[0] as NativeDecisionCard)).toContain(
+      '<strong>Pick one</strong>',
+    );
+    expect(selectedNative[1].description).toBeUndefined();
+
+    const selectedBoard = renderInboxListMarkdown([native, board], boardKey);
+    expect(question(selectedBoard[0] as NativeDecisionCard)).toBeUndefined();
+    expect(renderToStaticMarkup(selectedBoard[1].description)).toContain(
+      '<strong>body</strong>',
+    );
   });
 });

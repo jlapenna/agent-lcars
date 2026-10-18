@@ -105,6 +105,20 @@ export function nativeDecisionQuestion(
   );
 }
 
+/** Server Markdown is detail-pane content: a queue row renders a title and
+ * meta, never a body. Only the detail pane shows the parsed question/description.
+ * So the rendered Markdown should ride only with the card the detail will show.
+ * When a decision is selected (`?item=`) the rest of the list is hidden rows
+ * the selected decision's interaction must not wait behind, so the only key
+ * that needs Markdown is the selected one. While browsing there is no selected
+ * decision — the detail follows client-side filtering, so which card the detail
+ * will show is not knowable server-side and every card keeps its Markdown. */
+export function inboxDetailMarkdownKeys(
+  selectedItemKey?: string,
+): Set<string> | 'all' {
+  return selectedItemKey === undefined ? 'all' : new Set([selectedItemKey]);
+}
+
 export function inboxCardMetadata(card: InboxCard) {
   if ('work' in card) {
     const [owner, name] = card.work.spec.target.repo.split('/');
