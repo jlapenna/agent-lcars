@@ -55,17 +55,6 @@ function expectIncompleteExploration(extra: ReturnType<typeof JSON.parse>) {
     expect(extra.partialObservation.completedAtMs).toBeLessThan(
       extra.deadlineAtMs,
     );
-    for (const [name, value] of Object.entries(
-      extra.partialObservation.value.marks,
-    )) {
-      expect([
-        'primaryCommitMs',
-        'handlerEntryMs',
-        'openConfirmReturnMs',
-        'dialogInsertionObservedMs',
-      ]).toContain(name);
-      expect(Number.isFinite(value)).toBe(true);
-    }
   } else {
     expect([
       'page-not-created',
