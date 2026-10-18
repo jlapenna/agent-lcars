@@ -3,7 +3,10 @@ import type { ReactNode } from 'react';
 import { getWatchedRepos } from '../lib/github-client';
 import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
-import { renderInboxCardMarkdown } from './render-card-markdown';
+import {
+  renderInboxCardMarkdown,
+  renderInboxListMarkdown,
+} from './render-card-markdown';
 import type { ReplyAction } from './work/work-actions';
 
 /** The standalone master/detail surface for work awaiting a decision. */
@@ -32,7 +35,7 @@ export function DecisionInbox({
 
   return (
     <QueueWorkspace
-      cards={yourQueue.map(renderInboxCardMarkdown)}
+      cards={renderInboxListMarkdown(yourQueue, selectedItemKey)}
       selectedCard={selectedCard && renderInboxCardMarkdown(selectedCard)}
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
