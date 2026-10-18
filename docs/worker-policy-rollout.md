@@ -66,10 +66,15 @@ provider start/expiry); the contract is the approved source/artifact binding
 (source commit, provider version, the fourteen baked module/helper/runner
 hashes, and the complete current probe-harness and failure-consumer hashes).
 The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
-clock or hash — before claiming `<runs>/<run-id>` exclusively with
-`intent.json`; a repeated invocation against that root can only re-read
+clock or hash — and on any dirty owning input (the setup scripts it is about to
+execute, the probe harness, and the failure-consumer files) before claiming
+`<runs>/run-<32-hex>` exclusively with `intent.json`. That basename is the
+SHA-256 of `lcars-run:v1:<run-id>` truncated to 32 hex characters: the canonical
+run id contains `:` and `/`, which a basename must never smuggle as a path
+separator. A repeated invocation against that root can only re-read
 `status.json`, never start a second entry. Inside the original provider clock
-it runs one detached child: baked CLI version once, the full native suite once,
+the detached child runs setup first — `tools/setup-worktree.sh` once, then the
+baked CLI version once, the full native suite once,
 the setup-negative suite once (both through the unchanged driver with `TMPDIR`
 set to the run's owned `fixtures/` root and `LCARS_PROBE_KEEP_EVIDENCE=1`), the
 existing `evaluateImageEvidence` binding, and exactly one genuine typed failure
@@ -82,7 +87,17 @@ raw image reports, `qualification.json`, the fourteen retained baked input
 files under `retained/baked/`, all fixture descendants under `fixtures/`
 (never filtered by name), and `index.json` — every root entry's dev/ino/UID/
 mode/role. A diagnostic pointer outside the root is retained via those copies
-or marks `retention: "incomplete"`; nothing is silently ignored.
+or marks `retention: "incomplete"`; nothing is silently ignored. `index.json`
+also carries `nestedRetirement`. Killing the wrapper's process group cannot
+certify that the provider group its driver started has stopped, so any phase
+that did not report its own exit — timeout, signal, or spawn failure — records
+`nestedRetirement: "unknown"` in `index.json` and `qualification.json`, names
+the phase in `qualification.json.unknowns`, and forces
+`retention: "incomplete"` even when every pointer is otherwise retained. Only a
+phase that reported its own exit leaves it `"confirmed"`. Unknown nested
+retirement is an evidence-retention statement, not operator retirement
+permission: every preserved file stays, and acceptance and cleanup stay the
+separate operator gate below.
 `status.json` is written last.
 
 `qualification.json` separates the local probe outcome from acceptance:
