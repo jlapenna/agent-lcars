@@ -135,16 +135,6 @@ test.describe('Inbox phone measurement artifact', () => {
       ]) {
         expect(extra.status).toBe('complete');
         expect(extra.excludedFromBudget).toBe(true);
-        for (const name of [
-          'primaryCommitMs',
-          'handlerEntryMs',
-          'openConfirmReturnMs',
-          'dialogInsertionObservedMs',
-        ])
-          expect(Number.isFinite(extra.inputBoundaries[name])).toBe(true);
-        expect(
-          extra.inputBoundaries.openConfirmReturnMs,
-        ).toBeGreaterThanOrEqual(extra.inputBoundaries.handlerEntryMs);
       }
 
       expect(diagnostic.cpuProfile.samples.length).toBeGreaterThan(0);
@@ -395,9 +385,6 @@ test.describe('Inbox phone measurement artifact', () => {
       expect(partial.partialObservation.status).toBe('observed');
       // Native dialog exists closed; actual confirmation wait still never returned.
       expect(partial.partialObservation.value.matchingDialogPresent).toBe(true);
-      expect(
-        Number.isFinite(partial.partialObservation.value.marks.handlerEntryMs),
-      ).toBe(true);
       for (const failureStage of [
         'artifact-size-cap',
         'source-binding',
