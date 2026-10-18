@@ -1,5 +1,5 @@
 {
-  "_readme": "Expected fleet identity state, asserted against live GitHub and GCP by tools/iam-contract/check.mjs and scheduled by .github/workflows/iam-contract-audit.yml. docs/fleet-credentials.md is the prose; this file is the part a machine can check. Change them together (jlapenna/agent-lcars#1376).",
+  "_readme": "Expected fleet identity state. jlapenna/homelab's bin/emit-iam-contract-metrics.py reads this file from main and diffs it against live GitHub and GCP (docs/iam-contract.md). docs/fleet-credentials.md is the prose; change them together (#1376).",
   "fleetRepositories": [
     "jlapenna/agent-lcars",
     "jlapenna/homelab",
@@ -15,7 +15,6 @@
       "key": "fleet",
       "slug": "agent-lcars",
       "clientId": "Iv23liO6X8pLJLcTFzyv",
-      "checkable": true,
       "_note": "What the agent lanes and the console authenticate as - claims, PRs and comments land as agent-lcars[bot]. Private key: Secret Manager AGENT_LCARS_APP_PRIVATE_KEY (project agent-lcars) / repo secret AGENT_LCARS_PRIVATE_KEY.",
       "owner": {
         "login": "agent-lcars",
@@ -26,48 +25,7 @@
           "id": 150568943,
           "account": "jlapenna",
           "repositorySelection": "all",
-          "repositories": [
-            "jlapenna/adk-go",
-            "jlapenna/agent-lcars",
-            "jlapenna/bambu",
-            "jlapenna/bikebuds",
-            "jlapenna/claude-memory",
-            "jlapenna/ebayclaw",
-            "jlapenna/fendlife",
-            "jlapenna/fleet-runtime",
-            "jlapenna/foursquared",
-            "jlapenna/herdr-auto-title",
-            "jlapenna/herdr-overview",
-            "jlapenna/home-assistant",
-            "jlapenna/home-assistant-config",
-            "jlapenna/homegit",
-            "jlapenna/homelab",
-            "jlapenna/jclaw",
-            "jlapenna/jlapenna.github.io",
-            "jlapenna/labels",
-            "jlapenna/lossless-claw",
-            "jlapenna/mcporter",
-            "jlapenna/messages-control",
-            "jlapenna/nx-cache-server",
-            "jlapenna/open-design",
-            "jlapenna/openclaw",
-            "jlapenna/openclaw-workspace-backups",
-            "jlapenna/procfs",
-            "jlapenna/repo-tools",
-            "jlapenna/restic-glance-extension",
-            "jlapenna/s1ngularity-repository",
-            "jlapenna/server",
-            "jlapenna/service-registry",
-            "jlapenna/spark-arena-blog",
-            "jlapenna/sparkrun",
-            "jlapenna/sparkrun-config",
-            "jlapenna/sparkstack",
-            "jlapenna/sparkstack-registry",
-            "jlapenna/sync-padd",
-            "jlapenna/wedding",
-            "jlapenna/x1c"
-          ],
-          "_note": "The maintainer confirmed All repositories access for this jlapenna installation during labels onboarding on 2026-10-12. The repository list was observed with this App's own temporary installation token, then the token was revoked. The complete observed list remains modelled so new repository access is reported as drift. Installation coverage does not establish an active runner or admit a repository to the Console."
+          "_note": "The maintainer chose All repositories (2026-10-12), so only the selection is asserted: a repository list would mirror the account and make every new repository drift."
         },
         {
           "id": 150568991,
@@ -82,13 +40,7 @@
         {
           "id": 154278523,
           "account": "jlaorg",
-          "repositorySelection": "all",
-          "repositories": [
-            "jlaorg/ha-smartwings-levitate",
-            "jlaorg/news-digest",
-            "jlaorg/replicator"
-          ],
-          "_note": "Non-fleet personal org. repository_selection is 'all', so this installation's repository list grows whenever a repo is created in jlaorg; a new repo here is expected drift and the fix is to update this list."
+          "repositorySelection": "all"
         }
       ],
       "permissions": {
@@ -106,7 +58,6 @@
       "key": "autoscaler",
       "slug": "agent-lcars-autoscaler",
       "clientId": "Iv23lir3t9e2k4RAkWxw",
-      "checkable": true,
       "owner": {
         "login": "agent-lcars",
         "type": "User"
@@ -116,63 +67,13 @@
           "id": 154210710,
           "account": "jlapenna",
           "repositorySelection": "all",
-          "repositories": [
-            "jlapenna/adk-go",
-            "jlapenna/agent-lcars",
-            "jlapenna/bambu",
-            "jlapenna/bikebuds",
-            "jlapenna/claude-memory",
-            "jlapenna/ebayclaw",
-            "jlapenna/fendlife",
-            "jlapenna/fleet-runtime",
-            "jlapenna/foursquared",
-            "jlapenna/herdr-auto-title",
-            "jlapenna/herdr-overview",
-            "jlapenna/home-assistant",
-            "jlapenna/home-assistant-config",
-            "jlapenna/homegit",
-            "jlapenna/homelab",
-            "jlapenna/jclaw",
-            "jlapenna/jlapenna.github.io",
-            "jlapenna/labels",
-            "jlapenna/lossless-claw",
-            "jlapenna/mcporter",
-            "jlapenna/messages-control",
-            "jlapenna/nx-cache-server",
-            "jlapenna/open-design",
-            "jlapenna/openclaw",
-            "jlapenna/openclaw-workspace-backups",
-            "jlapenna/procfs",
-            "jlapenna/repo-tools",
-            "jlapenna/restic-glance-extension",
-            "jlapenna/s1ngularity-repository",
-            "jlapenna/server",
-            "jlapenna/service-registry",
-            "jlapenna/spark-arena-blog",
-            "jlapenna/sparkrun",
-            "jlapenna/sparkrun-config",
-            "jlapenna/sparkstack",
-            "jlapenna/sparkstack-registry",
-            "jlapenna/sync-padd",
-            "jlapenna/wedding",
-            "jlapenna/x1c"
-          ],
-          "_note": "The maintainer confirmed All repositories access for this jlapenna installation during labels onboarding on 2026-10-12. The repository list was observed with this App's own temporary installation token, then the token was revoked. The complete observed list remains modelled so new repository access is reported as drift. Installation coverage does not establish an active runner or admit a repository to the Console."
+          "_note": "The maintainer chose All repositories (2026-10-12), so only the selection is asserted: a repository list would mirror the account and make every new repository drift."
         },
         {
           "id": 154210731,
           "account": "supersprinklesracing",
           "repositorySelection": "all",
-          "repositories": [
-            "supersprinklesracing/design",
-            "supersprinklesracing/ghost-theme-supersprinkles",
-            "supersprinklesracing/girosf",
-            "supersprinklesracing/pos",
-            "supersprinklesracing/preem-machine",
-            "supersprinklesracing/sprinkles",
-            "supersprinklesracing/www"
-          ],
-          "_note": "Still 'all'. #1381 decided to narrow this one to the three fleet repos (sprinkles, www, girosf), dropping design, ghost-theme-supersprinkles, pos and preem-machine - none of which hold a self-hosted runner or a workflow targeting one. Today's live value is modelled so the check is green now; when the maintainer makes the UI change this entry takes one edit (selection -> 'selected', three repositories)."
+          "_note": "#1381 decided to narrow this installation to the three fleet repos (sprinkles, www, girosf); when that UI change happens, set repositorySelection to 'selected' and list them."
         }
       ],
       "permissions": {
@@ -180,12 +81,10 @@
         "administration": "write",
         "metadata": "read"
       },
-      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key').",
-      "_scopeNote": "This App holds administration:write over every repository its installations cover. The maintainer confirmed all-repository access for jlapenna during labels onboarding on 2026-10-12. The supersprinklesracing installation retains its existing all-repository baseline and separately owned narrowing decision (#1381). Complete repository lists remain modelled so new admin-capable access is reported. GitHub App coverage does not widen WIF admission or establish active runners."
+      "_note": "What runner scale-set listeners register with. Its private key is deployed on the homelab controller for those listeners (github-runner-autoscaler/lcars-app-private-key.pem) and the collector reads it there in place, so this App is asserted from the same host with no new key distribution (jlapenna/homelab#768). It was previously modelled as unassertable on the belief that the key only existed in the ansible vault; that was wrong. It also carries actions:read (App settings UI, 2026-09-20) for the github-actions-exporter deployed on homelab: since jlapenna/agent-lcars#2024 the exporter authenticates as this App with a copy of the same key and reads /repos/{owner}/{repo}/actions/runs, which needs Actions read. Prose: docs/fleet-credentials.md ('Autoscaler App key')."
     }
   ],
-  "fleetCoverageExceptions": [],
-  "_fleetCoverageNote": "Every entry in fleetRepositories must appear in exactly one checkable App installation's repositories list, unless listed in fleetCoverageExceptions with a reason. The list is empty and should stay that way: supersprinklesracing/www was the one entry, added when this check found the fleet App was not installed on it (#1380), and removed the same day once the maintainer installed it - the check reported the stale exception as drift within one run.",
+  "_fleetCoverageNote": "Every entry in fleetRepositories must be covered by some App installation. supersprinklesracing/www was found uncovered this way (#1380).",
   "_userManagedKeyNote": "No fleet service account should hold a user-managed key. The allowlists above are a ratchet: an unlisted key is a failure, and a listed account that no longer holds a key is ALSO a failure, so a retired exemption cannot be silently inherited by the next key.",
   "gcpProjects": {
     "agent-lcars": {
