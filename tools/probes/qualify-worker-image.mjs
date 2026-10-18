@@ -628,9 +628,13 @@ export const CONSUMER_TIMEOUT_MS = 30 * 60000;
 
 class PhaseFailure extends Error {}
 
-export function defaultCollectBakedInputs(contract, runRoot) {
+export function defaultCollectBakedInputs(
+  contract,
+  runRoot,
+  { inputs = bakedInputMap(source), toolsRoot = dirname(BAKED_BIN) } = {},
+) {
   const captured = [];
-  for (const [name, [, bakedPath]] of Object.entries(bakedInputMap(source))) {
+  for (const [name, [, bakedPath]] of Object.entries(inputs)) {
     const actual = hashFile(bakedPath);
     if (actual !== contract.bakedHashes[name])
       throw new PhaseFailure('baked-input-mismatch: ' + name);
@@ -639,7 +643,18 @@ export function defaultCollectBakedInputs(contract, runRoot) {
     cpSync(bakedPath, dest);
     captured.push({ name, hash: actual, retained: relative(runRoot, dest) });
   }
-  return { roots: [BAKED_BIN, BAKED_RUNTIME, BAKED_RUNNER], captured };
+  // Scenarios link the entire fleet-tools package, not just its bin directory.
+  // Preserve the actual target before certifying that external pointer. Links
+  // within the copy remain links so indexing can still refuse outside targets.
+  cpSync(toolsRoot, join(runRoot, 'retained', 'fleet-tools'), {
+    recursive: true,
+    dereference: false,
+    verbatimSymlinks: true,
+  });
+  return {
+    roots: [toolsRoot, ...Object.values(inputs).map(([, path]) => path)],
+    captured,
+  };
 }
 
 // Approved source identity is confirmed against the actual checkout before
@@ -748,6 +763,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
   // A phase killed from outside never reports its own exit, and killing this
   // wrapper's process group cannot certify the driver's nested provider group.
   let nestedRetirement = 'confirmed';
+  let retainedRoots = [];
   const remainingMs = () =>
     remainingProviderMs(
       intent.monotonicDeadline,
@@ -789,7 +805,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
     const drift = deps.verifySourceContract(contract, runRoot);
     if (drift.length)
       throw new PhaseFailure('source-drift: ' + drift.join(', '));
-    deps.collectBakedInputs(contract, runRoot);
+    retainedRoots = deps.collectBakedInputs(contract, runRoot).roots;
     const setup = await runPhase('setup', {
       binary: '/bin/bash',
       args: [join(source, 'tools/setup-worktree.sh')],
@@ -950,9 +966,7 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
       join(runRoot, 'index.json'),
       JSON.stringify(
         indexRoot(runRoot, {
-          ...(defaultCollectBakedInputs === deps.collectBakedInputs
-            ? { retainedRoots: [BAKED_BIN, BAKED_RUNTIME, BAKED_RUNNER] }
-            : {}),
+          retainedRoots,
           nestedRetirement,
         }),
       ),

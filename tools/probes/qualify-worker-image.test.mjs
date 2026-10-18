@@ -33,6 +33,7 @@ import {
   bakedInputMap,
   claimRunRoot,
   consumerHashes,
+  defaultCollectBakedInputs,
   dirtyOwningInputFailures,
   executeInRunnerPhases,
   hashFile,
@@ -588,6 +589,68 @@ test('an unknown termination reports nested retirement unknown and retention inc
   );
   assert.equal(cleanIndex.nestedRetirement, 'confirmed');
   assert.equal(cleanIndex.retention, 'complete');
+});
+
+test('fleet-tools directory pointers are retained only after copying the complete target', async () => {
+  const root = ownedScratch();
+  const toolsRoot = join(root, 'agent-tools');
+  mkdirSync(join(toolsRoot, 'bin'), { recursive: true });
+  writeFileSync(join(toolsRoot, 'bin/worker-policy.cjs'), 'policy');
+  writeFileSync(join(toolsRoot, 'package.json'), '{"name":"fleet-tools"}');
+  const inputs = {
+    'worker-policy.cjs': ['/unused', join(toolsRoot, 'bin/worker-policy.cjs')],
+  };
+  const contract = {
+    bakedHashes: {
+      'worker-policy.cjs': hashFile(inputs['worker-policy.cjs'][1]),
+    },
+  };
+  const runRoot = preparedRunRoot();
+  symlinkSync(toolsRoot, join(runRoot, 'fixtures/fleet-tools'));
+  assert.equal(indexRoot(runRoot).retention, 'incomplete');
+  const deps = phaseDeps();
+  deps.collectBakedInputs = () =>
+    defaultCollectBakedInputs(contract, runRoot, { inputs, toolsRoot });
+  assert.equal(await executeInRunnerPhases(runRoot, deps), 0);
+  const index = JSON.parse(readFileSync(join(runRoot, 'index.json')));
+  assert.equal(index.retention, 'complete');
+  assert.equal(index.externalPointers[0].retained, true);
+  for (const path of ['bin/worker-policy.cjs', 'package.json'])
+    assert.deepEqual(
+      readFileSync(join(runRoot, 'retained/fleet-tools', path)),
+      readFileSync(join(toolsRoot, path)),
+    );
+
+  symlinkSync('/unretained-target', join(toolsRoot, 'outside-link'));
+  const externalRoot = preparedRunRoot();
+  const external = defaultCollectBakedInputs(contract, externalRoot, {
+    inputs,
+    toolsRoot,
+  });
+  const externalIndex = indexRoot(externalRoot, {
+    retainedRoots: external.roots,
+  });
+  assert.equal(externalIndex.retention, 'incomplete');
+  assert.equal(
+    externalIndex.externalPointers.find(
+      (pointer) => pointer.path === 'retained/fleet-tools/outside-link',
+    ).retained,
+    false,
+  );
+
+  const failedRoot = preparedRunRoot();
+  symlinkSync(toolsRoot, join(failedRoot, 'fixtures/fleet-tools'));
+  const failedDeps = phaseDeps();
+  failedDeps.collectBakedInputs = () =>
+    defaultCollectBakedInputs(contract, failedRoot, {
+      inputs,
+      toolsRoot: join(root, 'missing-target'),
+    });
+  failedDeps.runProcess = () => assert.fail('no phase after failed retention');
+  assert.equal(await executeInRunnerPhases(failedRoot, failedDeps), 1);
+  const failedIndex = JSON.parse(readFileSync(join(failedRoot, 'index.json')));
+  assert.equal(failedIndex.retention, 'incomplete');
+  assert.equal(failedIndex.externalPointers[0].retained, false);
 });
 
 test('unknown nested retirement cannot certify retention even when every pointer is retained', () => {
