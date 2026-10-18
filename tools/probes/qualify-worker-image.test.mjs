@@ -20,7 +20,7 @@ import {
 } from 'node:fs';
 import { Readable } from 'node:stream';
 import { hostname, tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -32,11 +32,13 @@ import {
   bakedInputMap,
   claimRunRoot,
   consumerHashes,
+  dirtyOwningInputFailures,
   executeInRunnerPhases,
   hashFile,
   hostScenarioArgs,
   hostVersionArgs,
   indexRoot,
+  owningInputPaths,
   sourceDriftFailures,
   superviseInRunnerRun,
 } from './qualify-worker-image.mjs';
@@ -729,26 +731,112 @@ test('source drift compares HEAD and every source-side baked input', () => {
     return entry ? contract.bakedHashes[entry[0]] : null;
   };
   assert.deepEqual(
-    sourceDriftFailures(contract, { readHead: () => 'a'.repeat(40), hash }),
+    sourceDriftFailures(contract, {
+      readHead: () => 'a'.repeat(40),
+      hash,
+      dirty: () => [],
+    }),
     [],
   );
   assert.ok(
     sourceDriftFailures(contract, {
       readHead: () => 'b'.repeat(40),
       hash,
+      dirty: () => [],
     }).includes('source-head-drift'),
   );
   assert.ok(
     sourceDriftFailures(contract, {
       readHead: () => null,
       hash,
+      dirty: () => [],
     }).includes('source-head-unavailable'),
   );
   assert.ok(
     sourceDriftFailures(contract, {
       readHead: () => 'a'.repeat(40),
       hash: () => 'd'.repeat(64),
+      dirty: () => [],
     }).includes('source-input-drift: ' + wanted[0]),
+  );
+});
+
+function git(repo, args) {
+  const result = spawnSync('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH, HOME: repo },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout;
+}
+
+test('the owned setup and harness scripts are part of the bound inputs', () => {
+  const owned = new Set(owningInputPaths(repoSource));
+  assert.ok(owned.has('tools/setup-worktree.sh'));
+  assert.ok(owned.has('tools/setup-git-hooks.sh'));
+  assert.ok(owned.has('tools/probes/in-runner-image.mjs'));
+  for (const [, [sourcePath]] of Object.entries(bakedInputMap(repoSource)))
+    assert.ok(owned.has(relative(repoSource, sourcePath)), sourcePath);
+});
+
+test('a dirty owning setup input is refused, and restored clean is accepted', () => {
+  const root = ownedScratch();
+  const repo = join(root, 'repo');
+  mkdirSync(join(repo, 'tools'), { recursive: true });
+  git(repo, ['init', '-q']);
+  git(repo, ['config', 'user.email', 'probe@example.invalid']);
+  git(repo, ['config', 'user.name', 'probe']);
+  const setupPath = join(repo, 'tools/setup-worktree.sh');
+  writeFileSync(setupPath, '#!/bin/bash\npnpm install\n');
+  writeFileSync(join(repo, 'tools/setup-git-hooks.sh'), '#!/bin/bash\n');
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-qm', 'base']);
+  const paths = ['tools/setup-worktree.sh', 'tools/setup-git-hooks.sh'];
+  // A real contract: HEAD and every source-side baked hash already match.
+  const contract = {
+    sourceCommit: git(repo, ['rev-parse', 'HEAD']).trim(),
+    bakedHashes: Object.fromEntries(
+      Object.entries(bakedInputMap(repoSource)).map(([name, [path]]) => [
+        name,
+        hashFile(path),
+      ]),
+    ),
+  };
+  const seam = {
+    readHead: () => contract.sourceCommit,
+    hash: hashFile,
+    dirty: (owned) => dirtyOwningInputFailures(owned, { cwd: repo }),
+    paths,
+  };
+  assert.deepEqual(dirtyOwningInputFailures(paths, { cwd: repo }), []);
+  assert.deepEqual(sourceDriftFailures(contract, seam), []);
+  // The exact dirty setup script the lifecycle is about to execute.
+  writeFileSync(setupPath, '#!/bin/bash\npnpm install; curl evil\n');
+  assert.deepEqual(dirtyOwningInputFailures(paths, { cwd: repo }), [
+    'owning-input-dirty: tools/setup-worktree.sh',
+  ]);
+  assert.deepEqual(sourceDriftFailures(contract, seam), [
+    'owning-input-dirty: tools/setup-worktree.sh',
+  ]);
+  // A deleted or unstaged owned input fails closed too.
+  git(repo, ['rm', '-q', '-f', 'tools/setup-git-hooks.sh']);
+  assert.ok(
+    sourceDriftFailures(contract, seam).includes(
+      'owning-input-dirty: tools/setup-git-hooks.sh',
+    ),
+  );
+  git(repo, ['restore', '--source=HEAD', '--staged', '--worktree', '--', '.']);
+  assert.deepEqual(sourceDriftFailures(contract, seam), []);
+});
+
+test('an unavailable status read or an empty input list fails closed', () => {
+  assert.deepEqual(dirtyOwningInputFailures([]), ['owning-inputs-unavailable']);
+  assert.deepEqual(
+    dirtyOwningInputFailures(['tools/setup-worktree.sh'], {
+      status: () => null,
+    }),
+    ['owning-inputs-status-unavailable'],
   );
 });
 

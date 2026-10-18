@@ -600,9 +600,68 @@ export function readGitHead() {
   return result.stdout.trim();
 }
 
+// The lifecycle executes these files, so a dirty copy is a different run even
+// when HEAD and the baked hashes still match. The list is the exact set of
+// paths the command itself runs or hashes — never a broad tree scan.
+export const SETUP_INPUT_FILES = [
+  'tools/setup-worktree.sh',
+  'tools/setup-nx-native-file-cache.sh',
+  'tools/setup-git-hooks.sh',
+  'package.json',
+  'pnpm-lock.yaml',
+];
+export const HARNESS_INPUT_FILES = [
+  'tools/probes/qualify-worker-image.mjs',
+  'tools/probes/in-runner-image.mjs',
+  'tools/probes/native-process.mjs',
+  'tools/probes/qualification-evidence.mjs',
+  'tools/probes/qualification-scenario.mjs',
+  'tools/probes/qualification-version.mjs',
+  'tools/probes/scratch.mjs',
+  ...CONSUMER_FILES.map((name) => 'tools/probes/' + name),
+];
+
+export function owningInputPaths(sourceDir = source) {
+  const baked = Object.values(bakedInputMap(sourceDir)).map(([path]) =>
+    relative(sourceDir, path).split(sep).join('/'),
+  );
+  return [...new Set([...baked, ...SETUP_INPUT_FILES, ...HARNESS_INPUT_FILES])];
+}
+
+function gitStatus(paths, cwd) {
+  const result = spawnSync('git', ['status', '--porcelain=1', '--', ...paths], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 30000,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error || result.status !== 0) return null;
+  return result.stdout;
+}
+
+// Fail closed: no status, no path list, or any dirty/untracked owning input
+// all refuse the run before the setup phase can execute a modified script.
+export function dirtyOwningInputFailures(
+  paths,
+  { cwd = source, status = gitStatus } = {},
+) {
+  if (!paths.length) return ['owning-inputs-unavailable'];
+  const output = status(paths, cwd);
+  if (output === null) return ['owning-inputs-status-unavailable'];
+  return output
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => 'owning-input-dirty: ' + line.slice(3).trim());
+}
+
 export function sourceDriftFailures(
   contract,
-  { readHead = readGitHead, hash = hashFile } = {},
+  {
+    readHead = readGitHead,
+    hash = hashFile,
+    dirty = (paths) => dirtyOwningInputFailures(paths),
+    paths = owningInputPaths(),
+  } = {},
 ) {
   const failures = [];
   const head = readHead();
@@ -619,6 +678,7 @@ export function sourceDriftFailures(
     if (actual !== contract?.bakedHashes?.[name])
       failures.push('source-input-drift: ' + name);
   }
+  failures.push(...dirty(paths));
   return failures;
 }
 
