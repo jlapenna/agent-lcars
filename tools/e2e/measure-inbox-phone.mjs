@@ -325,9 +325,41 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
     await cdp.send('Network.clearBrowserCache');
     await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
     await cdp.send('Debugger.enable', { maxScriptsCacheSize: maxBytes });
+    // Retain a same-session monotonic bridge only for this extra diagnostic.
+    // Durations from the separate budget contexts cannot anchor this profile.
+    await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
+    const readClock = async () => {
+      try {
+        const { metrics } = await cdp.send('Performance.getMetrics');
+        const values = {};
+        for (const name of ['Timestamp', 'NavigationStart']) {
+          const matches = metrics.filter((metric) => metric.name === name);
+          if (
+            matches.length === 1 &&
+            Number.isFinite(matches[0].value) &&
+            matches[0].value > 0
+          )
+            values[name] = matches[0].value;
+        }
+        return values;
+      } catch {
+        return {};
+      }
+    };
+    artifact.clockBridge = {
+      status: 'unavailable',
+      timeDomain: 'timeTicks',
+      metricUnits: 'seconds',
+      profileUnits: 'microseconds',
+      navigationUnits: 'milliseconds',
+      sourceRevision: report.sourceRevision,
+      browserVersion: report.browserVersion,
+      checkpoints: {},
+    };
     await cdp.send('Profiler.enable');
     await cdp.send('Profiler.setSamplingInterval', { interval: 1_000 });
     stage = 'profiled-cold';
+    artifact.clockBridge.checkpoints.beforeProfile = await readClock();
     artifact.profileStartedWallTimeMs = Date.now();
     await cdp.send('Profiler.start');
     artifact.journey = await milestone(
@@ -336,12 +368,54 @@ async function captureColdProfile(browser, options, report, runDeadlineAt) {
       { stage },
       'profiled',
     );
+    artifact.clockBridge.checkpoints.afterJourney = await readClock();
     artifact.navigationClock = await page.evaluate(() => ({
       timeOriginMs: performance.timeOrigin,
       nowMs: performance.now(),
     }));
     artifact.cpuProfile = (await cdp.send('Profiler.stop')).profile;
     artifact.profileEndedWallTimeMs = Date.now();
+    artifact.clockBridge.checkpoints.afterProfile = await readClock();
+    const { beforeProfile, afterJourney, afterProfile } =
+      artifact.clockBridge.checkpoints;
+    const required = [
+      beforeProfile.Timestamp,
+      afterJourney.Timestamp,
+      afterJourney.NavigationStart,
+      afterProfile.Timestamp,
+      afterProfile.NavigationStart,
+    ];
+    if (!required.every((value) => Number.isFinite(value) && value > 0)) {
+      artifact.clockBridge.reason = 'missing-or-invalid-metrics';
+    } else {
+      const { startTime, endTime, samples, timeDeltas } = artifact.cpuProfile;
+      const sampleTimesCoherent =
+        Array.isArray(samples) &&
+        Array.isArray(timeDeltas) &&
+        timeDeltas.length === samples.length &&
+        timeDeltas.every((delta) => Number.isFinite(delta) && delta >= 0) &&
+        timeDeltas.reduce((total, delta) => total + delta, 0) <=
+          endTime - startTime;
+      const lowerNowMs =
+        (afterJourney.Timestamp - afterJourney.NavigationStart) * 1_000;
+      const upperNowMs =
+        (afterProfile.Timestamp - afterProfile.NavigationStart) * 1_000;
+      const coherent =
+        sampleTimesCoherent &&
+        Number.isFinite(startTime) &&
+        Number.isFinite(endTime) &&
+        afterJourney.NavigationStart === afterProfile.NavigationStart &&
+        beforeProfile.Timestamp <= startTime / 1_000_000 &&
+        startTime / 1_000_000 <= afterJourney.Timestamp &&
+        afterJourney.Timestamp <= endTime / 1_000_000 &&
+        endTime / 1_000_000 <= afterProfile.Timestamp &&
+        lowerNowMs >= 0 &&
+        Number.isFinite(artifact.navigationClock.timeOriginMs) &&
+        artifact.navigationClock.nowMs >= lowerNowMs &&
+        artifact.navigationClock.nowMs <= upperNowMs;
+      artifact.clockBridge.status = coherent ? 'available' : 'unavailable';
+      if (!coherent) artifact.clockBridge.reason = 'incoherent-clock-bracket';
+    }
     if (!artifact.cpuProfile.samples?.length) throw Error('Empty profile');
     for (const node of artifact.cpuProfile.nodes)
       node.callFrame.url = diagnosticPath(node.callFrame.url, options.origin);
