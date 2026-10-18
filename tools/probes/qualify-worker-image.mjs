@@ -1024,6 +1024,9 @@ export async function executeInRunnerPhases(runRoot, deps = defaultChildDeps) {
         beforePublish: () => {
           if (localProbePassed) remainingMs();
         },
+        checkDeadline: () => {
+          if (localProbePassed) remainingMs();
+        },
       },
     );
   }
@@ -1152,6 +1155,9 @@ export function finalizeRun(
   io.beforePublish?.();
   if (indexSemanticsSHA256(indexRoot(runRoot, options)) !== semanticsSHA)
     throw new Error('completion-index-semantics-changed');
+  // The inventory walk consumes provider time too. Check after it, with no
+  // further traversal between this admission fence and atomic publication.
+  io.checkDeadline?.();
   io.renameSync(pending, statusPath);
 }
 

@@ -131,6 +131,9 @@ self metadata is still exact. After flushing the staged status and final index,
 an atomic rename publishes `status.json` last. Failure or interruption before
 publication retains incomplete evidence without a visible successful status;
 there is no retry, overwrite or cleanup of that root.
+For a passing run, the original monotonic provider deadline is checked again
+after the final inventory walk, immediately before that rename. Expiry during
+the walk leaves the index and staged evidence intact without publishing status.
 
 `qualification.json` separates the local probe outcome from acceptance:
 `localProbePassed` reports the measured result, while

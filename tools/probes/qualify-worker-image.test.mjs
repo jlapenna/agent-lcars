@@ -1902,6 +1902,59 @@ test('a deadline refusal at final publication leaves the finalized inventory inc
   assert.ok(existsSync(join(root, '.status.pending')));
 });
 
+for (const expiresDuringInventory of [false, true]) {
+  test(`final inventory ${expiresDuringInventory ? 'expiry refuses' : 'within budget allows'} atomic status publication`, () => {
+    const root = ownedScratch();
+    const target = join(ownedScratch(), 'target');
+    writeFileSync(target, 'keep');
+    symlinkSync(target, join(root, 'retained-link'));
+    let nowMs = 1000;
+    const deadlineMs = 2000;
+    let finalInventory = false;
+    let visitedFinalLink = false;
+    const retainedRoots = [dirname(target)];
+    retainedRoots.some = (predicate) => {
+      if (finalInventory) {
+        visitedFinalLink = true;
+        if (expiresDuringInventory) nowMs = deadlineMs;
+      }
+      return Array.prototype.some.call(retainedRoots, predicate);
+    };
+    const publish = () =>
+      finalizeRun(
+        root,
+        { exitCode: 0 },
+        { retainedRoots },
+        {
+          renameSync,
+          beforePublish: () => {
+            assert.ok(nowMs < deadlineMs);
+            finalInventory = true;
+          },
+          checkDeadline: () => {
+            assert.equal(visitedFinalLink, true);
+            if (nowMs >= deadlineMs) throw new Error('provider-clock-expired');
+          },
+        },
+      );
+    if (expiresDuringInventory) {
+      assert.throws(publish, /provider-clock-expired/);
+      assert.equal(existsSync(join(root, 'status.json')), false);
+      assert.ok(existsSync(join(root, '.status.pending')));
+    } else {
+      publish();
+      assert.equal(
+        JSON.parse(readFileSync(join(root, 'status.json'))).exitCode,
+        0,
+      );
+      assert.equal(existsSync(join(root, '.status.pending')), false);
+    }
+    assert.equal(visitedFinalLink, true);
+    assert.equal(readFileSync(target, 'utf8'), 'keep');
+    assert.ok(existsSync(join(root, 'index.json')));
+  });
+}
+
 for (const defect of ['unfinished', 'failed']) {
   test(`even a freshly inventoried ${defect} phase journal cannot become success`, async () => {
     const r = await completedRun();
