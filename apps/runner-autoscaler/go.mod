@@ -1,6 +1,6 @@
 module github.com/jlapenna/agent-lcars/apps/runner-autoscaler
 
-go 1.26.5
+go 1.27.2
 
 require (
 	cloud.google.com/go/firestore v1.26.0

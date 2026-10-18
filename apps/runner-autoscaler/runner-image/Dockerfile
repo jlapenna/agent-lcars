@@ -39,7 +39,7 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:4ffadc0002b2581327e06101fc
 # apps/runner-autoscaler/go.mod so an update cannot silently leave CI using a
 # stale compiler. An exact release tag keeps the toolchain reproducible while
 # still letting BuildKit cache its immutable image layers.
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.27.2
 
 # One pin feeds the source image and both runtime-user build assertions.
 ARG TERRAFORM_VERSION=1.16.6
