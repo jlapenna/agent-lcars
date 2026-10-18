@@ -731,10 +731,13 @@ export async function measure(options) {
     } catch (error) {
       report.cleanupError =
         error instanceof Error ? error.message : 'Browser cleanup failed';
-      if (!options.cpuProfileOut || !report.summary)
-        report.error ??= report.cleanupError;
+      report.error ??= report.cleanupError;
     }
-    if (report.error) delete report.summary;
+    if (report.error) {
+      if (options.cpuProfileOut && report.summary)
+        report.completedCohortSummary = report.summary;
+      delete report.summary;
+    }
     await writeFile(options.out, `${JSON.stringify(report, null, 2)}\n`, {
       flag: 'wx',
     });
