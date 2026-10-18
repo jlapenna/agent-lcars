@@ -52,6 +52,46 @@ direct runner differs from the checkout — no copies enter the image. Retain it
 bundle the same way; see the partial 2026-10-18 in-job Codex observation in
 [worker-behavior-enforcement](worker-behavior-enforcement.md#current-qualification-boundary).
 
+Inside that allocated Job, one deterministic command replaces manual phase
+sequencing:
+
+```bash
+node tools/probes/qualify-worker-image.mjs --in-runner codex \
+  /tmp/allocation-receipt.json /tmp/source-contract.json /tmp/qualification-runs
+```
+
+The receipt is the Root-authenticated allocation record (provider, inspected
+image ID, run ID, hostname/arch, UID 1001, cgroup CPU/memory actuals, canonical
+provider start/expiry); the contract is the approved source/artifact binding
+(source commit, provider version, the fourteen baked module/helper/runner
+hashes, and the complete current probe-harness and failure-consumer hashes).
+The command refuses closed on any mismatch — wrong user, host, arch, cgroup,
+clock or hash — before claiming `<runs>/<run-id>` exclusively with
+`intent.json`; a repeated invocation against that root can only re-read
+`status.json`, never start a second entry. Inside the original provider clock
+it runs one detached child: baked CLI version once, the full native suite once,
+the setup-negative suite once (both through the unchanged driver with `TMPDIR`
+set to the run's owned `fixtures/` root and `LCARS_PROBE_KEEP_EVIDENCE=1`), the
+existing `evaluateImageEvidence` binding, and exactly one genuine typed failure
+consumer. It stops at the first failure and never repeats a phase.
+
+The run root keeps every journal (`intent.json`, `child.json` with PID and
+proc birth, `phases.json` with per-phase invocation, deadline, exit and
+recording stats, raw `*.stdout.bin`/`*.stderr.bin` logs), `expected.json`, both
+raw image reports, `qualification.json`, the fourteen retained baked input
+files under `retained/baked/`, all fixture descendants under `fixtures/`
+(never filtered by name), and `index.json` — every root entry's dev/ino/UID/
+mode/role. A diagnostic pointer outside the root is retained via those copies
+or marks `retention: "incomplete"`; nothing is silently ignored.
+`status.json` is written last.
+
+`qualification.json` separates the local probe outcome from acceptance:
+`localProbePassed` reports the measured result, while
+`durableCollectionComplete`, `qualificationAccepted`, `cleanupAuthorized`,
+`graduated` and `activationAuthorized` stay `false` until the operator
+separately collects the bundle, performs semantic review and Root ACK — the
+same remaining gates as the Docker route, whose interface is unchanged.
+
 The full native suite and all setup-negative cases must pass exactly once;
 missing, duplicated, failed, partial, wrong-user or mixed-artifact observations
 fail. The host output includes `expected.json`, `qualification.json`, both raw
