@@ -22,6 +22,26 @@
 //
 //	go test -tags=kubernetes_integration -run '^TestReceiptKubernetes$' -count=1 -timeout=420s ./apps/runner-autoscaler
 //
+// Application bridge (TestReceiptKubernetesApplication, #2312). The matrix above
+// scripts the Work API. This separate opt-in family instead talks to the
+// PRODUCTION createRunsHandler over loopback with the real CapacityProtocol,
+// Orchestrator and an isolated Firestore emulator, owned by
+// apps/console/src/lib/queue-receipt-kubernetes.test.ts. It is NEVER run
+// directly: that Node test spawns this compiled binary and supplies the
+// parent-owned loopback endpoint, a per-invocation random bearer and the
+// invocation ID. Consumer sequence (also documented there): first compile
+//
+//	(cd apps/runner-autoscaler && go test -tags=kubernetes_integration -run '^$' -c -o "$BIN" .)
+//
+// with BIN an absolute owned path, then run that one Node test through
+// tools/firestore-emulator-gate.mjs with FIRESTORE_GATE_EXEC_CMD wrapping
+// normal `firebase emulators:exec`, passing every LCARS_RECEIPT_K8S_* value
+// above plus LCARS_RECEIPT_K8S_APPLICATION=1 and
+// LCARS_RECEIPT_K8S_APPLICATION_BINARY=$BIN. Unset, the family skips and
+// contacts nothing; set with a missing or drifting input it FAILS before any
+// client is built. Only an exact http://127.0.0.1:<port> parent endpoint is
+// accepted, never an arbitrary URL.
+//
 // Retained fixture deltas, stated rather than hidden:
 //   - The live-Pod Job keeps the production name, labels, annotations, receipt
 //     fence, dummy credential mount and SecurityContext, but replaces the
@@ -47,6 +67,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +91,10 @@ const (
 	receiptFixtureToken   = "receipt-fence-original-run-token"
 	receiptFixtureRunner  = "receipt-fence-runner"
 )
+
+// receiptApplicationBearer, when set by the application family, replaces the
+// scripted-API subject as the capacity bearer. Empty keeps the old fixtures.
+var receiptApplicationBearer string
 
 var receiptFencePool = queueCapacityConfig{PoolID: "receipt-fence-pool", Cluster: "receipt-fence-cluster", Version: 1, WorkerAudience: "receipt-fence-worker"}
 
@@ -546,6 +571,7 @@ type receiptOwnership struct {
 	mu            sync.Mutex
 	jobs          map[string]types.UID
 	secrets       map[string]types.UID
+	runs          map[string]bool // Exact real-route run IDs the application family seeded.
 	done          bool
 	invocation    string
 	cleanupOnce   sync.Once
@@ -556,7 +582,7 @@ type receiptOwnership struct {
 // recordCreated is called only from an actual Job POST 201 response, including
 // one whose reply is subsequently hidden from the client under test.
 func (o *receiptOwnership) recordCreated(j *batch.Job) error {
-	if j.UID == "" || j.Namespace != o.rt.namespace || !strings.HasPrefix(j.Annotations[queueRunAnnotation], "work:receipt-fence-"+o.invocation+"-") {
+	if j.UID == "" || j.Namespace != o.rt.namespace || !(strings.HasPrefix(j.Annotations[queueRunAnnotation], "work:receipt-fence-"+o.invocation+"-") || o.runs[j.Annotations[queueRunAnnotation]]) {
 		return fmt.Errorf("successful create is outside this invocation's qualified ownership: %s/%s uid=%s", j.Namespace, j.Name, j.UID)
 	}
 	o.mu.Lock()
@@ -850,7 +876,12 @@ func receiptFenceQueueEndpoint(ctx context.Context, t *testing.T, rt receiptKube
 		},
 		verifyRun: func(context.Context, string, string) error { return nil },
 	}
-	idToken := func() (string, error) { return receiptFixtureSubject, nil }
+	idToken := func() (string, error) {
+		if receiptApplicationBearer != "" {
+			return receiptApplicationBearer, nil
+		}
+		return receiptFixtureSubject, nil
+	}
 	q.capacity = &queueCapacityClient{config: pool, namespace: rt.namespace, maxConcurrent: 2, consoleURL: api.server.URL, idToken: idToken, producerID: newCapacityIdentity(), registered: endpoint == ""}
 	q.exits = newRunExitReporter(api.server.URL, receiptFixtureRunner, idToken, logger)
 	q.claimSettled = queueClaimStatus(api.server.URL, idToken)
@@ -958,10 +989,14 @@ func receiptFenceWaitPods(ctx context.Context, t *testing.T, q *kubernetesQueue,
 }
 
 func receiptFenceSecret(q *kubernetesQueue, j *batch.Job) *core.Secret {
+	return receiptFenceSecretWith(q, j, receiptFixtureToken)
+}
+
+func receiptFenceSecretWith(q *kubernetesQueue, j *batch.Job, token string) *core.Secret {
 	return &core.Secret{ObjectMeta: meta.ObjectMeta{
 		Name: j.Name, Namespace: q.config.Namespace,
 		OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: j.Name, UID: j.UID, Controller: ptr(true)}},
-	}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte(receiptFixtureToken)}}
+	}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte(token)}}
 }
 
 func receiptFenceWorker(r capacityReceipt, pod core.Pod, generation int, active bool) capacityReceipt {
@@ -1511,6 +1546,14 @@ type receiptDeathConfig struct {
 	Checkpoint   string    `json:"checkpoint"`
 	Successor    bool      `json:"successor"`
 	Deadline     time.Time `json:"deadline"`
+	// Application mode talks to the production route: the run token is minted
+	// by the claim, so the Secret check binds the captured token, not a fixture.
+	Application bool   `json:"application,omitempty"`
+	Pool        string `json:"pool,omitempty"`
+	Bearer      string `json:"bearer,omitempty"`
+	Pipeline    string `json:"pipeline,omitempty"`
+	// ExpectedTokenHash is parent-only (never sent to the child).
+	ExpectedTokenHash string `json:"-"`
 }
 type receiptDeathFrame struct {
 	Kind       string           `json:"kind"`
@@ -1825,7 +1868,13 @@ func TestReceiptKubernetesProcessChild(t *testing.T) {
 	if err != nil || len(raw) > receiptDeathFrameLimit || json.Unmarshal(raw, &spec) != nil {
 		t.Fatal("invalid bounded parent config")
 	}
-	if spec.Invocation == "" || !strings.HasPrefix(spec.RunID, "work:receipt-fence-"+spec.Invocation+"-") || !strings.HasSuffix(spec.RunID, "/r1") || spec.NamespaceUID == "" {
+	if spec.Application {
+		if spec.Invocation == "" || spec.Pool == "" || spec.Bearer == "" || spec.Pipeline == "" || len(spec.RunID) != len("work:")+26+len("/r1") || !strings.HasPrefix(spec.RunID, "work:") || !strings.HasSuffix(spec.RunID, "/r1") || spec.NamespaceUID == "" {
+			t.Fatal("unbound application invocation")
+		}
+		receiptFencePool.PoolID = spec.Pool
+		receiptApplicationBearer = spec.Bearer
+	} else if spec.Invocation == "" || !strings.HasPrefix(spec.RunID, "work:receipt-fence-"+spec.Invocation+"-") || !strings.HasSuffix(spec.RunID, "/r1") || spec.NamespaceUID == "" {
 		t.Fatal("unbound invocation")
 	}
 	u, err := url.Parse(spec.API)
@@ -1848,7 +1897,11 @@ func TestReceiptKubernetesProcessChild(t *testing.T) {
 	if rt.namespaceUID != spec.NamespaceUID {
 		t.Fatal("parent namespace UID drift")
 	}
-	q, _, faults, _ := receiptFenceQueueEndpoint(ctx, t, rt, spec.API, spec.Invocation, false)
+	q, _, faults, childOwn := receiptFenceQueueEndpoint(ctx, t, rt, spec.API, spec.Invocation, false)
+	if spec.Application {
+		childOwn.runs = map[string]bool{spec.RunID: true}
+		receiptApplicationCapture(q)
+	}
 	send := func(f receiptDeathFrame) {
 		f.RunID = spec.RunID
 		f.Producer = q.capacity.producerID
@@ -1857,7 +1910,9 @@ func TestReceiptKubernetesProcessChild(t *testing.T) {
 		}
 	}
 	send(receiptDeathFrame{Kind: "hello"})
-	faults.beforeRequest = func(req *http.Request) (*http.Request, error) { return receiptDeathInertRequest(req, q, spec) }
+	faults.beforeRequest = func(req *http.Request) (*http.Request, error) {
+		return receiptDeathInertRequest(req, q, spec, childOwn)
+	}
 	faults.afterResponse = func(req *http.Request, resp *http.Response) (*http.Response, error) {
 		jobsPath := "/apis/batch/v1/namespaces/" + rt.namespace + "/jobs"
 		secretsPath := "/api/v1/namespaces/" + rt.namespace + "/secrets"
@@ -1960,9 +2015,17 @@ func TestReceiptKubernetesProcessChild(t *testing.T) {
 	send(f)
 }
 
-func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDeathConfig) (*http.Request, error) {
+func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDeathConfig, own *receiptOwnership) (*http.Request, error) {
 	if req.Method == http.MethodGet {
 		return req, nil
+	}
+	if s.Application {
+		// Parent-side production paths that are NOT launch writes: the exact
+		// UID/RV/nonce retirement barrier and positively owned conditional
+		// cleanup. Everything else still falls through to launch validation.
+		if r, handled, err := receiptApplicationParentWrite(req, q, s, own); handled {
+			return r, err
+		}
 	}
 	jp := "/apis/batch/v1/namespaces/" + q.config.Namespace + "/jobs"
 	sp := "/api/v1/namespaces/" + q.config.Namespace + "/secrets"
@@ -1992,7 +2055,11 @@ func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDe
 			if json.Unmarshal(raw, &got) != nil || got.Kind != "Secret" || got.APIVersion != "v1" {
 				return nil, fmt.Errorf("unexpected Secret shape")
 			}
-			expected := receiptFenceSecret(q, current)
+			token, tokenErr := receiptRunTokenFor(s)
+			if tokenErr != nil {
+				return nil, tokenErr
+			}
+			expected := receiptFenceSecretWith(q, current, token)
 			expected.TypeMeta = got.TypeMeta
 			eb, _ := json.Marshal(expected)
 			gb, _ := json.Marshal(got)
@@ -2048,7 +2115,15 @@ func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDe
 	if json.Unmarshal([]byte(got.Annotations[queueReceiptAnnotation]), &fence) != nil || !fence.valid(receiptFencePool.PoolID, s.RunID) {
 		return nil, fmt.Errorf("unbound desired receipt")
 	}
-	expected, err := q.job(directRunnerLaunch{runID: s.RunID, runToken: receiptFixtureToken, pipeline: "codex", consoleURL: s.API, runner: receiptFixtureRunner, receipt: &fence})
+	jobToken, err := receiptRunTokenFor(s)
+	if err != nil {
+		return nil, err
+	}
+	jobPipeline := "codex"
+	if s.Pipeline != "" {
+		jobPipeline = s.Pipeline
+	}
+	expected, err := q.job(directRunnerLaunch{runID: s.RunID, runToken: jobToken, pipeline: jobPipeline, consoleURL: s.API, runner: receiptFixtureRunner, receipt: &fence})
 	if err != nil {
 		return nil, err
 	}
@@ -2067,6 +2142,11 @@ func receiptDeathInertRequest(req *http.Request, q *kubernetesQueue, s receiptDe
 	got.Spec.Template.Spec.Containers[0].Command = []string{"/bin/sh", "-c", "sleep 15; exit 0"}
 	got.Spec.Template.Spec.Containers[0].Args = nil
 	got.Spec.ActiveDeadlineSeconds = ptr(int64(120))
+	if jobPipeline == "opencode" {
+		if err := receiptApplicationDropProviderKey(&got); err != nil {
+			return nil, err
+		}
+	}
 	b, err = json.Marshal(got)
 	if err != nil {
 		return nil, err
@@ -2243,7 +2323,7 @@ func receiptDeathRecord(ctx context.Context, t *testing.T, q *kubernetesQueue, o
 	}
 	if f.Kind == "secret" {
 		j, ok := seen["job"]
-		if !ok || f.JobUID != j.UID || !f.Immutable || f.TokenHash != receiptDeathTokenHash() {
+		if !ok || f.JobUID != j.UID || !f.Immutable || f.TokenHash != receiptDeathExpectedHash(s) {
 			t.Fatal("accepted Secret lacks original owner/immutable token hash")
 		}
 		actual, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, f.Name, meta.GetOptions{})
@@ -2294,7 +2374,10 @@ func receiptDeathRun(ctx context.Context, t *testing.T, rt receiptKubernetesRunt
 	producer := ""
 	var done receiptDeathFrame
 	claimArm := false
-	claimSignal := a.claimEntered
+	var claimSignal chan struct{}
+	if a != nil {
+		claimSignal = a.claimEntered
+	}
 	for {
 		if kill && s.Checkpoint == "claim" && claimArm && producer != "" {
 			break
@@ -2451,15 +2534,15 @@ func receiptDeathInertControls(ctx context.Context, t *testing.T, q *kubernetesQ
 		}
 		return req
 	}
-	if _, err := receiptDeathInertRequest(request(desired, jp), q, spec); err != nil {
+	if _, err := receiptDeathInertRequest(request(desired, jp), q, spec, nil); err != nil {
 		t.Fatalf("exact production desired shape refused: %v", err)
 	}
 	changed := desired.DeepCopy()
 	changed.Spec.Template.Spec.Containers = append(changed.Spec.Template.Spec.Containers, changed.Spec.Template.Spec.Containers[0])
-	if _, err := receiptDeathInertRequest(request(changed, jp), q, spec); err == nil {
+	if _, err := receiptDeathInertRequest(request(changed, jp), q, spec, nil); err == nil {
 		t.Fatal("extra container bypassed inert rewrite fence")
 	}
-	if _, err := receiptDeathInertRequest(request(desired, jp+"-foreign"), q, spec); err == nil {
+	if _, err := receiptDeathInertRequest(request(desired, jp+"-foreign"), q, spec, nil); err == nil {
 		t.Fatal("foreign write path accepted")
 	}
 }
@@ -2590,5 +2673,894 @@ func receiptKubernetesProcessDeath(ctx context.Context, t *testing.T, rt receipt
 		}) {
 			return
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Application bridge (#2312): production HTTP route + isolated Firestore.
+//
+// SOURCE-ONLY HERE: this family is compile-qualified and REAL KUBERNETES UNRUN
+// until Root executes the documented sequence in the file header. It reuses the
+// existing runtime qualification, fault transport, ownership/cleanup and
+// process-child machinery; the only new control plane is the Node-owned route
+// adapter, which this file talks to but never reimplements.
+// ---------------------------------------------------------------------------
+
+const (
+	receiptApplicationEnv      = "LCARS_RECEIPT_K8S_APPLICATION"
+	receiptApplicationPipeline = "opencode"
+	receiptApplicationBodyMax  = 1 << 20
+)
+
+var (
+	receiptApplicationTokenMu    sync.Mutex
+	receiptApplicationTokenValue string
+)
+
+func receiptApplicationSetToken(token string) {
+	receiptApplicationTokenMu.Lock()
+	defer receiptApplicationTokenMu.Unlock()
+	receiptApplicationTokenValue = token
+}
+
+// receiptRunTokenFor is the fixture token for the scripted matrix and the
+// really minted claim token (held only in this process's memory) for the
+// application family. Token bytes are never logged or sent over IPC.
+func receiptRunTokenFor(s receiptDeathConfig) (string, error) {
+	if !s.Application {
+		return receiptFixtureToken, nil
+	}
+	receiptApplicationTokenMu.Lock()
+	defer receiptApplicationTokenMu.Unlock()
+	if receiptApplicationTokenValue == "" {
+		return "", fmt.Errorf("no claim token captured from the production route")
+	}
+	return receiptApplicationTokenValue, nil
+}
+
+func receiptDeathExpectedHash(s receiptDeathConfig) string {
+	if s.Application {
+		return s.ExpectedTokenHash
+	}
+	return receiptDeathTokenHash()
+}
+
+// receiptTokenCapture observes the production claim exchange: the minted token
+// (memory only) and the exact claimRequestId, so a later replay can reuse it.
+type receiptTokenCapture struct {
+	base      http.RoundTripper
+	mu        sync.Mutex
+	requestID string
+	ops       map[string]bool // operationId -> resolved, as the production client sent them.
+}
+
+// unresolvedOps is the exact set of operation IDs this producer recorded and
+// never resolved. A GET never resolves one; only a resolved=true record does.
+func (c *receiptTokenCapture) unresolvedOps() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for id, resolved := range c.ops {
+		if !resolved {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (c *receiptTokenCapture) lastRequestID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.requestID
+}
+
+func (c *receiptTokenCapture) RoundTrip(req *http.Request) (*http.Response, error) {
+	claim := req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/runs/claim")
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/runs/capacity") && req.GetBody != nil {
+		if rc, err := req.GetBody(); err == nil {
+			var body struct {
+				Action      string `json:"action"`
+				OperationID string `json:"operationId"`
+				Resolved    bool   `json:"resolved"`
+			}
+			if json.NewDecoder(io.LimitReader(rc, receiptApplicationBodyMax)).Decode(&body) == nil && body.Action == "operation" && body.OperationID != "" {
+				c.mu.Lock()
+				if c.ops == nil {
+					c.ops = map[string]bool{}
+				}
+				c.ops[body.OperationID] = c.ops[body.OperationID] || body.Resolved
+				c.mu.Unlock()
+			}
+			rc.Close()
+		}
+	}
+	if claim && req.GetBody != nil {
+		if rc, err := req.GetBody(); err == nil {
+			var body struct {
+				ClaimRequestID string `json:"claimRequestId"`
+			}
+			if json.NewDecoder(io.LimitReader(rc, receiptApplicationBodyMax)).Decode(&body) == nil && body.ClaimRequestID != "" {
+				c.mu.Lock()
+				c.requestID = body.ClaimRequestID
+				c.mu.Unlock()
+			}
+			rc.Close()
+		}
+	}
+	resp, err := c.base.RoundTrip(req)
+	if err != nil || !claim || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, receiptApplicationBodyMax+1))
+	resp.Body.Close()
+	if readErr != nil || len(raw) > receiptApplicationBodyMax {
+		return nil, fmt.Errorf("claim response unreadable or oversized")
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(raw))
+	var reply struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(raw, &reply) == nil && reply.Token != "" {
+		receiptApplicationSetToken(reply.Token)
+	}
+	return resp, nil
+}
+
+func receiptApplicationCapture(q *kubernetesQueue) *receiptTokenCapture {
+	capture := &receiptTokenCapture{base: http.DefaultTransport}
+	q.capacity.httpClient = &http.Client{Timeout: 10 * time.Second, Transport: capture,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return capture
+}
+
+type receiptApplication struct {
+	endpoint   string
+	bearer     string
+	invocation string
+	client     *http.Client
+}
+
+type receiptApplicationCase struct {
+	name, runID, poolID, bearer string
+}
+
+type receiptApplicationFacts struct {
+	Problems []string `json:"problems"`
+	Run      *struct {
+		State  string `json:"state"`
+		Status string `json:"status"`
+	} `json:"run"`
+	Successor *struct {
+		State   string `json:"state"`
+		Claimed bool   `json:"claimed"`
+	} `json:"successor"`
+	Receipt *struct {
+		State         string `json:"state"`
+		Unplaced      bool   `json:"unplaced"`
+		JobUID        string `json:"jobUid"`
+		SecretUID     string `json:"secretUid"`
+		TokenHash     string `json:"tokenHash"`
+		PendingWrites int    `json:"pendingWrites"`
+		Producers     []struct {
+			ProducerID string   `json:"producerId"`
+			Stopped    bool     `json:"stopped"`
+			Fenced     bool     `json:"fenced"`
+			Pending    []string `json:"pending"`
+		} `json:"producers"`
+		Barrier *struct {
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"barrier"`
+	} `json:"receipt"`
+	RequestRecords int `json:"requestRecords"`
+	Retired        *struct {
+		Released      bool `json:"released"`
+		PendingWrites int  `json:"pendingWrites"`
+		Barrier       *struct {
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"barrier"`
+	} `json:"retired"`
+	FaultsFired int      `json:"faultsFired"`
+	Sequence    []string `json:"sequence"`
+}
+
+// receiptApplicationFromEnv fails, never skips or defaults, once enabled. Only
+// the exact parent-owned loopback endpoint is accepted.
+func receiptApplicationFromEnv(t *testing.T) receiptApplication {
+	t.Helper()
+	if os.Getenv(receiptApplicationEnv) != "1" {
+		t.Fatalf("%s must be exactly 1 when enabled", receiptApplicationEnv)
+	}
+	a := receiptApplication{
+		endpoint:   os.Getenv(receiptApplicationEnv + "_ENDPOINT"),
+		bearer:     os.Getenv(receiptApplicationEnv + "_BEARER"),
+		invocation: os.Getenv(receiptApplicationEnv + "_INVOCATION"),
+	}
+	u, err := url.Parse(a.endpoint)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Hostname() != "127.0.0.1" {
+		t.Fatal("application endpoint must be the parent-owned http://127.0.0.1:<port>")
+	}
+	if _, err := strconv.Atoi(u.Port()); err != nil {
+		t.Fatal("application endpoint port absent")
+	}
+	if len(a.bearer) < 32 || len(a.invocation) < 8 {
+		t.Fatal("application bearer/invocation binding absent")
+	}
+	a.client = &http.Client{Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return a
+}
+
+// control calls the parent's bounded control surface. Failures never echo the
+// request or response bytes.
+func (a receiptApplication) control(ctx context.Context, t *testing.T, path string, in, out any) int {
+	t.Helper()
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal("application control request invalid")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal("application control request invalid")
+	}
+	req.Header.Set("Authorization", "Bearer "+a.bearer)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.client.Do(req)
+	if err != nil {
+		t.Fatalf("application control %s unavailable", path)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, receiptApplicationBodyMax+1))
+	if err != nil || len(body) > receiptApplicationBodyMax {
+		t.Fatalf("application control %s response unreadable or oversized", path)
+	}
+	if out != nil && json.Unmarshal(body, out) != nil {
+		t.Fatalf("application control %s response invalid (HTTP %d)", path, resp.StatusCode)
+	}
+	return resp.StatusCode
+}
+
+func (a receiptApplication) seed(ctx context.Context, t *testing.T, name string) receiptApplicationCase {
+	t.Helper()
+	var out struct {
+		RunID  string `json:"runId"`
+		PoolID string `json:"poolId"`
+		Bearer string `json:"bearer"`
+	}
+	if status := a.control(ctx, t, "/__bridge/seed", map[string]string{"case": name}, &out); status != http.StatusOK || out.RunID == "" || out.PoolID == "" || out.Bearer == "" {
+		t.Fatalf("seeding the native fixture Task for %s failed (HTTP %d)", name, status)
+	}
+	return receiptApplicationCase{name: name, runID: out.RunID, poolID: out.PoolID, bearer: out.Bearer}
+}
+
+func (a receiptApplication) arm(ctx context.Context, t *testing.T, route, mode string) {
+	t.Helper()
+	if status := a.control(ctx, t, "/__bridge/arm", map[string]string{"route": route, "mode": mode}, nil); status != http.StatusOK {
+		t.Fatalf("arming %s %s failed (HTTP %d)", route, mode, status)
+	}
+}
+
+// verify makes the parent reopen Firestore through a SECOND client and assert
+// the one-Task/one-run/one-request/one-receipt invariants plus any binding.
+func (a receiptApplication) verify(ctx context.Context, t *testing.T, c receiptApplicationCase, bind map[string]string) receiptApplicationFacts {
+	t.Helper()
+	return a.verifyPhase(ctx, t, c, "preExit", bind)
+}
+
+// verifyPhase is phase-specific: before the real exit route commits there is
+// exactly one run; after it the production executorExitedAndRetry settles the
+// original lost and mints one undispatched deterministic successor.
+func (a receiptApplication) verifyPhase(ctx context.Context, t *testing.T, c receiptApplicationCase, phase string, bind map[string]string) receiptApplicationFacts {
+	t.Helper()
+	in := map[string]string{"case": c.name, "phase": phase}
+	for k, v := range bind {
+		in[k] = v
+	}
+	var facts receiptApplicationFacts
+	if status := a.control(ctx, t, "/__bridge/verify", in, &facts); status != http.StatusOK {
+		t.Fatalf("reopened Firestore contradicts the exact claim state (HTTP %d): %v", status, facts.Problems)
+	}
+	return facts
+}
+
+// pendingOf returns the durable pending-write operation IDs of one producer.
+func (f receiptApplicationFacts) pendingOf(producerID string) []string {
+	if f.Receipt == nil {
+		return nil
+	}
+	for _, p := range f.Receipt.Producers {
+		if p.ProducerID == producerID {
+			out := append([]string{}, p.Pending...)
+			sort.Strings(out)
+			return out
+		}
+	}
+	return nil
+}
+
+func (f receiptApplicationFacts) sequenceIndex(prefix string) int {
+	for i, s := range f.Sequence {
+		if strings.HasPrefix(s, prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+type receiptApplicationWire struct {
+	mu       sync.Mutex
+	jobPosts []int // Status of every forwarded Job POST, in order.
+}
+
+func (w *receiptApplicationWire) jobPostStatuses() []int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]int{}, w.jobPosts...)
+}
+
+type receiptApplicationRig struct {
+	q       *kubernetesQueue
+	faults  *receiptFaultTransport
+	own     *receiptOwnership
+	capture *receiptTokenCapture
+	s       receiptDeathConfig
+	wire    *receiptApplicationWire
+}
+
+// receiptApplicationQueue builds one production queue for a case: its own pool
+// and bearer, ownership of exactly the seeded run, the PARENT transport scope
+// (launch validation plus exact retirement/cleanup), captured claim token and
+// exact ownership of every accepted Secret.
+func receiptApplicationQueue(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication, c receiptApplicationCase) *receiptApplicationRig {
+	t.Helper()
+	receiptFencePool.PoolID = c.poolID
+	receiptApplicationBearer = c.bearer
+	receiptApplicationSetToken("")
+	q, _, faults, own := receiptFenceQueueEndpoint(ctx, t, rt, app.endpoint, app.invocation, true)
+	own.runs = map[string]bool{c.runID: true}
+	capture := receiptApplicationCapture(q)
+	dl, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("missing shared deadline")
+	}
+	s := receiptDeathConfig{Invocation: app.invocation, RunID: c.runID, NamespaceUID: rt.namespaceUID, API: app.endpoint, Deadline: dl,
+		Application: true, Pool: c.poolID, Bearer: c.bearer, Pipeline: receiptApplicationPipeline}
+	wire := &receiptApplicationWire{}
+	faults.beforeRequest = func(req *http.Request) (*http.Request, error) { return receiptDeathInertRequest(req, q, s, own) }
+	jobsPath := "/apis/batch/v1/namespaces/" + rt.namespace + "/jobs"
+	secretsPath := "/api/v1/namespaces/" + rt.namespace + "/secrets"
+	faults.afterResponse = func(req *http.Request, resp *http.Response) (*http.Response, error) {
+		if req.Method == http.MethodPost && req.URL.Path == jobsPath {
+			wire.mu.Lock()
+			wire.jobPosts = append(wire.jobPosts, resp.StatusCode)
+			wire.mu.Unlock()
+		}
+		if req.Method != http.MethodPost || req.URL.Path != secretsPath || resp.StatusCode != http.StatusCreated {
+			return resp, nil
+		}
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, receiptApplicationBodyMax+1))
+		resp.Body.Close()
+		if err != nil || len(raw) > receiptApplicationBodyMax {
+			return nil, fmt.Errorf("accepted Secret response unreadable or oversized")
+		}
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		var secret core.Secret
+		if json.Unmarshal(raw, &secret) != nil || secret.UID == "" || secret.Name != queueJobName(c.runID) {
+			return nil, fmt.Errorf("accepted Secret is outside this case's ownership")
+		}
+		own.ownSecret(&secret)
+		return resp, nil
+	}
+	return &receiptApplicationRig{q: q, faults: faults, own: own, capture: capture, s: s, wire: wire}
+}
+
+func receiptApplicationPoll(ctx context.Context, q *kubernetesQueue, endpoint string) (queuePollOutcome, error) {
+	return pollOnceWithOutcome(queueExecutorConfig{capacity: q.capacity, runnerName: receiptFixtureRunner, consoleURL: endpoint,
+		reserve: func() (*directRunnerReservation, error) { return q.reserve(ctx) }})
+}
+
+func receiptApplicationSecretHash(ctx context.Context, t *testing.T, q *kubernetesQueue, name string) (*core.Secret, string) {
+	t.Helper()
+	secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil || secret.Immutable == nil || !*secret.Immutable {
+		t.Fatalf("the exact immutable Secret is absent: %v", err)
+	}
+	sum := sha256.Sum256(secret.Data["run-token"])
+	return secret, hex.EncodeToString(sum[:])
+}
+
+// receiptApplicationDropProviderKey is the ONE reviewed inert-only delta for
+// the opencode pipeline: the dummy credentials Secret holds only
+// telemetry-writer.json={}, so the production projection of the unused
+// opencode-llm-api-key item could never mount. The volume is byte-checked to be
+// exactly the production [telemetry, provider-key] projection and only the
+// provider item is removed. The run token Secret, fence and env are untouched
+// and no real provider credential is introduced.
+func receiptApplicationDropProviderKey(job *batch.Job) error {
+	for i := range job.Spec.Template.Spec.Volumes {
+		v := &job.Spec.Template.Spec.Volumes[i]
+		if v.Name != "credentials" {
+			continue
+		}
+		want := []core.KeyToPath{{Key: "telemetry-writer.json", Path: "telemetry-writer.json"}, {Key: "opencode-llm-api-key", Path: "opencode-llm-api-key"}}
+		if v.Secret == nil || !reflect.DeepEqual(v.Secret.Items, want) {
+			return fmt.Errorf("credentials projection is not the reviewed production opencode shape")
+		}
+		v.Secret.Items = want[:1]
+		return nil
+	}
+	return fmt.Errorf("credentials volume absent")
+}
+
+type receiptApplicationProbeKey struct{}
+
+// receiptApplicationParentWrite admits exactly the two production parent
+// writes that are not launch writes. It never widens the child scope: the
+// child (and every launch POST/unsuspend PUT) is still validated above.
+func receiptApplicationParentWrite(req *http.Request, q *kubernetesQueue, s receiptDeathConfig, own *receiptOwnership) (*http.Request, bool, error) {
+	jp := "/apis/batch/v1/namespaces/" + q.config.Namespace + "/jobs/"
+	sp := "/api/v1/namespaces/" + q.config.Namespace + "/secrets/"
+	switch {
+	case req.Method == http.MethodDelete && (strings.HasPrefix(req.URL.Path, jp) || strings.HasPrefix(req.URL.Path, sp)):
+		if own == nil || req.GetBody == nil {
+			return nil, true, fmt.Errorf("unowned or unreadable delete")
+		}
+		isJob := strings.HasPrefix(req.URL.Path, jp)
+		name := strings.TrimPrefix(req.URL.Path, sp)
+		if isJob {
+			name = strings.TrimPrefix(req.URL.Path, jp)
+		}
+		rc, err := req.GetBody()
+		if err != nil {
+			return nil, true, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(rc, 1<<16))
+		rc.Close()
+		var opts meta.DeleteOptions
+		if err != nil || json.Unmarshal(raw, &opts) != nil || opts.Preconditions == nil || opts.Preconditions.UID == nil {
+			return nil, true, fmt.Errorf("delete lacks an exact UID precondition")
+		}
+		own.mu.Lock()
+		owned := own.secrets[name]
+		if isJob {
+			owned = own.jobs[name]
+		}
+		own.mu.Unlock()
+		if name != queueJobName(s.RunID) {
+			return nil, true, fmt.Errorf("delete names an object outside this case")
+		}
+		if owned == "" || *opts.Preconditions.UID != owned {
+			// Only an explicitly marked negative probe may carry a foreign UID;
+			// the apiserver, not this fence, must then refuse it.
+			if req.Context().Value(receiptApplicationProbeKey{}) == true && owned != "" {
+				return req, true, nil
+			}
+			return nil, true, fmt.Errorf("delete precondition is not the positively owned UID")
+		}
+		if !isJob && opts.Preconditions.ResourceVersion == nil {
+			return nil, true, fmt.Errorf("Secret delete lacks an exact resourceVersion")
+		}
+		return req, true, nil
+	case req.Method == http.MethodPut && req.URL.Path == jp+queueJobName(s.RunID):
+		if req.GetBody == nil {
+			return nil, true, fmt.Errorf("unreadable parent write")
+		}
+		rc, err := req.GetBody()
+		if err != nil {
+			return nil, true, err
+		}
+		raw, err := io.ReadAll(io.LimitReader(rc, (1<<20)+1))
+		rc.Close()
+		var got batch.Job
+		if err != nil || len(raw) > 1<<20 || json.Unmarshal(raw, &got) != nil {
+			return nil, true, fmt.Errorf("unreadable parent write")
+		}
+		if got.Spec.Suspend == nil || !*got.Spec.Suspend {
+			return nil, false, nil // The inert unsuspend keeps its existing validation.
+		}
+		current, err := q.client.BatchV1().Jobs(q.config.Namespace).Get(req.Context(), queueJobName(s.RunID), meta.GetOptions{})
+		if err != nil {
+			return nil, true, err
+		}
+		var fence capacityFence
+		if json.Unmarshal([]byte(current.Annotations[queueReceiptAnnotation]), &fence) != nil || !fence.valid(receiptFencePool.PoolID, s.RunID) ||
+			current.UID == "" || got.UID != current.UID || got.ResourceVersion == "" || current.DeletionTimestamp != nil ||
+			current.Annotations[queueBarrierAnnotation] != "" || got.Annotations[queueBarrierAnnotation] != fence.Nonce {
+			return nil, true, fmt.Errorf("barrier write is not the exact original UID/RV/nonce transition")
+		}
+		expected := current.DeepCopy()
+		expected.TypeMeta = got.TypeMeta
+		expected.Spec.Suspend = ptr(true)
+		expected.Spec.TTLSecondsAfterFinished = nil
+		expected.Annotations[queueBarrierAnnotation] = fence.Nonce
+		for _, j := range []*batch.Job{expected, &got} {
+			j.ResourceVersion, j.Generation, j.Status, j.ManagedFields = "", 0, batch.JobStatus{}, nil
+		}
+		eb, _ := json.Marshal(expected)
+		gb, _ := json.Marshal(got)
+		if !bytes.Equal(eb, gb) {
+			return nil, true, fmt.Errorf("barrier write changed more than suspend/TTL/nonce")
+		}
+		return req, true, nil
+	}
+	return nil, false, nil
+}
+
+// All cases share ONE 180s logical context and the suite's independent cleanup
+// allowance. Each case owns its own pool, so no case consumes another's slot.
+func TestReceiptKubernetesApplication(t *testing.T) {
+	if os.Getenv(receiptApplicationEnv) == "" {
+		t.Skip("application bridge not enabled; no Kubernetes access")
+	}
+	app := receiptApplicationFromEnv(t)
+	rt := receiptKubernetesRuntimeFromEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	for _, c := range []struct {
+		name string
+		run  func(context.Context, *testing.T, receiptKubernetesRuntime, receiptApplication)
+	}{
+		{"ClaimLossQuarantine", receiptApplicationClaimLoss},
+		{"ClaimReplayRecoversOwnedSecret", receiptApplicationSecretReplay},
+		{"AcceptedWriteLostReply", receiptApplicationLostWrite},
+		{"ControllerDeathReconcile", receiptApplicationControllerDeath},
+		{"PhysicalRetirement", receiptApplicationRetirement},
+	} {
+		if !t.Run(c.name, func(t *testing.T) { c.run(ctx, t, rt, app) }) {
+			return
+		}
+	}
+}
+
+// A. A claim reply lost AFTER the store committed. Before any Secret exists the
+// original token is unrecoverable by design: replay must quarantine it and must
+// not mint a second token, run or receipt.
+func receiptApplicationClaimLoss(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication) {
+	c := app.seed(ctx, t, "claimLoss")
+	rig := receiptApplicationQueue(ctx, t, rt, app, c)
+	q, own := rig.q, rig.own
+	app.arm(ctx, t, "claim", "drop")
+	if _, err := q.capacity.claim(ctx, receiptFixtureRunner); err == nil {
+		t.Fatal("the dropped claim reply was observed")
+	}
+	requestID := q.capacity.requestID
+	if requestID == "" {
+		t.Fatal("the unresolved claim request ID was not retained")
+	}
+	before := app.verify(ctx, t, c, nil)
+	if before.FaultsFired != 1 || before.Receipt == nil || before.Receipt.State != "unplaced" || before.RequestRecords != 1 || before.Run == nil || before.Run.State != "claimed" {
+		t.Fatalf("the committed claim is not the exact unplaced decision: %+v", before)
+	}
+	var replay capacityClaimReply
+	body := map[string]any{"runner": receiptFixtureRunner, "capacityVersion": receiptFencePool.Version, "producerId": q.capacity.producerID, "claimRequestId": requestID}
+	if err := q.capacity.call(ctx, http.MethodPost, "/claim", body, &replay); err != nil {
+		t.Fatalf("replaying the exact claim request: %v", err)
+	}
+	if replay.Kind != "quarantined-unrecoverable-token" || replay.Token != "" || replay.RunID != c.runID {
+		t.Fatalf("a replay before any Secret must quarantine the unrecoverable token, got kind=%q run=%q tokenReturned=%t", replay.Kind, replay.RunID, replay.Token != "")
+	}
+	after := app.verify(ctx, t, c, nil)
+	if after.RequestRecords != 1 || after.Receipt == nil || after.Receipt.TokenHash != before.Receipt.TokenHash {
+		t.Fatalf("the replay minted or replaced credentials: %+v", after)
+	}
+	receiptFenceRequireAbsent(ctx, t, q, queueJobName(c.runID))
+	own.cleanupObjects(ctx)
+}
+
+// A (continued). With the exact immutable Secret bound, the same request ID
+// recovers the OWNED Secret and returns no token: the original credential is
+// preserved, never replaced to satisfy a fixture.
+func receiptApplicationSecretReplay(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication) {
+	c := app.seed(ctx, t, "secretReplay")
+	rig := receiptApplicationQueue(ctx, t, rt, app, c)
+	q, own := rig.q, rig.own
+	outcome, err := receiptApplicationPoll(ctx, q, app.endpoint)
+	if err != nil || outcome != queuePollOutcomeClaimed {
+		t.Fatalf("production launch through the real route: outcome=%s err=%v", outcome, err)
+	}
+	requestID := rig.capture.lastRequestID()
+	job, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, queueJobName(c.runID), meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own.ownJob(t, job)
+	secret, hash := receiptApplicationSecretHash(ctx, t, q, job.Name)
+	var replay capacityClaimReply
+	body := map[string]any{"runner": receiptFixtureRunner, "capacityVersion": receiptFencePool.Version, "producerId": q.capacity.producerID, "claimRequestId": requestID}
+	if err := q.capacity.call(ctx, http.MethodPost, "/claim", body, &replay); err != nil {
+		t.Fatalf("replaying the exact claim request: %v", err)
+	}
+	if replay.Kind != "recover-owned-secret" || replay.Token != "" || replay.RunID != c.runID || replay.SecretUID != string(secret.UID) || replay.JobUID != string(job.UID) {
+		t.Fatalf("a replay after the Secret bound must recover the owned Secret, got kind=%q tokenReturned=%t", replay.Kind, replay.Token != "")
+	}
+	facts := app.verify(ctx, t, c, map[string]string{"secretHash": hash, "jobUid": string(job.UID)})
+	if facts.RequestRecords != 1 || facts.Receipt == nil || facts.Receipt.SecretUID != string(secret.UID) {
+		t.Fatalf("recovery did not preserve the original Secret binding: %+v", facts)
+	}
+	if !own.cleanupObjects(ctx) {
+		t.Fatal("owned launch did not retire")
+	}
+}
+
+// B1. The apiserver ACCEPTS the Job create (real 201 + UID) and the reply is
+// hidden. Production GET-corroborates that exact UID, may bind it and resume
+// the never-attempted original, but the unknown Create stays an unresolved
+// operation: a GET never drains it. A later duplicate gets the apiserver's
+// real AlreadyExists409, which resolves only ITS OWN operation.
+func receiptApplicationLostWrite(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication) {
+	c := app.seed(ctx, t, "lostWrite")
+	rig := receiptApplicationQueue(ctx, t, rt, app, c)
+	q, faults, own := rig.q, rig.faults, rig.own
+	name := queueJobName(c.runID)
+	receiptFenceRequireAbsent(ctx, t, q, name)
+	lost := faults.loseReply(http.MethodPost, "/apis/batch/v1/namespaces/"+rt.namespace+"/jobs", name)
+	outcome, err := receiptApplicationPoll(ctx, q, app.endpoint)
+	lost.requireFinished(t, http.StatusCreated)
+	if err != nil || outcome != queuePollOutcomeClaimed {
+		t.Fatalf("production must recover the exact accepted Job after a hidden create: outcome=%s err=%v", outcome, err)
+	}
+	job, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil || job.UID == "" {
+		t.Fatalf("the accepted Job is not observable: %v", err)
+	}
+	own.ownJob(t, job) // Ownership came from the real POST 201 body, not this GET.
+	unresolved := rig.capture.unresolvedOps()
+	if len(unresolved) != 1 {
+		t.Fatalf("exactly the lost Create must remain unresolved, got %d operations", len(unresolved))
+	}
+	producer := q.capacity.producerID
+	pending := app.verify(ctx, t, c, nil)
+	if pending.Receipt == nil || !reflect.DeepEqual(pending.pendingOf(producer), unresolved) {
+		t.Fatalf("the durable pending write is not the exact lost Create: %+v", pending.Receipt)
+	}
+	if pending.Receipt.JobUID != "" && pending.Receipt.JobUID != string(job.UID) {
+		t.Fatalf("the receipt bound a Job other than the accepted original: %s", pending.Receipt.JobUID)
+	}
+	if pending.Receipt.JobUID != string(job.UID) {
+		t.Fatal("production did not bind the GET-corroborated same-UID original")
+	}
+	// Duplicate of the exact production desired shape, with the ORIGINAL token.
+	inv, err := q.capacity.inventory(ctx)
+	if err != nil || len(inv.Receipts) != 1 {
+		t.Fatalf("authoritative inventory: %v", err)
+	}
+	r := inv.Receipts[0]
+	token, err := receiptRunTokenFor(rig.s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := q.capacity.recovery(ctx, r, "recover")
+	if err != nil {
+		t.Fatalf("recovery lease for the original producer: %v", err)
+	}
+	dup, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: token, pipeline: r.Pipeline, consoleURL: app.endpoint, runner: receiptFixtureRunner, receipt: &r.capacityFence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	posts := len(rig.wire.jobPostStatuses())
+	werr := q.capacity.write(ctx, r, n, func() error {
+		_, e := q.client.BatchV1().Jobs(rt.namespace).Create(ctx, dup, meta.CreateOptions{})
+		return e
+	})
+	statuses := rig.wire.jobPostStatuses()
+	if !apierrors.IsAlreadyExists(werr) || len(statuses) != posts+1 || statuses[posts] != http.StatusConflict {
+		t.Fatalf("the duplicate must reach the apiserver and get its definitive AlreadyExists409, got %v statuses=%v", werr, statuses)
+	}
+	after := app.verify(ctx, t, c, nil)
+	if !reflect.DeepEqual(after.pendingOf(producer), unresolved) || !reflect.DeepEqual(rig.capture.unresolvedOps(), unresolved) {
+		t.Fatalf("a definitive409 resolved the unrelated lost write: %+v", after.Receipt)
+	}
+	same, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil || same.UID != job.UID {
+		t.Fatalf("the original Job UID changed: %v", err)
+	}
+	if !own.cleanupObjects(ctx) {
+		t.Fatal("owned lost-write Job did not retire")
+	}
+}
+
+// B2. Kill only the owned child at the accepted Job-create checkpoint, then
+// reconcile a NEW controller incarnation through the real route. The original
+// never-attempted Job survives, its original credential is absent so nothing
+// may resume, and the dead producer's unresolved write authority is retained.
+func receiptApplicationControllerDeath(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication) {
+	c := app.seed(ctx, t, "controllerDeath")
+	rig := receiptApplicationQueue(ctx, t, rt, app, c)
+	q, own, s := rig.q, rig.own, rig.s
+	s.Checkpoint = "job"
+	original, _, seen := receiptDeathRun(ctx, t, rt, q, own, nil, s, true)
+	if original == "" || seen["job"].UID == "" {
+		t.Fatal("no accepted original Job witness")
+	}
+	name := queueJobName(c.runID)
+	before, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil || before.UID != seen["job"].UID || before.Generation != 1 || before.Spec.Suspend == nil || !*before.Spec.Suspend || queueJobAttempted(before) {
+		t.Fatalf("original accepted Job absent or not the never-attempted original: %v", err)
+	}
+	dead := app.verify(ctx, t, c, nil)
+	deadPending := dead.pendingOf(original)
+	if dead.Receipt == nil || len(deadPending) != 1 || dead.Receipt.JobUID != "" {
+		t.Fatalf("reopened Firestore lost the dead producer's exact pending write: %+v", dead.Receipt)
+	}
+	successor := s
+	successor.Successor, successor.Checkpoint = true, ""
+	fresh, done, recoverySeen := receiptDeathRun(ctx, t, rt, q, own, nil, successor, false)
+	if fresh == original || len(recoverySeen) != 0 {
+		t.Fatalf("successor was not a new incarnation or wrote objects: distinct=%t frames=%d", fresh != original, len(recoverySeen))
+	}
+	// Recovery reuses the authenticated inventory nonce and both incarnations
+	// share the fixture subject, so the only legitimate result is the missing
+	// ORIGINAL credential. A bare capacity409 (reason dropped by the client)
+	// could be any unrelated conflict and is never accepted.
+	if done.Error != "receipt original credential unavailable" {
+		t.Fatalf("successor must fail only for the missing original credential, got %q", done.Error)
+	}
+	after := app.verify(ctx, t, c, nil)
+	if after.Receipt == nil || !reflect.DeepEqual(after.pendingOf(original), deadPending) || after.Receipt.JobUID != "" || after.Receipt.SecretUID != "" {
+		t.Fatalf("process death discarded or rewrote the unresolved write authority: %+v", after.Receipt)
+	}
+	same, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, name, meta.GetOptions{})
+	if err != nil || !receiptFenceSameJob(before, same) || same.Generation != 1 || same.Spec.Suspend == nil || !*same.Spec.Suspend || queueJobAttempted(same) {
+		t.Fatalf("successor replaced, attempted or restarted the original Job: %v", err)
+	}
+	if _, err := q.client.CoreV1().Secrets(rt.namespace).Get(ctx, name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("successor fabricated a Secret for an unbound original: %v", err)
+	}
+	if pods := receiptFenceOwnedPods(ctx, t, q, same); len(pods) != 0 {
+		t.Fatal("successor launched a physical worker")
+	}
+	if !own.cleanupObjects(ctx) {
+		t.Fatal("owned controller-death objects did not retire")
+	}
+}
+
+// C. A live SAME-UID inert Pod owns capacity: no logical exit, release or
+// barrier. Only after fresh terminal Job/container evidence does normal
+// reconciliation exit BEFORE release, retain the exact UID/RV barrier and
+// commit the retired record. The real exit settles the original lost and mints
+// one undispatched deterministic successor; reply loss and 409 are injected
+// AFTER that decision committed.
+func receiptApplicationRetirement(ctx context.Context, t *testing.T, rt receiptKubernetesRuntime, app receiptApplication) {
+	c := app.seed(ctx, t, "retirement")
+	rig := receiptApplicationQueue(ctx, t, rt, app, c)
+	q, faults, own := rig.q, rig.faults, rig.own
+	outcome, err := receiptApplicationPoll(ctx, q, app.endpoint)
+	if err != nil || outcome != queuePollOutcomeClaimed {
+		t.Fatalf("production launch through the real route: outcome=%s err=%v", outcome, err)
+	}
+	job, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, queueJobName(c.runID), meta.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own.ownJob(t, job)
+	pods := receiptFenceWaitPods(ctx, t, q, job, func(p []core.Pod) bool {
+		return len(p) == 1 && p[0].DeletionTimestamp == nil && p[0].Status.Phase == core.PodRunning
+	}, "observe the real inert Pod")
+	pod := pods[0]
+
+	// Live Pod: no logical exit, no release, no barrier.
+	if err := q.reconcileReceipts(ctx); err != nil {
+		t.Logf("reconcile with a live Pod: %v", err)
+	}
+	live := app.verify(ctx, t, c, nil)
+	if live.sequenceIndex("exit:") >= 0 || live.sequenceIndex("capacity:release") >= 0 || live.Retired != nil {
+		t.Fatalf("a live same-UID Pod was exited or released: %v", live.Sequence)
+	}
+	if lj, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{}); err != nil || lj.UID != job.UID || lj.Annotations[queueBarrierAnnotation] != "" {
+		t.Fatalf("a live worker gained a retirement barrier: %v", err)
+	}
+
+	// Fresh positive terminal evidence on the same objects.
+	for {
+		fresh, getErr := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{})
+		if getErr != nil || fresh.UID != job.UID || fresh.DeletionTimestamp != nil {
+			t.Fatalf("the original Job disappeared, was replaced or is deleting: %v", getErr)
+		}
+		freshPods := receiptFenceOwnedPods(ctx, t, q, fresh)
+		ended, never := physicalReceiptWorkersEnded(fresh, freshPods)
+		if ended && !never && len(freshPods) == 1 && freshPods[0].UID == pod.UID && freshPods[0].Status.Phase == core.PodSucceeded {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("observe terminal original Pod: %v", ctx.Err())
+		case <-time.After(2 * time.Second):
+		}
+	}
+
+	// A 409 and a lost reply after the real exit decision each retain authority.
+	// The exit itself COMMITTED, so the original is lost and one retry exists.
+	for i, mode := range []string{"409", "drop"} {
+		app.arm(ctx, t, "exit", mode)
+		if err := q.reconcileReceipts(ctx); err == nil {
+			t.Fatalf("reconcile %s reply to the logical exit released capacity", mode)
+		}
+		held := app.verifyPhase(ctx, t, c, "postExit", nil)
+		if held.FaultsFired != i+1 || held.sequenceIndex("exit:200:"+mode) < 0 || held.sequenceIndex("capacity:release:200") >= 0 || (held.Retired != nil && held.Retired.Released) {
+			t.Fatalf("%s at the exit route released capacity or was never exercised: %v", mode, held.Sequence)
+		}
+		barrier, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{})
+		if err != nil || barrier.UID != job.UID || barrier.Annotations[queueBarrierAnnotation] == "" || barrier.Spec.Suspend == nil || !*barrier.Spec.Suspend {
+			t.Fatalf("the exit was attempted without the inert UID barrier: %v", err)
+		}
+	}
+
+	// Real backend rejections: a wrong originalJobUid and a stale fence are each
+	// refused with the production 'stale' reason and change nothing.
+	inv, err := q.capacity.inventory(ctx)
+	if err != nil || len(inv.Receipts) != 1 {
+		t.Fatalf("authoritative inventory: %v", err)
+	}
+	r := inv.Receipts[0]
+	n, err := q.capacity.recovery(ctx, r, "recover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := app.verifyPhase(ctx, t, c, "postExit", nil)
+	stale := r.capacityFence
+	stale.Nonce = "stale-" + stale.Nonce
+	for name, release := range map[string]map[string]any{
+		"wrongOriginalJobUid": {"action": "release", "fence": r.capacityFence, "recoveryNonce": n, "barrierUid": string(job.UID), "barrierRunId": r.RunID, "barrierNonce": r.Nonce,
+			"resourceVersion": job.ResourceVersion, "jobName": job.Name, "evidence": "uid-rv-inert-job-and-owned-pods", "inert": true, "physicalWorkersEnded": true, "neverStarted": false, "originalJobUid": "not-the-original-job-uid"},
+		"staleFence": {"action": "release", "fence": stale, "recoveryNonce": n, "barrierUid": string(job.UID), "barrierRunId": r.RunID, "barrierNonce": r.Nonce,
+			"resourceVersion": job.ResourceVersion, "jobName": job.Name, "evidence": "uid-rv-inert-job-and-owned-pods", "inert": true, "physicalWorkersEnded": true, "neverStarted": false, "originalJobUid": r.JobUID},
+	} {
+		_, err := q.capacity.command(ctx, release)
+		still := app.verifyPhase(ctx, t, c, "postExit", nil)
+		last := ""
+		if len(still.Sequence) > 0 {
+			last = still.Sequence[len(still.Sequence)-1]
+		}
+		if err == nil || err.Error() != "capacity returned HTTP 409" || !strings.HasPrefix(last, "capacity:release:409") || !strings.Contains(last, "stale") {
+			t.Fatalf("%s was not refused with the production stale reason: err=%v last=%q", name, err, last)
+		}
+		if still.Receipt == nil || still.Receipt.State != snapshot.Receipt.State || (still.Retired != nil && still.Retired.Released) {
+			t.Fatalf("%s changed authority: %+v", name, still.Receipt)
+		}
+	}
+	// Wrong PHYSICAL UID: the real apiserver refuses a foreign UID precondition.
+	// Only this explicitly marked probe may carry one past the local fence.
+	probe := context.WithValue(ctx, receiptApplicationProbeKey{}, true)
+	foreign := types.UID("00000000-0000-0000-0000-000000000000")
+	if err := q.client.BatchV1().Jobs(rt.namespace).Delete(probe, job.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &foreign}}); !apierrors.IsConflict(err) {
+		t.Fatalf("the apiserver must refuse a foreign Job UID precondition: %v", err)
+	}
+	if kept, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{}); err != nil || kept.UID != job.UID {
+		t.Fatalf("the foreign-UID probe disturbed the original Job: %v", err)
+	}
+
+	// Normal reconciliation now completes the (replayed) exit, then the release.
+	faults.clearJobRead()
+	if err := q.reconcileReceipts(ctx); err != nil {
+		t.Fatalf("normal producer reconciliation after terminal evidence: %v", err)
+	}
+	observed := faults.observedJobRead(t, rt.namespace, job.Name)
+	final := app.verifyPhase(ctx, t, c, "postExit", nil)
+	exitAt, releaseAt := -1, -1
+	for i, s := range final.Sequence {
+		if strings.HasPrefix(s, "exit:200") && exitAt < 0 {
+			exitAt = i
+		}
+		if strings.HasPrefix(s, "capacity:release:200") {
+			releaseAt = i
+		}
+	}
+	if exitAt < 0 || releaseAt < 0 || exitAt > releaseAt {
+		t.Fatalf("release did not follow the real logical exit: %v", final.Sequence)
+	}
+	if final.Successor == nil || final.Successor.Claimed {
+		t.Fatalf("the exit must leave one undispatched deterministic successor: %+v", final.Successor)
+	}
+	if final.Retired == nil || !final.Retired.Released || final.Retired.Barrier == nil || final.Retired.Barrier.UID != string(job.UID) || final.Retired.Barrier.ResourceVersion != observed.ResourceVersion {
+		t.Fatalf("the retired record does not carry the exact inert UID/RV barrier: %+v", final.Retired)
+	}
+	end, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{})
+	if err != nil || end.UID != job.UID || end.Annotations[queueBarrierAnnotation] != r.Nonce || end.Spec.Suspend == nil || !*end.Spec.Suspend {
+		t.Fatalf("the permanent barrier did not survive release: %v", err)
+	}
+	if !own.cleanupObjects(ctx) {
+		t.Fatal("owned retirement objects did not retire")
 	}
 }
