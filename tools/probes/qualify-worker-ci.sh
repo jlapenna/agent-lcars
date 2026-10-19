@@ -16,6 +16,32 @@ cd "$source_root"
 mkdir -m 700 "$output" # Refuse an existing run; never overwrite a failure.
 scratch="$(mktemp -d "${RUNNER_TEMP:-/tmp}/worker-policy-scratch.XXXXXX")"
 mkdir -m 700 "$scratch/home" "$scratch/tmp"
+
+retain_failure() {
+  local status="$1" collection_status
+  (( status != 0 )) || return 0
+  trap - EXIT
+  # Copy existing diagnostics, including partial files after a phase timeout.
+  if timeout --signal=TERM --kill-after=2s 15s bash -c '
+    set -euo pipefail
+    mkdir -m 700 "$2"
+    cd "$1"
+    find -P . -type d \( -name node_modules -o -name .git \) -prune -o \
+      -type f \( -name "*.json" -o -name "*.jsonl" -o -name "*stdout*" -o -name "*stderr*" \) \
+      -exec cp --parents --no-dereference --target-directory="$2" -- {} +
+  ' bash "$scratch/tmp" "$output/failed-diagnostics" \
+    >"$output/collection.stdout.txt" 2>"$output/collection.stderr.txt"; then
+    collection_status=0
+  else
+    collection_status=$?
+  fi
+  # These writes are best effort only after failure; never replace its exit.
+  printf '%s\n' "$status" >"$output/execution.exit" || :
+  printf '%s\n' "$collection_status" >"$output/collection.exit" || :
+  exit "$status"
+}
+trap 'retain_failure "$?"' EXIT
+
 binary="$(command -v "$provider")"
 [[ "$binary" = /* ]] || { echo 'Image CLI must resolve to an absolute path' >&2; exit 2; }
 
@@ -28,7 +54,9 @@ run_phase() {
   else
     status=$?
   fi
-  printf '%s\n' "$status" >"$output/$phase.exit"
+  if ! printf '%s\n' "$status" >"$output/$phase.exit"; then
+    (( status != 0 )) || return 1
+  fi
   return "$status"
 }
 

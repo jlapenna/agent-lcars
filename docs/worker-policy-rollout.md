@@ -52,6 +52,13 @@ existing evaluator requires the complete provider mode inventory. The failure
 consumer uses the same native report; no synthetic replacement is generated.
 Every command has a bounded timeout and retained stdout, stderr and exit code;
 the job stops on the first failure without repeating a phase.
+On failure, a 15-second exit trap copies existing raw stdout/stderr and JSON/JSONL
+fixture diagnostics into `failed-diagnostics/`, preserving their scratch-relative
+paths and full contents. It also collects partial files available after an early
+failure or phase timeout. Dependency/Git directories and symlinks are excluded.
+`execution.exit` preserves the original failure; `collection.exit` and collection
+logs separately report any copy failure or timeout. The ordinary artifact uploads
+these diagnostics with the phase logs.
 
 The candidate image ID is operator-supplied expected identity, not an OCI
 inspection performed by the worker. `qualification.json` records
