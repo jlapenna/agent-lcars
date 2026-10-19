@@ -244,6 +244,17 @@ HTTPS and config persistence off; it adds no encoding, recompression or cache.
 Its HTTP/1.1 upstream has automatic compression disabled so the client's gzip
 negotiation reaches the unchanged Next server. Only the frontend server
 protocol list changes between `h1` and `h1 h2`; HTTP/3 is excluded.
+Both manual certificate pairs have the same localhost/IP SANs in one Caddy
+process. Node IP requests omit SNI. The private global option
+`default_sni 127.0.0.1` makes Caddy's adapter include empty SNI in each
+listener's tagged certificate policy, keeping the selected and unrelated leaves
+bound to their respective listeners. This selects a certificate; it does not
+change client trust. See [Caddy default_sni](https://caddyserver.com/docs/caddyfile/options#default-sni)
+and the [pinned adapter](https://github.com/caddyserver/caddy/blob/v2.11.7/caddyconfig/httpcaddyfile/httptype.go#L749-L784).
+The Node contract fixture checks the no-SNI request and explicit-CA refusal;
+it does not exercise Caddy. Validate adapter policies and real Caddy positive
+and negative HTTPS controls separately before running a new cohort.
+
 See [Caddy protocols](https://caddyserver.com/docs/caddyfile/options#protocols).
 
 The probe remains HTTP-loopback-only by default. HTTPS additionally requires

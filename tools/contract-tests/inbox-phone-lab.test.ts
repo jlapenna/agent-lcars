@@ -284,9 +284,10 @@ describe('opt-in loopback TLS diagnostic', () => {
     }
   });
 
-  it('seeds using the explicit CA and refuses an unrelated real certificate without posting', async () => {
+  it('seeds an IP without SNI using the explicit CA and refuses an unrelated real certificate without posting', async () => {
     const tls = labOptions(args(), environment).tls;
     let selectedPosts = 0;
+    const serverNames: Array<string | false> = [];
     let unrelatedPosts = 0;
     const selected = createHttpsServer(
       { cert: await readFile(cert), key: await readFile(key) },
@@ -296,6 +297,9 @@ describe('opt-in loopback TLS diagnostic', () => {
         res.end('{}');
       },
     );
+    selected.on('secureConnection', (socket) => {
+      serverNames.push(socket.servername);
+    });
     const unrelated = createHttpsServer(
       {
         cert: await readFile(unrelatedCert),
@@ -319,6 +323,7 @@ describe('opt-in loopback TLS diagnostic', () => {
       const selectedOrigin = await listen(selected);
       const unrelatedOrigin = await listen(unrelated);
       await seed(selectedOrigin, tls);
+      expect(serverNames).toEqual([false]);
       await expect(seed(unrelatedOrigin, tls)).rejects.toMatchObject({
         code: 'DEPTH_ZERO_SELF_SIGNED_CERT',
       });
