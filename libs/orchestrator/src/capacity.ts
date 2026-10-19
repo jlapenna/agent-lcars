@@ -13,7 +13,7 @@ import {
   requestKey,
   retiredKey,
 } from './capacity-model';
-import { runLeaseExpiresAt, runStartDeadlineAt } from './decide';
+import { claimQueuedRun } from './decide';
 import { isLive, type Run, runRecoveryDeadline, taskKey } from './model';
 import {
   isQueueAdmissionCandidate,
@@ -657,27 +657,13 @@ export class CapacityProtocol {
           ],
         };
         snapshot.state.receipts.push(receipt);
-        const claimed: Run = {
-          ...run,
-          leaseExpiresAt: runLeaseExpiresAt(input.now),
-          updatedAt: input.now,
-          queue: {
-            state: 'claimed',
-            claimedAt: input.now,
-            startDeadlineAt: runStartDeadlineAt(input.now),
-            ...(input.placementAware === true
-              ? {
-                  startupPlacement: {
-                    state: 'waiting' as const,
-                    observedAt: input.now,
-                  },
-                }
-              : {}),
-            claimedBy: input.runner,
-            claimedBySubject: authority.subject,
-            tokenHash: input.tokenHash,
-          },
-        };
+        const claimed = claimQueuedRun(run, {
+          now: input.now,
+          claimedBy: input.runner,
+          claimedBySubject: authority.subject,
+          tokenHash: input.tokenHash,
+          placementAware: input.placementAware,
+        });
         const record: CapacityRecord = {
           kind: 'request',
           poolId: policy.poolId,

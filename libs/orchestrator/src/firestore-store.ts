@@ -22,11 +22,10 @@ import {
   retiredKey,
 } from './capacity-model';
 import {
+  claimQueuedRun,
   type Decision,
   isRefusal,
   type Refusal,
-  runLeaseExpiresAt,
-  runStartDeadlineAt,
 } from './decide';
 import {
   type LifecycleMetricRead,
@@ -1160,29 +1159,7 @@ export class FirestoreStore implements OrchestratorStore {
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
-      const claimed: Run = {
-        ...first.run,
-        leaseExpiresAt: runLeaseExpiresAt(input.now),
-        queue: {
-          state: 'claimed',
-          claimedAt: input.now,
-          startDeadlineAt: runStartDeadlineAt(input.now),
-          ...(input.placementAware === true
-            ? {
-                startupPlacement: {
-                  state: 'waiting' as const,
-                  observedAt: input.now,
-                },
-              }
-            : {}),
-          claimedBy: input.claimedBy,
-          ...(input.claimedBySubject === undefined
-            ? {}
-            : { claimedBySubject: input.claimedBySubject }),
-          tokenHash: input.tokenHash,
-        },
-        updatedAt: input.now,
-      };
+      const claimed = claimQueuedRun(first.run, input);
       tx.set(first.doc.ref, claimed);
       tx.set(
         this.#priorityPositions.doc(encodeURIComponent(claimed.pipeline)),

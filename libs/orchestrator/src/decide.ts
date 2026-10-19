@@ -100,6 +100,43 @@ export function runLeaseExpiresAt(now: string): string {
   return new Date(Date.parse(now) + RUN_LEASE_MS).toISOString();
 }
 
+/** Pure queued-to-claimed transition shared by the transactional stores and
+ * receipt-backed capacity admission. Callers retain selection and persistence. */
+export function claimQueuedRun(
+  run: Run,
+  input: {
+    now: string;
+    claimedBy: string;
+    claimedBySubject?: string;
+    tokenHash: string;
+    placementAware?: boolean;
+  },
+): Run {
+  return {
+    ...run,
+    leaseExpiresAt: runLeaseExpiresAt(input.now),
+    updatedAt: input.now,
+    queue: {
+      state: 'claimed',
+      claimedAt: input.now,
+      startDeadlineAt: runStartDeadlineAt(input.now),
+      ...(input.placementAware === true
+        ? {
+            startupPlacement: {
+              state: 'waiting' as const,
+              observedAt: input.now,
+            },
+          }
+        : {}),
+      claimedBy: input.claimedBy,
+      ...(input.claimedBySubject === undefined
+        ? {}
+        : { claimedBySubject: input.claimedBySubject }),
+      tokenHash: input.tokenHash,
+    },
+  };
+}
+
 /** A task whose runs go `lost` this many times in a row stops auto-retrying
  *  and parks instead -- see `expireLease` (which bumps the counter) and
  *  `Orchestrator.sweepExpired` (which reads it to decide whether to
