@@ -43,12 +43,8 @@ const PUBLISHED = {
       'permission-contents': { required: false, default: '' },
       'permission-pull-requests': { required: false, default: '' },
       'permission-actions': { required: false, default: '' },
-      // permission-metadata/permission-workflows added deliberately
-      // (agent-lcars#868): both additive, unset by default, so an existing
-      // consumer that omits them is unaffected. permission-workflows also
-      // gates a new preflight step (verify-workflows-grant.sh) that fails
-      // the mint before returning a token if the installation has not
-      // actually approved `workflows` - see docs/agent-workflow-write-permission.md.
+      // Permission inputs remain optional individually; the composite requires
+      // at least one explicit permission before delegating the native mint.
       'permission-metadata': { required: false, default: '' },
       'permission-workflows': { required: false, default: '' },
     },

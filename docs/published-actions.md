@@ -25,6 +25,16 @@ their operating constraints.
 | `oidc-post`             | Send an OIDC-authenticated request and expose its single response.      |
 | `control-flag`          | Make an engaged fleet control flag visible in logs and the job summary. |
 
+`mint-agent-token` requires at least one explicit `permission-*` input,
+including when the requested token only needs `permission-metadata: read`.
+Blank or whitespace-only permission sets fail before minting; tokens never
+inherit every installation permission through an omitted allowlist. The pinned
+GitHub-owned action enforces the permission and repository request and revokes
+the actual token after the job. `permission-workflows: write` stays explicit;
+unsupported installation grants fail at the native mint. Leaving both target
+inputs empty still scopes to the workflow repository; explicitly setting an
+owner without repositories intentionally selects that owner's installation.
+
 ## Published reusable workflows
 
 | Workflow                       | Purpose                                        |
@@ -60,18 +70,13 @@ This leaves branch updates and the resulting CI events under Renovate's
 own identity.
 
 The workflow's required `runs-on` input selects the short-lived glue-job
-pool. Consumers whose required-check aggregators use that same constrained
-pool should also set `restore-runs-on` to a different pool. The persistent
-`restore-main-checks` job can wait for the required checks for
-`check-wait-minutes`; separating it prevents the waiter from occupying the
-only runner needed by the checks it is waiting for. Existing consumers that
-omit `restore-runs-on` retain the `runs-on` value.
+pool. It no longer runs persistent post-merge CI/deploy monitors.
 
 ### Auto-merge identity
 
 Set `app-token-enabled: true`, pass `vars.AGENT_LCARS_CLIENT_ID` as
 `app-client-id`, and map `secrets.AGENT_LCARS_PRIVATE_KEY` to
-`APP_PRIVATE_KEY` for the preferred fleet path. The reusable workflow mints a
+`APP_PRIVATE_KEY`. These inputs are required for the supported fleet path. The reusable workflow mints a
 short-lived token limited to the current repository and only the permissions
 used by its arm or reconcile job. GitHub then performs the merge as the Agent
 LCARS App, preserving the normal `push` and `workflow_run` event chain, native
@@ -81,8 +86,8 @@ An App-enabled caller must use `pull_request_target`, not `pull_request` or
 `pull_request_review`, and must never check out or execute PR-head content in
 that workflow. This keeps the private key in workflow code loaded from the
 trusted default branch. The reusable arm job rejects App mode on any other PR
-event as defense in depth. Legacy callers do not receive the App secret and
-retain their existing `pull_request`/`pull_request_review` triggers.
+event. False or omitted `app-token-enabled` fails configuration validation
+before any mutation job runs; it never falls back to a different merge identity.
 
 The caller must also grant its `GITHUB_TOKEN` `statuses: read` alongside
 `checks: read`; GitHub's `statusCheckRollup` query fails as a whole when a
@@ -91,17 +96,22 @@ queries use that token because the fleet App intentionally has no commit-status
 grant; mutations continue to use the repository-scoped App token. App-enabled
 callers add a `push: [main]` trigger. That first trusted-base run migrates any
 still-open agent PR armed by the exact legacy `app/github-actions` identity: it
-disables the legacy request and re-arms with the App token before the restore
-path is considered retired. Human and other App arms are preserved. Every
+disables the legacy request and re-arms with the App token under the current App identity. Human and other App arms are preserved. Every
 reconciliation run performs the migration; if the cutover PR's own legacy
 merge actor suppresses that first push, run the caller once with a plain
 `workflow_dispatch`.
 
-The input defaults to false for compatible per-repository rollout. A caller
-that has not supplied the App credential continues to use `GITHUB_TOKEN`; for
-that caller only, `restore-main-checks` and `close-orphaned-anchors` remain the
-post-merge compatibility path, and its cron schedule remains the trigger for
-`reconcile-automerge` and `close-orphaned-anchors`.
+The `app-token-enabled` input keeps its false default so an omitted value
+fails clearly instead of silently changing a caller's identity. All fleet
+callers explicitly enable App mode. The former `GITHUB_TOKEN` recovery jobs
+and their inputs are retired: `restore-runs-on`, `ci-workflow`,
+`extra-main-workflows`, `post-ci-workflows`, `deploy-workflow`,
+`post-deploy-verify-workflow`, `post-submit-enabled`, `check-wait-minutes`,
+`restore-timeout-minutes`, `monitor-pr`, and `monitor-head-sha`.
+
+`required-checks` remains a deprecated, ignored compatibility input while
+existing callers remove it. It does not enforce merge gates; GitHub's native
+ruleset and the live check rollup remain authoritative.
 
 An App-enabled caller reconciles on events instead of a short poll: `push` to
 main (when an armed PR falls behind) and `workflow_run` `completed` for every
