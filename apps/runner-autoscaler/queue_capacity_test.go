@@ -1203,6 +1203,7 @@ func TestReceiptRetirementPreservesSchedulerPreemption(t *testing.T) {
 					}
 				}
 				reports := 0
+				var exitBarrierUID, exitBarrierRV string
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					reports++
 					var body struct {
@@ -1219,6 +1220,15 @@ func TestReceiptRetirementPreservesSchedulerPreemption(t *testing.T) {
 					d := body.Disruption
 					if d == nil || d.JobUID != r.JobUID || d.PodUID != string(p.UID) || d.Kind != schedulerPreemptionKind || d.ObservedAt != "2026-08-15T12:00:00Z" {
 						t.Errorf("lost disruption receipt: %+v", d)
+					}
+					// Inspect the exact inert barrier while still inside the logical
+					// exit callback: it must already be present with its own UID and
+					// resourceVersion before any capacity release is permitted.
+					inCallback, cbErr := k.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
+					if cbErr != nil || inCallback.UID != j.UID || inCallback.Spec.Suspend == nil || !*inCallback.Spec.Suspend || inCallback.Annotations[queueBarrierAnnotation] != r.Nonce || inCallback.ResourceVersion == "" {
+						t.Errorf("inert barrier not exact inside exit callback: uid=%q rv=%q err=%v", inCallback.UID, inCallback.ResourceVersion, cbErr)
+					} else {
+						exitBarrierUID, exitBarrierRV = string(inCallback.UID), inCallback.ResourceVersion
 					}
 					for _, op := range *ops {
 						if op["action"] == "release" {
@@ -1240,14 +1250,28 @@ func TestReceiptRetirementPreservesSchedulerPreemption(t *testing.T) {
 				if reports != 1 {
 					t.Fatalf("exit reports=%d", reports)
 				}
-				released := false
+				releaseCount := 0
+				var releaseOp map[string]any
 				for _, op := range *ops {
 					if op["action"] == "release" {
-						released = true
+						releaseCount++
+						releaseOp = op
 					}
 				}
-				if released != (authority != "exit-refused") {
-					t.Fatal("receipt release ignored logical exit result")
+				wantReleases := 0
+				if authority != "exit-refused" {
+					wantReleases = 1
+				}
+				if releaseCount != wantReleases {
+					t.Fatalf("release count=%d want=%d (authority=%s)", releaseCount, wantReleases, authority)
+				}
+				if wantReleases == 1 {
+					if exitBarrierUID == "" || exitBarrierRV == "" {
+						t.Fatal("exit callback never observed the exact inert barrier")
+					}
+					if releaseOp["barrierUid"] != exitBarrierUID || releaseOp["resourceVersion"] != exitBarrierRV || releaseOp["barrierNonce"] != r.Nonce {
+						t.Fatalf("release did not carry the barrier observed in the exit callback: %+v callback={%s %s}", releaseOp, exitBarrierUID, exitBarrierRV)
+					}
 				}
 				barrier, getErr := k.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
 				if getErr != nil || barrier.UID != j.UID || barrier.Spec.Suspend == nil || !*barrier.Spec.Suspend || barrier.Annotations[queueBarrierAnnotation] != r.Nonce {
