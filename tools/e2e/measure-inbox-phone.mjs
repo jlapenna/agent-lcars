@@ -1,14 +1,16 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash, X509Certificate } from 'node:crypto';
+import { once } from 'node:events';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { request as httpsRequest } from 'node:https';
-import { isIP } from 'node:net';
+import { connect, createServer, isIP } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from 'node:util';
+import { parseArgs, promisify } from 'node:util';
 
 import { chromium } from '@playwright/test';
 
@@ -36,6 +38,7 @@ export function labOptions(args, env = process.env) {
       samples: { type: 'string', default: '30' },
       out: { type: 'string' },
       'cpu-profile-out': { type: 'string' },
+      'transport-experiment': { type: 'boolean', default: false },
       'tls-diagnostic': { type: 'boolean', default: false },
       'tls-certificate': { type: 'string' },
     },
@@ -70,7 +73,9 @@ export function labOptions(args, env = process.env) {
   if (
     (origin.protocol === 'https:') !== tlsEnabled ||
     tlsEnabled !== Boolean(certificate) ||
-    (tlsEnabled && values['cpu-profile-out'])
+    (tlsEnabled && values['cpu-profile-out']) ||
+    (values['transport-experiment'] &&
+      (tlsEnabled || values['cpu-profile-out']))
   )
     throw Error(
       'TLS requires HTTPS, --tls-diagnostic and --tls-certificate together; no CPU profile.',
@@ -101,6 +106,7 @@ export function labOptions(args, env = process.env) {
       ? path.resolve(values['cpu-profile-out'])
       : undefined,
     ...(tls ? { tls } : {}),
+    ...(values['transport-experiment'] ? { experiment: true } : {}),
   };
 }
 
@@ -1365,12 +1371,310 @@ export async function measure(options) {
   return report;
 }
 
+const exec = promisify(execFile);
+const CADDY_URL =
+  'https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz';
+const CADDY_SHA256 =
+  '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b';
+const CADDY_BYTES = 18113754;
+const PROBE = path.resolve('tools/e2e/measure-inbox-phone.mjs');
+async function freePort() {
+  const socket = createServer();
+  socket.listen(0, '127.0.0.1');
+  await once(socket, 'listening');
+  const address = socket.address();
+  if (!address || typeof address === 'string') throw Error('No loopback port');
+  await new Promise((resolve, reject) =>
+    socket.close((err) => (err ? reject(err) : resolve())),
+  );
+  return address.port;
+}
+async function certificate(directory, name) {
+  const cert = path.join(directory, name + '.pem');
+  const key = path.join(directory, name + '.key');
+  await exec(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-sha256',
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost',
+      '-addext',
+      'subjectAltName=DNS:localhost,IP:127.0.0.1',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+    ],
+    { timeout: 15_000, maxBuffer: 64 * 1024 },
+  );
+  await chmod(key, 0o600);
+  return { cert, key };
+}
+async function stop(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null)
+    return;
+  const exited = once(child, 'exit');
+  child.kill('SIGTERM');
+  const timer = setTimeout(() => child.kill('SIGKILL'), 3_000);
+  try {
+    await exited;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+export async function transportExperiment(options) {
+  if (os.platform() !== 'linux' || os.arch() !== 'x64')
+    throw Error('Pinned standard Caddy requires linux_amd64');
+  if (process.env.E2E_INBOX_TLS_DIAGNOSTIC !== '1')
+    throw Error('Transport experiment requires exact hermetic opt-in');
+  const backend = new URL(options.origin);
+  labOptions(['--origin', backend.origin, '--out', options.out]);
+  const artifactPath = (name) => path.join(path.dirname(options.out), name);
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'inbox-transport-'));
+  const report = {
+    status: 'incomplete',
+    blocks: [],
+    caddy: { version: '2.11.7', sha256: CADDY_SHA256, bytes: CADDY_BYTES },
+    series:
+      'TLS loopback diagnostic; separate from accepted HTTP baseline and production',
+  };
+  let proxy;
+  let helper;
+  let smokeBrowser;
+  let expired = false;
+  // A whole-diagnostic bound inside the unchanged 30-minute job. Helpers
+  // retain their own 15-minute ceiling; cleanup only touches owned children.
+  const deadlineAt = Date.now() + 24 * 60_000;
+  const interruptExperiment = () => {
+    expired = true;
+    helper?.kill('SIGTERM');
+    proxy?.kill('SIGTERM');
+    void smokeBrowser?.close();
+  };
+  process.once('SIGTERM', interruptExperiment);
+  const timer = setTimeout(() => {
+    expired = true;
+    helper?.kill('SIGTERM');
+    proxy?.kill('SIGTERM');
+    void smokeBrowser?.close();
+  }, deadlineAt - Date.now());
+  const remaining = () => {
+    if (expired || Date.now() >= deadlineAt)
+      throw Error('Transport diagnostic deadline');
+    return deadlineAt - Date.now();
+  };
+  try {
+    const response = await fetch(CADDY_URL, {
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok || !response.body) throw Error('Caddy download failed');
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of response.body) {
+      bytes += chunk.length;
+      if (bytes > CADDY_BYTES) throw Error('Caddy archive exceeds pinned size');
+      chunks.push(chunk);
+    }
+    const archive = Buffer.concat(chunks);
+    if (
+      bytes !== CADDY_BYTES ||
+      createHash('sha256').update(archive).digest('hex') !== CADDY_SHA256
+    )
+      throw Error('Caddy archive integrity mismatch');
+    const archivePath = path.join(directory, 'caddy.tar.gz');
+    await writeFile(archivePath, archive);
+    await exec('tar', ['-xzf', archivePath, '-C', directory, 'caddy'], {
+      timeout: 15_000,
+    });
+    const caddy = path.join(directory, 'caddy');
+    const { stdout } = await exec(caddy, ['version'], { timeout: 5_000 });
+    if (!stdout.startsWith('v2.11.7 ')) throw Error('Unexpected Caddy version');
+    const pair = await certificate(directory, 'lab');
+    const badPair = await certificate(directory, 'unrelated');
+    const tls = tlsCertificate(pair.cert, '127.0.0.1');
+    const port = await freePort();
+    const origin = `https://127.0.0.1:${port}`;
+    const badOrigin = `https://127.0.0.1:${await freePort()}`;
+    const config = path.join(directory, 'Caddyfile');
+    const startProxy = async (arm) => {
+      remaining();
+      await writeFile(
+        config,
+        `{
+  admin off
+  persist_config off
+  auto_https off
+  servers {
+    protocols ${arm === 'h1' ? 'h1' : 'h1 h2'}
+  }
+}
+${origin} {
+  bind 127.0.0.1
+  tls ${pair.cert} ${pair.key}
+  reverse_proxy ${backend.origin} {
+    transport http {
+      versions 1.1
+      compression off
+    }
+  }
+}
+${badOrigin} {
+  bind 127.0.0.1
+  tls ${badPair.cert} ${badPair.key}
+  respond "unrelated certificate"
+}
+`,
+      );
+      proxy = spawn(
+        caddy,
+        ['run', '--config', config, '--adapter', 'caddyfile'],
+        { stdio: 'ignore' },
+      );
+      await once(proxy, 'spawn');
+      // Observe the owned listener rather than retrying a failed journey.
+      await new Promise((resolve, reject) => {
+        const expires = Date.now() + 5_000;
+        const poll = () => {
+          if (proxy?.exitCode !== null || expired)
+            return reject(Error('Owned Caddy did not start'));
+          const socket = connect(port, '127.0.0.1');
+          socket.once('connect', () => {
+            socket.destroy();
+            resolve();
+          });
+          socket.once('error', () => {
+            socket.destroy();
+            if (Date.now() >= expires)
+              reject(Error('Owned Caddy listener deadline'));
+            else setTimeout(poll, 50);
+          });
+        };
+        poll();
+      });
+    };
+    await startProxy('h1');
+    // Positive and negative TLS controls precede cohorts. Node gets an
+    // explicit CA; Chromium gets only this exact SPKI in its own process.
+    await seed(origin, tls);
+    await assert.rejects(seed(badOrigin, tls));
+    smokeBrowser = await chromium.launch({
+      ...tlsLaunchOptions(tls),
+      ...(process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH']
+        ? {
+            executablePath: process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'],
+          }
+        : {}),
+    });
+    const smokePage = await smokeBrowser.newPage();
+    const valid = await smokePage.goto(origin, {
+      timeout: 30_000,
+      waitUntil: 'load',
+    });
+    assert.ok(valid);
+    await assert.rejects(
+      smokePage.goto(badOrigin, { timeout: 10_000 }),
+      /ERR_CERT_AUTHORITY_INVALID/,
+    );
+    await smokeBrowser.close();
+    smokeBrowser = undefined;
+    report.tlsSmoke = {
+      explicitNodeCA: true,
+      exactChromiumSPKI: true,
+      unrelatedCertificateRefused: true,
+    };
+    await stop(proxy);
+    proxy = undefined;
+    for (const [index, arm] of ['h1', 'h2', 'h2', 'h1'].entries()) {
+      await startProxy(arm);
+      const out = artifactPath(`transport-${index + 1}-${arm}.json`);
+      try {
+        await new Promise((resolve, reject) => {
+          helper = spawn(
+            process.execPath,
+            [
+              PROBE,
+              '--origin',
+              origin,
+              '--tls-diagnostic',
+              '--tls-certificate',
+              pair.cert,
+              '--samples',
+              '15',
+              '--out',
+              out,
+            ],
+            { stdio: 'ignore' },
+          );
+          const helperTimer = setTimeout(
+            () => {
+              helper?.kill('SIGTERM');
+              reject(Error('Transport helper deadline'));
+            },
+            Math.min(15.5 * 60_000, remaining()),
+          );
+          helper.once('error', reject);
+          helper.once('exit', (code) => {
+            clearTimeout(helperTimer);
+            if (code === 0) resolve();
+            else reject(Error(`Transport helper failed: ${code ?? 'signal'}`));
+          });
+        });
+      } finally {
+        await stop(helper);
+        helper = undefined;
+        try {
+          report.blocks.push({
+            arm,
+            report: JSON.parse(await readFile(out, 'utf8')),
+          });
+        } catch {
+          report.blocks.push({
+            arm,
+            report: { error: 'helper-artifact-unavailable', samples: [] },
+          });
+        } finally {
+          await stop(proxy);
+          proxy = undefined;
+        }
+      }
+      remaining();
+    }
+    report.summary = transportSummary(report.blocks);
+    report.status = 'complete';
+  } catch (error) {
+    // Fixed failure category avoids retaining subprocess output or credentials.
+    report.failure = expired
+      ? 'diagnostic-deadline'
+      : 'harness-or-transport-incomplete';
+    throw error;
+  } finally {
+    process.removeListener('SIGTERM', interruptExperiment);
+    clearTimeout(timer);
+    await stop(helper);
+    await stop(proxy);
+    await smokeBrowser?.close();
+    await writeFile(options.out, JSON.stringify(report, null, 2) + '\n');
+    // Only diagnostic JSON lives in test-output; private keys and Caddy stay
+    // in this owned temporary directory and are never uploaded.
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
-    await measure(labOptions(process.argv.slice(2)));
+    const options = labOptions(process.argv.slice(2));
+    if (options.experiment) await transportExperiment(options);
+    else await measure(options);
   } catch (error) {
     console.error(
       error instanceof Error ? error.message : 'Measurement failed',
