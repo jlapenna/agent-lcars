@@ -27,16 +27,27 @@ enough.
   delivery (same GitHub delivery ID) maps back to the run it already
   created instead of starting a second one (`duplicate-request`). Your
   attempt identity, `$ATTEMPT_ID`, is `g<generation>:<intentId>`, where
-  `intentId` is literally the orchestrator's run ID
-  (`<repo>#<issue>/r<generation>`) — passed to your workflow as the
-  `broker_intent_id`/`broker_generation` `workflow_dispatch` inputs by the
-  orchestrator's outbox drain, not re-derived or re-verified by you.
-- **Native work items (Plan 2/3):** an item with no GitHub issue or PR
-  anchor enters through `PUT /api/work/v1/items/{id}`, is minted as a
-  `work:<ulid>/r<n>` run, and is dispatched with a `work` workflow input
-  (no `issue`). It is completed the same way as any other run — the
-  finalizer binds to it by the dispatch marker
-  (`[dispatch:g<generation>:<intentId>]`), not by issue number.
+  `intentId` is the immutable orchestrator run ID
+  (`<repo>#<issue>/r<generation>` for a GitHub anchor). The outbox drain
+  puts the run into QueueExecutor's claimable queue; it does not dispatch a
+  provider GitHub Actions workflow. QueueExecutor claims the run and starts
+  the direct-runner bootstrap with its authenticated dispatch brief. The Work
+  API validates the worker's `LCARS_RUN_TOKEN` and claim identity separately
+  from the public attempt identity; an attempt ID or artifact marker is not
+  authentication. Completion uses the Work API run-token route and the native
+  deliverable verifier requires the exact
+  `<!-- attempt-claim:<attempt-id> -->` marker on the artifact.
+- **Native work items:** an item with no GitHub issue or PR anchor enters
+  through `PUT /api/work/v1/items/{id}` and is minted as a
+  `work:<ulid>/r<n>` run. It uses the same QueueExecutor queue/claim,
+  authenticated brief, and run-token completion path. The brief identifies a
+  Work anchor rather than a GitHub issue; a PR references it as
+  `Work: work:<id>`. A PARK or NO-OP has no issue thread: the worker writes
+  exactly two lines to `NATIVE_WORK_OUTCOME_FILE`, the matching
+  `<!-- agent-result:v1:park:<attempt-id> -->` (or `no-op`) result marker
+  followed by `<!-- attempt-claim:<attempt-id> -->`. The native verifier
+  binds that outcome to the exact attempt, rather than inferring completion
+  from an issue number or worker exit alone.
 
 ## `agent:*` vs `review:*` — which label means which mode
 
