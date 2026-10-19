@@ -1,33 +1,39 @@
 // @vitest-environment node
 //
 // Opt-in Node owner of the isolated real-bootstrap useful-work qualification
-// carrier (#2312 original AC5/8; Tracks #2312, closes nothing). It is TEST-ONLY
-// source: the authoring job compiles and unit-checks it, and NEVER sets
+// carrier (#2312 original AC5/8; Tracks #2312, closes nothing). TEST-ONLY
+// source. The authoring job compiles and unit-checks it and NEVER sets
 // LCARS_RECEIPT_USEFUL_WORK, so the family below is skipped there. A skip is
-// not a PASS and is never evidence that a worker, provider, Kubernetes API or
-// GCS object was exercised.
+// not a PASS and earns no journey credit.
 //
-// What the family does when a later, separately authorized Root run enables it:
-// one parent around the PRODUCTION createRunsHandler(), Orchestrator and a real
-// FirestoreStore (loopback emulator, demo- project, random collection prefix,
-// plus a SECOND client for reopened reads). It requests a real codex
-// `deliverable: report` Work item through orchestrator.request, store.enqueueRun
-// and orchestrator.confirmDispatch, exposes the handler on two listeners
-// (controller-only loopback HTTP and an explicit private HTTPS callback for the
-// Pod), and spawns the compiled tagged Go binary's
-// TestReceiptKubernetesUsefulWork, which builds the real Kubernetes queue and
-// launches the original Job. The old queue-receipt-kubernetes.test.ts family
-// (#2926) is untouched and earns no credit here.
+// When Root separately authorizes execution, ONE parent runs around the
+// PRODUCTION createRunsHandler(), Orchestrator, CapacityProtocol and a real
+// FirestoreStore (loopback emulator, demo- project, random prefix, plus a
+// SECOND client for reopened reads):
+//   1. real orchestrator.request -> store.enqueueRun -> confirmDispatch;
+//   2. the compiled tagged Go binary's TestReceiptKubernetesUsefulWork emits
+//      publicIdentity (actual cluster issuer + public JWKS); the parent binds it,
+//      installs the process-local worker-identity mapping, configures and
+//      imports ONE invocation-local pool through the real capacity route, then
+//      ACKs `prepared`;
+//   3. Go claims, launches the original Job through production q.launch, and the
+//      worker talks to the SAME handler on a private HTTPS listener (exact
+//      method+path allowlist; fixture authority never reaches it);
+//   4. after `usefulCompleted` the parent reads the finished report from the
+//      reopened Store, runs canonical Codex credential recovery, ACKs
+//      `usefulRecorded`; Go then proves physical end/retirement and cleans up;
+//   5. the parent freezes evidence outside the checkout and ACKs `finish`; the
+//      child, listeners, Store and emulator are joined LAST.
 //
-// Not claimed by this file: operator/Pod admission, real GCS or provider
-// settlement, Google/session authentication (the controller bearer maps to one
-// invocation-local fixture principal), or any external effect: the completion
-// drain may truthfully perform zero effects and leave the outbox pending.
+// Not claimed: Google/session authentication (the controller bearer maps to one
+// invocation-local fixture principal), operator/Pod admission, or any external
+// effect (the completion drain truthfully performs none and leaves the outbox
+// pending). The #2926 receipt family is untouched.
 //
 // Reviewed consumer sequence (Root; NOT run by the authoring job):
 //   (cd apps/runner-autoscaler && go test -tags=kubernetes_integration \
 //      -run '^$' -c -o "$BIN" .)
-//   LCARS_RECEIPT_USEFUL_WORK=1 LCARS_RECEIPT_USEFUL_WORK_INPUT=<private json> \
+//   LCARS_RECEIPT_USEFUL_WORK=1 LCARS_RECEIPT_USEFUL_WORK_INPUT=/abs/input.json \
 //   FIRESTORE_GATE_EXEC_CMD='... vitest run queue-receipt-useful-work.test.ts' \
 //   node tools/firestore-emulator-gate.mjs
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
@@ -40,71 +46,97 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  CapacityProtocol,
   FirestoreStore,
   Orchestrator,
   type OrchestratorStore,
 } from '@agent-lcars/orchestrator';
-import { createLocalJWKSet, type JSONWebKeySet } from 'jose';
+import {
+  createLocalJWKSet,
+  exportJWK,
+  generateKeyPair,
+  type JSONWebKeySet,
+  SignJWT,
+} from 'jose';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { verifyCapacityWorkerIdentity } from './capacity-worker-identity';
+import { codexAuthStore } from './codex-auth-store';
+import { recoverCodexCredentialOperations } from './codex-credential-operations';
+import {
+  createDispatchTokenProvider,
+  DIRECT_RUNNER_PERMISSIONS,
+  lazyDispatchTokenProvider,
+  ORCHESTRATOR_GITHUB_PERMISSIONS,
+} from './github-app-tokens';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import type { WorkPrincipal } from './work-auth';
 
 const execFileAsync = promisify(execFile);
 
-// Bounds from the reviewed plan. The provider budget and every Job deadline are
-// fixed here so a caller cannot widen them through input.
+// Bounds from the reviewed design; none is reachable from input.
 export const PROVIDER_BUDGET_S = 900;
-export const JOB_ACTIVE_DEADLINE_S = 1200;
+export const RUN_DEADLINE_S = 1200;
 export const CLEANUP_BUDGET_S = 180;
 export const OUTER_MS = 1500_000;
 export const FRAME_LIMIT = 64 << 10;
 export const FRAME_TOTAL_LIMIT = 1 << 20;
-export const WORKER_TOKEN_PATH = '/run/agent-lcars-identity/token';
-export const FRAME_KINDS = [
-  'publicIdentity',
-  'prepared',
-  'claimed',
-  'jobAccepted',
-  'podObserved',
-  'workerActivated',
-  'providerObserved',
-  'usefulCompleted',
-  'physicalEnded',
-  'retired',
-  'cleanup',
-] as const;
+export const DIAGNOSTIC_LIMIT = 4 << 20;
+export const FRAME_MARKER = '@@LCARS-UW-FRAME@@ ';
+const BODY_LIMIT = 1 << 20;
+const POOL_CLUSTER = 'useful-work-cluster';
 
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const k8sName = z.string().regex(/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/u);
 const uid = z.string().min(8).max(128);
-const privateIpv4 = z.string().refine(isPrivateIpv4, 'not a private IPv4');
-const receipt = z.strictObject({
-  sha256,
-  observedAt: z.iso.datetime(),
-  owner: z.string().min(1).max(256),
-});
+const absolute = z.string().refine(path.isAbsolute, 'must be absolute');
 
-/** Closed qualification input. Every field is required: there is no default
- * namespace, no `latest` image, no production URL, no adapter module path and
- * no embedded credential. Proposals do not confer permission; the runtime
- * bindings (source, metadata, current owner) are checked against the receipts
- * by the Go side and by the parent before first Job create. */
+export function isPrivateIpv4(value: string) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(value);
+  if (m === null) return false;
+  const o = m.slice(1).map(Number);
+  if (o.some((n) => n > 255)) return false;
+  const [a, b] = o as [number, number, number, number];
+  return (
+    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  );
+}
+const privateIpv4 = z.string().refine(isPrivateIpv4, 'not a private IPv4');
+
+/** A positive evidence reference: a readable file whose bytes hash to
+ * `sha256`. The file's own closed content is checked by `loadEvidence`. */
+const evidenceRef = z.strictObject({ path: absolute, sha256 });
+
+export const EVIDENCE_KINDS = [
+  'authorization',
+  'currentOwner',
+  'sourceSnapshot',
+  'bakedInputs',
+  'parentAdmission',
+  'workerAdmission',
+  'providerAdmission',
+] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
+/** Closed qualification input. No defaults: no namespace, `latest` image,
+ * production URL, adapter module path or embedded credential. */
 export const inputSchema = z.strictObject({
   reviewed: z.strictObject({
     sourceCommit: z.string().regex(/^[0-9a-f]{40}$/u),
     tsSha256: sha256,
     goSha256: sha256,
     binarySha256: sha256,
-    imageDigest: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/u),
+    imageDigest: z
+      .string()
+      .regex(/^[^\s@:]+(:\d+)?\/[^\s@]+@sha256:[0-9a-f]{64}$/u),
     bakedInputSha256: sha256,
   }),
   kube: z.strictObject({
     context: z.string().min(1),
-    kubeconfig: z.string().refine(path.isAbsolute, 'must be absolute'),
-    namespace: k8sName,
+    cluster: z.string().min(1),
+    kubeconfig: absolute,
+    namespace: k8sName.refine((n) => n !== 'default' && !n.startsWith('kube-')),
     namespaceUid: uid,
     namespaceLabels: z
       .record(z.string().min(1), z.string())
@@ -121,10 +153,10 @@ export const inputSchema = z.strictObject({
   callback: z.strictObject({
     ip: privateIpv4,
     san: privateIpv4,
-    publicRootsPath: z.string().min(1),
+    publicRootsPath: absolute,
     publicRootsSha256: sha256,
   }),
-  binary: z.string().refine(path.isAbsolute, 'must be absolute'),
+  binary: absolute,
   work: z.strictObject({
     title: z.string().min(1).max(200),
     description: z.string().min(1).max(8192),
@@ -132,66 +164,177 @@ export const inputSchema = z.strictObject({
     owner: z.string().min(1).max(256),
     reviewedSha256: sha256,
   }),
-  receipts: z.strictObject({
-    authorization: receipt,
-    currentOwner: receipt,
-    sourceSnapshot: receipt,
-    parentAdmission: receipt,
-    workerAdmission: receipt,
-    providerAdmission: receipt,
-  }),
+  evidence: z.strictObject(
+    Object.fromEntries(EVIDENCE_KINDS.map((k) => [k, evidenceRef])) as Record<
+      EvidenceKind,
+      typeof evidenceRef
+    >,
+  ),
+  evidenceDir: absolute,
 });
 export type UsefulWorkInput = z.infer<typeof inputSchema>;
 
-export function isPrivateIpv4(value: string) {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(value);
-  if (m === null) return false;
-  const o = m.slice(1).map(Number);
-  if (o.some((n) => n > 255)) return false;
-  const [a, b] = o as [number, number, number, number];
-  return (
-    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
-  );
+/** The scope every evidence file must carry and match against the input. */
+const evidenceSchema = z.strictObject({
+  kind: z.enum(EVIDENCE_KINDS),
+  owner: z.string().min(1).max(256),
+  observedAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+  scope: z.strictObject({
+    sourceCommit: z.string().regex(/^[0-9a-f]{40}$/u),
+    imageDigest: z.string().min(1),
+    namespaceUid: uid,
+    workSha256: sha256,
+  }),
+  // Kind-specific positive content, checked in loadEvidence.
+  content: z.record(z.string(), z.unknown()),
+});
+
+export const taskHash = (w: UsefulWorkInput['work']) =>
+  crypto
+    .createHash('sha256')
+    .update(`${w.need}\n${w.owner}\n${w.description}`)
+    .digest('hex');
+
+const digestOf = (bytes: Buffer | string) =>
+  crypto.createHash('sha256').update(bytes).digest('hex');
+
+/** Reads, hashes and verifies one evidence file; throws on any gap. */
+export function loadEvidence(
+  kind: EvidenceKind,
+  input: UsefulWorkInput,
+  now: Date,
+) {
+  const ref = input.evidence[kind];
+  const bytes = fs.readFileSync(ref.path);
+  if (bytes.length > 256 << 10) throw new Error(`${kind} evidence too large`);
+  if (digestOf(bytes) !== ref.sha256)
+    throw new Error(`${kind} evidence differs from its hash`);
+  const doc = evidenceSchema.parse(JSON.parse(bytes.toString('utf8')));
+  if (doc.kind !== kind)
+    throw new Error(`${kind} evidence has kind ${doc.kind}`);
+  if (
+    doc.scope.sourceCommit !== input.reviewed.sourceCommit ||
+    doc.scope.imageDigest !== input.reviewed.imageDigest ||
+    doc.scope.namespaceUid !== input.kube.namespaceUid ||
+    doc.scope.workSha256 !== input.work.reviewedSha256
+  )
+    throw new Error(`${kind} evidence scope differs from the input`);
+  if (Date.parse(doc.expiresAt) <= now.getTime())
+    throw new Error(`${kind} evidence is not current`);
+  if (Date.parse(doc.observedAt) > now.getTime() + 60_000)
+    throw new Error(`${kind} evidence is from the future`);
+  const c = doc.content;
+  if (kind === 'sourceSnapshot') {
+    // Binds the source bytes and the binary build provenance to one commit.
+    const shape = z
+      .strictObject({
+        tsSha256: z.literal(input.reviewed.tsSha256),
+        goSha256: z.literal(input.reviewed.goSha256),
+        binarySha256: z.literal(input.reviewed.binarySha256),
+        builtFromCommit: z.literal(input.reviewed.sourceCommit),
+      })
+      .safeParse(c);
+    if (!shape.success) throw new Error('sourceSnapshot content mismatch');
+  }
+  if (kind === 'currentOwner') {
+    const shape = z
+      .strictObject({
+        taskOwner: z.literal(input.work.owner),
+        unowned: z.literal(true),
+      })
+      .safeParse(c);
+    if (!shape.success) throw new Error('currentOwner content mismatch');
+  }
+  if (kind === 'authorization') {
+    const shape = z
+      .strictObject({
+        taskNeed: z.literal(input.work.need),
+        taskSha256: z.literal(taskHash(input.work)),
+      })
+      .safeParse(c);
+    if (!shape.success) throw new Error('authorization content mismatch');
+  }
+  if (kind === 'bakedInputs') {
+    const shape = z
+      .strictObject({
+        bootstrapSha256: sha256,
+        workerActivationSha256: sha256,
+        providerProcessSha256: sha256,
+        publicRootsSha256: z.literal(input.callback.publicRootsSha256),
+      })
+      .safeParse(c);
+    if (!shape.success) throw new Error('bakedInputs content mismatch');
+    const joined = digestOf(
+      `${shape.data.bootstrapSha256}\n${shape.data.workerActivationSha256}\n${shape.data.providerProcessSha256}\n`,
+    );
+    if (joined !== input.reviewed.bakedInputSha256)
+      throw new Error('baked inputs differ from the reviewed hash');
+  }
+  if (
+    kind === 'parentAdmission' ||
+    kind === 'workerAdmission' ||
+    kind === 'providerAdmission'
+  ) {
+    const shape = z
+      .strictObject({
+        requests: z.literal('2/6Gi/24Gi'),
+        limits: z.literal('2/6Gi/24Gi'),
+        accelerators: z.literal(0),
+        admitted: z.literal(true),
+      })
+      .safeParse(c);
+    if (!shape.success) throw new Error(`${kind} content mismatch`);
+  }
+  return doc;
 }
 
-/** `LCARS_RECEIPT_USEFUL_WORK` gate: unset skips before any client, secret or
- * API access; exactly `1` enables; anything else is rejected. */
+export interface InputFiles {
+  ts: string;
+  go: string;
+}
+
+/** Parses the private input FILE (never raw JSON), binds it to the actual
+ * carrier bytes, binary, exact-image public roots and every evidence file, and
+ * returns the object plus the digest both owners must agree on. */
+export function loadInput(
+  inputPath: string | undefined,
+  files: InputFiles,
+  now = new Date(),
+) {
+  if (inputPath === undefined || !path.isAbsolute(inputPath))
+    throw new Error('LCARS_RECEIPT_USEFUL_WORK_INPUT must be an absolute file');
+  const stat = fs.statSync(inputPath);
+  if (!stat.isFile() || stat.size > 256 << 10 || (stat.mode & 0o077) !== 0)
+    throw new Error('input must be a private regular file under 256KiB');
+  const raw = fs.readFileSync(inputPath);
+  const input = inputSchema.parse(JSON.parse(raw.toString('utf8')));
+  const file = (p: string) => digestOf(fs.readFileSync(p));
+  if (file(files.ts) !== input.reviewed.tsSha256)
+    throw new Error('TS carrier differs from the reviewed hash');
+  if (file(files.go) !== input.reviewed.goSha256)
+    throw new Error('Go carrier differs from the reviewed hash');
+  if (file(input.binary) !== input.reviewed.binarySha256)
+    throw new Error('compiled binary differs from the reviewed hash');
+  if (file(input.callback.publicRootsPath) !== input.callback.publicRootsSha256)
+    throw new Error('public roots differ from the exact image bundle hash');
+  if (input.callback.san !== input.callback.ip)
+    throw new Error('callback SAN must equal the callback IP');
+  if (taskHash(input.work) !== input.work.reviewedSha256)
+    throw new Error(
+      'task need/owner/description differ from the reviewed hash',
+    );
+  for (const kind of EVIDENCE_KINDS) loadEvidence(kind, input, now);
+  return { input, inputSha256: digestOf(raw) };
+}
+
+/** `LCARS_RECEIPT_USEFUL_WORK` gate. */
 export function optIn(value: string | undefined): 'skip' | 'run' {
   if (value === undefined) return 'skip';
   if (value === '1') return 'run';
   throw new Error('LCARS_RECEIPT_USEFUL_WORK must be unset or exactly 1');
 }
 
-/** Parses the private input and re-binds it to the actual files it names. The
- * input must also say the trusted tool inputs (this file, the binary) are the
- * reviewed bytes, so an edited carrier cannot ride an old receipt. */
-export function parseInput(
-  raw: string | undefined,
-  files: { ts: string; go?: string; binary?: string; roots?: string },
-): UsefulWorkInput {
-  if (raw === undefined || raw.trim() === '')
-    throw new Error('LCARS_RECEIPT_USEFUL_WORK_INPUT is required');
-  const input = inputSchema.parse(JSON.parse(raw));
-  const digest = (file: string) =>
-    crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-  if (digest(files.ts) !== input.reviewed.tsSha256)
-    throw new Error('TS carrier differs from the reviewed hash');
-  if (files.go !== undefined && digest(files.go) !== input.reviewed.goSha256)
-    throw new Error('Go carrier differs from the reviewed hash');
-  if (
-    files.binary !== undefined &&
-    digest(files.binary) !== input.reviewed.binarySha256
-  )
-    throw new Error('compiled binary differs from the reviewed hash');
-  if (
-    files.roots !== undefined &&
-    digest(files.roots) !== input.callback.publicRootsSha256
-  )
-    throw new Error('public roots differ from the exact image bundle hash');
-  return input;
-}
-
-/** Emulator-only Store options: loopback host, demo- project, random prefix. */
 export function emulatorOptions(env: NodeJS.ProcessEnv) {
   const project = env.GCLOUD_PROJECT ?? env.GOOGLE_CLOUD_PROJECT ?? '';
   if (!/^demo-[a-z0-9-]+$/u.test(project))
@@ -209,27 +352,62 @@ export function emulatorOptions(env: NodeJS.ProcessEnv) {
   };
 }
 
-/** Worker listener allowlist: only the exact bound run-token paths and
- * /runs/activate. Capacity, qualification and operator routes never match. */
-export function workerPathAllowed(pathname: string, runId: string) {
-  const rest = pathname.replace(/^\/api\/work\/v1/u, '');
-  if (rest === '/runs/activate') return true;
+const API = '/api/work/v1';
+
+/** Worker listener: METHOD + EXACT path + exact encoded bound run ID. The
+ * routes are the ones the baked direct-runner actually uses (contract.ts,
+ * capacity-contract.ts). /exit, claim, capacity, recovery, placement and Work
+ * routes are controller-only. `activateRunId` is the body's fence.runId. */
+export function workerRouteAllowed(
+  method: string,
+  pathname: string,
+  runId: string,
+  activateRunId?: unknown,
+) {
+  if (!pathname.startsWith(`${API}/`)) return false;
+  const rest = pathname.slice(API.length);
+  if (rest === '/runs/activate')
+    return method === 'POST' && activateRunId === runId;
   const id = encodeURIComponent(runId);
-  return [
-    `/runs/${id}/token`,
-    `/runs/${id}/exit`,
-    `/runs/${id}/complete`,
-    `/runs/${id}/heartbeat`,
-  ].includes(rest);
+  const table: Record<string, string[]> = {
+    [`/runs/${id}/brief`]: ['GET'],
+    [`/runs/${id}/checkout-token`]: ['GET'],
+    [`/runs/${id}/codex-auth`]: ['GET', 'PUT'],
+    [`/runs/${id}/heartbeat`]: ['POST'],
+    [`/runs/${id}/complete`]: ['POST'],
+  };
+  return table[rest]?.includes(method) === true;
 }
 
-/** The only allowed delta over the production Job body: a public-CA ConfigMap
- * volume, its read-only mount and CURL_CA_BUNDLE on the sole container, plus
- * the finite provider budget and active deadline. Everything else must match. */
-export function applyCaDelta(job: Record<string, any>, configMap: string) {
+/** Mirrors app/api/work/v1/[[...rest]]/route.ts: Authorization -> bearerToken,
+ * x-lcars-worker-identity -> workerIdentityToken, decimal
+ * x-lcars-worker-generation -> workerGeneration. A fresh object every call. */
+export function workerHeaderContext(headers: Headers) {
+  const authorization = headers.get('authorization') ?? '';
+  const bearer = authorization.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : undefined;
+  const identity = headers.get('x-lcars-worker-identity');
+  const generation = headers.get('x-lcars-worker-generation') ?? '';
+  return {
+    ...(bearer === undefined ? {} : { bearerToken: bearer }),
+    ...(identity === null ? {} : { workerIdentityToken: identity }),
+    ...(/^\d+$/u.test(generation)
+      ? { workerGeneration: Number(generation) }
+      : {}),
+  };
+}
+
+type JobLike = Record<string, any>;
+
+/** The ONLY delta over the production Job body: the public-CA ConfigMap volume
+ * + read-only mount + CURL_CA_BUNDLE, supported CODEX_TIMEOUT_SECONDS, and the
+ * finite run deadline in the location q.job already negotiated (Pod when the
+ * placement annotation is present, otherwise Job): never both. */
+export function applyCaDelta(job: JobLike, configMap: string): JobLike {
   const clone = structuredClone(job);
   const pod = clone.spec?.template?.spec;
-  const containers: Record<string, any>[] | undefined = pod?.containers;
+  const containers: JobLike[] | undefined = pod?.containers;
   if (
     pod === undefined ||
     containers?.length !== 1 ||
@@ -237,32 +415,43 @@ export function applyCaDelta(job: Record<string, any>, configMap: string) {
     (pod.ephemeralContainers?.length ?? 0) !== 0
   )
     throw new Error('Job must have exactly one direct-runner container');
-  const bundle = '/etc/lcars-public-ca/ca-bundle.pem';
   const container = containers[0]!;
-  if (
-    (container.env ?? []).some(
-      (e: { name: string }) => e.name === 'CURL_CA_BUNDLE',
-    )
-  )
-    throw new Error('production Job already sets CURL_CA_BUNDLE');
+  const names = (container.env ?? []).map((e: { name: string }) => e.name);
+  for (const n of ['CURL_CA_BUNDLE', 'CODEX_TIMEOUT_SECONDS'])
+    if (names.includes(n)) throw new Error(`production Job already sets ${n}`);
+  const dir = '/etc/lcars-public-ca';
   container.env = [
     ...(container.env ?? []),
-    { name: 'CURL_CA_BUNDLE', value: bundle },
+    { name: 'CURL_CA_BUNDLE', value: `${dir}/ca-bundle.pem` },
+    { name: 'CODEX_TIMEOUT_SECONDS', value: String(PROVIDER_BUDGET_S) },
   ];
   container.volumeMounts = [
     ...(container.volumeMounts ?? []),
-    { name: 'public-ca', mountPath: path.dirname(bundle), readOnly: true },
+    { name: 'public-ca', mountPath: dir, readOnly: true },
   ];
   pod.volumes = [
     ...(pod.volumes ?? []),
     { name: 'public-ca', configMap: { name: configMap } },
   ];
-  clone.spec.activeDeadlineSeconds = JOB_ACTIVE_DEADLINE_S;
+  if (
+    clone.metadata?.annotations?.['lcars.dev/placement-aware'] !== undefined ||
+    pod.activeDeadlineSeconds !== undefined
+  )
+    pod.activeDeadlineSeconds = RUN_DEADLINE_S;
+  else clone.spec.activeDeadlineSeconds = RUN_DEADLINE_S;
   return clone;
 }
 
-/** Joins the exact image roots to the callback CA. A callback-CA-only bundle
- * would break GitHub and bootstrap TLS, so the roots are mandatory. */
+/** Everything but the whitelisted delta must be byte-identical. */
+export function onlyCaDelta(
+  before: JobLike,
+  after: JobLike,
+  configMap: string,
+) {
+  const expected = applyCaDelta(before, configMap);
+  return JSON.stringify(expected) === JSON.stringify(after);
+}
+
 export function joinCaBundle(publicRoots: string, callbackCa: string) {
   if (!/-----BEGIN CERTIFICATE-----/u.test(publicRoots))
     throw new Error('public roots hold no certificates');
@@ -271,36 +460,190 @@ export function joinCaBundle(publicRoots: string, callbackCa: string) {
   return `${publicRoots.trimEnd()}\n${callbackCa.trimEnd()}\n`;
 }
 
-/** Bounded, secret-free controller frame decoder (Node child pipes, one JSON
- * object per line). Unknown kinds, oversize frames and credential-bearing
- * fields are refused rather than truncated. */
-export class FrameReader {
-  private total = 0;
-  private buffer = '';
-  readonly frames: {
-    kind: (typeof FRAME_KINDS)[number];
-    [k: string]: unknown;
-  }[] = [];
-  push(chunk: string) {
-    this.total += chunk.length;
-    if (this.total > FRAME_TOTAL_LIMIT)
-      throw new Error('frame stream too large');
-    this.buffer += chunk;
+// ---- Typed controller protocol ----------------------------------------
+export const FRAME_ORDER = [
+  'publicIdentity',
+  'claimed',
+  'jobAccepted',
+  'podObserved',
+  'workerActivated',
+  'providerObserved',
+  'usefulCompleted',
+  'physicalEnded',
+  'retired',
+  'cleanup',
+] as const;
+export type FrameKind = (typeof FRAME_ORDER)[number];
+const base = {
+  v: z.literal(1),
+  invocation: z.string().min(8),
+  seq: z.number().int().positive(),
+};
+const frameShapes = {
+  publicIdentity: z.strictObject({
+    ...base,
+    kind: z.literal('publicIdentity'),
+    inputSha256: sha256,
+    poolId: z.string().min(1),
+    issuer: z.url().startsWith('https://'),
+    jwksUri: z.url().startsWith('https://'),
+    jwks: z.strictObject({
+      keys: z.array(z.record(z.string(), z.unknown())).min(1).max(16),
+    }),
+    jwksSha256: sha256,
+    namespace: k8sName,
+    serviceAccountUid: uid,
+  }),
+  claimed: z.strictObject({
+    ...base,
+    kind: z.literal('claimed'),
+    runId: z.string(),
+    producerId: z.string(),
+    jobName: z.string(),
+  }),
+  jobAccepted: z.strictObject({
+    ...base,
+    kind: z.literal('jobAccepted'),
+    runId: z.string(),
+    jobUid: uid,
+    secretUid: uid,
+    configMapUid: uid,
+    claimFingerprint: sha256,
+  }),
+  podObserved: z.strictObject({
+    ...base,
+    kind: z.literal('podObserved'),
+    runId: z.string(),
+    podUid: uid,
+    imageId: z.string().min(1),
+  }),
+  workerActivated: z.strictObject({
+    ...base,
+    kind: z.literal('workerActivated'),
+    runId: z.string(),
+    generation: z.number().int().positive(),
+    podUid: uid,
+  }),
+  providerObserved: z.strictObject({
+    ...base,
+    kind: z.literal('providerObserved'),
+    runId: z.string(),
+    containerStartedAt: z.iso.datetime(),
+  }),
+  usefulCompleted: z.strictObject({
+    ...base,
+    kind: z.literal('usefulCompleted'),
+    runId: z.string(),
+  }),
+  physicalEnded: z.strictObject({
+    ...base,
+    kind: z.literal('physicalEnded'),
+    runId: z.string(),
+    podUid: uid,
+    exitCode: z.number().int(),
+  }),
+  retired: z.strictObject({
+    ...base,
+    kind: z.literal('retired'),
+    runId: z.string(),
+    released: z.boolean(),
+    barrier: z.boolean(),
+  }),
+  cleanup: z.strictObject({
+    ...base,
+    kind: z.literal('cleanup'),
+    runId: z.string(),
+    removed: z.array(z.string()).max(8),
+    retained: z.array(z.string()).max(8),
+  }),
+} as const;
+export type Frame = { kind: FrameKind; seq: number; [k: string]: unknown };
+
+/** Chunk-safe decoder. EVERY stdout byte goes through `push`; marked lines are
+ * frames, everything else is bounded ordinary diagnostics. UTF-8 is counted in
+ * bytes and decoded only on complete lines, so split code points, coalesced or
+ * split frames and mixed diagnostics are all handled. `end()` rejects an
+ * unfinished trailing line. Invalid input throws; callers route that into the
+ * lifecycle promise instead of an event callback. */
+export class FrameDecoder {
+  frames: Frame[] = [];
+  diagnostics = 0;
+  private pending: Buffer = Buffer.alloc(0);
+  private protocol = 0;
+  private lastOrder = -1;
+  private finished = false;
+  constructor(
+    private readonly invocation: string,
+    private readonly runId: () => string | undefined,
+  ) {}
+  push(chunk: Buffer): Frame[] {
+    const produced: Frame[] = [];
+    this.pending = Buffer.concat([this.pending, chunk]);
     for (;;) {
-      const at = this.buffer.indexOf('\n');
+      const at = this.pending.indexOf(0x0a);
       if (at < 0) break;
-      const line = this.buffer.slice(0, at);
-      this.buffer = this.buffer.slice(at + 1);
-      if (line.length > FRAME_LIMIT) throw new Error('frame too large');
-      const frame = JSON.parse(line) as { kind?: string };
-      if (!FRAME_KINDS.includes(frame.kind as never))
-        throw new Error(`unknown frame kind ${String(frame.kind)}`);
-      if (/bearer|runToken|authorization|jwt|nonce|privateKey/iu.test(line))
-        throw new Error('frame carries a forbidden field');
-      this.frames.push(frame as never);
+      const line = this.pending.subarray(0, at);
+      this.pending = this.pending.subarray(at + 1);
+      const frame = this.line(line);
+      if (frame !== undefined) produced.push(frame);
     }
-    if (this.buffer.length > FRAME_LIMIT) throw new Error('frame too large');
+    if (this.pending.length > FRAME_LIMIT + FRAME_MARKER.length)
+      throw new Error('unterminated stdout line exceeds the frame bound');
+    return produced;
   }
+  end() {
+    if (this.pending.length !== 0)
+      throw new Error('unfinished trailing frame at EOF');
+  }
+  markFinished() {
+    this.finished = true;
+  }
+  private line(bytes: Buffer): Frame | undefined {
+    const text = bytes.toString('utf8');
+    if (!text.startsWith(FRAME_MARKER)) {
+      this.diagnostics += bytes.length + 1;
+      if (this.diagnostics > DIAGNOSTIC_LIMIT)
+        throw new Error('diagnostics exceed their bound');
+      return undefined;
+    }
+    if (this.finished) throw new Error('frame after finish');
+    if (bytes.length > FRAME_LIMIT) throw new Error('frame too large');
+    this.protocol += bytes.length + 1;
+    if (this.protocol > FRAME_TOTAL_LIMIT)
+      throw new Error('frame stream too large');
+    const raw = JSON.parse(text.slice(FRAME_MARKER.length)) as {
+      kind?: string;
+    };
+    const kind = raw.kind as FrameKind;
+    const shape = (frameShapes as Record<string, z.ZodType>)[kind];
+    if (shape === undefined)
+      throw new Error(`unknown frame kind ${String(kind)}`);
+    const frame = shape.parse(raw) as Frame & {
+      invocation: string;
+      runId?: string;
+    };
+    if (frame.invocation !== this.invocation)
+      throw new Error('frame invocation mismatch');
+    const order = FRAME_ORDER.indexOf(kind);
+    if (order <= this.lastOrder)
+      throw new Error(`frame ${kind} is duplicate or out of order`);
+    if (this.frames.length !== 0 && frame.seq !== this.frames.at(-1)!.seq + 1)
+      throw new Error('frame sequence gap');
+    const run = this.runId();
+    if (kind !== 'publicIdentity' && frame.runId !== run)
+      throw new Error('frame names a different run');
+    this.lastOrder = order;
+    this.frames.push(frame);
+    return frame;
+  }
+}
+
+const SECRET_KEY = /^(d|p|q|dp|dq|qi|k)$/u;
+/** A published JWKS must hold public members only. */
+export function publicJwksOnly(jwks: { keys: Record<string, unknown>[] }) {
+  return jwks.keys.every((k) =>
+    Object.keys(k).every((m) => !SECRET_KEY.test(m)),
+  );
 }
 
 async function makeCallbackTls(ip: string, dir: string) {
@@ -329,60 +672,129 @@ async function makeCallbackTls(ip: string, dir: string) {
 
 // ---- Always-on unit controls: offline, labelled, never journey credit. ----
 describe('useful-work carrier unit controls (offline, not journey evidence)', () => {
-  const good = {
-    reviewed: {
-      sourceCommit: 'a'.repeat(40),
-      tsSha256: 'b'.repeat(64),
-      goSha256: 'c'.repeat(64),
-      binarySha256: 'd'.repeat(64),
-      imageDigest: `registry.example/runner@sha256:${'e'.repeat(64)}`,
-      bakedInputSha256: 'f'.repeat(64),
-    },
-    kube: {
-      context: 'ctx',
-      kubeconfig: '/tmp/kubeconfig',
-      namespace: 'qual-ns',
-      namespaceUid: 'ns-uid-0001',
-      namespaceLabels: { a: 'b' },
-      serviceAccount: 'worker',
-      serviceAccountUid: 'sa-uid-0001',
-      credentialSecret: 'creds',
-      credentialSecretUid: 'secret-uid-1',
-      nodeSelector: { pool: 'x' },
-      audience: 'aud',
-    },
-    callback: {
-      ip: '10.0.0.5',
-      san: '10.0.0.5',
-      publicRootsPath: '/etc/ssl/certs/ca-certificates.crt',
-      publicRootsSha256: '1'.repeat(64),
-    },
-    binary: '/tmp/bin',
-    work: {
-      title: 't',
-      description: 'd',
-      need: 'n',
-      owner: 'o',
-      reviewedSha256: '2'.repeat(64),
-    },
-    receipts: Object.fromEntries(
-      [
-        'authorization',
-        'currentOwner',
-        'sourceSnapshot',
-        'parentAdmission',
-        'workerAdmission',
-        'providerAdmission',
-      ].map((k) => [
-        k,
-        {
-          sha256: '3'.repeat(64),
-          observedAt: '2026-10-19T00:00:00Z',
-          owner: 'o',
-        },
-      ]),
-    ),
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uw-unit-'));
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const write = (name: string, body: string | object, mode = 0o600) => {
+    const p = path.join(dir, name);
+    fs.writeFileSync(
+      p,
+      typeof body === 'string' ? body : JSON.stringify(body),
+      { mode },
+    );
+    return p;
   };
+
+  function fixture() {
+    const ts = write('carrier.ts', 'ts');
+    const go = write('carrier.go', 'go');
+    const bin = write('bin', 'bin');
+    const roots = write('roots.pem', 'roots');
+    const work = {
+      title: 't',
+      description: 'review the carrier',
+      need: 'unreviewed source',
+      owner: 'owner',
+    } as UsefulWorkInput['work'];
+    const reviewedSha256 = taskHash({ ...work, reviewedSha256: '' });
+    const sourceCommit = 'a'.repeat(40);
+    const imageDigest = `registry.example/runner@sha256:${'e'.repeat(64)}`;
+    const namespaceUid = 'ns-uid-0001';
+    const baked = ['1', '2', '3'].map((c) => c.repeat(64));
+    const bakedInputSha256 = digestOf(`${baked.join('\n')}\n`);
+    const hashOf = (p: string) => digestOf(fs.readFileSync(p));
+    const rootsSha = hashOf(roots);
+    const content: Record<EvidenceKind, object> = {
+      authorization: {
+        taskNeed: work.need,
+        taskSha256: taskHash({ ...work, reviewedSha256 }),
+      },
+      currentOwner: { taskOwner: work.owner, unowned: true },
+      sourceSnapshot: {
+        tsSha256: hashOf(ts),
+        goSha256: hashOf(go),
+        binarySha256: hashOf(bin),
+        builtFromCommit: sourceCommit,
+      },
+      bakedInputs: {
+        bootstrapSha256: baked[0],
+        workerActivationSha256: baked[1],
+        providerProcessSha256: baked[2],
+        publicRootsSha256: rootsSha,
+      },
+      parentAdmission: {
+        requests: '2/6Gi/24Gi',
+        limits: '2/6Gi/24Gi',
+        accelerators: 0,
+        admitted: true,
+      },
+      workerAdmission: {
+        requests: '2/6Gi/24Gi',
+        limits: '2/6Gi/24Gi',
+        accelerators: 0,
+        admitted: true,
+      },
+      providerAdmission: {
+        requests: '2/6Gi/24Gi',
+        limits: '2/6Gi/24Gi',
+        accelerators: 0,
+        admitted: true,
+      },
+    };
+    const evidence = Object.fromEntries(
+      EVIDENCE_KINDS.map((kind) => {
+        const p = write(`${kind}.json`, {
+          kind,
+          owner: 'o',
+          observedAt: '2026-10-19T00:00:00Z',
+          expiresAt: '2099-01-01T00:00:00Z',
+          scope: {
+            sourceCommit,
+            imageDigest,
+            namespaceUid,
+            workSha256: reviewedSha256,
+          },
+          content: content[kind],
+        });
+        return [kind, { path: p, sha256: hashOf(p) }];
+      }),
+    );
+    const input = {
+      reviewed: {
+        sourceCommit,
+        tsSha256: hashOf(ts),
+        goSha256: hashOf(go),
+        binarySha256: hashOf(bin),
+        imageDigest,
+        bakedInputSha256,
+      },
+      kube: {
+        context: 'ctx',
+        cluster: 'c',
+        kubeconfig: '/tmp/kubeconfig',
+        namespace: 'qual-ns',
+        namespaceUid,
+        namespaceLabels: { a: 'b' },
+        serviceAccount: 'worker',
+        serviceAccountUid: 'sa-uid-0001',
+        credentialSecret: 'creds',
+        credentialSecretUid: 'secret-uid-1',
+        nodeSelector: { pool: 'x' },
+        audience: 'aud',
+      },
+      callback: {
+        ip: '10.0.0.5',
+        san: '10.0.0.5',
+        publicRootsPath: roots,
+        publicRootsSha256: rootsSha,
+      },
+      binary: bin,
+      work: { ...work, reviewedSha256 },
+      evidence,
+      evidenceDir: dir,
+    };
+    return { input, files: { ts, go }, write, content };
+  }
 
   it('opt-in is skip when unset, run for exactly 1, otherwise rejected', () => {
     expect(optIn(undefined)).toBe('skip');
@@ -391,40 +803,62 @@ describe('useful-work carrier unit controls (offline, not journey evidence)', ()
       expect(() => optIn(bad)).toThrow();
   });
 
-  it('accepts the closed input and refuses unknown, zero or defaulted values', () => {
-    expect(inputSchema.safeParse(good).success).toBe(true);
-    const mutate = (f: (v: any) => void) => {
-      const v = structuredClone(good);
-      f(v);
-      return inputSchema.safeParse(v).success;
-    };
-    expect(mutate((v) => (v.extra = 1))).toBe(false);
-    expect(mutate((v) => delete v.kube.namespace)).toBe(false);
-    expect(mutate((v) => (v.kube.nodeSelector = {}))).toBe(false);
-    expect(mutate((v) => (v.kube.namespaceLabels = {}))).toBe(false);
-    expect(
-      mutate((v) => (v.reviewed.imageDigest = 'registry/runner:latest')),
-    ).toBe(false);
-    expect(mutate((v) => (v.callback.ip = '8.8.8.8'))).toBe(false);
-    expect(mutate((v) => (v.callback.ip = '127.0.0.1'))).toBe(false);
-    expect(mutate((v) => (v.binary = 'relative/bin'))).toBe(false);
-    expect(mutate((v) => (v.reviewed.tsSha256 = '0'))).toBe(false);
-    expect(mutate((v) => (v.credentials = '{"type":"service_account"}'))).toBe(
-      false,
+  it('accepts the fully bound input and returns the shared input digest', () => {
+    const f = fixture();
+    const p = f.write('input.json', f.input);
+    const loaded = loadInput(p, f.files);
+    expect(loaded.inputSha256).toBe(digestOf(fs.readFileSync(p)));
+  });
+
+  it('refuses raw JSON, non-private files, changed bytes and unknown fields', () => {
+    const f = fixture();
+    expect(() => loadInput(JSON.stringify(f.input), f.files)).toThrow(
+      /absolute file/u,
+    );
+    expect(() =>
+      loadInput(f.write('open.json', f.input, 0o644), f.files),
+    ).toThrow(/private/u);
+    expect(() =>
+      loadInput(f.write('extra.json', { ...f.input, extra: 1 }), f.files),
+    ).toThrow();
+    fs.writeFileSync(f.files.ts, 'changed');
+    expect(() => loadInput(f.write('i2.json', f.input), f.files)).toThrow(
+      /reviewed hash/u,
     );
   });
 
-  it('binds the input to the actual carrier bytes', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uw-unit-'));
-    try {
-      const ts = path.join(dir, 'a.ts');
-      fs.writeFileSync(ts, 'x');
-      const raw = JSON.stringify(good);
-      expect(() => parseInput(raw, { ts })).toThrow(/reviewed hash/u);
-      expect(() => parseInput(undefined, { ts })).toThrow(/required/u);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+  it('resolves every receipt to scoped, hash-matched, current evidence', () => {
+    const f = fixture();
+    const mutate = (kind: EvidenceKind, edit: (d: any) => void) => {
+      const input = structuredClone(f.input) as any;
+      const doc = JSON.parse(
+        fs.readFileSync(input.evidence[kind].path, 'utf8'),
+      );
+      edit(doc);
+      const p = f.write(`${kind}-m.json`, doc);
+      input.evidence[kind] = { path: p, sha256: digestOf(fs.readFileSync(p)) };
+      return () => loadInput(f.write('im.json', input), f.files);
+    };
+    expect(mutate('currentOwner', (d) => (d.content.unowned = false))).toThrow(
+      /currentOwner/u,
+    );
+    expect(
+      mutate('providerAdmission', (d) => (d.content.accelerators = 1)),
+    ).toThrow(/providerAdmission/u);
+    expect(
+      mutate('sourceSnapshot', (d) => (d.scope.sourceCommit = 'b'.repeat(40))),
+    ).toThrow(/scope/u);
+    expect(
+      mutate('authorization', (d) => (d.expiresAt = '2020-01-01T00:00:00Z')),
+    ).toThrow(/current/u);
+    expect(
+      mutate('workerAdmission', (d) => (d.kind = 'parentAdmission')),
+    ).toThrow(/kind/u);
+    const missing = structuredClone(f.input) as any;
+    missing.evidence.bakedInputs.sha256 = '0'.repeat(64);
+    expect(() => loadInput(f.write('ih.json', missing), f.files)).toThrow(
+      /hash/u,
+    );
   });
 
   it('refuses emulator options that are not loopback demo-', () => {
@@ -437,35 +871,90 @@ describe('useful-work carrier unit controls (offline, not journey evidence)', ()
     expect(() =>
       emulatorOptions({ ...ok, FIRESTORE_EMULATOR_HOST: '0.0.0.0:8080' }),
     ).toThrow();
-    expect(() =>
-      emulatorOptions({ ...ok, FIRESTORE_EMULATOR_HOST: 'fs.example:8080' }),
-    ).toThrow();
   });
 
-  it('worker listener admits only the bound run paths and activation', () => {
-    expect(workerPathAllowed('/api/work/v1/runs/activate', 'r1')).toBe(true);
-    expect(workerPathAllowed('/api/work/v1/runs/r1/exit', 'r1')).toBe(true);
-    expect(workerPathAllowed('/api/work/v1/runs/r2/exit', 'r1')).toBe(false);
-    expect(workerPathAllowed('/api/work/v1/runs/capacity', 'r1')).toBe(false);
-    expect(workerPathAllowed('/api/work/v1/runs/claim', 'r1')).toBe(false);
+  it('worker listener checks method, exact path, bound run and activation fence', () => {
+    const r = 'run/1';
+    const id = encodeURIComponent(r);
+    const ok = (m: string, p: string, a?: unknown) =>
+      workerRouteAllowed(m, `${API}${p}`, r, a);
+    expect(ok('GET', `/runs/${id}/brief`)).toBe(true);
+    expect(ok('PUT', `/runs/${id}/codex-auth`)).toBe(true);
+    expect(ok('POST', '/runs/activate', r)).toBe(true);
+    expect(ok('POST', '/runs/activate', 'other')).toBe(false);
+    expect(ok('GET', '/runs/activate', r)).toBe(false);
+    expect(ok('POST', `/runs/${id}/brief`)).toBe(false);
+    expect(ok('POST', `/runs/${id}/exit`)).toBe(false);
+    expect(ok('GET', `/runs/${id}/token`)).toBe(false);
+    expect(ok('GET', `/runs/${id}/brief/`)).toBe(false);
+    expect(ok('GET', `/runs/x${id}/brief`)).toBe(false);
+    for (const p of [
+      '/runs/capacity',
+      '/runs/claim',
+      `/runs/${id}/placement`,
+      '/items',
+    ])
+      expect(ok('POST', p)).toBe(false);
   });
 
-  it('adds only the public-CA delta and refuses extra containers', () => {
+  it('translates worker headers like the production route', () => {
+    const h = workerHeaderContext(
+      new Headers({
+        authorization: 'Bearer tok',
+        'x-lcars-worker-identity': 'jwt',
+        'x-lcars-worker-generation': '7',
+      }),
+    );
+    expect(h).toEqual({
+      bearerToken: 'tok',
+      workerIdentityToken: 'jwt',
+      workerGeneration: 7,
+    });
+    expect(
+      workerHeaderContext(new Headers({ 'x-lcars-worker-generation': '-1' })),
+    ).toEqual({});
+    expect(workerHeaderContext(new Headers())).not.toBe(
+      workerHeaderContext(new Headers()),
+    );
+  });
+
+  it('adds only the CA delta, in the negotiated deadline location', () => {
     const job = {
+      metadata: { annotations: {} },
       spec: { template: { spec: { containers: [{ name: 'r', env: [] }] } } },
     };
-    const out = applyCaDelta(job, 'public-ca-cm');
-    const c = out.spec.template.spec.containers[0];
-    expect(c.env).toEqual([
-      { name: 'CURL_CA_BUNDLE', value: '/etc/lcars-public-ca/ca-bundle.pem' },
-    ]);
-    expect(out.spec.activeDeadlineSeconds).toBe(JOB_ACTIVE_DEADLINE_S);
-    expect(job.spec.template.spec.containers[0]).toEqual({
-      name: 'r',
-      env: [],
-    });
-    const two = { spec: { template: { spec: { containers: [{}, {}] } } } };
-    expect(() => applyCaDelta(two, 'x')).toThrow(/exactly one/u);
+    const out = applyCaDelta(job, 'cm');
+    expect(out.spec.activeDeadlineSeconds).toBe(RUN_DEADLINE_S);
+    expect(out.spec.template.spec.activeDeadlineSeconds).toBeUndefined();
+    const aware = structuredClone(job) as any;
+    aware.spec.template.spec.activeDeadlineSeconds = 7200;
+    const outAware = applyCaDelta(aware, 'cm');
+    expect(outAware.spec.activeDeadlineSeconds).toBeUndefined();
+    expect(outAware.spec.template.spec.activeDeadlineSeconds).toBe(
+      RUN_DEADLINE_S,
+    );
+    expect(onlyCaDelta(job, out, 'cm')).toBe(true);
+    const tampered = structuredClone(out);
+    tampered.spec.template.spec.containers[0].command = ['x'];
+    expect(onlyCaDelta(job, tampered, 'cm')).toBe(false);
+    expect(() =>
+      applyCaDelta(
+        { spec: { template: { spec: { containers: [{}, {}] } } } },
+        'x',
+      ),
+    ).toThrow(/exactly one/u);
+    expect(() =>
+      applyCaDelta(
+        {
+          spec: {
+            template: {
+              spec: { containers: [{ env: [{ name: 'CURL_CA_BUNDLE' }] }] },
+            },
+          },
+        },
+        'x',
+      ),
+    ).toThrow(/already/u);
   });
 
   it('the CA bundle keeps the public roots and adds the callback CA', () => {
@@ -475,36 +964,165 @@ describe('useful-work carrier unit controls (offline, not journey evidence)', ()
     expect(joined).toContain('roots');
     expect(joined).toContain('callback');
     expect(() => joinCaBundle('', pem('callback'))).toThrow();
+    expect(() => joinCaBundle(pem('roots'), '')).toThrow();
   });
 
-  it('frames are bounded, known and secret-free', () => {
-    const r = new FrameReader();
-    r.push('{"kind":"prepared","jobUid":"u"}\n');
-    expect(r.frames).toHaveLength(1);
-    expect(() => new FrameReader().push('{"kind":"nope"}\n')).toThrow(
-      /unknown/u,
-    );
-    expect(() =>
-      new FrameReader().push('{"kind":"claimed","runToken":"x"}\n'),
-    ).toThrow(/forbidden/u);
-    expect(() =>
-      new FrameReader().push(`${'x'.repeat(FRAME_LIMIT + 1)}`),
-    ).toThrow(/too large/u);
+  describe('frame decoder', () => {
+    const inv = 'invocation-1';
+    const mk = (kind: string, seq: number, extra: object = {}) =>
+      `${FRAME_MARKER}${JSON.stringify({ v: 1, invocation: inv, seq, kind, ...extra })}\n`;
+    const identity = (seq = 1) =>
+      mk('publicIdentity', seq, {
+        inputSha256: 'a'.repeat(64),
+        poolId: 'p',
+        issuer: 'https://k',
+        jwksUri: 'https://k/jwks',
+        jwks: { keys: [{ kty: 'EC' }] },
+        jwksSha256: 'b'.repeat(64),
+        namespace: 'ns',
+        serviceAccountUid: 'sa-uid-0001',
+      });
+    const claimed = (seq = 2) =>
+      mk('claimed', seq, { runId: 'r1', producerId: 'p', jobName: 'j' });
+    const decoder = () => new FrameDecoder(inv, () => 'r1');
+
+    it('handles split bytes, split code points, coalesced frames and diagnostics', () => {
+      const d = decoder();
+      const bytes = Buffer.from(`=== RUN é\n${identity()}ok ✓\n${claimed()}`);
+      const got: Frame[] = [];
+      for (let i = 0; i < bytes.length; i += 3)
+        got.push(...d.push(bytes.subarray(i, i + 3)));
+      d.end();
+      expect(got.map((f) => f.kind)).toEqual(['publicIdentity', 'claimed']);
+      expect(d.diagnostics).toBeGreaterThan(0);
+    });
+    it('rejects an unfinished trailing frame, bad order, wrong run and after-finish', () => {
+      const d = decoder();
+      d.push(Buffer.from(identity().slice(0, -1)));
+      expect(() => d.end()).toThrow(/unfinished/u);
+      const o = decoder();
+      o.push(Buffer.from(identity()));
+      expect(() => o.push(Buffer.from(identity(2)))).toThrow(/out of order/u);
+      const w = new FrameDecoder(inv, () => 'other');
+      w.push(Buffer.from(identity()));
+      expect(() => w.push(Buffer.from(claimed()))).toThrow(/different run/u);
+      const f = decoder();
+      f.push(Buffer.from(identity()));
+      f.markFinished();
+      expect(() => f.push(Buffer.from(claimed()))).toThrow(/after finish/u);
+    });
+    it('rejects unknown kinds, extra properties, oversize frames and bad invocations', () => {
+      expect(() => decoder().push(Buffer.from(mk('nope', 1)))).toThrow();
+      expect(() =>
+        decoder().push(
+          Buffer.from(claimed(1).replace('"seq":1', '"seq":1,"runToken":"x"')),
+        ),
+      ).toThrow();
+      expect(() =>
+        decoder().push(
+          Buffer.from(`${FRAME_MARKER}${'x'.repeat(FRAME_LIMIT)}\n`),
+        ),
+      ).toThrow(/too large/u);
+      expect(() =>
+        decoder().push(Buffer.from(identity().replace(inv, 'someone-else-1'))),
+      ).toThrow(/invocation/u);
+    });
+    it('publishes public JWKS members only', () => {
+      expect(
+        publicJwksOnly({ keys: [{ kty: 'RSA', n: 'x', e: 'AQAB' }] }),
+      ).toBe(true);
+      expect(
+        publicJwksOnly({ keys: [{ kty: 'RSA', n: 'x', d: 'secret' }] }),
+      ).toBe(false);
+    });
   });
 
-  it('verifies only through the real verifier against a supplied JWKS', async () => {
-    const saved = process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
-    process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = '[]';
-    try {
-      const jwks = createLocalJWKSet({ keys: [] } satisfies JSONWebKeySet);
-      await expect(
-        verifyCapacityWorkerIdentity('x.y.z', 'pool', jwks),
-      ).rejects.toThrow(/No declared capacity worker identity/u);
-    } finally {
-      if (saved === undefined)
-        delete process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
-      else process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = saved;
+  describe('existing capacity worker verifier, offline signed tokens (unit control)', () => {
+    async function setup() {
+      const { publicKey, privateKey } = await generateKeyPair('ES256');
+      const jwk = { ...(await exportJWK(publicKey)), alg: 'ES256', use: 'sig' };
+      const keys = createLocalJWKSet({ keys: [jwk] } satisfies JSONWebKeySet);
+      const id = {
+        poolId: 'pool',
+        issuer: 'https://issuer.example',
+        jwksUri: 'https://issuer.example/jwks',
+        audience: 'aud',
+        namespace: 'ns',
+        serviceAccountUid: 'sa-uid',
+      };
+      const sign = (
+        claims: Record<string, unknown>,
+        o: { iss?: string; aud?: string; exp?: string } = {},
+      ) =>
+        new SignJWT(claims)
+          .setProtectedHeader({ alg: 'ES256' })
+          .setIssuer(o.iss ?? id.issuer)
+          .setAudience(o.aud ?? id.audience)
+          .setIssuedAt()
+          .setExpirationTime(o.exp ?? '10m')
+          .sign(privateKey);
+      const bound = {
+        namespace: 'ns',
+        pod: { uid: 'pod-1' },
+        serviceaccount: { uid: 'sa-uid' },
+      };
+      return { keys, id, sign, bound };
     }
+    const withEnv = async <T>(value: string, f: () => Promise<T>) => {
+      const saved = process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
+      process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = value;
+      try {
+        return await f();
+      } finally {
+        if (saved === undefined)
+          delete process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
+        else process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = saved;
+      }
+    };
+    it('accepts a bound token and refuses forged, wrong-scope and expired ones', async () => {
+      const { keys, id, sign, bound } = await setup();
+      await withEnv(JSON.stringify([id]), async () => {
+        await expect(
+          verifyCapacityWorkerIdentity(
+            await sign({ 'kubernetes.io': bound }),
+            'pool',
+            keys,
+          ),
+        ).resolves.toEqual({ podUid: 'pod-1', namespace: 'ns' });
+        const bad = [
+          sign({ 'kubernetes.io': bound }, { iss: 'https://evil.example' }),
+          sign({ 'kubernetes.io': bound }, { aud: 'other' }),
+          sign({ 'kubernetes.io': { ...bound, namespace: 'x' } }),
+          sign({ 'kubernetes.io': { ...bound, serviceaccount: { uid: 'x' } } }),
+          sign({
+            'kubernetes.io': {
+              namespace: 'ns',
+              serviceaccount: { uid: 'sa-uid' },
+            },
+          }),
+          sign({ 'kubernetes.io': bound }, { exp: '-1m' }),
+        ];
+        for (const t of bad)
+          await expect(
+            verifyCapacityWorkerIdentity(await t, 'pool', keys),
+          ).rejects.toThrow();
+        const other = await setup();
+        await expect(
+          verifyCapacityWorkerIdentity(
+            await other.sign({ 'kubernetes.io': bound }),
+            'pool',
+            keys,
+          ),
+        ).rejects.toThrow();
+        await expect(
+          verifyCapacityWorkerIdentity(
+            await sign({ 'kubernetes.io': bound }),
+            'unknown',
+            keys,
+          ),
+        ).rejects.toThrow(/No declared/u);
+      });
+    });
   });
 });
 
@@ -512,46 +1130,47 @@ describe('useful-work carrier unit controls (offline, not journey evidence)', ()
 const mode = optIn(process.env.LCARS_RECEIPT_USEFUL_WORK);
 
 describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
+  const closers: (() => Promise<void>)[] = [];
   let child: ChildProcess | undefined;
-  const servers: (http.Server | https.Server)[] = [];
-  const tmp: string[] = [];
 
   afterAll(async () => {
-    // Join only what this suite started. A SIGKILL is never cleanup proof; the
-    // Go side reports exact retained identities.
+    // Join exactly what this suite started, LAST. A SIGKILL is never cleanup
+    // or retirement proof; Go reports exact retained identities itself.
     if (child?.pid !== undefined && child.exitCode === null)
       try {
-        process.kill(-child.pid, 'SIGKILL');
+        process.kill(-child.pid, 'SIGTERM');
       } catch {
         // Already gone.
       }
-    await Promise.all(
-      servers.map((s) => new Promise<void>((r) => s.close(() => r()))),
-    );
-    for (const dir of tmp) fs.rmSync(dir, { recursive: true, force: true });
+    for (const close of closers.reverse()) await close();
   });
 
   it(
     'runs one genuinely needed report through the unchanged worker path',
-    { timeout: OUTER_MS + 60_000 },
+    { timeout: OUTER_MS + 120_000 },
     async () => {
       const here = new URL(import.meta.url).pathname;
-      const input = parseInput(process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT, {
-        ts: here,
-        go: path.join(
-          path.dirname(here),
-          '../../../runner-autoscaler/queue_receipt_useful_work_kubernetes_integration_test.go',
-        ),
-        binary: JSON.parse(process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT!).binary,
-        roots: JSON.parse(process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT!).callback
-          .publicRootsPath,
-      });
+      const { input, inputSha256 } = loadInput(
+        process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT,
+        {
+          ts: here,
+          go: path.join(
+            path.dirname(here),
+            '../../../runner-autoscaler/queue_receipt_useful_work_kubernetes_integration_test.go',
+          ),
+        },
+      );
       const options = emulatorOptions(process.env);
       const store: OrchestratorStore = new FirestoreStore(options);
       const reopened: OrchestratorStore = new FirestoreStore(options);
       const orchestrator = new Orchestrator(store, {
         now: () => new Date().toISOString(),
       });
+      const invocation = crypto.randomBytes(8).toString('hex');
+      const poolId = `uw-${invocation}`;
+
+      // Providers are lazy: nothing reads credentials until a route needs one.
+      const codexAuth = codexAuthStore('agent-lcars-codex-auth');
 
       const workId = Array.from(
         crypto.randomBytes(26),
@@ -559,7 +1178,7 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
       ).join('');
       const decision = await orchestrator.request({
         taskId: { workId },
-        requestId: `useful-work-${crypto.randomUUID()}`,
+        requestId: `useful-work-${invocation}`,
         pipeline: 'codex',
         params: { mode: 'implement' },
         work: {
@@ -583,7 +1202,6 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
       if ('refused' in confirmed) throw new Error('confirmDispatch refused');
 
       const controllerBearer = crypto.randomBytes(32).toString('base64url');
-      const poolId = `useful-work-${crypto.randomBytes(6).toString('hex')}`;
       const principal: WorkPrincipal = {
         principal: 'svc:useful-work',
         subject: 'useful-work-controller',
@@ -597,50 +1215,88 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
           'work.capacity.operator',
         ]),
       };
-      const base = {
+      let localJwks: ReturnType<typeof createLocalJWKSet> | undefined;
+      const derived: { podUid: string; namespace: string }[] = [];
+      const runtime: Omit<RunsContext, 'bearerToken' | 'principal'> = {
         store,
         orchestrator,
         now: () => new Date(),
         capacityEnabled: true,
-      } as unknown as Omit<RunsContext, 'bearerToken' | 'principal'>;
+        tokens: lazyDispatchTokenProvider(() =>
+          createDispatchTokenProvider(
+            process.env,
+            ORCHESTRATOR_GITHUB_PERMISSIONS,
+          ),
+        ),
+        checkoutTokens: lazyDispatchTokenProvider(() =>
+          createDispatchTokenProvider(process.env, DIRECT_RUNNER_PERMISSIONS),
+        ),
+        codexAuth,
+        // Honest: the isolated drain performs no external effects and leaves the
+        // outbox pending; this proves no webhook/session-expiry/delivery.
+        drain: async () => ({ dispatched: [], reported: [], failed: [] }),
+        verifyWorkerIdentity: async (token, pool) => {
+          if (localJwks === undefined)
+            throw new Error('worker identity keys not bound');
+          const out = await verifyCapacityWorkerIdentity(
+            token,
+            pool,
+            localJwks,
+          );
+          derived.push(out);
+          return out;
+        },
+      };
       const handler = createRunsHandler();
-      const handle = async (
+      const serve = async (
         req: http.IncomingMessage,
         res: http.ServerResponse,
         controller: boolean,
       ) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
-        if (!controller && !workerPathAllowed(url.pathname, runId)) {
-          res.writeHead(404).end();
-          return;
-        }
         const chunks: Buffer[] = [];
         let size = 0;
         for await (const c of req) {
           size += (c as Buffer).length;
-          if (size > 1 << 20) return void res.writeHead(413).end();
+          if (size > BODY_LIMIT) return void res.writeHead(413).end();
           chunks.push(c as Buffer);
         }
-        const token = (req.headers.authorization ?? '').replace(
-          /^Bearer /u,
-          '',
-        );
-        const context: RunsContext = {
-          ...base,
-          bearerToken: token,
-          ...(controller && token === controllerBearer ? { principal } : {}),
-        } as RunsContext;
+        const body = Buffer.concat(chunks);
+        let parsed: { fence?: { runId?: unknown } } | undefined;
+        try {
+          parsed =
+            body.length === 0 ? undefined : JSON.parse(body.toString('utf8'));
+        } catch {
+          parsed = undefined;
+        }
+        if (
+          !controller &&
+          !workerRouteAllowed(
+            req.method ?? '',
+            url.pathname,
+            runId,
+            parsed?.fence?.runId,
+          )
+        )
+          return void res.writeHead(404).end();
         const headers = new Headers();
         for (const [k, v] of Object.entries(req.headers))
           if (typeof v === 'string') headers.set(k, v);
-        const body = Buffer.concat(chunks);
+        const translated = workerHeaderContext(headers);
+        const context: RunsContext = {
+          ...runtime,
+          ...translated,
+          ...(controller && translated.bearerToken === controllerBearer
+            ? { principal }
+            : {}),
+        };
         const result = await handler.handle(
           new Request(`http://localhost${url.pathname}${url.search}`, {
             method: req.method,
             headers,
             ...(body.length === 0 ? {} : { body }),
           }),
-          { prefix: '/api/work/v1', context },
+          { prefix: API, context },
         );
         if (!result.matched || result.response === undefined)
           return void res.writeHead(404).end();
@@ -650,119 +1306,325 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
         );
         res.end(Buffer.from(await result.response.arrayBuffer()));
       };
-      const fail = (res: http.ServerResponse) => {
-        if (!res.headersSent) res.writeHead(500).end();
-      };
+      const guard =
+        (controller: boolean) =>
+        (q: http.IncomingMessage, s: http.ServerResponse) =>
+          void serve(q, s, controller).catch(() => {
+            if (!s.headersSent) s.writeHead(500).end();
+          });
 
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'useful-work-'));
-      fs.chmodSync(dir, 0o700);
-      tmp.push(dir);
-      const tls = await makeCallbackTls(input.callback.ip, dir);
-      const roots = fs.readFileSync(input.callback.publicRootsPath, 'utf8');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'useful-work-'));
+      fs.chmodSync(tmp, 0o700);
+      closers.push(async () =>
+        fs.rmSync(tmp, { recursive: true, force: true }),
+      );
+      const tls = await makeCallbackTls(input.callback.ip, tmp);
+      const bundle = path.join(tmp, 'ca-bundle.pem');
       fs.writeFileSync(
-        path.join(dir, 'ca-bundle.pem'),
-        joinCaBundle(roots, tls.cert),
+        bundle,
+        joinCaBundle(
+          fs.readFileSync(input.callback.publicRootsPath, 'utf8'),
+          tls.cert,
+        ),
         { mode: 0o600 },
       );
 
-      const controllerServer = http.createServer(
-        (q, s) => void handle(q, s, true).catch(() => fail(s)),
-      );
+      const controllerServer = http.createServer(guard(true));
       await new Promise<void>((r) =>
         controllerServer.listen(0, '127.0.0.1', r),
       );
-      servers.push(controllerServer);
+      closers.push(
+        () => new Promise<void>((r) => controllerServer.close(() => r())),
+      );
       // Pod-reachable listener binds the one qualified private IP, never 0.0.0.0.
       const workerServer = https.createServer(
         { key: tls.key, cert: tls.cert },
-        (q, s) => void handle(q, s, false).catch(() => fail(s)),
+        guard(false),
       );
       await new Promise<void>((r) =>
         workerServer.listen(0, input.callback.ip, r),
       );
-      servers.push(workerServer);
-      const controllerPort = (controllerServer.address() as { port: number })
-        .port;
-      const workerPort = (workerServer.address() as { port: number }).port;
+      closers.push(
+        () => new Promise<void>((r) => workerServer.close(() => r())),
+      );
+      const controllerUrl = `http://127.0.0.1:${(controllerServer.address() as { port: number }).port}`;
+      const callbackUrl = `https://${input.callback.ip}:${(workerServer.address() as { port: number }).port}`;
 
-      // The child-process-only identity mapping is completed by the Go
-      // preflight's publicIdentity frame; env is restored in finally.
+      const post = async (body: unknown) => {
+        const r = await fetch(`${controllerUrl}${API}/runs/capacity`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${controllerBearer}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        });
+        return {
+          status: r.status,
+          body: (await r.json()) as { digest?: string },
+        };
+      };
+      // Configure then import ONE empty invocation-local pool through the real
+      // route. Setting capacityEnabled alone neither imports nor qualifies it.
+      const preparePool = async () => {
+        const now = new Date().toISOString();
+        const before = await new CapacityProtocol(reopened).read(now);
+        if (before.receipts.length !== 0)
+          throw new Error('isolated inventory is not empty');
+        const policy = {
+          poolId,
+          cluster: POOL_CLUSTER,
+          namespace: input.kube.namespace,
+          version: 1,
+          maxConcurrent: 1,
+          maxUnplaced: 1,
+          enforced: true,
+          inventoryKnown: false,
+          domains: { codex: { domainId: `${poolId}-codex`, ceiling: 1 } },
+        };
+        if ((await post({ action: 'configure', policy })).status !== 200)
+          throw new Error('configure refused');
+        const proposal = {
+          action: 'import',
+          dryRun: true,
+          known: true,
+          evidence: 'reviewed-complete-inventory',
+          inventory: [],
+        };
+        const dry = await post(proposal);
+        if (dry.status !== 200 || dry.body.digest === undefined)
+          throw new Error('import dry-run refused');
+        if (
+          (
+            await post({
+              ...proposal,
+              dryRun: false,
+              reviewedDigest: dry.body.digest,
+            })
+          ).status !== 200
+        )
+          throw new Error('import refused');
+      };
+
       const savedIdentities =
         process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
-      const reader = new FrameReader();
-      try {
-        child = spawn(
-          input.binary,
-          [
-            '-test.run=^TestReceiptKubernetesUsefulWork$',
-            '-test.v',
-            '-test.count=1',
-            '-test.timeout=1500s',
-          ],
-          {
-            detached: true,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: {
-              PATH: process.env.PATH ?? '',
-              HOME: process.env.HOME ?? '',
-              LCARS_RECEIPT_USEFUL_WORK: '1',
-              LCARS_RECEIPT_USEFUL_WORK_INPUT:
-                process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT!,
-              LCARS_RECEIPT_USEFUL_WORK_CONTROLLER: `http://127.0.0.1:${controllerPort}`,
-              LCARS_RECEIPT_USEFUL_WORK_CALLBACK: `https://${input.callback.ip}:${workerPort}`,
-              LCARS_RECEIPT_USEFUL_WORK_CA_BUNDLE: path.join(
-                dir,
-                'ca-bundle.pem',
-              ),
-              LCARS_RECEIPT_USEFUL_WORK_RUN: runId,
-            },
-          },
-        );
-        // The controller bearer travels on the private stdin pipe, never argv.
-        child.stdin?.write(`${JSON.stringify({ controllerBearer })}\n`);
-        let output = '';
-        child.stdout?.on('data', (c: Buffer) => {
-          const text = c.toString();
-          if (output.length < 256 << 10)
-            output += text.replaceAll(controllerBearer, '[redacted]');
-          if (text.startsWith('{')) reader.push(text);
-        });
-        child.stderr?.on('data', (c: Buffer) => {
-          if (output.length < 256 << 10)
-            output += c.toString().replaceAll(controllerBearer, '[redacted]');
-        });
-        const code = await new Promise<number | null>((resolve) => {
-          const timer = setTimeout(() => {
-            try {
-              process.kill(-child!.pid!, 'SIGKILL');
-            } catch {
-              // Already gone.
-            }
-          }, OUTER_MS);
-          child!.once('exit', (c) => {
-            clearTimeout(timer);
-            resolve(c);
-          });
-          child!.once('error', () => resolve(null));
-        });
-        if (code !== 0) console.error(output.slice(-(64 << 10)));
-        expect(code).toBe(0);
-        expect(output).toMatch(/--- PASS: TestReceiptKubernetesUsefulWork\b/u);
-        expect(output).not.toMatch(
-          /--- SKIP: TestReceiptKubernetesUsefulWork\b/u,
-        );
-
-        // The report must be readable from the SECOND client: finished,
-        // successful and carrying a reviewable message. Nothing here writes it.
-        const run = await reopened.readRun(runId);
-        expect(run?.state).toBe('succeeded');
-        expect(JSON.stringify(run)).toContain('report');
-      } finally {
+      closers.push(async () => {
         if (savedIdentities === undefined)
           delete process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES;
         else
           process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = savedIdentities;
+      });
+
+      const decoder = new FrameDecoder(invocation, () => runId);
+      const timeline: { kind: string; at: string; seq: number }[] = [];
+      let output = '';
+      child = spawn(
+        input.binary,
+        [
+          '-test.run=^TestReceiptKubernetesUsefulWork$',
+          '-test.v',
+          '-test.count=1',
+          '-test.timeout=1500s',
+        ],
+        {
+          detached: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: {
+            PATH: process.env.PATH ?? '',
+            HOME: process.env.HOME ?? '',
+            LCARS_RECEIPT_USEFUL_WORK: '1',
+            LCARS_RECEIPT_USEFUL_WORK_INPUT:
+              process.env.LCARS_RECEIPT_USEFUL_WORK_INPUT!,
+            LCARS_RECEIPT_USEFUL_WORK_DESCRIPTOR: JSON.stringify({
+              invocation,
+              inputSha256,
+              poolId,
+              cluster: POOL_CLUSTER,
+              runId,
+              workId,
+              controllerUrl,
+              callbackUrl,
+              caBundlePath: bundle,
+            }),
+          },
+        },
+      );
+      const proc = child;
+      // One lifecycle promise: parser, handler, child error/exit/timeout all land here.
+      const writeAck = (name: string) =>
+        new Promise<void>((resolve, reject) => {
+          const ok = proc.stdin!.write(
+            `${JSON.stringify({ ack: name, invocation })}\n`,
+            (e) => (e ? reject(e) : resolve()),
+          );
+          if (!ok) proc.stdin!.once('drain', () => undefined);
+        });
+      const lifecycle = new Promise<number | null>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('outer 1500s bound exceeded')),
+          OUTER_MS,
+        );
+        let chain = Promise.resolve();
+        const fail = (e: unknown) => {
+          clearTimeout(timer);
+          reject(e instanceof Error ? e : new Error(String(e)));
+        };
+        proc.once('error', fail);
+        proc.stdin!.on('error', fail);
+        proc.stderr!.on('data', (c: Buffer) => {
+          if (output.length < 256 << 10)
+            output += c.toString().replaceAll(controllerBearer, '[redacted]');
+        });
+        proc.stdout!.on('data', (c: Buffer) => {
+          if (output.length < 256 << 10)
+            output += c.toString().replaceAll(controllerBearer, '[redacted]');
+          try {
+            for (const frame of decoder.push(c)) {
+              timeline.push({
+                kind: frame.kind,
+                at: new Date().toISOString(),
+                seq: frame.seq,
+              });
+              chain = chain.then(() => onFrame(frame)).catch(fail);
+            }
+          } catch (e) {
+            fail(e);
+          }
+        });
+        proc.once('close', (code) => {
+          void chain.then(() => {
+            try {
+              decoder.end();
+            } catch (e) {
+              return fail(e);
+            }
+            clearTimeout(timer);
+            resolve(code);
+          });
+        });
+      });
+      lifecycle.catch(() => undefined);
+      // The fixture bearer travels only on the private stdin pipe, never argv.
+      proc.stdin!.write(
+        `${JSON.stringify({ controllerBearer, invocation })}\n`,
+      );
+
+      let report: unknown;
+      let recovery: { recovered: string[]; unresolved: string[] } | undefined;
+      const evidence: Record<string, unknown> = {
+        invocation,
+        runId,
+        workId,
+        inputSha256,
+        timeline,
+        derived,
+      };
+      async function onFrame(frame: Frame) {
+        if (frame.kind === 'publicIdentity') {
+          const f = frame as unknown as z.infer<
+            typeof frameShapes.publicIdentity
+          >;
+          if (
+            f.inputSha256 !== inputSha256 ||
+            f.poolId !== poolId ||
+            f.namespace !== input.kube.namespace ||
+            f.serviceAccountUid !== input.kube.serviceAccountUid
+          )
+            throw new Error('publicIdentity is not bound to this invocation');
+          if (!publicJwksOnly(f.jwks as { keys: Record<string, unknown>[] }))
+            throw new Error('JWKS carries private members');
+          if (digestOf(JSON.stringify(f.jwks)) !== f.jwksSha256)
+            throw new Error('JWKS hash mismatch');
+          localJwks = createLocalJWKSet(f.jwks as unknown as JSONWebKeySet);
+          // Process-local mapping only; restored by the closer above.
+          process.env.AGENT_LCARS_CAPACITY_WORKER_IDENTITIES = JSON.stringify([
+            {
+              poolId,
+              issuer: f.issuer,
+              jwksUri: f.jwksUri,
+              audience: input.kube.audience,
+              namespace: f.namespace,
+              serviceAccountUid: f.serviceAccountUid,
+            },
+          ]);
+          await preparePool();
+          await writeAck('prepared');
+        }
+        if (frame.kind === 'usefulCompleted') {
+          // Canonical finished report from the SECOND client; nothing here wrote it.
+          const run = await reopened.readRun(runId);
+          const task = await reopened.readTask({ workId });
+          if (
+            run?.state !== 'finished' ||
+            run.result?.ok !== true ||
+            run.result.summary !== 'report' ||
+            (run.result.message ?? '').trim() === ''
+          )
+            throw new Error(
+              `run is not a finished successful report (state=${run?.state})`,
+            );
+          // The trusted OS spawn helper's time, committed by the real heartbeat;
+          // spawn alone is not a model response, and the model stays unknown
+          // unless a real provider archive observed it.
+          const started = run.queue?.providerProcessStartedAt;
+          if (started === undefined)
+            throw new Error('providerProcessStartedAt was never committed');
+          evidence.providerProcessStartedAt = started;
+          evidence.model = 'unknown';
+          report = {
+            state: run.state,
+            result: run.result,
+            task: task?.task.workId,
+          };
+          // Canonical recovery through the owning adapter; unresolved debt keeps
+          // the Go side from treating cleanup as a success.
+          recovery = await recoverCodexCredentialOperations({
+            store: reopened,
+            orchestrator,
+            codexAuth,
+            now: () => new Date(),
+          });
+          if (recovery.unresolved.length !== 0)
+            throw new Error(
+              `credential operations unresolved: ${recovery.unresolved.join(',')}`,
+            );
+          await writeAck('usefulRecorded');
+        }
+        if (frame.kind === 'cleanup') {
+          const outDir = path.join(
+            path.resolve(os.homedir(), '.cache'),
+            `useful-work-evidence-${invocation}`,
+          );
+          fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+          evidence.report = report;
+          evidence.recovery = recovery;
+          evidence.cleanup = frame;
+          fs.writeFileSync(
+            path.join(outDir, 'evidence.json'),
+            JSON.stringify(evidence),
+            { mode: 0o600 },
+          );
+          decoder.markFinished();
+          await writeAck('finish');
+          proc.stdin!.end();
+        }
       }
+      let code: number | null;
+      try {
+        code = await lifecycle;
+      } catch (e) {
+        // Unresolved state is retained, never discarded; no cleanup credit.
+        console.error(output.slice(-(64 << 10)));
+        throw e;
+      }
+      if (code !== 0) console.error(output.slice(-(64 << 10)));
+      expect(code).toBe(0);
+      expect(output).toMatch(/--- PASS: TestReceiptKubernetesUsefulWork\b/u);
+      expect(output).not.toMatch(
+        /--- SKIP: TestReceiptKubernetesUsefulWork\b/u,
+      );
+      expect(decoder.frames.map((f) => f.kind)).toEqual([...FRAME_ORDER]);
+      expect(report).toBeDefined();
     },
   );
 });
