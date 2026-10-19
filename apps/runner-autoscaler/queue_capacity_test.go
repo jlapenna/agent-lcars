@@ -1349,3 +1349,148 @@ func TestReceiptPreemptionRetirementRejectsAmbiguousNonexecution(t *testing.T) {
 		})
 	}
 }
+
+// TestReconcileRetiresDeletingTerminalSchedulerVictim proves the #2520 guard
+// ordering through the real reconcileReceipts path (not a helper or direct
+// retireReceipt call): a retained, deleting, terminal, scheduler-preempted Pod
+// is retired only after its producer is positively drained, while a replaced
+// current worker identity retains physical occupancy.
+func TestReconcileRetiresDeletingTerminalSchedulerVictim(t *testing.T) {
+	for _, kind := range []string{"drained", "replaced-identity"} {
+		kind := kind
+		t.Run(kind, func(t *testing.T) {
+			q, r, _ := receiptFixture(t)
+			q.capacity.registered = true
+			r.Producers = []capacityProducer{{ProducerID: q.capacity.producerID, Subject: "subject", Stopped: true}}
+			j, err := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.UID = "original-job"
+			j.ResourceVersion = "1"
+			j.Generation = 2
+			j.Spec.Suspend = ptr(false)
+			j.Status.Conditions = []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue}}
+			r.JobUID = string(j.UID)
+			p := disruptedPod("original-pod", string(j.UID), true, schedulerPreemptionReason, nil)
+			p.OwnerReferences[0].Name = j.Name
+			p.OwnerReferences[0].APIVersion = "batch/v1"
+			p.Spec = *j.Spec.Template.Spec.DeepCopy()
+			p.Status.Phase = core.PodFailed
+			at := meta.Now()
+			p.DeletionTimestamp = &at
+			r.Worker = &capacityWorker{Generation: 1, PodUID: string(p.UID), JobUID: r.JobUID, Active: true}
+			if kind == "replaced-identity" {
+				// The controller's last attested worker identity no longer owns
+				// any live object; the owned Pod has a different replacement UID.
+				p.UID = "replacement-pod"
+			}
+			k := q.client.(*fake.Clientset)
+			secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: j.Name, Namespace: q.config.Namespace, UID: "original-secret", OwnerReferences: p.OwnerReferences}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte("original-token")}}
+			r.SecretUID = string(secret.UID)
+			for _, obj := range []runtime.Object{j, p, secret} {
+				if err = k.Tracker().Add(obj); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var mu sync.Mutex
+			var ledger []map[string]any
+			exitsCalled := 0
+			var exitBarrierUID, exitBarrierRV string
+			capacity := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				if req.Method == http.MethodGet {
+					json.NewEncoder(w).Encode(map[string]any{"policy": map[string]any{"poolId": "pool", "cluster": "cluster", "namespace": q.config.Namespace, "version": 1, "maxConcurrent": 2, "enforced": true, "inventoryKnown": true}, "receipts": []capacityReceipt{*r}})
+					return
+				}
+				var x map[string]any
+				json.NewDecoder(req.Body).Decode(&x)
+				if x["action"] == "retire" {
+					r.State = "retiring"
+				}
+				ledger = append(ledger, x)
+				fmt.Fprint(w, `{"ok":true}`)
+			}))
+			defer capacity.Close()
+			q.capacity.consoleURL = capacity.URL
+
+			exiter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				mu.Lock()
+				exitsCalled++
+				for _, op := range ledger {
+					if op["action"] == "release" {
+						t.Error("capacity released before drained closure and logical exit")
+					}
+					if op["action"] == "retire" {
+						break
+					}
+				}
+				mu.Unlock()
+				inCallback, cbErr := k.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
+				if cbErr != nil || inCallback.UID != j.UID || inCallback.Annotations[queueBarrierAnnotation] != r.Nonce || inCallback.ResourceVersion == "" {
+					t.Errorf("inert barrier not exact during reconciled exit: err=%v", cbErr)
+				} else {
+					mu.Lock()
+					exitBarrierUID, exitBarrierRV = string(inCallback.UID), inCallback.ResourceVersion
+					mu.Unlock()
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"state":"lost"}`)
+			}))
+			defer exiter.Close()
+			q.exits = testExitReporter(exiter.URL)
+
+			err = q.reconcileReceipts(context.Background())
+			mu.Lock()
+			releaseIdx, retireIdx, recoverIdx, releaseCount := -1, -1, -1, 0
+			var releaseOp map[string]any
+			for i, op := range ledger {
+				switch op["action"] {
+				case "recover":
+					if recoverIdx == -1 {
+						recoverIdx = i
+					}
+				case "retire":
+					if retireIdx == -1 {
+						retireIdx = i
+					}
+				case "release":
+					releaseIdx = i
+					releaseCount++
+					releaseOp = op
+				}
+			}
+			mu.Unlock()
+
+			stored, getErr := k.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), j.Name, meta.GetOptions{})
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			barrierSet := stored.Annotations[queueBarrierAnnotation] == r.Nonce
+			if kind == "replaced-identity" {
+				if err == nil || releaseCount != 0 || exitsCalled != 0 || barrierSet {
+					t.Fatalf("replaced identity retired occupancy: err=%v releases=%d exits=%d barrier=%v", err, releaseCount, exitsCalled, barrierSet)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("drained deleting-terminal victim was not retired: %v", err)
+			}
+			if !barrierSet {
+				t.Fatal("reconciled retirement did not install the inert barrier")
+			}
+			if exitsCalled != 1 || releaseCount != 1 {
+				t.Fatalf("exits=%d releases=%d, want one each", exitsCalled, releaseCount)
+			}
+			if recoverIdx == -1 || retireIdx == -1 || releaseIdx == -1 || !(recoverIdx < retireIdx && retireIdx < releaseIdx) {
+				t.Fatalf("drained closure must precede retirement precedes release: recover=%d retire=%d release=%d", recoverIdx, retireIdx, releaseIdx)
+			}
+			if exitBarrierUID == "" || exitBarrierRV == "" || releaseOp["barrierUid"] != exitBarrierUID || releaseOp["resourceVersion"] != exitBarrierRV || releaseOp["barrierNonce"] != r.Nonce {
+				t.Fatalf("reconciled release lacked barrier observed at exit: %+v callback={%s %s}", releaseOp, exitBarrierUID, exitBarrierRV)
+			}
+		})
+	}
+}
