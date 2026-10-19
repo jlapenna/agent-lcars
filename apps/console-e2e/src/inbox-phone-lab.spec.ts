@@ -9,6 +9,61 @@ import { expect, test } from '@playwright/test';
 
 import { resetCliSessions } from './seed';
 
+function expectIncompleteExploration(extra: ReturnType<typeof JSON.parse>) {
+  expect(extra.status).toBe('incomplete');
+  expect(extra.excludedFromBudget).toBe(true);
+  expect(extra.navigationBarrier).toBe('domcontentloaded');
+  expect(extra.failureStage).toBe('diagnostic-deadline');
+  expect(extra.journey).toBeUndefined();
+  expect(extra.deadlineMilestoneProgress.stage).toMatch(
+    /^profiled\.(document-load|decision-content|primary-action|confirmation|cancel)$/,
+  );
+  expect(extra.deadlineAtMs - extra.attemptStartedAtMs).toBeLessThanOrEqual(
+    30_000,
+  );
+  expect(extra.deadlineAtMs).toBeGreaterThan(extra.attemptStartedAtMs);
+  const names = [
+    'navigation-returned',
+    'decision-content-visible',
+    'primary-click-returned',
+    'confirmation-visible',
+    'cancel-returned',
+  ];
+  let previous = -1;
+  for (const checkpoint of extra.deadlineMilestoneProgress
+    .completedCheckpoints) {
+    const index = names.indexOf(checkpoint.name);
+    expect(index).toBeGreaterThan(previous);
+    previous = index;
+    expect(Number.isFinite(checkpoint.completedAtMs)).toBe(true);
+    expect(checkpoint.completedAtMs).toBeLessThan(extra.deadlineAtMs);
+  }
+  expect(Object.keys(extra.sourceBindings)).toHaveLength(5);
+  for (const value of Object.values(extra.sourceBindings))
+    expect(value).toMatch(/^[a-f0-9]{64}$/);
+  expect(['observed', 'unavailable']).toContain(
+    extra.partialObservation.status,
+  );
+  if (extra.partialObservation.status === 'observed') {
+    expect(Number.isFinite(extra.partialObservation.value.nowMs)).toBe(true);
+    expect(extra.partialObservation.requestedAtMs).toBeGreaterThanOrEqual(
+      extra.attemptStartedAtMs,
+    );
+    expect(extra.partialObservation.completedAtMs).toBeGreaterThanOrEqual(
+      extra.partialObservation.requestedAtMs,
+    );
+    expect(extra.partialObservation.completedAtMs).toBeLessThan(
+      extra.deadlineAtMs,
+    );
+  } else {
+    expect([
+      'page-not-created',
+      'page-observation-failed',
+      'snapshot-not-completed-before-close',
+    ]).toContain(extra.partialObservation.reason);
+  }
+}
+
 // This is an owned performance signal for #2201 as well as a browser
 // contract for the probe. A missed machine-dependent budget never replaces
 // the semantic E2E gate with a timing threshold. Retain raw evidence instead.
@@ -55,6 +110,22 @@ test.describe('Inbox phone measurement artifact', () => {
       const diagnostic = JSON.parse(await readFile(cpuProfile, 'utf8'));
       expect(diagnostic.status).toBe('complete');
       expect(diagnostic.excludedFromBudget).toBe(true);
+      const exploratory = JSON.parse(
+        await readFile(cpuProfile + '.exploratory.json', 'utf8'),
+      );
+      expect(diagnostic.navigationBarrier).toBe('load');
+      expect(exploratory.navigationBarrier).toBe('domcontentloaded');
+      // The optional earlier attempt may time out honestly; never call it complete.
+      if (exploratory.status !== 'complete')
+        expectIncompleteExploration(exploratory);
+      for (const extra of [
+        diagnostic,
+        ...(exploratory.status === 'complete' ? [exploratory] : []),
+      ]) {
+        expect(extra.status).toBe('complete');
+        expect(extra.excludedFromBudget).toBe(true);
+      }
+
       expect(diagnostic.cpuProfile.samples.length).toBeGreaterThan(0);
       expect(diagnostic.sources.length).toBeGreaterThan(0);
       for (const sample of report.samples) {
@@ -127,6 +198,17 @@ test.describe('Inbox phone measurement artifact', () => {
         // Missing diagnostic must not mask the real lab failure.
         cpuAttachmentFailure = attachmentError;
       }
+      try {
+        await testInfo.attach(
+          'Exploratory earlier-barrier input diagnostic (excluded)',
+          {
+            path: cpuProfile + '.exploratory.json',
+            contentType: 'application/json',
+          },
+        );
+      } catch (attachmentError) {
+        cpuAttachmentFailure ??= attachmentError;
+      }
       await resetCliSessions();
     }
     // No throw inside finally: the real lab failure is reported first, and
@@ -136,12 +218,14 @@ test.describe('Inbox phone measurement artifact', () => {
     if (pendingFailure) throw pendingFailure;
   });
   test('retains a real load-blocking request before cleanup and keeps normal measurement functional', async () => {
-    test.setTimeout(60_000);
+    test.setTimeout(120_000);
     const directory = await mkdtemp(
       path.join(os.tmpdir(), 'inbox-phone-navigation-'),
     );
     let blocked = true;
     let primaryClicks = 0;
+    let forceExploratoryTimeout = false;
+    let probeNavigations = 0;
     const server = createServer((request, response) => {
       const url = new URL(request.url!, 'http://localhost');
       if (url.pathname === '/api/e2e/seed') {
@@ -156,13 +240,14 @@ test.describe('Inbox phone measurement artifact', () => {
         primaryClicks++;
         response.end();
       } else if (url.pathname === '/inbox') {
+        const noDialog = forceExploratoryTimeout && ++probeNavigations === 17;
         response.writeHead(200, { 'Content-Type': 'text/html' });
         response.end(`<div class="queue-workspace__detail">
           <p>feat(console): tap-icon refresh on the queue header</p>
-          <button onclick="fetch('/click'); document.querySelector('dialog').showModal()">Approve &amp; Rebase</button>
-          </div><dialog aria-label="Rebase #9003?">
+          <button class="queue-primary-action" onclick="window.__inboxPhoneDiagnostics?.recordPrimaryBoundary?.('handlerEntryMs'); fetch('/click'); if (!${noDialog}) document.querySelector('dialog').showModal(); window.__inboxPhoneDiagnostics?.recordPrimaryBoundary?.('openConfirmReturnMs')">Approve &amp; Rebase</button>
+          </div><dialog role="dialog" aria-label="Rebase #9003?">
           <button onclick="this.closest('dialog').close()">Cancel</button>
-          </dialog><script src="/blocked.js?private-query-sentinel=secret"></script>`);
+          </dialog><script>window.__inboxPhoneDiagnostics?.recordPrimaryBoundary?.('primaryCommitMs')</script><script src="/blocked.js?private-query-sentinel=secret"></script>`);
       } else response.end();
     });
     await new Promise<void>((resolve) =>
@@ -173,7 +258,7 @@ test.describe('Inbox phone measurement artifact', () => {
       throw Error('Missing fixture port');
     const origin = `http://127.0.0.1:${address.port}`;
     const failureOut = path.join(directory, 'failed.json');
-    const runProbe = (out: string) =>
+    const runProbe = (out: string, cpuProfile?: string) =>
       promisify(execFile)(
         process.execPath,
         [
@@ -184,6 +269,7 @@ test.describe('Inbox phone measurement artifact', () => {
           '5',
           '--out',
           out,
+          ...(cpuProfile ? ['--cpu-profile-out', cpuProfile] : []),
         ],
         {
           timeout: 60_000,
@@ -257,6 +343,51 @@ test.describe('Inbox phone measurement artifact', () => {
           sample.primaryClickDispatchedMs,
         );
       }
+
+      forceExploratoryTimeout = true;
+      probeNavigations = 0;
+      const partialOut = path.join(directory, 'partial.json');
+      const partialCPU = path.join(directory, 'partial-cpu.json');
+      await runProbe(partialOut, partialCPU);
+      const completed = JSON.parse(await readFile(partialOut, 'utf8'));
+      expect(completed.error).toBeUndefined();
+      expect(completed.samples).toHaveLength(10);
+      // The fixture serves no generated Next.js bundle, so the load-gated
+      // diagnostic cannot bind sources (real-build completeness is asserted by
+      // the lab test above). It must still finish its own attempt well before
+      // the exploratory diagnostic runs, and stay excluded from the budget.
+      const gated = JSON.parse(await readFile(partialCPU, 'utf8'));
+      expect(gated.excludedFromBudget).toBe(true);
+      expect(gated.failureStage).not.toBe('diagnostic-deadline');
+      const partialBytes = await readFile(partialCPU + '.exploratory.json');
+      expect(partialBytes.length).toBeLessThanOrEqual(8 * 1024 * 1024);
+      const partial = JSON.parse(partialBytes.toString());
+      expectIncompleteExploration(partial);
+      expect(partial.deadlineMilestoneProgress.stage).toBe(
+        'profiled.confirmation',
+      );
+      expect(
+        partial.deadlineMilestoneProgress.completedCheckpoints.map(
+          (x: { name: string }) => x.name,
+        ),
+      ).toEqual([
+        'navigation-returned',
+        'decision-content-visible',
+        'primary-click-returned',
+      ]);
+      expect(partial.partialObservation.status).toBe('observed');
+      // Native dialog exists closed; actual confirmation wait still never returned.
+      expect(partial.partialObservation.value.matchingDialogPresent).toBe(true);
+      for (const failureStage of [
+        'artifact-size-cap',
+        'source-binding',
+        'setup',
+      ])
+        expect(() =>
+          expectIncompleteExploration({ ...partial, failureStage }),
+        ).toThrow();
+      forceExploratoryTimeout = false;
+      await runProbe(path.join(directory, 'restored.json'));
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) =>

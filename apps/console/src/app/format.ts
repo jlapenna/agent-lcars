@@ -7,7 +7,12 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['minute', 60],
 ];
 
-const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+// Client callers also import non-Intl helpers from this module.
+let rtf: Intl.RelativeTimeFormat | undefined;
+
+function getRelativeTimeFormatter(): Intl.RelativeTimeFormat {
+  return (rtf ??= new Intl.RelativeTimeFormat('en', { numeric: 'auto' }));
+}
 
 /**
  * Formatted server-side (see page.tsx) rather than in the 'use client' card
@@ -18,11 +23,17 @@ export function formatRelativeTime(iso: string): string {
   const elapsed = (Date.now() - new Date(iso).getTime()) / 1000;
   const seconds = Math.max(elapsed < 0 ? 1 : 0, Math.round(Math.abs(elapsed)));
   if (seconds < 60) {
-    return elapsed < 0 ? rtf.format(seconds, 'second') : 'just now';
+    return elapsed < 0
+      ? getRelativeTimeFormatter().format(seconds, 'second')
+      : 'just now';
   }
   for (const [unit, secondsPerUnit] of UNITS) {
     const value = Math.floor(seconds / secondsPerUnit);
-    if (value >= 1) return rtf.format(elapsed < 0 ? value : -value, unit);
+    if (value >= 1)
+      return getRelativeTimeFormatter().format(
+        elapsed < 0 ? value : -value,
+        unit,
+      );
   }
   return 'just now';
 }
@@ -80,10 +91,14 @@ export function formatDuration(totalSeconds: number): string {
  * differs from the browser's would produce two different strings for the
  * same number and trip a hydration mismatch. The console is single-locale
  * anyway. */
-const USD = new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD',
-});
+let USD: Intl.NumberFormat | undefined;
+
+function getUsdFormatter(): Intl.NumberFormat {
+  return (USD ??= new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }));
+}
 
 /** Costs anywhere they're shown - the in-flight budget gauge, the session
  * table, the cost ledger: "$0.42", "$3.10", "$3,953.71". Grouped, because
@@ -96,7 +111,7 @@ const USD = new Intl.NumberFormat('en-US', {
  * in session-ledger.ts), and a negative dollar figure is never meaningful to
  * show here regardless of which upstream value produced it. */
 export function formatCost(usd: number): string {
-  return USD.format(Math.max(0, usd));
+  return getUsdFormatter().format(Math.max(0, usd));
 }
 
 /* `shareArtifactUrl` moved to lib/deployment.ts: its base URL is
