@@ -1,0 +1,49 @@
+name: Worker policy qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to test independently
+        required: true
+        type: choice
+        options: [claude, codex, opencode]
+      candidate-image-id:
+        description: Expected immutable runner image ID; the release owner verifies the actual runner Pod binding
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-policy-qualification-${{ inputs.provider }}
+  cancel-in-progress: false
+
+jobs:
+  qualification:
+    name: ${{ inputs.provider }} worker policy
+    runs-on: agent-lcars-ci
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - name: Run existing provider suites and failure consumer
+        env:
+          LCARS_QUALIFICATION_PROVIDER: ${{ inputs.provider }}
+          LCARS_QUALIFICATION_IMAGE_ID: ${{ inputs.candidate-image-id }}
+          LCARS_QUALIFICATION_OUTPUT: ${{ runner.temp }}/worker-policy-${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash tools/probes/qualify-worker-ci.sh
+
+      - name: Retain reports and command logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-policy-${{ inputs.provider }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/worker-policy-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
