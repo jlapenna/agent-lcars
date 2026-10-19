@@ -808,12 +808,16 @@ export class FirestoreStore implements OrchestratorStore {
         this.#outbox.where('state', '==', 'pending'),
       );
       const cutoff = Date.parse(input.now);
-      const expired = leasedSnapshot.docs.filter((doc) => {
-        const entry = outboxEntrySchema.parse(doc.data());
-        return (
-          entry.state === 'leased' && Date.parse(entry.leaseExpiresAt) <= cutoff
+      const expired = leasedSnapshot.docs
+        .map((doc) => ({
+          ref: doc.ref,
+          entry: outboxEntrySchema.parse(doc.data()),
+        }))
+        .filter(
+          ({ entry }) =>
+            entry.state === 'leased' &&
+            Date.parse(entry.leaseExpiresAt) <= cutoff,
         );
-      });
       const excluded = input.excludeEntryIds;
       // #1548 follow-up: a pending entry still backing off from its last
       // delivery failure (`nextAttemptAt` in the future) is skipped here,
@@ -825,24 +829,20 @@ export class FirestoreStore implements OrchestratorStore {
       // is never stuck behind an arbitrarily larger due-again,
       // already-failing set -- see that function's doc comment.
       const pendingCandidates = pendingSnapshot.docs
-        .filter((doc) => {
-          const entry = outboxEntrySchema.parse(doc.data());
-          return (
+        .map((doc) => ({
+          ref: doc.ref,
+          entry: outboxEntrySchema.parse(doc.data()),
+        }))
+        .filter(
+          ({ entry }) =>
             !(excluded?.has(entry.entryId) ?? false) &&
             (entry.nextAttemptAt === undefined ||
-              Date.parse(entry.nextAttemptAt) <= cutoff)
-          );
-        })
-        .sort((a, b) =>
-          byOutboxClaimFairness(
-            outboxEntrySchema.parse(a.data()),
-            outboxEntrySchema.parse(b.data()),
-          ),
-        );
+              Date.parse(entry.nextAttemptAt) <= cutoff),
+        )
+        .sort((a, b) => byOutboxClaimFairness(a.entry, b.entry));
       const eligible = [...expired, ...pendingCandidates].slice(0, input.limit);
 
-      return eligible.map((doc): LeasedOutboxEntry => {
-        const entry = outboxEntrySchema.parse(doc.data());
+      return eligible.map(({ ref, entry }): LeasedOutboxEntry => {
         const { state: _state, ...rest } = entry;
         const claimed: LeasedOutboxEntry = {
           ...rest,
@@ -852,7 +852,7 @@ export class FirestoreStore implements OrchestratorStore {
           attempts: entry.attempts + 1,
           updatedAt: input.now,
         };
-        tx.set(doc.ref, claimed);
+        tx.set(ref, claimed);
         return claimed;
       });
     });
