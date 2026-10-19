@@ -332,6 +332,37 @@ describe('opt-in loopback TLS diagnostic', () => {
     }
   });
 
+  it('selects the actual Inbox Document and excludes otherwise identical Fetch/RSC responses and their private metadata', () => {
+    const response = {
+      url: 'https://127.0.0.1:4204/inbox?item=private-item&_rsc=private-rsc',
+      protocol: 'h2',
+      status: 200,
+      headers: {
+        'content-encoding': 'gzip',
+        'set-cookie': 'private-cookie',
+        'x-private': 'private-header',
+      },
+    };
+    const document = transportResponse(
+      response,
+      'https://127.0.0.1:4204',
+      'Document',
+    );
+    expect(document).toMatchObject({
+      path: '/inbox',
+      type: 'Document',
+      protocol: 'h2',
+      encoding: 'gzip',
+    });
+    expect(JSON.stringify(document)).not.toContain('private-');
+    expect(
+      transportResponse(response, 'https://127.0.0.1:4204', 'Fetch'),
+    ).toBeUndefined();
+    expect(
+      transportResponse(response, 'https://127.0.0.1:4204', undefined),
+    ).toBeUndefined();
+  });
+
   it('retains only safe bounded response fields and removes URL queries', () => {
     expect(
       transportResponse(
@@ -348,9 +379,11 @@ describe('opt-in loopback TLS diagnostic', () => {
           },
         },
         'https://127.0.0.1:4204',
+        'Document',
       ),
     ).toEqual({
       path: '/inbox',
+      type: 'Document',
       protocol: 'h2',
       status: 200,
       encoding: 'gzip',
@@ -415,6 +448,8 @@ function transportBlocks() {
             '/_next/static/chunks/tiny.js',
           ].map((path) => ({
             path,
+            type: path === '/inbox' ? 'Document' : 'Script',
+            encoding: path.endsWith('/tiny.js') ? 'identity' : 'gzip',
             protocol: arm === 'h1' ? 'http/1.1' : 'h2',
             status: 200,
             headers: path.endsWith('/tiny.js')

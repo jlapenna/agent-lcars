@@ -171,12 +171,15 @@ const staticJS = /^\/_next\/static\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.js$/;
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 
 /** Retain only bounded response metadata, never request headers or dynamic bodies. */
-export function transportResponse(response, origin) {
+export function transportResponse(response, origin, type) {
   const url = new URL(response.url);
   if (
     url.origin !== origin ||
     url.hash ||
-    !(url.pathname === '/inbox' || (!url.search && staticJS.test(url.pathname)))
+    !(
+      (url.pathname === '/inbox' && type === 'Document') ||
+      (!url.search && staticJS.test(url.pathname))
+    )
   )
     return undefined;
   const headers = {};
@@ -196,6 +199,7 @@ export function transportResponse(response, origin) {
   }
   return {
     path: url.pathname,
+    type,
     protocol: response.protocol,
     status: response.status,
     encoding: headers['content-encoding'] ?? 'identity',
@@ -245,7 +249,7 @@ export function transportSummary(blocks) {
         sample.nextHopProtocol !== expected ||
         !scripts.length ||
         scripts.some((r) => r.nextHopProtocol !== expected) ||
-        !metadata?.some((r) => r.path === '/inbox') ||
+        !metadata?.some((r) => r.path === '/inbox' && r.type === 'Document') ||
         metadata.some(
           (r) =>
             r.protocol !== expected ||
@@ -1206,11 +1210,18 @@ export async function measure(options) {
           const cdp = await context.newCDPSession(page);
           const transportResponses = new Map();
           if (options.tls)
-            cdp.on('Network.responseReceived', ({ requestId, response }) => {
-              const metadata = transportResponse(response, options.origin);
-              if (metadata && transportResponses.size < 256)
-                transportResponses.set(requestId, metadata);
-            });
+            cdp.on(
+              'Network.responseReceived',
+              ({ requestId, response, type }) => {
+                const metadata = transportResponse(
+                  response,
+                  options.origin,
+                  type,
+                );
+                if (metadata && transportResponses.size < 256)
+                  transportResponses.set(requestId, metadata);
+              },
+            );
           await cdp.send('Network.enable');
           await cdp.send('Emulation.setCPUThrottlingRate', {
             rate: PROFILE.cpuSlowdown,
