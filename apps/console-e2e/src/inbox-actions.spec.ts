@@ -10,6 +10,7 @@ import { expect, test } from '@playwright/test';
 import { E2E_ITEM_NUMBERS, usePopulatedFixtures } from './seed';
 import {
   E2E_ADMIN_HEADERS,
+  setE2eAdminUser,
   useE2eAdminBeforeEach,
 } from './util/e2e-test-utils';
 import {
@@ -461,6 +462,69 @@ test.describe('Inbox authorized action journeys', () => {
     ]);
     await expectScope(page, url);
   });
+
+  // SSR paints the primary before React attaches its handler; a click in that
+  // window is lost. Hold the real app chunks so the actual server-rendered
+  // primary is observed pre-hydration, then release and use it normally.
+  for (const action of ['merge', 'approve-rebase'] as const) {
+    test(`${action} primary stays natively disabled until the app chunks load, then opens its confirmation`, async ({
+      page,
+      context,
+      request,
+    }) => {
+      const number = E2E_ITEM_NUMBERS.reviewRequested;
+      const label = action === 'merge' ? 'Approve & Merge' : 'Approve & Rebase';
+      const title = `${action === 'merge' ? 'Merge' : 'Rebase'} #${number}?`;
+      const mergeableState = action === 'merge' ? 'clean' : 'behind';
+      const requestedReviewers = [
+        process.env['AGENT_LCARS_ADMIN_GITHUB_LOGIN'] ?? 'dummy-id',
+      ];
+      await configure(request, {
+        pr: { number, mergeableState, requestedReviewers },
+      });
+      await updateDashboardAnchor({
+        issue: number,
+        mergeableState,
+        requestedReviewerLogins: requestedReviewers,
+      });
+      const url = await selectItem(page, number);
+
+      const held: Route[] = [];
+      let holding = true;
+      const fresh = await context.newPage();
+      try {
+        await setE2eAdminUser(fresh);
+        // Registered after the admin-header route, so it runs first; fallback
+        // hands each request to that route to keep the signed fixture auth.
+        await fresh.route('**/_next/static/**/*.js', async (route) => {
+          if (holding) held.push(route);
+          else await route.fallback();
+        });
+        await fresh.goto(url, { waitUntil: 'commit' });
+        const primary = fresh
+          .locator('.queue-workspace__detail')
+          .getByRole('button', { name: label, exact: true });
+        await expect(primary).toBeDisabled();
+        expect(held.length).toBeGreaterThan(0);
+        expect(await journal(request)).toEqual([]);
+
+        holding = false;
+        await Promise.all(held.splice(0).map((route) => route.fallback()));
+        await expect(primary).toBeEnabled({ timeout: 30_000 });
+        await primary.click();
+        const dialog = fresh.getByRole('dialog', { name: title });
+        await expect(dialog).toBeVisible();
+        if (action === 'merge') await fresh.keyboard.press('Escape');
+        else await dialog.getByRole('button', { name: 'Cancel' }).click();
+        await expect(dialog).toBeHidden();
+        expect(await journal(request)).toEqual([]);
+      } finally {
+        holding = false;
+        await Promise.all(held.splice(0).map((route) => route.fallback()));
+        await fresh.close();
+      }
+    });
+  }
 
   for (const action of ['merge', 'approve-rebase', 'rebase'] as const) {
     const number = E2E_ITEM_NUMBERS.reviewRequested;
