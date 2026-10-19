@@ -267,6 +267,12 @@ export function ActionItemCard({
     Pipeline | undefined
   >(supportedAgentPipelines(item.repo)[0]);
   const [isPending, startTransition] = useTransition();
+  // SSR renders the primary buttons before React has attached their handlers,
+  // so a click in that window is silently lost. Passive effects run after
+  // hydration has registered listeners; keep the confirmation primaries
+  // natively disabled until then (same pattern as QuickTaskButton).
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(true), []);
   const notifyDraft = useEffectEvent((hasDraft: boolean) =>
     onReplyDraftChange?.(hasDraft),
   );
@@ -814,7 +820,7 @@ export function ActionItemCard({
               className={workspace ? 'queue-primary-action' : undefined}
               // item.draft is belt-and-suspenders for the 'draft'
               // mergeable_state: merging a draft always 405s.
-              disabled={mergeDisabled}
+              disabled={mergeDisabled || !ready}
               loading={isPending}
               title={disabledMergeReason(item)}
               onClick={confirmMerge}
@@ -826,7 +832,7 @@ export function ActionItemCard({
             <Button
               color={workspace ? 'orange' : 'dark'}
               className={workspace ? 'queue-primary-action' : undefined}
-              disabled={rebaseDisabled}
+              disabled={rebaseDisabled || !ready}
               ref={(node) => {
                 if (node?.closest('.queue-workspace__detail'))
                   recordPhonePrimaryBoundary('primaryCommitMs');
