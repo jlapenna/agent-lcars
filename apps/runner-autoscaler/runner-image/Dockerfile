@@ -783,8 +783,13 @@ COPY --from=pnpm-store-seed --chown=runner:runner \
 # hardlink, but the content is still `reused`, never re-downloaded, which is
 # the whole point of the seed. pnpm-store-seed.test.sh's separate-mount case
 # proves both the `reused`/`downloaded` accounting and the resolved path.
+# `packageImportMethod: hardlink`: pnpm's default (`auto`) tries clone first,
+# and on the runners' ext4 a "clone" silently falls back to a full copy, so
+# it never hard-links even with _work beside the store. Measured on homelab
+# k3s: 2,512 MiB written per Sprinkles install with `auto`, 529 MiB with
+# `hardlink` (homelab#849). Across filesystems `hardlink` still copies.
 RUN install -d -m 0755 /home/runner/.config/pnpm && \
-    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
+    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\npackageImportMethod: hardlink\n' \
       > /home/runner/.config/pnpm/config.yaml
 
 WORKDIR /home/runner

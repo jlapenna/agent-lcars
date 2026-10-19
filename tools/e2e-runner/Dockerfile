@@ -105,7 +105,7 @@ RUN install -d -o runner -g runner /home/runner/.local/share/pnpm/store \
       /home/runner/.cache/pnpm /home/runner/.config/pnpm \
     && chown runner:runner /home/runner/.local /home/runner/.local/share \
       /home/runner/.cache /home/runner/.config \
-    && printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
+    && printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\npackageImportMethod: hardlink\n' \
       > /home/runner/.config/pnpm/config.yaml \
     && chown runner:runner /home/runner/.config/pnpm/config.yaml \
     && touch -d @0 /home/runner /home/runner/.local /home/runner/.local/share \

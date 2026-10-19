@@ -22,7 +22,7 @@ USER runner
 # simulates) makes pnpm pick a fresh default store on that other
 # filesystem instead of this seeded one.
 RUN install -d -m 0755 /home/runner/.config/pnpm && \
-    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\n' \
+    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\npackageImportMethod: hardlink\n' \
       > /home/runner/.config/pnpm/config.yaml
 
 # Warm the runner user's Corepack cache while resolving the exact version from
