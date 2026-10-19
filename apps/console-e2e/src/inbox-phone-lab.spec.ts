@@ -352,9 +352,13 @@ test.describe('Inbox phone measurement artifact', () => {
       const completed = JSON.parse(await readFile(partialOut, 'utf8'));
       expect(completed.error).toBeUndefined();
       expect(completed.samples).toHaveLength(10);
-      expect(JSON.parse(await readFile(partialCPU, 'utf8')).status).toBe(
-        'complete',
-      );
+      // The fixture serves no generated Next.js bundle, so the load-gated
+      // diagnostic cannot bind sources (real-build completeness is asserted by
+      // the lab test above). It must still finish its own attempt well before
+      // the exploratory diagnostic runs, and stay excluded from the budget.
+      const gated = JSON.parse(await readFile(partialCPU, 'utf8'));
+      expect(gated.excludedFromBudget).toBe(true);
+      expect(gated.failureStage).not.toBe('diagnostic-deadline');
       const partialBytes = await readFile(partialCPU + '.exploratory.json');
       expect(partialBytes.length).toBeLessThanOrEqual(8 * 1024 * 1024);
       const partial = JSON.parse(partialBytes.toString());
