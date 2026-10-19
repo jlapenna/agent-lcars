@@ -247,12 +247,14 @@ inside the unchanged 30-minute job, with bounded cleanup of owned processes.
 A failed journey or harness fails; missing the 2,000 ms budget alone does not.
 
 Cold navigation and static-JS resource protocols must match the selected arm;
-selected response metadata must show gzip. Only bounded safe response fields
+selected response metadata must preserve gzip on compressed assets and explicit
+identity on legitimately uncompressed tiny scripts, with equal encoding per
+path across all cold samples and arms. Only bounded safe response fields
 (content-encoding, vary, content-length, cache-control, etag and age), timings,
 byte counts, decoded public-JS SHA256 hashes, build hashes, certificate hashes
 and raw measurement rows are retained. Browser JS must equal the local built
 static corpus; the sorted decoded corpus and encoded resource byte counts must
-match across all cold samples and arms. Mixed protocols, bytes or builds make
+match across all cold samples and arms. Changed encodings or mixed protocols, bytes or builds make
 the diagnostic confounded/incomplete, never a passing comparison. No request
 headers, cookies, auth data, dynamic response bodies, public-JS source text or
 private keys are captured by the transport diagnostic. Keys and proxy files

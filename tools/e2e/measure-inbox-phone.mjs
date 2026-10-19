@@ -28,6 +28,11 @@ const TARGET_MS = 2_000;
 const SAMPLE_TIMEOUT_MS = 30_000;
 const RUN_TIMEOUT_MS = 15 * 60_000;
 const ITEM_PATH = '/inbox?item=supersprinklesracing%2Fsprinkles%239003';
+const BUILD_EVIDENCE_FILES = [
+  'BUILD_ID',
+  'server/app/inbox/page_client-reference-manifest.js',
+  'server/app/inbox/page/build-manifest.json',
+];
 
 /** Reject unsafe destinations before launching Chromium or seeding anything. */
 export function labOptions(args, env = process.env) {
@@ -81,10 +86,10 @@ export function labOptions(args, env = process.env) {
       'TLS requires HTTPS, --tls-diagnostic and --tls-certificate together; no CPU profile.',
     );
   if (
-    tlsEnabled &&
+    (tlsEnabled || values['transport-experiment']) &&
     (env.NODE_TLS_REJECT_UNAUTHORIZED === '0' ||
       (env.AUTH_SECRET !== undefined && env.AUTH_SECRET !== 'dummy-secret') ||
-      env.E2E_LIVE === '1')
+      env.E2E_TESTING === 'false')
   )
     throw Error(
       'TLS diagnostic requires ordinary verified TLS and dummy hermetic auth.',
@@ -193,8 +198,20 @@ export function transportResponse(response, origin) {
     path: url.pathname,
     protocol: response.protocol,
     status: response.status,
+    encoding: headers['content-encoding'] ?? 'identity',
     headers,
   };
+}
+
+export async function transportBuildHashes(next = 'dist/apps/console/.next') {
+  return Object.fromEntries(
+    await Promise.all(
+      BUILD_EVIDENCE_FILES.map(async (file) => [
+        file,
+        sha256(await readFile(path.join(next, file))),
+      ]),
+    ),
+  );
 }
 
 export function transportSummary(blocks) {
@@ -205,6 +222,7 @@ export function transportSummary(blocks) {
     throw Error('Incomplete counterbalanced transport blocks');
   const first = blocks[0].report;
   let corpus;
+  let encodings;
   for (const { arm, report } of blocks) {
     if (
       report.error ||
@@ -232,7 +250,13 @@ export function transportSummary(blocks) {
           (r) =>
             r.protocol !== expected ||
             r.status !== 200 ||
-            r.headers['content-encoding'] !== 'gzip',
+            !['gzip', 'identity'].includes(
+              r.headers['content-encoding'] ?? 'identity',
+            ),
+        ) ||
+        !metadata.some(
+          (r) =>
+            staticJS.test(r.path) && r.headers['content-encoding'] === 'gzip',
         )
       )
         throw Error('Confounded transport protocol or compression');
@@ -243,6 +267,31 @@ export function transportSummary(blocks) {
         sample.scriptCorpus.length !== scripts.length
       )
         throw Error('Incomplete static corpus');
+      const encodingSignature = JSON.stringify(
+        metadata
+          .map((r) => ({
+            path: r.path,
+            encoding: r.headers['content-encoding'] ?? 'identity',
+          }))
+          .sort((a, b) => a.path.localeCompare(b.path)),
+      );
+      encodings ??= encodingSignature;
+      if (encodings !== encodingSignature)
+        throw Error('Confounded per-path content encoding');
+      for (const entry of sample.scriptCorpus) {
+        const response = metadata.find((r) => r.path === entry.path);
+        if (
+          !response ||
+          !Number.isFinite(entry.encodedBytes) ||
+          entry.encodedBytes <= 0 ||
+          !Number.isFinite(entry.decodedBytes) ||
+          entry.decodedBytes <= 0 ||
+          ((response.headers['content-encoding'] ?? 'identity') ===
+            'identity' &&
+            entry.encodedBytes !== entry.decodedBytes)
+        )
+          throw Error('Incomplete static byte/encoding evidence');
+      }
       const signature = JSON.stringify(sample.scriptCorpus);
       corpus ??= signature;
       if (corpus !== signature) throw Error('Confounded static bytes or build');
@@ -907,11 +956,7 @@ async function captureColdProfile(
       )
         throw Error('Profile script has no exact matching generated source');
     }
-    for (const file of [
-      'BUILD_ID',
-      'server/app/inbox/page_client-reference-manifest.js',
-      'server/app/inbox/page/build-manifest.json',
-    ]) {
+    for (const file of BUILD_EVIDENCE_FILES) {
       const data = await readFile(path.join(next, file));
       append(artifact.manifests, {
         path: file,
@@ -1080,18 +1125,7 @@ export async function measure(options) {
         series: 'opt-in-loopback-tls',
         certificateSHA256: options.tls.certificateSHA256,
         spkiSHA256: options.tls.spkiSHA256,
-        buildHashes: Object.fromEntries(
-          await Promise.all(
-            ['BUILD_ID', 'app-build-manifest.json', 'build-manifest.json'].map(
-              async (file) => [
-                file,
-                sha256(
-                  await readFile(path.join('dist/apps/console/.next', file)),
-                ),
-              ],
-            ),
-          ),
-        ),
+        buildHashes: await transportBuildHashes(),
       };
     await seed(options.origin, options.tls);
     for (let index = 0; index < options.samples; index++) {
@@ -1219,8 +1253,11 @@ export async function measure(options) {
           );
           if (options.tls) {
             sample.transportResponses = [...transportResponses.values()];
+            if (cache === 'cold') sample.scriptCorpus = [];
+            // Retain the completed journey even if subsequent corpus binding
+            // fails. Such a report has raw rows and an error, never a summary.
+            report.samples.push({ cache, index: index + 1, ...sample });
             if (cache === 'cold') {
-              sample.scriptCorpus = [];
               for (const [requestId, metadata] of transportResponses) {
                 if (!staticJS.test(metadata.path)) continue;
                 const { body, base64Encoded } = await cdp.send(
@@ -1255,8 +1292,13 @@ export async function measure(options) {
             }
           }
           if (errors.length)
-            throw new Error(`Browser errors: ${errors.join('; ')}`);
-          report.samples.push({ cache, index: index + 1, ...sample });
+            throw new Error(
+              options.tls
+                ? 'Browser reported errors; counts retained in failure diagnostics'
+                : `Browser errors: ${errors.join('; ')}`,
+            );
+          if (!options.tls)
+            report.samples.push({ cache, index: index + 1, ...sample });
           console.log(
             `${cache} ${index + 1}/${options.samples}: ${sample.readyMs.toFixed(0)}ms`,
           );
@@ -1563,7 +1605,9 @@ ${badOrigin} {
     // Positive and negative TLS controls precede cohorts. Node gets an
     // explicit CA; Chromium gets only this exact SPKI in its own process.
     await seed(origin, tls);
-    await assert.rejects(seed(badOrigin, tls));
+    await assert.rejects(seed(badOrigin, tls), {
+      code: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+    });
     smokeBrowser = await chromium.launch({
       ...tlsLaunchOptions(tls),
       ...(process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH']
@@ -1660,10 +1704,15 @@ ${badOrigin} {
     await stop(helper);
     await stop(proxy);
     await smokeBrowser?.close();
-    await writeFile(options.out, JSON.stringify(report, null, 2) + '\n');
-    // Only diagnostic JSON lives in test-output; private keys and Caddy stay
-    // in this owned temporary directory and are never uploaded.
-    await rm(directory, { recursive: true, force: true });
+    try {
+      await writeFile(options.out, JSON.stringify(report, null, 2) + '\n', {
+        flag: 'wx',
+      });
+    } finally {
+      // Only diagnostic JSON lives in test-output; private keys and Caddy stay
+      // in this owned temporary directory and are never uploaded.
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 }
 
