@@ -62,19 +62,17 @@ Do not use a successful build or HTTP response as rendered-browser proof.
 
 Root and delegated causes belong to one workstream inventory. Before every
 blocker total, reconcile **all** retained root inventories and authoritative
-issue/delegate ledgers using the read-only
-[cause report workflow](references/cause-report.md) and its
-[assembler](scripts/reconcile-causes.mjs). A standalone `blockers.json` count
-is insufficient when a ledger retains delegated causes. Register newly
+issue/delegate ledgers by reading them directly. A standalone `blockers.json`
+count is insufficient when a ledger retains delegated causes. Register newly
 returned delegate records before the next report, even when their issues
 already have source fixes or are closed.
 
-Report a complete total only from an exit-0 report with `complete: true` and
-non-null `totals`. Otherwise name the unresolved identities, missing evidence,
-conflicts and scope gaps; label observed subtotals incomplete. Preserve source
-snapshots, original records, historical failures, remaining gates and owning
-issue references. Resolve descriptive aliases from retained evidence explicitly;
-never guess a cause ID from issue order, title or filename.
+Report a complete total only when every retained cause resolves to one owning
+issue with current evidence. Otherwise name the unresolved identities, missing
+evidence, conflicts and scope gaps; label observed subtotals incomplete.
+Preserve source snapshots, original records, historical failures, remaining
+gates and owning issue references. Resolve descriptive aliases from retained
+evidence explicitly; never guess a cause ID from issue order, title or filename.
 
 Keep cause totals, unique owning issues, live closed-issue counts, source and
 runtime qualification, and confirmed provider execution as separate claims.

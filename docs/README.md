@@ -17,7 +17,6 @@ Use this index to retrieve the smallest current contract for a task.
 | CI control flags                                                   | [`ci-control-flags.md`](ci-control-flags.md)                                   |
 | Runner image publication                                           | [`image-publish-routing.md`](image-publish-routing.md)                         |
 | Nx remote cache                                                    | [`nx-remote-cache.md`](nx-remote-cache.md)                                     |
-| App Hosting stale revision audit                                   | [`apphosting-stale-revision-audit.md`](apphosting-stale-revision-audit.md)     |
 | Provider-process start event contract                              | [`provider-process-measurement.md`](provider-process-measurement.md)           |
 | Native Work production smoke (maintainer-approved runbook)         | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)                 |
 | Screenshot evidence production smoke (maintainer-approved runbook) | [`quick-task-evidence-smoke-runbook.md`](quick-task-evidence-smoke-runbook.md) |
