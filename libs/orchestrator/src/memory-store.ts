@@ -12,11 +12,10 @@ import {
   retiredKey,
 } from './capacity-model';
 import {
+  claimQueuedRun,
   type Decision,
   isRefusal,
   type Refusal,
-  runLeaseExpiresAt,
-  runStartDeadlineAt,
 } from './decide';
 import {
   type LifecycleMetricRead,
@@ -799,29 +798,7 @@ export class MemoryStore implements OrchestratorStore {
       this.#priorityPositions,
     );
     if (candidate === undefined) return undefined;
-    const claimed: Run = {
-      ...candidate,
-      leaseExpiresAt: runLeaseExpiresAt(input.now),
-      queue: {
-        state: 'claimed',
-        claimedAt: input.now,
-        startDeadlineAt: runStartDeadlineAt(input.now),
-        ...(input.placementAware === true
-          ? {
-              startupPlacement: {
-                state: 'waiting' as const,
-                observedAt: input.now,
-              },
-            }
-          : {}),
-        claimedBy: input.claimedBy,
-        ...(input.claimedBySubject === undefined
-          ? {}
-          : { claimedBySubject: input.claimedBySubject }),
-        tokenHash: input.tokenHash,
-      },
-      updatedAt: input.now,
-    };
+    const claimed = claimQueuedRun(candidate, input);
     this.#runs.set(candidate.runId, claimed);
     this.#priorityPositions.set(
       candidate.pipeline,
