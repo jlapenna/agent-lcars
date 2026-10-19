@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash, X509Certificate } from 'node:crypto';
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import {
   chmod,
@@ -20,6 +21,7 @@ import {
   labOptions,
   measure,
   seed,
+  stopTransportChild,
   tlsCertificate,
   tlsLaunchOptions,
   transportBuildHashes,
@@ -572,6 +574,30 @@ describe('transport build evidence at the supported Next16 layout', () => {
       });
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('transport child deadline cleanup', () => {
+  it('reaps an already-terminating owned helper without interrupting its diagnostic flush with a second TERM', async () => {
+    const child = spawn(process.execPath, [
+      '-e',
+      `let signals = 0; process.on('SIGTERM', () => { signals++; process.stdout.write('stopping\\n'); setTimeout(() => { process.stdout.write('flushed:' + signals); process.exit(0); }, 80); }); setInterval(() => {}, 1000); process.stdout.write('ready\\n');`,
+    ]);
+    try {
+      await once(child.stdout, 'data');
+      const stopping = once(child.stdout, 'data');
+      child.kill('SIGTERM');
+      await stopping;
+      let remaining = '';
+      child.stdout.on('data', (bytes) => {
+        remaining += bytes.toString();
+      });
+      await stopTransportChild(child);
+      expect(remaining).toBe('flushed:1');
+      expect(child.exitCode).toBe(0);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGKILL');
     }
   });
 });

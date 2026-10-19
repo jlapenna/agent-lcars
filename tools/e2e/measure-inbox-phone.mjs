@@ -1459,11 +1459,13 @@ async function certificate(directory, name) {
   await chmod(key, 0o600);
   return { cert, key };
 }
-async function stop(child) {
+export async function stopTransportChild(child) {
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null)
     return;
   const exited = once(child, 'exit');
-  child.kill('SIGTERM');
+  // Deadline and cleanup can converge on the same child. Never send a second
+  // TERM while its first handler is flushing partial rows and closing Chromium.
+  if (!child.killed) child.kill('SIGTERM');
   const timer = setTimeout(() => child.kill('SIGKILL'), 3_000);
   try {
     await exited;
@@ -1633,7 +1635,7 @@ ${badOrigin} {
       exactChromiumSPKI: true,
       unrelatedCertificateRefused: true,
     };
-    await stop(proxy);
+    await stopTransportChild(proxy);
     proxy = undefined;
     for (const [index, arm] of ['h1', 'h2', 'h2', 'h1'].entries()) {
       await startProxy(arm);
@@ -1671,7 +1673,7 @@ ${badOrigin} {
           });
         });
       } finally {
-        await stop(helper);
+        await stopTransportChild(helper);
         helper = undefined;
         try {
           report.blocks.push({
@@ -1684,7 +1686,7 @@ ${badOrigin} {
             report: { error: 'helper-artifact-unavailable', samples: [] },
           });
         } finally {
-          await stop(proxy);
+          await stopTransportChild(proxy);
           proxy = undefined;
         }
       }
@@ -1701,8 +1703,8 @@ ${badOrigin} {
   } finally {
     process.removeListener('SIGTERM', interruptExperiment);
     clearTimeout(timer);
-    await stop(helper);
-    await stop(proxy);
+    await stopTransportChild(helper);
+    await stopTransportChild(proxy);
     await smokeBrowser?.close();
     try {
       await writeFile(options.out, JSON.stringify(report, null, 2) + '\n', {
