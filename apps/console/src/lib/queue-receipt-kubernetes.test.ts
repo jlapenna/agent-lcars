@@ -149,6 +149,21 @@ function readBody(req: http.IncomingMessage): Promise<Buffer> {
   });
 }
 
+// A refused capacity decision carries its production reason in the reply; keep
+// only that bounded, non-credential text so callers can bind the exact reason.
+function refusal(status: number, out: Buffer) {
+  if (status < 400) return '';
+  try {
+    const message = (JSON.parse(out.toString()) as { message?: unknown })
+      .message;
+    return typeof message === 'string' && message.startsWith('Capacity ')
+      ? `|${message.slice(0, 80)}`
+      : '';
+  } catch {
+    return '';
+  }
+}
+
 function routeLabel(pathname: string, body: unknown) {
   const rest = pathname.replace(/^\/api\/work\/v1/u, '');
   if (rest === '/runs/claim') return 'claim';
@@ -335,6 +350,7 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
           mode?: 'drop' | '409';
           secretHash?: string;
           jobUid?: string;
+          phase?: 'preExit' | 'postExit';
         };
         if (pathname === '/__bridge/arm') {
           if (
@@ -397,8 +413,38 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
           const runs = await reopened.listRuns({ workId: state.workId });
           const task = await reopened.readTask({ workId: state.workId });
           if (task === undefined) problems.push('task missing');
-          if (runs.length !== 1) problems.push(`runs=${runs.length}, want 1`);
-          const run = runs[0];
+          // The ORIGINAL run is always read by its stored ID. Before the real
+          // exit route commits there is exactly one run; afterwards the
+          // production executorExitedAndRetry legitimately settles it lost and
+          // mints one deterministic, still-undispatched successor.
+          const run = await reopened.readRun(state.runId);
+          if (run === undefined) problems.push('original run missing');
+          let successor: { state: string; claimed: boolean } | undefined;
+          if (body.phase === 'postExit') {
+            const retry = runs.find((r) => r.runId !== state.runId);
+            if (runs.length !== 2 || retry === undefined)
+              problems.push(`runs=${runs.length}, want original+retry`);
+            if (run?.state !== 'lost')
+              problems.push(`original run is ${run?.state}, want lost`);
+            if (retry !== undefined) {
+              successor = {
+                state: retry.state,
+                claimed: retry.queue?.state === 'claimed',
+              };
+              if (
+                retry.requestId !== `retry:${state.runId}` ||
+                retry.state !== 'pending' ||
+                successor.claimed ||
+                task?.task.activeRunId !== retry.runId ||
+                task.task.consecutiveLost !== 1
+              )
+                problems.push(
+                  'successor is not the bounded undispatched retry',
+                );
+            }
+          } else if (runs.length !== 1) {
+            problems.push(`runs=${runs.length}, want 1 before exit`);
+          }
           const capacity = await new CapacityProtocol(reopened).read(now);
           const receipts = capacity.receipts.filter(
             (r) => r.runId === state.runId,
@@ -444,7 +490,8 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
           if (problems.length !== 0) failures.push(...problems);
           return json(res, problems.length === 0 ? 200 : 409, {
             problems,
-            run: run && { state: run.queue?.state, status: run.status },
+            run: run && { state: run.queue?.state, status: run.state },
+            successor,
             receipt: receipt && {
               state: receipt.state,
               unplaced: receipt.unplaced,
@@ -458,6 +505,12 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
               },
               pendingWrites: receipt.producers.flatMap((p) => p.pendingWrites)
                 .length,
+              producers: receipt.producers.map((p) => ({
+                producerId: p.producerId,
+                stopped: p.stopped,
+                fenced: p.fenced,
+                pending: p.pendingWrites,
+              })),
               barrier: receipt.barrier,
             },
             requestRecords: requestRecords.length,
@@ -552,7 +605,7 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
             )?.runId;
             if (runId !== undefined)
               (sequence[runId] ??= []).push(
-                `${label}:${result.response.status}${fault ? `:${fault.mode}` : ''}`,
+                `${label}:${result.response.status}${fault ? `:${fault.mode}` : ''}${refusal(result.response.status, out)}`,
               );
             if (fault !== undefined) {
               fault.fired = true;
