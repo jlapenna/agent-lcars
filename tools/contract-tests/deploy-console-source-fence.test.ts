@@ -330,18 +330,15 @@ describe('serialized automatic deployment source fence', () => {
     });
   });
 
-  it.each(['delayed older gate', 'older CI completes last'])(
-    'prevents rollback when %s after a newer source deployed',
-    () => {
-      // Each invocation represents acquisition of the SAME deploy lock.
-      // The newer source owns the main tip before both possible arrivals.
-      const delivered: string[] = [];
-      for (const source of [NEW, OLD]) {
-        if (sourceDecision(source, NEW).output === 'true')
-          delivered.push(source);
-      }
-      expect(delivered).toEqual([NEW]);
+  it.each([
+    ['current', NEW, 'true'],
+    ['older', OLD, 'false'],
+  ])(
+    'gates the %s source after a newer source deployed',
+    (_name, source, output) => {
+      expect(sourceDecision(source, NEW)).toMatchObject({ status: 0, output });
     },
+    SOURCE_DECISION_TIMEOUT + 1000,
   );
 
   it('allows a tip source and preserves explicit manual old-source semantics', () => {
