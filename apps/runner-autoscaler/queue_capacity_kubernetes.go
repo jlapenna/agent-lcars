@@ -547,7 +547,7 @@ func physicalReceiptWorkersEnded(j *batch.Job, pods []core.Pod) (bool, bool) {
 		}
 		observed++
 		never = false
-		if p.Status.Reason == "NodeLost" || p.DeletionTimestamp != nil || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) {
+		if p.Status.Reason == "NodeLost" || (p.Status.Phase != core.PodFailed && p.Status.Phase != core.PodSucceeded) {
 			return false, false
 		}
 		// A terminal scheduler-preempted Pod can have no runtime exit because
@@ -560,6 +560,13 @@ func physicalReceiptWorkersEnded(j *batch.Job, pods []core.Pod) (bool, bool) {
 			(len(p.Status.ContainerStatuses) == 0 || (len(p.Status.ContainerStatuses) == 1 && p.Status.ContainerStatuses[0].Name == directRunnerContainer)) &&
 			schedulerPreemption(*j, pods) != nil {
 			continue
+		}
+		// A real API-bound scheduler victim keeps its deletionTimestamp while it
+		// is retained: Kubernetes never clears it. Only the exact terminal
+		// never-run scheduler victim above is exempt; any other deleting Pod
+		// leaves physical retirement unproven.
+		if p.DeletionTimestamp != nil {
+			return false, false
 		}
 		// Terminal Pod phase can include synthesized unknown container exits.
 		// Require complete, positive runtime evidence for every declared worker.
