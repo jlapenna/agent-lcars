@@ -14,6 +14,7 @@ import type {
 import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
+  OutboxSettlement,
   QueuePriority,
   RequestSource,
   Run,
@@ -391,15 +392,7 @@ export interface OrchestratorStore {
    * entry unchanged -- every other settle path (a successful delivery, a
    * permanent failure) omits all three and so never touches them.
    */
-  settleOutbox(input: {
-    entryId: string;
-    claimId: string;
-    state: 'pending' | 'done' | 'failed';
-    now: string;
-    firstFailedAt?: string;
-    nextAttemptAt?: string;
-    deliveryFailures?: number;
-  }): Promise<boolean>;
+  settleOutbox(input: OutboxSettlement): Promise<boolean>;
 
   /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */
   listExpiredRuns(now: string): Promise<Run[]>;
