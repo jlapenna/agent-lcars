@@ -50,6 +50,7 @@ import {
   FirestoreStore,
   Orchestrator,
   type OrchestratorStore,
+  retiredKey,
 } from '@agent-lcars/orchestrator';
 import {
   createLocalJWKSet,
@@ -638,6 +639,20 @@ export class FrameDecoder {
   }
 }
 
+/** Canonical release (codex-auth-store.ts releaseLease) keeps the owning
+ * identity as an EXPIRED tombstone with generation CAS; it never deletes. */
+export function classifyLease(
+  lease: { runId: string; expiresAt: string; generation: string } | undefined,
+  runId: string,
+  now: Date,
+) {
+  if (lease === undefined) return 'none' as const;
+  if (lease.runId !== runId) return 'foreign' as const;
+  return Date.parse(lease.expiresAt) <= now.getTime()
+    ? ('released-owning-tombstone' as const)
+    : ('live-owning' as const);
+}
+
 const SECRET_KEY = /^(d|p|q|dp|dq|qi|k)$/u;
 /** A published JWKS must hold public members only. */
 export function publicJwksOnly(jwks: { keys: Record<string, unknown>[] }) {
@@ -1026,6 +1041,32 @@ describe('useful-work carrier unit controls (offline, not journey evidence)', ()
       expect(() =>
         decoder().push(Buffer.from(identity().replace(inv, 'someone-else-1'))),
       ).toThrow(/invocation/u);
+    });
+    it('classifies the canonical released-lease tombstone', () => {
+      const now = new Date('2026-10-19T00:00:00Z');
+      const base = { runId: 'r1', generation: '7' };
+      expect(classifyLease(undefined, 'r1', now)).toBe('none');
+      expect(
+        classifyLease(
+          { ...base, expiresAt: '1970-01-01T00:00:00.000Z' },
+          'r1',
+          now,
+        ),
+      ).toBe('released-owning-tombstone');
+      expect(
+        classifyLease(
+          { ...base, expiresAt: '2099-01-01T00:00:00Z' },
+          'r1',
+          now,
+        ),
+      ).toBe('live-owning');
+      expect(
+        classifyLease(
+          { ...base, runId: 'other', expiresAt: '1970-01-01T00:00:00Z' },
+          'r1',
+          now,
+        ),
+      ).toBe('foreign');
     });
     it('publishes public JWKS members only', () => {
       expect(
@@ -1640,24 +1681,29 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
           const confirmed = await snapshot(new FirestoreStore(options));
           if (JSON.stringify(exported) !== JSON.stringify(confirmed))
             throw new Error('reopened Store differs from the exported state');
-          if (
-            exported.capacity.receipts.some(
-              (r) => r.runId === runId && r.state !== 'retired',
-            )
-          )
+          // Released receipts are REMOVED; durable retirement is a separate
+          // record (the one `inspect-retired` returns).
+          if (exported.capacity.receipts.some((r) => r.runId === runId))
             retained.push(`live capacity receipt for ${runId}`);
+          const [retirement] = await reopened.transactCapacity({
+            now: new Date().toISOString(),
+            recordKeys: [retiredKey(runId)],
+            decide: (snap) => ({ value: [...snap.records.values()] }),
+          });
+          if (retirement?.kind !== 'retired' || !retirement.released)
+            retained.push(`no released retirement record for ${runId}`);
+          evidence.retirement = retirement;
           const lease = await codexAuth.readLease();
-          if (lease !== undefined && JSON.stringify(lease).includes(runId))
-            throw new Error(
-              'Codex lease still names this run; recovery unresolved',
-            );
-          evidence.leaseHeldByRun = false;
+          const verdict = classifyLease(lease, runId, new Date());
+          evidence.lease = { verdict, generation: lease?.generation };
+          if (verdict === 'live-owning' || verdict === 'foreign')
+            retained.push(`Codex lease is ${verdict}`);
           evidence.report = report;
           evidence.recovery = recovery;
           evidence.cleanup = frame;
           evidence.store = exported;
           const outDir = fs.mkdtempSync(
-            path.join(os.tmpdir(), `useful-work-evidence-${invocation}-`),
+            path.join(input.evidenceDir, `useful-work-${invocation}-`),
           );
           fs.chmodSync(outDir, 0o700);
           fs.writeFileSync(
@@ -1678,6 +1724,31 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
         code = await lifecycle;
       } catch (e) {
         // Unresolved state is retained, never discarded; no cleanup credit.
+        // Checkpoint what the still-open Store holds before anything closes.
+        try {
+          const dir = fs.mkdtempSync(
+            path.join(input.evidenceDir, `useful-work-failure-${invocation}-`),
+          );
+          fs.writeFileSync(
+            path.join(dir, 'failure.json'),
+            JSON.stringify({
+              invocation,
+              runId,
+              workId,
+              frames: decoder.frames,
+              run: await reopened.readRun(runId),
+              task: await reopened.readTask({ workId }),
+              capacity: await new CapacityProtocol(reopened).read(
+                new Date().toISOString(),
+              ),
+              error: String(e instanceof Error ? e.message : e),
+            }),
+            { mode: 0o600 },
+          );
+          retained.push(`failure checkpoint ${dir}`);
+        } catch {
+          retained.push('failure checkpoint could not be written');
+        }
         console.error(output.slice(-(64 << 10)));
         throw e;
       }
