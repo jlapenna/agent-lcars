@@ -308,9 +308,7 @@ describe('read-only onboarding audit', () => {
       profiles: { 'fleet-member': { repositories: [repo] } },
       fleetLogin: 'fleet',
       auditReadToken: 'admin-read',
-      registrationConfig: {
-        github: { url: 'https://github.com/example/legacy' },
-      },
+      registrationConfig: { registrations: [] },
       api: async (path: string, token: string) => {
         if (path.endsWith('/installation')) throw new Error('GitHub HTTP 404');
         expect(token).toBe('admin-read');
@@ -466,8 +464,12 @@ describe('read-only onboarding audit', () => {
       fleetLogin: 'fleet',
       api,
       registrationConfig: {
-        github: { url: 'https://github.com/example/legacy' },
         registrations: [
+          {
+            name: 'other-app',
+            github: { url: 'https://github.com/example/other' },
+            app: { client_id: 'other-app', installation_id: 8 },
+          },
           {
             name: 'match',
             github: { url: 'https://github.com/example/project' },
@@ -510,9 +512,20 @@ describe('read-only onboarding audit', () => {
     ).toBe('/orgs/example/actions/runners');
     expect(() =>
       runnerRegistrations({
-        github: { url: 'https://wrong.example/example/project' },
+        registrations: [
+          { github: { url: 'https://wrong.example/example/project' } },
+        ],
       }),
     ).toThrow('Invalid runner registration URL');
+  });
+
+  it('rejects retired root registrations with an actionable inventory error', () => {
+    expect(() =>
+      runnerRegistrations({
+        github: { url: 'https://github.com/example/project' },
+        app: { client_id: 'IvExample123', installation_id: 7 },
+      }),
+    ).toThrow('Root runner registration is no longer supported');
   });
 
   it('accepts the resolved receipt shape while preserving per-registration App identities', () => {
@@ -574,6 +587,7 @@ describe('read-only onboarding audit', () => {
   );
 
   it.each([
+    ['missing ARC inventory', undefined],
     ['empty operator inventory', {}],
     ['explicit empty YAML document', null],
     [
@@ -614,62 +628,6 @@ describe('read-only onboarding audit', () => {
       ]);
       expect(auditHasFailure(facts)).toBe(false);
       expect(calls).toEqual([]);
-    },
-  );
-
-  it.each(['kubernetes:\n  namespace: agent-lcars\n', ''])(
-    'reports missing coverage in the default source and revokes its temporary read token (%j)',
-    async (source) => {
-      const { privateKey } = generateKeyPairSync('rsa', {
-        modulusLength: 2048,
-      });
-      const calls: { path: string; method: string; body: unknown }[] = [];
-      const facts = await runAudit({
-        clientId: 'fleet-app',
-        privateKey,
-        repos: [],
-        labels,
-        profiles,
-        fleetLogin: 'fleet',
-        api: async (
-          path: string,
-          _token: string,
-          method = 'GET',
-          body?: unknown,
-        ) => {
-          calls.push({ path, method, body });
-          if (path === '/repos/jlapenna/homelab/installation')
-            return { id: 7, permissions: { contents: 'read' } };
-          if (path === '/app/installations/7/access_tokens')
-            return { token: 'private-read-token' };
-          if (
-            path.endsWith('/contents/github-runner-autoscaler/orchestrator.yml')
-          )
-            return {
-              content: Buffer.from(source).toString('base64'),
-            };
-          if (path === '/installation/token' && method === 'DELETE')
-            return null;
-          throw new Error('Unexpected API request');
-        },
-      });
-      expect(facts).toEqual([
-        {
-          repo: 'registrations',
-          fact: 'configuration',
-          status: 'unverifiable',
-          detail: expect.stringContaining('No active runner registrations'),
-        },
-      ]);
-      expect(calls.filter(({ method }) => method === 'POST')).toEqual([
-        {
-          path: '/app/installations/7/access_tokens',
-          method: 'POST',
-          body: { permissions: { metadata: 'read', contents: 'read' } },
-        },
-      ]);
-      expect(calls.filter(({ method }) => method === 'DELETE')).toHaveLength(1);
-      expect(JSON.stringify(facts)).not.toContain('private-read-token');
     },
   );
 
