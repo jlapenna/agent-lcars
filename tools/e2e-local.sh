@@ -262,6 +262,14 @@ if [ -n "${E2E_NETWORK_MODE:-}" ]; then
   SAFE_ENV+=("E2E_NETWORK_MODE=$E2E_NETWORK_MODE")
 fi
 
+# A single exact opt-in for the manual transport diagnostic. Certificates,
+# proxy executables and launch flags are created inside the hermetic task.
+case "${E2E_INBOX_TLS_DIAGNOSTIC:-}" in
+  '') ;;
+  1) SAFE_ENV+=("E2E_INBOX_TLS_DIAGNOSTIC=1") ;;
+  *) echo 'e2e-hermetic: E2E_INBOX_TLS_DIAGNOSTIC must be exactly 1 or unset' >&2; exit 1 ;;
+esac
+
 # The E2E target itself is deliberately uncached: replaying a green test run
 # would mean the suite never actually exercised the app. Its dependency graph
 # includes a separately invoked, deterministic console bundle, though, and

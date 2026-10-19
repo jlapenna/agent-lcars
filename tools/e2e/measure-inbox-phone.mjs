@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
+import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,13 +36,15 @@ export function labOptions(args, env = process.env) {
       samples: { type: 'string', default: '30' },
       out: { type: 'string' },
       'cpu-profile-out': { type: 'string' },
+      'tls-diagnostic': { type: 'boolean', default: false },
+      'tls-certificate': { type: 'string' },
     },
   });
   const origin = new URL(values.origin ?? '');
   const emulator = new URL(`http://${env.FIRESTORE_EMULATOR_HOST ?? ''}`);
   const loopback = (host) => ['localhost', '127.0.0.1', '[::1]'].includes(host);
   if (
-    origin.protocol !== 'http:' ||
+    !['http:', 'https:'].includes(origin.protocol) ||
     !loopback(origin.hostname) ||
     origin.username ||
     origin.password ||
@@ -47,6 +52,12 @@ export function labOptions(args, env = process.env) {
     origin.search ||
     origin.hash ||
     !loopback(emulator.hostname) ||
+    emulator.username ||
+    emulator.password ||
+    emulator.pathname !== '/' ||
+    emulator.search ||
+    emulator.hash ||
+    !emulator.port ||
     env.E2E_HERMETIC !== '1' ||
     env.PROJECT_ID !== 'demo-no-project'
   ) {
@@ -54,6 +65,28 @@ export function labOptions(args, env = process.env) {
       'Only explicit loopback demo-no-project hermetic labs are allowed.',
     );
   }
+  const tlsEnabled = values['tls-diagnostic'];
+  const certificate = values['tls-certificate'];
+  if (
+    (origin.protocol === 'https:') !== tlsEnabled ||
+    tlsEnabled !== Boolean(certificate) ||
+    (tlsEnabled && values['cpu-profile-out'])
+  )
+    throw Error(
+      'TLS requires HTTPS, --tls-diagnostic and --tls-certificate together; no CPU profile.',
+    );
+  if (
+    tlsEnabled &&
+    (env.NODE_TLS_REJECT_UNAUTHORIZED === '0' ||
+      (env.AUTH_SECRET !== undefined && env.AUTH_SECRET !== 'dummy-secret') ||
+      env.E2E_LIVE === '1')
+  )
+    throw Error(
+      'TLS diagnostic requires ordinary verified TLS and dummy hermetic auth.',
+    );
+  const tls = tlsEnabled
+    ? tlsCertificate(certificate, origin.hostname)
+    : undefined;
   const samples = Number(values.samples);
   if (!Number.isInteger(samples) || samples < 5 || samples > 60) {
     throw new Error('Samples must be an integer from 5 to 60 per cache case.');
@@ -67,13 +100,216 @@ export function labOptions(args, env = process.env) {
     cpuProfileOut: values['cpu-profile-out']
       ? path.resolve(values['cpu-profile-out'])
       : undefined,
+    ...(tls ? { tls } : {}),
   };
+}
+
+/** Public certificate only; the measurement process never receives a private key. */
+export function tlsCertificate(file, hostname) {
+  const resolved = realpathSync(file);
+  const relative = path.relative(realpathSync(os.tmpdir()), resolved);
+  const parent = statSync(path.dirname(resolved));
+  if (
+    !relative ||
+    relative.startsWith('..') ||
+    path.isAbsolute(relative) ||
+    !statSync(resolved).isFile() ||
+    statSync(resolved).size > 16_384 ||
+    path.dirname(resolved) === realpathSync(os.tmpdir()) ||
+    (parent.mode & 0o077) !== 0 ||
+    (process.getuid && parent.uid !== process.getuid())
+  )
+    throw Error('TLS certificate must be a bounded task-local temporary file.');
+  const pem = readFileSync(resolved, 'utf8');
+  if (
+    !/^\s*-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----\s*$/.test(
+      pem,
+    ) ||
+    /PRIVATE KEY/.test(pem) ||
+    (pem.match(/BEGIN CERTIFICATE/g) ?? []).length !== 1
+  )
+    throw Error('Provide exactly one public certificate.');
+  const cert = new X509Certificate(pem);
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (
+    !cert.checkIssued(cert) ||
+    !cert.verify(cert.publicKey) ||
+    !(isIP(host) ? cert.checkIP(host) : cert.checkHost(host)) ||
+    Date.parse(cert.validFrom) > Date.now() ||
+    Date.parse(cert.validTo) <= Date.now()
+  )
+    throw Error(
+      'TLS diagnostic requires a valid self-signed certificate for the loopback host.',
+    );
+  return {
+    ca: pem,
+    certificateSHA256: createHash('sha256').update(cert.raw).digest('hex'),
+    spkiSHA256: createHash('sha256')
+      .update(cert.publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('base64'),
+  };
+}
+
+export function tlsLaunchOptions(tls) {
+  return tls
+    ? { args: [`--ignore-certificate-errors-spki-list=${tls.spkiSHA256}`] }
+    : {};
+}
+
+const staticJS = /^\/_next\/static\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.js$/;
+const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** Retain only bounded response metadata, never request headers or dynamic bodies. */
+export function transportResponse(response, origin) {
+  const url = new URL(response.url);
+  if (
+    url.origin !== origin ||
+    url.hash ||
+    !(url.pathname === '/inbox' || (!url.search && staticJS.test(url.pathname)))
+  )
+    return undefined;
+  const headers = {};
+  for (const [key, value] of Object.entries(response.headers)) {
+    const name = key.toLowerCase();
+    if (
+      [
+        'content-encoding',
+        'vary',
+        'content-length',
+        'cache-control',
+        'etag',
+        'age',
+      ].includes(name)
+    )
+      headers[name] = String(value).slice(0, 256);
+  }
+  return {
+    path: url.pathname,
+    protocol: response.protocol,
+    status: response.status,
+    headers,
+  };
+}
+
+export function transportSummary(blocks) {
+  if (
+    blocks.length !== 4 ||
+    blocks.map((b) => b.arm).join(',') !== 'h1,h2,h2,h1'
+  )
+    throw Error('Incomplete counterbalanced transport blocks');
+  const first = blocks[0].report;
+  let corpus;
+  for (const { arm, report } of blocks) {
+    if (
+      report.error ||
+      report.samples.length !== 30 ||
+      !report.transport ||
+      report.browserVersion !== first.browserVersion ||
+      report.sourceRevision !== first.sourceRevision ||
+      JSON.stringify(report.profile) !== JSON.stringify(first.profile) ||
+      JSON.stringify(report.transport) !== JSON.stringify(first.transport)
+    )
+      throw Error('Confounded or incomplete transport cohort');
+    for (const cache of ['cold', 'warm'])
+      if (report.samples.filter((s) => s.cache === cache).length !== 15)
+        throw Error('Incomplete cache block');
+    for (const sample of report.samples.filter((s) => s.cache === 'cold')) {
+      const expected = arm === 'h1' ? 'http/1.1' : 'h2';
+      const scripts = sample.resources.filter((r) => staticJS.test(r.path));
+      const metadata = sample.transportResponses;
+      if (
+        sample.nextHopProtocol !== expected ||
+        !scripts.length ||
+        scripts.some((r) => r.nextHopProtocol !== expected) ||
+        !metadata?.some((r) => r.path === '/inbox') ||
+        metadata.some(
+          (r) =>
+            r.protocol !== expected ||
+            r.status !== 200 ||
+            r.headers['content-encoding'] !== 'gzip',
+        )
+      )
+        throw Error('Confounded transport protocol or compression');
+      if (
+        metadata.filter((r) => staticJS.test(r.path)).length !==
+          scripts.length ||
+        !sample.scriptCorpus?.length ||
+        sample.scriptCorpus.length !== scripts.length
+      )
+        throw Error('Incomplete static corpus');
+      const signature = JSON.stringify(sample.scriptCorpus);
+      corpus ??= signature;
+      if (corpus !== signature) throw Error('Confounded static bytes or build');
+    }
+  }
+  return Object.fromEntries(
+    ['h1', 'h2'].map((arm) => [
+      arm,
+      Object.fromEntries(
+        ['cold', 'warm'].map((cache) => {
+          const values = blocks
+            .filter((b) => b.arm === arm)
+            .flatMap((b) =>
+              b.report.samples
+                .filter((s) => s.cache === cache)
+                .map((s) => s.readyMs),
+            );
+          if (
+            values.length !== 30 ||
+            values.some((v) => !Number.isFinite(v) || v <= 0)
+          )
+            throw Error('Incomplete readiness cohort');
+          const p95Ms = percentile(values, 0.95);
+          return [
+            cache,
+            {
+              n: values.length,
+              p50Ms: percentile(values, 0.5),
+              p95Ms,
+              maxMs: Math.max(...values),
+              targetMet: p95Ms < TARGET_MS,
+            },
+          ];
+        }),
+      ),
+    ]),
+  );
 }
 
 const percentile = (values, quantile) =>
   [...values].sort((a, b) => a - b)[Math.ceil(values.length * quantile) - 1];
 
-async function seed(origin) {
+export async function seed(origin, tls) {
+  if (tls) {
+    await new Promise((resolve, reject) => {
+      const request = httpsRequest(
+        `${origin}/api/e2e/seed`,
+        {
+          method: 'POST',
+          ca: tls.ca,
+          rejectUnauthorized: true,
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(SAMPLE_TIMEOUT_MS),
+        },
+        (response) => {
+          response.resume();
+          response.on('end', () =>
+            response.statusCode === 200
+              ? resolve()
+              : reject(
+                  Error(
+                    `Lab fixture seed failed: HTTP ${response.statusCode}.`,
+                  ),
+                ),
+          );
+          response.on('error', reject);
+        },
+      );
+      request.on('error', reject);
+      request.end(JSON.stringify({ action: 'seed-inbox' }));
+    });
+    return;
+  }
   const response = await fetch(`${origin}/api/e2e/seed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -807,17 +1043,24 @@ export async function measure(options) {
   let browser;
   let deadline;
   let runDeadlineAt;
+  const interrupt = () => {
+    report.error = 'Measurement interrupted; partial cohort only';
+    void browser?.close().catch(() => undefined);
+  };
+  if (options.tls) process.once('SIGTERM', interrupt);
   try {
     report.environment.network = checkNetworkBoundary();
     report.sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], {
       encoding: 'utf8',
     }).trim();
     browser = await chromium.launch({
+      ...tlsLaunchOptions(options.tls),
       ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
         ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
         : {}),
     });
     report.browserVersion = browser.version();
+    if (report.error) throw Error(report.error);
     runDeadlineAt = Date.now() + RUN_TIMEOUT_MS;
     deadline = setTimeout(() => {
       if (!options.cpuProfileOut || !report.summary)
@@ -826,7 +1069,25 @@ export async function measure(options) {
         report.cleanupError = error.message;
       });
     }, RUN_TIMEOUT_MS);
-    await seed(options.origin);
+    if (options.tls)
+      report.transport = {
+        series: 'opt-in-loopback-tls',
+        certificateSHA256: options.tls.certificateSHA256,
+        spkiSHA256: options.tls.spkiSHA256,
+        buildHashes: Object.fromEntries(
+          await Promise.all(
+            ['BUILD_ID', 'app-build-manifest.json', 'build-manifest.json'].map(
+              async (file) => [
+                file,
+                sha256(
+                  await readFile(path.join('dist/apps/console/.next', file)),
+                ),
+              ],
+            ),
+          ),
+        ),
+      };
+    await seed(options.origin, options.tls);
     for (let index = 0; index < options.samples; index++) {
       // Interleave cases rather than assigning all cold runs the cold server.
       for (const cache of ['warm', 'cold']) {
@@ -903,6 +1164,13 @@ export async function measure(options) {
             }
           });
           const cdp = await context.newCDPSession(page);
+          const transportResponses = new Map();
+          if (options.tls)
+            cdp.on('Network.responseReceived', ({ requestId, response }) => {
+              const metadata = transportResponse(response, options.origin);
+              if (metadata && transportResponses.size < 256)
+                transportResponses.set(requestId, metadata);
+            });
           await cdp.send('Network.enable');
           await cdp.send('Emulation.setCPUThrottlingRate', {
             rate: PROFILE.cpuSlowdown,
@@ -924,6 +1192,7 @@ export async function measure(options) {
           // document's accumulated work from the timed renderer's counters.
           await cdp.send('Performance.enable', { timeDomain: 'timeTicks' });
           requests.clear();
+          transportResponses.clear();
           droppedRequests = 0;
           const sample = await milestone(page, options.origin, active, 'timed');
           active.stage = 'timed.metrics';
@@ -942,6 +1211,43 @@ export async function measure(options) {
               )
               .map(({ name, value }) => [name, value * 1_000]),
           );
+          if (options.tls) {
+            sample.transportResponses = [...transportResponses.values()];
+            if (cache === 'cold') {
+              sample.scriptCorpus = [];
+              for (const [requestId, metadata] of transportResponses) {
+                if (!staticJS.test(metadata.path)) continue;
+                const { body, base64Encoded } = await cdp.send(
+                  'Network.getResponseBody',
+                  { requestId },
+                );
+                const decoded = Buffer.from(
+                  body,
+                  base64Encoded ? 'base64' : 'utf8',
+                );
+                if (decoded.length > 8 * 1024 * 1024)
+                  throw Error('Static script exceeds diagnostic cap');
+                const built = await readFile(
+                  path.join(
+                    'dist/apps/console/.next',
+                    metadata.path.slice('/_next/'.length),
+                  ),
+                );
+                if (sha256(decoded) !== sha256(built))
+                  throw Error('Browser/build static script mismatch');
+                const resource = sample.resources.find(
+                  (r) => r.path === metadata.path,
+                );
+                sample.scriptCorpus.push({
+                  path: metadata.path,
+                  sha256: sha256(decoded),
+                  decodedBytes: decoded.length,
+                  encodedBytes: resource?.encodedBytes,
+                });
+              }
+              sample.scriptCorpus.sort((a, b) => a.path.localeCompare(b.path));
+            }
+          }
           if (errors.length)
             throw new Error(`Browser errors: ${errors.join('; ')}`);
           report.samples.push({ cache, index: index + 1, ...sample });
@@ -1032,6 +1338,7 @@ export async function measure(options) {
     report.error =
       error instanceof Error ? error.message : 'Measurement failed';
   } finally {
+    if (options.tls) process.removeListener('SIGTERM', interrupt);
     clearTimeout(deadline);
     report.environment.systemObservationsAtEnd = {
       loadAverage: os.loadavg(),

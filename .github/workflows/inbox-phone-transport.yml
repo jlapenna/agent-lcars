@@ -1,0 +1,54 @@
+name: Inbox phone TLS transport diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inbox-phone-transport
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    name: Manual loopback H1 and H2 diagnostic
+    runs-on: agent-lcars-e2e
+    timeout-minutes: 30
+    steps:
+      - name: Require protected main dispatch
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+        run: |
+          test "$DISPATCH_REF" = refs/heads/main
+          test "$REF_PROTECTED" = true
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node-pnpm
+
+      - uses: ./.github/actions/setup-nx-remote-cache
+        with:
+          url: ${{ vars.NX_CACHE_URL }}
+          write-token: ${{ secrets.NX_CACHE_TOKEN }}
+
+      # e2e-local launches the exact browser before build/port/emulator work.
+      # Missing baked prerequisites fail; no install, Docker or privilege fallback.
+      - name: Run opt-in transport diagnostic
+        env:
+          E2E_INBOX_TLS_DIAGNOSTIC: '1'
+          E2E_GREP: '^Inbox phone TLS transport diagnostic '
+        run: ./tools/e2e-local.sh
+
+      - name: Retain bounded diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: inbox-phone-tls-transport-${{ github.run_id }}
+          path: apps/console-e2e/test-output/
+          retention-days: 14
+          if-no-files-found: warn
