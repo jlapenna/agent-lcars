@@ -576,8 +576,7 @@ async function mintInstallationAccessToken(
       permissions,
     );
     // GitHub can also succeed with a narrowed grant, omitting an optional
-    // permission the installation has not approved from the response
-    // (the case mint-agent-token's verify-workflows-grant.sh handles).
+    // permission the installation has not approved from the response.
     const missing = OPTIONAL_PERMISSIONS.filter(
       (name) =>
         name in permissions &&

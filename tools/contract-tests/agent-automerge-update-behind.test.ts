@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 // Behavioral + presence fixtures for reconcile-automerge's "Update behind
 // branches of auto-merge-armed PRs" step (#1748). GitHub's own auto-merge
@@ -13,7 +14,7 @@ import { describe, expect, it } from 'vitest';
 // way). This extracts the two real jq gating predicates embedded in the
 // workflow (not a reimplementation) and runs them against realistic
 // gh-shaped fixtures, the same technique
-// agent-automerge-required-checks.test.ts uses for restore-main-checks, so
+// stale-review-dismissal coverage uses, so
 // a regression in the embedded jq itself fails the test. It also pins the
 // step's presence, its BEHIND/UNKNOWN gating and rebase/fallback update
 // commands, and the per-run cap as plain substring/regex assertions on the
@@ -29,21 +30,15 @@ const workflowPath = path.join(
 );
 const workflowText = readFileSync(workflowPath, 'utf8');
 
-const stepAnchor = workflowText.indexOf(
-  '- name: Update behind branches of auto-merge-armed PRs',
-);
-if (stepAnchor < 0) {
-  throw new Error(
-    'reconcile-automerge "Update behind branches of auto-merge-armed PRs" step not found',
-  );
+const workflow = parseYaml(workflowText) as {
+  jobs: Record<string, { steps: { name?: string; run?: string }[] }>;
+};
+const stepText = workflow.jobs['reconcile-automerge'].steps.find(
+  (step) => step.name === 'Update behind branches of auto-merge-armed PRs',
+)?.run;
+if (stepText === undefined) {
+  throw new Error('update-behind-branches shell step not found');
 }
-// The next step header (restore-main-checks's job key) bounds the step body
-// so extraction/assertions below cannot accidentally match later content.
-const stepEnd = workflowText.indexOf('\n  restore-main-checks:', stepAnchor);
-if (stepEnd < 0) {
-  throw new Error('could not find the end of the update-behind-branches step');
-}
-const stepText = workflowText.slice(stepAnchor, stepEnd);
 
 /**
  * Pulls the single-quoted jq program that follows `marker`, searching
@@ -75,8 +70,7 @@ function nextQuoted(
 // auto-merge-armed/not-parked eligibility check, then the
 // all-checks-green/none-running check. The marker deliberately excludes
 // the opening quote itself - nextQuoted's own indexOf("'", ...) is what
-// locates it - matching agent-automerge-required-checks.test.ts's
-// convention.
+// locates it.
 const eligibilityPredicate = nextQuoted('if ! jq -e', 0);
 const checksPredicate = nextQuoted('if ! jq -e', eligibilityPredicate.end);
 
@@ -193,9 +187,7 @@ describe('agent-automerge-reusable update-behind-branches step', () => {
     });
 
     it('admits a PR whose failed check is mixed with an in-progress replacement', () => {
-      // Not a claim about correctness of superseded-run handling (that
-      // logic lives in restore-main-checks) - just documents that this
-      // predicate treats "any non-running, non-SUCCESS entry" as
+      // The live predicate treats any failed or running check as
       // disqualifying, so it fails closed rather than open here.
       expect(
         runJqPredicate(checksPredicate.text, {

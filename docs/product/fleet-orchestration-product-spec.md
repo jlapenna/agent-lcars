@@ -495,9 +495,10 @@ consumed by every dispatched run in every member repository.
   - A reconcile job re-arms missed PRs, updates BEHIND branches (at most 5,
     skipping Renovate and Dependabot), and dismisses stale bot
     `CHANGES_REQUESTED` reviews.
-  - Legacy jobs remain for callers that still use `GITHUB_TOKEN`:
-    `restore-main-checks`, `close-orphaned-anchors`, and a legacy-arm
-    migration.
+  - Merge operations require explicit repository-scoped App identity;
+    unsupported `GITHUB_TOKEN` mode fails before mutation. Native events own
+    post-merge CI/deployment and issue closure. The bounded migration of an
+    existing legacy auto-merge arm to App identity remains.
 - **FL-CM-3 [Shipped]** Maintainer merge actions are available in the console:
   Approve & Merge, Approve & Rebase, Rebase, Unstick, Clear needs-human,
   Assign pipeline, and Close.
