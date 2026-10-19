@@ -71,14 +71,6 @@
         "AGENT_LCARS_RUNNER_APP_CLIENT_ID": {
           "class": "shared-input",
           "required": false
-        },
-        "LEGACY_RUNNER_APP_CLIENT_ID": {
-          "class": "shared-input",
-          "required": false
-        },
-        "LEGACY_RUNNER_APP_INSTALLATION_ID": {
-          "class": "shared-input",
-          "required": false
         }
       }
     },
