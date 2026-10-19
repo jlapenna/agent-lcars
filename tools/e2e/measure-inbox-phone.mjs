@@ -1507,6 +1507,40 @@ export async function stopTransportChild(child) {
     clearTimeout(timer);
   }
 }
+export function transportCaddyfile({
+  arm,
+  origin,
+  badOrigin,
+  pair,
+  badPair,
+  backend,
+}) {
+  return `{
+  admin off
+  persist_config off
+  auto_https off
+  default_sni 127.0.0.1
+  servers {
+    protocols ${arm === 'h1' ? 'h1' : 'h1 h2'}
+  }
+}
+${origin} {
+  bind 127.0.0.1
+  tls ${pair.cert} ${pair.key}
+  reverse_proxy ${backend.origin} {
+    transport http {
+      versions 1.1
+      compression off
+    }
+  }
+}
+${badOrigin} {
+  bind 127.0.0.1
+  tls ${badPair.cert} ${badPair.key}
+  respond "unrelated certificate"
+}
+`;
+}
 export async function transportExperiment(options) {
   if (process.env.E2E_INBOX_TLS_DIAGNOSTIC !== '1')
     throw Error('Transport experiment requires exact hermetic opt-in');
@@ -1585,30 +1619,7 @@ export async function transportExperiment(options) {
       remaining();
       await writeFile(
         config,
-        `{
-  admin off
-  persist_config off
-  auto_https off
-  servers {
-    protocols ${arm === 'h1' ? 'h1' : 'h1 h2'}
-  }
-}
-${origin} {
-  bind 127.0.0.1
-  tls ${pair.cert} ${pair.key}
-  reverse_proxy ${backend.origin} {
-    transport http {
-      versions 1.1
-      compression off
-    }
-  }
-}
-${badOrigin} {
-  bind 127.0.0.1
-  tls ${badPair.cert} ${badPair.key}
-  respond "unrelated certificate"
-}
-`,
+        transportCaddyfile({ arm, origin, badOrigin, pair, badPair, backend }),
       );
       proxy = spawn(
         caddy,
