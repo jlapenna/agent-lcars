@@ -25,6 +25,60 @@ the candidate's immutable registry digest, local inspected image ID, build
 source SHA and baked CLI versions; retain publisher provenance and scan results.
 Do not promote a mutable fleet tag as a qualification shortcut.
 
+### Ordinary CI execution
+
+The manual `Worker policy qualification` workflow runs one provider's existing
+native suite, setup-negative suite, image-evidence evaluator and typed failure
+consumer directly in an ordinary `agent-lcars-ci` allocation. It uses the normal
+Node/pnpm setup and GitHub Actions artifact upload. It does not dispatch another
+AI worker, create an external receiver, reserve a dedicated host or change the
+production policy selector. Other jobs continue through normal Kubernetes
+scheduling. The generic worker size is a platform-owned setting, not a memory
+or disk requirement of these tests.
+
+After the workflow reaches the default branch, the qualification owner supplies
+its expected immutable image ID and selects the provider, for example:
+
+```bash
+gh workflow run worker-policy-qualification.yml \
+  -f provider=claude -f candidate-image-id="$candidate_id"
+```
+
+Use a separate invocation for OpenCode. Do not repeat already-accepted Codex
+qualification for an unchanged candidate merely to produce a newer report.
+The CLI version is measured from the runner. The existing wrapper checks the
+image-baked handlers and runtime against the checked-out source, and the
+existing evaluator requires the complete provider mode inventory. The failure
+consumer uses the same native report; no synthetic replacement is generated.
+Every command has a bounded timeout and retained stdout, stderr and exit code;
+the job stops on the first failure without repeating a phase.
+On failure, a 15-second exit trap copies existing raw stdout/stderr and JSON/JSONL
+fixture diagnostics into `failed-diagnostics/`, preserving their scratch-relative
+paths and full contents. It also collects partial files available after an early
+failure or phase timeout. Dependency/Git directories and symlinks are excluded.
+`execution.exit` preserves the original failure; `collection.exit` and collection
+logs separately report any copy failure or timeout. The ordinary artifact uploads
+these diagnostics with the phase logs.
+
+The candidate image ID is operator-supplied expected identity, not an OCI
+inspection performed by the worker. `qualification.json` records
+`imageIdentityVerified: false` and `qualificationAccepted: false`. Before
+accepting candidate-image qualification, the owner must bind the workflow
+run/attempt and actual runner name to the normal runner Pod's immutable image
+identity using the existing platform read route. A green workflow alone does
+not prove that external binding or authorize graduation or activation.
+
+The normal artifact contains version output, native/setup reports, evaluator
+output, consumer output and phase exit codes, with source/baked hashes and
+workflow/runner identity. Passing scratch trees use their existing cleanup;
+copying dependency trees, collecting whole fixture archives, byte-custody ACKs
+and a separately qualified receiver are not prerequisites for this CI path.
+Historical complete archives and original failures remain unchanged. Failed
+commands retain their actual logs; a failed or canceled workflow is not passing
+qualification and must not be retried into green.
+
+### Local Docker alternative
+
 From a clean committed source worktree and a Docker host with the candidate
 already present, run each provider independently. Set `candidate_id` to the
 exact `sha256:` ID returned by `docker image inspect`; use a fresh output path:
