@@ -84,6 +84,12 @@ if [ "${E2E_NETWORK_MODE:-host}" != "host" ]; then
     node "$ROOT/tools/e2e/check-network.mjs"
 fi
 
+# Refuse unsupported opt-ins before locks, temporary HOME or tooling.
+case "${E2E_INBOX_TLS_DIAGNOSTIC:-}" in
+  '' | 1) ;;
+  *) echo 'e2e-hermetic: E2E_INBOX_TLS_DIAGNOSTIC must be exactly 1 or unset' >&2; exit 1 ;;
+esac
+
 # Take a non-blocking host-level lock before touching any port or starting
 # any build. This wrapper documents supporting macOS and Windows Bash
 # environments too (docs/e2e-security-boundary.md), where the stock shell is
@@ -260,6 +266,12 @@ if [ -n "${E2E_GREP:-}" ]; then
 fi
 if [ -n "${E2E_NETWORK_MODE:-}" ]; then
   SAFE_ENV+=("E2E_NETWORK_MODE=$E2E_NETWORK_MODE")
+fi
+
+# A single exact opt-in for the manual transport diagnostic. Certificates,
+# proxy executables and launch flags are created inside the hermetic task.
+if [ "${E2E_INBOX_TLS_DIAGNOSTIC:-}" = "1" ]; then
+  SAFE_ENV+=("E2E_INBOX_TLS_DIAGNOSTIC=1")
 fi
 
 # The E2E target itself is deliberately uncached: replaying a green test run
