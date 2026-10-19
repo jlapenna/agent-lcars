@@ -75,8 +75,6 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   [scale-set Support evidence](scale-set-support-evidence.md) (#1716) and the
   [2026-10-09 worker-policy source evidence](worker-policy-source-evidence-2026-10-09.json)
   read through [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md).
-  The smoke runbooks above also carry dated historical sections below their
-  current procedure.
 - [`api/work-v1.openapi.json`](api/work-v1.openapi.json) is generated from the
   Work contract. Regenerate it through the repository command rather than
   editing it by hand.

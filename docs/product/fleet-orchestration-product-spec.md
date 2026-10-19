@@ -522,14 +522,14 @@ consumed by every dispatched run in every member repository.
   trigger tag (`lib/tagged-reply-resume.ts`). The design doc's mention of an
   `AGENT_LCARS_IMPLICIT_REPLY_REPOS` gate is stale; that variable no longer
   exists. Historical session-identity proof is recorded in the
-  [canonical smoke ledger](../native-work-smoke-runbook.md#tagged-gate-re-gating-three-live-proofs-2026-09-06):
+  [canonical smoke ledger](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#tagged-gate-re-gating-three-live-proofs-2026-09-06):
   Claude [#1794](https://github.com/jlapenna/agent-lcars/issues/1794#issuecomment-5557261018)
   archived `6c2030cb-cebc-4d3d-953c-13b8fd390cd1` in both rounds;
   OpenCode [#1797](https://github.com/jlapenna/agent-lcars/issues/1797)
   archived `ses_f8ab9b701ffeQe92wumRW83s16` in both rounds on 2026-09-06.
   [#1798](https://github.com/jlapenna/agent-lcars/issues/1798#issuecomment-5557319183)
   proved Codex capture only before hitting quota; the
-  [2026-09-07 real-work proof](../native-work-smoke-runbook.md#2026-09-07-pass--restore-and-codex-exec-resume-on-real-work)
+  [2026-09-07 real-work proof](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#2026-09-07-pass--restore-and-codex-exec-resume-on-real-work)
   on sprinkles#5177 restored and resumed
   `01a07c4c-1c40-7221-8afb-68e1b4c4b582`, observed in both archives,
   `codex exec resume`, and `thread.started`. Recalling a codeword visible
@@ -541,7 +541,7 @@ consumed by every dispatched run in every member repository.
   sessions cannot cross providers.
 - **FL-RC-3 [Partial]** Slack threads (sub-project 5) have historical inbound
   and outbound proof: the
-  [2026-09-06 ledger](../native-work-smoke-runbook.md#slack-threads-sub-project-5-2026-09-06--inbound-and-outbound-pass-one-hop-unproven)
+  [2026-09-06 ledger](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#slack-threads-sub-project-5-2026-09-06--inbound-and-outbound-pass-one-hop-unproven)
   records a mention creating item `01M1W3T2X7KR5Z482XVK5C3837` in six
   seconds and the parked agent question reaching its originating thread.
   The remaining Slack gate is a **genuine human thread reply** reaching
