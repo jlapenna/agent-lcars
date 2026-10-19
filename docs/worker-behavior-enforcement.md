@@ -17,12 +17,12 @@ actions, correction and retained work with a localhost model and local
 transports. Those are isolated runtime observations, not real policy-enabled
 dispatches.
 
-| Evidence level   | Established                                                                                             | Remaining                                                                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification | Ready-head CI and independent review for changed live contracts                                                                            |
-| Isolated image   | Historical ledger binds observed CLIs, baked modules/helpers/runner and harness hashes                  | Current candidate must rerun every native and setup-negative case; changed bytes invalidate historical evidence                            |
-| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                              | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
-| Activation       | Default is off; no deployment or selector mutation is performed here                                    | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+| Evidence level   | Established                                                                                                | Remaining                                                                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification    | Ready-head CI and independent review for changed live contracts                                                                            |
+| Isolated image   | Codex 79+3, evaluator and failure consumer at the exact image/source below, with complete durable evidence | Claude/OpenCode current-image suites; changed artifacts need fresh provider evidence; offline success does not graduate a provider         |
+| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                                 | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
+| Activation       | Default is off; no deployment or selector mutation is performed here                                       | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
 
 The [2026-10-17 useful-work receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6228476076)
 binds Claude CLI 2.1.302, Work `01M53SRA2AE75PY9PAWNA9MT1S/r1`, its actual
@@ -50,9 +50,25 @@ source/module/helper/harness hashes: Claude **78/78**, Codex **79/79**, OpenCode
 Codex catalog failures and pre-fix Claude/Codex exhaustion failures. The raw
 runner-local directories are temporary; the committed record does not claim
 an inspected image identity, complete durable fixture bundles or a live dispatch.
-Current candidate-image qualification and failure consumption remain open.
+That source-only record does not establish candidate-image qualification or
+failure consumption.
 
-The 2026-10-18 in-job Codex run adds partial observations, not complete
+The [accepted Codex offline receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6256439638)
+binds Work `01M58GRR662DGGDBB72VNJ2QYP/r1`, source
+`37ceafcbc015eb254cc029d239d6248303026525`, CLI `codex-cli 0.163.0` and imageID
+`sha256:d714279ad545542f927d4aa53c56e4488bcbd24db737928c10b65156c00db6bc`.
+All 79 native cases, three setup-negative cases and both typed failure-consumer
+controls passed. The complete source/baked bindings, full durable fixture
+archive and positive original-container exit-0 receipt were verified. The
+receipt retains the receiver's initial mode-comparison failure, the outer
+worker's credential-output violation and the limits of the byte-only custody
+ACK; it does not credit the whole outer run as procedurally compliant.
+The evaluator remains `offlinePassed: true`, `graduated: false` and
+`activationAuthorized: false`. This qualifies that exact Codex offline evidence,
+not another image/provider or policy-enabled dispatch. Claude/OpenCode
+current-image suites and failure consumption remain open.
+
+The earlier 2026-10-18 in-job Codex run adds partial observations, not complete
 qualification evidence. Work `01M5666ND109DH80NVB9AN2WRQ/r2` ran as UID 1001
 with equal 2 CPU/6Gi/24Gi requests and limits on ARM64, at source
 `0a100485a47a9fe44ae6161360fb8ea4396bb990`. The allocation's inspected Pod
@@ -84,10 +100,10 @@ the exact Job and Pod became absent, so full retention remains unqualified.
 
 The canonical provider clock starts at `2026-10-18T01:31:01.740Z`; the run
 finished at `2026-10-18T01:45:28.068Z`. Its uploaded local binding record's
-`01:30:58Z` start is not that canonical timestamp. No successful suite was
-rerun to replace this history. Complete current-image qualification remains
-open, as do Claude/OpenCode current-image suites, useful policy-enabled
-dispatch and activation. No graduation or activation is authorized.
+`01:30:58Z` start is not that canonical timestamp. The later Codex result does
+not repair this earlier run's isolation or incomplete retention. Useful
+policy-enabled dispatch and activation remain separate unqualified gates.
+No graduation or activation is authorized.
 
 The native fixture uses one monotonic budget across initial execution,
 correction, explicit resume and failure finalization. Its 30/60-second limits
