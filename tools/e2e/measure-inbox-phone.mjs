@@ -1425,11 +1425,34 @@ export async function measure(options) {
 }
 
 const exec = promisify(execFile);
-const CADDY_URL =
-  'https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz';
-const CADDY_SHA256 =
-  '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b';
-const CADDY_BYTES = 18113754;
+const CADDY_ASSETS = {
+  x64: {
+    asset: 'caddy_2.11.7_linux_amd64.tar.gz',
+    bytes: 18113754,
+    sha256: '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b',
+  },
+  arm64: {
+    asset: 'caddy_2.11.7_linux_arm64.tar.gz',
+    bytes: 16485181,
+    sha256: 'd8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42',
+  },
+};
+
+export function caddyRelease(
+  platform = os.platform(),
+  architecture = os.arch(),
+) {
+  if (platform !== 'linux' || !Object.hasOwn(CADDY_ASSETS, architecture))
+    throw Error('Pinned standard Caddy requires Linux x64 or arm64');
+  const selected = CADDY_ASSETS[architecture];
+  return {
+    version: '2.11.7',
+    platform,
+    architecture,
+    ...selected,
+    url: `https://github.com/caddyserver/caddy/releases/download/v2.11.7/${selected.asset}`,
+  };
+}
 const PROBE = path.resolve('tools/e2e/measure-inbox-phone.mjs');
 async function freePort() {
   const socket = createServer();
@@ -1487,8 +1510,7 @@ export async function stopTransportChild(child) {
 export async function transportExperiment(options) {
   if (process.env.E2E_INBOX_TLS_DIAGNOSTIC !== '1')
     throw Error('Transport experiment requires exact hermetic opt-in');
-  if (os.platform() !== 'linux' || os.arch() !== 'x64')
-    throw Error('Pinned standard Caddy requires linux_amd64');
+  const release = caddyRelease();
   const backend = new URL(options.origin);
   labOptions(['--origin', backend.origin, '--out', options.out]);
   const artifactPath = (name) => path.join(path.dirname(options.out), name);
@@ -1496,7 +1518,7 @@ export async function transportExperiment(options) {
   const report = {
     status: 'incomplete',
     blocks: [],
-    caddy: { version: '2.11.7', sha256: CADDY_SHA256, bytes: CADDY_BYTES },
+    caddy: release,
     series:
       'TLS loopback diagnostic; separate from accepted HTTP baseline and production',
   };
@@ -1526,7 +1548,7 @@ export async function transportExperiment(options) {
     return deadlineAt - Date.now();
   };
   try {
-    const response = await fetch(CADDY_URL, {
+    const response = await fetch(release.url, {
       signal: AbortSignal.timeout(60_000),
     });
     if (!response.ok || !response.body) throw Error('Caddy download failed');
@@ -1534,13 +1556,14 @@ export async function transportExperiment(options) {
     let bytes = 0;
     for await (const chunk of response.body) {
       bytes += chunk.length;
-      if (bytes > CADDY_BYTES) throw Error('Caddy archive exceeds pinned size');
+      if (bytes > release.bytes)
+        throw Error('Caddy archive exceeds pinned size');
       chunks.push(chunk);
     }
     const archive = Buffer.concat(chunks);
     if (
-      bytes !== CADDY_BYTES ||
-      createHash('sha256').update(archive).digest('hex') !== CADDY_SHA256
+      bytes !== release.bytes ||
+      createHash('sha256').update(archive).digest('hex') !== release.sha256
     )
       throw Error('Caddy archive integrity mismatch');
     const archivePath = path.join(directory, 'caddy.tar.gz');

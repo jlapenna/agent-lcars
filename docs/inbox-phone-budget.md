@@ -212,10 +212,33 @@ part of this experiment. Ordinary CI skips the new spec by default.
 
 The hermetic entrypoint admits only `E2E_INBOX_TLS_DIAGNOSTIC=1` (unset is the
 default; other values fail), together with its existing `E2E_GREP` selection.
-The opted-in spec downloads the standard Linux amd64 Caddy **v2.11.7** archive
-into its private task temporary directory, checking exactly 18,113,754 bytes
-and SHA256 `727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b`.
-It neither installs nor builds Caddy. A task-local public self-signed certificate
+The opted-in spec selects the standard Caddy **v2.11.7** Linux archive for the
+actual process architecture (`x64` or `arm64`) before downloading into its private
+task temporary directory. Other platforms/architectures fail before download;
+there is no placement change, fallback asset or retry for a different host.
+The selected platform, actual architecture, asset name, URL, size and SHA256
+are retained in the diagnostic artifact.
+
+| Process architecture | Official archive                  | Exact bytes | SHA256                                                             |
+| -------------------- | --------------------------------- | ----------: | ------------------------------------------------------------------ |
+| `x64`                | `caddy_2.11.7_linux_amd64.tar.gz` |  18,113,754 | `727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b` |
+| `arm64`              | `caddy_2.11.7_linux_arm64.tar.gz` |  16,485,181 | `d8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42` |
+
+Pins identify the standard assets from the
+[official v2.11.7 release](https://github.com/caddyserver/caddy/releases/tag/v2.11.7).
+The original source assumed amd64 only; the retained normal E2E worker was
+ARM64, so that assumption did not cover the heterogeneous supported pool.
+That source finding was not an executed architecture refusal or transport
+experiment. All four arms still run on the same admitted host, architecture,
+build, browser, certificate and origin; other-host historical series remain
+separate. The source-author Job does not run the downloaded binary.
+
+The manual workflow's `E2E_GREP` matches the describe title without a leading
+start anchor: Playwright prepends project/file components to its matching title.
+Project-config listing must select exactly the one intended transport case;
+listing is not browser or transport execution.
+
+The diagnostic neither installs nor builds Caddy. A task-local public self-signed certificate
 and private key terminate TLS on `127.0.0.1` only. Caddy has admin, automatic
 HTTPS and config persistence off; it adds no encoding, recompression or cache.
 Its HTTP/1.1 upstream has automatic compression disabled so the client's gzip

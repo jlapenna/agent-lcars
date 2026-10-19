@@ -16,8 +16,10 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 import {
+  caddyRelease,
   labOptions,
   measure,
   seed,
@@ -635,4 +637,113 @@ describe('transport child deadline cleanup', () => {
       if (child.exitCode === null) child.kill('SIGKILL');
     }
   });
+});
+
+describe('standard Caddy release selection', () => {
+  it.each([
+    [
+      'x64',
+      'caddy_2.11.7_linux_amd64.tar.gz',
+      18113754,
+      '727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b',
+    ],
+    [
+      'arm64',
+      'caddy_2.11.7_linux_arm64.tar.gz',
+      16485181,
+      'd8fc6d179a5d283028a472a5618564f6ad8a86fed513e64f032b3b0b7cc45e42',
+    ],
+  ])(
+    'selects the exact official Linux %s asset and artifact provenance',
+    (architecture, asset, bytes, sha256) => {
+      expect(caddyRelease('linux', architecture as string)).toEqual({
+        version: '2.11.7',
+        platform: 'linux',
+        architecture,
+        asset,
+        bytes,
+        sha256,
+        url: `https://github.com/caddyserver/caddy/releases/download/v2.11.7/${asset}`,
+      });
+    },
+  );
+  it('uses actual process platform and architecture by default', () => {
+    expect(caddyRelease()).toEqual(caddyRelease(os.platform(), os.arch()));
+  });
+  it.each([
+    ['darwin', 'arm64'],
+    ['win32', 'x64'],
+    ['linux', 'arm'],
+    ['linux', 'ppc64'],
+    ['linux', 'toString'],
+  ])(
+    'refuses unsupported %s/%s rather than choosing another host or asset',
+    (platform, architecture) => {
+      expect(() => caddyRelease(platform, architecture)).toThrow(
+        'requires Linux x64 or arm64',
+      );
+    },
+  );
+  it.each([
+    ['darwin', 'arm64'],
+    ['linux', 'ppc64'],
+  ])(
+    'refuses actual unsupported %s/%s before download',
+    async (platform, architecture) => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      vi.spyOn(os, 'platform').mockReturnValue(platform as NodeJS.Platform);
+      vi.spyOn(os, 'arch').mockReturnValue(architecture as NodeJS.Architecture);
+      vi.stubEnv('E2E_INBOX_TLS_DIAGNOSTIC', '1');
+      try {
+        await expect(
+          transportExperiment({
+            origin: 'http://127.0.0.1:4204',
+            out: '/tmp/never-caddy.json',
+          }),
+        ).rejects.toThrow('requires Linux x64 or arm64');
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+});
+
+describe('manual transport workflow discovery', () => {
+  it('selects exactly the intended case through the actual Playwright project config', async () => {
+    const workflow = parseYaml(
+      await readFile('.github/workflows/inbox-phone-transport.yml', 'utf8'),
+    );
+    const selection = workflow.jobs.diagnostic.steps.find(
+      (step: { env?: { E2E_GREP?: string } }) => step.env?.E2E_GREP,
+    ).env.E2E_GREP;
+    const { stdout } = await promisify(execFile)(
+      'pnpm',
+      [
+        'exec',
+        'dotenv',
+        '-e',
+        'tools/e2e/ci.env',
+        '--',
+        'pnpm',
+        'exec',
+        'playwright',
+        'test',
+        '--config',
+        'apps/console-e2e/playwright.config.ts',
+        '--list',
+        '--reporter=list',
+      ],
+      {
+        timeout: 25_000,
+        maxBuffer: 64 * 1024,
+        env: { ...process.env, NX_DAEMON: 'false', E2E_GREP: selection },
+      },
+    );
+    expect(stdout).toContain('Total: 1 test in 1 file');
+    expect(stdout).toContain(
+      'Inbox phone TLS transport diagnostic › counterbalances H1 H2 H2 H1 without changing the bundle',
+    );
+  }, 30_000);
 });

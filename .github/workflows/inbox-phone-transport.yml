@@ -41,7 +41,7 @@ jobs:
       - name: Run opt-in transport diagnostic
         env:
           E2E_INBOX_TLS_DIAGNOSTIC: '1'
-          E2E_GREP: '^Inbox phone TLS transport diagnostic '
+          E2E_GREP: 'Inbox phone TLS transport diagnostic '
         run: ./tools/e2e-local.sh
 
       - name: Retain bounded diagnostic artifacts
