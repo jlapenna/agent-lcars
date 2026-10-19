@@ -41,11 +41,13 @@ import {
   type LeasedOutboxEntry,
   type OutboxEntry,
   outboxEntrySchema,
+  type OutboxSettlement,
   type RequestSource,
   type Run,
   runRecoveryDeadline,
   runSchema,
   runStateSchema,
+  settleOutboxEntry,
   taskDocumentSchema,
   type TaskId,
   taskKey,
@@ -857,45 +859,16 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
-  async settleOutbox(input: {
-    entryId: string;
-    claimId: string;
-    state: 'pending' | 'done' | 'failed';
-    now: string;
-    firstFailedAt?: string;
-    nextAttemptAt?: string;
-    deliveryFailures?: number;
-  }): Promise<boolean> {
+  async settleOutbox(input: OutboxSettlement): Promise<boolean> {
     const ref = this.#outboxRef(input.entryId);
     return this.#firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
       if (!snapshot.exists) return false; // no-op, matching MemoryStore
-      const current = outboxEntrySchema.parse(snapshot.data());
-      if (current.state !== 'leased' || current.claimId !== input.claimId) {
-        return false;
-      }
-      const {
-        claimId: _claimId,
-        leaseExpiresAt: _leaseExpiresAt,
-        ...rest
-      } = current;
-      const settled: OutboxEntry = {
-        ...rest,
-        state: input.state,
-        updatedAt: input.now,
-        // #1548 follow-up: omitted (`undefined`) leaves the field as
-        // `rest` already carried it forward from `current` -- only a
-        // caller settling an actual delivery failure passes these.
-        ...(input.firstFailedAt === undefined
-          ? {}
-          : { firstFailedAt: input.firstFailedAt }),
-        ...(input.nextAttemptAt === undefined
-          ? {}
-          : { nextAttemptAt: input.nextAttemptAt }),
-        ...(input.deliveryFailures === undefined
-          ? {}
-          : { deliveryFailures: input.deliveryFailures }),
-      };
+      const settled = settleOutboxEntry(
+        outboxEntrySchema.parse(snapshot.data()),
+        input,
+      );
+      if (settled === undefined) return false;
       tx.set(ref, settled);
       return true;
     });

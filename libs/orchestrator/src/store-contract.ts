@@ -1457,6 +1457,63 @@ export function runOrchestratorStoreContract(
         expect(retry.attempts).toBe(2);
       });
 
+      it('preserves retry history across omitted settlement fields and rejects stale owners', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
+        const first = onlyClaim(await claimOutbox(store, clock.now()));
+        const history = {
+          firstFailedAt: clock.now(),
+          nextAttemptAt: clock.now(),
+          deliveryFailures: 2,
+        };
+        expect(
+          await store.settleOutbox({
+            entryId: first.entryId,
+            claimId: first.claimId,
+            state: 'pending',
+            now: clock.now(),
+            ...history,
+          }),
+        ).toBe(true);
+
+        const retry = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(retry).toMatchObject(history);
+        expect(
+          await store.settleOutbox({
+            entryId: first.entryId,
+            claimId: first.claimId,
+            state: 'failed',
+            now: clock.now(),
+            deliveryFailures: 99,
+          }),
+        ).toBe(false);
+        expect(
+          await store.settleOutbox({
+            entryId: retry.entryId,
+            claimId: retry.claimId,
+            state: 'pending',
+            now: clock.now(),
+          }),
+        ).toBe(true);
+
+        const retained = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(retained).toMatchObject({ ...history, attempts: 3 });
+        expect(
+          await store.settleOutbox({
+            entryId: retained.entryId,
+            claimId: retained.claimId,
+            state: 'pending',
+            now: clock.now(),
+            deliveryFailures: 0,
+          }),
+        ).toBe(true);
+        expect(onlyClaim(await claimOutbox(store, clock.now()))).toMatchObject({
+          ...history,
+          deliveryFailures: 0,
+          attempts: 4,
+        });
+      });
+
       it('claims a never-attempted entry over a larger set of already-attempted, due entries (starvation)', async () => {
         const { clock, store, orchestrator } = await fixture();
 

@@ -641,6 +641,45 @@ export const outboxEntrySchema = z.discriminatedUnion('state', [
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 export type LeasedOutboxEntry = Extract<OutboxEntry, { state: 'leased' }>;
 
+export interface OutboxSettlement {
+  entryId: string;
+  claimId: string;
+  state: 'pending' | 'done' | 'failed';
+  now: string;
+  firstFailedAt?: string;
+  nextAttemptAt?: string;
+  deliveryFailures?: number;
+}
+
+/** Settle only the current lease owner; omitted retry fields retain history. */
+export function settleOutboxEntry(
+  entry: OutboxEntry | undefined,
+  input: OutboxSettlement,
+): OutboxEntry | undefined {
+  if (
+    entry === undefined ||
+    entry.state !== 'leased' ||
+    entry.claimId !== input.claimId
+  ) {
+    return undefined;
+  }
+  const { claimId: _claimId, leaseExpiresAt: _leaseExpiresAt, ...rest } = entry;
+  return {
+    ...rest,
+    state: input.state,
+    updatedAt: input.now,
+    ...(input.firstFailedAt === undefined
+      ? {}
+      : { firstFailedAt: input.firstFailedAt }),
+    ...(input.nextAttemptAt === undefined
+      ? {}
+      : { nextAttemptAt: input.nextAttemptAt }),
+    ...(input.deliveryFailures === undefined
+      ? {}
+      : { deliveryFailures: input.deliveryFailures }),
+  };
+}
+
 /**
  * Claim order for due, pending outbox entries -- shared by `MemoryStore`
  * and `FirestoreStore` so both `claimPendingOutbox` implementations agree

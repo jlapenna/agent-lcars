@@ -26,6 +26,7 @@ import type {
   GithubAnchorProjection,
   LeasedOutboxEntry,
   OutboxEntry,
+  OutboxSettlement,
   RequestSource,
   Run,
   TaskId,
@@ -37,6 +38,7 @@ import {
   isWorkAnchor,
   requestHistoryKey,
   runRecoveryDeadline,
+  settleOutboxEntry,
   taskKey,
 } from './model';
 import {
@@ -591,45 +593,10 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(claimed);
   }
 
-  async settleOutbox(input: {
-    entryId: string;
-    claimId: string;
-    state: 'pending' | 'done' | 'failed';
-    now: string;
-    firstFailedAt?: string;
-    nextAttemptAt?: string;
-    deliveryFailures?: number;
-  }): Promise<boolean> {
-    const entry = this.#outbox.get(input.entryId);
-    if (
-      entry === undefined ||
-      entry.state !== 'leased' ||
-      entry.claimId !== input.claimId
-    ) {
-      return false;
-    }
-    const {
-      claimId: _claimId,
-      leaseExpiresAt: _leaseExpiresAt,
-      ...rest
-    } = entry;
-    this.#outbox.set(input.entryId, {
-      ...rest,
-      state: input.state,
-      updatedAt: input.now,
-      // #1548 follow-up: omitted (`undefined`) leaves the field as `rest`
-      // already carried it forward from `entry` -- only a caller settling
-      // an actual delivery failure passes these.
-      ...(input.firstFailedAt === undefined
-        ? {}
-        : { firstFailedAt: input.firstFailedAt }),
-      ...(input.nextAttemptAt === undefined
-        ? {}
-        : { nextAttemptAt: input.nextAttemptAt }),
-      ...(input.deliveryFailures === undefined
-        ? {}
-        : { deliveryFailures: input.deliveryFailures }),
-    });
+  async settleOutbox(input: OutboxSettlement): Promise<boolean> {
+    const settled = settleOutboxEntry(this.#outbox.get(input.entryId), input);
+    if (settled === undefined) return false;
+    this.#outbox.set(input.entryId, settled);
     return true;
   }
 
