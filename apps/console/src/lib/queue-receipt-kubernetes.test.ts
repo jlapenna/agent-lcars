@@ -598,11 +598,32 @@ describe.skipIf(!enabled)('receipt fence application bridge', () => {
                   });
               }
             }
-            const runId = [...cases.values()].find(
-              (s) =>
-                url.pathname.includes(encodeURIComponent(s.runId)) ||
-                out.toString().includes(s.runId),
-            )?.runId;
+            // Capacity commands carry the run only inside the validated body
+            // (fence.runId / runId), never in the URL or the reply. Bind that
+            // run to a seeded case AND that case's own principal/pool before
+            // recording the actual production status and refusal.
+            const body = (parsed ?? {}) as {
+              fence?: { runId?: unknown };
+              runId?: unknown;
+            };
+            const named =
+              typeof body.fence?.runId === 'string'
+                ? body.fence.runId
+                : typeof body.runId === 'string'
+                  ? body.runId
+                  : undefined;
+            const runId =
+              named !== undefined && label.startsWith('capacity:')
+                ? [...cases.values()].find(
+                    (s) =>
+                      s.runId === named &&
+                      principals.get(token)?.capacityPool === s.poolId,
+                  )?.runId
+                : [...cases.values()].find(
+                    (s) =>
+                      url.pathname.includes(encodeURIComponent(s.runId)) ||
+                      out.toString().includes(s.runId),
+                  )?.runId;
             if (runId !== undefined)
               (sequence[runId] ??= []).push(
                 `${label}:${result.response.status}${fault ? `:${fault.mode}` : ''}${refusal(result.response.status, out)}`,

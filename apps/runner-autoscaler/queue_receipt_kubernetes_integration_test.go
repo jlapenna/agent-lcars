@@ -3390,16 +3390,12 @@ func receiptApplicationControllerDeath(ctx context.Context, t *testing.T, rt rec
 	if fresh == original || len(recoverySeen) != 0 {
 		t.Fatalf("successor was not a new incarnation or wrote objects: distinct=%t frames=%d", fresh != original, len(recoverySeen))
 	}
-	// The result must be the documented contract, not any refusal: the original
-	// credential never existed (missing Secret) or recovery is held (409).
-	allowed := map[string]bool{"receipt original credential unavailable": true, "capacity returned HTTP 409": true}
-	if done.Error == "" {
-		t.Fatal("successor reconciled an unbound original without its credential")
-	}
-	for _, line := range strings.Split(done.Error, "\n") {
-		if !allowed[strings.TrimSpace(line)] {
-			t.Fatalf("successor failed for an unrelated reason: %q", line)
-		}
+	// Recovery reuses the authenticated inventory nonce and both incarnations
+	// share the fixture subject, so the only legitimate result is the missing
+	// ORIGINAL credential. A bare capacity409 (reason dropped by the client)
+	// could be any unrelated conflict and is never accepted.
+	if done.Error != "receipt original credential unavailable" {
+		t.Fatalf("successor must fail only for the missing original credential, got %q", done.Error)
 	}
 	after := app.verify(ctx, t, c, nil)
 	if after.Receipt == nil || !reflect.DeepEqual(after.pendingOf(original), deadPending) || after.Receipt.JobUID != "" || after.Receipt.SecretUID != "" {
