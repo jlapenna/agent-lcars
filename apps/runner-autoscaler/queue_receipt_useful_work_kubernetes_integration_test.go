@@ -912,7 +912,10 @@ func TestReceiptKubernetesUsefulWork(t *testing.T) {
 					}
 				}
 			}
-			if cs != nil && !seen["provider"] && (cs.State.Running != nil || cs.State.Terminated != nil) {
+			// Container start is not provider start: only after the accepted
+			// activation (the real bootstrap order), and the parent then checks the
+			// authoritative committed providerProcessStartedAt marker.
+			if cs != nil && seen["activated"] && !seen["provider"] && (cs.State.Running != nil || cs.State.Terminated != nil) {
 				at := time.Now()
 				if cs.State.Running != nil {
 					at = cs.State.Running.StartedAt.Time
@@ -928,7 +931,9 @@ func TestReceiptKubernetesUsefulWork(t *testing.T) {
 		}
 		done, _ := physicalReceiptWorkersEnded(current, pods)
 		ended = done && len(pods) == 1
-		return ended, nil
+		// Never finish before the activation and provider frames were emitted in
+		// order; a missing one is an honest deadline failure.
+		return ended && seen["activated"] && seen["provider"], nil
 	})
 	if err != nil || !seen["activated"] {
 		t.Fatalf("worker did not activate and end within the shared deadline (activated=%v, reconcile=%v): %v", seen["activated"], reconcileFailure, err)

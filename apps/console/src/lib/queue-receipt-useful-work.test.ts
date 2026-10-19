@@ -1133,16 +1133,34 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
   const closers: (() => Promise<void>)[] = [];
   let child: ChildProcess | undefined;
 
+  // Set only after export, reopen-confirmation and the finish ACK succeed. Until
+  // then every private transient path is retained for recovery.
+  let clean = false;
+  const retained: string[] = [];
+
   afterAll(async () => {
-    // Join exactly what this suite started, LAST. A SIGKILL is never cleanup
-    // or retirement proof; Go reports exact retained identities itself.
-    if (child?.pid !== undefined && child.exitCode === null)
+    // Join exactly what this suite started, LAST. SIGTERM asks for graceful
+    // handling and we AWAIT the child's close; a signal or local process death
+    // is never retirement or cleanup proof (Go reports exact retained identities).
+    if (child?.pid !== undefined && child.exitCode === null) {
+      const gone = new Promise<void>((r) => child!.once('close', () => r()));
       try {
         process.kill(-child.pid, 'SIGTERM');
       } catch {
         // Already gone.
       }
+      await Promise.race([
+        gone,
+        new Promise<void>((r) => setTimeout(r, CLEANUP_BUDGET_S * 1000)),
+      ]);
+      if (child.exitCode === null)
+        retained.push(`child pid ${child.pid} did not exit`);
+    }
     for (const close of closers.reverse()) await close();
+    if (retained.length !== 0)
+      console.error(
+        `useful-work retained recovery state: ${retained.join('; ')}`,
+      );
   });
 
   it(
@@ -1315,9 +1333,10 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
 
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'useful-work-'));
       fs.chmodSync(tmp, 0o700);
-      closers.push(async () =>
-        fs.rmSync(tmp, { recursive: true, force: true }),
-      );
+      closers.push(async () => {
+        if (clean) fs.rmSync(tmp, { recursive: true, force: true });
+        else retained.push(`private transient state ${tmp}`);
+      });
       const tls = await makeCallbackTls(input.callback.ip, tmp);
       const bundle = path.join(tmp, 'ca-bundle.pem');
       fs.writeFileSync(
@@ -1550,6 +1569,22 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
           await preparePool();
           await writeAck('prepared');
         }
+        if (frame.kind === 'providerObserved') {
+          // Container start proves nothing; require the authoritative marker the
+          // real heartbeat committed after the accepted activation.
+          const deadline = Date.now() + 120_000;
+          for (;;) {
+            const live = await reopened.readRun(runId);
+            const marker = live?.queue?.providerProcessStartedAt;
+            if (marker !== undefined) {
+              evidence.providerProcessStartedAt = marker;
+              break;
+            }
+            if (Date.now() > deadline)
+              throw new Error('providerProcessStartedAt was never committed');
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
         if (frame.kind === 'usefulCompleted') {
           // Canonical finished report from the SECOND client; nothing here wrote it.
           const run = await reopened.readRun(runId);
@@ -1591,19 +1626,48 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
           await writeAck('usefulRecorded');
         }
         if (frame.kind === 'cleanup') {
-          const outDir = path.join(
-            path.resolve(os.homedir(), '.cache'),
-            `useful-work-evidence-${invocation}`,
-          );
-          fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+          // Export the actual durable state from a reopened Store, freeze it
+          // outside the checkout, then confirm it against a THIRD client and the
+          // owning adapter's lease before the finish ACK.
+          const snapshot = async (store: OrchestratorStore) => ({
+            run: await store.readRun(runId),
+            task: await store.readTask({ workId }),
+            capacity: await new CapacityProtocol(store).read(
+              new Date().toISOString(),
+            ),
+          });
+          const exported = await snapshot(reopened);
+          const confirmed = await snapshot(new FirestoreStore(options));
+          if (JSON.stringify(exported) !== JSON.stringify(confirmed))
+            throw new Error('reopened Store differs from the exported state');
+          if (
+            exported.capacity.receipts.some(
+              (r) => r.runId === runId && r.state !== 'retired',
+            )
+          )
+            retained.push(`live capacity receipt for ${runId}`);
+          const lease = await codexAuth.readLease();
+          if (lease !== undefined && JSON.stringify(lease).includes(runId))
+            throw new Error(
+              'Codex lease still names this run; recovery unresolved',
+            );
+          evidence.leaseHeldByRun = false;
           evidence.report = report;
           evidence.recovery = recovery;
           evidence.cleanup = frame;
+          evidence.store = exported;
+          const outDir = fs.mkdtempSync(
+            path.join(os.tmpdir(), `useful-work-evidence-${invocation}-`),
+          );
+          fs.chmodSync(outDir, 0o700);
           fs.writeFileSync(
             path.join(outDir, 'evidence.json'),
             JSON.stringify(evidence),
             { mode: 0o600 },
           );
+          retained.push(`frozen evidence ${outDir}`);
+          if (retained.length > 1)
+            throw new Error(`unresolved: ${retained.join('; ')}`);
           decoder.markFinished();
           await writeAck('finish');
           proc.stdin!.end();
@@ -1625,6 +1689,7 @@ describe.skipIf(mode === 'skip')('isolated real-bootstrap useful work', () => {
       );
       expect(decoder.frames.map((f) => f.kind)).toEqual([...FRAME_ORDER]);
       expect(report).toBeDefined();
+      clean = true;
     },
   );
 });
