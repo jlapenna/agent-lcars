@@ -1485,10 +1485,10 @@ export async function stopTransportChild(child) {
   }
 }
 export async function transportExperiment(options) {
-  if (os.platform() !== 'linux' || os.arch() !== 'x64')
-    throw Error('Pinned standard Caddy requires linux_amd64');
   if (process.env.E2E_INBOX_TLS_DIAGNOSTIC !== '1')
     throw Error('Transport experiment requires exact hermetic opt-in');
+  if (os.platform() !== 'linux' || os.arch() !== 'x64')
+    throw Error('Pinned standard Caddy requires linux_amd64');
   const backend = new URL(options.origin);
   labOptions(['--origin', backend.origin, '--out', options.out]);
   const artifactPath = (name) => path.join(path.dirname(options.out), name);
