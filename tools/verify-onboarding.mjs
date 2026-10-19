@@ -83,16 +83,13 @@ export function resolvedRegistrationInventory(source) {
   }
 }
 
-export function runnerRegistrations(config, legacyApp) {
-  const registrations = [];
-  if (config.github?.url)
-    registrations.push({
-      name: 'default',
-      github: config.github,
-      app: config.app ?? legacyApp,
-    });
-  registrations.push(
-    ...(config.registrations ?? []).filter((item) => !item.disabled),
+export function runnerRegistrations(config) {
+  if (config.github !== undefined || config.app !== undefined)
+    throw new AuditError(
+      'Root runner registration is no longer supported; supply current ARC registrations and their resolved App identities with --registrations=PATH.',
+    );
+  const registrations = (config.registrations ?? []).filter(
+    (item) => !item.disabled,
   );
   return registrations.map(({ name, github, app }) => {
     const url = new URL(github.url);
@@ -377,7 +374,6 @@ export async function runAudit({
   auditReadToken,
   runnerClientId,
   runnerPrivateKey,
-  legacyRunnerApp,
   api = createApi(),
 }) {
   const facts = [];
@@ -466,24 +462,10 @@ export async function runAudit({
         })),
       );
     }
-    // The deployed configuration remains Homelab-owned. Read its data; never
-    // import code or copy its registration list into this repository.
+    // ARC registration identities come from Homelab's accepted audit receipt.
     let registrations = [];
     try {
-      if (registrationConfig === undefined) {
-        const token = await tokenFor('jlapenna/homelab');
-        const file = await api(
-          '/repos/jlapenna/homelab/contents/github-runner-autoscaler/orchestrator.yml',
-          token,
-        );
-        registrationConfig = parse(
-          Buffer.from(file.content, 'base64').toString('utf8'),
-        );
-      }
-      registrations = runnerRegistrations(
-        registrationConfig ?? {},
-        legacyRunnerApp,
-      );
+      registrations = runnerRegistrations(registrationConfig ?? {});
       if (!registrations.length)
         throw new UnverifiableError(
           'No active runner registrations in configuration; supply current registration targets and their actual App identities with --registrations=PATH. Runner coverage was not audited.',
@@ -501,7 +483,6 @@ export async function runAudit({
         repo: registration.target,
         fact: `runner-list:${registration.name}`,
       };
-      // Legacy root registration receives identity through deployment env.
       // Do not substitute another App and claim its scope was verified.
       const registrationJwt =
         registration.clientId === clientId
@@ -514,7 +495,7 @@ export async function runAudit({
           ...fact,
           status: 'unverifiable',
           detail:
-            'Registration App identity absent or differs from supplied App credential; supply its declared identity with RUNNER_APP_CLIENT_ID/RUNNER_APP_PRIVATE_KEY (or the LEGACY_RUNNER_APP_* pair)',
+            'Registration App identity absent or differs from supplied App credential; supply its declared identity with RUNNER_APP_CLIENT_ID/RUNNER_APP_PRIVATE_KEY',
         });
         continue;
       }
@@ -611,16 +592,6 @@ async function main() {
     auditReadToken: process.env.AUDIT_READ_TOKEN?.trim() || undefined,
     runnerClientId: process.env.RUNNER_APP_CLIENT_ID,
     runnerPrivateKey: process.env.RUNNER_APP_PRIVATE_KEY,
-    legacyRunnerApp:
-      process.env.LEGACY_RUNNER_APP_CLIENT_ID &&
-      process.env.LEGACY_RUNNER_APP_INSTALLATION_ID
-        ? {
-            client_id: process.env.LEGACY_RUNNER_APP_CLIENT_ID,
-            installation_id: Number(
-              process.env.LEGACY_RUNNER_APP_INSTALLATION_ID,
-            ),
-          }
-        : undefined,
     registrationConfig: configPath
       ? parse(readFileSync(configPath, 'utf8'))
       : undefined,

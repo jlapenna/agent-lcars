@@ -47,8 +47,6 @@ jobs:
           # tokens within its existing grants and revokes them on completion.
           # Other App identities and permission gaps remain unverifiable; the
           # full maintainer audit is an onboarding step, not a scheduled secret.
-          LEGACY_RUNNER_APP_CLIENT_ID: ${{ vars.LEGACY_RUNNER_APP_CLIENT_ID }}
-          LEGACY_RUNNER_APP_INSTALLATION_ID: ${{ vars.LEGACY_RUNNER_APP_INSTALLATION_ID }}
         shell: bash
         run: |
           if [[ -n "$REGISTRATIONS_YAML" ]]; then

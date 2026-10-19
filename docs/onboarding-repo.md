@@ -341,14 +341,13 @@ Run `node tools/verify-onboarding.mjs` with `APP_CLIENT_ID`,
 `APP_PRIVATE_KEY`, and `AGENT_FLEET_LOGIN` supplied by the approved credential
 environment. Do not paste credentials into commands or logs. Use
 `--repo=OWNER/REPO` to narrow repository checks, or `--registrations=PATH` to
-read an operator-supplied registration configuration. The default watches the
-console's actual repository list and reads Homelab's legacy
-`github-runner-autoscaler/orchestrator.yml` through the GitHub API; it does not
-copy the registration list or import Homelab source code. That file now owns
-QueueExecutor, not ARC registrations. If it contains no active registrations,
-the audit emits `registrations/configuration: unverifiable`, explicitly reporting
-that runner coverage was not audited. An empty or entirely disabled operator
-inventory produces the same result; a green workflow is not complete coverage.
+read an operator-supplied ARC registration inventory. The default watches the
+console's actual repository list. Without an inventory, the audit emits
+`registrations/configuration: unverifiable`, explicitly reporting that runner
+coverage was not audited. An empty or entirely disabled inventory produces the
+same result; a green workflow is not complete coverage. The retired root
+`github`/`app` registration shape is rejected; use `registrations` entries with
+resolved App identities.
 
 For ARC runner-scope checks, an operator must supply current registration data
 from Homelab in the accepted format: `registrations` entries with `name`,
@@ -383,11 +382,8 @@ the current identity; they never establish a pass. Rate limits (including
 and token-revocation failures remain failures. Only `fail` produces a nonzero
 exit; an all-unverifiable run is successful execution with zero verified facts.
 For every run, retain the per-fact statuses rather than treating green workflow
-conclusion as full onboarding qualification. In particular,
-the legacy root autoscaler registration gets its App identity from deployment
-environment variables. Its identity cannot be established from the committed
-YAML alone. Supply its resolved registration metadata and its actual App
-credential for that check; another App's successful runner-list response is
+conclusion as full onboarding qualification. Supply each registration's actual
+App credential for its check; another App's successful runner-list response is
 not evidence for it. No private-key file referenced by registration YAML is
 opened by this tool. Record per-fact results when registrations use different
 Apps, rather than treating one credential's audit as complete fleet coverage.
@@ -396,12 +392,9 @@ At onboarding, `AUDIT_READ_TOKEN` supplies the existing maintainer credential
 for repository variables and rules/check metadata (see the final step below). All use of that token is GET-only; installation,
 claim permission, labels, and runner scope still use the actual fleet or
 runner App. This avoids granting administrative visibility to the fleet App
-solely for auditing. For the autoscaler App, supply `RUNNER_APP_CLIENT_ID` and
-`RUNNER_APP_PRIVATE_KEY` separately. Resolve the legacy registration identity
-from deployment into `LEGACY_RUNNER_APP_CLIENT_ID` and
-`LEGACY_RUNNER_APP_INSTALLATION_ID`, or supply resolved `app` metadata in the
-operator configuration file. These identifiers must describe the actual
-registration, not whichever credential happens to be available.
+solely for auditing. For a separate runner App, supply `RUNNER_APP_CLIENT_ID` and
+`RUNNER_APP_PRIVATE_KEY`; its identity must match the resolved `app` metadata in
+the inventory, not whichever credential happens to be available.
 Missing optional credentials and authorization gaps are emitted as
 `unverifiable` facts without failing the workflow; only an observed mismatch or
 operational request failure is `fail`.
@@ -424,9 +417,9 @@ After an approved apply, an operator can copy that public identity projection
 into the variable. Refresh it after each accepted lane/App identity change;
 a source merge alone does not create a deployed receipt. The workflow validates the nonempty allowlisted identity shape, rejects duplicate
 lane names and extra fields (including private keys), and passes the value as data through a private temporary file to `--registrations=PATH`
-and removes the file on exit. An unset variable preserves the default
-configuration lookup and its explicit coverage gap. A supplied empty or
-invalid inventory cannot silently fall back to that lookup. GitHub may display public step environment values in its run log. Keep private
+and removes the file on exit. An unset variable reports the explicit runner
+coverage gap without fetching obsolete autoscaler configuration. A supplied
+empty or invalid inventory is rejected. GitHub may display public step environment values in its run log. Keep private
 keys out of this inventory. This transport does not authenticate the declared App;
 runner scope still requires its separately supplied actual credential.
 Publishing the public inventory remains an operator action. Reuse existing
