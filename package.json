@@ -64,7 +64,7 @@
     "@eslint-react/eslint-plugin": "5.28.1",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
-    "@jlapenna/repo-tools": "github:jlapenna/repo-tools#v3.2.3",
+    "@jlapenna/repo-tools": "github:jlapenna/repo-tools#v3.2.4",
     "@naxodev/gonx": "4.1.2",
     "@next/eslint-plugin-next": "^16.2.4",
     "@nx/devkit": "23.3.0",
