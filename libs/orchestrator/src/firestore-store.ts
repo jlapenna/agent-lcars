@@ -39,7 +39,6 @@ import {
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
-  type OutboxEntry,
   outboxEntrySchema,
   type OutboxSettlement,
   type RequestSource,
