@@ -936,8 +936,6 @@ export const schedulesContract = {
         minted: z.array(
           z.strictObject({ scheduleId: workIdSchema, itemId: workIdSchema }),
         ),
-        // Compatibility field: intake always queues, so this is empty.
-        skippedCap: z.array(workIdSchema),
         disabled: z.array(workIdSchema),
         // One schedule's unexpected failure (a `mintItem` or store-write
         // rejection -- anything not already handled by `disabled`)

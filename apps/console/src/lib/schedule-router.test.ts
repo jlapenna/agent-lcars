@@ -309,7 +309,6 @@ describe('schedules routes', () => {
     );
     expect(r.json).toMatchObject({
       minted: [],
-      skippedCap: [],
       disabled: [ID],
     });
     expect(await call(ctx, 'GET', `/schedules/${ID}`)).toMatchObject({
@@ -486,7 +485,6 @@ describe('tick', () => {
     expect(r.json).toEqual({
       ticked: 1,
       minted: [],
-      skippedCap: [],
       disabled: [],
       errors: [],
     });
@@ -523,7 +521,6 @@ describe('tick', () => {
     expect(second.json).toEqual({
       ticked: 1,
       minted: [],
-      skippedCap: [],
       disabled: [],
       errors: [],
     });
@@ -635,7 +632,6 @@ describe('tick', () => {
     const r = await call(tickCtx, 'POST', '/schedules/tick', {});
     expect(r.json).toMatchObject({
       minted: [],
-      skippedCap: [],
       disabled: [ID],
     });
     expect(await call(ctx, 'GET', `/schedules/${ID}`)).toMatchObject({
@@ -667,7 +663,6 @@ describe('tick', () => {
     );
     expect(first.json).toMatchObject({
       minted: [{ scheduleId: ID, itemId }],
-      skippedCap: [],
     });
     const second = await call(
       withPrincipal(ctx, cronTick),
@@ -675,7 +670,7 @@ describe('tick', () => {
       '/schedules/tick',
       {},
     );
-    expect(second.json).toMatchObject({ minted: [], skippedCap: [] });
+    expect(second.json).toMatchObject({ minted: [] });
     expect((await call(ctx, 'GET', `/items/${itemId}`)).json.runs).toHaveLength(
       1,
     );
@@ -759,7 +754,6 @@ describe('tick', () => {
       { scheduleId: ID, message: 'store unavailable' },
     ]);
     expect(r.json.disabled).toEqual([]);
-    expect(r.json.skippedCap).toEqual([]);
     expect(r.json.minted).toHaveLength(1);
     expect(r.json.minted[0].scheduleId).toBe(OTHER_ID);
   });
