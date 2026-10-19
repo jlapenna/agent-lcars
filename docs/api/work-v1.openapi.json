@@ -7017,13 +7017,6 @@
                         "additionalProperties": false
                       }
                     },
-                    "skippedCap": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
-                      }
-                    },
                     "disabled": {
                       "type": "array",
                       "items": {
@@ -7049,13 +7042,7 @@
                       }
                     }
                   },
-                  "required": [
-                    "ticked",
-                    "minted",
-                    "skippedCap",
-                    "disabled",
-                    "errors"
-                  ],
+                  "required": ["ticked", "minted", "disabled", "errors"],
                   "additionalProperties": false
                 }
               }

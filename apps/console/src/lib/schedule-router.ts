@@ -536,7 +536,6 @@ export const scheduleRouter = os.router({
     return {
       ticked: schedules.length,
       minted,
-      skippedCap: [] as string[],
       disabled,
       errors,
     };
