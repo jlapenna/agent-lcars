@@ -19,9 +19,12 @@ allowBuilds:
   unrs-resolver: true
 
 # pnpm 11 revalidates the existing frozen lockfile against its new default
-# 24-hour release-age policy. These are the exact versions accepted by #964;
-# keep the default policy for every other present and future dependency.
+# 24-hour release-age policy. First-party publisher scopes are exempt; retain
+# the default policy for third-party dependencies except the exact versions
+# accepted below by #964 and #1345.
 minimumReleaseAgeExclude:
+  - '@jlapenna/*'
+  - '@supersprinklesracing/*'
   - '@eslint-react/ast@5.18.4'
   - '@eslint-react/core@5.18.4'
   - '@eslint-react/eslint-plugin@5.18.4'
