@@ -151,9 +151,7 @@ function issueResponse(overrides: Record<string, unknown> = {}) {
 
 /** A schema-safe stand-in for `@agent-lcars/orchestrator`'s own
  * `{repo}#{issue}/r{generation}` runId format. Fixtures here use a simpler
- * `intent-abc`-shaped ID rather than a real runId's `/`/`#`-bearing form;
- * orchestrator-dispatch.ts passes the real runId verbatim as
- * `broker_intent_id` in production. */
+ * `intent-abc`-shaped ID rather than a real runId's `/`/`#`-bearing form. */
 function orchestratorRun(
   overrides: Partial<{
     runId: string;

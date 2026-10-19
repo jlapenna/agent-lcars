@@ -277,15 +277,15 @@ export async function POST(
       },
     });
   }
-  // The broker's outbox drain uses raw fetch rather than Octokit. These two
-  // handler keeps the QueueExecutor dispatch coverage inside the same local
-  // GitHub boundary while validating the production request shape.
+  // Native item closure dispatches session expiry through GitHub. Provider
+  // execution uses QueueExecutor; unknown workflows must stay unhandled.
   if (
     path[0] === 'repos' &&
     path.length === 7 &&
     path.slice(1, 3).join('/') === controlPlaneRepository() &&
     path[3] === 'actions' &&
     path[4] === 'workflows' &&
+    path[5] === SESSION_EXPIRY_WORKFLOW_FILE &&
     path[6] === 'dispatches'
   ) {
     const body = (await req.json()) as {
@@ -293,29 +293,12 @@ export async function POST(
       inputs?: Record<string, unknown>;
     };
     const inputs = body.inputs;
-    if (path[5] === SESSION_EXPIRY_WORKFLOW_FILE) {
-      // A native item's close starts its telemetry session expiry.
-      return body.ref === 'main' &&
-        typeof inputs?.['item'] === 'string' &&
-        inputs['item'] !== ''
-        ? new NextResponse(null, { status: 204 })
-        : NextResponse.json(
-            { message: 'Invalid session expiry dispatch fixture request' },
-            { status: 422 },
-          );
-    }
-    const valid =
-      body.ref === 'main' &&
-      inputs !== undefined &&
-      typeof inputs['issue'] === 'string' &&
-      ['implement', 'plan'].includes(String(inputs['mode'])) &&
-      typeof inputs['broker_intent_id'] === 'string' &&
-      typeof inputs['broker_generation'] === 'string' &&
-      typeof inputs['broker_dispatch_token'] === 'string';
-    return valid
+    return body.ref === 'main' &&
+      typeof inputs?.['item'] === 'string' &&
+      inputs['item'] !== ''
       ? new NextResponse(null, { status: 204 })
       : NextResponse.json(
-          { message: 'Invalid workflow dispatch fixture request' },
+          { message: 'Invalid session expiry dispatch fixture request' },
           { status: 422 },
         );
   }

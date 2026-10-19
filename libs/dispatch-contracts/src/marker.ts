@@ -32,21 +32,11 @@ export function parseRunGeneration(runId: string): number | undefined {
 /**
  * The attempt's stable identity: `g<generation>:<intentId>`.
  *
- * #645 asks for "one immutable attemptId and workflow-run binding" per
- * attempt. This derives it from the intent and generation rather than minting
- * a fresh random value, for a specific reason: GitHub's API does not return a
- * run's dispatch-time inputs on the run object, so `display_title` is the only
- * channel a bound run and an orchestrator run record actually share. A minted ID would
- * therefore have to be encoded into the run title anyway — at which point it
- * is a second identifier that can disagree with the marker already there.
- *
- * Deriving it makes the two the same fact by construction: the marker is
- * literally this string in brackets, and immutability comes free, because
- * `intentId` and `generation` are both immutable once a generation exists.
- *
- * This is identity, not proof. `attempt.token` remains the separate bearer
- * capability the worker echoes back at preflight — an attemptId is public
- * (it is in the run title) and must never be accepted in its place.
+ * Derive it from the immutable run identity and generation so producers and
+ * artifact verification share one identity without a second random ID.
+ * This is public correlation identity, not worker authentication. The Work
+ * API separately validates the worker's `LCARS_RUN_TOKEN` and claim identity;
+ * an attemptId must never substitute for those credentials.
  */
 export function formatAttemptId({ generation, intentId }: AttemptLike): string {
   return `g${generation}:${intentId}`;
