@@ -12,7 +12,9 @@
 // dispatch-broker/workflow-contract.test.mjs uses; action.yml files here
 // are prettier-formatted two-space YAML, which this parser assumes.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 const tests = [];
@@ -29,6 +31,7 @@ const PUBLISHED = {
   'setup-repo-checks': {
     inputs: {
       tool: { required: true },
+      'tool-source': { required: false, default: 'install' },
       'actionlint-version': { required: false, default: '1.7.7' },
     },
     outputs: [],
@@ -195,6 +198,244 @@ for (const [name, expected] of Object.entries(PUBLISHED)) {
 test('every Published action directory exists', async () => {
   for (const name of Object.keys(PUBLISHED)) {
     await fs.access(path.join(actionsDirectory, name, 'action.yml'));
+  }
+});
+
+// Exercise the public shell entry point with installers forbidden. This runs
+// in the existing published-interface merge gate, without network access.
+test('setup-repo-checks baked tools validate exact versions without installation', async () => {
+  const scratch = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'baked-repo-checks-'),
+  );
+  const bin = path.join(scratch, 'bin');
+  await fs.mkdir(bin);
+  const write = async (name, body) =>
+    fs.writeFile(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  try {
+    for (const name of [
+      'curl',
+      'python3',
+      'pip',
+      'apt-get',
+      'sudo',
+      'mktemp',
+    ]) {
+      await write(name, 'echo forbidden-installer >&2; exit 97');
+    }
+    for (const name of ['uname', 'head', 'awk', 'sed', 'dirname']) {
+      await fs.symlink(`/usr/bin/${name}`, path.join(bin, name));
+    }
+    const versions = {
+      gitleaks: '8.18.2',
+      actionlint: 'v1.7.7',
+      shellcheck: 'version: 0.10.0',
+      pyflakes: '3.2.0 Python 3.12.0 on Linux',
+    };
+    const invoke = (tool, extra = {}) =>
+      spawnSync(
+        '/bin/bash',
+        [path.join(actionsDirectory, 'setup-repo-checks/install.sh')],
+        {
+          encoding: 'utf8',
+          env: { PATH: bin, CHECK_TOOL: tool, TOOL_SOURCE: 'baked', ...extra },
+        },
+      );
+    for (const [name, version] of Object.entries(versions))
+      await write(name, `echo '${version}'`);
+    for (const tool of ['gitleaks', 'actionlint']) {
+      const result = invoke(tool);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    for (const name of Object.keys(versions)) {
+      const tool = name === 'gitleaks' ? name : 'actionlint';
+      await write(name, 'echo wrong');
+      let result = invoke(tool);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /version mismatch/);
+      assert.doesNotMatch(result.stderr, /forbidden-installer/);
+      await fs.unlink(path.join(bin, name));
+      result = invoke(tool);
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.stderr, /is missing/);
+      assert.doesNotMatch(result.stderr, /forbidden-installer/);
+      await write(name, `echo '${versions[name]}'`);
+    }
+    let result = invoke('actionlint', { ACTIONLINT_VERSION: '1.7.8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /expected 1.7.8/);
+    await write('actionlint', "echo 'v1.7.8'");
+    assert.equal(
+      invoke('actionlint', { ACTIONLINT_VERSION: '1.7.8' }).status,
+      0,
+    );
+    result = invoke('gitleaks', { TOOL_SOURCE: 'automatic' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /tool-source must be baked or install/);
+    assert.doesNotMatch(result.stderr, /forbidden-installer/);
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('setup-repo-checks default install verifies and extracts the selected release on x64 and arm64', async () => {
+  const scratch = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'install-repo-checks-'),
+  );
+  const bin = path.join(scratch, 'bin');
+  const assets = path.join(scratch, 'assets');
+  await fs.mkdir(bin);
+  await fs.mkdir(assets);
+  const write = async (name, body) =>
+    fs.writeFile(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  try {
+    await fs.writeFile(
+      path.join(assets, 'gitleaks'),
+      '#!/bin/sh\necho 8.18.2\n',
+      { mode: 0o755 },
+    );
+    for (const [_machine, arch] of [
+      ['x86_64', 'x64'],
+      ['aarch64', 'arm64'],
+    ]) {
+      const asset = `gitleaks_8.18.2_linux_${arch}.tar.gz`;
+      assert.equal(
+        spawnSync('tar', [
+          '-czf',
+          path.join(assets, asset),
+          '-C',
+          assets,
+          'gitleaks',
+        ]).status,
+        0,
+      );
+    }
+    const checksums = spawnSync(
+      '/bin/sh',
+      ['-c', 'sha256sum gitleaks_*.tar.gz'],
+      { cwd: assets, encoding: 'utf8' },
+    );
+    assert.equal(checksums.status, 0);
+    await fs.writeFile(
+      path.join(assets, 'gitleaks_8.18.2_checksums.txt'),
+      checksums.stdout,
+    );
+    await write(
+      'uname',
+      'if [ "$1" = -s ]; then echo Linux; else echo "$MACHINE"; fi',
+    );
+    await write(
+      'curl',
+      `for argument do case "$argument" in https://*) url="$argument";; esac; done
+case "$url" in https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/*) ;; *) exit 96;; esac
+while [ "$1" != -o ]; do shift; done
+cp "$ASSETS/$(basename "$url")" "$2"`,
+    );
+    for (const mode of [undefined, 'install']) {
+      for (const machine of ['x86_64', 'aarch64']) {
+        const githubPath = path.join(scratch, 'github-path');
+        await fs.writeFile(githubPath, '');
+        const env = {
+          PATH: `${bin}:/usr/bin:/bin`,
+          CHECK_TOOL: 'gitleaks',
+          RUNNER_TEMP: scratch,
+          GITHUB_PATH: githubPath,
+          MACHINE: machine,
+          ASSETS: assets,
+        };
+        if (mode) env.TOOL_SOURCE = mode;
+        const result = spawnSync(
+          '/bin/bash',
+          [path.join(actionsDirectory, 'setup-repo-checks/install.sh')],
+          { env, encoding: 'utf8' },
+        );
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /OK/);
+        const installedBin = (await fs.readFile(githubPath, 'utf8')).trim();
+        assert.equal(
+          spawnSync(path.join(installedBin, 'gitleaks'), ['version'], {
+            encoding: 'utf8',
+          }).stdout.trim(),
+          '8.18.2',
+        );
+      }
+    }
+    // A tampered release must be rejected by the real sha256sum before extraction.
+    await fs.appendFile(
+      path.join(assets, 'gitleaks_8.18.2_linux_x64.tar.gz'),
+      'tampered',
+    );
+    const result = spawnSync(
+      '/bin/bash',
+      [path.join(actionsDirectory, 'setup-repo-checks/install.sh')],
+      {
+        env: {
+          PATH: `${bin}:/usr/bin:/bin`,
+          CHECK_TOOL: 'gitleaks',
+          RUNNER_TEMP: scratch,
+          GITHUB_PATH: path.join(scratch, 'rejected-path'),
+          MACHINE: 'x86_64',
+          ASSETS: assets,
+        },
+        encoding: 'utf8',
+      },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /FAILED/);
+    await assert.rejects(fs.access(path.join(scratch, 'rejected-path')));
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
+  }
+});
+
+test('repo-validation validates baked prerequisites before its install-only xz step', async () => {
+  const workflow = await fs.readFile(
+    '.github/workflows/repo-validation.yml',
+    'utf8',
+  );
+  assert.match(workflow, /tool-source:\n(?:.*\n){0,5} {8}default: 'install'/);
+  assert.match(workflow, /tool-source: \$\{\{ inputs.tool-source \}\}/);
+  assert.match(
+    workflow,
+    /- name: Install xz when missing\n {8}if: inputs.tool-source == 'install'/,
+  );
+  const block = workflow.match(
+    /- name: Validate tool source and baked xz\n[\s\S]*? {8}run: \|\n((?: {10}.*\n)+)/,
+  )?.[1];
+  assert.ok(block, 'workflow prerequisite validation step must exist');
+  const script = block
+    .split('\n')
+    .map((line) => line.slice(10))
+    .join('\n');
+  const scratch = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'repo-validation-xz-'),
+  );
+  try {
+    for (const name of ['sudo', 'apt-get', 'curl', 'python3', 'mktemp']) {
+      await fs.writeFile(
+        path.join(scratch, name),
+        '#!/bin/sh\necho forbidden-installer >&2; exit 97\n',
+        { mode: 0o755 },
+      );
+    }
+    const invoke = (mode) =>
+      spawnSync('/bin/bash', ['-c', script], {
+        env: { PATH: scratch, TOOL_SOURCE: mode },
+        encoding: 'utf8',
+      });
+    assert.equal(invoke('install').status, 0);
+    let result = invoke('baked');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /requires xz already/);
+    await fs.writeFile(path.join(scratch, 'xz'), '#!/bin/sh\nexit 0\n', {
+      mode: 0o755,
+    });
+    assert.equal(invoke('baked').status, 0);
+    result = invoke('invalid');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /tool-source must be baked or install/);
+    assert.doesNotMatch(result.stderr, /forbidden-installer/);
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
   }
 });
 

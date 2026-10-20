@@ -38,6 +38,10 @@ write_exe "$bin/pnpm" 'v="$(sed -nE "s/.*\"pnpm@([0-9.]+)[^\"]*\".*/\1/p" packag
 printf '{"packageManager": "pnpm@11.28.5"}\n' > "$tmp/corepack/package.json"
 printf '%s\n' pnpm@11.28.2 pnpm@11.28.5 > "$tmp/corepack/fleet-pnpm-pins"
 printf '%s\n' 11.28.2 11.28.5 > "$tmp/corepack/cached"
+write_exe "$bin/gitleaks" 'echo 8.18.2'
+write_exe "$bin/actionlint" 'echo v1.7.7'
+write_exe "$bin/shellcheck" 'echo "version: 0.10.0"'
+write_exe "$bin/pyflakes" 'echo "3.2.0 Python 3.12 on Linux"'
 write_exe "$bin/terraform" 'exit 0'
 write_exe "$bin/python314" 'exit 0'
 write_exe "$bin/uv" 'command -v python314'
@@ -52,6 +56,8 @@ gate() {
     AGENT_LCARS_LIB_DIR="$lib" \
     AGENT_LCARS_EXTERNALS_DIR="$tmp/externals" \
     AGENT_LCARS_COREPACK_DIR="$tmp/corepack" \
+    AGENT_LCARS_REPO_CHECKS_PINS="$here/repo-checks.env" \
+    AGENT_LCARS_ACTIONLINT_PIN="$here/actionlint-version" \
     AGENT_LCARS_JAVA_COMMAND="$bin/java" \
     AGENT_LCARS_OPENCODE="$bin/opencode" \
     AGENT_LCARS_LCARS="$bin/lcars" \
@@ -86,6 +92,10 @@ expect_failure() {
   if gate; then fail "$label: gate accepted a broken image"; fi
   grep -Fq "FAIL: $message" "$tmp/out" || fail "$label: expected 'FAIL: $message' ($(cat "$tmp/out"))"
 }
+
+write_exe "$bin/pyflakes" 'echo "2.0.0 Python 3.12 on Linux"'
+expect_failure "scanner mismatch" "pinned repository scanners run as runner"
+write_exe "$bin/pyflakes" 'echo "3.2.0 Python 3.12 on Linux"'
 
 export IMAGE_TEST_REPO_TOOLS_FAILURE=1
 expect_failure "repo-tools" "repo-tools commands are installed and the worktree guard executes"

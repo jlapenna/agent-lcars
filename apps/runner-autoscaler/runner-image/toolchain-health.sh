@@ -76,3 +76,23 @@ trusted_opencode_supports_auto() {
   [ -x "$opencode_command" ] &&
     "$opencode_command" run --help 2>&1 | grep -Fq -- '--auto'
 }
+
+# Exact scanner versions must be executable through the same PATH jobs use.
+repo_checks_run() (
+  pins="${AGENT_LCARS_REPO_CHECKS_PINS:-/usr/local/share/agent-lcars-tooling/repo-checks.env}"
+  actionlint_pin="${AGENT_LCARS_ACTIONLINT_PIN:-/usr/local/share/agent-lcars-tooling/actionlint-version}"
+  # shellcheck disable=SC1090
+  . "$pins" || return 1
+  actionlint_expected="$(cat "$actionlint_pin")" || return 1
+  [ -n "$actionlint_expected" ] || return 1
+  # This predicate is invoked as a condition: errexit does not propagate
+  # through it, and a comparison would discard a substitution's exit status.
+  gitleaks_output="$(gitleaks version)" || return 1
+  actionlint_output="$(actionlint -version)" || return 1
+  shellcheck_output="$(shellcheck --version)" || return 1
+  pyflakes_output="$(pyflakes --version)" || return 1
+  [ "$gitleaks_output" = "$GITLEAKS_VERSION" ] &&
+    [ "$(printf '%s\n' "$actionlint_output" | head -n 1 | sed 's/^v//')" = "$actionlint_expected" ] &&
+    [ "$(printf '%s\n' "$shellcheck_output" | sed -n 's/^version: //p')" = "$SHELLCHECK_VERSION" ] &&
+    [ "$(printf '%s\n' "$pyflakes_output" | awk '{print $1}')" = "$PYFLAKES_VERSION" ]
+)

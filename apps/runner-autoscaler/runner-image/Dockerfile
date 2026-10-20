@@ -227,6 +227,10 @@ FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS ci-tooling-build
 ARG GO_VERSION
 ARG TARGETOS
 ARG TARGETARCH
+COPY repo-checks.env install-repo-checks.sh /tmp/repo-checks/
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
+    && bash /tmp/repo-checks/install-repo-checks.sh \
+    && rm -rf /var/lib/apt/lists/*
 COPY actionlint-version /tmp/actionlint-version
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -290,7 +294,7 @@ RUN rm -f \
 # rather than relying on Ubuntu's older distribution package. Keep its bin
 # first on PATH so both CI and actionlint use this compiler consistently.
 COPY --from=go-runtime /usr/local/go /usr/local/go
-COPY --from=ci-tooling-build /out/actionlint /usr/local/bin/actionlint
+COPY --from=ci-tooling-build /out/ /usr/local/bin/
 COPY actionlint-version /usr/local/share/agent-lcars-tooling/actionlint-version
 ENV PATH=/usr/local/go/bin:${PATH}
 
@@ -425,11 +429,14 @@ RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_V
     chown -R runner:runner /opt/terraform-plugin-cache /opt/uv-python && \
     rm -rf /tmp/ci-providers
 
+COPY repo-checks.env /usr/local/share/agent-lcars-tooling/repo-checks.env
 COPY requirements-precommit.txt /usr/local/share/agent-lcars-tooling/requirements-precommit.txt
-RUN uv venv --python /usr/bin/python3 /opt/runner-python-tools && \
+RUN source /usr/local/share/agent-lcars-tooling/repo-checks.env && \
+    uv venv --python /usr/bin/python3 /opt/runner-python-tools && \
     uv pip install --python /opt/runner-python-tools/bin/python --no-cache \
-      -r /usr/local/share/agent-lcars-tooling/requirements-precommit.txt && \
-    ln -s /opt/runner-python-tools/bin/pre-commit /usr/local/bin/pre-commit
+      -r /usr/local/share/agent-lcars-tooling/requirements-precommit.txt "pyflakes==$PYFLAKES_VERSION" && \
+    ln -s /opt/runner-python-tools/bin/pre-commit /usr/local/bin/pre-commit && \
+    ln -s /opt/runner-python-tools/bin/pyflakes /usr/local/bin/pyflakes
 COPY python-hooks.test.sh /usr/local/lib/agent-lcars/python-hooks.test.sh
 
 COPY entrypoint.sh /entrypoint.sh

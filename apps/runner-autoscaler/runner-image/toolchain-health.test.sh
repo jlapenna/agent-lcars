@@ -269,4 +269,52 @@ if AGENT_LCARS_JAVA_COMMAND="$tmp/missing/java" java_21_runs; then
   exit 1
 fi
 
+# Exercise the image's runtime predicate through PATH, including every
+# scanner being missing or reporting a different version.
+mkdir "$tmp/scanners"
+for utility in head sed awk cat; do
+  ln -s "$(command -v "$utility")" "$tmp/scanners/$utility"
+done
+scanner() {
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$2" > "$tmp/scanners/$1"
+  chmod +x "$tmp/scanners/$1"
+}
+scanner gitleaks 8.18.2
+scanner actionlint "v$actionlint_version"
+scanner shellcheck 'version: 0.10.0'
+scanner pyflakes '3.2.0 Python 3.12 on Linux'
+scanners_run() {
+  AGENT_LCARS_REPO_CHECKS_PINS="$here/repo-checks.env" \
+    AGENT_LCARS_ACTIONLINT_PIN="${1:-$here/actionlint-version}" PATH="$tmp/scanners" repo_checks_run
+}
+scanners_run || { echo 'matching scanner versions rejected' >&2; exit 1; }
+for binary in gitleaks actionlint shellcheck pyflakes; do
+  cp "$tmp/scanners/$binary" "$tmp/saved-scanner"
+  printf '\nexit 1\n' >> "$tmp/scanners/$binary"
+  if scanners_run; then
+    echo "failing $binary with expected version output accepted" >&2; exit 1
+  fi
+  scanner "$binary" wrong
+  if scanners_run; then
+    echo "wrong $binary version accepted" >&2; exit 1
+  fi
+  rm "$tmp/scanners/$binary"
+  if scanners_run; then
+    echo "missing $binary accepted" >&2; exit 1
+  fi
+  mv "$tmp/saved-scanner" "$tmp/scanners/$binary"
+done
+
+# An absent or empty expected version must never match empty successful output.
+scanner actionlint ''
+if scanners_run "$tmp/absent-actionlint-pin"; then
+  echo 'missing actionlint pin matched empty version output' >&2; exit 1
+fi
+: > "$tmp/empty-actionlint-pin"
+if scanners_run "$tmp/empty-actionlint-pin"; then
+  echo 'empty actionlint pin matched empty version output' >&2; exit 1
+fi
+scanner actionlint "v$actionlint_version"
+scanners_run || { echo 'restored actionlint pin rejected' >&2; exit 1; }
+
 echo "toolchain-health.test.sh: all cases passed"
