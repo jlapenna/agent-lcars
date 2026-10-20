@@ -420,13 +420,33 @@ protected delivery separately.
 Immediately arm squash auto-merge yourself after the PR exists and this gate passes — re-running the same gate in the same fail-fast chain, so a rejected or changed read cannot reach the arming mutation:
 
 ```bash
+repository="<owner/repo>"
+pr_number="<PR>"
+reviewed_head="<exact-reviewed-pushed-head>"
 node "$(dirname "$AGENT_PROTOCOL_PATH")/../scripts/check-pr-closing-references.mjs" \
-  <owner/repo> <PR> <exact-reviewed-pushed-head> <declared-scope> \
-  && gh pr merge <N> --repo <owner/repo> --auto --squash \
-    --match-head-commit <exact-reviewed-pushed-head> \
-  && gh pr view <N> --repo <owner/repo> --json state,autoMergeRequest \
-  --jq 'if .state == "MERGED" or .autoMergeRequest != null then . else error("auto-merge is not armed") end'
+  "$repository" "$pr_number" "$reviewed_head" <declared-scope> \
+  && pr_node="$(gh pr view "$pr_number" --repo "$repository" --json id --jq .id)" \
+  && gh api graphql \
+    -f query='mutation($id: ID!, $head: GitObjectID!) {
+      enablePullRequestAutoMerge(input: {
+        pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH
+      }) {
+        pullRequest { id state headRefOid autoMergeRequest { enabledAt mergeMethod } }
+      }
+    }' \
+    -f id="$pr_node" -f head="$reviewed_head" \
+  && gh pr view "$pr_number" --repo "$repository" \
+    --json state,isDraft,headRefOid,autoMergeRequest \
+    --jq "if .headRefOid == \"$reviewed_head\" and (.state == \"MERGED\" or (.state == \"OPEN\" and .isDraft == false and .autoMergeRequest.mergeMethod == \"SQUASH\")) then . else error(\"expected head is not Ready with squash armed\") end"
 ```
+
+This recipe only enables expected-head SQUASH through the queue-only
+GraphQL mutation and validates the actual same-head arm; direct merging is
+not its action. Require an open, ready PR at `reviewed_head` and a non-null
+SQUASH `autoMergeRequest`
+at that same head in the final readback. If it merged during the request,
+verify the exact merge and rules evaluation rather than treating the arming
+command as proof of protected delivery.
 
 When implement mode takes over an existing PR, apply this handoff only if its
 author is a registered fleet bot. Leave a human-authored PR's merge state

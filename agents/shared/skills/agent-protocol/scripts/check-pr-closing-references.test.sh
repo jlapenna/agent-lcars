@@ -5,6 +5,7 @@ set -euo pipefail
 protocol_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 repo_root="$(cd "$protocol_root/../../../.." && pwd)"
 export AGENT_PROTOCOL_PATH="$protocol_root/reference/agent-protocol.md"
+command -v jq >/dev/null || { echo "jq is required (normal runner-image toolchain)" >&2; exit 1; }
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 export pr_number=2324 reviewed_head
@@ -15,6 +16,7 @@ export FAKE_GH_CALLS="$temp_dir/read"
 mkdir "$temp_dir/bin"
 cat > "$temp_dir/bin/gh" <<'GH'
 #!/usr/bin/env bash
+set -euo pipefail
 case "$1 $2" in
   'api graphql')
     if [[ "$*" != *enablePullRequestAutoMerge* ]]; then
@@ -23,29 +25,43 @@ case "$1 $2" in
       exit
     fi ;;
   'pr view')
-    if [[ "$*" == *'--json id --jq .id'* ]]; then
-      printf '%s\n' OWNED_PR_NODE
+    [[ "$*" != *'--json state,'* ]] || printf ran > "$READBACK_WITNESS"
+    filter=''
+    while (($#)); do
+      case "$1" in
+        --jq) filter=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    readback=$(jq -cn --arg head "$FAKE_READBACK_HEAD" \
+      '{id:"OWNED_PR_NODE",state:"OPEN",isDraft:false,headRefOid:$head,autoMergeRequest:{mergeMethod:"SQUASH"}}')
+    if [[ -n "$filter" ]]; then
+      jq -er "$filter" <<<"$readback"
     else
-      [[ "$*" != *'--json state,'* ]] || printf ran > "$READBACK_WITNESS"
-      printf '%s\n' '{"id":"OWNED_PR_NODE","state":"OPEN","isDraft":false,"autoMergeRequest":{"mergeMethod":"SQUASH"}}'
+      printf '%s\n' "$readback"
     fi
     exit ;;
   'pr ready') printf ran > "$MUTATION_WITNESS"; exit ;;
-  'pr merge') ;;
+  'pr merge') echo 'Published arming must use queue-only GraphQL' >&2; exit 64 ;;
   *) exit 64 ;;
 esac
 # Model only the public arming API's expected-head precondition. This is a
 # harmless sink, not a replacement checker or a production gh invocation.
-expected='' query=''
+expected='' query='' mutation_id=''
 while (($#)); do
   case "$1" in
-    --match-head-commit) expected=$2; shift 2 ;;
-    -f|-F) case "$2" in head=*) expected=${2#head=} ;; query=*) query=${2#query=} ;; esac; shift 2 ;;
+    -f|-F) case "$2" in head=*) expected=${2#head=} ;; query=*) query=${2#query=} ;; id=*) mutation_id=${2#id=} ;; esac; shift 2 ;;
     *) shift ;;
   esac
 done
-if [[ -n "$query" && "$query" != *expectedHeadOid* ]]; then expected=''; fi
-if [[ -n "$expected" && "$expected" != "$FAKE_MUTATION_HEAD" ]]; then
+head_binding='expectedHeadOid:[[:space:]]*\$head'
+squash_method='mergeMethod:[[:space:]]*SQUASH'
+if [[ -z "$expected" || "$mutation_id" != OWNED_PR_NODE ||
+      ! "$query" =~ $head_binding || ! "$query" =~ $squash_method ]]; then
+  echo 'Queue arming requires the supplied expected head and SQUASH' >&2
+  exit 64
+fi
+if [[ "$expected" != "$FAKE_MUTATION_HEAD" ]]; then
   echo 'Head changed at the arming boundary' >&2
   exit 1
 fi
@@ -77,7 +93,7 @@ NODE
 
 run_published() {
   local document=$1 action=$2 declared=$3 response_head=$4 closing=$5 mutation_head=$6
-  export FAKE_MUTATION_HEAD="$mutation_head"
+  export FAKE_MUTATION_HEAD="$mutation_head" FAKE_READBACK_HEAD="${7:-$reviewed_head}"
   rm -f "$MUTATION_WITNESS" "$READBACK_WITNESS" "$FAKE_GH_CALLS"
   local nodes='[]'
   [[ "$closing" = 0 ]] || nodes='[{"number":2407,"repository":{"nameWithOwner":"jlapenna/agent-lcars"}}]'
@@ -129,6 +145,12 @@ for document in "$AGENT_PROTOCOL_PATH" "$repo_root/.agents/skills/agent-lcars-de
       check 'concurrent push: arming precondition rejects new head' test "$CHAINED_STATUS" -ne 0
       check 'concurrent push: no mutation' mutation_absent
       check 'concurrent push: no dependent readback' readback_absent
+      if [[ "$document" = "$AGENT_PROTOCOL_PATH" ]]; then
+        run_published "$document" "$action" none "$reviewed_head" 0 "$reviewed_head" b
+        check 'wrong readback: published predicate exits nonzero' test "$CHAINED_STATUS" -ne 0
+        check 'wrong readback: arming mutation already occurred' mutation_present
+        check 'wrong readback: final readback actually evaluated' readback_present
+      fi
     fi
   done
 done
