@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { getWatchedRepos } from '../lib/github-client';
-import { type InboxCard, inboxCardKey } from './inbox-card';
+import type { InboxCard } from './inbox-card';
 import { QueueWorkspace } from './queue-workspace';
 import {
   renderInboxCardMarkdown,
@@ -35,11 +35,7 @@ export function DecisionInbox({
 
   return (
     <QueueWorkspace
-      cards={
-        selectedCard && inboxCardKey(selectedCard) === selectedItemKey
-          ? yourQueue
-          : renderInboxListMarkdown(yourQueue, selectedItemKey)
-      }
+      cards={renderInboxListMarkdown(yourQueue, selectedItemKey)}
       selectedCard={selectedCard && renderInboxCardMarkdown(selectedCard)}
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}
