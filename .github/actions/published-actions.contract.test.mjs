@@ -12,10 +12,10 @@
 // dispatch-broker/workflow-contract.test.mjs uses; action.yml files here
 // are prettier-formatted two-space YAML, which this parser assumes.
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const tests = [];
 function test(name, run) {
@@ -293,7 +293,7 @@ test('setup-repo-checks default install verifies and extracts the selected relea
       '#!/bin/sh\necho 8.18.2\n',
       { mode: 0o755 },
     );
-    for (const [machine, arch] of [
+    for (const [_machine, arch] of [
       ['x86_64', 'x64'],
       ['aarch64', 'arm64'],
     ]) {
