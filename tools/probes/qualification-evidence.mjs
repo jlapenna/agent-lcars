@@ -110,9 +110,9 @@ export function evaluateImageEvidence(expected, native, setup) {
     activationAuthorized: false,
     remainingGates: [
       'monotonic provider-budget qualification (#2223)',
-      'real policy-enabled dispatch acceptance (#2181)',
-      'interactive/member-repository acceptance (#2044 and #2181)',
-      'maintainer approval for exact provider/image/target (#2181)',
+      'real policy-enabled dispatch acceptance (#2956)',
+      'interactive/member-repository acceptance (#2044 and #2956)',
+      'maintainer approval for exact provider/image/target (#2956)',
     ],
   };
 }

@@ -245,8 +245,9 @@ writes. It is still offline qualification.
 
 ## Approval targets and remaining acceptance
 
-Keep #2181 open until the current candidate's normal dispatch and activation
-gates have evidence. [#2044](https://github.com/jlapenna/agent-lcars/issues/2044)
+Qualification and rollout preparation in [#2181](https://github.com/jlapenna/agent-lcars/issues/2181)
+are complete. Track the current candidate's normal dispatch and activation gates
+in [#2956](https://github.com/jlapenna/agent-lcars/issues/2956). [#2044](https://github.com/jlapenna/agent-lcars/issues/2044)
 is closed for its fresh native Claude interactive instruction-compliance scope;
 it does not qualify a new worker image or policy-enabled dispatch.
 Historical #2031/#2032 evidence establishes its named workstation/dispatch
