@@ -285,7 +285,7 @@ scanner shellcheck 'version: 0.10.0'
 scanner pyflakes '3.2.0 Python 3.12 on Linux'
 scanners_run() {
   AGENT_LCARS_REPO_CHECKS_PINS="$here/repo-checks.env" \
-    AGENT_LCARS_ACTIONLINT_PIN="$here/actionlint-version" PATH="$tmp/scanners" repo_checks_run
+    AGENT_LCARS_ACTIONLINT_PIN="${1:-$here/actionlint-version}" PATH="$tmp/scanners" repo_checks_run
 }
 scanners_run || { echo 'matching scanner versions rejected' >&2; exit 1; }
 for binary in gitleaks actionlint shellcheck pyflakes; do
@@ -304,5 +304,17 @@ for binary in gitleaks actionlint shellcheck pyflakes; do
   fi
   mv "$tmp/saved-scanner" "$tmp/scanners/$binary"
 done
+
+# An absent or empty expected version must never match empty successful output.
+scanner actionlint ''
+if scanners_run "$tmp/absent-actionlint-pin"; then
+  echo 'missing actionlint pin matched empty version output' >&2; exit 1
+fi
+: > "$tmp/empty-actionlint-pin"
+if scanners_run "$tmp/empty-actionlint-pin"; then
+  echo 'empty actionlint pin matched empty version output' >&2; exit 1
+fi
+scanner actionlint "v$actionlint_version"
+scanners_run || { echo 'restored actionlint pin rejected' >&2; exit 1; }
 
 echo "toolchain-health.test.sh: all cases passed"
