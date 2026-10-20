@@ -76,3 +76,15 @@ trusted_opencode_supports_auto() {
   [ -x "$opencode_command" ] &&
     "$opencode_command" run --help 2>&1 | grep -Fq -- '--auto'
 }
+
+# Exact scanner versions must be executable through the same PATH jobs use.
+repo_checks_run() (
+  pins="${AGENT_LCARS_REPO_CHECKS_PINS:-/usr/local/share/agent-lcars-tooling/repo-checks.env}"
+  actionlint_pin="${AGENT_LCARS_ACTIONLINT_PIN:-/usr/local/share/agent-lcars-tooling/actionlint-version}"
+  # shellcheck disable=SC1090
+  . "$pins" || return 1
+  [ "$(gitleaks version)" = "$GITLEAKS_VERSION" ] &&
+    [ "$(actionlint -version | head -n 1 | sed 's/^v//')" = "$(cat "$actionlint_pin")" ] &&
+    [ "$(shellcheck --version | sed -n 's/^version: //p')" = "$SHELLCHECK_VERSION" ] &&
+    [ "$(pyflakes --version | awk '{print $1}')" = "$PYFLAKES_VERSION" ]
+)

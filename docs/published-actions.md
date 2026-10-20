@@ -205,16 +205,31 @@ before authorization or storage; callers must not pre-truncate it.
 `setup-repo-checks` is Published. Set `tool: gitleaks` for Gitleaks 8.18.2,
 or `tool: actionlint` for actionlint (optional `actionlint-version`, default
 1.7.7), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
-on Linux x64/arm64 using a temporary directory and verified release archives.
-The actionlint toolchain requires xz to unpack ShellCheck, plus Python 3 and
-pip for Python-script checks. These prerequisites are installed in the fleet
-runner image.
+on Linux x64/arm64. `tool-source: install` remains the default: it uses a
+temporary directory and verified release archives, preserving GitHub-hosted
+and fork support and custom actionlint releases. The actionlint toolchain
+requires xz to unpack ShellCheck, plus Python 3 and pip. These prerequisites
+are installed in the fleet runner image.
+
+`tool-source: baked` validates the selected tools already on PATH: Gitleaks,
+or actionlint plus ShellCheck and Pyflakes. Every version must match the
+requested actionlint version and shared scanner pins exactly. Missing, broken
+or mismatched tools fail before creating a temporary package target or calling
+an installer; there is no fallback. The composite action consumes its sibling
+`apps/runner-autoscaler/runner-image/repo-checks.env` from the downloaded action
+repository as the shared scanner pin owner.
+
+The runner image source bakes these scanners, with Pyflakes in the root-owned
+`/opt/runner-python-tools` venv and executables on ordinary PATH. Source delivery
+is staged: publishing/adopting that image and selecting baked mode in fleet
+callers are separate work. Existing callers continue using install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. The workflow installs
-`xz-utils` with passwordless sudo/apt when an older worker lacks xz. Keep GitHub-hosted
-routing for fork pull requests. Secret scanning can use the same setup action
-without changing its check name, commit range, redaction or repository config.
+`xz-utils` with passwordless sudo/apt when an older worker lacks xz. Keep
+GitHub-hosted routing for fork pull requests. Secret scanning can use the same
+setup action without changing its check name, commit range, redaction or
+repository config.
 
 `repo-validation.yml` also runs repo-tools' `repo-check-runner-labels` at a
 pinned commit, in its own GitHub-hosted `runner label combinations` job so it

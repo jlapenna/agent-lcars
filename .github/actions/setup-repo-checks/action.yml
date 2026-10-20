@@ -4,6 +4,10 @@ inputs:
   tool:
     description: Scanner to install (gitleaks or actionlint).
     required: true
+  tool-source:
+    description: Use baked exact-version tools or install verified releases (baked never falls back).
+    required: false
+    default: 'install'
   actionlint-version:
     description: Exact actionlint release version (without v).
     required: false
@@ -13,6 +17,7 @@ runs:
   steps:
     - shell: bash
       env:
+        TOOL_SOURCE: ${{ inputs.tool-source }}
         CHECK_TOOL: ${{ inputs.tool }}
         ACTIONLINT_VERSION: ${{ inputs.actionlint-version }}
         SETUP_ACTION_PATH: ${{ github.action_path }}
