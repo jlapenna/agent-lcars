@@ -387,6 +387,58 @@ cp "$ASSETS/$(basename "$url")" "$2"`,
   }
 });
 
+test('repo-validation validates baked prerequisites before its install-only xz step', async () => {
+  const workflow = await fs.readFile(
+    '.github/workflows/repo-validation.yml',
+    'utf8',
+  );
+  assert.match(workflow, /tool-source:\n(?:.*\n){0,5} {8}default: 'install'/);
+  assert.match(workflow, /tool-source: \$\{\{ inputs.tool-source \}\}/);
+  assert.match(
+    workflow,
+    /- name: Install xz when missing\n {8}if: inputs.tool-source == 'install'/,
+  );
+  const block = workflow.match(
+    /- name: Validate tool source and baked xz\n[\s\S]*? {8}run: \|\n((?: {10}.*\n)+)/,
+  )?.[1];
+  assert.ok(block, 'workflow prerequisite validation step must exist');
+  const script = block
+    .split('\n')
+    .map((line) => line.slice(10))
+    .join('\n');
+  const scratch = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'repo-validation-xz-'),
+  );
+  try {
+    for (const name of ['sudo', 'apt-get', 'curl', 'python3', 'mktemp']) {
+      await fs.writeFile(
+        path.join(scratch, name),
+        '#!/bin/sh\necho forbidden-installer >&2; exit 97\n',
+        { mode: 0o755 },
+      );
+    }
+    const invoke = (mode) =>
+      spawnSync('/bin/bash', ['-c', script], {
+        env: { PATH: scratch, TOOL_SOURCE: mode },
+        encoding: 'utf8',
+      });
+    assert.equal(invoke('install').status, 0);
+    let result = invoke('baked');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /requires xz already/);
+    await fs.writeFile(path.join(scratch, 'xz'), '#!/bin/sh\nexit 0\n', {
+      mode: 0o755,
+    });
+    assert.equal(invoke('baked').status, 0);
+    result = invoke('invalid');
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /tool-source must be baked or install/);
+    assert.doesNotMatch(result.stderr, /forbidden-installer/);
+  } finally {
+    await fs.rm(scratch, { recursive: true, force: true });
+  }
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

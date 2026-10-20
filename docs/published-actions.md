@@ -225,8 +225,10 @@ is staged: publishing/adopting that image and selecting baked mode in fleet
 callers are separate work. Existing callers continue using install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
-set its `runs-on` input to their socketless fleet pool. The workflow installs
-`xz-utils` with passwordless sudo/apt when an older worker lacks xz. Keep
+set its `runs-on` input to their socketless fleet pool. It forwards optional
+`tool-source` (default `install`) to the setup action. Only install mode installs
+missing `xz-utils` with passwordless sudo/apt; baked mode requires xz already on
+PATH and never invokes that installer. Invalid modes fail before apt. Keep
 GitHub-hosted routing for fork pull requests. Secret scanning can use the same
 setup action without changing its check name, commit range, redaction or
 repository config.

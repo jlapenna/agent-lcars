@@ -36,6 +36,11 @@ name: Repo Validation
 on:
   workflow_call:
     inputs:
+      tool-source:
+        description: Use baked exact-version scanners or install verified releases. Baked requires xz already present.
+        required: false
+        type: string
+        default: 'install'
       actionlint-version:
         description: >-
           Exact native actionlint release version to run. The default tracks the
@@ -50,7 +55,7 @@ on:
           fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
           validation must stay green-capable before a repo's self-hosted
           fleet capacity deploys. Linux x64/arm64 runners need curl, tar, xz,
-          Python 3 and pip. Missing xz is installed with sudo apt-get; no
+          Python 3 and pip. In install mode, missing xz is installed with sudo apt-get; no
           Docker daemon is required.
         required: false
         type: string
@@ -156,7 +161,23 @@ jobs:
 
       - uses: actions/checkout@v7
 
+      - name: Validate tool source and baked xz
+        env:
+          TOOL_SOURCE: ${{ inputs.tool-source }}
+        run: |
+          case "$TOOL_SOURCE" in
+            install) ;;
+            baked)
+              command -v xz >/dev/null 2>&1 || {
+                echo '::error::baked tool-source requires xz already on PATH.'
+                exit 1
+              }
+              ;;
+            *) echo '::error::tool-source must be baked or install.'; exit 1 ;;
+          esac
+
       - name: Install xz when missing
+        if: inputs.tool-source == 'install'
         run: |
           if ! command -v xz >/dev/null 2>&1; then
             sudo -n apt-get update
@@ -166,6 +187,7 @@ jobs:
       - uses: jlapenna/agent-lcars/.github/actions/setup-repo-checks@main
         with:
           tool: actionlint
+          tool-source: ${{ inputs.tool-source }}
           actionlint-version: ${{ inputs.actionlint-version }}
 
       - name: actionlint
