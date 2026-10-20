@@ -17,12 +17,22 @@ actions, correction and retained work with a localhost model and local
 transports. Those are isolated runtime observations, not real policy-enabled
 dispatches.
 
-| Evidence level   | Established                                                                                                | Remaining                                                                                                                                  |
-| ---------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification    | Ready-head CI and independent review for changed live contracts                                                                            |
-| Isolated image   | Codex 79+3, evaluator and failure consumer at the exact image/source below, with complete durable evidence | Claude/OpenCode current-image suites; changed artifacts need fresh provider evidence; offline success does not graduate a provider         |
-| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                                 | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
-| Activation       | Default is off; no deployment or selector mutation is performed here                                       | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+| Evidence level   | Established                                                                                             | Remaining                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification | Ready-head CI and independent review for changed live contracts                                                                            |
+| Isolated image   | Claude 78+3, Codex 79+3 and OpenCode 81+3, evaluator and failure consumer at the candidate linked below | Changed artifacts need fresh provider evidence; offline success does not graduate a provider                                               |
+| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                              | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
+| Activation       | Default is off; no deployment or selector mutation is performed here                                    | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+
+The [current ordinary-CI qualification receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6277415491)
+binds all three provider suites to source `987d0f43abcb127e4f1536d8c91883bc30e99983`
+and immutable image index
+`sha256:54760b9bc082868263725fbdcbd07970b5a552f29d9fe059a2ef65fd3e30693e`.
+Each actual runner/Pod image binding was verified on ARM64 as UID 1001. All
+native cases, three setup-negative cases and the typed failure consumer passed
+per provider; normal artifacts and their verified digests are retained. This
+completes isolated qualification for that candidate, not policy-enabled dispatch
+or production activation.
 
 The [2026-10-17 useful-work receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6228476076)
 binds Claude CLI 2.1.302, Work `01M53SRA2AE75PY9PAWNA9MT1S/r1`, its actual
@@ -65,8 +75,9 @@ worker's credential-output violation and the limits of the byte-only custody
 ACK; it does not credit the whole outer run as procedurally compliant.
 The evaluator remains `offlinePassed: true`, `graduated: false` and
 `activationAuthorized: false`. This qualifies that exact Codex offline evidence,
-not another image/provider or policy-enabled dispatch. Claude/OpenCode
-current-image suites and failure consumption remain open.
+not another image/provider or policy-enabled dispatch. The ordinary-CI receipt
+above supplies the later three-provider qualification without changing this
+historical result.
 
 The earlier 2026-10-18 in-job Codex run adds partial observations, not complete
 qualification evidence. Work `01M5666ND109DH80NVB9AN2WRQ/r2` ran as UID 1001
@@ -142,8 +153,8 @@ the controller observed on 2026-10-10 runs source
 controller-adoption gates for token refresh and terminal-run retention. Their
 source fixes landed in [#2264](https://github.com/jlapenna/agent-lcars/pull/2264);
 Console deployment does not deliver the controller binary. The production policy
-selector remains empty, and current-image qualification, useful policy-enabled
-dispatch and approved activation remain separate gates.
+selector default remains empty. Isolated candidate qualification does not
+establish useful policy-enabled dispatch or approved activation.
 
 ## Scope and decisions
 
