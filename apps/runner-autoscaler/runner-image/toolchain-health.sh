@@ -83,8 +83,14 @@ repo_checks_run() (
   actionlint_pin="${AGENT_LCARS_ACTIONLINT_PIN:-/usr/local/share/agent-lcars-tooling/actionlint-version}"
   # shellcheck disable=SC1090
   . "$pins" || return 1
-  [ "$(gitleaks version)" = "$GITLEAKS_VERSION" ] &&
-    [ "$(actionlint -version | head -n 1 | sed 's/^v//')" = "$(cat "$actionlint_pin")" ] &&
-    [ "$(shellcheck --version | sed -n 's/^version: //p')" = "$SHELLCHECK_VERSION" ] &&
-    [ "$(pyflakes --version | awk '{print $1}')" = "$PYFLAKES_VERSION" ]
+  # This predicate is invoked as a condition: errexit does not propagate
+  # through it, and a comparison would discard a substitution's exit status.
+  gitleaks_output="$(gitleaks version)" || return 1
+  actionlint_output="$(actionlint -version)" || return 1
+  shellcheck_output="$(shellcheck --version)" || return 1
+  pyflakes_output="$(pyflakes --version)" || return 1
+  [ "$gitleaks_output" = "$GITLEAKS_VERSION" ] &&
+    [ "$(printf '%s\n' "$actionlint_output" | head -n 1 | sed 's/^v//')" = "$(cat "$actionlint_pin")" ] &&
+    [ "$(printf '%s\n' "$shellcheck_output" | sed -n 's/^version: //p')" = "$SHELLCHECK_VERSION" ] &&
+    [ "$(printf '%s\n' "$pyflakes_output" | awk '{print $1}')" = "$PYFLAKES_VERSION" ]
 )

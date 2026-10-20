@@ -290,6 +290,10 @@ scanners_run() {
 scanners_run || { echo 'matching scanner versions rejected' >&2; exit 1; }
 for binary in gitleaks actionlint shellcheck pyflakes; do
   cp "$tmp/scanners/$binary" "$tmp/saved-scanner"
+  printf '\nexit 1\n' >> "$tmp/scanners/$binary"
+  if scanners_run; then
+    echo "failing $binary with expected version output accepted" >&2; exit 1
+  fi
   scanner "$binary" wrong
   if scanners_run; then
     echo "wrong $binary version accepted" >&2; exit 1
