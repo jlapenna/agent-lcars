@@ -9,7 +9,8 @@ folded image qualification ledgers and dated acceptance checkpoints live in
 
 ## Current qualification boundary
 
-Track completion in [#2181](https://github.com/jlapenna/agent-lcars/issues/2181).
+Qualification and rollout preparation are complete in [#2181](https://github.com/jlapenna/agent-lcars/issues/2181).
+Track useful policy-enabled dispatch and production rollout in [#2956](https://github.com/jlapenna/agent-lcars/issues/2956).
 The shared policy, provider adapters, setup smoke, attempt/session binding,
 marker repair, review-hold reader, evaluator recovery and runner classification
 exist. Native suites exercise useful edit/commit/push/publication, forbidden
