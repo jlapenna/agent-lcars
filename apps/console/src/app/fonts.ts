@@ -24,8 +24,6 @@ export const bodyFont = localFont({
   weight: '400 600',
   style: 'normal',
   variable: '--font-body',
-  // Request this swap-loaded face through CSS instead of eager preload.
-  preload: false,
   display: 'swap',
 });
 
