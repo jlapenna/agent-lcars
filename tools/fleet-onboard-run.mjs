@@ -25,7 +25,6 @@ export const STEPS = Object.freeze(['target', 'lcars', 'homelab', 'github']);
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const LCARS_REPO = 'jlapenna/agent-lcars';
 const HOMELAB_REPO = 'jlapenna/homelab';
-const REVIEWER = 'jlapenna';
 const ATTRIBUTION =
   '🤖 Generated with [Claude Code](https://claude.com/claude-code)';
 
@@ -141,8 +140,6 @@ function createDraft(run, { repo, cwd, title, body, workdir, slug }) {
       '-R',
       repo,
       '--draft',
-      '--reviewer',
-      REVIEWER,
       '--title',
       title,
       '--body-file',
