@@ -17,12 +17,17 @@
    data-dir move that k3s cannot start from (absolute paths in its stored
    kubeconfigs), and a rescue path that would have rolled a healthy cluster
    back onto hour-old state — none of which CI could see.
-4. For an interactive, human-driven change, open the PR with `jlapenna` as
-   reviewer:
+4. For an interactive, human-driven change, open the PR as a draft:
 
    ```bash
-   gh pr create --draft --reviewer jlapenna
+   gh pr create --draft
    ```
+
+   Add `--reviewer jlapenna` only when the PR author is another identity,
+   such as a bot login. Interactive sessions push as `jlapenna`, and GitHub
+   silently drops a request for the author's own review, so on those PRs the
+   flag is a no-op; the `Protect main` ruleset's required checks and
+   review-thread resolution (steps 5 and 6) are the review gate instead.
 
    **Reconcile GitHub's actual closing scope before ready/arming**, in both
    interactive and dispatched publication. Declare exactly which issues this
@@ -168,9 +173,9 @@
    reconciler honours (it updates a `BEHIND` branch when `main` moves, see
    `stacked-prs.md`), and the merge lands under that login, so the
    push-triggered `main` workflows fire naturally with no recovery
-   dispatch. Review requests and required checks gate the merge exactly as
-   before; a session that ends without arming leaves a green PR waiting for
-   a human click.
+   dispatch. Required checks and review-thread resolution gate the merge
+   exactly as before; a session that ends without arming leaves a green PR
+   waiting for a human click.
 
    **The `Protect main` ruleset is the only thing protecting `main`.** The
    classic branch protection that used to sit alongside it was retired on
