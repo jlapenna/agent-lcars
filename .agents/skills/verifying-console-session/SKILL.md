@@ -1,6 +1,6 @@
 ---
 name: verifying-console-session
-description: Capture and reuse a real authenticated Agent LCARS browser session for production UI verification. Use when asked to test, inspect, screenshot, or verify the live auth-walled LCARS console with a saved admin or authenticated-user session instead of asking someone to log in again.
+description: Check, reuse, capture, mint or rotate a real authenticated Agent LCARS browser session with the repository's tools/saved-session commands (check-session, verify-session, capture-session, mint-session) to verify, inspect or screenshot the live auth-walled LCARS console at lcars.jlapenna.net. Use whenever a task asks to test or prove a production console page, admin-only route or deployed login path with a saved admin or user session instead of asking someone to log in again, or when a saved session is expired, expiring or missing. Not for hermetic emulator Playwright E2E (agent-lcars-dev owns that), not for mutating live state, and not for driving a person's signed-in shared Chrome.
 ---
 
 # Saved LCARS browser sessions
@@ -20,13 +20,15 @@ does not weaken them.
 
 - A saved Playwright storage state contains a live session cookie. Treat it as
   a bearer credential: never print it, attach it to an issue/PR, commit it, or
-  place it in a shared scratch directory.
+  place it in a shared scratch directory. Keep any `--state-file` outside the
+  repository.
 - The capture step is deliberately interactive. A human completes GitHub
   sign-in in the headed browser; an agent never types, requests, or handles
   login credentials. The mint step is the non-interactive alternative for a
   dedicated verification session: it requires maintainer access to the
   production `AUTH_SECRET`, which the read-only agent identity must never
-  receive.
+  receive. Minting and rotation are maintainer actions; read-only workers must
+  not run them.
 - Prefer a dedicated verification identity for any state shared through
   Secret Manager. A personal session should remain in the private local
   backend and only be captured when its owner explicitly chooses to do so.
@@ -50,191 +52,95 @@ logins during sign-in, so `user` is chiefly useful when a test only needs to
 assert authentication rather than admin status. Use `admin` when verifying an
 admin-only path.
 
-## Storage backends
+## Verify a production page
 
-The default `local` backend is ready without infrastructure. It writes a raw,
-directly reusable Playwright storage state with directory mode `0700` and file
-mode `0600`:
+Run every command from the repository root.
 
-```text
-${XDG_STATE_HOME:-~/.local/state}/agent-lcars/sessions/<role>.json
-```
+1. **Pick the role and backend.** The default `local` backend is a private
+   file on this workstation; `--storage secret` reads the shared
+   `AGENT_LCARS_<ROLE>_STORAGE_STATE` secret in project `agent-lcars`. Read
+   [references/storage-backends.md](references/storage-backends.md) before
+   using `--state-file`, `--project` or `--secret-name`, or when a backend
+   path, mode or permission is in question.
 
-Override it with `--state-file <path>` when another test harness needs a known
-location. Its containing directory must already be private (`0700`), or the
-tool refuses to write without changing the caller-owned directory's
-permissions. Keep that location outside the repository; `.auth/` is ignored
-only as a last defensive layer, not an invitation to put credentials in the
-tree.
+2. **Check readiness.** This read-only check needs only access to the saved
+   state, checks the live Auth.js role without launching a browser, and
+   reports the cookie deadline and the last safe rotation time for the
+   default 14-day validity window:
 
-The optional `secret` backend stores base64-encoded storage state as a new
-version of an existing secret in project `agent-lcars`:
+   ```bash
+   ./tools/nx run @agent-lcars/console:check-session -- \
+     --role admin --storage secret --origin https://lcars.jlapenna.net \
+     --project agent-lcars --minimum-valid-days 14
+   ```
 
-| Role    | Default secret                    |
-| ------- | --------------------------------- |
-| `admin` | `AGENT_LCARS_ADMIN_STORAGE_STATE` |
-| `user`  | `AGENT_LCARS_USER_STORAGE_STATE`  |
+   Exit codes are `0` ready, `1` unavailable/invalid request, `2` expired or
+   revoked, `3` wrong role, and `4` expiring or unknown expiry. The request
+   has a 10-second timeout; Secret Manager access has a 20-second timeout. It does not rotate or refresh a credential and never saves response cookies. A pass proves authentication
+   and the rotation window, not host capacity or resource guards. On `2` or
+   `4`, or when no saved state exists yet, read
+   [references/capture-mint-rotate.md](references/capture-mint-rotate.md).
 
-Use `--project` or `--secret-name` only for an intentionally provisioned
-alternative. Capture needs permission to add a version; reuse needs
-secret-version access. The scripts never create the container or its grants.
+3. **Qualify the local browser phase.** Before browser capture, reuse or
+   browser-cache installation, read and apply
+   [Bounded local verification](../agent-lcars-dev/references/verify.md#bounded-local-verification)
+   at the launch decision. Keep capacity, supervisor, accounting and storage
+   requirements in that authoritative owner; this skill supplies the
+   saved-session sequence. Keep failed guard receipts distinct from later functional evidence.
+   Checking this route establishes the handoff, not future agent behavior or
+   resource enforcement. Read-only credential readiness (step 2) remains a
+   separate check.
 
-## Mint a dedicated verification session
+4. **Install the matching headless shell** for this checkout's Playwright
+   package (re-run after a Playwright upgrade):
 
-The console uses Auth.js encrypted JWT sessions, so a maintainer can mint a
-dedicated production-verifier session without creating or sharing a personal
-GitHub login. The command reads `AUTH_SECRET` directly from Secret Manager,
-uses Auth.js's own encoder and production cookie name, writes a 30-day admin
-storage state, and never prints either credential:
+   ```bash
+   pnpm exec playwright install chromium --only-shell
+   ```
 
-```bash
-# Inspect locally first (private file backend)
-./tools/nx run @agent-lcars/console:mint-session
+   This is an explicit, unprivileged browser-cache step. The verifier never
+   downloads a browser, installs operating-system packages, or uses `sudo`.
+   Playwright's host-library dependencies remain a workstation prerequisite
+   managed through the host's normal reviewed setup path; never add
+   `--with-deps` to a verification run. Do not substitute an older cached browser or a
+   person's signed-in shared Chrome.
 
-# Publish a version for read-only headless agents
-./tools/nx run @agent-lcars/console:mint-session -- --storage secret
-```
+5. **Verify the page.** For the secret backend, add `--storage secret`:
 
-Minting is an operator bootstrap/rotation action. It requires access to both
-`AUTH_SECRET` and the destination's `secretVersionAdder` permission. Reuse
-requires only `secretAccessor` on `AGENT_LCARS_ADMIN_STORAGE_STATE`; do not
-grant the agent identity access to `AUTH_SECRET`. The minted subject is
-`agent-lcars-production-verifier`, distinct from the maintainer's GitHub
-identity. Use the interactive capture flow below only when verifying the real
-OAuth login path itself.
+   ```bash
+   ./tools/nx run @agent-lcars/console:verify-session -- \
+     --role admin \
+     --path /sessions \
+     --wait-for 'text=Sessions' \
+     --assert-text 'Session archive' \
+     --screenshot /tmp/lcars-sessions.png
+   ```
 
-## Capture
+   The command loads the saved state into a fresh headless browser, verifies
+   the live Auth.js session and role, requires the requested path not to
+   redirect, performs optional visible selector/text checks, and captures a
+   screenshot (full-page by default; `--screenshot-mode viewport` for a
+   focused view). `--minimum-valid-days 14` applies the same expiry
+   classifier as `check-session` before navigation. Its executable preflight
+   runs before saved state is read and before browser launch, and reports `BROWSER_RUNTIME_UNAVAILABLE`
+   separately from credential, role, redirect and assertion failures.
 
-Apply the [local browser phase preflight](#local-browser-phase-preflight)
-before capture as well. From the repository root:
-
-```bash
-# Private state on this workstation (default)
-./tools/nx run @agent-lcars/console:capture-session -- --role admin
-
-# Shared/headless reuse, after the secret container and grants exist
-./tools/nx run @agent-lcars/console:capture-session -- \
-  --role admin --storage secret
-```
-
-The command opens `https://lcars.jlapenna.net/login`, waits
-for the human to finish GitHub sign-in, validates `/api/auth/session`, checks
-the requested role, and only then saves the browser storage state. Override
-the deployment with `--origin <http(s)-origin>` for an explicitly intended
-test environment.
-
-## Reuse and verify
-
-Run the read-only readiness check before a production acceptance run. It needs
-only access to the saved state, checks the live Auth.js role without launching
-a browser, and reports the cookie deadline and the last safe rotation time for
-the default 14-day validity window:
-
-```bash
-./tools/nx run @agent-lcars/console:check-session -- \
-  --role admin --storage secret --origin https://lcars.jlapenna.net \
-  --project agent-lcars --minimum-valid-days 14
-```
-
-Exit codes are `0` ready, `1` unavailable/invalid request, `2` expired or
-revoked, `3` wrong role, and `4` expiring or unknown expiry. The request has a
-10-second timeout; Secret Manager access has a 20-second timeout. The command
-does not rotate or refresh a credential and never saves response cookies.
-`verify-session --minimum-valid-days 14` uses the same expiry classifier before
-page navigation. A readiness pass proves authentication and the rotation
-window; it does not qualify host capacity or resource guards. Use the browser
-verifier below for rendered-page acceptance after the local phase preflight.
-
-For a daily operator-owned check, configure the following command in the
-existing private monitoring environment, with its saved-state read identity
-and absolute repository path. Keep stdout/stderr in private operator logs;
-alert routing and installation of the schedule belong to that environment.
-This is a configuration handoff, not an installed cron job or public alert:
-
-```bash
-# Daily at 08:00 in the operator scheduler's timezone
-0 8 * * * cd /absolute/path/to/agent-lcars && timeout 60s node tools/saved-session/check.mjs --role admin --storage secret --origin https://lcars.jlapenna.net --project agent-lcars --minimum-valid-days 14
-```
-
-On an expiry warning, an approved maintainer rotates the dedicated admin state
-with this exact scoped command (read-only workers must not run it):
-
-```bash
-./tools/nx run @agent-lcars/console:mint-session -- \
-  --storage secret --origin https://lcars.jlapenna.net --project agent-lcars \
-  --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
-```
-
-### Local browser phase preflight
-
-Before browser capture, reuse or browser-cache installation, read and apply
-[Bounded local verification](../agent-lcars-dev/references/verify.md#bounded-local-verification)
-at the launch decision. Keep capacity, supervisor, accounting and storage
-requirements in that authoritative owner; this skill supplies the saved-session
-sequence. Read-only credential readiness above remains a separate check.
-
-Keep failed guard receipts distinct from later functional evidence. Checking
-this route establishes the handoff, not future agent behavior or resource
-enforcement.
-
-After rotation, run `check-session` above, qualify the local phase, then prove
-the admin session and the intended page with the supported browser verifier:
-
-```bash
-./tools/nx run @agent-lcars/console:verify-session -- \
-  --role admin --storage secret --origin https://lcars.jlapenna.net \
-  --project agent-lcars --minimum-valid-days 14 --path / \
-  --wait-for main --assert-text Bridge
-```
-
-Install the Chromium headless shell that matches this checkout's installed
-Playwright package before using the read-only verifier lane:
-
-```bash
-pnpm exec playwright install chromium --only-shell
-```
-
-This is an explicit, unprivileged browser-cache setup step; the verifier never
-downloads a browser, installs operating-system packages, or uses `sudo` on the
-operator's behalf. Playwright's host-library dependencies remain a workstation
-prerequisite and must be managed through the host's normal reviewed setup path,
-not by adding `--with-deps` to a verification run. Re-run the command after a
-Playwright upgrade so the cached revision stays aligned with the package in the
-current checkout. Do not substitute an older cached browser or a person's
-signed-in shared Chrome.
-
-```bash
-./tools/nx run @agent-lcars/console:verify-session -- \
-  --role admin \
-  --path /sessions \
-  --wait-for 'text=Sessions' \
-  --assert-text 'Session archive' \
-  --screenshot /tmp/lcars-sessions.png
-```
-
-For the secret backend, add `--storage secret`. The command loads the saved
-state into a fresh headless browser, verifies the live Auth.js session and
-role, requires the requested path not to redirect, performs optional visible
-selector/text checks, and captures a screenshot. Screenshots default to
-full-page; pass `--screenshot-mode viewport` for a focused view.
-
-Exit codes:
-
-- `0`: requested authenticated page and assertions passed.
-- `1`: invalid arguments, unavailable storage, selector/assertion failure, or
-  another operational error.
-- `2`: the saved session is expired or revoked; repeat the interactive capture.
-- `3`: the session authenticates but has the wrong role or the page redirected
-  elsewhere.
-- `4`: the saved session expiry is unknown or falls inside the requested
-  `--minimum-valid-days` safety window; rotate it before the deadline.
-- `5`: the matching Playwright Chromium headless-shell executable is not ready;
-  run the bounded install command above and retry.
-
-The executable preflight runs before saved state is read and before browser
-launch. It reports `BROWSER_RUNTIME_UNAVAILABLE` separately from expired
-credentials, role failures, redirects, and product-navigation assertions.
+   | Exit | Meaning                                                                                                     |
+   | ---- | ----------------------------------------------------------------------------------------------------------- |
+   | `0`  | Requested authenticated page and assertions passed.                                                         |
+   | `1`  | Invalid arguments, unavailable storage, selector/assertion failure, or another operational error.           |
+   | `2`  | Saved session expired or revoked; repeat the interactive capture.                                           |
+   | `3`  | Session authenticates but has the wrong role, or the page redirected elsewhere.                             |
+   | `4`  | Expiry unknown or inside the requested `--minimum-valid-days` safety window; rotate it before the deadline. |
+   | `5`  | Matching Playwright Chromium headless-shell executable not ready; run the step 4 install and retry.         |
 
 Auth.js JWT sessions are finite-lived credentials. The saved file/secret does
-not silently refresh itself; recapture when the command reports exit code 2 or
+not silently refresh itself; recapture when a command reports exit code 2 or
 after an explicit sign-out/revocation.
+
+## Capture, mint, rotate or monitor
+
+Read [references/capture-mint-rotate.md](references/capture-mint-rotate.md)
+before capturing a session interactively, minting or rotating the dedicated
+verifier session, accepting a rotation, or configuring the daily
+operator-owned readiness check.
