@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@jlapenna/repo-tools':
-        specifier: github:jlapenna/repo-tools#v2.3.0
-        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/266b637d51f73f2feff226eb9e8307d8b8e7368f(eslint@10.9.1(supports-color@7.2.0))(nx@23.1.2)(supports-color@7.2.0)(typescript@6.0.3)
+        specifier: github:jlapenna/repo-tools#v2.3.1
+        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/3bf8a0acb7a1a0480a60767819bfd3d76923f8db(eslint@10.9.1(supports-color@7.2.0))(nx@23.1.2)(supports-color@7.2.0)(typescript@6.0.3)
       dotenv:
         specifier: ^18.0.0
         version: 18.0.8
@@ -89,8 +89,8 @@ packages:
     resolution: {integrity: sha512-n5H8QLDJ47QqbCNn5SuFjCRDrOLEZ0h8vAHCK5RL9Ls7Xa8AQLa/YxAc9UjFqoEDM48muwtBGjtMY5cr0PLDCw==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/266b637d51f73f2feff226eb9e8307d8b8e7368f':
-    resolution: {gitHosted: true, integrity: sha512-F2bGcQKsxLJqHDGvGnk/3UpkPU2cyGuAwvtk8pC8PSh1OmvdnHpJWzEydwt9jWLVUVJgyNiXI+7IeCxUrtlvPg==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/266b637d51f73f2feff226eb9e8307d8b8e7368f}
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/3bf8a0acb7a1a0480a60767819bfd3d76923f8db':
+    resolution: {gitHosted: true, integrity: sha512-xHfEsa6fncxx1dlqzHaYVnTv6QvnUngrFYKGZB9IMbRz2akLa0LFT1Dtsj+jlVXiQC/bVHfyb8JowrdAcdpDRg==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/3bf8a0acb7a1a0480a60767819bfd3d76923f8db}
     version: 0.0.0
     engines: {node: '24', pnpm: 11.28.6}
     hasBin: true
@@ -1104,7 +1104,7 @@ snapshots:
 
   '@jest/diff-sequences@30.0.1': {}
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/266b637d51f73f2feff226eb9e8307d8b8e7368f(eslint@10.9.1(supports-color@7.2.0))(nx@23.1.2)(supports-color@7.2.0)(typescript@6.0.3)':
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/3bf8a0acb7a1a0480a60767819bfd3d76923f8db(eslint@10.9.1(supports-color@7.2.0))(nx@23.1.2)(supports-color@7.2.0)(typescript@6.0.3)':
     dependencies:
       '@nx/devkit': 23.3.0(nx@23.1.2)
       '@typescript-eslint/utils': 8.71.2(eslint@10.9.1(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
