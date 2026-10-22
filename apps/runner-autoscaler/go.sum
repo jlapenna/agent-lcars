@@ -12,6 +12,8 @@ cloud.google.com/go/firestore v1.26.0 h1:7Y6wn4aj5JXl2DAsKSTpLzYKPrfrIbhgQnHDjNO
 cloud.google.com/go/firestore v1.26.0/go.mod h1:X7hAjktdf9wIYJEHJ/dRFpYJmpcZanf1WnWxBAq8vJE=
 cloud.google.com/go/firestore v1.27.0 h1:zGcfBV2AwUGYsqj3+KcAx9MMWOiGYsAS8Xche13kM+c=
 cloud.google.com/go/firestore v1.27.0/go.mod h1:igzGLe8KqzF6LwK3n5skIqtozEmRJ3DXxJk10JgZZkc=
+cloud.google.com/go/firestore v1.28.0 h1:5/LmeAk6My5WCSkLZGVPPC5I0opkNrseA8nkUpTbc9w=
+cloud.google.com/go/firestore v1.28.0/go.mod h1:igzGLe8KqzF6LwK3n5skIqtozEmRJ3DXxJk10JgZZkc=
 cloud.google.com/go/longrunning v1.2.0 h1:WjYH3YHBGCxGJP9M4dWGHBfXr/cFIjMkNgWcJj7/iMM=
 cloud.google.com/go/longrunning v1.2.0/go.mod h1:5KMQALFGOCtFoi2xSOA1u3H7WKlhmckgiyFw7+LGQp0=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
@@ -208,6 +210,8 @@ google.golang.org/api v0.305.0 h1:2+f87RXv3l6Rom0t2GN0zOr2dV+LqOKnxSFVOUEurnc=
 google.golang.org/api v0.305.0/go.mod h1:dcjRWAy1QdjGb3Z67Qu0gdBWH2gL8Qoy/RI2ZVuvdeE=
 google.golang.org/api v0.306.0 h1:jbakJtAJAO1d8PUFandqfYHuf/ecaeTgoas7+hpXLHc=
 google.golang.org/api v0.306.0/go.mod h1:4XMH+b/ZEfuTbK7FnrFRY9c4xfFHVflGTKuy/i5wUmE=
+google.golang.org/api v0.308.0 h1:iGb+4qT3nVb3uuIzwor3yP2nyu+rMZr31PvLFiRNJQk=
+google.golang.org/api v0.308.0/go.mod h1:4XMH+b/ZEfuTbK7FnrFRY9c4xfFHVflGTKuy/i5wUmE=
 google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d h1:C9v1o0/4quuhOAfmRXA2j+we0PqZIp8traLdeogF3Ms=
 google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d/go.mod h1:Wz2wFJntZFmLGo7pLDXZ3wYk5hyc0Mb+SkHhDDXT+lU=
 google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d h1:FarXi840EJWSHYTN3ERkADbPWjl307+FGrA22KAVjjc=

@@ -32,7 +32,7 @@
 # linux/arm64 resolve from it.
 #
 # Currently: upstream v2.336.0.
-ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:4ffadc0002b2581327e06101fc8c06cd189232baf79fe561fac9caeb76f5e807
+ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690
 
 # Keep the Go compiler embedded in the JIT image aligned with the module the
 # Verify job tests. toolchain-health.test.sh compares this value with
@@ -265,7 +265,7 @@ FROM golang:${GO_VERSION}-bookworm AS go-runtime
 #
 # The Docker client supports remote BuildKit and static Compose validation;
 # the worker has no local Docker daemon or mounted host socket.
-FROM ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b AS uv-runtime
+FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
 FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 AS terraform-runtime
