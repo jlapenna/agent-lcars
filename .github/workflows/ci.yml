@@ -41,7 +41,7 @@ jobs:
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         if: steps.terraform-tooling.outputs.ready != 'true'
         with:
-          terraform_version: v1.16.6
+          terraform_version: v1.17.0
 
       - name: Verify repository-owned Terraform
         run: |
@@ -152,7 +152,7 @@ jobs:
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         if: steps.terraform-tooling.outputs.ready != 'true'
         with:
-          terraform_version: v1.16.6
+          terraform_version: v1.17.0
 
       # Keep the IAM authorization tests on the same required Verify check as
       # the code gate. The test file mocks both Google providers, and disabling
@@ -355,10 +355,10 @@ jobs:
           path: ${{ steps.python-tooling.outputs.cache_dir }}
           key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ hashFiles('apps/github-actions-exporter/requirements.lock') }}
 
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         if: steps.python-tooling.outputs.ready != 'true'
         with:
-          version: 0.13.4
+          version: 0.13.5
           python-version: '3.14'
           enable-cache: true
           cache-dependency-glob: apps/github-actions-exporter/requirements.lock
