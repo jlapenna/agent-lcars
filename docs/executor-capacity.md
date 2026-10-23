@@ -206,6 +206,12 @@ stays unknown. To apply the same reviewed proposal through the application,
 send `dryRun: false` with that `reviewedDigest`. Configuration/claim changes
 invalidate the digest. Imported attempts remain quarantined until exact
 recovery/retirement evidence; a token hash never supplies an absent secret.
+Legacy inventory larger than the pool drains in reviewed batches no larger
+than its slot count. Physically retire and release each batch before importing
+the next; missing Runs keep inventory unknown and new claims closed. Reuse the
+original producer incarnation: a permanently closed producer stays closed,
+and later imported receipts inherit its stopped state without discarding
+unknown writes or their required barriers. Finish with a known-inventory review.
 Import binds or verifies each task identity against a canonical Run read in
 the same transaction. A mismatched supplied identity is refused; a genuinely
 missing Run discards the supplied hint and leaves inventory unknown.
