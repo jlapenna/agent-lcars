@@ -40,6 +40,10 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca
 # stale compiler. An exact release tag keeps the toolchain reproducible while
 # still letting BuildKit cache its immutable image layers.
 ARG GO_VERSION=1.27.3
+# The canonical publisher can freeze these indexes across semantic build jobs.
+# Defaults keep ordinary builds and Renovate version ownership unchanged.
+ARG NODE_BUILD_BASE=node:24.22.1-slim
+ARG GO_BUILD_BASE=golang:${GO_VERSION}-bookworm
 
 # One pin feeds the source image and both runtime-user build assertions.
 ARG TERRAFORM_VERSION=1.17.0
@@ -75,7 +79,7 @@ ARG TERRAFORM_VERSION=1.17.0
 #
 # If this stage ever starts emitting a native binary, this pin becomes
 # wrong -- it would bake an amd64 artifact into the arm64 image.
-FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS telemetry-watcher-build
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS telemetry-watcher-build
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
 ARG NODE_OPTIONS=--max-old-space-size=1024
@@ -163,7 +167,7 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # its size and churn visible.
 # Fetching runs no lifecycle scripts or target binaries. Keep the Node work
 # native and project `current` CPU settings onto TARGETARCH through pnpm's CLI.
-FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS pnpm-store-seed
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-store-seed
 ARG TARGETARCH
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
@@ -235,7 +239,7 @@ COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/
 # Build both once per runner-image revision instead. Compile actionlint on
 # the builder platform for the final target so publishing arm64 does not pay
 # an avoidable QEMU compiler pass.
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS ci-tooling-build
+FROM --platform=$BUILDPLATFORM ${GO_BUILD_BASE} AS ci-tooling-build
 # One compiler at a time; bound Go heap growth inside the builder cgroup.
 ARG GOMAXPROCS=1
 ARG GOFLAGS=-p=1
@@ -267,7 +271,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 # instruction, so BuildKit only pulls the matching distribution; the final
 # image gets a runnable Go runtime for its own architecture without emulating
 # a compiler.
-FROM golang:${GO_VERSION}-bookworm AS go-runtime
+FROM ${GO_BUILD_BASE} AS go-runtime
 
 # Phase-2 JIT runner image for the autoscaler.
 #
