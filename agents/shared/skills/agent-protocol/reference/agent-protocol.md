@@ -255,7 +255,7 @@ branch on the reference format:
   instead (§4).
 - **Work anchor** (`anchor.type` is `work`, no issue): reference the item
   as `Work: work:<id>` (never `Fixes #N`). No GitHub comment is available.
-  A parked or already-satisfied Work result is instead recorded in the
+  A parked or evidence-backed no-change Work result is instead recorded in the
   explicit terminal-outcome artifact with its exact attempt claim plus, respectively,
   `<!-- agent-result:v1:park:$ATTEMPT_ID -->` or
   `<!-- agent-result:v1:no-op:$ATTEMPT_ID -->`. The hosted finalizer verifies
@@ -315,10 +315,15 @@ artifact that IS your deliverable — you post no separate takeover or
 progress comment to stamp instead (§1, §3): the marker is a claim of
 authorship over one specific object, not a running commentary tag.
 
-When the requested result already exists before the run starts, finish with
-one evidence-backed structured no-op comment. Name the existing commit, PR,
-check, or live behavior that proves no new change is needed, and include both
-the attempt claim above and this exact result marker:
+When evidence proves no change is needed, finish with a structured no-op.
+This includes a result that already exists and a completed bounded experiment
+whose candidate fails the requested acceptance criteria and is discarded.
+Name the existing commit, PR, check or live behavior, or the experiment
+measurements, acceptance criteria and verified restoration of the original
+state. Do not create an empty commit or PR. An unfinished investigation,
+missing required verification or unresolved blocker still parks. For an issue
+anchor, post one evidence comment with both the attempt claim above and this
+exact result marker (Work anchors use the terminal artifact described above):
 
 ```text
 <!-- agent-result:v1:no-op -->

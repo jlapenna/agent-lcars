@@ -1729,6 +1729,26 @@ grep -q '"outcome":"park"' "$COMPLETE_LOG" ||
 
 echo "scenario opencode-native-park-no-continuation: OK"
 
+# A completed negative experiment settles native Work without a source change.
+# Exercise the delivered prompt and finalizer together: no artificial PR and no
+# recovery round after the attempt-bound no-op artifact.
+export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=no-op
+export FAKE_OPENCODE_LAST_MESSAGE='NO-OP candidate slower than baseline; original state restored'
+run_scenario opencode-native-negative-experiment opencode
+unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME FAKE_OPENCODE_LAST_MESSAGE
+[ "$rc" -eq 0 ] || fail "native negative experiment: expected completed no-op"
+[ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
+  fail "native negative experiment: provider continued after completed experiment"
+jq -e '.outcome == "no-op" and (.message | contains("original state restored"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "native negative experiment: lost outcome or evidence"
+grep -q 'completed bounded experiment' "$OPENCODE_ARGS_LOG" ||
+  fail "native negative experiment: provider prompt omitted no-change completion"
+if grep -q 'Commit and push before you end your turn.' "$OPENCODE_ARGS_LOG"; then
+  fail "native negative experiment: provider prompt still requires a commit unconditionally"
+fi
+
+echo "scenario opencode-native-negative-experiment: OK"
+
 # A GitHub structured no-op is an exact-marker deliverable and suppresses the
 # recovery round just like a park.
 export FAKE_ANCHOR=github FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1
