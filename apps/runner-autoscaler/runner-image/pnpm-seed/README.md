@@ -54,10 +54,14 @@ package (`type: git`), which pnpm clones.
 Every listed repository must use pnpm 11 (the `v11` content-store layout);
 the seed test fails otherwise.
 
-Homelab's canonical publisher measures every `pnpm*-store-content` target
-before promotion and refuses a combined compressed seed above 1.5 GiB per
-architecture. The seed stage is target-platform native, so native packages
-such as SWC, esbuild, and sharp are fetched for the architecture being built.
+Homelab's canonical publisher measures the shipped content-store and registry-
+metadata layers and refuses their combined compressed size above 1.5 GiB per
+architecture. Seed fetching runs on the builder platform without lifecycle
+scripts or target binaries. `fetch-pnpm-seed.mjs` reads each repository's pinned
+pnpm CPU settings and projects only `current` onto `TARGETARCH` (`amd64` to
+`x64`, or `arm64`); missing CPU settings use that target default. Explicit CPU
+values, including an empty list, and OS/libc settings stay unchanged. The final
+image and its offline invariants still execute for the requested architecture.
 
 ## Why the store and cache paths are pinned
 
