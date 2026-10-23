@@ -345,7 +345,10 @@ the work that has stopped, and the work in flight.
   - The description is grounded in the current queue reason, latest comment
     or handoff, and relevant issue, review, and failure context. Preserve
     prerequisites and approval conditions; state missing information rather
-    than guessing. Long handoffs must retain their concluding decision request.
+    than guessing. The latest handoff supersedes conflicting original choices:
+    describe required work directly and never reopen a settled decision or
+    offer a prohibited action, such as premature issue closure. Long handoffs
+    must retain their concluding decision request.
   - Keep the original title and complete source context accessible. Generated
     text is a reading aid, never authorization or an executable action.
   - Changed source content or decision state selects a fresh summary. Opening
