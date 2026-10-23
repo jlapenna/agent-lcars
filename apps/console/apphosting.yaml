@@ -206,6 +206,21 @@ env:
     availability:
       - RUNTIME
 
+  # Decision Inbox descriptions and completion handoff actions share this
+  # bounded server-only provider. The dedicated virtual key permits only this model.
+  - variable: AGENT_LCARS_HANDOFF_SUMMARY_URL
+    value: 'https://llm.jlapenna.net/chat/completions'
+    availability:
+      - RUNTIME
+  - variable: AGENT_LCARS_HANDOFF_SUMMARY_MODEL
+    value: 'gemini-flash'
+    availability:
+      - RUNTIME
+  - variable: AGENT_LCARS_HANDOFF_SUMMARY_API_KEY
+    secret: AGENT_LCARS_HANDOFF_SUMMARY_API_KEY
+    availability:
+      - RUNTIME
+
   # Actual Secrets from GCP Secret Manager
   - variable: AUTH_SECRET
     secret: AUTH_SECRET

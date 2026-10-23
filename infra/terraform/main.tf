@@ -447,12 +447,29 @@ resource "google_secret_manager_secret" "runtime" {
     "AUTH_GITHUB_ID",
     "AUTH_GITHUB_SECRET",
     "AGENT_LCARS_WEBHOOK_SECRET",
+    "AGENT_LCARS_HANDOFF_SUMMARY_API_KEY",
   ])
   secret_id = each.value
   replication {
     auto {}
   }
   depends_on = [google_project_service.services]
+}
+
+# App Hosting resolves secret-version metadata during rollout preparation and
+# manages versions through its service agent, in addition to runtime access.
+resource "google_secret_manager_secret_iam_member" "handoff_summary_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_HANDOFF_SUMMARY_API_KEY"].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "handoff_summary_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_HANDOFF_SUMMARY_API_KEY"].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }
 
 # Playwright storage state for the dedicated production verification identity.

@@ -21,6 +21,15 @@ Configure these three settings together on the Console runtime:
 | `AGENT_LCARS_HANDOFF_SUMMARY_MODEL`   | An endpoint-supported small model with JSON object response support        |
 | `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY` | Dedicated server credential from Secret Manager                            |
 
+This deployment explicitly uses the existing LiteLLM `gemini-flash` route at
+`https://llm.jlapenna.net/chat/completions`. A dedicated virtual key restricted
+to that route is stored as `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY` in Secret Manager;
+Terraform owns its container, the Console runtime's access and metadata grants,
+and the App Hosting service agent's version-management grant. Provision
+the value before deploying the App Hosting binding. The route must return valid
+summary JSON within the eight-second budget; qualify provider changes with
+the application prompt before updating this binding.
+
 There is no implicit provider, endpoint, or reuse of worker subscription
 credentials. With all three absent, Console keeps the existing full-handoff
 behavior. Partial or insecure configuration fails startup. The owning
