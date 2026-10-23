@@ -18,7 +18,7 @@ lib="$tmp/lib"
 home="$tmp/home"
 bin="$tmp/bin"
 mkdir -p "$lib/runtime" "$lib/agents/shared" "$home" "$bin" "$tmp/corepack" \
-  "$tmp/externals/node20/bin" "$tmp/externals/node24/bin" "$tmp/archive"
+  "$tmp/externals/node24/bin" "$tmp/archive"
 cp "$here/externals-health.sh" "$here/toolchain-health.sh" "$here/verify-image-invariants.sh" "$lib/"
 # The dedicated package-bin tests and real image build exercise this checker.
 # This gate fixture tests aggregation and failure propagation only.
@@ -30,7 +30,6 @@ write_exe() {
   printf '%s\n' '#!/bin/sh' "$2" > "$1"
   chmod +x "$1"
 }
-write_exe "$tmp/externals/node20/bin/node" 'exit 0'
 write_exe "$tmp/externals/node24/bin/node" 'exit 0'
 # Corepack shim fixture: resolves a project's pinned version, or the image
 # default outside one, only from the versions listed in $tmp/corepack/cached.
@@ -52,7 +51,7 @@ write_exe "$bin/lcars" 'exit 0'
 write_exe "$lib/check-opencode-store.sh" 'exit 0'
 
 gate() {
-  env HOME="$home" PATH="$bin:/usr/bin:/bin" \
+  env HOME="$home" PATH="$bin:/usr/bin:/bin" FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true \
     AGENT_LCARS_LIB_DIR="$lib" \
     AGENT_LCARS_EXTERNALS_DIR="$tmp/externals" \
     AGENT_LCARS_COREPACK_DIR="$tmp/corepack" \
@@ -101,13 +100,13 @@ export IMAGE_TEST_REPO_TOOLS_FAILURE=1
 expect_failure "repo-tools" "repo-tools commands are installed and the worktree guard executes"
 unset IMAGE_TEST_REPO_TOOLS_FAILURE
 
-write_exe "$tmp/externals/node20/bin/node" 'exit 1'
+write_exe "$tmp/externals/node24/bin/node" 'exit 1'
 write_exe "$bin/opencode" 'exit 0'
-expect_failure "two regressions" "Actions node20/node24 runtimes run"
+expect_failure "two regressions" "Actions Node 24 migration and runtime run"
 grep -Fq "FAIL: trusted OpenCode CLI supports QueueExecutor's --auto mode" "$tmp/out" ||
   fail "gate stopped at the first failure instead of reporting all of them"
 grep -Fq "2 image invariant(s) failed" "$tmp/out" || fail "failure count was wrong ($(cat "$tmp/out"))"
-write_exe "$tmp/externals/node20/bin/node" 'exit 0'
+write_exe "$tmp/externals/node24/bin/node" 'exit 0'
 write_exe "$bin/opencode" '[ "$1 $2" = "run --help" ] && echo "      --auto   auto-approve permissions"; exit 0'
 
 write_exe "$bin/java" "echo 'openjdk version \"17.0.16\" 2025-07-15' >&2"

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Replace the npm-bundled node-tar copies inherited from the Actions runner
-# image and NodeSource. The upstream runner payload carries its own Node 20 and
-# Node 24 npm installations, so updating only the system npm leaves two
-# vulnerable copies behind.
+# image and NodeSource. The retained runner Node 24 npm installation is
+# independent of system npm and must receive the same repair.
 set -euo pipefail
 
 readonly fixed_version="7.5.22"
@@ -14,8 +13,7 @@ npm install --prefix "$work_dir" --no-save --ignore-scripts \
 
 for tar_target in \
   /usr/lib/node_modules/npm/node_modules/tar \
-  /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar \
-  /home/runner/externals/node20/lib/node_modules/npm/node_modules/tar; do
+  /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar; do
   test -f "${tar_target}/package.json"
   rm -rf "${tar_target}"
   mkdir -p "${tar_target}"

@@ -7,19 +7,13 @@ node_runtime_runs() {
     --version >/dev/null 2>&1
 }
 
-node20_runs() {
-  node_runtime_runs node20
-}
-
 node24_runs() {
   node_runtime_runs node24
 }
 
-# These are the non-Alpine runtimes proven reachable from actions used by the
-# fleet: current first-party actions use node24, while OpenCode's pinned
-# composite still calls actions/cache@v4, which declares node20 (#395). Do not
-# probe every backup entry; add another runtime here only when a
-# dispatched action demonstrates that dependency.
+# GitHub's supported migration flag routes older action metadata (including
+# OpenCode's actions/cache@v4) through the patched Node 24 runtime. Refuse an
+# image that would fall back to the retired Node 20 runtime.
 required_node_runtimes_run() {
-  node20_runs && node24_runs
+  [ "${FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:-}" = true ] && node24_runs
 }

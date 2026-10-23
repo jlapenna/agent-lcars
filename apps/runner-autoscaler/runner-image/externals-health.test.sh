@@ -19,22 +19,22 @@ make_runtime() {
   chmod +x "$root/$runtime/bin/node"
 }
 
-make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node20 0
+export FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node24 0
 required_node_runtimes_run || {
-  echo "healthy node20/node24 runtimes were rejected" >&2
+  echo "healthy Node 24 runtime was rejected" >&2
   exit 1
 }
 
-# A healthy node24 must not mask a missing node20 dependency.
-rm -rf "$AGENT_LCARS_EXTERNALS_DIR/node20"
+# A healthy runtime must not mask a missing migration control.
+unset FORCE_JAVASCRIPT_ACTIONS_TO_NODE24
 if required_node_runtimes_run; then
-  echo "missing node20 runtime was accepted" >&2
+  echo "missing Node 24 migration control was accepted" >&2
   exit 1
 fi
 
-# Restore the fixture before checking a broken executable independently.
-make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node20 0
+# Restore the control before checking a broken executable independently.
+export FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 
 # Invocation matters: an executable-but-broken runtime must also trigger repair.
 make_runtime "$AGENT_LCARS_EXTERNALS_DIR" node24 1

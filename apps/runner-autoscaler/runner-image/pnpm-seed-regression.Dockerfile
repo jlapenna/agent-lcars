@@ -1,7 +1,7 @@
 # A small, container-only proof for the same store layering the production
 # runner image uses. It intentionally seeds TypeScript only: the content hit
 # must come from a lower image layer, while is-number is an ordinary miss.
-FROM node:24-slim AS pnpm-store-seed
+FROM node:24.22.1-slim AS pnpm-store-seed
 
 WORKDIR /seed
 RUN corepack enable
@@ -9,7 +9,7 @@ COPY pnpm-seed-regression/seed/package.json package.json
 COPY pnpm-seed-regression/seed/pnpm-lock.yaml pnpm-lock.yaml
 RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
 
-FROM node:24-slim
+FROM node:24.22.1-slim
 
 RUN useradd --create-home --uid 1001 runner && corepack enable
 COPY --from=pnpm-store-seed --chown=runner:runner /pnpm-store/ /home/runner/.local/share/pnpm/store/

@@ -12,6 +12,7 @@
 # example -- this ARG is kept in lockstep with that one's digest.
 ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690
 
+FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node-runtime
 FROM ${RUNNER_BASE}
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
@@ -20,6 +21,9 @@ ARG npm_config_network_concurrency=4
 ARG npm_config_child_concurrency=1
 
 USER root
+COPY --from=node-runtime /usr/local/bin/node /home/runner/externals/node24/bin/node
+ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
+RUN rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # The upstream runner image bundles a Docker engine even though this
@@ -65,8 +69,7 @@ RUN set -eux; \
     npm install --prefix /tmp/control-plane-tar --no-save --ignore-scripts \
       --install-strategy=nested tar@7.5.22; \
     for tar_target in \
-      /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar \
-      /home/runner/externals/node20/lib/node_modules/npm/node_modules/tar; do \
+      /home/runner/externals/node24/lib/node_modules/npm/node_modules/tar; do \
       rm -rf "${tar_target}"; \
       mkdir -p "${tar_target}"; \
       cp -a /tmp/control-plane-tar/node_modules/tar/. "${tar_target}"; \
