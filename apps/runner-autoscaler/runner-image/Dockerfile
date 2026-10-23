@@ -76,6 +76,11 @@ ARG TERRAFORM_VERSION=1.17.0
 # If this stage ever starts emitting a native binary, this pin becomes
 # wrong -- it would bake an amd64 artifact into the arm64 image.
 FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS telemetry-watcher-build
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -157,6 +162,11 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # image build. Keep the copy below as a distinct final-image layer to make
 # its size and churn visible.
 FROM node:24.22.1-slim AS pnpm-store-seed
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 # A consumer may lock a git-hosted dependency as a `type: git` resolution
 # (Sprinkles locks `@jlapenna/fleet-runtime` and `@jlapenna/repo-tools` from
 # `git+https://` specifiers); pnpm clones those with the git CLI, which the
@@ -224,6 +234,10 @@ COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/
 # the builder platform for the final target so publishing arm64 does not pay
 # an avoidable QEMU compiler pass.
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-bookworm AS ci-tooling-build
+# One compiler at a time; bound Go heap growth inside the builder cgroup.
+ARG GOMAXPROCS=1
+ARG GOFLAGS=-p=1
+ARG GOMEMLIMIT=1GiB
 ARG GO_VERSION
 ARG TARGETOS
 ARG TARGETARCH
@@ -271,6 +285,11 @@ FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf56
 FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:4d1b496a256f2989bccdb04b9104a4ede97234b10fba90259e173e905ec4fb58 AS terraform-runtime
 
 FROM ${RUNNER_BASE}
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 
 ARG GO_VERSION
 ARG TERRAFORM_VERSION

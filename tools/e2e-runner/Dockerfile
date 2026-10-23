@@ -56,6 +56,11 @@ FROM ${RUNNER_BASE} AS agent
 # supply-chain check otherwise rewrites on every install. The sandbox base
 # already carries Node, Corepack and git (for `type: git` resolutions).
 FROM ${SANDBOX_IMAGE} AS pnpm-store-seed
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 USER root
 WORKDIR /seed
 COPY apps/runner-autoscaler/runner-image/pnpm-seed/fleet/jlapenna__agent-lcars/ ./

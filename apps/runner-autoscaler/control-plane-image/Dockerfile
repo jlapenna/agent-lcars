@@ -14,6 +14,11 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca
 
 FROM node:24.22.1-slim@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node-runtime
 FROM ${RUNNER_BASE}
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 
 USER root
 COPY --from=node-runtime /usr/local/bin/node /home/runner/externals/node24/bin/node
