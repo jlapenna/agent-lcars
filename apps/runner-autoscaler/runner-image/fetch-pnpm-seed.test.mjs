@@ -1,12 +1,13 @@
+/* eslint-disable vitest/no-import-node-test -- the isolated image regression runs without Vitest installed. */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 const helper = fileURLToPath(new URL('./fetch-pnpm-seed.mjs', import.meta.url));
 const pin = JSON.parse(
