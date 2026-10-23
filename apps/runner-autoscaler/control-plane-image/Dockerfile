@@ -13,6 +13,11 @@
 ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690
 
 FROM ${RUNNER_BASE}
+# Build-time only: one bounded worker must cover the daemon and this vertex.
+# ARG reaches RUN children without constraining jobs in the shipped image.
+ARG NODE_OPTIONS=--max-old-space-size=1024
+ARG npm_config_network_concurrency=4
+ARG npm_config_child_concurrency=1
 
 USER root
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
