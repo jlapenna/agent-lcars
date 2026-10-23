@@ -52,6 +52,29 @@ const card: NativeDecisionCard = {
 };
 
 describe('native decision Reply', () => {
+  it('shows the decision brief while preserving the full handoff and reply', () => {
+    render(
+      <MantineProvider>
+        <NativeDecisionDetail
+          card={{
+            ...card,
+            decisionSummary: (
+              <span>Choose a storage backend before the agent continues.</span>
+            ),
+          }}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByLabelText('Inbox summary')).toHaveTextContent(
+      'Choose a storage backend',
+    );
+    expect(screen.getByText('Which storage should I use?')).toBeTruthy();
+    expect(
+      screen.getByRole('textbox', { name: 'Reply to the agent' }),
+    ).toBeTruthy();
+  });
+
   it('interrupts a snooze when a later parked question arrives', () => {
     const before = inboxCardSignature(card);
     expect(inboxCardSignature({ ...card, canReply: false })).toBe(before);

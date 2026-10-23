@@ -482,11 +482,11 @@ const RUNS = [
 const PHASES = ['intake', 'plan', 'build', 'verify', 'review'];
 
 const INBOX = [
-  { kind: 'Plan approval', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true, by: 'jlapenna', notes: 2 },
-  { kind: 'Takeover requested', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true, by: 'agent-lcars-bot', notes: 1 },
-  { kind: 'Review requested', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m', by: 'agent-lcars-bot' },
-  { kind: 'Merge blocked', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m', by: 'agent-lcars-bot' },
-  { kind: 'Budget extension', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m', by: 'agent-lcars-bot', notes: 1 },
+  { kind: 'Plan approval', summary: 'Decide whether to approve the proposed capacity policy and identity trust changes before implementation.', title: 'Plan changes production capacity policy and identity trust roots', repo: 'homelab', ref: '#2245', agent: 'claude', age: '3h 12m', late: true, by: 'jlapenna', notes: 2 },
+  { kind: 'Takeover requested', summary: 'Decide how to provide the missing GHCR publishing permission so this run can continue.', title: 'Run paused: needs GHCR packages:write, which its grant cannot request', repo: 'messages-control', ref: '#117', agent: 'codex', age: '2h 20m', late: true, by: 'agent-lcars-bot', notes: 1 },
+  { kind: 'Review requested', summary: 'Review the token sync changes and decide whether to approve the pull request.', title: 'members app: adopt the .ss-* token sync layer', repo: 'sprinkles', ref: 'PR #6036', agent: 'opencode', age: '1h 05m', by: 'agent-lcars-bot' },
+  { kind: 'Merge blocked', summary: 'Decide how to address the failing e2e-console check before merging; the reported flake is not yet confirmed.', title: 'Required check e2e-console failed twice on retry; flake suspected in claim-release spec', repo: 'agent-lcars', ref: 'PR #2475', agent: 'codex', age: '47m', by: 'agent-lcars-bot' },
+  { kind: 'Budget extension', summary: 'Decide whether to raise the run budget from $8 to $12 to finish review fixes.', title: 'At 89% of its $8.00 cap with review fixes outstanding; asks for +$4.00', repo: 'agent-lcars', ref: '#2473', agent: 'claude', age: '14m', by: 'agent-lcars-bot', notes: 1 },
 ];
 
 const DONE = [
@@ -598,6 +598,7 @@ function runsPanel(full) {
 function inboxPanel(full) {
   const items = INBOX.map((d, i) => `<li data-od-id="decision-${i + 1}" class="${full && i === 0 ? 'sel' : ''}">
     <div><div class="kind">${d.kind}</div><div class="t">${d.title}</div>
+    ${full ? `<p title="AI-generated summary">${d.summary}</p>` : ''}
     <div class="m"><span><a href="#" class="ref">${d.repo} ${d.ref}</a></span><span>${d.agent}</span><span class="${d.late ? 'late' : ''}">waiting ${d.age}${d.late ? ' · over SLA' : ''}</span>${full ? `<span>by ${d.by}${d.notes ? ' · ' + d.notes + (d.notes === 1 ? ' comment' : ' comments') : ''}</span>` : ''}</div></div>
     <div class="acts"><button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>${full ? kebab('Decision actions') : ''}</div>
   </li>`).join('');
@@ -605,6 +606,7 @@ function inboxPanel(full) {
     <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
     <ul class="inbox">${items}</ul>
     ${full ? `<section aria-label="Selected human decision" style="margin-top:16px;border-top:1px solid var(--hairline);padding-top:12px">
+      <p aria-label="Inbox summary">${INBOX[0].summary}</p>
       <h3>Human work · AI summary</h3>
       <ul><li>Inspect the affected deployment: <code>kubectl rollout status deployment/console -n agent-lcars</code></li><li>Reply with the result to resume the agent.</li></ul>
       <details><summary>Full handoff</summary><p>The agent needs the production rollout state before continuing. Run <code>kubectl rollout status deployment/console -n agent-lcars</code>, then reply with the result.</p></details>

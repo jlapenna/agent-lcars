@@ -70,6 +70,11 @@ export function QueueItemRow({
           >
             {item.title}
           </span>
+          {card.decisionSummary && (
+            <span className="queue-item-row__question">
+              {card.decisionSummary}
+            </span>
+          )}
           <div className="ops-inbox__meta">
             <span className="ops-ref">
               {repoDisplayName(item.repo)} {item.kind === 'pr' ? 'PR ' : ''}#

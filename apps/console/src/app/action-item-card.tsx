@@ -219,6 +219,7 @@ export function ActionItemCard({
   item,
   primaryAction,
   description,
+  decisionSummary,
   lastComment,
   multiRepo = false,
   muted,
@@ -229,6 +230,7 @@ export function ActionItemCard({
   item: ActionItem;
   primaryAction?: PrimaryAction;
   description?: ReactNode;
+  decisionSummary?: ReactNode;
   lastComment?: ReactNode;
   /** Whether more than one repo is watched - passed down from the server
    * route rather than resolved here, since this is a client component and
@@ -683,6 +685,11 @@ export function ActionItemCard({
           </Text>
         )}
 
+        {decisionSummary && (
+          <Text size="sm" aria-label="Inbox summary">
+            {decisionSummary}
+          </Text>
+        )}
         {item.actionTypes.includes('needs-human') && (
           <HumanNeededSummary actions={item.humanNeededActions} />
         )}
