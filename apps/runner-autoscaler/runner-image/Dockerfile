@@ -161,7 +161,10 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # accepted, so a package published hours before a refresh must not fail the
 # image build. Keep the copy below as a distinct final-image layer to make
 # its size and churn visible.
-FROM node:24.22.1-slim AS pnpm-store-seed
+# Fetching runs no lifecycle scripts or target binaries. Keep the Node work
+# native and project `current` CPU settings onto TARGETARCH through pnpm's CLI.
+FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS pnpm-store-seed
+ARG TARGETARCH
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
 ARG NODE_OPTIONS=--max-old-space-size=1024
@@ -177,6 +180,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 WORKDIR /seed
 RUN corepack enable
 COPY pnpm-seed/fleet/ ./
+COPY fetch-pnpm-seed.mjs /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs
 # Each fetch also runs pnpm 11's supply-chain verification, which caches the
 # registry metadata of every locked package (~590 MiB for Sprinkles). Jobs run
 # the same verification on every install; without this cache in the image each
@@ -189,9 +193,7 @@ RUN set -eu; \
         echo "fleet seed $repository has an empty lockfile; re-run tools/sync-runner-pnpm-seed.py (#2084 rewrote them)" >&2; \
         exit 1; }; \
       (cd "$repository" && \
-        pnpm fetch --frozen-lockfile --ignore-scripts \
-          --config.minimum-release-age=0 --store-dir /pnpm-store \
-          --config.cache-dir=/pnpm-cache); \
+        node /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs "$TARGETARCH"); \
     done; \
     rm -f /pnpm-cache/lockfile-verified.jsonl
 # The fetches above made Corepack download every fleet-pinned pnpm into

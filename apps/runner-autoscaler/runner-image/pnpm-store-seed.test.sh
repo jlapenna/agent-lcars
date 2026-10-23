@@ -69,10 +69,8 @@ fi
 
 # The production build uses the runner user's normal pnpm store.
 grep -Fqx 'COPY pnpm-seed/fleet/ ./' "$dockerfile"
-grep -Fqx '          --config.minimum-release-age=0 --store-dir /pnpm-store \' "$dockerfile"
 # pnpm's registry-metadata cache ships with the store (#2082), minus the seed's
 # own lockfile-verification record.
-grep -Fqx '          --config.cache-dir=/pnpm-cache); \' "$dockerfile"
 grep -Fqx '    rm -f /pnpm-cache/lockfile-verified.jsonl' "$dockerfile"
 # pnpm >= 11.28.5 reads its registry-metadata mirror from v12/metadata, not
 # v11/metadata (pnpm/pnpm#13512, #2902). The seed stage must require the mirror
@@ -92,14 +90,16 @@ if ! grep -Fx -A1 'COPY --from=pnpm-store-seed --chown=runner:runner \' "$docker
   echo 'runner image must copy the isolated pnpm store seed into the final image' >&2
   exit 1
 fi
-if grep -Eq '^FROM --platform=.* AS pnpm-store-seed$' "$dockerfile"; then
-  echo 'pnpm seeds must build for the target image architecture, not a fixed builder platform' >&2
-  exit 1
-fi
 if ! command -v docker >/dev/null 2>&1; then
   echo 'docker is required to prove pnpm store lower-layer behavior' >&2
   exit 1
 fi
+
+# Exercise the actual pinned pnpm CLI against a tiny local registry: target
+# defaults/current, explicit multi-CPU/empty settings, and offline contents.
+# This replaces the old FROM proxy, which could not permit safe native fetch.
+docker buildx build --file "$regression_dockerfile" --target pnpm-cpu-regression \
+  --output type=cacheonly "$here"
 
 # The static checks above only cover failures already seen. Fetch the real
 # fleet seed through the production stage so whatever else `pnpm fetch`

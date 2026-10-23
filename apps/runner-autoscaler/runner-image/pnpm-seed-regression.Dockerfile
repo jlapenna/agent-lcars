@@ -1,3 +1,13 @@
+# A native, real-pnpm contract for cross-target optional package selection.
+# The actual target image below still proves lower-layer hit/miss behavior.
+FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS pnpm-cpu-regression
+WORKDIR /proof
+COPY fetch-pnpm-seed.mjs fetch-pnpm-seed.test.mjs ./
+COPY pnpm-seed/fleet/jlapenna__agent-lcars/package.json ./pnpm-seed/fleet/jlapenna__agent-lcars/package.json
+RUN corepack enable && \
+    corepack install --global "$(node -p 'require("./pnpm-seed/fleet/jlapenna__agent-lcars/package.json").packageManager')"
+RUN node --test fetch-pnpm-seed.test.mjs
+
 # A small, container-only proof for the same store layering the production
 # runner image uses. It intentionally seeds TypeScript only: the content hit
 # must come from a lower image layer, while is-number is an ordinary miss.
