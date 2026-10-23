@@ -603,7 +603,16 @@ export function QueueWorkspace({
           )}
           <div className="queue-workspace__list-header">
             <h2 className="ops-panel__title">Decision inbox</h2>
-            <span className="ops-panel__count">{visibleCards.length}</span>
+            <span className="ops-panel__count">
+              {decisionCards.length} decision
+              {decisionCards.length === 1 ? '' : 's'}
+            </span>
+            {visibleCards.length > decisionCards.length && (
+              <span className="ops-panel__meta">
+                {visibleCards.length - decisionCards.length} completed report
+                {visibleCards.length - decisionCards.length === 1 ? '' : 's'}
+              </span>
+            )}
             <span className="ops-panel__meta">
               <DecisionSlaMeta
                 waitingSince={decisionCards.map(

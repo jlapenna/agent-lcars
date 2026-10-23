@@ -461,7 +461,7 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
    console renders. */
 const DEST = [
   { key: 'deck', label: 'Bridge', accent: 'amber', w: 168, live: true, title: 'Bridge', sub: 'Fleet overview · 4 repos' },
-  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, live: true, title: 'Decision Inbox', sub: 'Work waiting on a maintainer response · 4 repos' },
+  { key: 'inbox', label: 'Inbox', accent: 'blue', w: 132, count: 5, live: true, title: 'Decision Inbox', sub: 'Pending decisions and completed reports · 4 repos' },
   { key: 'agents', label: 'Agents', accent: 'periwinkle', w: 132, count: 7, live: true, title: 'Agents', sub: 'Active runs, claimed work and recent outcomes · 4 repos' },
   { key: 'shuttlebay', label: 'Shuttlebay', accent: 'blue', w: 156, title: 'Shuttlebay', sub: 'Runner fleet · live runners and queue status' },
   { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 5, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
@@ -603,7 +603,7 @@ function inboxPanel(full) {
     <div class="acts"><button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>${full ? kebab('Decision actions') : ''}</div>
   </li>`).join('');
   return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
-    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length}</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
+    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length} decisions</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
     <ul class="inbox">${items}</ul>
     ${full ? `<section aria-label="Selected human decision" style="margin-top:16px;border-top:1px solid var(--hairline);padding-top:12px">
       <p aria-label="Inbox summary">${INBOX[0].summary}</p>

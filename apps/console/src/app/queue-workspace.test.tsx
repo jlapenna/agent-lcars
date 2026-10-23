@@ -787,6 +787,25 @@ describe('QueueWorkspace native reports', () => {
     expect(screen.queryByText(/over SLA/u)).toBeNull();
     expect(screen.getByText(/^settled/u)).toBeTruthy();
     expect(screen.queryByRole('link', { name: /oldest/iu })).toBeNull();
+    expect(screen.getByText('0 decisions')).toBeTruthy();
+    expect(screen.getByText('1 completed report')).toBeTruthy();
+  });
+
+  it('counts pending decisions separately from readable completed reports', () => {
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[makeCard(), report]}
+          watchedRepos={[]}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByText('1 decision')).toBeTruthy();
+    expect(screen.getByText('1 completed report')).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: 'Dismiss Choose storage' }),
+    ).toBeTruthy();
   });
 
   it('drops a dismissed report that has aged out of the Inbox from Snoozed', async () => {

@@ -182,7 +182,7 @@ const InboxView = withConsolePageShell(
     repoFilter: repoFilterKey,
     subtitle: (
       <>
-        Work waiting on a maintainer response · {subtitle}
+        Pending decisions and completed reports · {subtitle}
         {repoFilter && (
           <>
             {' · '}
