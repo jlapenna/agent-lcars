@@ -1,11 +1,12 @@
 'use client';
 
-import { Button, Popover, Stack, Textarea } from '@mantine/core';
+import { Button, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
+import { DeferredPopover } from './deferred-popover';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
@@ -61,45 +62,43 @@ export function RetriggerButton({
   };
 
   return (
-    <Popover
+    <DeferredPopover
       opened={opened}
       onChange={setOpened}
       width={340}
       position="bottom-end"
       withArrow
-    >
-      <Popover.Target>
+      target={(triggerProps) => (
         <Button
+          {...triggerProps}
           variant="default"
           size={size}
           disabled={isPending || disabled}
           loading={isPending}
           title={disabled ? disabledReason : undefined}
-          onClick={() => setOpened((prev) => !prev)}
         >
           Retrigger
         </Button>
-      </Popover.Target>
-      <Popover.Dropdown>
-        <Stack gap="xs">
-          <Textarea
-            value={note}
-            onChange={(e) => setNote(e.currentTarget.value)}
-            aria-label="Optional steering note — posted on the issue before the fresh run starts"
-            placeholder="Optional steering note — posted on the issue before the fresh run starts"
-            autosize
-            minRows={2}
-          />
-          <Button
-            disabled={isPending}
-            loading={isPending}
-            onClick={handleRetrigger}
-            fullWidth
-          >
-            Retrigger now
-          </Button>
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
+      )}
+    >
+      <Stack gap="xs">
+        <Textarea
+          value={note}
+          onChange={(e) => setNote(e.currentTarget.value)}
+          aria-label="Optional steering note — posted on the issue before the fresh run starts"
+          placeholder="Optional steering note — posted on the issue before the fresh run starts"
+          autosize
+          minRows={2}
+        />
+        <Button
+          disabled={isPending}
+          loading={isPending}
+          onClick={handleRetrigger}
+          fullWidth
+        >
+          Retrigger now
+        </Button>
+      </Stack>
+    </DeferredPopover>
   );
 }

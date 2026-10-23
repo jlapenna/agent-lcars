@@ -1,5 +1,4 @@
 import { MantineProvider } from '@mantine/core';
-import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
@@ -28,13 +27,15 @@ vi.mock('./actions', () => ({
   updateIssueContent: vi.fn(),
 }));
 
-// No ModalsProvider is mounted in these tests (only MantineProvider, matching
+// No confirmation provider is mounted in these tests (only MantineProvider, matching
 // the rest of this suite), so openConfirmModal is stubbed to invoke its
 // onConfirm immediately - equivalent to the maintainer confirming.
-vi.mock('@mantine/modals', () => ({
-  modals: {
-    openConfirmModal: vi.fn(({ onConfirm }) => onConfirm()),
-  },
+const { openConfirmation } = vi.hoisted(() => ({
+  openConfirmation: vi.fn(({ onConfirm }) => onConfirm()),
+}));
+vi.mock('@agent-lcars/app-providers', () => ({
+  useConfirmationDialog: () => openConfirmation,
+  dialogReturnTarget: () => null,
 }));
 
 vi.mock('@mantine/notifications', () => ({
@@ -175,7 +176,7 @@ describe('ItemOverflowMenu', () => {
     fireEvent.click(screen.getByText('Approve & Merge'));
 
     await waitFor(() => expect(mergePr).toHaveBeenCalledWith(DEFAULT_REPO, 42));
-    expect(modals.openConfirmModal).toHaveBeenCalledWith(
+    expect(openConfirmation).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Merge #42?',
         labels: { confirm: 'Approve & Merge', cancel: 'Cancel' },
@@ -279,7 +280,7 @@ describe('ItemOverflowMenu', () => {
     await waitFor(() =>
       expect(closeIssue).toHaveBeenCalledWith(DEFAULT_REPO, 42),
     );
-    expect(modals.openConfirmModal).toHaveBeenCalled();
+    expect(openConfirmation).toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({ message: '#42 closed', color: 'green' }),
     );
@@ -334,7 +335,7 @@ describe('ItemOverflowMenu', () => {
     fireEvent.click(screen.getByText('Snooze'));
 
     expect(onToggleMute).toHaveBeenCalledTimes(1);
-    expect(modals.openConfirmModal).not.toHaveBeenCalled();
+    expect(openConfirmation).not.toHaveBeenCalled();
   });
 
   it('clears needs-human without a confirm modal', async () => {
@@ -347,7 +348,7 @@ describe('ItemOverflowMenu', () => {
     await waitFor(() =>
       expect(clearHumanNeeded).toHaveBeenCalledWith(DEFAULT_REPO, 42),
     );
-    expect(modals.openConfirmModal).not.toHaveBeenCalled();
+    expect(openConfirmation).not.toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({
         message: 'Cleared needs-human on #42',
@@ -385,7 +386,7 @@ describe('ItemOverflowMenu', () => {
     await waitFor(() =>
       expect(rebasePr).toHaveBeenCalledWith(DEFAULT_REPO, 42),
     );
-    expect(modals.openConfirmModal).not.toHaveBeenCalled();
+    expect(openConfirmation).not.toHaveBeenCalled();
     expect(notifications.show).toHaveBeenCalledWith(
       expect.objectContaining({
         message: '#42 updated with the base branch',

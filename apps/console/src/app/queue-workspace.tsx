@@ -1,13 +1,15 @@
 'use client';
 
+import { dialogReturnTarget } from '@agent-lcars/app-providers';
 import { workRepository } from '@agent-lcars/work';
 import {
   ActionIcon,
   Anchor,
   Button,
   Group,
-  Menu,
-  Modal,
+  MenuDivider,
+  MenuItem,
+  MenuLabel,
   Stack,
   Text,
   Title,
@@ -19,14 +21,13 @@ import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ActionType } from '../lib/action-items';
-import {
-  MAX_DECISION_SNOOZES,
-  SNOOZE_DURATIONS,
-} from '../lib/decision-snooze-values';
+import { MAX_DECISION_SNOOZES } from '../lib/decision-snooze-values';
 import type { WatchedRepo } from '../lib/watched-repo';
 import { ActionItemCard } from './action-item-card';
 import { ToolbarFoldToggle } from './console-toolbar';
 import { DecisionSlaMeta } from './decision-waiting';
+import { DeferredInboxDialog } from './deferred-inbox-dialog';
+import { DeferredMenu } from './deferred-popover';
 import { formatAbsoluteLocal } from './format';
 import {
   type InboxCard,
@@ -166,7 +167,12 @@ export function QueueWorkspace({
     unsnooze,
     importLegacy,
   } = useDecisionSnoozes();
-  const [snoozeCard, setSnoozeCard] = useState<InboxCard>();
+  const [snoozeCard, setSnoozeCardState] = useState<InboxCard>();
+  const snoozeReturnFocus = useRef<HTMLElement | null>(null);
+  const setSnoozeCard = (card?: InboxCard) => {
+    if (card) snoozeReturnFocus.current = dialogReturnTarget();
+    setSnoozeCardState(card);
+  };
   // A report has nothing to come back to: Dismiss snoozes it past its Inbox
   // window instead of asking how long; Unsnooze under "Snoozed" restores it.
   const snoozeOrDismiss = (card: InboxCard) => {
@@ -532,9 +538,11 @@ export function QueueWorkspace({
               <IconX aria-hidden="true" size={12} />
             </ActionIcon>
           )}
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
+          <DeferredMenu
+            position="bottom-end"
+            target={(triggerProps) => (
               <ActionIcon
+                {...triggerProps}
                 variant={
                   filter === 'decisions' && sort === 'priority'
                     ? 'subtle'
@@ -551,33 +559,32 @@ export function QueueWorkspace({
               >
                 <IconAdjustments aria-hidden="true" size={14} />
               </ActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown>
-              <Menu.Label>Filter</Menu.Label>
-              {FILTER_OPTIONS.map((option) => (
-                <Menu.Item
-                  key={option.value}
-                  aria-current={filter === option.value ? 'true' : undefined}
-                  onClick={() => applyQueueControls(option.value, sort)}
-                  data-active={filter === option.value ? '' : undefined}
-                >
-                  {option.label}
-                </Menu.Item>
-              ))}
-              <Menu.Divider />
-              <Menu.Label>Sort</Menu.Label>
-              {SORT_OPTIONS.map((option) => (
-                <Menu.Item
-                  key={option.value}
-                  aria-current={sort === option.value ? 'true' : undefined}
-                  onClick={() => applyQueueControls(filter, option.value)}
-                  data-active={sort === option.value ? '' : undefined}
-                >
-                  {option.label}
-                </Menu.Item>
-              ))}
-            </Menu.Dropdown>
-          </Menu>
+            )}
+          >
+            <MenuLabel>Filter</MenuLabel>
+            {FILTER_OPTIONS.map((option) => (
+              <MenuItem
+                key={option.value}
+                aria-current={filter === option.value ? 'true' : undefined}
+                onClick={() => applyQueueControls(option.value, sort)}
+                data-active={filter === option.value ? '' : undefined}
+              >
+                {option.label}
+              </MenuItem>
+            ))}
+            <MenuDivider />
+            <MenuLabel>Sort</MenuLabel>
+            {SORT_OPTIONS.map((option) => (
+              <MenuItem
+                key={option.value}
+                aria-current={sort === option.value ? 'true' : undefined}
+                onClick={() => applyQueueControls(filter, option.value)}
+                data-active={sort === option.value ? '' : undefined}
+              >
+                {option.label}
+              </MenuItem>
+            ))}
+          </DeferredMenu>
         </div>
         {toolbarEnd}
         {oldestCard && (
@@ -913,50 +920,21 @@ export function QueueWorkspace({
             </div>
           )}
         </div>
-        <Modal
-          opened={Boolean(snoozeCard)}
-          onClose={() => {
-            if (!pending) setSnoozeCard(undefined);
-          }}
-          title="Snooze decision"
-          size="sm"
-          closeOnClickOutside={!pending}
-          closeOnEscape={!pending}
-          withCloseButton={!pending}
-        >
-          <Stack gap="sm">
-            <Text size="sm">
-              Hide this decision only for your account, across devices. New
-              activity or a changed decision brings it back sooner. No work or
-              GitHub labels are changed.
-            </Text>
-            {error && (
-              <Text role="alert" size="sm">
-                {error}
-              </Text>
-            )}
-            {SNOOZE_DURATIONS.map((duration) => (
-              <Button
-                key={duration.minutes}
-                variant="default"
-                disabled={pending}
-                onClick={async () => {
-                  if (
-                    snoozeCard &&
-                    (await snooze({
-                      anchor: inboxCardKey(snoozeCard),
-                      signature: inboxCardSignature(snoozeCard),
-                      minutes: duration.minutes,
-                    }))
-                  )
-                    setSnoozeCard(undefined);
-                }}
-              >
-                {duration.label}
-              </Button>
-            ))}
-          </Stack>
-        </Modal>
+        {snoozeCard && (
+          <DeferredInboxDialog
+            returnFocus={snoozeReturnFocus.current}
+            kind="snooze"
+            options={{
+              card: snoozeCard,
+              pending,
+              error,
+              snooze,
+              onClose: () => {
+                if (!pending) setSnoozeCard(undefined);
+              },
+            }}
+          />
+        )}
       </div>
     </section>
   );

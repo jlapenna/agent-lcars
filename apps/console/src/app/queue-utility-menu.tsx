@@ -1,6 +1,12 @@
 'use client';
 
-import { ActionIcon, Anchor, Menu } from '@mantine/core';
+import {
+  ActionIcon,
+  Anchor,
+  MenuDivider,
+  MenuItem,
+  MenuLabel,
+} from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
@@ -9,6 +15,7 @@ import type { ActionItem } from '../lib/action-items';
 import { MenuIdentity } from './console-frame-readouts';
 import { consoleDestinations, type NavKey } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
+import { DeferredMenu } from './deferred-popover';
 import { InboxNotificationsToggle } from './inbox-notifications';
 import { useItemOverflowMenu } from './item-overflow-menu';
 import { ThemeToggle } from './theme-toggle';
@@ -34,49 +41,53 @@ export function QueueUtilityMenu({
   const allowedKeys = useConsoleNavigationKeys();
 
   return (
-    <Menu position="bottom-end" withinPortal>
-      <Menu.Target>
-        <ActionIcon
-          variant="subtle"
-          size={44}
-          disabled={itemActions.isPending}
-          loading={itemActions.isPending}
-          aria-label="More console options"
-          className="queue-utility-trigger"
-        >
-          <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
-        </ActionIcon>
-      </Menu.Target>
-      <Menu.Dropdown className="queue-utility-menu">
+    <>
+      <DeferredMenu
+        position="bottom-end"
+        dropdownClassName="queue-utility-menu"
+        target={(triggerProps) => (
+          <ActionIcon
+            {...triggerProps}
+            variant="subtle"
+            size={44}
+            disabled={itemActions.isPending}
+            loading={itemActions.isPending}
+            aria-label="More console options"
+            className="queue-utility-trigger"
+          >
+            <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
+          </ActionIcon>
+        )}
+      >
         {itemActions.hasActions && (
           <>
-            <Menu.Label>{`#${item?.number}`}</Menu.Label>
+            <MenuLabel>{`#${item?.number}`}</MenuLabel>
             {itemActions.items}
-            <Menu.Divider />
+            <MenuDivider />
           </>
         )}
         {includeNavigation && (
           <>
-            <Menu.Label>Navigate</Menu.Label>
+            <MenuLabel>Navigate</MenuLabel>
             {consoleDestinations(allowedKeys).map((destination) => (
-              <Menu.Item
+              <MenuItem
                 key={destination.key}
                 component={Link}
                 href={navigationHrefs?.[destination.key] ?? destination.href}
               >
                 {destination.label}
-              </Menu.Item>
+              </MenuItem>
             ))}
-            <Menu.Divider />
+            <MenuDivider />
           </>
         )}
-        <Menu.Label>Preferences</Menu.Label>
+        <MenuLabel>Preferences</MenuLabel>
         <div className="queue-utility-menu__control">
           <ThemeToggle />
         </div>
         <InboxNotificationsToggle />
-        <Menu.Divider />
-        <Menu.Label>Console</Menu.Label>
+        <MenuDivider />
+        <MenuLabel>Console</MenuLabel>
         <MenuIdentity />
         <div className="queue-utility-menu__control">{signOutControl}</div>
         <Anchor
@@ -89,8 +100,8 @@ export function QueueUtilityMenu({
         >
           Open repository on GitHub ↗
         </Anchor>
-      </Menu.Dropdown>
+      </DeferredMenu>
       {itemActions.modal}
-    </Menu>
+    </>
   );
 }

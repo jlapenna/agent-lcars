@@ -16,8 +16,9 @@ vi.mock('./actions', () => ({
   updateIssueContent: vi.fn(),
 }));
 
-vi.mock('@mantine/modals', () => ({
-  modals: { openConfirmModal: vi.fn() },
+vi.mock('@agent-lcars/app-providers', () => ({
+  useConfirmationDialog: () => vi.fn(),
+  dialogReturnTarget: () => null,
 }));
 
 vi.mock('@mantine/notifications', () => ({

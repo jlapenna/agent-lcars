@@ -1,5 +1,6 @@
 'use client';
 
+import { useConfirmationDialog } from '@agent-lcars/app-providers';
 import {
   Anchor,
   Badge,
@@ -14,7 +15,6 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import type { ReactNode } from 'react';
 import {
@@ -274,6 +274,7 @@ export function ActionItemCard({
   const [localAgentPipeline, setLocalAgentPipeline] = useState<
     Pipeline | undefined
   >(supportedAgentPipelines(item.repo)[0]);
+  const openConfirmation = useConfirmationDialog();
   const [isPending, startTransition] = useTransition();
   // SSR renders the primary buttons before React has attached their handlers,
   // so a click in that window is silently lost. Keep the confirmation
@@ -386,7 +387,7 @@ export function ActionItemCard({
   };
 
   const confirmMerge = () =>
-    modals.openConfirmModal({
+    openConfirmation({
       title: `Merge #${item.number}?`,
       children: (
         <Text size="sm">
@@ -423,7 +424,7 @@ export function ActionItemCard({
 
   const confirmRebase = () => {
     recordPhonePrimaryBoundary('handlerEntryMs');
-    const modalId = modals.openConfirmModal({
+    const modalId = openConfirmation({
       title: `Rebase #${item.number}?`,
       children: (
         <Text size="sm">
