@@ -335,6 +335,31 @@ the work that has stopped, and the work in flight.
   `decision-snoozes.spec.ts` protect authentication, isolation, concurrent
   persistence, cross-device visibility, unsnooze, expiry/reload, and new decisions.
 
+- **FE-IN-8 [Partial] Decision descriptions.** Every GitHub and native Inbox
+  item should have a concise LLM-generated description in its row and detail
+  pane explaining **what the human needs to decide or answer**. Lead with the
+  specific approval, choice, missing information, or intervention needed;
+  include the blocker or alternatives when the evidence supplies them. This
+  applies to older parks and label-only GitHub decisions as well as new work.
+  A completed report gets a reading summary, without inventing a decision.
+  - The description is grounded in the current queue reason, latest comment
+    or handoff, and relevant issue, review, and failure context. Preserve
+    prerequisites and approval conditions; state missing information rather
+    than guessing. Long handoffs must retain their concluding decision request.
+  - Keep the original title and complete source context accessible. Generated
+    text is a reading aid, never authorization or an executable action.
+  - Changed source content or decision state selects a fresh summary. Opening
+    an item must not wait behind summarization of hidden rows, and generation
+    must not delay navigation, reply, or other primary actions.
+  - Provider failure, timeout, invalid output, or absent configuration leaves
+    the Inbox usable. Native rows retain their original question or report;
+    GitHub items retain their title and source context.
+    Source implementation and focused tests cover generation, bounded failure,
+    source changes, and row/detail display. Production provider configuration and
+    live summary quality remain to be verified, so this requirement is Partial.
+    The implementation and verification owner is
+    [human-needed summaries](../human-needed-summaries.md#decision-inbox-descriptions).
+
 ### 6.3 Agents (`/agents`)
 
 **Purpose:** a live operational view of every agent and claim.

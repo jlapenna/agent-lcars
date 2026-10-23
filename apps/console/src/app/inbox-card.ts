@@ -6,6 +6,7 @@ import type { BoardCard } from './board-card';
 import { actionTypeMeta, queueReasonFor } from './queue-reason';
 
 export interface NativeDecisionCard {
+  decisionSummary?: ReactNode;
   work: WorkSummary & { anchor: { workId: string } };
   /** `decision` waits on a human answer; `report` is a finished read-only
    * result (#2845) shown until dismissed or older than the report window. */

@@ -49,3 +49,30 @@ and GitHub history and the native Inbox. Those fixtures do not prove model
 quality or live provider access. After configuration and deployment, use a real
 parked work item to verify that the saved 2–3 actions preserve prerequisites,
 commands and the resume trigger, and that the full handoff remains available.
+
+## Decision Inbox descriptions
+
+The Inbox also generates a one- or two-sentence description for each GitHub
+and native item when it is displayed, including older parks and label-only
+GitHub decisions. The description leads with the decision, approval, missing
+information or intervention needed. Finished reports get a reading description,
+without inventing a decision. Rows and detail panes show this description;
+the original issue, comment or handoff stays available below it.
+
+This uses the same three server settings and bounded JSON transport above.
+Long source fields retain both their beginning and end within individual caps: title, original request,
+latest comment or handoff, current queue reasons, CI/review state and diagnosis.
+No tools or actions are offered to the model. The result is plain text, capped
+at 600 characters, and is advisory rather than authorization.
+
+Descriptions stream independently behind Suspense so the queue and reply
+controls do not wait for the model. Up to four requests run concurrently per
+Console process; queue time shares the eight-second request budget. Next's
+server cache keys descriptions by the bounded source content and its revision,
+so changed comments, handoffs or decision state select a new summary. Successful
+results revalidate after a day; unavailable results retry after a minute.
+This is a cached reading aid, not a persisted change to the underlying work.
+When configuration is absent or generation fails, native rows retain their
+original question or report; GitHub rows direct the reader to the original context.
+Opening a selected item skips summary work for the hidden rows. The completion-time stored action summaries
+above continue to behave independently.

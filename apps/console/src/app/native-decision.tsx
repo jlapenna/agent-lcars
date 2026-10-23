@@ -53,7 +53,7 @@ export function NativeDecisionRow({
             {work.spec.title}
           </span>
           <span className="queue-item-row__question">
-            {nativeCardText(card)}
+            {card.decisionSummary ?? nativeCardText(card)}
           </span>
           <div className="ops-inbox__meta">
             <span className="ops-ref">
@@ -151,6 +151,11 @@ export function NativeDecisionDetail({
             : work.state}{' '}
         · <RelativeTime iso={nativeCardTime(card)} />
       </Text>
+      {card.decisionSummary && (
+        <Text size="sm" aria-label="Inbox summary">
+          {card.decisionSummary}
+        </Text>
+      )}
       {work.state === 'parked' && (
         <HumanNeededSummary
           actions={work.runs.at(-1)?.result?.humanNeededActions}

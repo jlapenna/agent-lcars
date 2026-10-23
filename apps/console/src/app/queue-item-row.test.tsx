@@ -53,6 +53,24 @@ function renderRow(
 }
 
 describe('QueueItemRow', () => {
+  it('shows the decision description next to the original title', () => {
+    render(
+      <MantineProvider>
+        <QueueItemRow
+          card={{
+            item: makeItem(),
+            decisionSummary: <span>Choose the retention period.</span>,
+          }}
+          href="/inbox?item=agent%2Flcars%23249"
+          selected={false}
+        />
+      </MantineProvider>,
+    );
+    expect(
+      screen.getByRole('link', { name: /Responsive Inbox/ }),
+    ).toHaveTextContent('Choose the retention period.');
+  });
+
   it('renders the Respond affordance inside the one row link', () => {
     renderRow();
     const link = screen.getByRole('link', { name: /Responsive Inbox/ });
