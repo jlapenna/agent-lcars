@@ -1,20 +1,19 @@
 'use client';
 
 import {
-  ActionIcon,
-  Button,
-  Group,
-  Menu,
-  Modal,
-  Stack,
-  Text,
-  Textarea,
-  TextInput,
-} from '@mantine/core';
-import { modals } from '@mantine/modals';
+  dialogReturnTarget,
+  useConfirmationDialog,
+} from '@agent-lcars/app-providers';
+import { ActionIcon, Button, MenuItem, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
-import { type FormEvent, type ReactNode, useState, useTransition } from 'react';
+import {
+  type FormEvent,
+  type ReactNode,
+  useRef,
+  useState,
+  useTransition,
+} from 'react';
 
 import type { ActionItem } from '../lib/action-items';
 import { derivePrimaryAction, type Pipeline } from '../lib/primary-action';
@@ -31,13 +30,15 @@ import {
   rebasePr,
   updateIssueContent,
 } from './actions';
+import { DeferredInboxDialog } from './deferred-inbox-dialog';
+import { DeferredMenu } from './deferred-popover';
 import { showErrorToast } from './show-error-toast';
 
 /**
  * The item-specific actions (edit, close, assign, merge/rebase, mute) an
  * overflow menu offers, decoupled from the trigger button that opens them so
  * a host that already renders its own single dots trigger (`QueueUtilityMenu`
- * on the task detail header - agent-lcars#1676) can fold these `Menu.Item`s
+ * on the task detail header - agent-lcars#1676) can fold these `MenuItem`s
  * into that same dropdown instead of showing a second dots icon next to it.
  * `item` is optional so a host that doesn't always have one (e.g. a page
  * shell shared with non-item routes) can call this unconditionally.
@@ -57,8 +58,10 @@ export function useItemOverflowMenu(
    * be closed from here (a PR). */
   confirmClose?: () => void;
 } {
+  const openConfirmation = useConfirmationDialog();
   const [isPending, startTransition] = useTransition();
   const [editOpened, setEditOpened] = useState(false);
+  const editReturnFocus = useRef<HTMLElement | null>(null);
   const [editTitle, setEditTitle] = useState(item?.title ?? '');
   const [editBody, setEditBody] = useState(item?.body ?? '');
 
@@ -120,6 +123,7 @@ export function useItemOverflowMenu(
   };
 
   const openEdit = () => {
+    editReturnFocus.current = dialogReturnTarget();
     setEditTitle(item.title);
     setEditBody(item.body ?? '');
     setEditOpened(true);
@@ -148,7 +152,7 @@ export function useItemOverflowMenu(
   };
 
   const confirmClose = () =>
-    modals.openConfirmModal({
+    openConfirmation({
       title: `Close #${item.number}?`,
       children: (
         <Text size="sm">
@@ -222,7 +226,7 @@ export function useItemOverflowMenu(
 
   const confirmReviewAction = () => {
     const rebasing = reviewAction === 'approve-rebase';
-    modals.openConfirmModal({
+    openConfirmation({
       title: `${rebasing ? 'Rebase' : 'Merge'} #${item.number}?`,
       children: (
         <Text size="sm">
@@ -262,89 +266,56 @@ export function useItemOverflowMenu(
 
   const items = (
     <>
-      {canEdit && <Menu.Item onClick={openEdit}>Edit issue</Menu.Item>}
+      {canEdit && <MenuItem onClick={openEdit}>Edit issue</MenuItem>}
       {canReview && (
-        <Menu.Item
-          disabled={reviewActionDisabled}
-          onClick={confirmReviewAction}
-        >
+        <MenuItem disabled={reviewActionDisabled} onClick={confirmReviewAction}>
           {reviewAction === 'approve-rebase'
             ? 'Approve & Rebase'
             : 'Approve & Merge'}
-        </Menu.Item>
+        </MenuItem>
       )}
       {canRebase && (
-        <Menu.Item onClick={handleRebase}>Rebase onto base branch</Menu.Item>
+        <MenuItem onClick={handleRebase}>Rebase onto base branch</MenuItem>
       )}
       {assignTargets.map((target) => (
-        <Menu.Item key={target} onClick={() => handleAssign(target)}>
+        <MenuItem key={target} onClick={() => handleAssign(target)}>
           Assign to {target}
-        </Menu.Item>
+        </MenuItem>
       ))}
       {canClearHumanNeeded && (
-        <Menu.Item onClick={handleClearHumanNeeded}>
-          Clear needs-human
-        </Menu.Item>
+        <MenuItem onClick={handleClearHumanNeeded}>Clear needs-human</MenuItem>
       )}
       {canMute && (
-        <Menu.Item onClick={onToggleMute}>
+        <MenuItem onClick={onToggleMute}>
           {muted ? 'Unsnooze' : 'Snooze'}
-        </Menu.Item>
+        </MenuItem>
       )}
       {canClose && (
-        <Menu.Item color="red" onClick={confirmClose}>
+        <MenuItem color="red" onClick={confirmClose}>
           Close issue
-        </Menu.Item>
+        </MenuItem>
       )}
     </>
   );
 
-  const modal = canEdit && (
-    <Modal
-      opened={editOpened}
-      onClose={() => {
-        if (!isPending) setEditOpened(false);
+  const modal = canEdit && editOpened && (
+    <DeferredInboxDialog
+      returnFocus={editReturnFocus.current}
+      kind="edit"
+      options={{
+        number: item.number,
+        title: editTitle,
+        body: editBody,
+        pending: isPending,
+        unchanged: editUnchanged,
+        onTitle: setEditTitle,
+        onBody: setEditBody,
+        onSubmit: handleEdit,
+        onClose: () => {
+          if (!isPending) setEditOpened(false);
+        },
       }}
-      closeOnClickOutside={!isPending}
-      title={`Edit #${item.number}`}
-    >
-      <form onSubmit={handleEdit}>
-        <Stack gap="sm">
-          <TextInput
-            label="Title"
-            required
-            value={editTitle}
-            onChange={(event) => setEditTitle(event.currentTarget.value)}
-            disabled={isPending}
-          />
-          <Textarea
-            label="Body"
-            value={editBody}
-            onChange={(event) => setEditBody(event.currentTarget.value)}
-            autosize
-            minRows={10}
-            disabled={isPending}
-          />
-          <Group justify="flex-end" gap="xs">
-            <Button
-              type="button"
-              variant="default"
-              disabled={isPending}
-              onClick={() => setEditOpened(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              loading={isPending}
-              disabled={!editTitle.trim() || editUnchanged}
-            >
-              Save changes
-            </Button>
-          </Group>
-        </Stack>
-      </form>
-    </Modal>
+    />
   );
 
   return {
@@ -382,9 +353,12 @@ export function ItemOverflowMenu({
 
   return (
     <>
-      <Menu withinPortal position="bottom-end" shadow="md">
-        <Menu.Target>
+      <DeferredMenu
+        position="bottom-end"
+        shadow="md"
+        target={(triggerProps) => (
           <ActionIcon
+            {...triggerProps}
             variant="subtle"
             color="gray"
             disabled={isPending}
@@ -394,9 +368,10 @@ export function ItemOverflowMenu({
           >
             <IconDotsVertical aria-hidden="true" size={18} stroke={1.7} />
           </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>{items}</Menu.Dropdown>
-      </Menu>
+        )}
+      >
+        {items}
+      </DeferredMenu>
       {modal}
     </>
   );

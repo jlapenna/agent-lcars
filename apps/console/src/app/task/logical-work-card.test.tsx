@@ -18,13 +18,15 @@ vi.mock('../actions', () => ({
   updateIssueContent: vi.fn(),
 }));
 
-// No ModalsProvider is mounted in these tests (only MantineProvider, matching
-// the item-overflow-menu suite), so openConfirmModal is stubbed to invoke its
+// No confirmation provider is mounted in these tests (only MantineProvider, matching
+// the item-overflow-menu suite), so the confirmation is stubbed to invoke its
 // onConfirm immediately - equivalent to the maintainer confirming.
-vi.mock('@mantine/modals', () => ({
-  modals: {
-    openConfirmModal: vi.fn(({ onConfirm }) => onConfirm()),
-  },
+vi.mock('@agent-lcars/app-providers', () => ({
+  useConfirmationDialog:
+    () =>
+    ({ onConfirm }: { onConfirm: () => void }) =>
+      onConfirm(),
+  dialogReturnTarget: () => null,
 }));
 
 vi.mock('@mantine/notifications', () => ({

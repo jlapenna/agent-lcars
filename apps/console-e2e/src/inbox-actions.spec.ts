@@ -193,6 +193,170 @@ async function expectScope(page: Page, url: string) {
 }
 
 test.describe('Inbox authorized action journeys', () => {
+  test.describe('deferred secondary controls', () => {
+    test.describe.configure({ retries: 0 });
+
+    async function openWithKeyboard(page: Page, label: string) {
+      const trigger = page
+        .getByRole('button', { name: label, exact: true })
+        .filter({ visible: true })
+        .first();
+      await expect(trigger).toBeVisible();
+      await trigger.focus();
+      await trigger.press('ArrowDown');
+      const menu = page.getByRole('menu');
+      await expect(menu).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            Boolean(document.activeElement?.closest('[role="menu"]')),
+          ),
+        )
+        .toBe(true);
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+      await expect(trigger).toBeFocused();
+    }
+
+    for (const width of [390, 1280]) {
+      test(`secondary menus open by keyboard and return focus at ${width}px`, async ({
+        page,
+        request,
+      }) => {
+        test.setTimeout(30_000);
+        await page.setViewportSize({ width, height: 844 });
+        await page.goto(`/inbox?repo=${REPO_QUERY}&sort=newest`);
+        await expect(page.locator('.inbox-toolbar')).toHaveAttribute(
+          'data-hydrated',
+          '',
+        );
+        // The compact phone toolbar keeps refine folded away; the full
+        // desktop toolbar exposes it. Both list headers expose utilities.
+        if (width >= 768) await openWithKeyboard(page, 'Filter and sort');
+        await openWithKeyboard(page, 'More console options');
+        const number = E2E_ITEM_NUMBERS.reviewRequested;
+        await selectItem(page, number);
+        // The selected phone detail replaces the list header with Back.
+        await openWithKeyboard(page, `More actions for #${number}`);
+        expect(await journal(request)).toEqual([]);
+      });
+    }
+
+    test('a failed secondary chunk leaves the primary usable and offers a page reload', async ({
+      page,
+      request,
+    }) => {
+      test.setTimeout(30_000);
+      await page.setViewportSize({ width: 1280, height: 844 });
+      const number = E2E_ITEM_NUMBERS.reviewRequested;
+      await selectItem(page, number);
+      const primary = page
+        .locator('.queue-workspace__detail')
+        .getByRole('button', { name: /^Approve & (Merge|Rebase)$/ });
+      await expect(primary).toBeEnabled();
+      const chunks = '**/_next/static/**/*.js';
+      await page.route(chunks, (route) => route.abort('failed'));
+      await page.getByRole('button', { name: 'Filter and sort' }).click();
+      const failure = page
+        .getByRole('alert')
+        .filter({ hasText: 'Options could not load.' });
+      await expect(failure).toBeVisible();
+      await primary.click();
+      const dialog = page.getByRole('dialog', { name: /^(Merge|Rebase) #/ });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      expect(await journal(request)).toEqual([]);
+      await page.unroute(chunks);
+      await failure.getByRole('button', { name: 'Reload page' }).click();
+      await expect(page.locator('.inbox-toolbar')).toHaveAttribute(
+        'data-hydrated',
+        '',
+      );
+      await page.getByRole('button', { name: 'Filter and sort' }).click();
+      await expect(page.getByRole('menu')).toBeVisible();
+    });
+  });
+
+  for (const width of [390, 1280]) {
+    test(`overflow confirmations return focus without writing at ${width}px`, async ({
+      page,
+      request,
+    }) => {
+      test.setTimeout(45_000);
+      await page.setViewportSize({ width, height: 844 });
+      for (const choice of [
+        {
+          number: E2E_ITEM_NUMBERS.humanNeeded,
+          action: 'Close issue',
+          title: /^Close #/,
+          escape: true,
+        },
+        {
+          number: E2E_ITEM_NUMBERS.reviewRequested,
+          action: /^Approve & (Merge|Rebase)$/,
+          title: /^(Merge|Rebase) #/,
+          escape: false,
+        },
+      ]) {
+        await selectItem(page, choice.number);
+        const trigger = page
+          .locator('.queue-workspace__detail')
+          .getByRole('button', {
+            name: `More actions for #${choice.number}`,
+            exact: true,
+          });
+        await trigger.click();
+        await page
+          .getByRole('menuitem', { name: choice.action, exact: true })
+          .click();
+        const dialog = page.getByRole('dialog', { name: choice.title });
+        await expect(dialog).toBeVisible();
+        if (choice.escape) await page.keyboard.press('Escape');
+        else
+          await dialog
+            .getByRole('button', { name: 'Cancel', exact: true })
+            .click();
+        await expect(dialog).toBeHidden();
+        await expect(trigger).toBeFocused();
+        expect(await journal(request)).toEqual([]);
+      }
+    });
+  }
+
+  test('confirmation remains available across client Back navigation', async ({
+    page,
+    request,
+  }) => {
+    test.setTimeout(45_000);
+    await page.goto('/work');
+    await page
+      .getByRole('link', { name: 'Inbox', exact: true })
+      .filter({ visible: true })
+      .first()
+      .click();
+    await expect(page.locator('.inbox-toolbar')).toHaveAttribute(
+      'data-hydrated',
+      '',
+    );
+    await page
+      .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
+      .getByRole('link')
+      .click();
+    const primary = page
+      .locator('.queue-workspace__detail')
+      .getByRole('button', { name: /^Approve & (Merge|Rebase)$/ });
+    await primary.click();
+    const dialog = page.getByRole('dialog', { name: /^(Merge|Rebase) #/ });
+    await expect(dialog).toBeVisible();
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/work$/);
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(await journal(request)).toEqual([]);
+  });
+
   test('Comment only posts once without Work; a selected pipeline hands off once on mobile', async ({
     page,
     request,
@@ -465,9 +629,31 @@ test.describe('Inbox authorized action journeys', () => {
         await primary.click();
         const dialog = fresh.getByRole('dialog', { name: title });
         await expect(dialog).toBeVisible();
+        await expect(
+          dialog.getByRole('button', { name: 'Close modal' }),
+        ).toBeFocused();
+        expect(
+          await fresh
+            .locator('body')
+            .evaluate((body) => getComputedStyle(body).overflow),
+        ).toBe('hidden');
+        await fresh.keyboard.press('Shift+Tab');
+        await expect(
+          dialog.getByRole('button', { name: label, exact: true }),
+        ).toBeFocused();
+        await fresh.keyboard.press('Tab');
+        await expect(
+          dialog.getByRole('button', { name: 'Close modal' }),
+        ).toBeFocused();
         if (action === 'merge') await fresh.keyboard.press('Escape');
         else await dialog.getByRole('button', { name: 'Cancel' }).click();
         await expect(dialog).toBeHidden();
+        await expect(primary).toBeFocused();
+        expect(
+          await fresh
+            .locator('body')
+            .evaluate((body) => getComputedStyle(body).overflow),
+        ).not.toBe('hidden');
         expect(await journal(request)).toEqual([]);
       } finally {
         holding = false;

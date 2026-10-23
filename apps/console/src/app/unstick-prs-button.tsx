@@ -1,10 +1,11 @@
 'use client';
 
-import { Button, Popover, Stack, Textarea } from '@mantine/core';
+import { Button, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import { dispatchUnstickPrs } from './actions';
+import { DeferredPopover } from './deferred-popover';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -52,45 +53,43 @@ export function UnstickPrsButton({
   };
 
   return (
-    <Popover
+    <DeferredPopover
       opened={opened}
       onChange={setOpened}
       width={340}
       position="bottom-end"
       withArrow
-    >
-      <Popover.Target>
+      target={(triggerProps) => (
         <Button
+          {...triggerProps}
           className="lcars-action-button"
           data-accent="violet"
           size={size}
           disabled={isPending}
           loading={isPending}
-          onClick={() => setOpened((prev) => !prev)}
         >
           {label}
         </Button>
-      </Popover.Target>
-      <Popover.Dropdown>
-        <Stack gap="xs">
-          <Textarea
-            value={context}
-            onChange={(e) => setContext(e.currentTarget.value)}
-            aria-label="Optional context — PR numbers, symptoms — posted on the anchor issue"
-            placeholder="Optional context — PR numbers, symptoms — posted on the anchor issue"
-            autosize
-            minRows={2}
-          />
-          <Button
-            disabled={isPending}
-            loading={isPending}
-            onClick={handleDispatch}
-            fullWidth
-          >
-            Dispatch
-          </Button>
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
+      )}
+    >
+      <Stack gap="xs">
+        <Textarea
+          value={context}
+          onChange={(e) => setContext(e.currentTarget.value)}
+          aria-label="Optional context — PR numbers, symptoms — posted on the anchor issue"
+          placeholder="Optional context — PR numbers, symptoms — posted on the anchor issue"
+          autosize
+          minRows={2}
+        />
+        <Button
+          disabled={isPending}
+          loading={isPending}
+          onClick={handleDispatch}
+          fullWidth
+        >
+          Dispatch
+        </Button>
+      </Stack>
+    </DeferredPopover>
   );
 }

@@ -6,9 +6,10 @@ import {
   MantineProvider,
   MantineThemeOverride,
 } from '@mantine/core';
-import { ModalsProvider } from '@mantine/modals';
 import { Notifications } from '@mantine/notifications';
 import React from 'react';
+
+import { ConfirmationDialogProvider } from './confirmation-dialog';
 
 export interface AppProvidersProps {
   children: React.ReactNode;
@@ -33,7 +34,7 @@ export function AppProviders({
   return (
     <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
       <Notifications zIndex={NOTIFICATIONS_Z_INDEX} />
-      <ModalsProvider>{children}</ModalsProvider>
+      <ConfirmationDialogProvider>{children}</ConfirmationDialogProvider>
     </MantineProvider>
   );
 }
