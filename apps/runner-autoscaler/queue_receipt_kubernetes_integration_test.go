@@ -870,7 +870,7 @@ func receiptFenceQueueEndpoint(ctx context.Context, t *testing.T, rt receiptKube
 		config: queueKubernetesConfig{
 			Namespace: rt.namespace, CredentialsSecret: rt.fixtureSecret, ServiceAccount: rt.serviceAccount,
 			MaxConcurrent: 2, NodeSelector: rt.nodeSelector,
-			Requests: map[string]string{"cpu": "50m", "memory": "64Mi", "ephemeral-storage": "64Mi"},
+			Requests: map[string]string{"cpu": "200m", "memory": "128Mi", "ephemeral-storage": "128Mi"},
 			Limits:   map[string]string{"cpu": "200m", "memory": "128Mi", "ephemeral-storage": "128Mi"},
 			Capacity: &pool,
 		},
