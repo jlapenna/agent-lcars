@@ -2579,7 +2579,7 @@ func receiptKubernetesProcessDeath(ctx context.Context, t *testing.T, rt receipt
 			registered := len(a.registered)
 			a.mu.Unlock()
 			if original == "" || oldProducer != original || requestID == "" || registered != 1 || claims != 1 || releases != 0 || refused != 0 || len(violations) != 0 {
-				t.Fatalf("original production claim ledger mismatch: producer=%t registered=%d claims=%d pending=%d resolved=%d violations=%v", oldProducer == original, registered, claims, pending, resolved, violations)
+				t.Fatalf("original production claim ledger mismatch: outcome=%q error=%q producer=%t registered=%d claims=%d pending=%d resolved=%d violations=%v", done.Outcome, done.Error, oldProducer == original, registered, claims, pending, resolved, violations)
 			}
 			t.Logf("production claim checkpoint=%s producer=%s claimRequestId=%s claims=%d pending=%d resolved=%d", name, original, requestID, claims, pending, resolved)
 			wantPending, wantResolved := 1, 0
