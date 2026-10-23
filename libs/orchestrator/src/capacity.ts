@@ -195,6 +195,19 @@ export class CapacityProtocol {
           else receipt.taskKey = taskKey(run.task);
           if (snapshot.records.has(retiredKey(receipt.runId)))
             throw new CapacityRefusal('retired');
+          const producer = snapshot.records.get(
+            producerKey(receipt.poolId, receipt.subject, receipt.producerId),
+          );
+          // A closed incarnation may have more historical Runs than pool
+          // slots. Later quarantine batches inherit its stop, never renewed
+          // launch authority. Unknown writes still retain their barriers.
+          if (producer?.kind === 'producer' && producer.closed)
+            for (const group of receipt.producers)
+              if (
+                group.subject === receipt.subject &&
+                group.producerId === receipt.producerId
+              )
+                group.stopped = true;
         }
         const known =
           input.known &&
@@ -230,15 +243,14 @@ export class CapacityProtocol {
             receipt.producerId,
           );
           const prior = snapshot.records.get(key);
-          if (prior?.kind === 'producer' && prior.closed)
-            throw new CapacityRefusal('producer');
-          records.set(key, {
-            kind: 'producer',
-            poolId: receipt.poolId,
-            subject: receipt.subject,
-            producerId: receipt.producerId,
-            closed: false,
-          });
+          if (prior?.kind !== 'producer')
+            records.set(key, {
+              kind: 'producer',
+              poolId: receipt.poolId,
+              subject: receipt.subject,
+              producerId: receipt.producerId,
+              closed: false,
+            });
           receipt.state = 'quarantined';
           snapshot.state.receipts.push(receipt);
           snapshot.state.slotRevisions[

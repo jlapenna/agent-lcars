@@ -1601,6 +1601,153 @@ function contract(
         await claim(protocol, authority('pool-b'), undefined, 'producer-b'),
       ).toMatchObject({ kind: 'wait' });
     });
+    it('drains reviewed legacy batches without reopening a closed producer', async () => {
+      const store = factory();
+      const orchestrator = new Orchestrator(store, { now: () => now });
+      const a = authority();
+      const legacyAuthority = authority(a.poolId, 'legacy-subject');
+      const legacyRuns = [];
+      for (let index = 0; index < 2; index++) {
+        await enqueue(store, orchestrator);
+        const run = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now,
+          claimedBy: 'legacy-runner',
+          claimedBySubject: legacyAuthority.subject,
+          tokenHash,
+        });
+        if (run === undefined) throw new Error('Expected legacy claim');
+        expect(
+          isRefusal(
+            await orchestrator.report(run.runId, { ok: true }, tokenHash),
+          ),
+        ).toBe(false);
+        legacyRuns.push(run);
+      }
+      const protocol = new CapacityProtocol(store);
+      await protocol.configure(a, policy(), now);
+      await protocol.register(a, 'producer-new', now);
+      const nextRun = await enqueue(store, orchestrator);
+
+      for (const [index, run] of legacyRuns.entries()) {
+        const observation: CapacityReceipt = {
+          poolId: a.poolId,
+          slot: 0,
+          revision: index + 1,
+          runId: run.runId,
+          nonce: `legacy-batch-nonce-${index}-12345`,
+          domainId: 'claude-global',
+          pipeline: 'claude',
+          subject: legacyAuthority.subject,
+          runner: 'legacy-runner',
+          producerId: 'legacy-producer',
+          claimedAt: now,
+          tokenHash,
+          jobName: `legacy-job-${index}`,
+          jobUid: `legacy-job-uid-${index}`,
+          state: 'quarantined',
+          unplaced: false,
+          producers: [
+            {
+              producerId: 'legacy-producer',
+              subject: legacyAuthority.subject,
+              stopped: false,
+              fenced: false,
+              pendingWrites: index === 1 ? ['unknown-legacy-write'] : [],
+            },
+          ],
+          retiredWorkers: [],
+        };
+        const input = {
+          now,
+          receipts: [observation],
+          known: true,
+          evidence: `reviewed-physical-batch-${index}`,
+          dryRun: true,
+        };
+        const before = await protocol.read(now);
+        const report = await protocol.importInventory(a, input);
+        expect(report.inventoryKnown).toBe(index === 1);
+        expect(await protocol.read(now)).toEqual(before);
+        await protocol.importInventory(a, {
+          ...input,
+          dryRun: false,
+          reviewedDigest: report.digest,
+        });
+        const receipt = (await protocol.read(now)).receipts[0];
+        if (receipt === undefined) throw new Error('Expected imported receipt');
+        expect(receipt.producers[0]).toMatchObject({
+          stopped: index === 1,
+          fenced: false,
+          pendingWrites: observation.producers[0]?.pendingWrites,
+        });
+        const admission = await claim(
+          protocol,
+          a,
+          'still-draining',
+          'producer-new',
+        ).catch((error: unknown) => {
+          if (error instanceof CapacityRefusal) return error;
+          throw error;
+        });
+        expect(admission).toMatchObject(
+          index === 0
+            ? { reason: 'inventory' }
+            : { kind: 'wait', reason: 'capacity' },
+        );
+        await owner(protocol, a, receipt);
+        await protocol.retire(a, fence(receipt), { recoveryNonce, now });
+        if (index === 0) {
+          await protocol.stopProducer(
+            {
+              ...a,
+              capabilities: new Set([...a.capabilities, 'fence']),
+            },
+            fence(receipt),
+            {
+              producerId: 'legacy-producer',
+              producerSubject: legacyAuthority.subject,
+              fenced: true,
+              evidence: 'exact-legacy-runtime-positively-fenced',
+              now,
+            },
+          );
+        }
+        await expect(
+          protocol.register(legacyAuthority, 'legacy-producer', now),
+        ).rejects.toThrow('producer');
+        await expect(
+          protocol.release(a, fence(receipt), {
+            ...releaseInput(receipt),
+            physicalWorkersEnded: false,
+          }),
+        ).rejects.toThrow('physical');
+        expect(
+          await protocol.release(a, fence(receipt), {
+            ...releaseInput(receipt),
+            neverStarted: false,
+          }),
+        ).toEqual({ released: true, retainBarrier: index === 1 });
+        expect((await store.readRun(run.runId))?.queue?.state).toBe('retired');
+        const afterRelease = await protocol.read(now);
+        expect(afterRelease.receipts).toHaveLength(0);
+        expect(afterRelease.policies[0]?.inventoryKnown).toBe(index === 1);
+        expect(
+          await protocol.inspectProducer(
+            legacyAuthority,
+            'legacy-producer',
+            now,
+          ),
+        ).toMatchObject({ closed: true });
+      }
+      await known(protocol, a);
+      expect(
+        await protocol.inspectRetired(a, legacyRuns[1]!.runId, now),
+      ).toMatchObject({ released: true, retainBarrier: true });
+      expect(
+        await claim(protocol, a, 'after-drain', 'producer-new'),
+      ).toMatchObject({ kind: 'claim', run: { runId: nextRun.runId } });
+    });
     it('producer bounds refuse new identities while preserving full-set replay', async () => {
       const { store, protocol, a, orchestrator } = await fixture();
       await enqueue(store, orchestrator);
