@@ -9,6 +9,10 @@
 # the arm64 image run the entire Go compiler under QEMU on the amd64 BuildKit
 # host, which added roughly 17 minutes to the 2026-08-21 publication.
 FROM --platform=$BUILDPLATFORM golang:1.27 AS build
+# One compiler at a time; bound Go heap growth inside the builder cgroup.
+ARG GOMAXPROCS=1
+ARG GOFLAGS=-p=1
+ARG GOMEMLIMIT=1GiB
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /build
