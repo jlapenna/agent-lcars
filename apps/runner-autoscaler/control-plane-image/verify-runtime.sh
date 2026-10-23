@@ -19,7 +19,9 @@ done
 test -x /home/runner/bin/Runner.Listener
 test "$(readlink -f "$(command -v node)")" = /home/runner/externals/node24/bin/node
 test "$(readlink -f "$(command -v npm)")" = /home/runner/externals/node24/lib/node_modules/npm/bin/npm-cli.js
-node --version
+test "$(node -p 'process.versions.node')" = 24.22.1
+test "${FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:-}" = true
+test ! -e /home/runner/externals/node20
 npm --version
 git --version
 gh --version | head -n 1

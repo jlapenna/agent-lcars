@@ -75,7 +75,7 @@ ARG TERRAFORM_VERSION=1.17.0
 #
 # If this stage ever starts emitting a native binary, this pin becomes
 # wrong -- it would bake an amd64 artifact into the arm64 image.
-FROM --platform=$BUILDPLATFORM node:24-slim AS telemetry-watcher-build
+FROM --platform=$BUILDPLATFORM node:24.22.1-slim AS telemetry-watcher-build
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -156,7 +156,7 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # accepted, so a package published hours before a refresh must not fail the
 # image build. Keep the copy below as a distinct final-image layer to make
 # its size and churn visible.
-FROM node:24-slim AS pnpm-store-seed
+FROM node:24.22.1-slim AS pnpm-store-seed
 # A consumer may lock a git-hosted dependency as a `type: git` resolution
 # (Sprinkles locks `@jlapenna/fleet-runtime` and `@jlapenna/repo-tools` from
 # `git+https://` specifiers); pnpm clones those with the git CLI, which the
@@ -327,6 +327,7 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # self-hosting ci.yml's `verify` job surfaced that the image had no C
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
+ARG NODE_VERSION=24.22.1
 
 # Playwright's browser stack is deliberately NOT baked here (reverted per
 # agent-lcars#920): E2E no longer runs on this generic JIT image -- the
@@ -354,8 +355,12 @@ RUN set -eux; \
     # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer
     # workflows (sprinkles deploy.py) assume it; with PEP 668 a job cannot
     # pip-install it at run time without --break-system-packages. \
-    apt-get install -y --no-install-recommends nodejs git-lfs gh jq xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
-    node --version; \
+    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    test "$(node -p 'process.versions.node')" = "$NODE_VERSION"; \
+    # Actions execute with their bundled Node, independently of PATH.
+    cp /usr/bin/node /home/runner/externals/node24/bin/node; \
+    test "$(/home/runner/externals/node24/bin/node -p 'process.versions.node')" = "$NODE_VERSION"; \
+    rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
     # as the throwaway telemetry-watcher-build stage above already does for
@@ -604,6 +609,7 @@ RUN chmod +x /usr/local/bin/lcars
 # before switching to the unprivileged runner user, then install the plugin
 # into that user's state below. This deliberately tracks the current CLI: the
 # runner is an integrated first-party delivery surface, not a pinned artifact.
+ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 RUN npm install -g @openai/codex && codex --version
 
 # QueueExecutor direct mode invokes `claude` itself instead of the GitHub
@@ -612,9 +618,8 @@ RUN npm install -g @openai/codex && codex --version
 # provides the expected executable must fail publication, not a claimed run.
 RUN npm install -g @anthropic-ai/claude-code && claude --version
 
-# The Actions runner base carries npm inside both bundled Actions Node
-# runtimes, while NodeSource installs a third system copy. Repair all three
-# node-tar copies after the image's global npm installs so CVE-2026-59873
+# The retained Actions Node runtime carries npm independently of NodeSource.
+# Repair both node-tar copies after the image's global npm installs so CVE-2026-59873
 # cannot survive in a job-visible npm tree.
 COPY repair-node-tar.sh /usr/local/lib/agent-lcars/repair-node-tar.sh
 RUN bash /usr/local/lib/agent-lcars/repair-node-tar.sh && \

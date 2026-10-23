@@ -86,6 +86,10 @@ RUN groupadd -g 1002 runner \
 # upstream base is JIT-native (honors ACTIONS_RUNNER_INPUT_JITCONFIG), so
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
+RUN cp /usr/bin/node /home/runner/externals/node24/bin/node \
+    && test "$(/home/runner/externals/node24/bin/node -p 'process.versions.node')" = 24.22.1 \
+    && rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine
+ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 
 # The seeded pnpm store and metadata cache, pinned in pnpm's global config the
 # same way as the JIT runner image (see its Dockerfile for why neither
@@ -116,8 +120,8 @@ COPY --from=pnpm-store-seed --chown=runner:runner \
 COPY --from=pnpm-store-seed --chown=runner:runner \
     /pnpm-cache/ /home/runner/.cache/pnpm/
 
-# The sandbox supplies system npm and the runner payload supplies two more npm
-# copies under its Actions Node runtimes. Repair every inherited node-tar copy
+# The sandbox supplies system npm and the retained Actions Node 24 runtime
+# supplies another copy. Repair every inherited node-tar copy
 # so the dedicated Playwright image does not retain CVE-2026-59873.
 COPY apps/runner-autoscaler/runner-image/repair-node-tar.sh /tmp/repair-node-tar.sh
 RUN bash /tmp/repair-node-tar.sh && rm /tmp/repair-node-tar.sh
