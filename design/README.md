@@ -20,6 +20,9 @@ Decisions the prototype already carries:
 
 - The Bridge has no repository select; its panels summarise the whole fleet.
 - Every toolbar control applies on change; there is no Apply step.
+- On phones the Inbox list and selected detail grow with their content; the
+  document owns vertical scrolling. The Back bar stays available while reading
+  a long detail. Desktop keeps independently scrolling list and detail panes.
 - Inbox defaults to pending decisions. Completed reports open through their
   separate count button or the reason filter, with a return to decisions.
   Report permalinks remain readable without changing the list filter.

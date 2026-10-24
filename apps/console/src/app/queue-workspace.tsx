@@ -179,6 +179,24 @@ export function QueueWorkspace({
   };
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const previousItemKey = useRef(selectedItemKey);
+
+  // Desktop preserves the two pane positions. On phones, selecting a row
+  // replaces the document's list with its detail: start at the Back bar even
+  // when the tapped row was far down a long queue.
+  useEffect(() => {
+    if (
+      previousItemKey.current !== selectedItemKey &&
+      window.matchMedia('(max-width: 47.99em)').matches
+    ) {
+      workspaceRef.current?.scrollIntoView({
+        block: 'start',
+        behavior: 'instant',
+      });
+    }
+    previousItemKey.current = selectedItemKey;
+  }, [selectedItemKey]);
   const keyboardNavigated = useRef(false);
   // Where the last j/k already sent us: router.replace is asynchronous, so
   // key-repeat arriving before selectedItemKey updates must step from this
@@ -573,6 +591,7 @@ export function QueueWorkspace({
       </div>
       <div
         className="queue-workspace"
+        ref={workspaceRef}
         data-mobile-view={mobileView}
         data-detail={showDetail ? '' : undefined}
       >

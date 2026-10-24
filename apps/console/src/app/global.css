@@ -3648,12 +3648,14 @@ td.costs-repo-spend__num {
   .queue-workspace {
     display: block;
     width: 100%;
-    height: calc(100dvh - var(--lcars-mobile-header-height, 74px));
-    min-height: calc(100dvh - var(--lcars-mobile-header-height, 74px));
+    /* Phones use the document as their single vertical scroll surface. The
+       header, warnings and toolbar also take space above this workspace. */
+    height: auto;
+    min-height: 0;
     border: 0;
     border-radius: 0;
     gap: 0;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .queue-workspace__list {
@@ -3735,24 +3737,21 @@ td.costs-repo-spend__num {
 
   .inbox-frame {
     border: 0;
+    /* Clip horizontally without creating an ancestor scroll container for
+       the sticky Back bar. */
+    overflow: clip;
   }
 
-  .queue-workspace__list {
-    height: 100%;
-    border: 0;
-  }
-
+  .queue-workspace__list,
   .queue-workspace__detail {
-    height: calc(100% - 52px);
+    height: auto;
     border: 0;
   }
 
-  .queue-workspace:has(.queue-mobile-meta) .queue-workspace__list {
-    height: calc(100% - 20px);
-  }
-
-  .queue-workspace:has(.queue-mobile-meta) .queue-workspace__detail {
-    height: calc(100% - 72px);
+  .queue-workspace__rows,
+  .queue-workspace__detail {
+    overflow: visible;
+    overscroll-behavior-y: auto;
   }
 
   .queue-workspace[data-mobile-view='list'] .queue-workspace__detail,
@@ -3822,10 +3821,6 @@ td.costs-repo-spend__num {
     left: 12px;
     height: 2px;
     background: linear-gradient(to right, var(--lcars-signal-stops));
-  }
-
-  .queue-workspace__detail {
-    overflow-y: auto;
   }
 
   .queue-detail-card {
