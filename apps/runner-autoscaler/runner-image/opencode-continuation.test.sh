@@ -42,6 +42,9 @@ cleanup() {
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
+  # Detached telemetry clients can outlive the CLI and recreate files during rm.
+  # Keep the scratch intact when ownership or retirement cannot be established.
+  python3 "$here/drain-hook-test-clients.py" "$tmp" || return 1
   rm -rf "$tmp"
 }
 trap cleanup EXIT
@@ -150,6 +153,7 @@ env \
   OPENCODE_DISABLE_MODELS_FETCH=true \
   OPENCODE_DISABLE_TERMINAL_TITLE=true \
   OPENCODE_MODELS_PATH="$tmp/models.json" \
+  TMPDIR="$tmp" \
   HOME="$tmp/home" \
   XDG_CACHE_HOME="$tmp/cache" \
   XDG_CONFIG_HOME="$tmp/home/.config" \

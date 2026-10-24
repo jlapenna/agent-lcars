@@ -16,8 +16,7 @@ it('drains a previously verified PIDFD without re-reading its environment while 
       [
         '-c',
         String.raw`import pathlib,subprocess,os,json,time,sys,shutil,signal
-p=pathlib.Path(sys.argv[2]);source=pathlib.Path(sys.argv[1]).read_text()
-helper=source.split("<<'PY_DRAIN'\n",1)[1].split('\nPY_DRAIN',1)[0]
+p=pathlib.Path(sys.argv[2]);helper=pathlib.Path(sys.argv[1]).read_text()
 rows=[]
 for mode in ['tracked','undiscovered']:
  root=p/mode;root.mkdir();scratch=root/'private';scratch.mkdir();control=root/'control';ready=root/'ready';denied=root/'denied';restored=root/'restored';done=root/'done';observed=root/'observed'
@@ -91,7 +90,9 @@ select.select=observe_select
  shutil.rmtree(root)
 print(json.dumps(rows))
 `,
-        resolve('apps/runner-autoscaler/runner-image/hook-telemetry.test.sh'),
+        resolve(
+          'apps/runner-autoscaler/runner-image/drain-hook-test-clients.py',
+        ),
         root,
       ],
       {
