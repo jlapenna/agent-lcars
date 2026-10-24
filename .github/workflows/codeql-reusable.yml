@@ -33,15 +33,15 @@ permissions: {}
 jobs:
   analyze:
     name: Analyze (${{ inputs.languages }})
-    # ubuntu-latest unconditionally, not an input: GitHub's CodeQL CLI has
+    # ubuntu-slim unconditionally, not an input: GitHub's CodeQL CLI has
     # no linux/arm64 build at all (confirmed on agent-lcars CI — "The
     # CodeQL CLI does not support the platform/architecture combination of
     # linux/arm64"), and the fleet's self-hosted pools include arm64
     # hosts. A caller-supplied label landing on one of those would fail
     # outright — this is a hard platform incompatibility, not a
     # trust-boundary question, so the knob deliberately does not exist.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: read

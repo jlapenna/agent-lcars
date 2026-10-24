@@ -37,7 +37,7 @@ on:
   workflow_call:
     inputs:
       tool-source:
-        description: Use baked exact-version scanners or install verified releases. Baked requires xz already present.
+        description: Use baked exact-version scanners or install verified releases. Both modes require xz already present.
         required: false
         type: string
         default: 'install'
@@ -52,14 +52,14 @@ on:
       runs-on:
         description: >-
           Runner labels as a JSON array string, passed straight to
-          fromJSON(). Defaults to GitHub-hosted ubuntu-latest on purpose:
+          fromJSON(). Defaults to GitHub-hosted ubuntu-slim on purpose:
           validation must stay green-capable before a repo's self-hosted
           fleet capacity deploys. Linux x64/arm64 runners need curl, tar, xz,
-          Python 3 and pip. In install mode, missing xz is installed with sudo apt-get; no
-          Docker daemon is required.
+          Python 3 and pip. Both modes require xz already present; no privilege
+          escalation or Docker daemon is required.
         required: false
         type: string
-        default: '["ubuntu-latest"]'
+        default: '["ubuntu-slim"]'
       check-runner-labels:
         description: >-
           Reject any job whose runs-on pairs `self-hosted` with a label
@@ -89,7 +89,7 @@ jobs:
   runner-labels:
     name: runner label combinations
     if: inputs.check-runner-labels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
       contents: read
@@ -110,7 +110,7 @@ jobs:
   schedules:
     name: schedule justifications
     if: inputs.check-schedules
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
       contents: read
@@ -161,28 +161,18 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - name: Validate tool source and baked xz
+      - name: Validate tool source and xz
         env:
           TOOL_SOURCE: ${{ inputs.tool-source }}
         run: |
           case "$TOOL_SOURCE" in
-            install) ;;
-            baked)
-              command -v xz >/dev/null 2>&1 || {
-                echo '::error::baked tool-source requires xz already on PATH.'
-                exit 1
-              }
-              ;;
+            install|baked) ;;
             *) echo '::error::tool-source must be baked or install.'; exit 1 ;;
           esac
-
-      - name: Install xz when missing
-        if: inputs.tool-source == 'install'
-        run: |
-          if ! command -v xz >/dev/null 2>&1; then
-            sudo -n apt-get update
-            sudo -n apt-get install -y --no-install-recommends xz-utils
-          fi
+          command -v xz >/dev/null 2>&1 || {
+            echo '::error::Repository validation requires xz already on PATH.'
+            exit 1
+          }
 
       - uses: jlapenna/agent-lcars/.github/actions/setup-repo-checks@main
         with:

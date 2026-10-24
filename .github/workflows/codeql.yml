@@ -4,7 +4,7 @@ name: CodeQL
 # see docs/published-actions.md). This file owns what `workflow_call`
 # cannot carry: the triggers (including this repo's weekly cron),
 # concurrency, and workflow-level permissions. The analyze steps — and
-# the reasoning for their unconditional ubuntu-latest runner — live in
+# the reasoning for their unconditional ubuntu-slim runner — live in
 # the reusable.
 
 on:

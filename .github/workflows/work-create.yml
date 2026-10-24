@@ -71,7 +71,7 @@ permissions:
 
 jobs:
   work:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - name: Mint a work API bearer for the Codex agent service account

@@ -55,3 +55,18 @@ Fixtures, mocks, deterministic regression tests, and narrowly scoped synthetic
 canaries still belong where they protect a specific contract or safely
 exercise a failure. Label their evidence accurately: they supplement, rather
 than substitute for, real-work proof of the full development workflow.
+
+## Job capacity
+
+Every complete job is limited to 2 CPU, 6 GiB RAM and 40 GiB storage; smaller
+lane limits still apply. Requests equal enforced limits, including setup,
+helpers, services, caches, images and scratch. Fit the complete envelope on one
+supported runner after its host/service reserves. Preserve resource failures;
+reduce or split work instead of increasing its allocation.
+
+GitHub-hosted jobs use [`ubuntu-slim`](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+(1 CPU, 5 GB RAM, 14 GB storage), including
+fork verification. The provider enforces a 15-minute timeout and unprivileged
+execution. A failed or timed-out capped job remains a failed result; it never
+falls back to a larger runner. Trusted heavy verification keeps its existing
+ARC lane and that lane's equal requests/limits.

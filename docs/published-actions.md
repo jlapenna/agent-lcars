@@ -226,9 +226,9 @@ callers are separate work. Existing callers continue using install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. It forwards optional
-`tool-source` (default `install`) to the setup action. Only install mode installs
-missing `xz-utils` with passwordless sudo/apt; baked mode requires xz already on
-PATH and never invokes that installer. Invalid modes fail before apt. Keep
+`tool-source` (default `install`) to the setup action. Both modes require xz
+already on PATH and validate the mode before checking that prerequisite. The
+workflow does not invoke sudo or a system package manager. Keep
 GitHub-hosted routing for fork pull requests. Secret scanning can use the same
 setup action without changing its check name, commit range, redaction or
 repository config.
