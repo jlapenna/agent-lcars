@@ -45,12 +45,15 @@ the seed starts pnpm without a download.
 `.github/workflows/refresh-runner-pnpm-seed.yml` runs it weekly and opens an
 auto-merged bot PR when anything changed. Do not edit `fleet/` by hand.
 The sync refuses an empty, non-pnpm-11, or still-patched lockfile before
-writing anything, and the required `Runner image pnpm-store seed` check
-(`pnpm-store-seed.test.sh`) fetches the committed seed through the
-Dockerfile's own `pnpm-store-seed` stage, so a seed the publisher cannot
-build fails before merge instead of blocking every later runner-image
-publication. The stage carries git because a consumer may lock a git-hosted
-package (`type: git`), which pnpm clones.
+writing anything. The required `Runner image pnpm-store seed` CI check runs
+`pnpm-store-seed-inputs.test.sh` on the capped hosted lane. The full real-fetch,
+CPU-selection, lower-layer hit/miss and separate-work-filesystem proof is a
+mandatory dependency of the production Dockerfile: a rejected seed or failed
+proof blocks the image build and publication. `pnpm-store-seed.test.sh` runs
+that complete `pnpm-store-proof` target on an admitted Docker/BuildKit worker;
+the native input check alone is not full-proof evidence. The production fetch
+stage carries git because a consumer may lock a git-hosted package (`type: git`),
+which pnpm clones.
 Every listed repository must use pnpm 11 (the `v11` content-store layout);
 the seed test fails otherwise.
 
@@ -89,8 +92,10 @@ store ends up on a different filesystem than the project (as on the k3s
 pods), pnpm falls back from hardlinking to copying package content
 (`package-import-method=copy`); that is slower per file than a hardlink,
 but the content is still `reused`, never re-downloaded, which is the
-property that matters. `pnpm-store-seed.test.sh`'s separate-mount case
-proves this against a tmpfs standing in for `_work`.
+property that matters. The mandatory image-build work-mount case proves this
+against a bounded tmpfs standing in for `_work`, using the runner UID. It starts
+from the same pristine base as the independent hit/miss case. The final image
+copies the exact pnpm configuration exercised by those cases.
 
 The pin is config baked into the image at `~/.config/pnpm/config.yaml`, keyed
 off the runner user's `$HOME`, not an environment variable threaded through a

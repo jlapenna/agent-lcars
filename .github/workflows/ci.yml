@@ -561,11 +561,9 @@ jobs:
 
   runner-image-pnpm-store-seed:
     name: Runner image pnpm-store seed
-    # The production JIT image intentionally has only a Docker client and no
-    # daemon socket. Run this focused container-layer assertion on the hosted
-    # runner instead; it needs no secrets and is safe for fork pull requests.
-    # It also fetches the real fleet seed through the production stage, so a
-    # seed the publisher could not build fails here rather than after merge.
+    # Native input checks remain a required merge result on the capped hosted
+    # lane. The full real-fetch/CLI/layer/mount proof is an unconditional
+    # dependency of the production Dockerfile, gating artifact publication.
     runs-on: ubuntu-slim
     timeout-minutes: 15
 
@@ -602,9 +600,9 @@ jobs:
             echo "::notice::pnpm-store seed inputs are unaffected; skipping the immutable-seed assertion."
           fi
 
-      - name: Prove immutable pnpm-store seed behavior
+      - name: Validate seed inputs (full proof gates image builds)
         if: steps.seed-scope.outputs.run == 'true'
-        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh
+        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed-inputs.test.sh
 
   e2e-control-flag:
     name: E2E control flag

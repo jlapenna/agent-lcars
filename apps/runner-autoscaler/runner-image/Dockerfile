@@ -167,7 +167,19 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # its size and churn visible.
 # Fetching runs no lifecycle scripts or target binaries. Keep the Node work
 # native and project `current` CPU settings onto TARGETARCH through pnpm's CLI.
+# Seed proofs are image-build gates, consumed by the final image below.
+# Keep real CLI CPU selection ahead of the production fetch and fixture proof.
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-cpu-regression
+ARG NODE_OPTIONS=--max-old-space-size=512
+WORKDIR /proof
+COPY fetch-pnpm-seed.mjs fetch-pnpm-seed.test.mjs ./
+COPY pnpm-seed/fleet/jlapenna__agent-lcars/package.json ./pnpm-seed/fleet/jlapenna__agent-lcars/package.json
+RUN corepack enable && \
+    corepack install --global "$(node -p 'require("./pnpm-seed/fleet/jlapenna__agent-lcars/package.json").packageManager')"
+RUN node --test fetch-pnpm-seed.test.mjs && printf 'passed\n' > /proof/cpu-selection.ok
+
 FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-store-seed
+COPY --from=pnpm-cpu-regression /proof/cpu-selection.ok /proof/cpu-selection.ok
 ARG TARGETARCH
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
@@ -224,6 +236,52 @@ RUN set -eu; \
         exit 1; }; \
     done < /fleet-pnpm-pins; \
     test -d /pnpm-cache/v12/metadata
+
+# A small fixture preserves the lower-image-layer TypeScript hit and normal
+# is-number writable miss. Depend on the real production fetch as well; none
+# of these phases may run in parallel or bypass a rejected fleet lockfile.
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-regression-seed
+ARG NODE_OPTIONS=--max-old-space-size=512
+WORKDIR /seed
+COPY --from=pnpm-store-seed /fleet-pnpm-pins /proof/production-pnpm-pins
+RUN corepack enable
+COPY pnpm-seed-regression/seed/package.json package.json
+COPY pnpm-seed-regression/seed/pnpm-lock.yaml pnpm-lock.yaml
+RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
+
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-regression-base
+ARG NODE_OPTIONS=--max-old-space-size=512
+RUN useradd --create-home --uid 1001 runner && corepack enable
+COPY --from=pnpm-regression-seed --chown=runner:runner /pnpm-store/ /home/runner/.local/share/pnpm/store/
+COPY --chown=runner:runner pnpm-seed-regression/hit /opt/pnpm-hit
+COPY --chown=runner:runner pnpm-seed-regression/miss /opt/pnpm-miss
+COPY pnpm-seed-regression/prove-store.sh /usr/local/lib/pnpm-seed-proof.sh
+USER runner
+RUN install -d -m 0755 /home/runner/.config/pnpm && \
+    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\npackageImportMethod: hardlink\n' \
+      > /home/runner/.config/pnpm/config.yaml
+WORKDIR /opt/pnpm-hit
+RUN pnpm --version
+
+FROM pnpm-regression-base AS pnpm-store-layer-proof
+RUN bash /usr/local/lib/pnpm-seed-proof.sh layer
+
+# A separate child of the pristine base keeps the mount case independent.
+# Copy only the prior success marker to serialize the phases. BuildKit tmpfs
+# does not accept uid/gid options; set ownership before returning to UID1001.
+FROM pnpm-regression-base AS pnpm-store-work-proof
+COPY --from=pnpm-store-layer-proof /home/runner/.cache/pnpm-proof/layer.ok /proof/layer.ok
+USER root
+RUN --mount=type=tmpfs,target=/home/runner/_work,size=268435456 \
+    chown 1001:1001 /home/runner/_work && \
+    su -s /bin/bash runner -c 'exec bash /usr/local/lib/pnpm-seed-proof.sh work-mount'
+
+FROM scratch AS pnpm-store-proof
+COPY --from=pnpm-cpu-regression /proof/cpu-selection.ok /proof/cpu-selection.ok
+COPY --from=pnpm-store-seed /fleet-pnpm-pins /proof/production-pnpm-pins
+COPY --from=pnpm-store-layer-proof /home/runner/.cache/pnpm-proof/layer.ok /proof/layer.ok
+COPY --from=pnpm-store-work-proof /home/runner/.cache/pnpm-proof/work-mount.ok /proof/work-mount.ok
+COPY --from=pnpm-regression-base /home/runner/.config/pnpm/config.yaml /proof/config.yaml
 
 # Measurement-only targets: `FROM scratch` ensures their OCI output contains
 # only the compressed store payload, not the Node base or fetch-stage virtual
@@ -291,6 +349,8 @@ FROM ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf56
 FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:4d1b496a256f2989bccdb04b9104a4ede97234b10fba90259e173e905ec4fb58 AS terraform-runtime
 
 FROM ${RUNNER_BASE}
+# BuildKit must finish every seed proof before constructing a publishable image.
+COPY --from=pnpm-store-proof /proof/ /usr/local/share/agent-lcars-tooling/pnpm-store-proof/
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
 ARG NODE_OPTIONS=--max-old-space-size=1024
@@ -822,16 +882,16 @@ COPY --from=pnpm-store-seed --chown=runner:runner \
 # filesystem than the project, pnpm falls back from hardlinking to copying
 # package content (`package-import-method=copy`) -- more I/O per file than a
 # hardlink, but the content is still `reused`, never re-downloaded, which is
-# the whole point of the seed. pnpm-store-seed.test.sh's separate-mount case
+# the whole point of the seed. the mandatory separate-mount proof above
 # proves both the `reused`/`downloaded` accounting and the resolved path.
 # `packageImportMethod: hardlink`: pnpm's default (`auto`) tries clone first,
 # and on the runners' ext4 a "clone" silently falls back to a full copy, so
 # it never hard-links even with _work beside the store. Measured on homelab
 # k3s: 2,512 MiB written per Sprinkles install with `auto`, 529 MiB with
 # `hardlink` (homelab#849). Across filesystems `hardlink` still copies.
-RUN install -d -m 0755 /home/runner/.config/pnpm && \
-    printf 'storeDir: /home/runner/.local/share/pnpm/store\ncacheDir: /home/runner/.cache/pnpm\npackageImportMethod: hardlink\n' \
-      > /home/runner/.config/pnpm/config.yaml
+RUN install -d -m 0755 /home/runner/.config/pnpm
+# Ship the exact configuration exercised by both pristine proof branches.
+COPY --from=pnpm-store-proof --chown=runner:runner /proof/config.yaml /home/runner/.config/pnpm/config.yaml
 
 WORKDIR /home/runner
 
