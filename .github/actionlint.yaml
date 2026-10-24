@@ -8,7 +8,7 @@ self-hosted-runner:
     - agent-lcars-ci
     - agent-lcars-e2e
 
-# GitHub supports concurrency.queue; pinned actionlint 1.7.7 does not yet.
+# GitHub supports concurrency.queue; pinned actionlint 1.7.12 does not yet.
 # Required deploy-console-source-fence contracts validate queue values and
 # queue:max cancellation rules for this one workflow. Preserve every other
 # syntax diagnostic. Remove this exception when rhysd/actionlint#657 lands.

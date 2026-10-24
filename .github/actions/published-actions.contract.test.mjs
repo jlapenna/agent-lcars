@@ -32,7 +32,7 @@ const PUBLISHED = {
     inputs: {
       tool: { required: true },
       'tool-source': { required: false, default: 'install' },
-      'actionlint-version': { required: false, default: '1.7.7' },
+      'actionlint-version': { required: false, default: '1.7.12' },
     },
     outputs: [],
   },
@@ -227,7 +227,7 @@ test('setup-repo-checks baked tools validate exact versions without installation
     }
     const versions = {
       gitleaks: '8.18.2',
-      actionlint: 'v1.7.7',
+      actionlint: 'v1.7.12',
       shellcheck: 'version: 0.10.0',
       pyflakes: '3.2.0 Python 3.12.0 on Linux',
     };

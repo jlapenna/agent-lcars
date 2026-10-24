@@ -48,7 +48,7 @@ on:
           (apps/runner-autoscaler/runner-image/actionlint-version).
         required: false
         type: string
-        default: '1.7.7'
+        default: '1.7.12'
       runs-on:
         description: >-
           Runner labels as a JSON array string, passed straight to

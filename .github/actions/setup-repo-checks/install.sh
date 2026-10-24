@@ -24,7 +24,7 @@ case "${CHECK_TOOL:?}" in
   gitleaks|actionlint) ;;
   *) echo 'tool must be gitleaks or actionlint.' >&2; exit 1 ;;
 esac
-[[ "${ACTIONLINT_VERSION:-1.7.7}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+[[ "${ACTIONLINT_VERSION:-1.7.12}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 # Baked mode is validation only: never create a package target or fall back.
 require_version() {
   local binary="$1" expected="$2" output
@@ -49,7 +49,7 @@ if [[ "${TOOL_SOURCE-install}" == baked ]]; then
   if [[ "$CHECK_TOOL" == gitleaks ]]; then
     require_version gitleaks "$GITLEAKS_VERSION" version
   else
-    require_version actionlint "${ACTIONLINT_VERSION:-1.7.7}" -version
+    require_version actionlint "${ACTIONLINT_VERSION:-1.7.12}" -version
     require_version shellcheck "$SHELLCHECK_VERSION" --version
     require_version pyflakes "$PYFLAKES_VERSION" --version
   fi
@@ -77,7 +77,7 @@ if [[ "$CHECK_TOOL" == gitleaks ]]; then
     "gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" gitleaks
   bin/gitleaks version
 else
-  version="${ACTIONLINT_VERSION:-1.7.7}"
+  version="${ACTIONLINT_VERSION:-1.7.12}"
   release_binary rhysd/actionlint "$version" \
     "actionlint_${version}_linux_${arch}.tar.gz" "actionlint_${version}_checksums.txt" actionlint
   asset="shellcheck-v${SHELLCHECK_VERSION}.linux.${shellcheck_arch}.tar.xz"
