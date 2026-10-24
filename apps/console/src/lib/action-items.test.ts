@@ -135,3 +135,43 @@ describe('actionItemFromGithubAnchorProjection observeUntil', () => {
     expect(item.observeUntil).toBe('2026-10-01T00:00:00Z');
   });
 });
+
+describe('automated PR review requests', () => {
+  const automatedPr = {
+    kind: 'pr' as const,
+    author: 'renovate[bot]',
+    requestedReviewerLogins: ['jlapenna'],
+    autoMergeEnabled: true,
+    reviewRequirement: 'not-required' as const,
+  };
+  it('does not ask a human to approve an automatically merging bot PR', () => {
+    expect(
+      actionItemFromGithubAnchorProjection(makeProjection(automatedPr))
+        .actionTypes,
+    ).toEqual([]);
+  });
+  it.each([
+    { reviewRequirement: 'required' as const },
+    { reviewRequirement: 'unknown' as const },
+    { reviewRequirement: undefined },
+    { autoMergeEnabled: false },
+    { autoMergeEnabled: undefined },
+    { author: 'human-contributor' },
+  ])(
+    'preserves review requests when policy or ownership requires caution: %j',
+    (override) => {
+      expect(
+        actionItemFromGithubAnchorProjection(
+          makeProjection({ ...automatedPr, ...override }),
+        ).actionTypes,
+      ).toContain('review-requested');
+    },
+  );
+  it('keeps an explicit human handoff even on an automerging bot PR', () => {
+    expect(
+      actionItemFromGithubAnchorProjection(
+        makeProjection({ ...automatedPr, labels: ['status:needs-human'] }),
+      ).actionTypes,
+    ).toContain('needs-human');
+  });
+});

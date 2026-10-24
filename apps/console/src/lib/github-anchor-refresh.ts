@@ -30,6 +30,8 @@ interface RawAnchorDetails {
   isDraft?: boolean;
   mergedAt?: string | null;
   mergeStateStatus?: string;
+  autoMergeRequest?: { enabledAt?: string } | null;
+  reviewDecision?: string | null;
   reviewRequests?: {
     nodes?: ({ requestedReviewer?: { login?: string } | null } | null)[];
   } | null;
@@ -132,7 +134,8 @@ export async function enrichGithubAnchorProjections(
           `${anchorAlias(projection.anchor.issue)}: issueOrPullRequest(number: ${projection.anchor.issue}) {
         ... on Issue { body comments(last: 1) { nodes { body url createdAt updatedAt author { login } } } }
         ... on PullRequest {
-          body isDraft mergedAt mergeStateStatus
+          body isDraft mergedAt mergeStateStatus reviewDecision
+          autoMergeRequest { enabledAt }
           createdAt headRefName headRefOid headRepository { nameWithOwner }
           comments(last: 1) { nodes { body url createdAt updatedAt author { login } } }
           reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
@@ -167,6 +170,20 @@ export async function enrichGithubAnchorProjections(
           path
             .slice(0, mergePath.length)
             .every((part, index) => part === mergePath[index]),
+      );
+      const reviewFieldFailed = response.errors.some(
+        ({ path }) =>
+          !Array.isArray(path) ||
+          ['reviewDecision', 'autoMergeRequest'].some((field) => {
+            const expected = [
+              'repository',
+              anchorAlias(projection.anchor.issue),
+              field,
+            ];
+            return path
+              .slice(0, expected.length)
+              .every((part, index) => part === expected[index]);
+          }),
       );
       const contexts =
         detail.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
@@ -246,6 +263,17 @@ export async function enrichGithubAnchorProjections(
                 mergeableState === 'unknown'
                   ? mergeableState
                   : 'unknown',
+              autoMergeEnabled:
+                !reviewFieldFailed && detail.autoMergeRequest != null,
+              reviewRequirement: reviewFieldFailed
+                ? 'unknown'
+                : detail.reviewDecision === 'REVIEW_REQUIRED' ||
+                    detail.reviewDecision === 'CHANGES_REQUESTED'
+                  ? 'required'
+                  : detail.reviewDecision === null ||
+                      detail.reviewDecision === 'APPROVED'
+                    ? 'not-required'
+                    : 'unknown',
               requestedReviewerLogins: (
                 detail.reviewRequests?.nodes ?? []
               ).flatMap((request) =>

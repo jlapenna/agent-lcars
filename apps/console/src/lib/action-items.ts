@@ -57,6 +57,8 @@ export interface ActionItem {
   linkedIssueNumbers?: number[];
   draft?: boolean;
   mergeableState?: MergeableState;
+  autoMergeEnabled?: boolean;
+  reviewRequirement?: GithubAnchorProjection['reviewRequirement'];
   failingChecks?: { name: string; url: string }[];
   ciRunning?: boolean;
   unresolvedReviewThreadCount?: number;
@@ -167,7 +169,14 @@ export function actionItemFromGithubAnchorProjection(
   if (projection.labels.includes('status:blocked')) {
     actionTypes.push('blocked');
   }
+  // A bot's optional reviewer assignment is not an outstanding human gate.
+  // Missing policy evidence is conservative; explicit handoff labels still win.
+  const automatedNonblockingReview =
+    projection.author?.endsWith('[bot]') === true &&
+    projection.autoMergeEnabled === true &&
+    projection.reviewRequirement === 'not-required';
   const reviewRequested =
+    !automatedNonblockingReview &&
     projection.kind === 'pr' &&
     projection.draft !== true &&
     projection.requestedReviewerLogins?.includes(maintainerLogin());
@@ -228,6 +237,12 @@ export function actionItemFromGithubAnchorProjection(
       ? {}
       : { linkedIssueNumbers: projection.linkedIssueNumbers }),
     ...(projection.draft === undefined ? {} : { draft: projection.draft }),
+    ...(projection.autoMergeEnabled === undefined
+      ? {}
+      : { autoMergeEnabled: projection.autoMergeEnabled }),
+    ...(projection.reviewRequirement === undefined
+      ? {}
+      : { reviewRequirement: projection.reviewRequirement }),
     ...(projection.mergeableState === undefined
       ? {}
       : { mergeableState: projection.mergeableState }),
