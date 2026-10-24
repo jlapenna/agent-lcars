@@ -1,8 +1,6 @@
 # Agent LCARS product spec, part 1: the console
 
-- **Status:** Product specification of record for the console. Originally written
-  from `main` at `608500a`; requirement statuses, E2E coverage, routes, and
-  roadmap were reviewed against `6515f8f` (2026-10-12). Part 2 is
+- **Status:** Product specification of record for the console. Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -11,9 +9,18 @@
   contract is owned by [`libs/work`](../../libs/work) and
   [`work-v1.openapi.json`](../api/work-v1.openapi.json).
 - **How to read it:** each requirement has an ID (`FE-…`) and is marked
-  **[Shipped]**, **[Partial]**, or **[Proposed]**. Shipped and partial items
-  describe what exists today. Proposed items are the recommended backlog in
-  [§10](#10-gaps-and-roadmap).
+  **[Shipped]**, **[Implemented]**, **[Partial]**, or **[Proposed]**:
+  - **Shipped:** the described capability is delivered. This does not imply
+    that every production journey has been qualified; §9 separates hermetic
+    coverage from live evidence.
+  - **Implemented:** source behavior exists, but runtime qualification is
+    not established here. Any stated runtime acceptance remains open.
+  - **Partial:** part of the capability exists; the requirement names the
+    remaining gap.
+  - **Proposed:** recommended behavior that is not implemented.
+
+  [§10](#10-gaps-and-roadmap) lists remaining work, not a second inventory of
+  delivered capabilities. Requirement and roadmap IDs remain stable.
 
 ---
 
@@ -269,7 +276,7 @@ the work that has stopped, and the work in flight.
 
 ### 6.2 Decision Inbox (`/inbox`)
 
-**Purpose:** work the queue to zero.
+**Purpose:** resolve pending decisions and read completed reports.
 
 - **FE-IN-1 [Shipped] Queue composition.** Items are sorted by the priority
   tier of their reason. The table is `ACTION_PRIORITY` in
@@ -287,10 +294,20 @@ the work that has stopped, and the work in flight.
   | 1    | `silent-error`       | Silent error     | The run ended "successfully" without evidence          |
   | 2    | `post-deploy-action` | Awaiting deploy  | Wait reason, shown on the Bridge only                  |
   | 2    | `blocked`            | Blocked          | Wait reason, shown on the Bridge only                  |
+  | 2    | `report-ready`       | Report ready     | A completed native report available to read            |
 
-  Tier-2 wait reasons are excluded from the Inbox and its filter.
+  The wait reasons `post-deploy-action` and `blocked` are excluded from the
+  Inbox and its filter; `report-ready` is included. Native work whose latest
+  run completed with a `report` result remains eligible for seven days after
+  that run's update. Reports use **Read**, **Dismiss**, and **Ask a follow-up**
+  rather than human-needed wording. Dismiss suppresses the report for seven
+  days, past its remaining Inbox lifetime, without canceling or deleting work.
+  Older reports remain readable in Work. A selected item may remain open after
+  it leaves the queue. Reports do not count as pending decisions, contribute
+  to decision SLA/oldest-decision selection, or trigger decision notifications.
+  The owning lifetime and dismissal constants are in `app/inbox-card.ts`.
 
-- **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each card
+- **FE-IN-2 [Shipped] Primary action** (`lib/primary-action.ts`). Each GitHub card
   shows at most one primary action chosen from its state: **Approve & Merge**,
   **Approve & Rebase**, **Reply**, or **Open failing check ↗**. The last
   appears only on a `run-failed` item that has a failing check.
@@ -315,9 +332,12 @@ the work that has stopped, and the work in flight.
   - Clear needs-human
   - Snooze or Unsnooze
   - Close issue (destructive, with confirmation)
-- **FE-IN-6 [Shipped]** A filter by reason, the `?repo=` scope, and the
-  addressable `?item=` selection. On mobile, a command deck provides "Back to
-  Inbox list".
+- **FE-IN-6 [Shipped]** The default reason filter is **Pending decisions**;
+  completed reports are available through the report toggle, **Report ready**,
+  or **All reasons**. Reason (`?reason=`), sort (`?sort=`), repository (`?repo=`),
+  agent (`?agent=`), find (`?q=`), activity window (`?window=`), and selected
+  item (`?item=`) are URL state. The default activity window is all time.
+  On mobile, a command deck provides "Back to Inbox list".
 - **FE-IN-7 [Shipped]** Snooze is persisted per authenticated maintainer
   and stable GitHub or native Work anchor, without changing execution state
   or GitHub labels. Durations are 15 minutes, 1 hour, 24 hours, and 7 days.
@@ -351,6 +371,11 @@ the work that has stopped, and the work in flight.
     must retain their concluding decision request.
   - Keep the original title and complete source context accessible. Generated
     text is a reading aid, never authorization or an executable action.
+    A detail pane may also show the parked run's stored action summary;
+    it is a historical digest of that handoff, not another current decision.
+    Neither generated text overrides the latest original context. See the
+    [summary types and precedence](../human-needed-summaries.md#summary-types-and-precedence)
+    for their separate inputs, refresh behavior, and disagreement handling.
   - Changed source content or decision state selects a fresh summary. Opening
     an item must not wait behind summarization of hidden rows, and generation
     must not delay navigation, reply, or other primary actions.
@@ -404,7 +429,7 @@ the work that has stopped, and the work in flight.
   render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
-- **FE-SB-3a [Implemented; runtime qualification pending]** Task history shows
+- **FE-SB-3a [Implemented]** Runtime qualification remains pending. Task history shows
   requested and effective execution providers and the latest label handoff
   outcome. A refused handoff names the owner/retirement gate and asks the
   administrator to reapply after it clears. Original admitted Work remains
@@ -532,14 +557,15 @@ GitHub issues, and manage recurring work.
   - Enable, disable, edit, and delete submit the selected configuration
     revision. Stale changes fail visibly without overwriting a newer edit.
     Delete requires explicit confirmation and stops future recurrence;
-    work admitted earlier may still finish.
+    work admitted earlier may still finish. The Work API's `PUT` remains an
+    idempotent create; `PATCH` edits and `DELETE` stops future recurrence.
   - The next occurrence includes UTC and an explicitly labeled browser-local
     time zone. Cron evaluation remains UTC; local display does not change it.
   - API/store regression tests cover authorization, invalid/revoked recovery,
     concurrent operator/tick decisions, deletion and durable mint retries.
     `work-schedules.spec.ts` covers create, enable, disable, edit, and
     confirmed delete in the browser.
-- **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
+- **FE-WK-6 [Shipped]** Work exposes state, repository, and principal filters
   (Work API inputs), agent, window (1h/24h/7d) and find, and cursor-based
   next-page navigation in the URL. The Work API filters each 200-task store
   page after reading it, so with any filter active the page keeps reading
@@ -554,9 +580,6 @@ GitHub issues, and manage recurring work.
   FIND when its value is committed (Enter, leaving the field, or clearing it).
   The Apply button shows only until the page hydrates.
   Scope is preserved across navigation between these pages.
-  Schedules support revision-checked editing/deletion in the UI and API,
-  with UTC evaluation and labeled local display. `PUT` remains an idempotent
-  create; `PATCH` edits and `DELETE` stops future recurrence. See R8.
 
 ### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
 
@@ -636,17 +659,19 @@ CLI sessions and dispatched runs.
 
 ## 7. Server surface owned by the console
 
-| Route                                       | Auth                                                               | Role                                                                     |
-| ------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| `/api/auth/[...nextauth]`                   | public                                                             | Auth.js                                                                  |
-| `/api/work/v1/*`                            | bearer (Google ID token, GitHub OIDC, or per-run token) or session | Work API: items, dispatches, schedules, runs, maintenance. See part 2 §6 |
-| `/api/control-plane/webhook` and `/process` | HMAC plus Cloud Tasks                                              | GitHub App intake. See part 2 §4                                         |
-| `/api/runner-status` and `/stream`          | admin session                                                      | Shuttlebay JSON and SSE                                                  |
-| `/api/dashboard/stream`                     | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)       |
-| `/api/inbox-notifications`                  | admin session                                                      | Inbox notification snapshot (R11)                                        |
-| `/api/quick-task-evidence/v1/[id]`          | capability ID                                                      | Screenshot evidence bytes; revocable                                     |
-| `/api/logs/error`                           | public                                                             | Browser error reporting                                                  |
-| `/api/e2e/*`                                | `E2E_TESTING` only                                                 | Seeding, fake GitHub, and operator-grant toggling for hermetic E2E       |
+| Route                                       | Auth                                                               | Role                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `/api/auth/[...nextauth]`                   | public                                                             | Auth.js                                                                      |
+| `/api/work/v1/*`                            | bearer (Google ID token, GitHub OIDC, or per-run token) or session | Work API: items, dispatches, schedules, runs, maintenance. See part 2 §6     |
+| `/api/control-plane/webhook` and `/process` | HMAC plus Cloud Tasks                                              | GitHub App intake. See part 2 §4                                             |
+| `/api/runner-status` and `/stream`          | admin session                                                      | Shuttlebay JSON and SSE                                                      |
+| `/api/console/shell-readouts`               | session; fleet figures require admin                               | Identity and shared frame readouts; non-admin sessions receive identity only |
+| `/costs/export`                             | admin session                                                      | Filtered cost ledger CSV (FE-CO-3)                                           |
+| `/api/dashboard/stream`                     | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)           |
+| `/api/inbox-notifications`                  | admin session                                                      | Inbox notification snapshot (R11)                                            |
+| `/api/quick-task-evidence/v1/[id]`          | capability ID                                                      | Screenshot evidence bytes; revocable                                         |
+| `/api/logs/error`                           | public                                                             | Browser error reporting                                                      |
+| `/api/e2e/*`                                | `E2E_TESTING` only                                                 | Seeding, fake GitHub, and operator-grant toggling for hermetic E2E           |
 
 Boot invariants (`lib/startup-configuration.ts`): the console refuses to
 start with a blank required variable, a non-absolute `AUTH_URL`, a malformed App key, a missing
@@ -660,7 +685,7 @@ never prints the secret.
 The CLI is packaged with `apps/telemetry-watcher`. It is the terminal
 counterpart of the Work destination.
 
-- `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>]`
+- `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>] [--deliverable report]`
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id> [--fallback-pipelines <ordered,csv|none>]`
 - `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
@@ -747,21 +772,18 @@ deployment.
 
 ## 10. Gaps and roadmap
 
-Priorities assume the single-maintainer design center.
+Priorities follow the expert-maintainer design center. This table lists only
+remaining work. Completed roadmap entries R1, R3–R5, and R7–R9 are retired;
+their behavior is owned by the corresponding destination requirements above.
+R2 now identifies the live qualification gap rather than repeating shipped E2E
+coverage. Existing IDs are not reused.
 
-| #   | Item                                                                                                                                  | Why                                                                       | Priority |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | -------- |
-| R1  | Live updates on Bridge, Inbox, and Agents over SSE (FE-LIVE-4, shipped)                                                               | The queue is the product, and a stale queue costs decisions               | P0       |
-| R2  | E2E coverage for the Work list and detail actions, schedules, task detail, Inbox reply submission/dispatch, merge/rebase, and Unstick | Shipped in hermetic E2E (§9); production qualification is separate        | P0       |
-| R3  | Paging and filters for `/work` and stopped work beyond 200 items, and a repo picker (shipped)                                         | Bounded raw pages retain cursors even when filters find no matches        | P1       |
-| R4  | One item view for GitHub-anchored and native tasks (FE-TK-2, shipped)                                                                 | One `Task` model, so one UI; removes duplicated surfaces                  | P1       |
-| R5  | Non-admin operator sign-in limited to `/work*` (FE-AUTH-6, shipped)                                                                   | Operator grants admit sign-in without granting admin authority            | P1       |
-| R6  | Render transcripts for OpenCode and CLI sessions (FE-SE-4)                                                                            | OpenCode shipped; CLI archives need per-session consent and activation    | P1       |
-| R7  | Provider cooldowns and claim throughput on Shuttlebay (FE-SB-4, shipped)                                                              | Makes "why isn't my run starting?" answerable                             | P2       |
-| R8  | Schedule edit/delete and UTC/local next-occurrence display (FE-WK-5, shipped)                                                         | Production evidence for the browser journeys is not recorded here         | P2       |
-| R9  | Per-maintainer timed snoozes (FE-IN-7, shipped)                                                                                       | Snooze follows the maintainer across devices without hiding new decisions | P2       |
-| R10 | Cost breakdowns by pipeline and model, budget alerts, and cost per deliverable (FE-CO-2)                                              | Breakdowns and budget states shipped; external alert delivery remains     | P2       |
-| R11 | Notifications: opt-in browser handoffs while Inbox is open; closed-tab push/digest pending ([contract](../inbox-notifications.md))    | The phone-first maintainer should not have to poll                        | P3       |
+| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                                      | Priority |
+| --- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                                        | P0       |
+| R6  | Restore production of new CLI transcript archives (FE-SE-4)                      | Implement and qualify a writer with per-session consent and bounded retention; the retired writer cannot be enabled through configuration. Existing archive rendering and OpenCode support already exist | P1       |
+| R10 | Deliver external budget alerts (FE-CO-2)                                         | Qualify the operator-owned alert integration described in [Session spend](../cost-ledger.md); Console breakdowns and warning states already exist                                                        | P2       |
+| R11 | Deliver notifications when no Inbox tab is open                                  | Closed-tab push or digest remains proposed; [the notification contract](../inbox-notifications.md) owns the shipped opt-in, open-Inbox behavior                                                          | P3       |
 
 ## 11. Success metrics
 

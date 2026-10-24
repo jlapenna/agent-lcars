@@ -9,7 +9,29 @@ The summary is a reading aid, never an authorization or an executable action.
 The native and GitHub Inbox detail panes show the current parked run's
 summary, and both task history pages retain the summary beside that round's
 full handoff. A new run cannot inherit an older summary. Older parks and
-label-only GitHub decisions have no generated summary; there is no backfill.
+label-only GitHub decisions have no stored action summary; those historical
+run records are not backfilled. They can still receive the display-time Inbox
+descriptions below.
+
+## Summary types and precedence
+
+Two independent reading aids can appear together in an Inbox detail pane:
+
+| Reading aid                                         | Source and lifetime                                                                                                                      | Display                                                                                  |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Decision description                                | Current bounded issue/comment or native handoff context and decision state; cached at display time and refreshed when that input changes | Inbox row and detail, including older parks, label-only decisions, and completed reports |
+| Stored action summary (`result.humanNeededActions`) | The final handoff of one authenticated parked run; generated once at completion and retained with that run                               | Current parked-run detail and that round's task history                                  |
+
+The description explains the current decision (or summarizes a completed
+report). Stored actions preserve what the agent asked at the time it parked;
+a later comment can change the current decision without rewriting that run's
+historical actions. A new run does not inherit them. The UI renders the two
+independently; it does not compare them, merge them, or resolve disagreements.
+Neither summary is authoritative. If they overlap or disagree, use the latest
+original issue/comment/handoff and its explicit constraints, not whichever
+generated wording is more convenient. Full source context and controls remain
+available when either summary fails. The product requirement is
+[FE-IN-8](product/console-product-spec.md#62-decision-inbox-inbox).
 
 ## Server configuration
 
