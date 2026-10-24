@@ -398,6 +398,8 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .telemetry > div { border-left: 0; padding-left: 0; }
   .op-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
   .op-row .acts .btn { flex: 1; min-height: 44px; }
+  /* Phone lists grow in the document; no nested vertical scroll viewport. */
+  .inbox { height: auto; max-height: none; overflow: visible; }
   .inbox li { grid-template-columns: minmax(0, 1fr) auto; }
   .inbox .btn { height: 44px; }
 }

@@ -995,21 +995,19 @@ test.describe('populated phone flows', () => {
       workspace.getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`),
     ).toBeVisible();
     const rows = workspace.locator('.queue-workspace__rows');
-    await rows.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    await expect(rows).toHaveCSS('overscroll-behavior-y', 'contain');
+    // A swipe over the list must move the page, rather than consume it in
+    // a second viewport below the header and filter bands.
+    await expect(rows).toHaveCSS('overflow-y', 'visible');
     expect(
-      await page.evaluate(() => ({
-        documentScrollTop: document.scrollingElement?.scrollTop,
-        listAtBottom: (() => {
-          const list = document.querySelector('.queue-workspace__rows');
-          return list
-            ? list.scrollTop + list.clientHeight >= list.scrollHeight
-            : false;
-        })(),
-      })),
-    ).toEqual({ documentScrollTop: 0, listAtBottom: true });
+      await rows.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight,
+      ),
+    ).toBe(true);
+    await rows.hover();
+    await page.mouse.wheel(0, 500);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -1019,7 +1017,32 @@ test.describe('populated phone flows', () => {
       .getByTestId(`queue-row-${E2E_ITEM_NUMBERS.reviewRequested}`)
       .getByRole('link')
       .click();
-    await expect(workspace.locator('.queue-workspace__detail')).toBeVisible();
+    const detail = workspace.locator('.queue-workspace__detail');
+    await expect(detail).toBeVisible();
+    await expect(detail).toHaveCSS('overflow-y', 'visible');
     await expect(workspace.locator('.queue-detail-identity')).toBeHidden();
+    // Start a selected detail at its command bar after leaving a scrolled list.
+    const back = workspace.getByRole('link', { name: 'Back to Inbox list' });
+    await expect(back).toBeInViewport();
+    // Force the long-comment case without changing shared seed data. The real
+    // layout must grow around it, so both its end and Back remain reachable.
+    await detail.evaluate((element) => {
+      const longComment = document.createElement('p');
+      longComment.textContent = 'A long decision comment. '.repeat(300);
+      element.append(longComment);
+    });
+    expect(
+      await detail.evaluate(
+        (element) => element.scrollHeight <= element.clientHeight,
+      ),
+    ).toBe(true);
+    await detail.hover();
+    await page.mouse.wheel(0, 700);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(500);
+    await expect(back).toBeInViewport();
+    await back.click();
+    await expect(workspace.locator('.queue-workspace__list')).toBeVisible();
   });
 });
