@@ -364,6 +364,18 @@ the work that has stopped, and the work in flight.
     The implementation and verification owner is
     [human-needed summaries](../human-needed-summaries.md#decision-inbox-descriptions).
 
+- **FE-IN-9 [Planned] Dispatched summary generation.** Decision/report and
+  handoff summaries become typed LCARS work, triggered by relevant source
+  changes and deduplicated by operation version plus source revision. The
+  Console renders the persisted current artifact and original context without
+  waiting on inference. Run settlement, navigation and primary actions remain
+  independent of summary success. Stale results cannot replace a newer source's
+  description; provider/validation failures retain the FE-IN-8 fallback.
+  Acceptance includes source changes during execution, duplicate admission,
+  executor restart and exhausted retries. FE-IN-8's shipped descriptions do not
+  establish this dispatch migration. See the
+  [unified-work design](../superpowers/specs/2026-10-15-unified-work-dataflow-design.md#first-consumers-and-acceptance).
+
 ### 6.3 Agents (`/agents`)
 
 **Purpose:** a live operational view of every agent and claim.
@@ -539,6 +551,19 @@ GitHub issues, and manage recurring work.
     concurrent operator/tick decisions, deletion and durable mint retries.
     `work-schedules.spec.ts` covers create, enable, disable, edit, and
     confirmed delete in the browser.
+- **FE-WK-7 [Planned] Generalized dispatched work.** Coding tasks, bounded
+  issue triage and model-generated summaries share durable admission, attempts,
+  cancellation, concurrency limits and finite retries. Work detail identifies
+  the operation, trigger/source revision, executor, result and failure reason;
+  a superseded result is distinguishable from a current result or failed attempt.
+  A repository is required only when the operation needs one. Lightweight
+  inference needs no coding checkout. Internal summary work is inspectable
+  without adding human-decision cards or chat notifications for every result.
+  Acceptance covers recovery after executor loss and revision-safe publication,
+  plus a real issue event producing one triage result without repeated comments,
+  duplicate coding dispatches or self-trigger loops. The owning contract and
+  rollout gates are in the
+  [unified-work design](../superpowers/specs/2026-10-15-unified-work-dataflow-design.md).
 - **FE-WK-6 [Partial]** Work exposes state, repository, and principal filters
   (Work API inputs), agent, window (1h/24h/7d) and find, and cursor-based
   next-page navigation in the URL. The Work API filters each 200-task store
