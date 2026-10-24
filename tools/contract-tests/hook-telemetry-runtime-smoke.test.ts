@@ -150,6 +150,7 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       for (const file of [
         'tools/hook-telemetry-runtime-smoke.sh',
         'apps/runner-autoscaler/runner-image/hook-telemetry.test.sh',
+        'apps/runner-autoscaler/runner-image/drain-hook-test-clients.py',
       ])
         writeFileSync(join(project, file), readFileSync(resolve(file)));
       if (refuseDrain)
@@ -180,8 +181,8 @@ def record_closed():
 select.select = refuse_owned
 atexit.register(record_closed)
 `)};
-const result=child.spawnSync('python3',process.argv.slice(2),{
-input:prelude+fs.readFileSync(0,'utf8'),encoding:'utf8',
+const result=child.spawnSync('python3',['-',...process.argv.slice(3)],{
+input:prelude+fs.readFileSync(process.argv[2],'utf8'),encoding:'utf8',
 env:{...process.env,PATH:process.env.PATH.split(':').slice(1).join(':')}});
 process.stdout.write(result.stdout??'');process.stderr.write(result.stderr??'');
 process.exit(result.status??1);
