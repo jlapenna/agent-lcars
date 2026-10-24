@@ -26,11 +26,13 @@ event_timeout_seconds=30
 # arm64 (native arm64 runners only get a looser bound) so the contract under
 # test stays "the hook runs and records the end", not emulator speed.
 claude_end_budget=()
+claude_hook_timeout_seconds=0
 case "$(uname -m)" in
   aarch64 | arm64)
     run_timeout_seconds=180
     event_timeout_seconds=90
-    claude_end_budget=(CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=15000)
+    claude_hook_timeout_seconds=30
+    claude_end_budget=(CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000)
     ;;
 esac
 
@@ -327,7 +329,15 @@ run_env "$claude_home" lcars integration install claude > /dev/null ||
 # exits with an async Stop hook still running, which on a 2-CPU runner was
 # every run until our Stop entry became synchronous.
 jq --arg marker "$tmp/claude-session-end-ran" \
-  '.hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
+  --argjson timeout "$claude_hook_timeout_seconds" \
+  'if $timeout > 0 then
+    # The CLI-wide SessionEnd budget does not replace per-command deadlines.
+    # Keep production settings unchanged; this private fixture runs under QEMU.
+    .hooks |= with_entries(.value |= map(.hooks |= map(
+      if .type == "command" and .async != true then .timeout = $timeout else . end
+    )))
+  else . end
+  | .hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
   "$claude_home/.claude/settings.json" > "$tmp/settings.json"
 mv "$tmp/settings.json" "$claude_home/.claude/settings.json"
 (
