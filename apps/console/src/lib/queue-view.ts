@@ -30,6 +30,7 @@ export function buildQueueView(
   rawItems: ActionItem[],
   activity: AgentActivity,
   runnerSessionsByRunId: Map<string, IssueAgentSessionDoc>,
+  now = Date.now(),
 ): QueueView {
   const silentErrorByIssue = deriveSilentErrorDiagnoses(
     activity.recentRuns,
@@ -93,12 +94,24 @@ export function buildQueueView(
   const idle = items.filter(
     (item) => !liveRunByItemKey.has(repoItemKey(item.repo, item.number)),
   );
+  // A dated human hand-back becomes actionable at its recorded instant.
+  // Independent failures/reviews must still surface during that wait.
+  const isDeferred = (item: ActionItem) =>
+    item.actionTypes.includes('needs-human') &&
+    item.actionTypes.every(
+      (type) => type === 'needs-human' || type === 'blocked',
+    ) &&
+    item.observeUntil !== undefined &&
+    Date.parse(item.observeUntil) > now;
   const yourQueue = idle.filter(
-    (item) => item.actionTypes.length > 0 && !isWaitOnly(item),
+    (item) =>
+      item.actionTypes.length > 0 && !isWaitOnly(item) && !isDeferred(item),
   );
   const waitingOnDeploy = idle.filter(isDeployWaitOnly);
   const blocked = idle.filter(isBlockedWait);
-  const rest = idle.filter((item) => item.actionTypes.length === 0);
+  const rest = idle.filter(
+    (item) => item.actionTypes.length === 0 || isDeferred(item),
+  );
 
   return {
     items,
