@@ -161,7 +161,9 @@ they are not label-triggered admission.
   also stays out of the decision inbox, its count, and notifications until
   that instant. Keep the item open and its human-needed label in place so it
   returns automatically. Invalid or elapsed dates never defer a decision;
-  independent failures and review requests still surface immediately.
+  independent failures and review requests still surface immediately. A due
+  hand-back starts its decision wait at the scheduled instant or a newer
+  recorded attention start, so deferral does not create an overdue decision.
 - Agent LCARS Work Tasks/Runs express queued/running/completed execution
   state. GitHub Actions may report repository automation, but is not an agent
   lifecycle authority.

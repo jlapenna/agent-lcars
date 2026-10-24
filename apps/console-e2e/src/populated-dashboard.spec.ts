@@ -627,9 +627,9 @@ test.describe('responsive decision inbox', () => {
 
     await page.keyboard.press('Enter');
     const choices = page.getByRole('menuitem');
-    await expect(choices).toHaveCount(11);
+    await expect(choices).toHaveCount(12);
     await expect(
-      page.getByRole('menuitem', { name: 'All reasons' }),
+      page.getByRole('menuitem', { name: 'Pending decisions' }),
     ).toHaveAttribute('aria-current', 'true');
     await expect(
       page.getByRole('menuitem', { name: 'Ready for agent' }),

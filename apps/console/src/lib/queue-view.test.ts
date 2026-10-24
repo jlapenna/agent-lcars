@@ -115,6 +115,17 @@ describe('buildQueueView', () => {
     const due = buildQueueView(inputs, activity(), new Map(), Date.parse(at));
     expect(due.yourQueue.map(({ number }) => number)).toEqual([1, 2, 3]);
     expect(due.rest).toEqual([]);
+    expect(due.yourQueue[0]?.decisionSince).toBe(at);
+    expect(due.yourQueue[1]?.decisionSince).toBeUndefined();
+    expect(due.yourQueue[2]?.decisionSince).toBeUndefined();
+    const newer = '2026-12-02T00:00:00.000Z';
+    const updated = buildQueueView(
+      [{ ...deferred, decisionSince: newer }],
+      activity(),
+      new Map(),
+      Date.parse(newer),
+    );
+    expect(updated.yourQueue[0]?.decisionSince).toBe(newer);
   });
 
   it('removes items with a live agent run from every idle-work surface', () => {
