@@ -603,7 +603,7 @@ function inboxPanel(full) {
     <div class="acts"><button class="btn btn-secondary btn-sm" type="button" data-od-id="decision-${i + 1}-open">${full ? 'Respond' : 'Open'}</button>${full ? kebab('Decision actions') : ''}</div>
   </li>`).join('');
   return `<section class="panel signalled" data-od-id="panel-decision-inbox"><div>
-    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length} decisions</span><span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
+    <div class="panel-head"><h2>Decision inbox</h2><span class="count">${INBOX.length} decisions</span>${full ? '<button class="btn btn-secondary btn-sm" type="button" data-od-id="inbox-completed-reports">2 completed reports</button>' : ''}<span class="meta">2 over SLA · oldest 3h 12m${full ? '<span class="kbd-hint"> · j/k to move · / to search</span>' : ''}</span></div>
     <ul class="inbox">${items}</ul>
     ${full ? `<section aria-label="Selected human decision" style="margin-top:16px;border-top:1px solid var(--hairline);padding-top:12px">
       <p aria-label="Inbox summary">${INBOX[0].summary}</p>

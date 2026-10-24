@@ -20,6 +20,9 @@ Decisions the prototype already carries:
 
 - The Bridge has no repository select; its panels summarise the whole fleet.
 - Every toolbar control applies on change; there is no Apply step.
+- Inbox defaults to pending decisions. Completed reports open through their
+  separate count button or the reason filter, with a return to decisions.
+  Report permalinks remain readable without changing the list filter.
 - The header carries **New work** (except on Work, whose toolbar owns it),
   Refresh, the ⋯ console menu (preferences and identity, plus the
   destinations below 64em, where the pills fold away) and the

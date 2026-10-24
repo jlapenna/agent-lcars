@@ -95,6 +95,39 @@ describe('buildQueueView', () => {
     expect(view.rest).toEqual([]);
   });
 
+  it('defers dated human hand-backs until the instant without hiding independent failures', () => {
+    const at = '2026-12-01T00:00:00.000Z';
+    const deferred = { ...item(1, ['needs-human']), observeUntil: at };
+    const inputs = [
+      deferred,
+      { ...item(2, ['needs-human', 'run-failed']), observeUntil: at },
+      { ...item(3, ['needs-human']), observeUntil: 'invalid' },
+    ];
+    const before = buildQueueView(
+      inputs,
+      activity(),
+      new Map(),
+      Date.parse(at) - 1,
+    );
+    expect(before.yourQueue.map(({ number }) => number)).toEqual([2, 3]);
+    expect(before.rest).toEqual([deferred]);
+    expect(before.items).toEqual(inputs);
+    const due = buildQueueView(inputs, activity(), new Map(), Date.parse(at));
+    expect(due.yourQueue.map(({ number }) => number)).toEqual([1, 2, 3]);
+    expect(due.rest).toEqual([]);
+    expect(due.yourQueue[0]?.decisionSince).toBe(at);
+    expect(due.yourQueue[1]?.decisionSince).toBeUndefined();
+    expect(due.yourQueue[2]?.decisionSince).toBeUndefined();
+    const newer = '2026-12-02T00:00:00.000Z';
+    const updated = buildQueueView(
+      [{ ...deferred, decisionSince: newer }],
+      activity(),
+      new Map(),
+      Date.parse(newer),
+    );
+    expect(updated.yourQueue[0]?.decisionSince).toBe(newer);
+  });
+
   it('removes items with a live agent run from every idle-work surface', () => {
     const view = buildQueueView(
       [item(1, ['needs-human'])],

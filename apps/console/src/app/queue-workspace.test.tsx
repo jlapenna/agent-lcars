@@ -456,10 +456,10 @@ describe('QueueWorkspace', () => {
     const menu = await screen.findByRole('menu');
     expect(
       within(menu).getAllByRole('menuitem', { hidden: true }),
-    ).toHaveLength(11);
+    ).toHaveLength(12);
     expect(
       within(menu).getByRole('menuitem', {
-        name: 'All reasons',
+        name: 'Pending decisions',
         hidden: true,
       }),
     ).toHaveAttribute('aria-current', 'true');
@@ -526,7 +526,9 @@ describe('QueueWorkspace', () => {
     );
     expect(screen.getByText('No “Run failed” items right now.')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show all reasons' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show pending decisions' }),
+    );
     expect(screen.getByText('Responsive Inbox')).toBeTruthy();
     const lastUrl = replaceState.mock.calls.at(-1)?.[2] as string;
     expect(lastUrl).not.toContain('reason=');
@@ -724,8 +726,8 @@ describe('inbox keyboard navigation', () => {
 describe('parseQueueFilter / parseQueueSort', () => {
   it('accepts known values and falls back on defaults for junk', () => {
     expect(parseQueueFilter('run-failed')).toBe('run-failed');
-    expect(parseQueueFilter('nonsense')).toBe('all');
-    expect(parseQueueFilter(null)).toBe('all');
+    expect(parseQueueFilter('nonsense')).toBe('decisions');
+    expect(parseQueueFilter(null)).toBe('decisions');
     expect(parseQueueSort('newest')).toBe('newest');
     expect(parseQueueSort('nonsense')).toBe('priority');
     expect(parseQueueSort(null)).toBe('priority');
@@ -753,6 +755,7 @@ describe('QueueWorkspace native reports', () => {
     'dismisses a report from the %s past its Inbox window without asking how long',
     async (_surface, name) => {
       vi.mocked(snoozeDecision).mockClear();
+      mockSearch = 'reason=report-ready';
       render(
         <MantineProvider>
           <QueueWorkspace
@@ -785,13 +788,13 @@ describe('QueueWorkspace native reports', () => {
       </MantineProvider>,
     );
     expect(screen.queryByText(/over SLA/u)).toBeNull();
-    expect(screen.getByText(/^settled/u)).toBeTruthy();
+    expect(screen.queryByText(/^settled/u)).toBeNull();
     expect(screen.queryByRole('link', { name: /oldest/iu })).toBeNull();
     expect(screen.getByText('0 decisions')).toBeTruthy();
     expect(screen.getByText('1 completed report')).toBeTruthy();
   });
 
-  it('counts pending decisions separately from readable completed reports', () => {
+  it('defaults to decisions and opens completed reports only on request', () => {
     render(
       <MantineProvider>
         <QueueWorkspace
@@ -804,8 +807,37 @@ describe('QueueWorkspace native reports', () => {
     expect(screen.getByText('1 decision')).toBeTruthy();
     expect(screen.getByText('1 completed report')).toBeTruthy();
     expect(
+      screen.queryByRole('button', { name: 'Dismiss Choose storage' }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '1 completed report' }));
+    expect(
       screen.getByRole('button', { name: 'Dismiss Choose storage' }),
     ).toBeTruthy();
+    expect(screen.queryByTestId('queue-row-249')).toBeNull();
+    expect(window.location.search).toContain('reason=report-ready');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to decisions' }));
+    expect(
+      screen.queryByRole('button', { name: 'Dismiss Choose storage' }),
+    ).toBeNull();
+    expect(screen.getByText('1 decision')).toBeTruthy();
+  });
+
+  it('opens a report permalink while the list defaults to pending decisions', () => {
+    mockSearch = `item=${encodeURIComponent(report.work.id)}`;
+    render(
+      <MantineProvider>
+        <QueueWorkspace
+          cards={[report]}
+          selectedItemKey={report.work.id}
+          watchedRepos={[]}
+          replyToWorkItem={vi.fn()}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole('button', { name: 'Dismiss report' })).toBeTruthy();
+    expect(
+      screen.queryByRole('button', { name: 'Dismiss Choose storage' }),
+    ).toBeNull();
   });
 
   it('drops a dismissed report that has aged out of the Inbox from Snoozed', async () => {

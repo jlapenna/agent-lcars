@@ -43,12 +43,13 @@ import { INBOX_FILTER_REASONS } from './queue-reason';
 import { useDecisionSnoozes } from './use-decision-snoozes';
 import type { ReplyAction } from './work/work-actions';
 
-type QueueFilter = 'all' | ActionType;
+type QueueFilter = 'decisions' | 'all' | ActionType;
 type QueueSort = 'priority' | 'newest' | 'oldest';
 
 // Derived from queue-reason.ts's canonical map so the menu can never
 // drift from what the rows and cards call the same reason.
 const FILTER_OPTIONS: Array<{ value: QueueFilter; label: string }> = [
+  { value: 'decisions', label: 'Pending decisions' },
   { value: 'all', label: 'All reasons' },
   ...INBOX_FILTER_REASONS.map((reason) => ({
     value: reason.type as QueueFilter,
@@ -83,7 +84,7 @@ const windowMs = (value: string) =>
 export function parseQueueFilter(value: string | null): QueueFilter {
   return FILTER_OPTIONS.some((option) => option.value === value)
     ? (value as QueueFilter)
-    : 'all';
+    : 'decisions';
 }
 
 export function parseQueueSort(value: string | null): QueueSort {
@@ -212,7 +213,7 @@ export function QueueWorkspace({
     else params.delete(AGENT_PARAM);
     if (windowMs(nextWindow)) params.set(WINDOW_PARAM, nextWindow);
     else params.delete(WINDOW_PARAM);
-    if (nextFilter === 'all') params.delete(REASON_PARAM);
+    if (nextFilter === 'decisions') params.delete(REASON_PARAM);
     else params.set(REASON_PARAM, nextFilter);
     if (nextSort === 'priority') params.delete(SORT_PARAM);
     else params.set(SORT_PARAM, nextSort);
@@ -259,6 +260,8 @@ export function QueueWorkspace({
       windowLimit === undefined ? undefined : Date.now() - windowLimit;
     const filtered = cards.filter((card) => {
       const meta = inboxCardMetadata(card);
+      if (filter === 'decisions' && 'work' in card && card.kind === 'report')
+        return false;
       if (isSnoozed(inboxCardKey(card), inboxCardSignature(card))) return false;
       if (needle && !meta.search.toLowerCase().includes(needle)) return false;
       if (agent && inboxCardAgent(card) !== agent) return false;
@@ -268,7 +271,9 @@ export function QueueWorkspace({
       )
         return false;
       return (
-        filter === 'all' || meta.actionTypes.some((type) => type === filter)
+        filter === 'decisions' ||
+        filter === 'all' ||
+        meta.actionTypes.some((type) => type === filter)
       );
     });
 
@@ -335,6 +340,12 @@ export function QueueWorkspace({
   const decisionCards = visibleCards.filter(
     (card) => !('work' in card) || card.kind === 'decision',
   );
+  const reportCount = cards.filter(
+    (card) =>
+      'work' in card &&
+      card.kind === 'report' &&
+      !isSnoozed(inboxCardKey(card), inboxCardSignature(card)),
+  ).length;
   const oldestCard = decisionCards.reduce<InboxCard | undefined>(
     (oldest, card) =>
       !oldest ||
@@ -506,10 +517,14 @@ export function QueueWorkspace({
             <Menu.Target>
               <ActionIcon
                 variant={
-                  filter === 'all' && sort === 'priority' ? 'subtle' : 'light'
+                  filter === 'decisions' && sort === 'priority'
+                    ? 'subtle'
+                    : 'light'
                 }
                 color={
-                  filter === 'all' && sort === 'priority' ? 'gray' : 'blue'
+                  filter === 'decisions' && sort === 'priority'
+                    ? 'gray'
+                    : 'blue'
                 }
                 size="xs"
                 aria-label="Filter and sort"
@@ -607,11 +622,21 @@ export function QueueWorkspace({
               {decisionCards.length} decision
               {decisionCards.length === 1 ? '' : 's'}
             </span>
-            {visibleCards.length > decisionCards.length && (
-              <span className="ops-panel__meta">
-                {visibleCards.length - decisionCards.length} completed report
-                {visibleCards.length - decisionCards.length === 1 ? '' : 's'}
-              </span>
+            {(reportCount > 0 || filter === 'report-ready') && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                onClick={() =>
+                  applyQueueControls(
+                    filter === 'report-ready' ? 'decisions' : 'report-ready',
+                    sort,
+                  )
+                }
+              >
+                {filter === 'report-ready'
+                  ? 'Back to decisions'
+                  : `${reportCount} completed report${reportCount === 1 ? '' : 's'}`}
+              </Button>
             )}
             <span className="ops-panel__meta">
               <DecisionSlaMeta
@@ -632,15 +657,15 @@ export function QueueWorkspace({
                 <Text fw={600}>
                   {search.trim()
                     ? `No matches for “${search.trim()}”.`
-                    : windowMs(activityWindow) && filter === 'all'
+                    : windowMs(activityWindow) && filter === 'decisions'
                       ? `No decisions with activity in the last ${activityWindow}.`
-                      : filter === 'all'
+                      : filter === 'decisions'
                         ? 'Nothing needs you right now.'
                         : `No “${FILTER_OPTIONS.find((option) => option.value === filter)?.label}” items right now.`}
                 </Text>
                 <Text size="sm" c="dimmed">
                   {search.trim() ||
-                  filter !== 'all' ||
+                  filter !== 'decisions' ||
                   agent ||
                   windowMs(activityWindow)
                     ? 'Other items may be hidden by the search or active filter.'
@@ -656,13 +681,13 @@ export function QueueWorkspace({
                       Clear search
                     </Button>
                   )}
-                  {filter !== 'all' && (
+                  {filter !== 'decisions' && (
                     <Button
                       variant="default"
                       size="compact-sm"
-                      onClick={() => applyQueueControls('all', sort)}
+                      onClick={() => applyQueueControls('decisions', sort)}
                     >
-                      Show all reasons
+                      Show pending decisions
                     </Button>
                   )}
                   {agent && (

@@ -21,6 +21,10 @@ export interface QueueView {
   liveRunByItemKey: Map<string, AgentRun>;
 }
 
+const isHumanHandback = (types: ActionItem['actionTypes']) =>
+  types.includes('needs-human') &&
+  types.every((type) => type === 'needs-human' || type === 'blocked');
+
 /**
  * Builds the shared ownership/priority view used by both the Bridge and
  * the standalone Decision Inbox. Keeping the joins here makes moving the
@@ -30,6 +34,7 @@ export function buildQueueView(
   rawItems: ActionItem[],
   activity: AgentActivity,
   runnerSessionsByRunId: Map<string, IssueAgentSessionDoc>,
+  now = Date.now(),
 ): QueueView {
   const silentErrorByIssue = deriveSilentErrorDiagnoses(
     activity.recentRuns,
@@ -68,7 +73,17 @@ export function buildQueueView(
       ...(failedRun ? (['run-failed'] as const) : []),
       ...(diagnosis ? (['silent-error'] as const) : []),
     ];
-    if (actionTypes.length === item.actionTypes.length) return item;
+    const observeAt = Date.parse(item.observeUntil ?? '');
+    // Scheduled attention starts when it becomes due, not when scheduled.
+    // A newer human update or independent failure keeps its own clock.
+    const scheduledSince =
+      isHumanHandback(actionTypes) &&
+      observeAt <= now &&
+      observeAt > Date.parse(item.decisionSince ?? item.updatedAt)
+        ? item.observeUntil
+        : undefined;
+    if (actionTypes.length === item.actionTypes.length && !scheduledSince)
+      return item;
     // Only the runs queued an item without a decision reason of its own, so
     // its wait began when the earliest of them ended.
     const queuedByRuns = item.actionTypes.length === 0 || isWaitOnly(item);
@@ -81,7 +96,11 @@ export function buildQueueView(
       ...(diagnosis === undefined
         ? {}
         : { silentErrorDiagnosis: diagnosis.diagnosis }),
-      ...(queuedByRuns ? { decisionSince: runEnds.sort()[0] } : {}),
+      ...(scheduledSince
+        ? { decisionSince: scheduledSince }
+        : queuedByRuns
+          ? { decisionSince: runEnds.sort()[0] }
+          : {}),
     };
   });
 
@@ -93,12 +112,21 @@ export function buildQueueView(
   const idle = items.filter(
     (item) => !liveRunByItemKey.has(repoItemKey(item.repo, item.number)),
   );
+  // A dated human hand-back becomes actionable at its recorded instant.
+  // Independent failures/reviews must still surface during that wait.
+  const isDeferred = (item: ActionItem) =>
+    isHumanHandback(item.actionTypes) &&
+    item.observeUntil !== undefined &&
+    Date.parse(item.observeUntil) > now;
   const yourQueue = idle.filter(
-    (item) => item.actionTypes.length > 0 && !isWaitOnly(item),
+    (item) =>
+      item.actionTypes.length > 0 && !isWaitOnly(item) && !isDeferred(item),
   );
   const waitingOnDeploy = idle.filter(isDeployWaitOnly);
   const blocked = idle.filter(isBlockedWait);
-  const rest = idle.filter((item) => item.actionTypes.length === 0);
+  const rest = idle.filter(
+    (item) => item.actionTypes.length === 0 || isDeferred(item),
+  );
 
   return {
     items,
