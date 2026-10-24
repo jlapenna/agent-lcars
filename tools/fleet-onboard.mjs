@@ -147,8 +147,8 @@ export function resolveSpec(options) {
 // Fork pull requests cannot reach a self-hosted scale set, so every
 // credential-free job falls back to GitHub-hosted runners for them.
 function glueRunsOn(spec) {
-  if (!spec.runnerLabel) return 'ubuntu-latest';
-  return `\${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || '${spec.runnerLabel}' }}`;
+  if (!spec.runnerLabel) return 'ubuntu-slim';
+  return `\${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || '${spec.runnerLabel}' }}`;
 }
 
 // workflow_run.workflows entries are the `name:` of each workflow that posts
@@ -259,7 +259,7 @@ jobs:
   terraform:
     name: repository-owned Terraform
     # Credential-free and takes seconds; keep it off any self-hosted pool.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -277,7 +277,7 @@ jobs:
 }
 
 export function renderAutomergeWorkflow(spec) {
-  const runsOn = spec.runnerLabel ?? 'ubuntu-latest';
+  const runsOn = spec.runnerLabel ?? 'ubuntu-slim';
   return `# ${MANAGED_NOTE}
 name: Agent PR Auto-Merge
 

@@ -36,6 +36,15 @@ cache invalidates independently whenever repo-tools/main advances, even
 across rebuilds of an unchanged agent-lcars commit. The E2E runner receives
 the matching E2E sandbox reference as `SANDBOX_IMAGE`.
 
+The `homelab-runner` Dockerfile makes its complete pnpm seed proof a mandatory
+build dependency. It serializes real CLI CPU selection, production fleet fetch,
+a lower-image-layer content hit and writable miss, and an independent UID1001
+work-mount hit on bounded tmpfs. The final image consumes all success markers
+and the exact tested pnpm configuration. Failed proof prevents an artifact from
+being built or promoted; a native CI input check does not establish this proof.
+For an admitted Docker/BuildKit worker, run the complete target with
+`bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh`.
+
 ## The `actions-runner` base image (RUNNER_BASE)
 
 `homelab-runner`, `control-plane-runner`, and `e2e-runner` all `FROM` the

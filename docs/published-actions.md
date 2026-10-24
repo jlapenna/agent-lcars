@@ -204,7 +204,7 @@ before authorization or storage; callers must not pre-truncate it.
 
 `setup-repo-checks` is Published. Set `tool: gitleaks` for Gitleaks 8.18.2,
 or `tool: actionlint` for actionlint (optional `actionlint-version`, default
-1.7.7), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
+1.7.12), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
 on Linux x64/arm64. `tool-source: install` remains the default: it uses a
 temporary directory and verified release archives, preserving GitHub-hosted
 and fork support and custom actionlint releases. The actionlint toolchain
@@ -226,9 +226,9 @@ callers are separate work. Existing callers continue using install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. It forwards optional
-`tool-source` (default `install`) to the setup action. Only install mode installs
-missing `xz-utils` with passwordless sudo/apt; baked mode requires xz already on
-PATH and never invokes that installer. Invalid modes fail before apt. Keep
+`tool-source` (default `install`) to the setup action. Both modes require xz
+already on PATH and validate the mode before checking that prerequisite. The
+workflow does not invoke sudo or a system package manager. Keep
 GitHub-hosted routing for fork pull requests. Secret scanning can use the same
 setup action without changing its check name, commit range, redaction or
 repository config.

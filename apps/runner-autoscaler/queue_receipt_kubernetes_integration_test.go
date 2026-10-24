@@ -3472,13 +3472,15 @@ func receiptApplicationRetirement(ctx context.Context, t *testing.T, rt receiptK
 
 	// A 409 and a lost reply after the real exit decision each retain authority.
 	// The exit itself COMMITTED, so the original is lost and one retry exists.
+	// The bridge counts faults across all cases; this case must add exactly two.
+	faultsBeforeExit := live.FaultsFired
 	for i, mode := range []string{"409", "drop"} {
 		app.arm(ctx, t, "exit", mode)
 		if err := q.reconcileReceipts(ctx); err == nil {
 			t.Fatalf("reconcile %s reply to the logical exit released capacity", mode)
 		}
 		held := app.verifyPhase(ctx, t, c, "postExit", nil)
-		if held.FaultsFired != i+1 || held.sequenceIndex("exit:200:"+mode) < 0 || held.sequenceIndex("capacity:release:200") >= 0 || (held.Retired != nil && held.Retired.Released) {
+		if held.FaultsFired != faultsBeforeExit+i+1 || held.sequenceIndex("exit:200:"+mode) < 0 || held.sequenceIndex("capacity:release:200") >= 0 || (held.Retired != nil && held.Retired.Released) {
 			t.Fatalf("%s at the exit route released capacity or was never exercised: %v", mode, held.Sequence)
 		}
 		barrier, err := q.client.BatchV1().Jobs(rt.namespace).Get(ctx, job.Name, meta.GetOptions{})

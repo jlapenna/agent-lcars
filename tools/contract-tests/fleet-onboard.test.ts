@@ -318,7 +318,7 @@ describe('scaffold', () => {
     ).toEqual(['project-default']);
     const gitleaks = parseYaml(read(target, '.github/workflows/gitleaks.yml'));
     expect(gitleaks.jobs.gitleaks['runs-on']).toContain('project-default');
-    expect(gitleaks.jobs.gitleaks['runs-on']).toContain('ubuntu-latest');
+    expect(gitleaks.jobs.gitleaks['runs-on']).toContain('ubuntu-slim');
 
     const tf = read(target, 'infra/github-ruleset/main.tf');
     expect(tf).toContain('owner = "example"');
@@ -354,7 +354,7 @@ describe('scaffold', () => {
       'ruleset',
     ]);
     expect(JSON.parse(automerge.jobs.automerge.with['runs-on'])).toEqual([
-      'ubuntu-latest',
+      'ubuntu-slim',
     ]);
     expect(
       JSON.parse(automerge.jobs.automerge.with['required-checks']),
@@ -363,7 +363,7 @@ describe('scaffold', () => {
       parseYaml(read(target, '.github/workflows/gitleaks.yml')).jobs.gitleaks[
         'runs-on'
       ],
-    ).toBe('ubuntu-latest');
+    ).toBe('ubuntu-slim');
   });
 
   it('merges hooks and sections into existing files without clobbering them', () => {

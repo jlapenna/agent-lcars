@@ -32,7 +32,7 @@ const PUBLISHED = {
     inputs: {
       tool: { required: true },
       'tool-source': { required: false, default: 'install' },
-      'actionlint-version': { required: false, default: '1.7.7' },
+      'actionlint-version': { required: false, default: '1.7.12' },
     },
     outputs: [],
   },
@@ -227,7 +227,7 @@ test('setup-repo-checks baked tools validate exact versions without installation
     }
     const versions = {
       gitleaks: '8.18.2',
-      actionlint: 'v1.7.7',
+      actionlint: 'v1.7.12',
       shellcheck: 'version: 0.10.0',
       pyflakes: '3.2.0 Python 3.12.0 on Linux',
     };
@@ -387,19 +387,15 @@ cp "$ASSETS/$(basename "$url")" "$2"`,
   }
 });
 
-test('repo-validation validates baked prerequisites before its install-only xz step', async () => {
+test('repo-validation requires xz without privilege in both tool modes', async () => {
   const workflow = await fs.readFile(
     '.github/workflows/repo-validation.yml',
     'utf8',
   );
   assert.match(workflow, /tool-source:\n(?:.*\n){0,5} {8}default: 'install'/);
   assert.match(workflow, /tool-source: \$\{\{ inputs.tool-source \}\}/);
-  assert.match(
-    workflow,
-    /- name: Install xz when missing\n {8}if: inputs.tool-source == 'install'/,
-  );
   const block = workflow.match(
-    /- name: Validate tool source and baked xz\n[\s\S]*? {8}run: \|\n((?: {10}.*\n)+)/,
+    /- name: Validate tool source and xz\n[\s\S]*? {8}run: \|\n((?: {10}.*\n)+)/,
   )?.[1];
   assert.ok(block, 'workflow prerequisite validation step must exist');
   const script = block
@@ -422,15 +418,21 @@ test('repo-validation validates baked prerequisites before its install-only xz s
         env: { PATH: scratch, TOOL_SOURCE: mode },
         encoding: 'utf8',
       });
-    assert.equal(invoke('install').status, 0);
-    let result = invoke('baked');
-    assert.equal(result.status, 1);
-    assert.match(result.stdout, /requires xz already/);
+    for (const mode of ['install', 'baked']) {
+      const result = invoke(mode);
+      assert.equal(result.status, 1);
+      assert.match(result.stdout, /requires xz already/);
+      assert.doesNotMatch(result.stderr, /forbidden-installer/);
+    }
     await fs.writeFile(path.join(scratch, 'xz'), '#!/bin/sh\nexit 0\n', {
       mode: 0o755,
     });
-    assert.equal(invoke('baked').status, 0);
-    result = invoke('invalid');
+    for (const mode of ['install', 'baked']) {
+      const result = invoke(mode);
+      assert.equal(result.status, 0);
+      assert.doesNotMatch(result.stderr, /forbidden-installer/);
+    }
+    const result = invoke('invalid');
     assert.equal(result.status, 1);
     assert.match(result.stdout, /tool-source must be baked or install/);
     assert.doesNotMatch(result.stderr, /forbidden-installer/);

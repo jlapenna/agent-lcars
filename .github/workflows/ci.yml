@@ -27,7 +27,7 @@ jobs:
     name: repository-owned Terraform
     # This credential-free check takes seconds; keep it independent of the
     # large self-hosted pool used by full verification and E2E (#2208).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -58,7 +58,7 @@ jobs:
   # lockfile pins, without a pnpm install.
   runner-labels:
     name: Runner label combinations
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -84,7 +84,7 @@ jobs:
   # @jlapenna/repo-tools at the commit the lockfile pins.
   schedules:
     name: Schedule justifications
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -111,17 +111,17 @@ jobs:
     name: Full verification (workspace)
     # Self-hosted for everything trusted (push to main, workflow_dispatch,
     # and a same-repo PR branch -- opening one already
-    # requires write access to this repo); ubuntu-latest only for a
+    # requires write access to this repo); ubuntu-slim only for a
     # pull_request whose head is a fork (#408's rationale). This job's `nx
     # run-many` includes @agent-lcars/runner-autoscaler:test-race (`go test
     # -race`), which needs cgo -- the runner image now bakes in a C
-    # toolchain (gcc/libc6-dev, #410) via EXTRA_APT_PACKAGES, so this no
-    # longer needs the ubuntu-latest carve-out it had between #408 and #410.
+    # toolchain (gcc/libc6-dev, #410) via EXTRA_APT_PACKAGES, so trusted work
+    # uses the capped fleet lane; fork work uses the capped hosted lane.
     #
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci' }}
     # The supported cold runner path can reach Go/race verification at 30m
     # (#2507). Keep the complete gate bounded without changing its resources.
-    timeout-minutes: 60
+    timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
 
     steps:
       - uses: actions/checkout@v7
@@ -403,8 +403,8 @@ jobs:
 
   verify-full-console:
     name: Full verification (console)
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-ci' }}
-    timeout-minutes: 60
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci' }}
+    timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
 
     steps:
       - uses: actions/checkout@v7
@@ -458,7 +458,7 @@ jobs:
           --projects="$NX_CONSOLE_SHARD_PROJECTS" --parallel=2
 
       # The trusted JIT runner image bakes OpenJDK 21 for the Firestore
-      # emulator; ubuntu-latest (the fork-PR carve-out above) still
+      # emulator; ubuntu-slim (the fork-PR carve-out above) still
       # defaults to Java 17. setup-java consults its own tool cache, not
       # PATH, so it re-downloads Temurin every run regardless -- detect
       # first and only fall back to install when the baked runtime isn't
@@ -503,7 +503,7 @@ jobs:
 
       # The real Claude Code, Codex and OpenCode CLIs on this runner image
       # drive this checkout's hook client through a localhost provider. Fork
-      # PRs run on ubuntu-latest, which has none of those CLIs.
+      # PRs run on ubuntu-slim, which has none of those CLIs.
       - name: Hook telemetry through the real agent CLIs
         if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) }}
         run: ./tools/hook-telemetry-runtime-smoke.sh
@@ -522,7 +522,7 @@ jobs:
     name: Verify
     needs: [verify-full, verify-full-console, runner-labels, schedules]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - name: Require full verification
@@ -561,13 +561,11 @@ jobs:
 
   runner-image-pnpm-store-seed:
     name: Runner image pnpm-store seed
-    # The production JIT image intentionally has only a Docker client and no
-    # daemon socket. Run this focused container-layer assertion on the hosted
-    # runner instead; it needs no secrets and is safe for fork pull requests.
-    # It also fetches the real fleet seed through the production stage, so a
-    # seed the publisher could not build fails here rather than after merge.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Native input checks remain a required merge result on the capped hosted
+    # lane. The full real-fetch/CLI/layer/mount proof is an unconditional
+    # dependency of the production Dockerfile, gating artifact publication.
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v7
@@ -602,14 +600,14 @@ jobs:
             echo "::notice::pnpm-store seed inputs are unaffected; skipping the immutable-seed assertion."
           fi
 
-      - name: Prove immutable pnpm-store seed behavior
+      - name: Validate seed inputs (full proof gates image builds)
         if: steps.seed-scope.outputs.run == 'true'
-        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed.test.sh
+        run: bash apps/runner-autoscaler/runner-image/pnpm-store-seed-inputs.test.sh
 
   e2e-control-flag:
     name: E2E control flag
     if: ${{ vars.E2E_ENABLED == 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 2
     steps:
       - uses: jlapenna/agent-lcars/.github/actions/control-flag@main
@@ -623,7 +621,7 @@ jobs:
     if: ${{ vars.E2E_ENABLED != 'false' }}
     # Selection must finish before reserving the scarce pinned browser pool.
     # This graph/diff query needs no fleet network or runtime credentials.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     outputs:
       run: ${{ steps.e2e-scope.outputs.run }}
@@ -704,7 +702,7 @@ jobs:
     # this job invoke the suite directly below -- no tools/e2e-docker.sh
     # wrapper or host Docker socket.
     #
-    # Fork PRs still run on ubuntu-latest via tools/e2e-local.sh -- agent-lcars-e2e
+    # Fork PRs still run on ubuntu-slim via tools/e2e-local.sh -- agent-lcars-e2e
     # is a trusted self-hosted pool, off-limits to untrusted fork code the
     # same way the trusted Verify pool is for `verify` above (see
     # codeql.yml's `analyze` job for the same fork-PR rationale in more
@@ -712,8 +710,8 @@ jobs:
     # only correct on a runner whose image IS the pinned sandbox, so
     # nothing should be able to silently redirect it elsewhere (mirrors
     # sprinkles' own e2e.yml `runs-on: [e2e]`).
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-latest' || 'agent-lcars-e2e' }}
-    timeout-minutes: 30
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-e2e' }}
+    timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 30 }}
 
     steps:
       - uses: actions/checkout@v7
@@ -800,7 +798,7 @@ jobs:
         if: needs.e2e-scope.outputs.run == 'true' && steps.playwright-deps.outputs.dependencies_ready != 'true'
         run: pnpm exec playwright install --with-deps chromium
 
-      # One e2e entrypoint for every environment (fork ubuntu-latest,
+      # One e2e entrypoint for every environment (fork ubuntu-slim,
       # trusted agent-lcars-e2e, dev machines): tools/e2e-local.sh. Its `env -i`
       # allowlist is load-bearing on the trusted path too -- a Codex P1/P2
       # pair on #931 flagged that the earlier bespoke direct invocation ran
@@ -843,7 +841,7 @@ jobs:
     # always() exposes selection/browser failure rather than skipping a
     # required check because one dependency failed or was cancelled.
     if: ${{ always() && vars.E2E_ENABLED != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 2
     steps:
       - name: Require successful E2E selection and selected browser execution
