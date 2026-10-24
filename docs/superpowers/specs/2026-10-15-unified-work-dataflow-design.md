@@ -16,14 +16,14 @@ Adding OpenClaw as one more pipeline with a "target is an agent, not a repo" bra
 
 ## Model
 
-Every work item flows through the same four stages. Each stage picks one adapter from one field, and GitHub appears only as an adapter.
+Every work item flows through the same four stages. Each stage selects its adapter from admitted configuration, and GitHub appears only as an adapter. A trusted operation delivery policy chooses persist-only or reply-to-origin before the reply adapter runs.
 
-| Stage      | Chosen by                    | Adapters                                                                                 |
-| ---------- | ---------------------------- | ---------------------------------------------------------------------------------------- |
-| 1. Intake  | `origin.channel`             | `github` (labels, replies), `slack`, `console`, `api`, `cron`                            |
-| 2. Execute | `agent` → registry `runtime` | `model-call` (bounded inference), `cli` (coding Jobs), `openclaw` (laforge bridge)       |
-| 3. Verify  | each `intent[].kind`         | look up the referenced state (GitHub API for GitHub intents; the message for reports)    |
-| 4. Reply   | `origin.channel`             | `github` → issue comment, `slack` / `api` → outcome webhook, console `/work/<id>` always |
+| Stage      | Chosen by                                        | Adapters                                                                                       |
+| ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| 1. Intake  | `origin.channel`                                 | `github` (labels, replies), `slack`, `console`, `api`, `cron`                                  |
+| 2. Execute | `agent` → registry `runtime`                     | `model-call` (bounded inference), `cli` (coding Jobs), `openclaw` (laforge bridge)             |
+| 3. Verify  | each `intent[].kind`                             | look up the referenced state (GitHub API for GitHub intents; the message for reports)          |
+| 4. Reply   | trusted `policy.delivery`, then `origin.channel` | `persist-only` → stored result; `reply-to-origin` → channel reply; console `/work/<id>` always |
 
 ```
 intake adapter ──▶ work item {agent, resources, intent[], origin}
@@ -58,7 +58,7 @@ WorkSpec {
   operation: OperationId,         // trusted, versioned input/result contract
   input: OperationInput,          // validated against that operation
   source?: { key: string; revision: string }, // immutable input snapshot identity
-  policy: PolicyId,               // server-owned deadline/retry/concurrency policy
+  policy: PolicyId,               // trusted deadline/retry/concurrency/delivery policy
 }
 Resource = { kind: 'repo'; repo: string; access: 'read' | 'write' }
 Intent =
@@ -90,6 +90,7 @@ The GitHub label (`agent:*`) and reply-trigger config moves into the **GitHub ch
 **Admission** refuses a work item unless all of these hold:
 
 - the operation, input, policy and result schema are registered and compatible with the agent
+- the policy fixes delivery to `persist-only` or `reply-to-origin`; source text and generated output cannot override it
 - the agent `satisfies` every intent
 - every resource is in `accepts`, and every `requires` entry is present
 - every repo-valued intent names a repo that is also a `resources` entry
@@ -179,7 +180,7 @@ The QueueExecutor launches a bridge Job. The Job keeps every LCARS lifecycle dut
 - **GitHub adapter.**
   - Labels and reply triggers map to `{agent, intent}` and create work items.
   - Its existing coding-work binding keeps relabeling or re-triggering on the same work item. Event-derived triage and summaries use separate operation/source bindings; the issue alone cannot identify all three operations.
-  - Replies are issue comments, and issue-side acknowledgements stay console-written projections (sub-project 5).
+  - For `reply-to-origin` work, completion replies are issue comments. Persist-only work produces no completion comment or acknowledgement. Triage comment effects belong to its operation and are reconciled separately; they are not generic completion replies. Issue-side acknowledgements for requested coding work stay console-written projections (sub-project 5).
 - **Console, CLI and Slack.** All three can assign permitted work to registry agents from phase 4. Each reads the agent list from a new read-only Work API route, `GET /agents` (the registry entries the caller's grant allows), so a new agent needs no channel change.
   - **Console:** the Quick Task dialog (`apps/console/src/app/quick-task-dialog.tsx`) replaces its hard-coded `PIPELINE_OPTIONS` with an agent picker. The intent is chosen from what the selected agent `satisfies`, defaulting to `report` for `openclaw/*`. The reply is the `/work/<id>` page.
   - **CLI/API:** `lcars work create` (`apps/telemetry-watcher`) replaces `--pipeline`/`--fallback-pipelines` with `--agent openclaw/investigator`, `--fallback-agents` and `--intent report`. A new `--wait` polls `/work/<id>` and prints the message; otherwise the item ID is printed for later lookup.
@@ -196,7 +197,8 @@ coding claims and human ownership remain admission constraints for effects.
 
 The trigger is separate from the operation and executor. GitHub deliveries,
 LCARS state changes and explicit user requests enter the existing durable intake
-and Work admission path. A browser visit may request a missing summary through
+and Work admission path. Summary operations use the trusted `persist-only` delivery policy, including
+when their source is a GitHub issue. A browser visit may request a missing summary through
 that same idempotent path; it must not create a second inference queue.
 
 - Each event-derived operation uses a stable deduplication key made from its
@@ -277,9 +279,12 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
 1. **Shared contract and admission.** Add operation/input/result contracts,
    source revisions, trusted policies and the runtime registry to Work. Artifact
    validation is required before any artifact-producing adapter is enabled. Resolve
-   the existing pipeline/target migration in one coherent API cutover; do not
-   create a parallel queue. Preserve task identity and existing coding behavior.
+   the existing pipeline/target migration in one coherent API cutover, including
+   existing Console, CLI, Slack and schedule producers/consumers in the same
+   phase. Do not create a parallel queue. Preserve task identity and existing
+   coding behavior; phase 4 adds new choices, not delayed client compatibility.
 2. **Lightweight execution and summaries.** Implement the `model-call` adapter,
+   enforce persist-only delivery,
    durable retries and revision-fenced artifact publication. Migrate Inbox and
    handoff summaries, preserving their existing usability and source-grounding
    requirements. Remove direct Console inference after qualification.
