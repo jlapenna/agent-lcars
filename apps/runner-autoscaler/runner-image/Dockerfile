@@ -682,13 +682,16 @@ RUN node --test /usr/local/lib/agent-lcars/opencode-litellm-proxy.test.mjs && \
 COPY prepare-opencode-store.sh check-opencode-store.sh check-opencode-concurrent-readers.sh \
     /usr/local/lib/agent-lcars/
 COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.py \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
     /repo/apps/runner-autoscaler/runner-image/opencode-version \
     /usr/local/lib/agent-lcars/opencode-continuation-test/
 COPY --from=telemetry-watcher-build \
+    /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.py \
+    /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.test.py \
     /repo/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh \
-    /usr/local/lib/agent-lcars/hook-telemetry.test.sh
+    /usr/local/lib/agent-lcars/
 
 USER runner
 
@@ -730,7 +733,8 @@ RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/op
 # CLIs through a localhost provider with the hook telemetry this image
 # installs, so a release that stops running our hooks or changes their
 # payloads fails publication instead of silently dropping live sessions.
-RUN --network=none bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh
+RUN --network=none python3 /usr/local/lib/agent-lcars/drain-hook-test-clients.test.py && \
+    bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh
 
 # Register the shared source checkout in each provider's own runner-user
 # plugin state. Both providers require their own installed plugin snapshot;
