@@ -190,7 +190,7 @@ describe('native decision Reply', () => {
     });
   });
 
-  it('keeps a refused reply editable with the admission error', async () => {
+  it('keeps a refused reply editable with distinct summary and reply statuses', async () => {
     const reply = vi
       .fn()
       .mockResolvedValue([
@@ -199,7 +199,17 @@ describe('native decision Reply', () => {
       ]);
     render(
       <MantineProvider>
-        <NativeDecisionDetail card={card} replyToWorkItem={reply} />
+        <NativeDecisionDetail
+          card={{
+            ...card,
+            decisionSummary: (
+              <span role="status" aria-label="Decision summary">
+                Summary unavailable.
+              </span>
+            ),
+          }}
+          replyToWorkItem={reply}
+        />
       </MantineProvider>,
     );
     fireEvent.change(screen.getByRole('textbox'), {
@@ -207,8 +217,13 @@ describe('native decision Reply', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Reply', exact: true }));
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent('run-live'),
+      expect(
+        screen.getByRole('status', { name: 'Reply status' }),
+      ).toHaveTextContent('run-live'),
     );
+    expect(
+      screen.getByRole('status', { name: 'Decision summary' }),
+    ).toHaveTextContent('Summary unavailable.');
     expect(screen.getByRole('textbox')).toHaveValue('Use Firestore.');
   });
 

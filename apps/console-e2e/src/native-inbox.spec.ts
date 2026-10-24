@@ -186,7 +186,9 @@ test.describe('native and GitHub human decisions', () => {
     });
     expect(admitted.ok()).toBe(true);
     await detail.getByRole('button', { name: 'Reply', exact: true }).click();
-    await expect(detail.getByRole('status')).toContainText('task-busy');
+    await expect(
+      detail.getByRole('status', { name: 'Reply status' }),
+    ).toContainText('task-busy');
     await expect(draft).toHaveValue('Keep this refused draft.');
     await draft.fill('Revised refused draft.');
     await expect(draft).toHaveValue('Revised refused draft.');

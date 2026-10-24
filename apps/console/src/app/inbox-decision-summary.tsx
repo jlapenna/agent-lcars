@@ -21,7 +21,9 @@ export async function InboxDecisionDescription({
       {description}
     </span>
   ) : (
-    <span role="status">Summary unavailable. {fallback}</span>
+    <span role="status" aria-label="Decision summary">
+      Summary unavailable. {fallback}
+    </span>
   );
 }
 
@@ -36,7 +38,11 @@ export function withInboxDecisionSummary(card: InboxCard): InboxCard {
     ...card,
     decisionSummary: (
       <Suspense
-        fallback={<span role="status">Generating summary… {fallback}</span>}
+        fallback={
+          <span role="status" aria-label="Decision summary">
+            Generating summary… {fallback}
+          </span>
+        }
       >
         <InboxDecisionDescription
           context={inboxDecisionContext(card)}
