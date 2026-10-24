@@ -50,9 +50,10 @@ describe('server-rendered Inbox summary', () => {
       new Promise(() => undefined),
     );
     const prepared = withInboxDecisionSummary(card);
-    expect(
-      renderToStaticMarkup(<div>{prepared.decisionSummary}</div>),
-    ).toContain('Choose 30 or 90 days.');
+    const markup = renderToStaticMarkup(<div>{prepared.decisionSummary}</div>);
+    expect(markup).toContain('Choose 30 or 90 days.');
+    expect(markup).toContain('Generating summary…');
+    expect(markup).not.toContain('Summary unavailable.');
   });
 
   it('keeps the source fallback visible when generation is unavailable', async () => {
@@ -61,7 +62,10 @@ describe('server-rendered Inbox summary', () => {
       context: 'source',
       fallback: 'Choose 30 or 90 days.',
     });
-    expect(renderToStaticMarkup(element)).toContain('Choose 30 or 90 days.');
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain('Choose 30 or 90 days.');
+    expect(markup).toContain('Summary unavailable.');
+    expect(markup).not.toContain('Generating summary…');
   });
 
   it('renders model output as inert text', async () => {

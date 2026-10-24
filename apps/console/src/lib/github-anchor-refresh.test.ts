@@ -498,3 +498,75 @@ describe('failed nullable merge fields (#2299)', () => {
     expect(actual?.mergedAt).toBe(timestamp);
   });
 });
+
+describe('review policy enrichment', () => {
+  it.each([
+    [null, 'not-required'],
+    ['APPROVED', 'not-required'],
+    ['REVIEW_REQUIRED', 'required'],
+    ['CHANGES_REQUESTED', 'required'],
+    [undefined, 'unknown'],
+  ])(
+    'records GitHub review decision %s as %s',
+    async (reviewDecision, expected) => {
+      const graphql = vi.fn().mockResolvedValue({
+        repository: {
+          i42: {
+            reviewDecision,
+            autoMergeRequest: { enabledAt: '2026-10-24T00:00:00Z' },
+          },
+        },
+      });
+      const [result] = await enrichGithubAnchorProjections(
+        anchor.repo,
+        [projection()],
+        { graphql },
+      );
+      expect(result?.reviewRequirement).toBe(expected);
+      expect(result?.autoMergeEnabled).toBe(true);
+      expect(graphql).toHaveBeenCalledWith(
+        expect.stringContaining('reviewDecision'),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each(['reviewDecision', 'autoMergeRequest'])(
+    'does not hide a review after a partial %s error',
+    async (field) => {
+      const graphql = vi.fn().mockRejectedValue({
+        data: {
+          repository: { i42: { reviewDecision: null, autoMergeRequest: null } },
+        },
+        errors: [
+          { message: 'Unavailable', path: ['repository', 'i42', field] },
+        ],
+      });
+      const [result] = await enrichGithubAnchorProjections(
+        anchor.repo,
+        [
+          {
+            ...projection(),
+            reviewRequirement: 'not-required',
+            autoMergeEnabled: true,
+          },
+        ],
+        { graphql },
+      );
+      expect(result?.reviewRequirement).toBe('unknown');
+      expect(result?.autoMergeEnabled).toBe(false);
+    },
+  );
+
+  it('clears disabled auto-merge on a fresh observation', async () => {
+    const graphql = vi.fn().mockResolvedValue({
+      repository: { i42: { reviewDecision: null, autoMergeRequest: null } },
+    });
+    const [result] = await enrichGithubAnchorProjections(
+      anchor.repo,
+      [{ ...projection(), autoMergeEnabled: true }],
+      { graphql },
+    );
+    expect(result?.autoMergeEnabled).toBe(false);
+  });
+});

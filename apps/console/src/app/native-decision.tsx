@@ -204,7 +204,7 @@ export function NativeDecisionDetail({
         </Text>
       )}
       {feedback && (
-        <Text role="status" size="sm">
+        <Text role="status" aria-label="Reply status" size="sm">
           {feedback}
         </Text>
       )}

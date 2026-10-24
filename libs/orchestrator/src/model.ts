@@ -110,6 +110,9 @@ export const githubAnchorProjectionSchema = z.strictObject({
       'unknown',
     ])
     .optional(),
+  /** Observed merge policy; unknown must never hide a review request. */
+  autoMergeEnabled: z.boolean().optional(),
+  reviewRequirement: z.enum(['required', 'not-required', 'unknown']).optional(),
   requestedReviewerLogins: z
     .array(z.string().min(1).max(256))
     .max(256)
