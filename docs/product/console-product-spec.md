@@ -335,7 +335,7 @@ the work that has stopped, and the work in flight.
   `decision-snoozes.spec.ts` protect authentication, isolation, concurrent
   persistence, cross-device visibility, unsnooze, expiry/reload, and new decisions.
 
-- **FE-IN-8 [Partial] Decision descriptions.** Every GitHub and native Inbox
+- **FE-IN-8 [Shipped] Decision descriptions.** Every GitHub and native Inbox
   item should have a concise LLM-generated description in its row and detail
   pane explaining **what the human needs to decide or answer**. Lead with the
   specific approval, choice, missing information, or intervention needed;
@@ -358,8 +358,9 @@ the work that has stopped, and the work in flight.
     the Inbox usable. Native rows retain their original question or report;
     GitHub items retain their title and source context.
     Source implementation and focused tests cover generation, bounded failure,
-    source changes, and row/detail display. Production provider configuration and
-    live summary quality remain to be verified, so this requirement is Partial.
+    source changes, and row/detail display. The production provider is configured;
+    authenticated live verification confirms generated descriptions in Inbox
+    rows and the selected detail pane, with source-grounded decision context.
     The implementation and verification owner is
     [human-needed summaries](../human-needed-summaries.md#decision-inbox-descriptions).
 
