@@ -56,9 +56,13 @@ WorkSpec {
   resources: Resource[],          // empty only if the agent requires none
   intent: Intent[],               // what must be true when done (≥1)
   operation: OperationId,         // trusted, versioned input/result contract
-  input: OperationInput,          // validated against that operation
-  source?: { key: string; revision: string }, // immutable input snapshot identity
+  source?: { key: string },       // stable subject; separate work per operation
   policy: PolicyId,               // trusted deadline/retry/concurrency/delivery policy
+}
+WorkRound {
+  requestId: string,              // semantic event identity; retries reuse it
+  input: OperationInput,          // immutable snapshot, validated by operation
+  sourceRevision?: string,        // required for event-derived work
 }
 Resource = { kind: 'repo'; repo: string; access: 'read' | 'write' }
 Intent =
@@ -195,6 +199,19 @@ coding work without one operation claiming or settling another. Single-flight
 for event-derived work is scoped to operation/version plus source; existing
 coding claims and human ownership remain admission constraints for effects.
 
+Event admission resolves `(operation/version, source key)` to one stable
+`workId`. Each distinct relevant source revision admits an immutable round with
+its input snapshot and revision; duplicate events return that same round.
+Retries create attempts of that round without changing its input. Coalescing
+marks older queued rounds superseded and advances the desired-round pointer;
+it never rewrites admitted snapshots. The existing work/task claim owns
+single-flight across all rounds, with no second source lock. Round admission,
+supersession and desired-round changes must be transactional in the existing
+store, and durable draining starts the latest queued round after the live one
+settles. The result publication check compares its round/revision against that
+current desired round, so input that changes and later changes back cannot
+accidentally publish an intervening obsolete round.
+
 The trigger is separate from the operation and executor. GitHub deliveries,
 LCARS state changes and explicit user requests enter the existing durable intake
 and Work admission path. Summary operations use the trusted `persist-only` delivery policy, including
@@ -251,7 +268,9 @@ Migration acceptance requires all of the following:
 1. Replayed deliveries and a restart between admission and execution recover one
    semantic work item, with visible attempts and finite retries.
 2. Source changes during a model call prevent stale publication; the newest
-   revision eventually gets its result. Invalid results, provider failure and
+   revision eventually gets its result. Specifically, B arriving while A runs
+   and C superseding queued B leaves A unable to publish, B unexecuted, and C
+   next under the same Work claim lifecycle. Invalid results, provider failure and
    absent configuration preserve original Inbox content and primary actions.
 3. A settled handoff remains settled even if its summary fails. Reports receive
    reading summaries, never invented human decisions or authorization.
