@@ -129,6 +129,16 @@ resource "google_storage_bucket" "transcripts" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   versioning { enabled = true }
+  # Explicitly consented CLI snapshots have bounded retention independent
+  # of the historical runner archives in this same bucket.
+  lifecycle_rule {
+    condition {
+      age            = 7
+      matches_prefix = ["cli-consented-v1/"]
+      with_state     = "ANY"
+    }
+    action { type = "Delete" }
+  }
   lifecycle_rule {
     condition {
       age        = 90
@@ -300,6 +310,13 @@ resource "google_secret_manager_secret_iam_member" "apphosting_secrets" {
 resource "google_storage_bucket_iam_member" "writer_transcripts" {
   bucket = google_storage_bucket.transcripts.name
   role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.telemetry_writer.email}"
+}
+
+# The consented CLI writer verifies the deployed retention policy before upload.
+resource "google_storage_bucket_iam_member" "writer_transcripts_metadata" {
+  bucket = google_storage_bucket.transcripts.name
+  role   = "roles/storage.legacyBucketReader"
   member = "serviceAccount:${google_service_account.telemetry_writer.email}"
 }
 

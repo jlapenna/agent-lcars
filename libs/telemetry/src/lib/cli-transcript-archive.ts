@@ -1,7 +1,4 @@
-/** Fixed privacy bound the console reader applies to archived CLI
- * transcripts. The host writer that produced these archives (the retired
- * watcher daemon) is gone; docs written before its removal still carry
- * `cliTranscriptArchive`, so the reader contract stays. */
+/** Shared bound for explicitly consented CLI snapshots and console reads. */
 export const CLI_TRANSCRIPT_MAX_BYTES = 5 * 1024 * 1024;
 
 export interface CliTranscriptArchive {
@@ -14,4 +11,6 @@ export interface CliTranscriptArchive {
     | 'unsupported';
   /** Present only after a successful upload; never inferred by a reader. */
   expiresAt?: string;
+  /** Fences publication against concurrent revocation or a newer capture. */
+  captureId?: string;
 }
