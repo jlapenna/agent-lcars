@@ -25,13 +25,15 @@ case "$(uname -m)" in
 esac
 
 fail() {
-  echo "FAIL: $*" >&2
-  exit 1
+  echo "FAIL: $1" >&2
+  exit "${2:-1}"
 }
 
 test -x "$opencode_bin" || fail "OpenCode executable is unavailable at $opencode_bin"
-actual_version="$(timeout -k 2s "${version_timeout_seconds}s" "$opencode_bin" --version)" ||
-  fail "pinned OpenCode version probe did not complete"
+actual_version="$(timeout -k 2s "${version_timeout_seconds}s" "$opencode_bin" --version)" || {
+  version_status=$?
+  fail "pinned OpenCode version probe did not complete (exit $version_status)" "$version_status"
+}
 [ "$actual_version" = "$expected_version" ] ||
   fail "test must run against pinned OpenCode $expected_version"
 
@@ -165,13 +167,14 @@ env \
   --dir "$tmp/workspace" \
   "Read fixture.txt, preserve the task state, and continue after compaction." \
   >"$tmp/opencode.stdout" 2>"$tmp/opencode.stderr" || {
+    framework_status=$?
     cat "$tmp/opencode.stderr" >&2
     if [ -s "$tmp/observations.ndjson" ]; then
       cat "$tmp/observations.ndjson" >&2
     else
       echo "OpenCode continuation observations: 0 (startup did not reach localhost provider)" >&2
     fi
-    fail "real OpenCode continuation run failed"
+    fail "real OpenCode continuation run failed (exit $framework_status)" "$framework_status"
   }
 
 python3 - "$tmp/observations.ndjson" "$tmp/data/opencode/opencode.db" <<'PY'

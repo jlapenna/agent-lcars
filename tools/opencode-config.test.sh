@@ -80,6 +80,7 @@ NODE
 
 # Protect request history and authoritative instructions at the plugin boundary.
 node "$repo_root/tools/opencode-context.test.mjs"
+python3 "$repo_root/tools/opencode-continuation-exit.test.py"
 grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the context lifecycle plugin"
 grep -Fq 'RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
