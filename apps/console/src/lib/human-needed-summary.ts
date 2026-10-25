@@ -14,7 +14,7 @@ const responseSchema = z.object({
 // Bound the wire body before UTF-8 decoding or either JSON parse, including
 // ignored provider fields. The requested token limit is not a trust boundary.
 const MAX_RESPONSE_BYTES = 65_536;
-const MAX_SUMMARY_MS = 8_000;
+export const MAX_SUMMARY_MS = 30_000;
 const SETTLEMENT_HEADROOM_MS = 5_000;
 
 async function readSummaryResponse(response: Response): Promise<unknown> {
@@ -142,6 +142,7 @@ export async function requestSummary(
     body: JSON.stringify({
       model: config.model,
       max_tokens: 1_200,
+      reasoning_effort: 'none',
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: instruction },

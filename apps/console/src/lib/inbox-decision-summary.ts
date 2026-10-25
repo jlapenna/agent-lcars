@@ -5,7 +5,11 @@ import { cacheLife } from 'next/cache';
 import { z } from 'zod';
 
 import { type InboxCard, nativeCardText } from '../app/inbox-card';
-import { handoffSummaryConfig, requestSummary } from './human-needed-summary';
+import {
+  MAX_SUMMARY_MS,
+  handoffSummaryConfig,
+  requestSummary,
+} from './human-needed-summary';
 
 const summarySchema = z
   .object({ description: z.string().trim().min(1).max(600) })
@@ -65,7 +69,7 @@ export function inboxDecisionContext(card: InboxCard): string {
 }
 
 /** All cards stream independently. Limit concurrent upstream calls per process;
- * queueing counts against the same eight-second reading-aid budget. */
+ * queueing counts against the same 30-second reading-aid budget. */
 export async function summarizeInboxDecision(
   context: string,
 ): Promise<string | undefined> {
@@ -74,7 +78,7 @@ export async function summarizeInboxDecision(
   try {
     const config = handoffSummaryConfig();
     if (!config) return undefined;
-    const deadline = Date.now() + 8_000;
+    const deadline = Date.now() + MAX_SUMMARY_MS;
     while (active.size >= 4) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return undefined;

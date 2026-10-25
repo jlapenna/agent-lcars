@@ -54,12 +54,38 @@ describe('human-needed summarization', () => {
     expect(url).toBe('https://summary.example.test/v1/chat/completions');
     expect(JSON.parse(init.body)).toMatchObject({
       model: 'small-summary-model',
+      reasoning_effort: 'none',
       messages: [
         { role: 'system', content: expect.any(String) },
         { role: 'user', content: result.message },
       ],
     });
     expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('shortens local inference to preserve settlement headroom and skips exhausted claims', async () => {
+    const timeout = vi
+      .spyOn(AbortSignal, 'timeout')
+      .mockImplementation(() => new AbortController().signal);
+    const now = new Date('2026-10-25T00:00:00Z');
+    fetchMock.mockResolvedValue(response({ actions }));
+    try {
+      await summarizeHumanNeeded(result, {
+        deadline: now.getTime() + 10_000,
+        now: () => now,
+      });
+      expect(timeout).toHaveBeenCalledWith(5_000);
+      fetchMock.mockClear();
+      expect(
+        await summarizeHumanNeeded(result, {
+          deadline: now.getTime() + 5_000,
+          now: () => now,
+        }),
+      ).toEqual(result);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it.each(['pull-request', 'no-op', 'runner-failed'])(

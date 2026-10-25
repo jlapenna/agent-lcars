@@ -214,7 +214,7 @@ env:
     availability:
       - RUNTIME
   - variable: AGENT_LCARS_HANDOFF_SUMMARY_MODEL
-    value: 'gemini-flash'
+    value: 'default'
     availability:
       - RUNTIME
   - variable: AGENT_LCARS_HANDOFF_SUMMARY_API_KEY
