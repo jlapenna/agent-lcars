@@ -407,7 +407,7 @@ jobs:
           test "$(crane digest "$image")" = "$IMAGE_DIGEST"
           node .console-deploy/deploy-console-prebuilt.mjs \
             --project "$PROJECT" --region us-central1 --backend "$BACKEND" \
-            --root-dir apps/console --runtime nodejs24 --commit "$SOURCE_SHA" \
+            --root-dir apps/console --commit "$SOURCE_SHA" \
             --image "${image%:*}@$IMAGE_DIGEST"
 
       - name: Resolve exact deployed App Hosting build
