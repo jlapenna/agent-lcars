@@ -136,9 +136,9 @@ for (const width of [390, 768, 1280]) {
     await control
       .getByRole('button', { name: 'Enable Inbox notifications' })
       .click();
-    await expect(control.getByRole('status')).toHaveText(
-      'Authorization or data unavailable — notifications paused',
-    );
+    await expect(
+      control.getByRole('status', { name: 'Open-tab notification status' }),
+    ).toHaveText('Authorization or data unavailable — notifications paused');
     expect(await counters()).toEqual({
       permission: 1,
       registered: 1,
@@ -147,9 +147,9 @@ for (const width of [390, 768, 1280]) {
     await page.unroute('**/api/inbox-notifications');
     await page.reload();
     control = await openPreferences(page);
-    await expect(control.getByRole('status')).toHaveText(
-      'Watching for new human decisions',
-    );
+    await expect(
+      control.getByRole('status', { name: 'Open-tab notification status' }),
+    ).toHaveText('Watching for new human decisions');
     // Consent survives a new document without asking permission again or
     // registering the worker again, and recovery never replays the backlog.
     expect(await counters()).toEqual({
@@ -168,7 +168,9 @@ for (const width of [390, 768, 1280]) {
       ),
     ).toBe(true);
     await button.click();
-    await expect(control.getByRole('status')).toHaveText('Notifications off');
+    await expect(
+      control.getByRole('status', { name: 'Open-tab notification status' }),
+    ).toHaveText('Notifications off');
     await expect(
       control.getByRole('button', { name: 'Enable Inbox notifications' }),
     ).toBeVisible();
@@ -217,9 +219,9 @@ test('discovers new and reopened decisions while Inbox RSC refreshes are blocked
   await control
     .getByRole('button', { name: 'Enable Inbox notifications' })
     .click();
-  await expect(control.getByRole('status')).toHaveText(
-    'Watching for new human decisions',
-  );
+  await expect(
+    control.getByRole('status', { name: 'Open-tab notification status' }),
+  ).toHaveText('Watching for new human decisions');
   expect(await notificationCounters(page)).toEqual({
     permission: 1,
     registered: 1,
@@ -274,9 +276,9 @@ test('discovers new and reopened decisions while Inbox RSC refreshes are blocked
     (await request.post('/api/e2e/seed', { data: { action: 'reset' } })).ok(),
   ).toBe(true);
   await absent;
-  await expect(control.getByRole('status')).toHaveText(
-    'Watching for new human decisions',
-  );
+  await expect(
+    control.getByRole('status', { name: 'Open-tab notification status' }),
+  ).toHaveText('Watching for new human decisions');
   expect((await notificationCounters(page)).delivered).toBe(1);
 
   const reopened = nextSnapshot(true);

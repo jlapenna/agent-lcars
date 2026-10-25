@@ -525,7 +525,12 @@ export function InboxNotificationsToggle() {
       >
         {enabled ? 'Disable notifications' : 'Enable notifications'}
       </Button>
-      <Text size="xs" c="dimmed" role="status">
+      <Text
+        size="xs"
+        c="dimmed"
+        role="status"
+        aria-label="Open-tab notification status"
+      >
         {status}
       </Text>
       <InboxPushToggle

@@ -163,7 +163,12 @@ export function InboxPushToggle({
           ? 'Disable background notifications'
           : 'Enable background notifications'}
       </Button>
-      <Text size="xs" c="dimmed" role="status">
+      <Text
+        size="xs"
+        c="dimmed"
+        role="status"
+        aria-label="Background notification status"
+      >
         {status}
       </Text>
       <Text size="xs" c="dimmed">
