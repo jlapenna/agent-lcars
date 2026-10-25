@@ -6,8 +6,8 @@ import { z } from 'zod';
 
 import { type InboxCard, nativeCardText } from '../app/inbox-card';
 import {
-  MAX_SUMMARY_MS,
   handoffSummaryConfig,
+  MAX_SUMMARY_MS,
   requestSummary,
 } from './human-needed-summary';
 
