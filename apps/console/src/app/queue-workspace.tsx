@@ -1,5 +1,6 @@
 'use client';
 
+import { workRepository } from '@agent-lcars/work';
 import {
   ActionIcon,
   Anchor,
@@ -604,7 +605,7 @@ export function QueueWorkspace({
           }
           selectedIdentity={
             selectedCard && 'work' in selectedCard
-              ? `${selectedCard.work.spec.target.repo} / ${selectedCard.work.id}`
+              ? `${workRepository(selectedCard.work.spec)} / ${selectedCard.work.id}`
               : undefined
           }
           backHref={backHref}

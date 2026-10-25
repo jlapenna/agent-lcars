@@ -1,5 +1,6 @@
 import { logger } from '@agent-lcars/logging';
 import type { TaskListCursor } from '@agent-lcars/orchestrator';
+import { workRepository } from '@agent-lcars/work';
 import { PIPELINES } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor } from '@mantine/core';
@@ -143,7 +144,7 @@ async function getParkedWork(
       page.items.filter(
         (item) =>
           (item.state === 'parked' || item.state === 'failed') &&
-          (!repo || item.spec.target.repo === repo),
+          (!repo || workRepository(item.spec) === repo),
       ),
     );
     return {
@@ -338,7 +339,10 @@ async function IndexBody({
   const stoppedItems = parkedWorkItems.filter(
     (item) =>
       (!view.agent || item.spec.pipeline === view.agent) &&
-      matchesFind([item.spec.title, item.id, item.spec.target.repo], view.q),
+      matchesFind(
+        [item.spec.title, item.id, workRepository(item.spec)],
+        view.q,
+      ),
   );
 
   // The right pane of the two-panel view (desktop ≥1024px). Resolved from the

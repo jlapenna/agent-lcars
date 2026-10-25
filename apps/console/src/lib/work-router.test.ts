@@ -160,6 +160,55 @@ async function call(
 }
 
 describe('items routes', () => {
+  it('exposes internal summary history while rejecting coding mutations', async () => {
+    const ctx = context();
+    await ctx.runtime.orchestrator.request({
+      taskId: { workId: ID },
+      requestId: 'source-1',
+      pipeline: 'inbox-summary',
+      work: {
+        origin: { principal: 'svc:inbox-summary', channel: 'console' },
+        spec: {
+          title: 'Inbox summary',
+          description: 'Reading aid',
+          pipeline: 'inbox-summary',
+          priority: 'background',
+          sourceKey: 'owner/repo#1',
+        },
+      },
+      sourceRevision: {
+        key: 'source-1',
+        input: { context: 'Original question' },
+      },
+    });
+    const read = await call(ctx, 'GET', `/items/${ID}`);
+    expect(read.status).toBe(200);
+    expect(read.json.spec.pipeline).toBe('inbox-summary');
+    expect(read.json.runs[0].sourceRevision.input.context).toBe(
+      'Original question',
+    );
+    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(409);
+    expect((await call(ctx, 'POST', `/items/${ID}/redispatch`)).status).toBe(
+      409,
+    );
+    expect(
+      (
+        await call(ctx, 'PATCH', `/items/${ID}`, {
+          title: 'Changed',
+          description: 'Changed',
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await call(ctx, 'POST', `/items/${ID}/reply`, {
+          text: 'Do something else',
+        })
+      ).status,
+    ).toBe(403);
+    expect(await ctx.runtime.store.listRuns({ workId: ID })).toHaveLength(1);
+  });
+
   it.each(['urgent', 'normal', 'background'] as const)(
     'mints and exposes %s priority without changing authorization or idempotency',
     async (priority) => {

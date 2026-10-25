@@ -205,7 +205,9 @@ describe('WorkList', () => {
 
 describe('providerCeilingMeta', () => {
   it('names providers that share a ceiling together', () => {
-    expect(providerCeilingMeta()).toBe('codex & opencode ceiling 1');
+    expect(providerCeilingMeta({ opencode: 1, codex: 1 })).toBe(
+      'codex & opencode ceiling 1',
+    );
     expect(
       providerCeilingMeta({ opencode: 1, codex: 2, claude: undefined }),
     ).toBe('codex ceiling 2 · opencode ceiling 1');

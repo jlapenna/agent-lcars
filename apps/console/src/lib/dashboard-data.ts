@@ -63,9 +63,10 @@ export interface Fetched<T> {
 }
 
 async function fetchActionItems(): Promise<Fetched<ActionItemsResult>> {
+  const fetchedAt = new Date().toISOString();
   return {
     data: await getAuthoritativeQueueItems(),
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
   };
 }
 
@@ -79,9 +80,10 @@ async function getProductionCachedActionItems(): Promise<
 }
 
 async function fetchAgentActivity(): Promise<Fetched<AgentActivity>> {
+  const fetchedAt = new Date().toISOString();
   return {
     data: await getAgentActivity(),
-    fetchedAt: new Date().toISOString(),
+    fetchedAt,
   };
 }
 

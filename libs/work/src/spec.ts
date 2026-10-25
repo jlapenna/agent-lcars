@@ -90,3 +90,28 @@ export const workPayloadSchema = z.strictObject({
   spec: workSpecSchema,
 });
 export type WorkPayload = z.infer<typeof workPayloadSchema>;
+
+/** Internal reading work. Public coding admission continues to use workSpecSchema. */
+export const inboxSummarySpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  pipeline: z.literal('inbox-summary'),
+  priority: z.literal('background'),
+  sourceKey: z.string().min(1).max(256),
+});
+export const storedWorkSpecSchema = z.union([
+  workSpecSchema,
+  inboxSummarySpecSchema,
+]);
+export type StoredWorkSpec = z.infer<typeof storedWorkSpecSchema>;
+export const storedWorkPayloadSchema = z.strictObject({
+  origin: workOriginSchema,
+  spec: storedWorkSpecSchema,
+});
+
+export function workRepository(spec: {
+  pipeline: string;
+  target?: { repo: string };
+}): string {
+  return spec.target?.repo ?? '';
+}

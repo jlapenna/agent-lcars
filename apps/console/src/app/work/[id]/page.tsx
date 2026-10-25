@@ -69,26 +69,32 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        <EditWork
-          id={item.id}
-          title={item.spec.title}
-          description={item.spec.description}
-          running={item.state === 'running'}
-          update={updateItem}
-        />
+        {item.spec.pipeline === 'inbox-summary' ? (
+          <Text>{item.spec.description}</Text>
+        ) : (
+          <EditWork
+            id={item.id}
+            title={item.spec.title}
+            description={item.spec.description}
+            running={item.state === 'running'}
+            update={updateItem}
+          />
+        )}
         <TaskDetailHistory
           anchor={{ workId: item.id }}
           item={item}
           canViewSessions={isAdmin}
           actions={
-            <WorkActions
-              id={item.id}
-              latestRunId={latestRun(item.runs)?.runId}
-              state={item.state}
-              cancel={cancelItem}
-              redispatch={redispatchItem}
-              reply={replyToWorkItem}
-            />
+            item.spec.pipeline === 'inbox-summary' ? undefined : (
+              <WorkActions
+                id={item.id}
+                latestRunId={latestRun(item.runs)?.runId}
+                state={item.state}
+                cancel={cancelItem}
+                redispatch={redispatchItem}
+                reply={replyToWorkItem}
+              />
+            )
           }
         />
       </Stack>

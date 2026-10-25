@@ -1,3 +1,4 @@
+import { workRepository } from '@agent-lcars/work';
 import type { ItemState, WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Badge, Group, Stack, Text } from '@mantine/core';
 
@@ -37,11 +38,12 @@ export function ParkedWorkDetail({
           {item.state}
         </Badge>
         <Text size="sm" c="dimmed">
-          {item.spec.target.repo} · {item.spec.pipeline} · updated{' '}
+          {workRepository(item.spec)} · {item.spec.pipeline} · updated{' '}
           {formatRelativeTime(item.updatedAt)}
         </Text>
       </Group>
-      {'workId' in item.anchor ? (
+      {item.spec.pipeline === 'inbox-summary' ? null : 'workId' in
+        item.anchor ? (
         <WorkActions
           id={item.anchor.workId}
           state={item.state}

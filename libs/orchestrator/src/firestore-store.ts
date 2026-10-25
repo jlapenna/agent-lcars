@@ -50,6 +50,8 @@ import {
   taskDocumentSchema,
   type TaskId,
   taskKey,
+  type WorkRevision,
+  workRevisionSchema,
 } from './model';
 import {
   providerCooldownForRun,
@@ -121,6 +123,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #tasks: CollectionReference;
   readonly #runs: CollectionReference;
   readonly #outbox: CollectionReference;
+  readonly #sourceWorkIds: CollectionReference;
   readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
   readonly #providerCooldowns: CollectionReference;
@@ -140,6 +143,7 @@ export class FirestoreStore implements OrchestratorStore {
     this.#capacityRecords = this.#firestore.collection(
       `${prefix}capacity-records`,
     );
+    this.#sourceWorkIds = this.#firestore.collection(`${prefix}work-sources`);
     this.#tasks = this.#firestore.collection(`${prefix}tasks`);
     this.#runs = this.#firestore.collection(`${prefix}runs`);
     this.#outbox = this.#firestore.collection(`${prefix}outbox`);
@@ -354,9 +358,16 @@ export class FirestoreStore implements OrchestratorStore {
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     const taskRef = this.#taskRef(input.taskId);
+    const revisionRef =
+      input.sourceRevision === undefined
+        ? undefined
+        : taskRef
+            .collection('source-revisions')
+            .doc(encodeURIComponent(input.sourceRevision.key));
     const bindingRef =
       input.requestBinding === undefined
         ? undefined
@@ -370,12 +381,16 @@ export class FirestoreStore implements OrchestratorStore {
       // if any concurrent request or settlement changes one of those reads,
       // closing the terminal-settlement replay window as well as the live-run
       // race without scanning the task's unbounded run history.
-      const [taskSnapshot, bindingSnapshot] = await Promise.all([
-        tx.get(taskRef),
-        bindingRef === undefined
-          ? Promise.resolve(undefined)
-          : tx.get(bindingRef),
-      ]);
+      const [taskSnapshot, bindingSnapshot, revisionSnapshot] =
+        await Promise.all([
+          tx.get(taskRef),
+          bindingRef === undefined
+            ? Promise.resolve(undefined)
+            : tx.get(bindingRef),
+          revisionRef === undefined
+            ? Promise.resolve(undefined)
+            : tx.get(revisionRef),
+        ]);
       const task = taskSnapshot.exists
         ? taskDocSchema.parse(taskSnapshot.data())
         : undefined;
@@ -436,7 +451,11 @@ export class FirestoreStore implements OrchestratorStore {
       const routingCapacity = routing?.[2].exists
         ? capacityStateSchema.parse(routing[2].data())
         : emptyCapacityState();
+      const previousSourceRevision = revisionSnapshot?.exists
+        ? workRevisionSchema.parse(revisionSnapshot.data())
+        : undefined;
       const outcome = input.decide({
+        previousSourceRevision,
         ...(routing === undefined
           ? {}
           : {
@@ -472,6 +491,13 @@ export class FirestoreStore implements OrchestratorStore {
         tx.create(bindingRef, bindingToCreate);
       }
       if (isRefusal(outcome)) return outcome;
+      if (
+        revisionRef !== undefined &&
+        input.sourceRevision !== undefined &&
+        previousSourceRevision === undefined &&
+        outcome.task.desiredRevision?.key === input.sourceRevision.key
+      )
+        tx.create(revisionRef, input.sourceRevision);
 
       const nextTaskDoc: z.infer<typeof taskDocSchema> = {
         task: outcome.task,
@@ -870,6 +896,20 @@ export class FirestoreStore implements OrchestratorStore {
       if (settled === undefined) return false;
       tx.set(ref, settled);
       return true;
+    });
+  }
+
+  async resolveSourceWorkId(
+    sourceKey: string,
+    candidateWorkId: string,
+  ): Promise<string> {
+    const ref = this.#sourceWorkIds.doc(encodeURIComponent(sourceKey));
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.exists)
+        return z.object({ workId: z.string() }).parse(snapshot.data()).workId;
+      tx.create(ref, { workId: candidateWorkId });
+      return candidateWorkId;
     });
   }
 

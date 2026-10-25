@@ -19,6 +19,7 @@ import {
   refused,
   renewLease,
   reportResult,
+  requestRevisionRun,
   requestRun,
   type SchedulerDisruptionEvidence,
   updateTaskWork,
@@ -37,6 +38,8 @@ import {
   type TaskId,
   type WorkAnchor,
   type WorkPayload,
+  type WorkRevision,
+  workRevisionSchema,
 } from './model';
 import {
   providerCooldownForRun,
@@ -99,6 +102,8 @@ export interface RequestInput {
   /** Typed action provenance supplied only by a trusted admission adapter. */
   intervention?: OperationalIntervention;
   work?: WorkPayload;
+  /** Trusted source admission; coding requests never set this. */
+  sourceRevision?: WorkRevision;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
   providerFallback?: ProviderFallbackRequest;
   /** Authorized alternatives are filtered against the provider chosen in this transaction. */
@@ -149,11 +154,17 @@ export class Orchestrator {
     // Firestore may replay a transaction callback after a concurrent commit;
     // capture time once so every replay evaluates the same pure request.
     const now = this.clock.now();
+    if (input.sourceRevision !== undefined) {
+      workRevisionSchema.parse(input.sourceRevision);
+      if (input.sourceRevision.key !== input.requestId)
+        throw new Error('revision/request mismatch');
+    }
     const requestSource = input.requestSource ?? 'caller';
     return this.store.transactRequest({
       taskId: input.taskId,
       requestId: input.requestId,
       requestSource,
+      sourceRevision: input.sourceRevision,
       ...(input.requestBinding === undefined
         ? {}
         : { requestBinding: input.requestBinding }),
@@ -164,6 +175,7 @@ export class Orchestrator {
         task,
         activeRun,
         previousRun,
+        previousSourceRevision,
         requestId,
         latestRun,
         retainedClaims,
@@ -180,6 +192,14 @@ export class Orchestrator {
           !input.isStoredWorkCompatible(task.task.work, task.task)
         ) {
           return refused('work-spec-mismatch');
+        }
+        if (previousSourceRevision !== undefined) {
+          if (
+            JSON.stringify(previousSourceRevision) !==
+            JSON.stringify(input.sourceRevision)
+          )
+            return refused('work-spec-mismatch');
+          return refused('duplicate-request', previousRun);
         }
         const storedPipeline =
           task === undefined
@@ -275,7 +295,14 @@ export class Orchestrator {
             outbox: [...canceled.outbox, ...replacement.outbox],
           };
         }
-        return requestRun({ ...requestArgs, task: task?.task, activeRun });
+        return input.sourceRevision === undefined
+          ? requestRun({ ...requestArgs, task: task?.task, activeRun })
+          : requestRevisionRun({
+              ...requestArgs,
+              task: task?.task,
+              activeRun,
+              sourceRevision: input.sourceRevision,
+            });
       },
     });
   }

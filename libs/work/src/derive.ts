@@ -9,7 +9,12 @@ import {
   taskKey,
 } from '@agent-lcars/orchestrator';
 
-import { type WorkOrigin, workPayloadSchema, type WorkSpec } from './spec';
+import {
+  storedWorkPayloadSchema,
+  type StoredWorkSpec,
+  type WorkOrigin,
+  type WorkSpec,
+} from './spec';
 
 export type ItemState = 'running' | 'done' | 'parked' | 'failed' | 'canceled';
 
@@ -66,7 +71,11 @@ export function deriveItemState(
     return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.
-  return task.consecutiveLost > MAX_AUTO_RETRIES ? 'failed' : 'running';
+  return task.consecutiveLost > MAX_AUTO_RETRIES ||
+    (latest.sourceRevision !== undefined &&
+      (latest.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)
+    ? 'failed'
+    : 'running';
 }
 
 export interface ItemRunView {
@@ -77,6 +86,8 @@ export interface ItemRunView {
   createdAt: string;
   updatedAt: string;
   result?: Run['result'];
+  sourceRevision?: Run['sourceRevision'];
+  revisionAttempt?: Run['revisionAttempt'];
   delivery?: DeliveryBinding;
   providerFallback?: Pick<
     ProviderFallback,
@@ -115,7 +126,7 @@ export interface ItemSessionView {
 export interface ItemView {
   id: string;
   state: ItemState;
-  spec: WorkSpec;
+  spec: StoredWorkSpec;
   origin: WorkOrigin;
   createdAt: string;
   updatedAt: string;
@@ -139,7 +150,7 @@ export interface WorkSummary {
   id: string;
   anchor: TaskId;
   state: ItemState;
-  spec: WorkSpec;
+  spec: StoredWorkSpec;
   origin: WorkOrigin;
   createdAt: string;
   updatedAt: string;
@@ -154,7 +165,7 @@ export function toItemView(input: {
   runs: readonly Run[];
   sessions?: readonly ItemSessionView[];
 }): ItemView {
-  const payload = workPayloadSchema.parse(input.task.work);
+  const payload = storedWorkPayloadSchema.parse(input.task.work);
   const runs = [...input.runs].sort(compareRunOrder);
   return {
     id: input.workId,
@@ -177,6 +188,12 @@ export function toItemView(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.sourceRevision === undefined
+        ? {}
+        : {
+            sourceRevision: r.sourceRevision,
+            revisionAttempt: r.revisionAttempt,
+          }),
       ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
       ...(r.providerFallback === undefined
         ? {}
@@ -241,7 +258,7 @@ export function toWorkSummary(input: {
   task: Task;
   runs: readonly Run[];
 }): WorkSummary {
-  const payload = workPayloadSchema.parse(input.task.work);
+  const payload = storedWorkPayloadSchema.parse(input.task.work);
   const runs = [...input.runs].sort(compareRunOrder);
   return {
     id: taskKey(input.task.task),
@@ -265,6 +282,12 @@ export function toWorkSummary(input: {
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
       ...(r.result === undefined ? {} : { result: r.result }),
+      ...(r.sourceRevision === undefined
+        ? {}
+        : {
+            sourceRevision: r.sourceRevision,
+            revisionAttempt: r.revisionAttempt,
+          }),
       ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
       ...(r.providerFallback === undefined
         ? {}

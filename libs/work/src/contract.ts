@@ -18,6 +18,7 @@ import { parseCron } from './cron';
 import {
   fallbackPipelinesSchema,
   PIPELINES,
+  storedWorkSpecSchema,
   WORK_DESCRIPTION_MAX,
   WORK_TITLE_MAX,
   workOriginSchema,
@@ -110,6 +111,14 @@ export const itemRunViewSchema = z.strictObject({
   createdAt: z.string(),
   updatedAt: z.string(),
   result: runResultSchema.optional(),
+  sourceRevision: z
+    .strictObject({
+      key: z.string(),
+      input: z.record(z.string(), z.unknown()),
+      observedAt: z.record(z.string(), z.iso.datetime()).optional(),
+    })
+    .optional(),
+  revisionAttempt: z.number().int().positive().optional(),
   providerFallback: z
     .strictObject({
       allowedPipelines: z.array(z.string()),
@@ -165,7 +174,7 @@ export const itemStateSchema = z.enum([
 export const itemViewSchema = z.strictObject({
   id: workIdSchema,
   state: itemStateSchema,
-  spec: workSpecSchema,
+  spec: storedWorkSpecSchema,
   origin: workOriginSchema,
   createdAt: z.string(),
   updatedAt: z.string(),

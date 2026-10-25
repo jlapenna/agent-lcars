@@ -59,6 +59,7 @@ async function InboxBody({
   mobileScopeLabel: string;
   watchedRepos: WatchedRepo[];
 }) {
+  const snapshotStartedAt = new Date().toISOString();
   const [
     {
       data: { items },
@@ -107,6 +108,14 @@ async function InboxBody({
       warnings={<DataWarnings warnings={warnings} />}
     >
       <DecisionInbox
+        sourceObservations={{
+          native: { source: snapshotStartedAt },
+          github: {
+            queue: itemsFetchedAt,
+            activity: activityFetchedAt,
+            sessions: snapshotStartedAt,
+          },
+        }}
         yourQueue={decisionCards}
         replyToWorkItem={replyToWorkItem}
         selectedCard={selectedCard}

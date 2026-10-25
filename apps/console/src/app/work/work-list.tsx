@@ -1,4 +1,5 @@
 import { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from '@agent-lcars/orchestrator';
+import { workRepository } from '@agent-lcars/work';
 import type { ItemState, ItemView } from '@agent-lcars/work/derive';
 import { latestRun } from '@agent-lcars/work/derive';
 import {
@@ -104,7 +105,7 @@ function ItemCell({ item }: { item: ItemView }) {
   return (
     <>
       <span className="work-item-ref">
-        {item.spec.target.repo} · {item.origin.principal}
+        {workRepository(item.spec)} · {item.origin.principal}
       </span>
       <Anchor href={`/work/${item.id}`} className="work-item-title">
         {item.spec.title}

@@ -49,7 +49,9 @@ describe('server-rendered Inbox summary', () => {
     vi.mocked(getInboxDecisionSummary).mockReturnValue(
       new Promise(() => undefined),
     );
-    const prepared = withInboxDecisionSummary(card);
+    const prepared = withInboxDecisionSummary(card, {
+      source: '2026-10-25T00:00:00Z',
+    });
     const markup = renderToStaticMarkup(<div>{prepared.decisionSummary}</div>);
     expect(markup).toContain('Choose 30 or 90 days.');
     expect(markup).toContain('Generating summary…');
@@ -60,6 +62,7 @@ describe('server-rendered Inbox summary', () => {
     vi.mocked(getInboxDecisionSummary).mockResolvedValue(undefined);
     const element = await InboxDecisionDescription({
       context: 'source',
+      observedAt: { source: '2026-10-25T00:00:00Z' },
       fallback: 'Choose 30 or 90 days.',
     });
     const markup = renderToStaticMarkup(element);
@@ -68,12 +71,27 @@ describe('server-rendered Inbox summary', () => {
     expect(markup).not.toContain('Generating summary…');
   });
 
-  it('renders model output as inert text', async () => {
-    vi.mocked(getInboxDecisionSummary).mockResolvedValue(
-      '<script>approve()</script>',
-    );
+  it('keeps the original question visible after durable admission', async () => {
+    vi.mocked(getInboxDecisionSummary).mockResolvedValue({ pending: true });
     const element = await InboxDecisionDescription({
       context: 'source',
+      observedAt: { source: '2026-10-25T00:00:00Z' },
+      fallback: 'Choose 30 or 90 days.',
+    });
+    const markup = renderToStaticMarkup(element);
+    expect(markup).toContain('Generating summary…');
+    expect(markup).toContain('Choose 30 or 90 days.');
+    expect(markup).not.toContain('Summary unavailable.');
+  });
+
+  it('renders model output as inert text', async () => {
+    vi.mocked(getInboxDecisionSummary).mockResolvedValue({
+      pending: false,
+      description: '<script>approve()</script>',
+    });
+    const element = await InboxDecisionDescription({
+      context: 'source',
+      observedAt: { source: '2026-10-25T00:00:00Z' },
       fallback: 'Original context',
     });
     const markup = renderToStaticMarkup(element);

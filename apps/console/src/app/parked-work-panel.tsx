@@ -1,3 +1,4 @@
+import { workRepository } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Group, Stack, Text } from '@mantine/core';
 
@@ -116,12 +117,13 @@ export function ParkedWorkPanel({
                     {item.spec.title}
                   </BridgePaneLink>
                   <Text size="xs" c="dimmed">
-                    {item.spec.target.repo} ·{' '}
+                    {workRepository(item.spec)} ·{' '}
                     <span>{latest?.result?.summary ?? 'lost'}</span> ·{' '}
                     {item.state} {formatRelativeTime(item.updatedAt)}
                   </Text>
                 </Stack>
-                {'workId' in item.anchor ? (
+                {item.spec.pipeline === 'inbox-summary' ? null : 'workId' in
+                  item.anchor ? (
                   <WorkActions
                     id={item.anchor.workId}
                     state={item.state}

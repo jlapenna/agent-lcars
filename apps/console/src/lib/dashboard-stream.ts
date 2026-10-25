@@ -40,6 +40,7 @@ export function subscribeDashboardChanges(
   }
   const listen = (firestore: Firestore, collection: string, field: string) => {
     let initial = true;
+    let previous: string | undefined;
     const initialized = () => {
       if (initial) {
         initial = false;
@@ -52,9 +53,17 @@ export function subscribeDashboardChanges(
         .orderBy(field, 'desc')
         .limit(200)
         .onSnapshot(
-          () => {
+          (snapshot) => {
+            // Admission watermarks are bookkeeping, not lifecycle changes.
+            // Invalidating on every Task write would refresh the Inbox and
+            // immediately write another observation watermark forever.
+            const current = JSON.stringify(
+              snapshot.docs.map((doc) => [doc.id, doc.get(field)]),
+            );
+            const changed = current !== previous;
+            previous = current;
             initialized();
-            signal();
+            if (changed) signal();
           },
           (error) => {
             logger.error('agent-lcars: dashboard listener failed:', error);

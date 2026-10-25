@@ -30,6 +30,7 @@ import type {
   RequestSource,
   Run,
   TaskId,
+  WorkRevision,
 } from './model';
 import {
   byOutboxClaimFairness,
@@ -76,6 +77,8 @@ export class MemoryStore implements OrchestratorStore {
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
+  readonly #sourceWorkIds = new Map<string, string>();
+  readonly #sourceRevisions = new Map<string, WorkRevision>();
   readonly #requestRuns = new Map<string, string>();
   readonly #requestBindings = new Map<
     string,
@@ -177,6 +180,15 @@ export class MemoryStore implements OrchestratorStore {
     });
   }
 
+  async resolveSourceWorkId(
+    sourceKey: string,
+    candidateWorkId: string,
+  ): Promise<string> {
+    const id = this.#sourceWorkIds.get(sourceKey) ?? candidateWorkId;
+    this.#sourceWorkIds.set(sourceKey, id);
+    return id;
+  }
+
   async readRun(runId: string): Promise<Run | undefined> {
     return structuredClone(this.#runs.get(runId));
   }
@@ -201,6 +213,7 @@ export class MemoryStore implements OrchestratorStore {
     requestSource: RequestSource;
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal> {
     // Do not await while this snapshot and its accepted write are in flight:
@@ -239,7 +252,16 @@ export class MemoryStore implements OrchestratorStore {
               taskKey(run.task) === key && run.queue?.state === 'claimed',
           )
         : undefined;
+    const revisionKey =
+      input.sourceRevision === undefined
+        ? undefined
+        : `${key}:${input.sourceRevision.key}`;
+    const previousSourceRevision =
+      revisionKey === undefined
+        ? undefined
+        : structuredClone(this.#sourceRevisions.get(revisionKey));
     const outcome = input.decide({
+      previousSourceRevision,
       task,
       activeRun,
       requestId,
@@ -279,6 +301,17 @@ export class MemoryStore implements OrchestratorStore {
     }
     if (isRefusal(outcome)) return outcome;
     this.#apply({ decision: outcome, expectedRevision: task?.revision });
+    if (
+      revisionKey !== undefined &&
+      input.sourceRevision !== undefined &&
+      previousSourceRevision === undefined &&
+      outcome.task.desiredRevision?.key === input.sourceRevision.key
+    ) {
+      this.#sourceRevisions.set(
+        revisionKey,
+        structuredClone(input.sourceRevision),
+      );
+    }
     return outcome;
   }
 

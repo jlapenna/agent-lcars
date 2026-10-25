@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+type Snapshot = { docs: Array<{ id: string; get(field: string): unknown }> };
+
 const mocks = vi.hoisted(() => ({
   telemetry: vi.fn(),
   queries: [] as {
     collection: string;
     field: string;
     limit: number;
-    push: () => void;
+    push: (snapshot?: Snapshot) => void;
     fail: (error: Error) => void;
     stop: ReturnType<typeof vi.fn>;
   }[],
@@ -25,13 +27,16 @@ vi.mock('@google-cloud/firestore', () => ({
           return {
             limit(limit: number) {
               return {
-                onSnapshot(push: () => void, fail: (error: Error) => void) {
+                onSnapshot(
+                  push: (snapshot: Snapshot) => void,
+                  fail: (error: Error) => void,
+                ) {
                   const stop = vi.fn();
                   mocks.queries.push({
                     collection,
                     field,
                     limit,
-                    push,
+                    push: (snapshot = { docs: [] }) => push(snapshot),
                     fail,
                     stop,
                   });
@@ -80,6 +85,35 @@ describe('bounded authoritative dashboard change feeds', () => {
     signal.mockClear();
     for (const query of mocks.queries) query.push();
     expect(signal).not.toHaveBeenCalled();
+  });
+
+  it('ignores admission watermark writes but refreshes for lifecycle changes and removal', async () => {
+    mocks.telemetry.mockResolvedValue(new Firestore());
+    const signal = vi.fn();
+    const stop = subscribeDashboardChanges(signal);
+    await Promise.resolve();
+    for (const query of mocks.queries) query.push();
+    const tasks = mocks.queries.find(
+      (query) => query.collection === 'orchestrator-tasks',
+    );
+    if (!tasks) throw new Error('Missing Task subscription');
+    const snapshot = (updatedAt: string, observedAt: string): Snapshot => ({
+      docs: [
+        {
+          id: 'work:summary',
+          get: (field) => (field === 'task.updatedAt' ? updatedAt : observedAt),
+        },
+      ],
+    });
+    tasks.push(snapshot('2026-10-25T00:00:00Z', '2026-10-25T00:00:00Z'));
+    signal.mockClear();
+    tasks.push(snapshot('2026-10-25T00:00:00Z', '2026-10-25T00:00:05Z'));
+    expect(signal).not.toHaveBeenCalled();
+    tasks.push(snapshot('2026-10-25T00:00:10Z', '2026-10-25T00:00:05Z'));
+    expect(signal).toHaveBeenCalledOnce();
+    tasks.push({ docs: [] });
+    expect(signal).toHaveBeenCalledTimes(2);
+    stop();
   });
 
   it('can dispose immediately while telemetry setup is pending, without late listeners', async () => {
