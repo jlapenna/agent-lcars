@@ -607,8 +607,8 @@ resource "google_service_account_iam_member" "codex_agent_impersonation" {
 # Read-only Work API identity for interactive maintainer sessions (#2502).
 # It holds no project role and no resource grant: its only use is minting a
 # Google ID token whose email the Console resolves to the `svc:work-reader`
-# Work grant, which carries `work.reader` alone -- the issue-owner query and
-# nothing that lists, reads items, or mutates. codex_agent above carries
+# Work grant, which carries the issue-owner query and read-only cost budget
+# assessment scopes, with nothing that reads Work items or mutates. codex_agent above carries
 # `work.operator`; letting interactive hosts impersonate that would hand every
 # session create/cancel/redispatch authority.
 resource "google_service_account" "work_reader" {
