@@ -10,6 +10,7 @@ import {
 } from './action-items';
 import { isSelectedGithubAnchorProjection } from './github-anchor-selector';
 import { getWatchedRepos } from './github-client';
+import { readHandoffActions } from './handoff-summary-work';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 /** Every page is bounded at the datastore boundary.  Do not turn this into a
@@ -59,11 +60,9 @@ export async function getAuthoritativeQueueItems(): Promise<ActionItemsResult> {
             issue: item.number,
           }),
         );
-        return run?.state === 'finished' &&
-          run.result?.summary === 'park' &&
-          run.result.humanNeededActions
-          ? { ...item, humanNeededActions: run.result.humanNeededActions }
-          : item;
+        const actions =
+          run === undefined ? undefined : await readHandoffActions(store, run);
+        return actions ? { ...item, humanNeededActions: actions } : item;
       } catch {
         // Optional reading aids must not hide an otherwise readable decision.
         logger.warn('agent-lcars: human-needed summary read unavailable');

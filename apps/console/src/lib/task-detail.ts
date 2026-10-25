@@ -22,6 +22,7 @@ import {
   UnwatchedRepoError,
   type WatchedRepo,
 } from './github-client';
+import { withHandoffActions } from './handoff-summary-work';
 import {
   coarsenRunStates,
   deriveLogicalWork,
@@ -145,6 +146,10 @@ export async function getTaskDetail(
       : {
           history: {
             ...state.item,
+            runs: await withHandoffActions(
+              createOrchestratorRuntime().store,
+              state.item.runs,
+            ),
             sessions: await sessionsForRuns(state.runs.map((run) => run.runId)),
           },
         }),

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   admitInboxSummary as admit,
-  executeInboxSummaries as execute,
+  executeSummaries as execute,
 } from './inbox-summary-work';
 import { drainOutbox } from './orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
@@ -15,7 +15,7 @@ const admitInboxSummary = (
   observed = JSON.parse(input).updatedAt,
 ) => admit(runtime, input, { source: observed });
 
-async function executeInboxSummaries(
+async function executeSummaries(
   runtime: OrchestratorRouteDeps,
   generate?: Parameters<typeof execute>[1],
 ) {
@@ -132,7 +132,7 @@ describe('Inbox summaries through Work', () => {
       pending: true,
     });
     const generate = vi.fn(async () => 'Choose a.');
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(await admitInboxSummary(runtime, context('a'))).toEqual({
       pending: false,
       description: 'Choose a.',
@@ -156,13 +156,13 @@ describe('Inbox summaries through Work', () => {
           }),
       )
       .mockResolvedValue('Choose c.');
-    const running = executeInboxSummaries(runtime, generate);
+    const running = executeSummaries(runtime, generate);
     await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
     await admitInboxSummary(runtime, context('b'));
     await admitInboxSummary(runtime, context('c'));
     finish('Obsolete a.');
     await running;
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(
       generate.mock.calls.map(([input]) => JSON.parse(input).revision),
     ).toEqual(['a', 'c']);
@@ -182,11 +182,11 @@ describe('Inbox summaries through Work', () => {
     const { runtime } = fixture();
     await admitInboxSummary(runtime, context('c'));
     const generate = vi.fn(async () => 'Choose c.');
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(await admitInboxSummary(runtime, context('a'))).toEqual({
       pending: false,
     });
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(1);
     expect((await admitInboxSummary(runtime, context('c'))).description).toBe(
       'Choose c.',
@@ -204,16 +204,16 @@ describe('Inbox summaries through Work', () => {
       (second) => `2026-10-25T01:00:0${second}.000Z`,
     );
     await admitInboxSummary(runtime, a, times[0]);
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(
       (await admitInboxSummary(runtime, b, times[0])).description,
     ).toBeUndefined();
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(1);
     await admitInboxSummary(runtime, b, times[1]);
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     await admitInboxSummary(runtime, a, times[2]);
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(3);
     expect((await admitInboxSummary(runtime, a, times[3])).description).toBe(
       'Choose a',
@@ -221,7 +221,7 @@ describe('Inbox summaries through Work', () => {
     expect(
       (await admitInboxSummary(runtime, b, times[1])).description,
     ).toBeUndefined();
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(3);
   });
 
@@ -237,9 +237,9 @@ describe('Inbox summaries through Work', () => {
         }),
     );
     const workers = Array.from({ length: 5 }, () =>
-      executeInboxSummaries(runtime, generate),
+      executeSummaries(runtime, generate),
     );
-    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(4));
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
     finishes.splice(0).forEach((resolve) => resolve('Choose a.'));
     await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(5));
     finishes.splice(0).forEach((resolve) => resolve('Choose a.'));
@@ -254,14 +254,14 @@ describe('Inbox summaries through Work', () => {
     const { runtime } = fixture();
     await admitInboxSummary(runtime, context('a'));
     const generate = vi.fn(async () => undefined);
-    await executeInboxSummaries(runtime, generate);
-    await executeInboxSummaries(runtime, generate);
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(3);
     expect(await admitInboxSummary(runtime, context('a'))).toEqual({
       pending: false,
     });
-    await executeInboxSummaries(runtime, generate);
+    await executeSummaries(runtime, generate);
     expect(generate).toHaveBeenCalledTimes(3);
   });
 });

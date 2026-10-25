@@ -1,3 +1,4 @@
+import type { RunResult } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import type { ReactNode } from 'react';
@@ -8,6 +9,7 @@ import { actionTypeMeta, queueReasonFor } from './queue-reason';
 
 export interface NativeDecisionCard {
   decisionSummary?: ReactNode;
+  humanNeededActions?: RunResult['humanNeededActions'];
   work: WorkSummary & { anchor: { workId: string } };
   /** `decision` waits on a human answer; `report` is a finished read-only
    * result (#2845) shown until dismissed or older than the report window. */

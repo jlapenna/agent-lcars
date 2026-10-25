@@ -16,8 +16,7 @@ import {
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
-import { itemViewSchema } from '@agent-lcars/work';
-import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
+import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -1204,7 +1203,7 @@ describe('claim -> brief -> heartbeat -> complete', () => {
     expect(deriveItemState(task!.task, runs)).toBe('parked');
   });
 
-  it('persists a human-needed summary through authenticated completion and the Work read schema', async () => {
+  it('settles the original handoff and durably schedules its summary without calling the model', async () => {
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('human-summary'),
@@ -1222,241 +1221,43 @@ describe('claim -> brief -> heartbeat -> complete', () => {
       '/runs/claim',
       { runner: 'runner-1' },
     );
-    const { token, workId } = claimed.json as { token: string; workId: string };
-    const actions = [
-      { text: 'Inspect production', command: 'check --prod' },
-      { text: 'Reply with the result to resume.' },
-    ];
+    const { token } = claimed.json as { token: string };
+    const fetchSummary = vi.fn(() => new Promise<Response>(() => undefined));
     vi.stubEnv(
       'AGENT_LCARS_HANDOFF_SUMMARY_URL',
-      'https://summary.example.test/v1/chat/completions',
+      'https://summary.example.test',
     );
     vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
     vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            choices: [{ message: { content: JSON.stringify({ actions }) } }],
-          }),
-        ),
-      ),
-    );
+    vi.stubGlobal('fetch', fetchSummary);
     try {
+      const message =
+        'Run `check --prod`, then reply with the result to resume.';
       const completed = await call(
         { store, orchestrator, now, ...context, bearerToken: token },
         'POST',
         runPath(runId, '/complete'),
-        {
-          outcome: 'park',
-          message: 'Run `check --prod`, then reply with the result to resume.',
-          outcomeReference: null,
-        },
+        { outcome: 'park', message, outcomeReference: null },
       );
       expect(completed.status).toBe(200);
-      const stored = await store.readRun(runId);
-      expect(stored?.result?.humanNeededActions).toEqual(actions);
-      const view = toItemView({
-        workId,
-        task: (await store.readTask({ workId }))!.task,
-        runs: await store.listRuns({ workId }),
+      expect(fetchSummary).not.toHaveBeenCalled();
+      expect((await store.readRun(runId))?.result).toEqual({
+        ok: true,
+        summary: 'park',
+        message,
       });
       expect(
-        itemViewSchema.parse(view).runs[0].result?.humanNeededActions,
-      ).toEqual(actions);
-    } finally {
-      vi.unstubAllGlobals();
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it.each(['lease', 'startup'] as const)(
-    'skips optional summarization near the effective %s deadline and settles the original park',
-    async (deadlineKind) => {
-      const f = fixture();
-      const runId = await seedQueuedRun(f.store, f.orchestrator, {
-        workId: wid(`summary-near-${deadlineKind}`),
-        now: NOW,
-      });
-      const claimed = await call(
-        { ...f, ...context, principal: executorPrincipal(['claude']) },
-        'POST',
-        '/runs/claim',
-        { runner: 'runner-1' },
-      );
-      expect(claimed.status).toBe(200);
-      const { token } = claimed.json as { token: string };
-      const run = (await f.store.readRun(runId))!;
-      const versioned = (await f.store.readTask(run.task))!;
-      const deadline = new Date(f.now().getTime() + 4_000).toISOString();
-      await f.store.apply({
-        decision: {
-          task: versioned.task,
-          run: {
-            ...run,
-            ...(deadlineKind === 'lease'
-              ? { leaseExpiresAt: deadline }
-              : { queue: { ...run.queue!, startDeadlineAt: deadline } }),
-          },
-          outbox: [],
-        },
-        expectedRevision: versioned.revision,
-      });
-      vi.stubEnv(
-        'AGENT_LCARS_HANDOFF_SUMMARY_URL',
-        'https://summary.example.test',
-      );
-      vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
-      vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
-      const fetchSummary = vi.fn();
-      vi.stubGlobal('fetch', fetchSummary);
-      try {
-        const message = 'Grant access, then redispatch to resume.';
-        const completed = await call(
-          { ...f, ...context, bearerToken: token },
-          'POST',
-          runPath(runId, '/complete'),
-          { outcome: 'park', outcomeReference: null, message },
-        );
-        expect(completed.status).toBe(200);
-        expect(fetchSummary).not.toHaveBeenCalled();
-        const stored = await f.store.readRun(runId);
-        expect(stored?.state).toBe('finished');
-        expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
-      } finally {
-        vi.unstubAllGlobals();
-        vi.unstubAllEnvs();
-      }
-    },
-  );
-
-  it('times out the optional provider before completion authority expires and settles the original park', async () => {
-    const f = fixture();
-    const runId = await seedQueuedRun(f.store, f.orchestrator, {
-      workId: wid('summary-timeout'),
-      now: NOW,
-    });
-    const claimed = await call(
-      { ...f, ...context, principal: executorPrincipal(['claude']) },
-      'POST',
-      '/runs/claim',
-      { runner: 'runner-1' },
-    );
-    expect(claimed.status).toBe(200);
-    const { token } = claimed.json as { token: string };
-    const run = (await f.store.readRun(runId))!;
-    // Only 40 ms are available for optional work, leaving 5 s for settlement.
-    const completionTime = Date.parse(runRecoveryDeadline(run)!) - 5_040;
-    f.setNow(new Date(completionTime).toISOString());
-    vi.stubEnv(
-      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
-      'https://summary.example.test',
-    );
-    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
-    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
-    const fetchSummary = vi.fn(
-      (_url: string, init: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          const signal = init.signal!;
-          signal.addEventListener(
-            'abort',
-            () => {
-              f.setNow(new Date(completionTime + 40).toISOString());
-              reject(signal.reason);
-            },
-            { once: true },
-          );
+        await store.claimPendingOutbox({
+          limit: 20,
+          now: NOW,
+          leaseExpiresAt: new Date(Date.parse(NOW) + 60_000).toISOString(),
         }),
-    );
-    vi.stubGlobal('fetch', fetchSummary);
-    try {
-      const message = 'Grant access, then redispatch to resume.';
-      const completed = await call(
-        { ...f, ...context, bearerToken: token },
-        'POST',
-        runPath(runId, '/complete'),
-        { outcome: 'park', outcomeReference: null, message },
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: 'admit-handoff-summary', runId }),
+          expect.objectContaining({ kind: 'report-outcome', runId }),
+        ]),
       );
-      expect(fetchSummary).toHaveBeenCalledOnce();
-      expect(completed.status).toBe(200);
-      const stored = await f.store.readRun(runId);
-      expect(stored?.state).toBe('finished');
-      expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
-    } finally {
-      vi.unstubAllGlobals();
-      vi.unstubAllEnvs();
-    }
-  }, 2_000);
-
-  it('settles an oversized chunked provider response without persisting a summary', async () => {
-    const f = fixture();
-    const runId = await seedQueuedRun(f.store, f.orchestrator, {
-      workId: wid('summary-oversized'),
-      now: NOW,
-    });
-    const claimed = await call(
-      { ...f, ...context, principal: executorPrincipal(['claude']) },
-      'POST',
-      '/runs/claim',
-      { runner: 'runner-1' },
-    );
-    expect(claimed.status).toBe(200);
-    const { token } = claimed.json as { token: string };
-    const cancel = vi.fn();
-    const encoded = new TextEncoder().encode(
-      JSON.stringify({
-        ignored: 'x'.repeat(70_000),
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                actions: [
-                  { text: 'Grant access.' },
-                  { text: 'Redispatch to resume.' },
-                ],
-              }),
-            },
-          },
-        ],
-      }),
-    );
-    let offset = 0;
-    const body = new ReadableStream<Uint8Array>(
-      {
-        pull(controller) {
-          if (offset === encoded.length) {
-            controller.close();
-            return;
-          }
-          const end = Math.min(encoded.length, offset + 1024);
-          controller.enqueue(encoded.subarray(offset, end));
-          offset = end;
-        },
-        cancel,
-      },
-      { highWaterMark: 0 },
-    );
-    vi.stubEnv(
-      'AGENT_LCARS_HANDOFF_SUMMARY_URL',
-      'https://summary.example.test',
-    );
-    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test');
-    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small');
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body)));
-    try {
-      const message = 'Grant access, then redispatch to resume.';
-      const completed = await call(
-        { ...f, ...context, bearerToken: token },
-        'POST',
-        runPath(runId, '/complete'),
-        { outcome: 'park', outcomeReference: null, message },
-      );
-      expect(completed.status).toBe(200);
-      expect(cancel).toHaveBeenCalledOnce();
-      const stored = await f.store.readRun(runId);
-      expect(stored?.state).toBe('finished');
-      expect(stored?.result).toEqual({ ok: true, summary: 'park', message });
     } finally {
       vi.unstubAllGlobals();
       vi.unstubAllEnvs();

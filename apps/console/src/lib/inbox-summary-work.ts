@@ -2,11 +2,20 @@ import 'server-only';
 
 import { createHash, randomUUID } from 'node:crypto';
 
-import { isRefusal, workRevisionSchema } from '@agent-lcars/orchestrator';
-import { inboxSummarySpecSchema, ulid } from '@agent-lcars/work';
+import {
+  isRefusal,
+  type RunResult,
+  workRevisionSchema,
+} from '@agent-lcars/orchestrator';
+import { summaryWorkSpecSchema, ulid } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import { handoffSummaryConfig, MAX_SUMMARY_MS } from './human-needed-summary';
+import { handoffInputSchema, handoffMessageHash } from './handoff-summary-work';
+import {
+  handoffSummaryConfig,
+  MAX_SUMMARY_MS,
+  summarizeHumanNeeded,
+} from './human-needed-summary';
 import { summarizeInboxDecision } from './inbox-summary-model';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 
@@ -37,7 +46,7 @@ export async function admitInboxSummary(
     input: { context },
     observedAt,
   });
-  const spec = inboxSummarySpecSchema.parse({
+  const spec = summaryWorkSpecSchema.parse({
     title: `Inbox summary: ${sourceKey}`,
     description:
       'Explain the current decision or report using its original source context.',
@@ -56,7 +65,7 @@ export async function admitInboxSummary(
     },
     sourceRevision: revision,
     isStoredWorkCompatible: (stored) => {
-      const parsed = inboxSummarySpecSchema.safeParse(stored['spec']);
+      const parsed = summaryWorkSpecSchema.safeParse(stored['spec']);
       return parsed.success && parsed.data.sourceKey === sourceKey;
     },
   });
@@ -84,7 +93,7 @@ export async function admitInboxSummary(
 /** Uses the same durable claims, token fencing and completion transactions as
  * coding work. Background passes execute at most four attempts. Maintenance
  * executes one within its request deadline, reserving five seconds to settle. */
-export async function executeInboxSummaries(
+export async function executeSummaries(
   runtime: OrchestratorRouteDeps,
   generate: typeof summarizeInboxDecision = summarizeInboxDecision,
   deadline?: number,
@@ -99,10 +108,10 @@ export async function executeInboxSummaries(
     if (deadline !== undefined && deadline - Date.now() <= 5_000) break;
     const fingerprint = createHash('sha256').update(randomUUID()).digest('hex');
     const run = await runtime.store.claimQueuedRun({
-      pipelines: ['inbox-summary'],
+      pipelines: ['inbox-summary', 'handoff-summary'],
       now: new Date().toISOString(),
       claimedBy: 'console-model-call',
-      claimedBySubject: 'svc:inbox-summary',
+      claimedBySubject: 'svc:summary',
       tokenHash: fingerprint,
     });
     if (run === undefined) break;
@@ -125,19 +134,50 @@ export async function executeInboxSummaries(
       });
       return;
     }
-    let description: string | undefined;
+    const modelDeadline = Date.now() + timeoutMs;
+    let result: RunResult = {
+      ok: false,
+      summary: 'summary-unavailable',
+    };
     try {
-      const input = inputSchema.parse(run.sourceRevision?.input);
-      description = await generate(input.context, timeoutMs);
+      if (run.pipeline === 'handoff-summary') {
+        const input = handoffInputSchema.parse(run.sourceRevision?.input);
+        const source = await runtime.store.readRun(input.sourceRunId);
+        if (
+          source?.state !== 'finished' ||
+          source.result?.summary !== 'park' ||
+          source.result.message === undefined ||
+          handoffMessageHash(source.result.message) !== input.messageHash
+        )
+          throw new Error('Handoff source changed or unavailable');
+        if (Date.now() >= modelDeadline) {
+          await runtime.store.releaseQueuedRunClaim({
+            runId: run.runId,
+            claimedBy: 'console-model-call',
+            tokenHash: fingerprint,
+            now: new Date().toISOString(),
+          });
+          return;
+        }
+        const summarized = await summarizeHumanNeeded(source.result, {
+          deadline: modelDeadline + 5_000,
+          now: () => new Date(),
+        });
+        if (summarized.humanNeededActions !== undefined)
+          result = {
+            ok: true,
+            summary: 'handoff-summary',
+            humanNeededActions: summarized.humanNeededActions,
+          };
+      } else {
+        const input = inputSchema.parse(run.sourceRevision?.input);
+        const description = await generate(input.context, timeoutMs);
+        if (description !== undefined)
+          result = { ok: true, summary: 'inbox-summary', message: description };
+      }
     } catch {
       // Persist a bounded failure, never raw source text or provider output.
     }
-    await runtime.orchestrator.report(
-      run.runId,
-      description === undefined
-        ? { ok: false, summary: 'summary-unavailable' }
-        : { ok: true, summary: 'inbox-summary', message: description },
-      fingerprint,
-    );
+    await runtime.orchestrator.report(run.runId, result, fingerprint);
   }
 }

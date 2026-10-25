@@ -88,6 +88,9 @@ export function runOrchestratorStoreContract(
   describe(`OrchestratorStore contract: ${name}`, () => {
     it('binds a source to one time-ordered Work identity under concurrent admission', async () => {
       const store = await makeStore();
+      expect(
+        await store.readSourceWorkId('inbox-summary:owner/repo#1'),
+      ).toBeUndefined();
       const ids = await Promise.all([
         store.resolveSourceWorkId(
           'inbox-summary:owner/repo#1',
@@ -99,6 +102,9 @@ export function runOrchestratorStoreContract(
         ),
       ]);
       expect(ids[0]).toBe(ids[1]);
+      expect(await store.readSourceWorkId('inbox-summary:owner/repo#1')).toBe(
+        ids[0],
+      );
       expect(
         await store.resolveSourceWorkId(
           'inbox-summary:owner/repo#1',

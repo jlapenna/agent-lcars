@@ -103,7 +103,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
               <TableTd>
                 <Stack gap={0}>
                   <Text size="xs">
-                    {run.pipeline === 'inbox-summary'
+                    {run.sourceRevision !== undefined
                       ? 'Model call'
                       : 'Queue executor'}{' '}
                     · {run.pipeline}

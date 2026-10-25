@@ -899,6 +899,15 @@ export class FirestoreStore implements OrchestratorStore {
     });
   }
 
+  async readSourceWorkId(sourceKey: string): Promise<string | undefined> {
+    const snapshot = await this.#sourceWorkIds
+      .doc(encodeURIComponent(sourceKey))
+      .get();
+    return snapshot.exists
+      ? z.object({ workId: z.string() }).parse(snapshot.data()).workId
+      : undefined;
+  }
+
   async resolveSourceWorkId(
     sourceKey: string,
     candidateWorkId: string,

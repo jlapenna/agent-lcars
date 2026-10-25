@@ -9,7 +9,12 @@ import {
  * Claude remains bounded by host capacity. */
 export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   Record<string, number | undefined>
-> = Object.freeze({ codex: 1, opencode: 1, 'inbox-summary': 4 });
+> = Object.freeze({
+  codex: 1,
+  opencode: 1,
+  'inbox-summary': 3,
+  'handoff-summary': 1,
+});
 
 /** Bound console reads at the datastore. Exceeding this bound is unavailable,
  * never a truncated count presented as the entire queue. */

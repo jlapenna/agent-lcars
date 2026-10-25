@@ -20,6 +20,7 @@ import {
 
 import type { CliSessionsResult } from './cli-sessions';
 import { isControlPlaneRepository } from './deployment';
+import { withHandoffActions } from './handoff-summary-work';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
 import type { WorkGrant } from './work-grants';
@@ -70,7 +71,12 @@ export async function view(
 ): Promise<ItemView> {
   const runs = await context.runtime.store.listRuns({ workId });
   const sessions = await context.sessionsFor(runs.map((run) => run.runId));
-  return toItemView({ workId, task, runs, sessions });
+  return toItemView({
+    workId,
+    task,
+    runs: await withHandoffActions(context.runtime.store, runs),
+    sessions,
+  });
 }
 
 /** Who a mint's grant is checked against: the caller for `items.create`,

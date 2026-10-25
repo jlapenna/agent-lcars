@@ -13,7 +13,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
-  inboxSummarySpecSchema,
+  summaryWorkSpecSchema,
   WORK_DESCRIPTION_MAX,
   workPayloadSchema,
   type WorkSpec,
@@ -170,7 +170,7 @@ export async function requestReply(
   if (task === undefined)
     return { ok: false, code: 'NOT_FOUND', message: 'no such item' };
 
-  if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+  if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
     return {
       ok: false,
       code: 'FORBIDDEN',

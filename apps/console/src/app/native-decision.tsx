@@ -160,7 +160,10 @@ export function NativeDecisionDetail({
       {work.state === 'parked' && (
         <HumanNeededSummary
           key={`${work.id}:${work.runs.at(-1)?.runId}`}
-          actions={work.runs.at(-1)?.result?.humanNeededActions}
+          actions={
+            card.humanNeededActions ??
+            work.runs.at(-1)?.result?.humanNeededActions
+          }
           historical
         />
       )}

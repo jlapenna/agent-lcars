@@ -1231,7 +1231,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",
@@ -1901,7 +1901,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",
@@ -2577,7 +2577,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",
@@ -3298,7 +3298,7 @@
                                   },
                                   "pipeline": {
                                     "type": "string",
-                                    "const": "inbox-summary"
+                                    "enum": ["inbox-summary", "handoff-summary"]
                                   },
                                   "priority": {
                                     "type": "string",
@@ -3973,7 +3973,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",
@@ -4669,7 +4669,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",
@@ -5413,7 +5413,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "const": "inbox-summary"
+                              "enum": ["inbox-summary", "handoff-summary"]
                             },
                             "priority": {
                               "type": "string",

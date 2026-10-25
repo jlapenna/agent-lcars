@@ -9,6 +9,7 @@ import {
   nativeReportRun,
   REPORT_INBOX_WINDOW_MS,
 } from '../app/inbox-card';
+import { readHandoffActions } from './handoff-summary-work';
 import type { WorkPrincipal } from './work-auth';
 import { forbiddenReason } from './work-mint';
 
@@ -36,7 +37,7 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
-      if (work.spec.pipeline === 'inbox-summary') continue;
+      if ('sourceKey' in work.spec) continue;
       const report = nativeReportRun(work);
       const freshReport =
         report !== undefined &&
@@ -46,7 +47,16 @@ export async function getNativeInboxCards(
         (work.state !== 'parked' && !freshReport && work.id !== selectedItemKey)
       )
         continue;
+      const latest = work.runs.at(-1);
+      let humanNeededActions = latest?.result?.humanNeededActions;
+      try {
+        if (latest !== undefined && work.state === 'parked')
+          humanNeededActions = await readHandoffActions(store, latest);
+      } catch {
+        logger.warn('agent-lcars: human-needed summary read unavailable');
+      }
       cards.push({
+        humanNeededActions,
         work: { ...work, anchor: work.anchor },
         kind: report ? 'report' : 'decision',
         queued: work.state === 'parked' || freshReport,

@@ -69,7 +69,7 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        {item.spec.pipeline === 'inbox-summary' ? (
+        {'sourceKey' in item.spec ? (
           <Text>{item.spec.description}</Text>
         ) : (
           <EditWork
@@ -85,7 +85,7 @@ export function WorkDetailViewContent({
           item={item}
           canViewSessions={isAdmin}
           actions={
-            item.spec.pipeline === 'inbox-summary' ? undefined : (
+            'sourceKey' in item.spec ? undefined : (
               <WorkActions
                 id={item.id}
                 latestRunId={latestRun(item.runs)?.runId}

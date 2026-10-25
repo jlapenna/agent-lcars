@@ -126,7 +126,8 @@ export function Conversation({
                 channel={humanChannel}
               />
             )}
-            {run.result?.summary === 'park' && (
+            {(run.result?.summary === 'park' ||
+              run.result?.summary === 'handoff-summary') && (
               <HumanNeededSummary actions={run.result.humanNeededActions} />
             )}
             {run.result?.message !== undefined && (

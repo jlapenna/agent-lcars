@@ -7,7 +7,7 @@ import { cache } from 'react';
 
 import { type InboxCard, nativeCardText } from '../app/inbox-card';
 import { handoffSummaryConfig } from './human-needed-summary';
-import { admitInboxSummary, executeInboxSummaries } from './inbox-summary-work';
+import { admitInboxSummary, executeSummaries } from './inbox-summary-work';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 // Decisions and resume conditions often follow the evidence at the end.
@@ -58,7 +58,6 @@ export function inboxDecisionContext(card: InboxCard): string {
       .map(({ name }) => name.slice(0, 100)),
     unresolvedReviewThreadCount: item.unresolvedReviewThreadCount,
     diagnosis: excerpt(item.silentErrorDiagnosis, 1_000),
-    handoffActions: item.humanNeededActions,
   });
 }
 
@@ -76,7 +75,7 @@ export const getInboxDecisionSummary = cache(
       if (summary.pending)
         after(async () => {
           await runtime.drain();
-          await executeInboxSummaries(runtime);
+          await executeSummaries(runtime);
         });
       return summary;
     } catch {

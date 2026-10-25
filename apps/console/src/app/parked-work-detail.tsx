@@ -42,8 +42,7 @@ export function ParkedWorkDetail({
           {formatRelativeTime(item.updatedAt)}
         </Text>
       </Group>
-      {item.spec.pipeline === 'inbox-summary' ? null : 'workId' in
-        item.anchor ? (
+      {'sourceKey' in item.spec ? null : 'workId' in item.anchor ? (
         <WorkActions
           id={item.anchor.workId}
           state={item.state}

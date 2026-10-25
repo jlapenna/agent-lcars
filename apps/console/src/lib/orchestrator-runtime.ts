@@ -23,7 +23,7 @@ import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
 import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
-import { executeInboxSummaries } from './inbox-summary-work';
+import { executeSummaries } from './inbox-summary-work';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -106,7 +106,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     store,
     orchestrator,
     executeModelWork: (deadline) =>
-      executeInboxSummaries(createOrchestratorRuntime(), undefined, deadline),
+      executeSummaries(createOrchestratorRuntime(), undefined, deadline),
     recoverCredentialOperations: () =>
       recoverCodexCredentialOperations({
         store,
