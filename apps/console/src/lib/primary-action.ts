@@ -15,13 +15,21 @@ export type PrimaryAction =
   | { kind: 'fix-ci'; checkName: string; checkUrl: string };
 
 /**
- * Priority mirrors ACTION_PRIORITY in action-items.ts: an open review
- * request or a needs-human question outranks a failing run (an agent may
- * still be fixing the latter on its own).
+ * Answer an explicit human question first, then repair known CI failures
+ * before offering approval. Queue sorting does not imply merge readiness.
  */
 export function derivePrimaryAction(
   item: ActionItem,
 ): PrimaryAction | undefined {
+  if (item.actionTypes.includes('needs-human')) {
+    return { kind: 'reply' };
+  }
+  if (item.actionTypes.includes('run-failed')) {
+    const check = item.failingChecks?.[0];
+    return check
+      ? { kind: 'fix-ci', checkName: check.name, checkUrl: check.url }
+      : undefined;
+  }
   if (
     item.kind === 'pr' &&
     item.actionTypes.includes('review-requested') &&
@@ -34,15 +42,6 @@ export function derivePrimaryAction(
     return item.mergeableState === 'behind'
       ? { kind: 'approve-rebase' }
       : { kind: 'approve-merge' };
-  }
-  if (item.actionTypes.includes('needs-human')) {
-    return { kind: 'reply' };
-  }
-  if (item.actionTypes.includes('run-failed')) {
-    const check = item.failingChecks?.[0];
-    if (check) {
-      return { kind: 'fix-ci', checkName: check.name, checkUrl: check.url };
-    }
   }
   return undefined;
 }

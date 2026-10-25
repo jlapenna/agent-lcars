@@ -62,16 +62,47 @@ describe('derivePrimaryAction', () => {
     ).toEqual({ kind: 'reply' });
   });
 
-  it('prefers the review over a failing run when both apply', () => {
+  it.each([undefined, 'behind'])(
+    'repairs failed CI before review with merge state %s',
+    (mergeableState) => {
+      expect(
+        derivePrimaryAction(
+          makeItem({
+            kind: 'pr',
+            actionTypes: ['review-requested', 'run-failed'],
+            mergeableState,
+            failingChecks: [{ name: 'Verify', url: 'https://ci/1' }],
+          }),
+        ),
+      ).toEqual({
+        kind: 'fix-ci',
+        checkName: 'Verify',
+        checkUrl: 'https://ci/1',
+      });
+    },
+  );
+
+  it('does not offer approval when a failing run has no check details', () => {
     expect(
       derivePrimaryAction(
         makeItem({
           kind: 'pr',
           actionTypes: ['review-requested', 'run-failed'],
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('keeps an explicit human question ahead of review and CI repair', () => {
+    expect(
+      derivePrimaryAction(
+        makeItem({
+          kind: 'pr',
+          actionTypes: ['review-requested', 'run-failed', 'needs-human'],
           failingChecks: [{ name: 'Verify', url: 'https://ci/1' }],
         }),
       ),
-    ).toEqual({ kind: 'approve-merge' });
+    ).toEqual({ kind: 'reply' });
   });
 
   it('points at the first failing check for run-failed', () => {
