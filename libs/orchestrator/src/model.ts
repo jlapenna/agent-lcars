@@ -585,7 +585,12 @@ export type TaskDocument = z.infer<typeof taskDocumentSchema>;
  */
 const outboxEntryBaseSchema = z.strictObject({
   entryId: z.string().min(1).max(OUTBOX_ENTRY_ID_MAX_LENGTH),
-  kind: z.enum(['dispatch-run', 'report-outcome', 'monitor-delivery']),
+  kind: z.enum([
+    'dispatch-run',
+    'report-outcome',
+    'monitor-delivery',
+    'admit-handoff-summary',
+  ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   /** Incremented by every `claimPendingOutbox` claim, including expired-

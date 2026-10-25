@@ -1164,7 +1164,20 @@ function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
   return {
     task: releasedTask,
     run: settledRun,
-    outbox: [outcomeEntry(settledRun, now)],
+    outbox: [
+      outcomeEntry(settledRun, now),
+      ...(settledRun.state === 'finished' &&
+      settledRun.result?.summary === 'park' &&
+      settledRun.result.message?.trim()
+        ? [
+            {
+              ...outcomeEntry(settledRun, now),
+              entryId: `handoff-summary/${settledRun.runId}`,
+              kind: 'admit-handoff-summary' as const,
+            },
+          ]
+        : []),
+    ],
   };
 }
 

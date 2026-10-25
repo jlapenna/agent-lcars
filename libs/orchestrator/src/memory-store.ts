@@ -180,6 +180,10 @@ export class MemoryStore implements OrchestratorStore {
     });
   }
 
+  async readSourceWorkId(sourceKey: string): Promise<string | undefined> {
+    return this.#sourceWorkIds.get(sourceKey);
+  }
+
   async resolveSourceWorkId(
     sourceKey: string,
     candidateWorkId: string,

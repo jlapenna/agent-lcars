@@ -67,9 +67,8 @@ export function handoffSummaryConfig(env = process.env) {
   return { url: endpoint.href, apiKey, model };
 }
 
-/** One bounded pass at completion, persisted with the exact run's result.
- * Failure must never block settlement, credential cleanup or the full handoff.
- * No tools, command execution, task mutation or background work is permitted. */
+/** One bounded model attempt over an immutable handoff. The Work executor
+ * owns persistence and retries; failure retains the original input. */
 export async function summarizeHumanNeeded(
   result: RunResult,
   authority?: { deadline: number; now: () => Date },

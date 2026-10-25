@@ -11,9 +11,9 @@ import {
 } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import {
-  inboxSummarySpecSchema,
   itemsContract,
   type MaintenanceTickOutput,
+  summaryWorkSpecSchema,
   workPayloadSchema,
   type WorkSpec,
 } from '@agent-lcars/work';
@@ -336,7 +336,7 @@ export const workRouter = os.router({
   cancel: operator.cancel.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
       throw errors.CONFLICT({
         message: 'Generated summary work is read-only.',
       });
@@ -378,7 +378,7 @@ export const workRouter = os.router({
   update: operator.update.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
       throw errors.CONFLICT({
         message: 'Generated summary work is read-only.',
       });
@@ -408,7 +408,7 @@ export const workRouter = os.router({
     async ({ input, context, errors }) => {
       const task = await context.runtime.store.readTask({ workId: input.id });
       if (task === undefined) throw errors.NOT_FOUND();
-      if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+      if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
         throw errors.CONFLICT({
           message: 'Generated summary work is read-only.',
         });
@@ -528,7 +528,7 @@ export const workRouter = os.router({
     // same way `get` does.
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
       throw errors.CONFLICT({
         message: 'Generated summary work is read-only.',
       });

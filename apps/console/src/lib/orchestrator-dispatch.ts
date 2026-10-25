@@ -11,13 +11,14 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
-import { inboxSummarySpecSchema, workPayloadSchema } from '@agent-lcars/work';
+import { summaryWorkSpecSchema, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
 import { loadGithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type { DispatchTokenProvider } from './github-app-tokens';
+import { admitHandoffSummary } from './handoff-summary-work';
 import {
   deliverOutcomeWebhook as deliverOutcomeWebhookDefault,
   outcomeWebhookFor,
@@ -201,7 +202,13 @@ export async function drainOutbox(
 
     const failuresBefore = result.failed.length;
     try {
-      if (entry.kind === 'dispatch-run') {
+      if (entry.kind === 'admit-handoff-summary') {
+        const source = await deps.store.readRun(entry.runId);
+        if (source === undefined)
+          throw new Error(`Missing handoff source: ${entry.runId}`);
+        await admitHandoffSummary(deps, source);
+        await settleClaim(deps, entry, 'done');
+      } else if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
       } else if (entry.kind === 'monitor-delivery') {
         await handleMonitorDelivery(deps, entry, result);
@@ -523,7 +530,7 @@ async function handleReportOutcome(
       : undefined;
   if (
     task !== undefined &&
-    inboxSummarySpecSchema.safeParse(task.work['spec']).success
+    summaryWorkSpecSchema.safeParse(task.work['spec']).success
   ) {
     await settleClaim(deps, entry, 'done');
     result.reported.push(run.runId);

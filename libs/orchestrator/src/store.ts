@@ -420,6 +420,8 @@ export interface OrchestratorStore {
    * filtered).
    */
   /** Stable source identity mapped once to a time-ordered native Work ID. */
+  readSourceWorkId(sourceKey: string): Promise<string | undefined>;
+
   resolveSourceWorkId(
     sourceKey: string,
     candidateWorkId: string,

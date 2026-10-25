@@ -316,12 +316,24 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    Original context stays usable while a summary is pending or unavailable.
    Each background pass claims at most four model calls; the existing maintenance
    pass drains subsequent retries and superseding inputs. Work history exposes
-   the executed revision and attempt.
+   the executed revision and attempt. Qualified in PR #3017: the deployed Inbox
+   rendered the summary for homelab #503 from Work `01M5TK4ZDAGQQC5PAVW5HQM6QH`.
 2. **Handoff summaries and shared operations.** Migrate handoff summaries through
    the qualified lifecycle. Extract shared operation contracts only where both
    consumers need them. Qualify source-event intake separately from request-time
-   admission. Remove each direct inference path when its replacement is qualified.
-   Defer public pipeline/target migration and a general runtime registry until the
+   admission. A parked completion atomically records an independent
+   `admit-handoff-summary` entry in the existing outbox, so optional summary
+   admission cannot delay or replay the outcome notification. The handler admits
+   one internal Work item per original run. Its immutable revision stores the
+   source run ID and message digest; execution reads that settled message and
+   verifies the digest, avoiding duplicate large handoff payloads. A shared
+   executor produces validated actions, retaining exact-command checks. Inbox
+   readers select the artifact for the exact source run; the original result is
+   never rewritten. Failed or pending generation retains the full handoff.
+   Three Inbox claims plus one handoff claim preserve a four-call aggregate cap;
+   maintenance still executes at most one call within its request budget.
+   Remove the synchronous inference path from worker completion when this
+   replacement is qualified. Defer public pipeline/target migration and a general runtime registry until the
    agent surfaces require them; update all affected clients together at that time.
 3. **Event-driven triage.** Connect durable GitHub intake to bounded issue work,
    qualify the selected agent adapter and idempotent effects, and backfill through
