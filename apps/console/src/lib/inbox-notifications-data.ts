@@ -1,10 +1,11 @@
 import 'server-only';
 
 import type { InboxCard } from '../app/inbox-card';
-import { inboxCardKey } from '../app/inbox-card';
+import { inboxCardKey, inboxCardSignature } from '../app/inbox-card';
 import { context as workContext } from '../app/work/context';
 import { auth } from '../auth';
 import { getCachedAgentActivity, getCachedQueueItems } from './dashboard-data';
+import { getDecisionSnoozeStore } from './decision-snooze-store';
 import type {
   InboxNotificationSnapshot,
   NotificationDecision,
@@ -40,14 +41,20 @@ export async function loadInboxNotificationSnapshot(): Promise<InboxNotification
   const session = await auth();
   if (!session?.user?.isAdmin || !session.user.id)
     throw new Error('Unauthorized');
+  return loadNotificationSnapshotFor(session.user.id, await workContext());
+}
+
+export async function loadNotificationSnapshotFor(
+  userId: string,
+  ctx: Pick<Awaited<ReturnType<typeof workContext>>, 'runtime' | 'principal'>,
+): Promise<InboxNotificationSnapshot> {
   const nativeReadStartedAt = Date.now();
-  const [queue, activity, sessions, native] = await Promise.all([
+  const [queue, activity, sessions, native, snoozes] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getRunnerSessionsByRunId(),
-    workContext().then((ctx) =>
-      getNativeInboxCards(ctx.runtime.store, ctx.principal),
-    ),
+    getNativeInboxCards(ctx.runtime.store, ctx.principal),
+    getDecisionSnoozeStore().read(userId),
   ]);
   const now = Date.now();
   const view = buildQueueView(
@@ -61,15 +68,17 @@ export async function loadInboxNotificationSnapshot(): Promise<InboxNotification
     native: nativeReadStartedAt,
   };
   const snapshot: InboxNotificationSnapshot = {
-    principalId: session.user.id,
+    principalId: userId,
     observedAt: Math.min(...Object.values(sourceTimes)),
     sourceTimes,
     available:
       activity.data.warnings.length === 0 && sessions.warnings.length === 0,
-    decisions: notificationDecisions([
-      ...view.yourQueue.map((item) => ({ item })),
-      ...native,
-    ]),
+    decisions: notificationDecisions(
+      [...view.yourQueue.map((item) => ({ item })), ...native].filter(
+        (card) =>
+          snoozes[inboxCardKey(card)]?.signature !== inboxCardSignature(card),
+      ),
+    ),
   };
   return { ...snapshot, available: notificationSnapshotFresh(snapshot, now) };
 }

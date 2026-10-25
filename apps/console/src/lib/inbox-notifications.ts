@@ -22,6 +22,7 @@ export interface InboxNotificationSnapshot {
 export const NOTIFICATION_RATE_MS = 60_000;
 export const NOTIFICATION_FRESH_MS = 60_000;
 export const NOTIFICATION_MAX_DECISIONS = 1_000;
+export const NOTIFICATION_MODE_LOCK = 'agent-lcars:notification-mode';
 export const NOTIFICATION_SCOPE = '/inbox/';
 export const NOTIFICATION_WORKER = '/inbox-notifications-sw.js';
 

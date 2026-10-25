@@ -54,7 +54,82 @@ describe('actual notification worker click boundary', () => {
       expect(Object.keys(handlers).sort()).toEqual([
         'install',
         'notificationclick',
+        'push',
       ]);
     },
   );
+});
+
+describe('closed-tab push receiver', () => {
+  it('rechecks live cookie and subscription, removes resolved candidates, and uses a generic preview', async () => {
+    const handlers: Record<string, (event: unknown) => unknown> = {};
+    const showNotification = vi.fn().mockResolvedValue(undefined);
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        available: true,
+        principalId: 'viewer',
+        observedAt: Date.now(),
+        decisions: [{ id: 'owner/repo#1', generation: 'current' }],
+      }),
+    });
+    const self = {
+      addEventListener: (
+        name: string,
+        handler: (event: unknown) => unknown,
+      ) => {
+        handlers[name] = handler;
+      },
+      registration: {
+        pushManager: {
+          getSubscription: async () => ({
+            endpoint: 'https://fcm.googleapis.com/test',
+          }),
+        },
+        showNotification,
+      },
+    };
+    runInNewContext(source, {
+      self,
+      fetch,
+      URLSearchParams,
+      AbortSignal,
+      Date,
+    });
+    async function push(
+      principalId = 'viewer',
+      expiresAt = Date.now() + 60000,
+    ) {
+      let done: Promise<unknown> = Promise.resolve();
+      handlers.push({
+        data: {
+          json: () => ({
+            principalId,
+            expiresAt,
+            attemptAt: Date.now(),
+            decisions: [
+              { id: 'owner/repo#1', generation: 'current' },
+              { id: 'resolved', generation: 'old' },
+            ],
+          }),
+        },
+        waitUntil: (promise: Promise<unknown>) => {
+          done = promise;
+        },
+      });
+      await done;
+    }
+    await push();
+    expect(showNotification).toHaveBeenCalledWith('Agent LCARS', {
+      body: 'A new human decision is available. Open the Inbox to review.',
+      tag: 'lcars-inbox-push',
+      data: { href: '/inbox?item=owner%2Frepo%231' },
+    });
+    showNotification.mockClear();
+    await push('previous-user');
+    await push('viewer', Date.now() - 1);
+    fetch.mockResolvedValue({ ok: false } as never);
+    await push();
+    expect(showNotification).not.toHaveBeenCalled();
+  });
 });

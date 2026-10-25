@@ -15,6 +15,7 @@ import {
 } from '@agent-lcars/work';
 import { implement, ORPCError } from '@orpc/server';
 
+import { deliverInboxPush } from './inbox-push';
 import { grantForPrincipal } from './work-grants';
 import { forbiddenReason, mintItem, type WorkContext } from './work-mint';
 
@@ -532,6 +533,11 @@ export const scheduleRouter = os.router({
         });
         errors.push({ scheduleId: snapshot.scheduleId, message });
       }
+    }
+    try {
+      await deliverInboxPush();
+    } catch {
+      logger.warn('agent-lcars: Inbox push delivery unavailable');
     }
     return {
       ticked: schedules.length,

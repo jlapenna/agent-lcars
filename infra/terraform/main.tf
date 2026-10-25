@@ -475,6 +475,7 @@ resource "google_secret_manager_secret" "runtime" {
     "AUTH_GITHUB_SECRET",
     "AGENT_LCARS_WEBHOOK_SECRET",
     "AGENT_LCARS_HANDOFF_SUMMARY_API_KEY",
+    "AGENT_LCARS_PUSH_VAPID",
   ])
   secret_id = each.value
   replication {
@@ -495,6 +496,20 @@ resource "google_secret_manager_secret_iam_member" "handoff_summary_viewer" {
 resource "google_secret_manager_secret_iam_member" "handoff_summary_version_manager" {
   project   = var.project_id
   secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_HANDOFF_SUMMARY_API_KEY"].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "inbox_push_viewer" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_PUSH_VAPID"].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "inbox_push_version_manager" {
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime["AGENT_LCARS_PUSH_VAPID"].secret_id
   role      = "roles/secretmanager.secretVersionManager"
   member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }
