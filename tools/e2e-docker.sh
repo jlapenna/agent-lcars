@@ -50,9 +50,10 @@
 #                       container and read by playwright.config.ts to scope a
 #                       run to one spec/suite.
 #
-# Resource caps (override for bigger/smaller machines):
-#   E2E_DOCKER_MEMORY=12g  E2E_DOCKER_MEMORY_SWAP=14g  E2E_DOCKER_PIDS=8192
-#   NX_MAX_PARALLEL=2      NODE_OPTIONS=--max-old-space-size=8192
+# Resource caps: at most 2 CPU / 6 GiB RAM, with no swap. Larger overrides
+# are clamped; a resource failure never permits a larger allocation.
+#   E2E_DOCKER_CPUS=2      E2E_DOCKER_MEMORY=6g  E2E_DOCKER_PIDS=8192
+#   NX_MAX_PARALLEL=2      NODE_OPTIONS=--max-old-space-size=3072
 #
 # App config comes only from tools/e2e/ci.env. The implementation target reads
 # that file directly and points its optional local override at the container's
@@ -262,6 +263,50 @@ if [ "${E2E_DOCKER_PRINT_STAMP:-}" = "1" ]; then
   exit 0
 fi
 
+# Resolve resource controls before pulling an image or modifying the checkout.
+CPUS="${E2E_DOCKER_CPUS:-2}"
+if [[ ! "$CPUS" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk -v n="$CPUS" 'BEGIN { exit !(n > 0) }'; then
+  echo "e2e-docker: E2E_DOCKER_CPUS must be a positive number" >&2
+  exit 2
+fi
+CPUS="$(awk -v n="$CPUS" 'BEGIN { print (n > 2 ? 2 : n) }')"
+MEM="${E2E_DOCKER_MEMORY:-6g}"
+MEM="${MEM,,}"
+# Docker's RAMInBytes accepts fractions, optional spaces, and k/m/g/t/p with
+# optional b/ib suffixes. Preserve valid smaller values and cap larger ones.
+memory_pattern='^([+]?([0-9]+([.][0-9]*)?|[.][0-9]+)(e[+-]?[0-9]+)?) ?([kmgtp](ib|b)?|b)?$'
+if [[ ! "$MEM" =~ $memory_pattern ]]; then
+  echo "e2e-docker: E2E_DOCKER_MEMORY must be a positive Docker memory size" >&2
+  exit 2
+fi
+memory_number="${BASH_REMATCH[1]}"
+case "${BASH_REMATCH[5]:0:1}" in
+  k) memory_factor=1024 ;;
+  m) memory_factor=1048576 ;;
+  g) memory_factor=1073741824 ;;
+  t) memory_factor=1099511627776 ;;
+  p) memory_factor=1125899906842624 ;;
+  *) memory_factor=1 ;;
+esac
+if ! memory_cap="$(awk -v n="$memory_number" -v factor="$memory_factor" 'BEGIN {
+  bytes = n * factor
+  if (bytes < 1) exit 2
+  print (bytes > 6442450944 ? "cap" : "keep")
+}')"; then
+  echo "e2e-docker: E2E_DOCKER_MEMORY must be at least one byte" >&2
+  exit 2
+fi
+if [ "$memory_cap" = cap ]; then
+  MEM=6g
+fi
+if [ "$CPUS" != "${E2E_DOCKER_CPUS:-2}" ] || [ "$MEM" != "${E2E_DOCKER_MEMORY:-6g}" ]; then
+  echo "e2e-docker: allocation capped at $CPUS CPU / $MEM RAM; resource failures are preserved" >&2
+fi
+# Docker's memory-swap value includes RAM. Equal values disable swap, including
+# when an old E2E_DOCKER_MEMORY_SWAP override asks for a larger allocation.
+MEM_SWAP="$MEM"
+PIDS="${E2E_DOCKER_PIDS:-8192}"
+
 INSTALL_STAMP="$DK_DIR/install.stamp"
 
 # Prefer whatever's already local (no network round-trip), else pull the
@@ -324,14 +369,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$ROOT/node_modules"
 fi
 
-# Resource caps so an overweight run (Next build + emulator JVM + Chromium +
-# parallel nx workers) is OOM-killed *inside* the container instead of
-# starving the host. 12g is sized for the Next.js production build (the
-# heaviest step); 8g intermittently OOM-kills it.
-MEM="${E2E_DOCKER_MEMORY:-12g}"
-MEM_SWAP="${E2E_DOCKER_MEMORY_SWAP:-14g}"
-PIDS="${E2E_DOCKER_PIDS:-8192}"
-
 QUOTED_PASSTHROUGH=""
 if [ "${#PASSTHROUGH_ARGS[@]}" -gt 0 ]; then
   QUOTED_PASSTHROUGH=" -- $(printf '%q ' "${PASSTHROUGH_ARGS[@]}")"
@@ -377,6 +414,7 @@ fi
 DOCKER_ARGS=(
   run --rm -t
   --ipc=host
+  --cpus="$CPUS"
   --memory="$MEM"
   --memory-swap="$MEM_SWAP"
   --pids-limit="$PIDS"
@@ -387,7 +425,7 @@ DOCKER_ARGS=(
   -e HOME=/e2e-cache/home
   -e NX_CACHE_DIRECTORY=/e2e-cache/nx-cache
   -e NX_MAX_PARALLEL="${NX_MAX_PARALLEL:-2}"
-  -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
+  -e NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=3072}"
   -e HUSKY=0
   -e CI=1
   -e E2E_GREP="${E2E_GREP:-}"

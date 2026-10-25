@@ -292,15 +292,17 @@ kubernetes:
   service_account: lcars-direct-runner
   max_concurrent: 5
   node_selector:
-    homelab.jlapenna.net/queue-runner: 'true'
-  requests: { cpu: '500m', memory: 2Gi, ephemeral-storage: 4Gi }
-  limits: { cpu: '8', memory: 16Gi, ephemeral-storage: 24Gi }
+    kubernetes.io/os: linux
+  requests: { cpu: '2', memory: 6Gi, ephemeral-storage: 24Gi }
+  limits: { cpu: '2', memory: 6Gi, ephemeral-storage: 24Gi }
 ```
 
 The deployment owns namespace, RBAC, node labels/readiness taints, Secret values,
-and resource sizing. The example budgets are provisional for rollout, not
-measured direct-runner quantiles or binary defaults; choose burst limits
-conservatively and measure pods before tightening them. The controller requires namespace Jobs
+and resource sizing. Every complete job is capped at 2 CPU, 6 GiB RAM and
+40 GiB storage; smaller lane limits still apply. Requests equal enforced limits,
+including setup, helpers, services, caches, images and scratch. Reduce oversized
+allocations and run within those caps, preserving failures rather than raising
+limits. The controller requires namespace Jobs
 `get,list,create,update,delete`, namespace Secrets `get,create`, and cluster
 Nodes/Pods `list`, plus `get` on the configured worker ServiceAccount. Its
 credential never reaches worker pods. Startup verifies the account exists and
