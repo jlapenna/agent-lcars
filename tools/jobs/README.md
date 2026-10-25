@@ -68,12 +68,17 @@ export bundles the named `report.md`, `findings.json` and `coverage.json` artifa
 
 ## Goose adapter and production integration boundary
 
-`gooseExecutor` invokes `goose run --recipe PATH --quiet --params key=value`
+`gooseExecutor` invokes `goose run --recipe PATH --quiet --output-format json --params key=value`
 without a shell, requires an isolated profile environment and an allocation
 verifier, bounds output, and terminates the owned process group on cancellation.
 The trusted host adapter must supervise the entire allocation, including any
 descendants that create their own process group. Process-group cleanup alone is
 not a replacement for that supervision.
+
+The adapter requires a completed JSON conversation envelope and parses only its
+final assistant response as the audit result. Earlier commentary and tool output
+cannot substitute for a missing or malformed final response. The 1 MiB output
+bound covers the entire conversation, so verbose runs fail rather than truncate.
 
 `cgroupAllocation` checks this process's actual unified cgroup, exact CPU/memory
 limits, no swap, and requires a host-owned hard-storage verifier. It does not

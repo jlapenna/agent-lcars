@@ -26,7 +26,14 @@ export function gooseExecutor({
         signal,
         environment,
       });
-      const args = ['run', '--recipe', recipe, '--quiet'];
+      const args = [
+        'run',
+        '--recipe',
+        recipe,
+        '--quiet',
+        '--output-format',
+        'json',
+      ];
       const parameters = {
         ...run.definition.job.inputs,
         baseline: JSON.stringify(baseline),
@@ -40,9 +47,26 @@ export function gooseExecutor({
         signal,
         environment,
       });
-      // The reference recipe's response.json_schema asks Goose for this exact
-      // object. Process success alone does not satisfy the result contract.
-      return JSON.parse(output);
+      // Goose's machine output wraps the conversation; --quiet alone still
+      // renders tool activity. Only the final assistant response is a result.
+      const envelope = JSON.parse(output);
+      if (
+        envelope.metadata?.status !== 'completed' ||
+        !Array.isArray(envelope.messages)
+      )
+        throw new Error('Goose did not return a completed conversation');
+      const final = envelope.messages.findLast(
+        (message) => message.role === 'assistant',
+      );
+      if (
+        !Array.isArray(final?.content) ||
+        !final.content.length ||
+        !final.content.every(
+          (part) => part.type === 'text' && typeof part.text === 'string',
+        )
+      )
+        throw new Error('Goose final assistant response is not result text');
+      return JSON.parse(final.content.map((part) => part.text).join(''));
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

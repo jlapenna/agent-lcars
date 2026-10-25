@@ -273,8 +273,38 @@ test('invalid scope or duplicate coverage cannot advance the successful baseline
 test('Goose subprocess adapter handles structured output and terminates cancellation', async (t) => {
   const directory = await temporary(t);
   const executable = join(directory, 'fixture-goose');
-  const script = `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(JSON.stringify(output()))});\n`;
-  await writeFile(executable, script, { mode: 0o700 });
+  const final = {
+    role: 'assistant',
+    content: [{ type: 'text', text: JSON.stringify(output()) }],
+  };
+  const conversation = {
+    metadata: { status: 'completed' },
+    messages: [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Assess the approved subnet.' }],
+      },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Checking exposure.' },
+          { type: 'toolRequest', id: 'scan' },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'toolResponse', id: 'scan', toolResult: { content: [] } },
+        ],
+      },
+      final,
+    ],
+  };
+  const fixture = async (envelope) => {
+    const script = `#!/usr/bin/env node\nif (process.argv[2] === 'recipe') process.exit(0);\nconst at = process.argv.indexOf('--output-format');\nif (at < 0 || process.argv[at + 1] !== 'json') process.exit(2);\nprocess.stdout.write(${JSON.stringify(JSON.stringify(envelope))});\n`;
+    await writeFile(executable, script, { mode: 0o700 });
+  };
+  await fixture(conversation);
   const controller = new JobController(':memory:');
   t.onTestFinished(() => controller.close());
   let checked = false;
@@ -292,6 +322,38 @@ test('Goose subprocess adapter handles structured output and terminates cancella
   const run = controller.admit(def(), { requestId: 'process', profile }).run;
   assert.equal((await controller.execute(run, execute)).status, 'succeeded');
   assert.equal(checked, true);
+  for (const [index, envelope] of [
+    { ...conversation, metadata: { status: 'error' } },
+    { ...conversation, messages: [] },
+    {
+      ...conversation,
+      messages: [
+        ...conversation.messages,
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Not valid JSON' }],
+        },
+      ],
+    },
+    {
+      ...conversation,
+      messages: [
+        ...conversation.messages,
+        {
+          role: 'assistant',
+          content: [{ type: 'toolRequest', id: 'unfinished' }],
+        },
+      ],
+    },
+  ].entries()) {
+    await fixture(envelope);
+    const invalid = controller.admit(def(), {
+      requestId: `bad-envelope-${index}`,
+      profile,
+    }).run;
+    assert.equal((await controller.execute(invalid, execute)).status, 'failed');
+    assert.equal(controller.baseline(def().id).id, run.id);
+  }
   await writeFile(
     executable,
     '#!/usr/bin/env node\nsetInterval(() => {}, 100);\n',
