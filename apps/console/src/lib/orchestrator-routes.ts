@@ -35,6 +35,7 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
+  executeModelWork?: (deadline: number) => Promise<void>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -362,6 +363,8 @@ export async function handleReconcile(
   deps: OrchestratorRouteDeps,
 ): Promise<RouteResult> {
   try {
+    // Leave headroom inside the production ticker’s 60-second HTTP deadline.
+    const modelDeadline = Date.now() + 45_000;
     const credentialRecovery = await deps.recoverCredentialOperations?.();
     const swept = await deps.orchestrator.sweepExpired();
     // Keep provider-cooldown rerouting in maintenance, outside the executor's
@@ -373,6 +376,7 @@ export async function handleReconcile(
     // ticker continues any larger backlog on its next pass.
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
+    await deps.executeModelWork?.(modelDeadline);
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +

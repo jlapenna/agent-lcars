@@ -6,7 +6,7 @@ import { isRefusal, workRevisionSchema } from '@agent-lcars/orchestrator';
 import { inboxSummarySpecSchema, ulid } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import { handoffSummaryConfig } from './human-needed-summary';
+import { handoffSummaryConfig, MAX_SUMMARY_MS } from './human-needed-summary';
 import { summarizeInboxDecision } from './inbox-summary-model';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 
@@ -82,17 +82,21 @@ export async function admitInboxSummary(
 }
 
 /** Uses the same durable claims, token fencing and completion transactions as
- * coding work. A request executes at most four 30-second model attempts. */
+ * coding work. Background passes execute at most four attempts. Maintenance
+ * executes one within its request deadline, reserving five seconds to settle. */
 export async function executeInboxSummaries(
   runtime: OrchestratorRouteDeps,
   generate: typeof summarizeInboxDecision = summarizeInboxDecision,
+  deadline?: number,
 ): Promise<void> {
   try {
     if (!handoffSummaryConfig()) return;
   } catch {
     return;
   }
-  for (let count = 0; count < 4; count++) {
+  const attempts = deadline === undefined ? 4 : 1;
+  for (let count = 0; count < attempts; count++) {
+    if (deadline !== undefined && deadline - Date.now() <= 5_000) break;
     const fingerprint = createHash('sha256').update(randomUUID()).digest('hex');
     const run = await runtime.store.claimQueuedRun({
       pipelines: ['inbox-summary'],
@@ -108,10 +112,23 @@ export async function executeInboxSummaries(
       true,
     );
     if (isRefusal(renewed)) continue;
+    const timeoutMs = Math.min(
+      MAX_SUMMARY_MS,
+      deadline === undefined ? MAX_SUMMARY_MS : deadline - Date.now() - 5_000,
+    );
+    if (timeoutMs <= 0) {
+      await runtime.store.releaseQueuedRunClaim({
+        runId: run.runId,
+        claimedBy: 'console-model-call',
+        tokenHash: fingerprint,
+        now: new Date().toISOString(),
+      });
+      return;
+    }
     let description: string | undefined;
     try {
       const input = inputSchema.parse(run.sourceRevision?.input);
-      description = await generate(input.context);
+      description = await generate(input.context, timeoutMs);
     } catch {
       // Persist a bounded failure, never raw source text or provider output.
     }

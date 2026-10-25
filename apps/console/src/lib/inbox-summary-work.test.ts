@@ -60,7 +60,10 @@ beforeEach(() => {
   vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_API_KEY', 'test-only-key');
   vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', 'small-summary-model');
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 
 describe('Inbox summaries through Work', () => {
   it('does not drain unrelated outcomes while rendering or break maintenance on invalid optional configuration', async () => {
@@ -71,6 +74,56 @@ describe('Inbox summaries through Work', () => {
     vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', '');
     await expect(execute(runtime)).resolves.toBeUndefined();
     expect(drain).not.toHaveBeenCalled();
+  });
+
+  it('limits maintenance inference to one item and the remaining HTTP budget', async () => {
+    vi.useFakeTimers();
+    const { runtime } = fixture();
+    await admitInboxSummary(runtime, context('a', 1));
+    await admitInboxSummary(runtime, context('a', 2));
+    await runtime.drain();
+    const generate = vi.fn(async () => 'Choose a.');
+    const deadline = Date.now() + 20_000;
+    await execute(runtime, generate, deadline);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledWith(expect.any(String), 15_000);
+    // A spent request budget leaves queued work for a later tick, without
+    // consuming an attempt or requiring post-response CPU to make progress.
+    vi.setSystemTime(deadline);
+    await execute(runtime, generate, deadline);
+    expect(generate).toHaveBeenCalledTimes(1);
+    await execute(runtime, generate, Date.now() + 45_000);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenLastCalledWith(expect.any(String), 30_000);
+  });
+
+  it('preserves the same queued attempt when claiming exhausts the request budget', async () => {
+    vi.useFakeTimers();
+    const { runtime } = fixture();
+    await admitInboxSummary(runtime, context('a'));
+    await runtime.drain();
+    const [queued] = await runtime.store.listQueuedRuns();
+    const deadline = Date.now() + 20_000;
+    const claim = runtime.store.claimQueuedRun.bind(runtime.store);
+    vi.spyOn(runtime.store, 'claimQueuedRun').mockImplementationOnce(
+      async (input) => {
+        const run = await claim(input);
+        vi.setSystemTime(deadline);
+        return run;
+      },
+    );
+    const generate = vi.fn(async () => 'Choose a.');
+    await execute(runtime, generate, deadline);
+    expect(generate).not.toHaveBeenCalled();
+    expect(await runtime.store.listQueuedRuns()).toMatchObject([
+      { runId: queued?.runId, revisionAttempt: queued?.revisionAttempt },
+    ]);
+    await execute(runtime, generate, Date.now() + 45_000);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(await admitInboxSummary(runtime, context('a'))).toEqual({
+      pending: false,
+      description: 'Choose a.',
+    });
   });
 
   it('persists the current reading aid without sending an outcome notification', async () => {
