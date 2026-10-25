@@ -52,8 +52,9 @@ grep -qF "some-other-registry/agent-lcars/e2e:${expected_tag}" "$TEST_DIR/regist
 # the inner command installs first, then writes the stamp, then runs nx.
 grep -qx -- 'docker' "$TEST_DIR/default.log"
 grep -qx -- '--ipc=host' "$TEST_DIR/default.log"
-grep -qx -- '--memory=12g' "$TEST_DIR/default.log"
-grep -qx -- '--memory-swap=14g' "$TEST_DIR/default.log"
+grep -qx -- '--cpus=2' "$TEST_DIR/default.log"
+grep -qx -- '--memory=6g' "$TEST_DIR/default.log"
+grep -qx -- '--memory-swap=6g' "$TEST_DIR/default.log"
 grep -qx -- '--pids-limit=8192' "$TEST_DIR/default.log"
 grep -qF "$REPO:/work" "$TEST_DIR/default.log"
 grep -qF "/node_modules:/work/node_modules" "$TEST_DIR/default.log"
@@ -61,6 +62,34 @@ grep -qF ":/e2e-cache" "$TEST_DIR/default.log"
 grep -qx -- 'CI=1' "$TEST_DIR/default.log"
 grep -q 'install.stamp miss' "$TEST_DIR/default.log"
 grep -q "inner command:.*pnpm install --frozen-lockfile.*&&.*install.stamp.*&&.*nx run ${PROJECT}:e2e-implementation" "$TEST_DIR/default.log"
+
+# Oversized overrides still produce a capped runnable command, including old
+# swap settings. Smaller allocations remain available for smaller lanes.
+E2E_DOCKER_CPUS=8 E2E_DOCKER_MEMORY=16g E2E_DOCKER_MEMORY_SWAP=20g \
+  run_dry "$PROJECT" >"$TEST_DIR/capped.log" 2>&1
+grep -qx -- '--cpus=2' "$TEST_DIR/capped.log"
+grep -qx -- '--memory=6g' "$TEST_DIR/capped.log"
+grep -qx -- '--memory-swap=6g' "$TEST_DIR/capped.log"
+E2E_DOCKER_CPUS=1 E2E_DOCKER_MEMORY=2048m \
+  run_dry "$PROJECT" >"$TEST_DIR/smaller.log" 2>&1
+grep -qx -- '--cpus=1' "$TEST_DIR/smaller.log"
+grep -qx -- '--memory=2048m' "$TEST_DIR/smaller.log"
+grep -qx -- '--memory-swap=2048m' "$TEST_DIR/smaller.log"
+for oversized in 6442450945 6291457k 6145m 16GiB 8.5g 1t '16 GB' 1p; do
+  E2E_DOCKER_MEMORY="$oversized" run_dry "$PROJECT" >"$TEST_DIR/bytes.log" 2>&1
+  grep -qx -- '--memory=6g' "$TEST_DIR/bytes.log"
+done
+for smaller in 4gib 2.5g '4 gib' .5g 4.g 1e9; do
+  E2E_DOCKER_MEMORY="$smaller" run_dry "$PROJECT" >"$TEST_DIR/fraction.log" 2>&1
+  grep -qx -- "--memory=$smaller" "$TEST_DIR/fraction.log"
+  grep -qx -- "--memory-swap=$smaller" "$TEST_DIR/fraction.log"
+done
+for invalid in 0 -1g 6wrong; do
+  if E2E_DOCKER_MEMORY="$invalid" run_dry "$PROJECT" >"$TEST_DIR/invalid.log" 2>&1; then
+    echo "invalid memory size was accepted: $invalid" >&2
+    exit 1
+  fi
+done
 
 # -- install.stamp hit: pre-seed a matching stamp + a populated node_modules
 # cache, and confirm the inner command skips `pnpm install` entirely --------
