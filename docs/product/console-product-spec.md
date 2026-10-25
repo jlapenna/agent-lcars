@@ -697,6 +697,7 @@ CLI sessions and dispatched runs.
 | `/api/console/shell-readouts`               | session; fleet figures require admin                               | Identity and shared frame readouts; non-admin sessions receive identity only |
 | `/costs/export`                             | admin session                                                      | Filtered cost ledger CSV (FE-CO-3)                                           |
 | `/api/dashboard/stream`                     | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)           |
+| `/api/work/v1/costs/budget`                 | `costs.reader` Work grant                                          | Fixed-selection cost budget readout for operator alerts (R10)                |
 | `/api/inbox-notifications`                  | admin session                                                      | Inbox notification snapshot (R11)                                            |
 | `/api/quick-task-evidence/v1/[id]`          | capability ID                                                      | Screenshot evidence bytes; revocable                                         |
 | `/api/logs/error`                           | public                                                             | Browser error reporting                                                      |

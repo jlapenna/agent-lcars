@@ -157,7 +157,7 @@ Interactive Claude and Codex sessions ask Console who owns an issue before
 starting work (#2502) with `lcars work owner <owner/repo>#<n>`. They
 authenticate as `work-reader@agent-lcars.iam.gserviceaccount.com`, a dedicated
 identity with no stored key and no project role. Its Console Work grant,
-`svc:work-reader`, carries only `work.reader`, which authorizes the owner
+`svc:work-reader`, carries `work.reader`, which authorizes the owner
 query and nothing that lists, reads items, or mutates.
 
 Only `user:jlapenna@gmail.com`, the Google account interactive hosts sign in
@@ -437,3 +437,9 @@ autoscaler App installations include the repository, and runs
   (`RUNNER_APP_CLIENT_ID`/`RUNNER_APP_PRIVATE_KEY`; `UNVERIFIED` when
   absent). It never modifies an installation: a missing membership fails
   with the exact settings-page instruction for the maintainer.
+
+The same reader also has `costs.reader` for the operator's fixed-selection
+`GET /api/work/v1/costs/budget` readout. It exposes aggregate pricing/coverage
+from Costs, never session transcripts or Work mutation authority. Homelab's
+cost collector impersonates this existing account through its existing
+maintainer credential; it does not distribute a new service-account key.

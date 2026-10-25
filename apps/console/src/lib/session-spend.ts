@@ -386,17 +386,40 @@ export function parseCostBudget(limit?: string, warning?: string): CostBudget {
   return { state: 'configured', limitUsd, warningPercent };
 }
 
+export type CostBudgetAssessment =
+  | 'unconfigured'
+  | 'invalid'
+  | 'exceeded'
+  | 'warning'
+  | 'unavailable'
+  | 'below-warning';
+
+/** Shared machine state for the UI and operator-owned alert integration. */
+export function costBudgetAssessment(
+  spend: SessionSpend,
+  budget: CostBudget,
+): CostBudgetAssessment {
+  if (budget.state === 'unconfigured') return 'unconfigured';
+  if (budget.state === 'invalid') return 'invalid';
+  const known = spend.totals.costUsd ?? 0;
+  if (known >= budget.limitUsd) return 'exceeded';
+  if (known >= (budget.limitUsd * budget.warningPercent) / 100)
+    return 'warning';
+  if (spend.coverageLimited || spend.totals.unpricedSessions > 0)
+    return 'unavailable';
+  return 'below-warning';
+}
+
 export function assessCostBudget(
   spend: SessionSpend,
   budget: CostBudget,
 ): string {
-  if (budget.state === 'unconfigured') return 'No budget configured';
-  if (budget.state === 'invalid') return 'Budget configuration invalid';
-  const known = spend.totals.costUsd ?? 0;
-  if (known >= budget.limitUsd) return 'At or above budget';
-  if (known >= (budget.limitUsd * budget.warningPercent) / 100)
-    return 'Near budget';
-  if (spend.coverageLimited || spend.totals.unpricedSessions > 0)
-    return 'Cannot assess: incomplete spend';
-  return 'Below warning threshold';
+  return {
+    unconfigured: 'No budget configured',
+    invalid: 'Budget configuration invalid',
+    exceeded: 'At or above budget',
+    warning: 'Near budget',
+    unavailable: 'Cannot assess: incomplete spend',
+    'below-warning': 'Below warning threshold',
+  }[costBudgetAssessment(spend, budget)];
 }

@@ -144,7 +144,7 @@ describe('grant scopes', () => {
     ).toThrow();
   });
 
-  it('commits the work-reader grant with work.reader alone (#2502)', () => {
+  it('commits only issue-owner and cost-assessment read scopes for work-reader', () => {
     const config = parseYaml(
       readFileSync(
         path.join(import.meta.dirname, '../../apphosting.yaml'),
@@ -159,7 +159,7 @@ describe('grant scopes', () => {
     expect(resolvePrincipal(subject, grants)).toMatchObject({
       principal: 'svc:work-reader',
       subjects: [subject],
-      scopes: ['work.reader'],
+      scopes: ['work.reader', 'costs.reader'],
     });
     // No other grant names the reader, and no other grant uses its scope.
     expect(

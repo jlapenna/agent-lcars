@@ -4,6 +4,7 @@ import { PIPELINES, WORK_CHANNELS } from '@agent-lcars/work';
 import { z } from 'zod';
 
 const workScopeSchema = z.enum([
+  'costs.reader',
   'work.operator',
   /** Read-only: the GitHub anchor-owner query (`anchorOwner`) and nothing
    *  else. Not `list`/`get` -- item reads are `work.operator`/`work.reaper`

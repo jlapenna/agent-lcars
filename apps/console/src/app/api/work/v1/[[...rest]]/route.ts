@@ -4,6 +4,7 @@ import { auth } from '@/auth';
 import { capacityMetricsHttpResponse } from '@/lib/capacity-metrics';
 import { getCliSessions } from '@/lib/cli-sessions';
 import { codexAuthStore } from '@/lib/codex-auth-store';
+import { costBudgetResponse } from '@/lib/cost-budget-readout';
 import {
   controlPlaneRepositories,
   controlPlaneRepository,
@@ -90,6 +91,9 @@ async function handle(request: Request): Promise<Response> {
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });
+
+  if (new URL(request.url).pathname === `${PREFIX}/costs/budget`)
+    return withNoStore(await costBudgetResponse(request, principal));
 
   const runtime = createOrchestratorRuntime();
   const runsResult = await runsHandler.handle(request, {

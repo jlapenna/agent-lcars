@@ -140,3 +140,19 @@ budget. Test delivery and recovery through that integration's owning workflow.
 This feature provides visible threshold states and the handoff contract; it does
 not create notification credentials, channels, monitoring writes, IAM or
 Terraform resources, or activate an external alert.
+
+### Operator readout
+
+`GET /api/work/v1/costs/budget?days=<1h|1..90>` requires the narrow
+`costs.reader` grant through existing Work API authentication. Selection is
+explicit; optional `source`, `repo`, `agent`, `issue` and `q` match Costs. Invalid,
+duplicate or unknown parameters are rejected rather than silently broadening
+the view. The JSON response is private/no-store and includes selection,
+observation time, configured limit/warning, the shared machine assessment,
+reported/estimated known subtotal and coverage. It reuses the Costs archive and
+`estimateCostUsd`; the consumer must not independently reprice sessions.
+
+Homelab owns collection, Prometheus/Alertmanager rules and delivery through its
+existing oncall route. The readout itself sends nothing. R10 remains partial
+until a reviewed fixed selection and dollar limit are configured and external
+delivery/recovery are qualified. Missing configuration remains unavailable.
