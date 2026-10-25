@@ -10,7 +10,7 @@ Native work items made `work` the source of task text for every anchor (sub-proj
 2. **Execution.** `pipeline` is a closed enum of three CLIs, each needing a repository checkout. Work can't go to an agent whose access lives outside GitHub, such as Joe's OpenClaw agents with their own workspaces, memory and host access.
 3. **Completion.** "Done" means the agent wrote `<!-- attempt-claim:<id> -->` into a bot-authored artifact, and `runtime/verify-outcome.sh` found it. That checks that a token was written, not that the requested state exists.
 
-Summaries currently make bounded model calls in the Console, with process-local concurrency and source-aware caching. Fleet triage has used an hourly OpenClaw sweep. Giving either its own durable queue would duplicate admission, retries and failure visibility. Both should become LCARS-dispatched work, with execution sized to the task.
+Inbox summaries now use durable Work admission, claims and revision fencing while executing bounded model calls in the Console. Handoff summaries are the next consumer of that lifecycle. Fleet triage has used an hourly OpenClaw sweep. Giving either its own durable queue would duplicate admission, retries and failure visibility. Execution remains sized to the task.
 
 Adding OpenClaw as one more pipeline with a "target is an agent, not a repo" branch would add a fourth fork. This design removes the forks instead.
 
@@ -335,10 +335,44 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    Remove the synchronous inference path from worker completion when this
    replacement is qualified. Defer public pipeline/target migration and a general runtime registry until the
    agent surfaces require them; update all affected clients together at that time.
-3. **Event-driven triage.** Connect durable GitHub intake to bounded issue work,
-   qualify the selected agent adapter and idempotent effects, and backfill through
-   the same admission path. If OpenClaw is selected, qualify the bridge on the
-   approved installed runtime before enabling it. Keep hourly sweeps disabled.
+3. **Event-driven triage.** Connect existing durable GitHub intake to one
+   background Work item per `fleet-triage:v1` issue source. Use the existing
+   OpenCode native Job with `deliverable: report`; qualify this path without a
+   new runtime, registry, worker pool or OpenClaw change. Keep hourly sweeps
+   disabled. Admit open bug issues only, preserving the predecessor's scope;
+   the current fleet configuration owns repository eligibility and excludes
+   repositories with agents disabled.
+
+   Relevant issue and human-context changes advance the immutable input
+   revision. Pending inputs coalesce and stale attempts cannot publish. Closed,
+   assigned or already claimed issues, open fixing PRs, agent/review labels and
+   unresolved parked coding attempts invalidate pending triage. Preserve trusted
+   dispatch parameters when the existing revision lifecycle mints a successor.
+   The worker's existing brief context carries only the source identity and
+   executing revision, within its 2,000-character limit; it reads current issue
+   evidence and repository guidance through existing tools.
+
+   Report workers remain read-only. Their structured report proposes evidence,
+   existing metadata labels, a marked triage comment and whether the issue meets
+   the existing coding-dispatch gates. Validated report settlement, the pending
+   publication record and its existing-outbox entry commit atomically. The
+   publisher repeats source and
+   ownership checks, updates the stable `fleet-triage:v1` comment, applies only
+   permitted existing labels and reads back effects. Adding `agent:opencode`
+   happens last and uses normal label intake; never remove/re-add a control
+   label to redispatch. Issue closure and assignment changes are outside this
+   slice.
+
+   A narrow `Run.triagePublication` record tracks pending, complete, superseded
+   or failed publication and effect receipts. Existing outbox leases, retry
+   counts and backoff retain ownership of delivery; do not duplicate them in
+   the publication record. Work remains running until effects reconcile, shows
+   terminal publication failure and retains superseded attempts in history.
+   Recovery reads back uncertain effects before retrying; external GitHub writes
+   are not claimed to be exactly once. Recorded own comment/label effects do
+   not generate another semantic revision, while human edits and ownership
+   changes still do. Backfill is bounded and uses this same admission path.
+
 4. **General agent surfaces and intent verification.** Expose permitted agents
    and operations through Console, CLI and Slack. Ship observed-state verification
    and remove obsolete marker verification together. Keep replies separate from

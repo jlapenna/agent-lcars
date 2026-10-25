@@ -42,6 +42,7 @@ import {
   restoreCodexCredential,
 } from './codex-credential-operations';
 import { consoleUrl } from './deployment';
+import { parseTriageReport, triageBriefContext } from './fleet-triage-work';
 import type { GithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type {
   DispatchTokenProvider,
@@ -641,7 +642,7 @@ export const runsRouter = os.router({
       replyChannel: run.params?.['replyChannel'] ?? '',
       replyPrincipal: run.params?.['replyPrincipal'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
-      context: run.params?.['context'] ?? '',
+      context: triageBriefContext(run) ?? run.params?.['context'] ?? '',
       // #1993's `agent-option:cross-repo` -- true iff admission captured
       // that label on the anchor. `checkoutToken` (below) reads the same
       // `run.params['crossRepo']` string independently; this is only the
@@ -1013,7 +1014,7 @@ export const runsRouter = os.router({
     const target = anchorTarget(run, task);
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
-    const result = toRunResult(
+    let result = toRunResult(
       target.repo,
       input.outcome,
       input.outcomeReference,
@@ -1027,6 +1028,18 @@ export const runsRouter = os.router({
             'report',
       },
     );
+    let publishTriage = false;
+    if (triageBriefContext(run) !== undefined && result.ok) {
+      try {
+        if (result.summary !== 'report')
+          throw new Error('Triage requires a structured report');
+        parseTriageReport(run, result.message);
+        publishTriage = true;
+      } catch {
+        logger.warn('agent-lcars: invalid triage report for %s', run.runId);
+        result = { ...result, ok: false, summary: 'invalid-triage-report' };
+      }
+    }
     const deliveryCorrection =
       run.params?.deliveryPredecessor !== undefined ||
       (task?.delivery !== undefined &&
@@ -1110,6 +1123,7 @@ export const runsRouter = os.router({
         undefined,
         context.workerPermit,
         delivery,
+        publishTriage,
       ),
     );
     if (

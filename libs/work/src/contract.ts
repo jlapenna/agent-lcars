@@ -2,6 +2,7 @@ import {
   humanNeededActionsSchema,
   providerRoutingSchema,
   runPlacementSchema,
+  triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
@@ -103,6 +104,7 @@ const deliveryBindingSchema = z.strictObject({
 });
 
 export const itemRunViewSchema = z.strictObject({
+  triagePublication: triagePublicationSchema.optional(),
   delivery: deliveryBindingSchema.optional(),
   runId: z.string(),
   state: z.enum(['pending', 'running', 'finished', 'canceled', 'lost']),

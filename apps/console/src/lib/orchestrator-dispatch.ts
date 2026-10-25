@@ -11,11 +11,13 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
-import { summaryWorkSpecSchema, workPayloadSchema } from '@agent-lcars/work';
+import { isSourceManagedWork, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
 import { agentFleetLogin, consoleUrl } from './deployment';
+import { publishFleetTriage } from './fleet-triage-publish';
+import { recordTriagePublication } from './fleet-triage-work';
 import { loadGithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { admitHandoffSummary } from './handoff-summary-work';
@@ -202,7 +204,10 @@ export async function drainOutbox(
 
     const failuresBefore = result.failed.length;
     try {
-      if (entry.kind === 'admit-handoff-summary') {
+      if (entry.kind === 'publish-triage') {
+        await publishFleetTriage(deps.store, entry);
+        await settleClaim(deps, entry, 'done');
+      } else if (entry.kind === 'admit-handoff-summary') {
         const source = await deps.store.readRun(entry.runId);
         if (source === undefined)
           throw new Error(`Missing handoff source: ${entry.runId}`);
@@ -528,10 +533,7 @@ async function handleReportOutcome(
     isWorkAnchor(run.task) || run.state === 'lost'
       ? (await store.readTask(run.task))?.task
       : undefined;
-  if (
-    task !== undefined &&
-    summaryWorkSpecSchema.safeParse(task.work['spec']).success
-  ) {
+  if (task !== undefined && isSourceManagedWork(task.work)) {
     await settleClaim(deps, entry, 'done');
     result.reported.push(run.runId);
     return;
@@ -1232,6 +1234,11 @@ async function settleRetryableFailure(
     Date.parse(nowStr) - Date.parse(firstFailedAt) >= OUTBOX_RETIRE_AFTER_MS;
 
   if (retired) {
+    if (entry.kind === 'publish-triage')
+      await recordTriagePublication(deps.store, entry.runId, {
+        state: 'failed',
+        error: message.slice(0, 400),
+      });
     logOutboxFailure(entry, message, 'retired');
     await settleClaim(deps, entry, 'failed', { now: nowStr, firstFailedAt });
     return;

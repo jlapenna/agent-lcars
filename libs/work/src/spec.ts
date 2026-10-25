@@ -109,6 +109,16 @@ export const storedWorkPayloadSchema = z.strictObject({
   spec: storedWorkSpecSchema,
 });
 
+/** Event-owned operations advance through their source, never manual replies. */
+export function isSourceManagedWork(payload: unknown): boolean {
+  const parsed = storedWorkPayloadSchema.safeParse(payload);
+  return (
+    parsed.success &&
+    ('sourceKey' in parsed.data.spec ||
+      parsed.data.origin.principal === 'svc:fleet-triage')
+  );
+}
+
 export function workRepository(spec: {
   pipeline: string;
   target?: { repo: string };

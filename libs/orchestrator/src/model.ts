@@ -3,6 +3,7 @@ import {
   providerRoutingSchema,
   QUEUE_PRIORITIES,
   runPlacementSchema,
+  triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
@@ -506,6 +507,7 @@ export const runSchema = z.strictObject({
   /** Queue claim state -- see `runQueueSchema`. */
   queue: runQueueSchema.optional(),
   delivery: deliveryBindingSchema.optional(),
+  triagePublication: triagePublicationSchema.optional(),
   credentialOperation: credentialOperationSchema.optional(),
   /** Successful restore receipt; authority remains the current queue hash. */
   credentialRestoredClaimFingerprint: credentialFingerprintSchema.optional(),
@@ -590,6 +592,7 @@ const outboxEntryBaseSchema = z.strictObject({
     'report-outcome',
     'monitor-delivery',
     'admit-handoff-summary',
+    'publish-triage',
   ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),

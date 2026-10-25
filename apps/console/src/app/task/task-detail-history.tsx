@@ -99,11 +99,18 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
               <TableTd>
                 {run.state}
                 <ExecutionStatus run={run} />
+                {run.triagePublication && (
+                  <Text size="xs">
+                    Triage updates: {run.triagePublication.state}
+                    {run.triagePublication.error &&
+                      ` — ${run.triagePublication.error}`}
+                  </Text>
+                )}
               </TableTd>
               <TableTd>
                 <Stack gap={0}>
                   <Text size="xs">
-                    {run.sourceRevision !== undefined
+                    {['inbox-summary', 'handoff-summary'].includes(run.pipeline)
                       ? 'Model call'
                       : 'Queue executor'}{' '}
                     · {run.pipeline}

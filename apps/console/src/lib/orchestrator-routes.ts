@@ -36,6 +36,10 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   executeModelWork?: (deadline: number) => Promise<void>;
+  reconcileIssueTriage?: (
+    anchor: Extract<TaskId, { repo: string }>,
+    deleted?: boolean,
+  ) => Promise<void>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -144,6 +148,8 @@ async function refreshGithubAnchorProjection(
     await (
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(deletedAnchor, { deleted: true });
+    if (!isWorkAnchor(deletedAnchor))
+      await deps.reconcileIssueTriage?.(deletedAnchor, true);
     await deps.invalidateAuthoritativeQueue?.();
     return;
   }
@@ -151,6 +157,14 @@ async function refreshGithubAnchorProjection(
     await (
       deps.refreshGithubAnchorProjection ?? refreshCurrentGithubAnchorProjection
     )(anchor);
+    if (
+      !isWorkAnchor(anchor) &&
+      (input.event === 'issues' || input.event === 'issue_comment')
+    ) {
+      const payload = input.payload as { issue?: { pull_request?: unknown } };
+      if (payload.issue?.pull_request === undefined)
+        await deps.reconcileIssueTriage?.(anchor);
+    }
   }
   await deps.invalidateAuthoritativeQueue?.();
 }

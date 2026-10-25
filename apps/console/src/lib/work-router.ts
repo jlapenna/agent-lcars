@@ -11,9 +11,9 @@ import {
 } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import {
+  isSourceManagedWork,
   itemsContract,
   type MaintenanceTickOutput,
-  summaryWorkSpecSchema,
   workPayloadSchema,
   type WorkSpec,
 } from '@agent-lcars/work';
@@ -336,9 +336,9 @@ export const workRouter = os.router({
   cancel: operator.cancel.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
+    if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
-        message: 'Generated summary work is read-only.',
+        message: 'Source-managed work is read-only.',
       });
     const runs = await context.runtime.store.listRuns({ workId: input.id });
     const state = deriveItemState(task.task, runs);
@@ -378,9 +378,9 @@ export const workRouter = os.router({
   update: operator.update.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
+    if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
-        message: 'Generated summary work is read-only.',
+        message: 'Source-managed work is read-only.',
       });
     const stored = workPayloadSchema.parse(task.task.work);
     // Only the prose is editable: pipeline and target are granted
@@ -408,9 +408,9 @@ export const workRouter = os.router({
     async ({ input, context, errors }) => {
       const task = await context.runtime.store.readTask({ workId: input.id });
       if (task === undefined) throw errors.NOT_FOUND();
-      if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
+      if (isSourceManagedWork(task.task.work))
         throw errors.CONFLICT({
-          message: 'Generated summary work is read-only.',
+          message: 'Source-managed work is read-only.',
         });
       const runs = await context.runtime.store.listRuns({ workId: input.id });
       const state = deriveItemState(task.task, runs);
@@ -528,9 +528,9 @@ export const workRouter = os.router({
     // same way `get` does.
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
-    if (summaryWorkSpecSchema.safeParse(task.task.work['spec']).success)
+    if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
-        message: 'Generated summary work is read-only.',
+        message: 'Source-managed work is read-only.',
       });
     return {
       ...(await view(context, input.id, task.task)),

@@ -148,7 +148,8 @@ export function runOrchestratorStoreContract(
         owner.request({
           taskId,
           requestId: key,
-          pipeline: 'inbox-summary',
+          pipeline: 'opencode',
+          params: { mode: 'implement' },
           work: TASK_WORK,
           sourceRevision: { key, input: { context: key } },
         });
@@ -158,7 +159,7 @@ export function runOrchestratorStoreContract(
       await store.enqueueRun({ runId: runA.runId, now: T0 });
       await first.confirmDispatch(runA.runId);
       const claimed = await store.claimQueuedRun({
-        pipelines: ['inbox-summary'],
+        pipelines: ['opencode'],
         now: T0,
         claimedBy: 'summary',
         tokenHash: 'a'.repeat(64),
@@ -186,6 +187,7 @@ export function runOrchestratorStoreContract(
         key: 'c',
         input: { context: 'c' },
       });
+      expect(done.additionalRuns?.[0]?.params).toEqual({ mode: 'implement' });
       const history = await store.listRuns(taskId);
       expect(history.map((run) => run.sourceRevision?.key)).toEqual(['a', 'c']);
       expect((await store.readTask(taskId))?.task.activeRunId).toBe(
@@ -226,6 +228,117 @@ export function runOrchestratorStoreContract(
         } else expect(result.task.activeRunId).toBeUndefined();
       }
       expect(await store.listRuns(taskId)).toHaveLength(3);
+    });
+
+    it('atomically admits publication and fences a finished report with ordered source invalidation', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const admitted = await orchestrator.request({
+        taskId,
+        requestId: 'triage',
+        pipeline: 'opencode',
+        params: { mode: 'implement' },
+        work: TASK_WORK,
+        sourceRevision: {
+          key: 'triage',
+          input: { issue: 1 },
+          observedAt: { github: T0 },
+        },
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      const runId = decidedRun(admitted).runId;
+      await orchestrator.report(
+        runId,
+        { ok: true, summary: 'report', message: '{}' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      expect((await store.readRun(runId))?.triagePublication?.state).toBe(
+        'pending',
+      );
+      const publication = (await claimOutbox(store, T0)).filter(
+        (entry) => entry.kind === 'publish-triage',
+      );
+      expect(publication).toHaveLength(1);
+      expect(publication[0]?.runId).toBe(runId);
+      await orchestrator.report(
+        runId,
+        { ok: true, summary: 'report' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        true,
+      );
+      expect(await claimOutbox(store, T0)).toHaveLength(0);
+      await orchestrator.invalidateSource(runId, { github: T0 });
+      expect((await store.readRun(runId))?.triagePublication?.state).toBe(
+        'pending',
+      );
+      clock.advanceMinutes(1);
+      await orchestrator.invalidateSource(runId, { github: clock.now() });
+      expect((await store.readRun(runId))?.triagePublication?.state).toBe(
+        'superseded',
+      );
+      expect(
+        (await store.readTask(taskId))?.task.desiredRevision,
+      ).toBeUndefined();
+      expect((await store.readTask(taskId))?.task.closedAt).toBeUndefined();
+      clock.advanceMinutes(1);
+      const resumed = await orchestrator.request({
+        taskId,
+        requestId: 'eligible-again',
+        pipeline: 'opencode',
+        params: { mode: 'implement' },
+        sourceRevision: {
+          key: 'eligible-again',
+          input: { issue: 1 },
+          observedAt: { github: clock.now() },
+        },
+      });
+      expect(isRefusal(resumed)).toBe(false);
+      expect((await store.listRuns(taskId)).length).toBe(2);
+    });
+
+    it('retains a claimed invalidated source until loss settlement without admitting a retry', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const admitted = await orchestrator.request({
+        taskId,
+        requestId: 'triage',
+        pipeline: 'opencode',
+        work: TASK_WORK,
+        sourceRevision: {
+          key: 'triage',
+          input: { issue: 1 },
+          observedAt: { github: T0 },
+        },
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      const runId = decidedRun(admitted).runId;
+      await store.enqueueRun({ runId, now: T0 });
+      await orchestrator.confirmDispatch(runId);
+      await store.claimQueuedRun({
+        pipelines: ['opencode'],
+        now: T0,
+        claimedBy: 'triage',
+        tokenHash: 'a'.repeat(64),
+      });
+      clock.advanceMinutes(1);
+      await orchestrator.invalidateSource(runId, { github: clock.now() });
+      expect((await store.readTask(taskId))?.task.activeRunId).toBe(runId);
+      expect((await store.readRun(runId))?.queue?.state).toBe('claimed');
+      clock.advanceMinutes(121);
+      expect((await orchestrator.sweepExpired()).retried).toHaveLength(0);
+      expect(await store.listRuns(taskId)).toHaveLength(1);
+      expect((await store.readTask(taskId))?.task.activeRunId).toBeUndefined();
     });
 
     async function fixture() {
