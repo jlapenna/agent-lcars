@@ -1,9 +1,9 @@
 # Inbox notifications
 
-The selected R11 path is an opt-in browser notification while an authenticated
-admin keeps an Inbox tab open. It reuses the existing durable Inbox decisions,
-including native parks the current Work principal may answer. It does not
-provision a delivery service or send Slack, email or SMS.
+The R11 implementation supports explicit opt-in open-tab notifications and
+background Web Push. Background production qualification remains pending. It reuses the existing durable Inbox decisions,
+including native parks the current Work principal may answer. Web Push uses the existing authenticated schedule tick and browser push service;
+it does not send Slack, email or SMS.
 
 ## Activate and unsubscribe
 
@@ -69,8 +69,9 @@ Every OS preview is generic: no issue/work title, question, body, repository,
 transcript, credential, or principal name. One decision links to its encoded
 Inbox selection; a coalesced notice opens the Inbox. The worker restricts clicks
 to the same-origin `/inbox`, strips unrelated query parameters, and relies on
-the normal route's authentication and current permission checks. It has no
-fetch/cache or push handler, receives no issue content, and performs no mutation.
+the normal route's authentication and current permission checks. Its push handler rechecks authenticated subscription, current grants and snoozes
+before requesting a preview. It caches no authenticated responses and receives
+no issue content.
 
 ## Delivery and operational handoff
 
@@ -81,11 +82,59 @@ click selection, unsubscribe, permission revocation and unavailable states.
 The hermetic tests use fake notification delivery and do not establish physical
 phone/OS delivery or production behavior.
 
-Closed-tab/background web push and server digests remain unavailable. Adding
-one requires a separate concrete plan for per-user authenticated subscriptions,
-endpoint/key lifecycle, deduplication, delivery retries, privacy, unsubscribe,
-and the Homelab-owned delivery/configuration path. No subscription, push key,
-infrastructure or unsolicited message is created by this implementation.
+## Background Web Push
+
+Under Preferences, select **Enable background notifications** and grant browser
+permission. This disables open-tab delivery in that browser to avoid duplicate
+previews. The new subscription starts with a quiet baseline, lasts 30 days, and
+can be disabled in Preferences; re-enable after expiry to renew consent. A valid
+signed-in admin cookie is still required when the worker wakes. Unsupported
+browsers, denied permissions, stale/unavailable sources or expired sign-in stay
+quiet; neither provider acceptance nor `showNotification` proves OS display.
+
+The application stores at most five browser subscriptions per user in the
+existing dispatch database (`console-inbox-push`), with provider endpoints,
+public encryption keys, expiry and identifier-only delivery state. Endpoints
+are delivery capabilities and never enter URLs or logs. Supported providers
+are Chrome/FCM, Mozilla and Apple; arbitrary endpoints are rejected.
+
+The existing authenticated schedule tick (currently every five minutes) re-resolves admin authority and Work
+grants, reads the same Inbox classification and server snoozes, and coalesces
+eligible new decisions. Native reports, resolved items and snoozed signatures
+are excluded. Each browser has a one-minute limit. Firestore transactions
+consume send attempts before calling the provider; ambiguous sends are not
+retried. Provider 404/410 removes only the matching subscription revision.
+Expired/revoked subscriptions are removed on a later tick. Delivery reads at
+most 20 user records and stops starting further browser sends after 20 seconds;
+each provider request has a five-second socket timeout. Source reads retain
+their existing datastore deadlines. This is best-effort delivery, not an SLA.
+
+Push has a 60-second TTL and carries only the user identifier and an attempt
+timestamp. Candidate identifiers/generations stay in the bounded server ledger
+until the authenticated receiver retrieves them. Before display, the worker POSTs to the same-origin,
+private `/api/inbox-push` endpoint with its current browser endpoint. That route
+rechecks cookie identity, current consent, grants, snoozes and fresh decisions;
+a transaction consumes the receive attempt once, so duplicate provider delivery
+cannot request another display. Account changes, expired messages and missing
+subscriptions suppress previews. Clicks retain the authenticated Inbox link.
+
+### Rollout and qualification
+
+Terraform owns the `AGENT_LCARS_PUSH_VAPID` secret container; its JSON value is
+`{publicKey, privateKey, subject}` using standard `web-push` VAPID keys and an
+operator contact URL. Provision the value through Secret Manager, never a
+Terraform variable or source file. The reviewed Console deployment reads it;
+only the public key is exposed to authenticated browser activation. Keep keys
+stable: rotation requires browser unsubscribe/re-subscribe. No browser is
+subscribed by deployment. The existing schedule tick is the sender; no new
+cron or daemon is needed.
+
+Verify on a real opted-in browser: close every Inbox tab, create a real eligible
+human decision, observe a generic OS notice, and follow its selection link.
+Also verify snooze, resolution-before-delivery, revoked consent/permission,
+account change, expired sign-in, duplicate ticks and provider failure. Tests
+use fake transports and do not establish physical OS delivery. Until this
+qualification and key provisioning complete, R11 remains partial.
 
 Browser API references: [service-worker display](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/showNotification),
 [explicit permission](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API),

@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   sessions: vi.fn(),
   native: vi.fn(),
   context: vi.fn(),
+  snoozes: vi.fn(),
+}));
+vi.mock('./decision-snooze-store', () => ({
+  getDecisionSnoozeStore: () => ({ read: mocks.snoozes }),
 }));
 vi.mock('../auth', () => ({ auth: mocks.auth }));
 vi.mock('./dashboard-data', () => ({
@@ -18,6 +22,7 @@ vi.mock('./runner-sessions', () => ({
 vi.mock('./native-inbox', () => ({ getNativeInboxCards: mocks.native }));
 vi.mock('../app/work/context', () => ({ context: mocks.context }));
 import type { InboxCard } from '../app/inbox-card';
+import { inboxCardSignature } from '../app/inbox-card';
 import {
   advanceNotificationState,
   emptyNotificationState,
@@ -53,6 +58,7 @@ describe('notification authorization and privacy', () => {
   afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     vi.resetAllMocks();
+    mocks.snoozes.mockResolvedValue({});
     vi.useFakeTimers();
     vi.setSystemTime(150_000);
     mocks.auth.mockResolvedValue({ user: { id: 'viewer', isAdmin: true } });
@@ -115,6 +121,16 @@ describe('notification authorization and privacy', () => {
     expect(result.observedAt).toBe(Date.parse((await mocks.queue()).fetchedAt));
     expect(JSON.stringify(result)).not.toContain('SECRET');
     expect(mocks.native).toHaveBeenCalledWith({}, {});
+  });
+  it('honors matching server snoozes and resumes on changed decision signatures', async () => {
+    mocks.snoozes.mockResolvedValue({
+      'work:01ABC': { signature: inboxCardSignature(native(true)) },
+    });
+    expect((await loadInboxNotificationSnapshot()).decisions).toEqual([]);
+    mocks.snoozes.mockResolvedValue({
+      'work:01ABC': { signature: 'earlier-run' },
+    });
+    expect((await loadInboxNotificationSnapshot()).decisions).toHaveLength(1);
   });
   it('marks stale or degraded evidence unavailable instead of fabricating empty success', async () => {
     mocks.activity.mockResolvedValue({

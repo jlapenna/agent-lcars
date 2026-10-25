@@ -809,7 +809,7 @@ coverage. Existing IDs are not reused.
 | R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                                        | P0       |
 | R6  | Restore production of new CLI transcript archives (FE-SE-4)                      | Implement and qualify a writer with per-session consent and bounded retention; the retired writer cannot be enabled through configuration. Existing archive rendering and OpenCode support already exist | P1       |
 | R10 | Deliver external budget alerts (FE-CO-2)                                         | Qualify the operator-owned alert integration described in [Session spend](../cost-ledger.md); Console breakdowns and warning states already exist                                                        | P2       |
-| R11 | Deliver notifications when no Inbox tab is open                                  | Closed-tab push or digest remains proposed; [the notification contract](../inbox-notifications.md) owns the shipped opt-in, open-Inbox behavior                                                          | P3       |
+| R11 | Deliver notifications when no Inbox tab is open                                  | Web Push implementation in progress; deployed key provisioning and explicit browser opt-in/closed-tab delivery verification remain required. [Notification contract](../inbox-notifications.md)          | P3       |
 
 ## 11. Success metrics
 

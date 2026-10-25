@@ -221,6 +221,13 @@ env:
     availability:
       - RUNTIME
 
+  # Explicit opt-in Web Push. JSON contains publicKey, privateKey and subject;
+  # only publicKey is returned to an authenticated browser.
+  - variable: AGENT_LCARS_PUSH_VAPID
+    secret: AGENT_LCARS_PUSH_VAPID
+    availability:
+      - RUNTIME
+
   # Actual Secrets from GCP Secret Manager
   - variable: AUTH_SECRET
     secret: AUTH_SECRET

@@ -14,6 +14,7 @@ import {
 
 import {
   advanceNotificationState,
+  NOTIFICATION_MODE_LOCK,
   NOTIFICATION_RATE_MS,
   NOTIFICATION_SCOPE,
   NOTIFICATION_WORKER,
@@ -23,6 +24,8 @@ import {
   parseNotificationState,
 } from '../lib/inbox-notifications';
 import { readInboxNotificationSnapshot } from '../lib/inbox-notifications-client';
+import { inboxPushStatus } from './inbox-push-actions';
+import { InboxPushToggle } from './inbox-push-toggle';
 
 function supported() {
   return (
@@ -61,7 +64,7 @@ interface InboxNotificationsController {
   busy: boolean;
   status: string;
   enable: () => Promise<void>;
-  disable: () => Promise<void>;
+  disable: () => Promise<boolean>;
 }
 
 /** Delivery state for one signed-in principal. The observer that reads the
@@ -275,92 +278,111 @@ function useInboxNotificationsController(
       setStatus('Notifications unavailable in this browser');
       return;
     }
-    setBusy(true);
-    try {
-      // Permission is requested only from this explicit user gesture.
-      const permission = await Notification.requestPermission();
+    const permissionRequest = Notification.requestPermission().catch(
+      () => 'denied' as const,
+    );
+    return navigator.locks.request(NOTIFICATION_MODE_LOCK, async () => {
       if (!current()) return;
-      if (permission !== 'granted') {
-        setStatus(
-          'Notifications not permitted — change browser settings to enable',
+      setBusy(true);
+      try {
+        const existingRegistration =
+          await navigator.serviceWorker.getRegistration(NOTIFICATION_SCOPE);
+        const backgroundSubscription =
+          await existingRegistration?.pushManager?.getSubscription();
+        if (
+          backgroundSubscription &&
+          (await inboxPushStatus(backgroundSubscription.endpoint)).enabled
+        ) {
+          setStatus(
+            'Disable background notifications before enabling open-tab notifications',
+          );
+          return;
+        }
+        // Permission is requested only from this explicit user gesture.
+        const permission = await permissionRequest;
+        if (!current()) return;
+        if (permission !== 'granted') {
+          setStatus(
+            'Notifications not permitted — change browser settings to enable',
+          );
+          return;
+        }
+        // Opt-in is a browser preference, not a health check of every source.
+        // A missing baseline pauses delivery; it must not discard consent.
+        const fresh = await bounded(readInboxNotificationSnapshot()).catch(
+          () => undefined,
         );
-        return;
-      }
-      // Opt-in is a browser preference, not a health check of every source.
-      // A missing baseline pauses delivery; it must not discard consent.
-      const fresh = await bounded(readInboxNotificationSnapshot()).catch(
-        () => undefined,
-      );
-      if (!current()) return;
-      if (fresh && fresh.principalId !== principalId)
-        throw new Error('Account changed');
-      const registration = await bounded(
-        navigator.serviceWorker.register(NOTIFICATION_WORKER, {
-          scope: NOTIFICATION_SCOPE,
-        }),
-      );
-      if (!current()) return;
-      if (!registration.active) {
-        const worker = registration.installing ?? registration.waiting;
-        if (!worker) throw new Error('Worker unavailable');
-        await bounded(
-          new Promise<void>((resolve, reject) => {
-            const changed = () => {
-              if (worker.state === 'activated') {
-                worker.removeEventListener('statechange', changed);
-                resolve();
-              } else if (worker.state === 'redundant') {
-                worker.removeEventListener('statechange', changed);
-                reject(new Error('Worker unavailable'));
-              }
-            };
-            worker.addEventListener('statechange', changed);
-            changed();
+        if (!current()) return;
+        if (fresh && fresh.principalId !== principalId)
+          throw new Error('Account changed');
+        const registration = await bounded(
+          navigator.serviceWorker.register(NOTIFICATION_WORKER, {
+            scope: NOTIFICATION_SCOPE,
           }),
         );
-      }
-      if (!current()) return;
-      let baselineReady = false;
-      await navigator.locks.request(key, () => {
         if (!current()) return;
-        const stored = parseNotificationState(localStorage.getItem(key));
-        baselineReady =
-          fresh !== undefined &&
-          notificationSnapshotFresh(fresh, Date.now()) &&
-          !Object.keys(stored.sourceTimes).some(
-            (key) =>
-              fresh.sourceTimes[key as keyof typeof fresh.sourceTimes] <
-              stored.sourceTimes[key as keyof typeof fresh.sourceTimes],
+        if (!registration.active) {
+          const worker = registration.installing ?? registration.waiting;
+          if (!worker) throw new Error('Worker unavailable');
+          await bounded(
+            new Promise<void>((resolve, reject) => {
+              const changed = () => {
+                if (worker.state === 'activated') {
+                  worker.removeEventListener('statechange', changed);
+                  resolve();
+                } else if (worker.state === 'redundant') {
+                  worker.removeEventListener('statechange', changed);
+                  reject(new Error('Worker unavailable'));
+                }
+              };
+              worker.addEventListener('statechange', changed);
+              changed();
+            }),
           );
-        const state = {
-          ...stored,
-          enabled: true,
-          // Never establish history from stale or degraded authorization.
-          // The first healthy observation will be a quiet baseline instead.
-          active: baselineReady && fresh ? fresh.decisions : null,
-          pending: [],
-          observedAt:
-            baselineReady && fresh ? fresh.observedAt : stored.observedAt,
-          sourceTimes:
-            baselineReady && fresh ? fresh.sourceTimes : stored.sourceTimes,
-        };
-        localStorage.setItem(key, JSON.stringify(state));
-      });
-      if (!current()) return;
-      baseline.current = !baselineReady;
-      setEnabled(true);
-      setStatus(
-        !watchingRef.current
-          ? OFF_INBOX_STATUS
-          : baselineReady
-            ? 'Watching for new human decisions'
-            : 'Authorization or data unavailable — notifications paused',
-      );
-    } catch {
-      if (current()) setStatus('Notification activation unavailable');
-    } finally {
-      if (current()) setBusy(false);
-    }
+        }
+        if (!current()) return;
+        let baselineReady = false;
+        await navigator.locks.request(key, () => {
+          if (!current()) return;
+          const stored = parseNotificationState(localStorage.getItem(key));
+          baselineReady =
+            fresh !== undefined &&
+            notificationSnapshotFresh(fresh, Date.now()) &&
+            !Object.keys(stored.sourceTimes).some(
+              (key) =>
+                fresh.sourceTimes[key as keyof typeof fresh.sourceTimes] <
+                stored.sourceTimes[key as keyof typeof fresh.sourceTimes],
+            );
+          const state = {
+            ...stored,
+            enabled: true,
+            // Never establish history from stale or degraded authorization.
+            // The first healthy observation will be a quiet baseline instead.
+            active: baselineReady && fresh ? fresh.decisions : null,
+            pending: [],
+            observedAt:
+              baselineReady && fresh ? fresh.observedAt : stored.observedAt,
+            sourceTimes:
+              baselineReady && fresh ? fresh.sourceTimes : stored.sourceTimes,
+          };
+          localStorage.setItem(key, JSON.stringify(state));
+        });
+        if (!current()) return;
+        baseline.current = !baselineReady;
+        setEnabled(true);
+        setStatus(
+          !watchingRef.current
+            ? OFF_INBOX_STATUS
+            : baselineReady
+              ? 'Watching for new human decisions'
+              : 'Authorization or data unavailable — notifications paused',
+        );
+      } catch {
+        if (current()) setStatus('Notification activation unavailable');
+      } finally {
+        if (current()) setBusy(false);
+      }
+    });
   }
 
   async function disable() {
@@ -388,21 +410,23 @@ function useInboxNotificationsController(
       };
       if (navigator.locks) await navigator.locks.request(key, unsubscribe);
       else unsubscribe();
-      if (!current()) return;
+      if (!current()) return false;
       setEnabled(false);
       setStatus('Notifications off');
       const registration = await bounded(
         navigator.serviceWorker.getRegistration(NOTIFICATION_SCOPE),
       );
-      if (!current()) return;
+      if (!current()) return false;
       const notifications = await bounded(
         registration?.getNotifications({ tag }) ?? Promise.resolve([]),
       );
-      if (!current()) return;
+      if (!current()) return false;
       for (const notification of notifications) notification.close();
+      return true;
     } catch {
       if (current())
         setStatus('Unsubscribe or notification cleanup unavailable');
+      return false;
     } finally {
       if (current()) setBusy(false);
     }
@@ -412,6 +436,7 @@ function useInboxNotificationsController(
 }
 
 const InboxNotificationsContext = createContext<{
+  principalId: string;
   controller: InboxNotificationsController;
   watch: () => () => void;
 } | null>(null);
@@ -435,7 +460,10 @@ export function InboxNotificationsProvider({
     setWatchers((count) => count + 1);
     return () => setWatchers((count) => count - 1);
   }, []);
-  const value = useMemo(() => ({ controller, watch }), [controller, watch]);
+  const value = useMemo(
+    () => ({ controller, watch, principalId }),
+    [controller, watch, principalId],
+  );
   return (
     <InboxNotificationsContext.Provider value={value}>
       {children}
@@ -468,12 +496,13 @@ export function InboxNotificationsWatch() {
 }
 
 const SCOPE =
-  'This browser, all repositories. Keep an Inbox tab open. Previews contain no decision details. Closed-tab delivery is unavailable.';
+  'This browser, all repositories. Keep an Inbox tab open. Previews contain no decision details. Use background notifications for closed-tab delivery.';
 
 /** The opt-in control, shown under Preferences in the console menu. */
 export function InboxNotificationsToggle() {
-  const controller = useContext(InboxNotificationsContext)?.controller;
-  if (!controller) return null;
+  const context = useContext(InboxNotificationsContext);
+  const controller = context?.controller;
+  if (!context || !controller) return null;
   const { enabled, busy, status, enable, disable } = controller;
   return (
     <div
@@ -499,6 +528,11 @@ export function InboxNotificationsToggle() {
       <Text size="xs" c="dimmed" role="status">
         {status}
       </Text>
+      <InboxPushToggle
+        key={context.principalId}
+        principalId={context.principalId}
+        disableOpenTab={disable}
+      />
       <VisuallyHidden id="inbox-notifications-scope">{SCOPE}</VisuallyHidden>
     </div>
   );

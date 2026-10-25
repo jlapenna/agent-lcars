@@ -20,6 +20,9 @@ const mocks = vi.hoisted(() => ({
   context: vi.fn(),
   native: vi.fn(),
 }));
+vi.mock('./decision-snooze-store', () => ({
+  getDecisionSnoozeStore: () => ({ read: async () => ({}) }),
+}));
 vi.mock('../auth', () => ({ auth: mocks.auth }));
 vi.mock('./dashboard-data', () => ({
   getCachedQueueItems: mocks.queue,

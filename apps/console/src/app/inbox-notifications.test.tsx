@@ -7,7 +7,9 @@ import {
   screen,
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ read: vi.fn() }));
+const mocks = vi.hoisted(() => ({ read: vi.fn(), pushStatus: vi.fn() }));
+vi.mock('./inbox-push-actions', () => ({ inboxPushStatus: mocks.pushStatus }));
+vi.mock('./inbox-push-toggle', () => ({ InboxPushToggle: () => null }));
 vi.mock('../lib/inbox-notifications-client', () => ({
   readInboxNotificationSnapshot: mocks.read,
 }));
@@ -71,10 +73,12 @@ async function tick() {
 
 // Browser-lock fixture serializes callbacks across component instances.
 let locked = false;
+const modeLock = 'agent-lcars:notification-mode';
 const locks = {
   request: vi.fn(
     async (_key: string, options: unknown, cb?: (lock: unknown) => unknown) => {
       const callback = typeof options === 'function' ? options : cb;
+      if (_key === modeLock) return callback?.({});
       if (locked) return callback?.(null);
       locked = true;
       try {
@@ -104,6 +108,7 @@ describe('opt-in Inbox notification delivery', () => {
       configurable: true,
       value: { register, getRegistration },
     });
+    mocks.pushStatus.mockResolvedValue({ enabled: false });
     requestPermission.mockResolvedValue('granted');
     register.mockResolvedValue(registration);
     getRegistration.mockResolvedValue(registration);
@@ -115,6 +120,23 @@ describe('opt-in Inbox notification delivery', () => {
     cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('allows open-tab activation with an orphaned background endpoint', async () => {
+    getRegistration.mockResolvedValue({
+      ...registration,
+      pushManager: {
+        getSubscription: async () => ({
+          endpoint: 'https://fcm.googleapis.com/orphan',
+        }),
+      },
+    });
+    render(tree(sample()));
+    await click('Enable Inbox notifications');
+    expect(mocks.pushStatus).toHaveBeenCalled();
+    expect(
+      screen.getByRole('button', { name: 'Disable Inbox notifications' }),
+    ).toBeTruthy();
   });
 
   it('never requests permission or registers a worker until explicit opt-in, and starts quiet', async () => {
