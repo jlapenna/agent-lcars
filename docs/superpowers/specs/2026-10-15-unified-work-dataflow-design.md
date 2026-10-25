@@ -310,6 +310,8 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    views accept both specifications; coding mutation routes reject internal work.
    Admission from an Inbox request is durable before returning; framework-owned
    post-response execution provides prompt service and maintenance recovers it.
+   Maintenance also schedules inference after its acknowledgement, keeping model
+   latency outside the ticker’s 60-second HTTP deadline.
    Original context stays usable while a summary is pending or unavailable.
    Each execution pass claims at most four model calls; the existing maintenance
    pass drains subsequent retries and superseding inputs. Work history exposes

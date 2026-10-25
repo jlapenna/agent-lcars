@@ -35,7 +35,6 @@ import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
 
 export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
-  executeModelWork?: () => Promise<void>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -374,7 +373,6 @@ export async function handleReconcile(
     // ticker continues any larger backlog on its next pass.
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
-    await deps.executeModelWork?.();
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +

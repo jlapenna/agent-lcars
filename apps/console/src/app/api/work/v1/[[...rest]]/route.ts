@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { after } from 'next/server';
+
 import { auth } from '@/auth';
 import { capacityMetricsHttpResponse } from '@/lib/capacity-metrics';
 import { getCliSessions } from '@/lib/cli-sessions';
@@ -24,6 +26,7 @@ import {
   createOrchestratorRuntime,
   createScheduleStore,
 } from '@/lib/orchestrator-runtime';
+import { executeInboxSummaries } from '@/lib/inbox-summary-work';
 import { createRunsHandler } from '@/lib/runs-router';
 import {
   authenticateWorkRequest,
@@ -175,6 +178,17 @@ async function handle(request: Request): Promise<Response> {
       now: () => new Date(),
     },
   });
+  // Acknowledge the durable maintenance pass before model inference: the
+  // ticker has a 60-second HTTP deadline, while four attempts may take 120s.
+  // Next owns this continuation; interrupted claims recover on later ticks.
+  if (
+    request.method === 'POST' &&
+    new URL(request.url).pathname === `${PREFIX}/maintenance/tick` &&
+    matched &&
+    response?.ok
+  ) {
+    after(() => executeInboxSummaries(runtime));
+  }
   return withNoStore(
     matched && response !== undefined
       ? response

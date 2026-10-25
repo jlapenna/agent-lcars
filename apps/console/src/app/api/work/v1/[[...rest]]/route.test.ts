@@ -9,6 +9,8 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  after,
+  executeInboxSummaries,
   auth,
   authenticateWorkRequest,
   controlPlaneRepository,
@@ -18,6 +20,8 @@ const {
   sessionDocsForRuns,
   getCliSessions,
 } = vi.hoisted(() => ({
+  after: vi.fn<(callback: () => Promise<void>) => void>(),
+  executeInboxSummaries: vi.fn(async () => undefined),
   auth: vi.fn(),
   authenticateWorkRequest: vi.fn(),
   controlPlaneRepository: vi.fn(() => 'jlapenna/agent-lcars'),
@@ -32,6 +36,9 @@ const {
     }),
   ),
 }));
+
+vi.mock('next/server', () => ({ after }));
+vi.mock('@/lib/inbox-summary-work', () => ({ executeInboxSummaries }));
 
 vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/deployment', () => ({
@@ -76,12 +83,12 @@ vi.mock('@/lib/orchestrator-runtime', () => ({
   createOrchestratorRuntime: () => ({
     store: orchestratorStore,
     orchestrator,
-    drain: async () => ({ dispatched: [], failed: [] }),
+    drain: async () => ({ dispatched: [], reported: [], failed: [] }),
   }),
   createScheduleStore: () => new MemoryScheduleStore(),
 }));
 
-import { GET } from './route';
+import { GET, POST } from './route';
 
 const operatorPrincipal = {
   principal: 'user:jlapenna',
@@ -284,4 +291,38 @@ describe('a work.reader-only principal (#2502)', () => {
       request.mockRestore();
     },
   );
+});
+
+describe('POST /api/work/v1/maintenance/tick', () => {
+  it('acknowledges maintenance before model work starts', async () => {
+    authenticateWorkRequest.mockResolvedValue({
+      ...operatorPrincipal,
+      scopes: new Set(['work.cron']),
+    });
+    const response = await POST(
+      new Request('https://lcars.test/api/work/v1/maintenance/tick', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ outboxProcessed: 0 });
+    expect(executeInboxSummaries).not.toHaveBeenCalled();
+    expect(after).toHaveBeenCalledTimes(1);
+    await after.mock.calls[0]?.[0]();
+    expect(executeInboxSummaries).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not schedule model work for an unauthorized tick', async () => {
+    const response = await POST(
+      new Request('https://lcars.test/api/work/v1/maintenance/tick', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(after).not.toHaveBeenCalled();
+  });
 });
