@@ -241,20 +241,6 @@ export function makeBuildBody(config, artifact, commitSha) {
   };
 }
 
-export function assertBackendContract(backend, expectedRuntime) {
-  const actualRuntime = backend?.runtime?.value;
-  if (actualRuntime !== expectedRuntime) {
-    throw new Error(
-      `App Hosting backend runtime is ${actualRuntime ?? '<missing>'}, expected ${expectedRuntime}`,
-    );
-  }
-  if (backend.automaticBaseImageUpdatesDisabled === true) {
-    throw new Error(
-      'App Hosting backend has automatic base image updates disabled',
-    );
-  }
-}
-
 function resourceId(name) {
   return name?.split('/').at(-1);
 }
@@ -490,7 +476,6 @@ function parseArgs(argv) {
     'region',
     'backend',
     'root-dir',
-    'runtime',
     'commit',
     'image',
   ]) {
@@ -526,8 +511,6 @@ async function main() {
   const buildName = `${parent}/builds/${buildId}`;
   const rolloutName = `${parent}/rollouts/${buildId}`;
 
-  const backend = await apiRequest('GET', parent);
-  assertBackendContract(backend, args.runtime);
   const artifact = args.image;
   const expectedRepository = `${args.region}-docker.pkg.dev/${args.project}/firebaseapphosting-images/console@sha256:`;
   if (!artifact.startsWith(expectedRepository)) {
