@@ -163,3 +163,6 @@ vitest.config.*.timestamp*
 
 # The global *.txt rule above would otherwise hide the bundled font license text.
 !design/assets/fonts/OFL.txt
+
+# Daemon-free Console deployment artifacts.
+.console-deploy/

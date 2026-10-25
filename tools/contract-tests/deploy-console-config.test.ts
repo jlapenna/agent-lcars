@@ -67,17 +67,23 @@ describe('console deployment workflow', () => {
       runConfig: { cpu: 1 },
       env: [],
     };
-    const artifact = `gs://sources/prebuilt/${buildId}.tar.gz`;
-    const body = makeBuildBody(config, artifact, 'apps/console', commit);
+    const artifact = `us-central1-docker.pkg.dev/agent-lcars/firebaseapphosting-images/console@sha256:${'1'.repeat(64)}`;
+    const body = makeBuildBody(config, artifact, commit);
 
     expect(buildId).toMatch(/^pb-a{12}-[0-9a-f]{12}$/u);
     expect(buildId.length).toBeLessThanOrEqual(30);
-    expect(body.source.locallyBuilt).toMatchObject({
-      userStorageUri: artifact,
-      rootDirectory: 'apps/console',
-      runCommand: 'node server.js',
-    });
+    expect(body.source).toEqual({ container: { image: artifact } });
     expect(body.labels['commit-sha']).toBe(commit);
+  });
+
+  it.each([
+    'gs://sources/source.tar.gz',
+    'us-central1-docker.pkg.dev/agent-lcars/firebaseapphosting-images/console:latest',
+    'docker.io/example/console@sha256:' + '1'.repeat(64),
+  ])('rejects a source requiring a build or mutable image: %s', (image) => {
+    expect(() =>
+      makeBuildBody({ runConfig: { cpu: 1 }, env: [] }, image, 'a'.repeat(40)),
+    ).toThrow(/immutable Artifact Registry/u);
   });
 
   it('fails closed on an unexpected App Hosting runtime contract', () => {
@@ -161,7 +167,7 @@ describe('console deployment workflow', () => {
   it('requires the exact prebuilt build to own all production traffic', () => {
     const buildName =
       'projects/agent-lcars/locations/us-central1/backends/agent-lcars/builds/pb-test';
-    const artifact = 'gs://sources/prebuilt/pb-test.tar.gz';
+    const artifact = `us-central1-docker.pkg.dev/agent-lcars/firebaseapphosting-images/console@sha256:${'1'.repeat(64)}`;
     const commit = 'b'.repeat(40);
     const [verdict] = rolloutVerdict({
       build: {
@@ -169,7 +175,7 @@ describe('console deployment workflow', () => {
         state: 'READY',
         image: 'us-docker.pkg.dev/image',
         labels: { 'commit-sha': commit },
-        source: { locallyBuilt: { userStorageUri: artifact } },
+        source: { container: { image: artifact } },
       },
       rollout: {
         build: buildName,

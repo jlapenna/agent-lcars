@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import { parse as parseYaml } from 'yaml';
 
 const execFileAsync = promisify(execFile);
-const API_ROOT = 'https://firebaseapphosting.googleapis.com/v1beta';
+const API_ROOT = 'https://firebaseapphosting.googleapis.com/v1';
 const TERMINAL_BUILD_STATES = new Set(['FAILED', 'SKIPPED', 'EXPIRED']);
 const TERMINAL_ROLLOUT_STATES = new Set([
   'FAILED',
@@ -214,23 +214,21 @@ export function buildIdFor(commitSha, runId, runAttempt = '1') {
   return `pb-${commitSha.slice(0, 12)}-${token}`;
 }
 
-export function makeBuildBody(config, artifact, rootDir, commitSha) {
+export function makeBuildBody(config, artifact, commitSha) {
+  if (
+    !/^[a-z0-9-]+-docker\.pkg\.dev\/[a-z0-9-]+\/[a-z0-9._-]+\/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$/u.test(
+      artifact,
+    )
+  ) {
+    throw new Error('Expected an immutable Artifact Registry container image');
+  }
   const labels = {
     'deployment-tool': 'agent-lcars',
     'commit-sha': commitSha,
   };
   return {
     displayName: `prebuilt ${commitSha.slice(0, 12)}`,
-    source: {
-      locallyBuilt: {
-        userStorageUri: artifact,
-        rootDirectory: rootDir,
-        runCommand: config.runCommand,
-        runConfig: config.runConfig,
-        env: config.env,
-        description: `Git commit ${commitSha}`,
-      },
-    },
+    source: { container: { image: artifact } },
     config: {
       runConfig: config.runConfig,
       env: config.env,
@@ -281,7 +279,7 @@ export function rolloutVerdict({
   if (build.labels?.['commit-sha'] !== expectedCommit) {
     return ['fail', 'Build commit provenance does not match the expected SHA'];
   }
-  const artifact = build.source?.locallyBuilt?.userStorageUri;
+  const artifact = build.source?.container?.image;
   if (artifact !== expectedArtifact) {
     return [
       'fail',
@@ -435,39 +433,6 @@ async function projectNumber(projectId) {
   return value;
 }
 
-async function uploadArchive({
-  archivePath,
-  projectId,
-  projectNumber: number,
-  region,
-  backendId,
-  buildId,
-}) {
-  const bucket = `firebaseapphosting-sources-${number}-${region.toLowerCase()}`;
-  await run('gcloud', [
-    'storage',
-    'buckets',
-    'update',
-    `gs://${bucket}`,
-    '--update-labels=used-by=cloudrun',
-    '--project',
-    projectId,
-    '--quiet',
-  ]);
-  const destination = `gs://${bucket}/prebuilt/${backendId}/${buildId}.tar.gz`;
-  await run('gcloud', [
-    'storage',
-    'cp',
-    archivePath,
-    destination,
-    '--project',
-    projectId,
-    '--content-type=application/octet-stream',
-    '--quiet',
-  ]);
-  return destination;
-}
-
 async function verifyRollout({
   parent,
   buildName,
@@ -527,6 +492,7 @@ function parseArgs(argv) {
     'root-dir',
     'runtime',
     'commit',
+    'image',
   ]) {
     if (!args[required]) {
       throw new Error(`Missing required argument --${required}`);
@@ -562,37 +528,12 @@ async function main() {
 
   const backend = await apiRequest('GET', parent);
   assertBackendContract(backend, args.runtime);
-  console.log(`[Deploy] Building prebuilt artifact: ${config.buildCommand}`);
-  await run('bash', ['-lc', config.buildCommand], {
-    cwd: repoRoot,
-    env: prepareBuildEnv(config),
-  });
-
-  const { archivePath, tempDirectory } = await createArchive(
-    repoRoot,
-    config.outputFiles,
-    buildId,
-  );
-  let artifact;
-  try {
-    artifact = await uploadArchive({
-      archivePath,
-      projectId: args.project,
-      projectNumber: number,
-      region: args.region,
-      backendId: args.backend,
-      buildId,
-    });
-  } finally {
-    await rm(tempDirectory, { recursive: true, force: true });
+  const artifact = args.image;
+  const expectedRepository = `${args.region}-docker.pkg.dev/${args.project}/firebaseapphosting-images/console@sha256:`;
+  if (!artifact.startsWith(expectedRepository)) {
+    throw new Error('Container is outside the console deployment repository');
   }
-
-  const buildBody = makeBuildBody(
-    config,
-    artifact,
-    args['root-dir'],
-    commitSha,
-  );
+  const buildBody = makeBuildBody(config, artifact, commitSha);
   console.log(`[Deploy] Registering App Hosting build ${buildId}`);
   const buildOperation = await apiRequest(
     'POST',

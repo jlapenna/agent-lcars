@@ -264,7 +264,6 @@ _fixture_datetime.datetime = _FixtureDateTime
 function executes(
   step: Step,
   current: string | undefined,
-  mode = 'managed',
   version = 'build-123',
 ) {
   return (
@@ -276,7 +275,6 @@ function executes(
           source: { outputs: { deploy_current: current } },
           release: { outputs: { version } },
         },
-        inputs: { build_mode: mode },
       },
       { timeout: 100 },
     ) === true
@@ -621,25 +619,18 @@ describe('serialized automatic deployment source fence', () => {
       for (const step of later) {
         expect({
           step: step.name ?? step.uses,
-          executes: executes(step, output, 'managed'),
-        }).toMatchObject({ executes: false });
-        expect({
-          step: step.name ?? step.uses,
-          executes: executes(step, output, 'prebuilt'),
+          executes: executes(step, output),
         }).toMatchObject({ executes: false });
       }
     },
   );
 
-  it('keeps the build path and missing-version annotation conditions after admission', () => {
+  it('admits the prebuilt image and annotates only a known release after admission', () => {
     const steps = workflow.jobs.deploy.steps;
-    const managed = steps.find((step) => step.id === 'managed')!;
     const prebuilt = steps.find((step) => step.id === 'prebuilt')!;
     const annotation = steps.find((step) => step.name?.startsWith('Annotate'))!;
-    expect(executes(managed, 'true', 'managed')).toBe(true);
-    expect(executes(managed, 'true', 'prebuilt')).toBe(false);
-    expect(executes(prebuilt, 'true', 'managed')).toBe(false);
-    expect(executes(prebuilt, 'true', 'prebuilt')).toBe(true);
-    expect(executes(annotation, 'true', 'managed', '')).toBe(false);
+    expect(executes(prebuilt, 'true')).toBe(true);
+    expect(executes(annotation, 'true', '')).toBe(false);
+    expect(executes(annotation, 'true', 'build-123')).toBe(true);
   });
 });
