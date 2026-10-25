@@ -1,0 +1,13 @@
+{
+  "name": "repository-jobs",
+  "projectType": "application",
+  "sourceRoot": "tools/jobs",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vitest run --config tools/jobs/vitest.config.mts"
+      }
+    }
+  }
+}
