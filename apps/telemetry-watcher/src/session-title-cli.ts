@@ -1,6 +1,9 @@
+import { spawnSync } from 'node:child_process';
+
 import {
   defaultHookCommandDependencies,
   executeHookCommand,
+  flusherBundlePath,
 } from './lib/hook/hook-command';
 import { executeIntegrationCommand } from './lib/hook/integration';
 import {
@@ -15,6 +18,19 @@ import { defaultWorkCommandDeps, executeWorkCommand } from './lib/work-command';
 // and, for status --watch, polls), so it runs inside an IIFE instead.
 void (async () => {
   const argv = process.argv.slice(2);
+  if (argv[0] === 'session' && argv[1] === 'archive') {
+    // Keep storage credentials and clients in the existing flusher bundle.
+    const child = spawnSync(
+      process.execPath,
+      [flusherBundlePath(), 'archive', ...argv.slice(2)],
+      {
+        stdio: 'inherit',
+        timeout: 120_000,
+      },
+    );
+    process.exitCode = child.status === 0 ? 0 : 1;
+    return;
+  }
   if (argv[0] === 'investigate') {
     const result = await executeInvestigateCommand(
       argv.slice(1),

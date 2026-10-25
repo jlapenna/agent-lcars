@@ -652,9 +652,11 @@ CLI sessions and dispatched runs.
   stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
   sessions use the same timeline only when their doc already carries an
   unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
-  not-enabled or unavailable. The host writer that created these archives was
-  deleted with the watcher daemon, so no new CLI archives are produced. See
-  [archived CLI transcripts](../../apps/telemetry-watcher/README.md#archived-cli-transcripts-reader-only).
+  not-enabled or unavailable. The explicit `lcars session archive --consent`
+  writer creates one current-session snapshot, with a seven-day reader expiry,
+  deployed lifecycle prerequisite and revocation. Installation and live qualification
+  remain pending; the retired watcher daemon is not restored. See
+  [archived CLI transcripts](../../apps/telemetry-watcher/README.md#archived-cli-transcripts).
 - **FE-SE-5 [Shipped]** A session's title is the transcript's own title
   (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
   `lcars session status` adds a status line. A session that drifts from its
@@ -805,12 +807,12 @@ their behavior is owned by the corresponding destination requirements above.
 R2 now identifies the live qualification gap rather than repeating shipped E2E
 coverage. Existing IDs are not reused.
 
-| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                                      | Priority |
-| --- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                                        | P0       |
-| R6  | Restore production of new CLI transcript archives (FE-SE-4)                      | Implement and qualify a writer with per-session consent and bounded retention; the retired writer cannot be enabled through configuration. Existing archive rendering and OpenCode support already exist | P1       |
-| R10 | Deliver external budget alerts (FE-CO-2)                                         | Qualify the operator-owned alert integration described in [Session spend](../cost-ledger.md); Console breakdowns and warning states already exist                                                        | P2       |
-| R11 | Deliver notifications when no Inbox tab is open                                  | Closed-tab push or digest remains proposed; [the notification contract](../inbox-notifications.md) owns the shipped opt-in, open-Inbox behavior                                                          | P3       |
+| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                             | Priority |
+| --- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                               | P0       |
+| R6  | Restore production of new CLI transcript archives (FE-SE-4)                      | Qualify the explicit CLI snapshot writer, deployed lifecycle/IAM, installed CLI/flusher pair and real consent/revocation journey. Existing archive rendering and OpenCode support already exist | P1       |
+| R10 | Deliver external budget alerts (FE-CO-2)                                         | Qualify the operator-owned alert integration described in [Session spend](../cost-ledger.md); Console breakdowns and warning states already exist                                               | P2       |
+| R11 | Deliver notifications when no Inbox tab is open                                  | Closed-tab push or digest remains proposed; [the notification contract](../inbox-notifications.md) owns the shipped opt-in, open-Inbox behavior                                                 | P3       |
 
 ## 11. Success metrics
 

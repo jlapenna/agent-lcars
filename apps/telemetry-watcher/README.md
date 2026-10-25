@@ -66,16 +66,40 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
    session id, or a failed download — a broken resume degrades to a fresh
    run rather than failing the dispatch.
 
-## Archived CLI transcripts (reader only)
+## Archived CLI transcripts
 
-The retired host daemon could archive individually consented CLI
-transcripts (`AGENT_TELEMETRY_CLI_ARCHIVE_POLICY`) and record a
-`cliTranscriptArchive` pointer on the session doc. That writer is deleted;
-nothing creates new CLI archives. The console still renders a doc that
-carries an unexpired pointer (bounded by `CLI_TRANSCRIPT_MAX_BYTES` in
-`@agent-lcars/telemetry`), and a hook write carries an existing pointer
-forward rather than clearing it. Stored objects remain subject to their
-bucket's lifecycle.
+`lcars session archive --consent /absolute/path/to/transcript.jsonl` creates
+one snapshot of the current Claude Code or Codex session. It uses the existing
+session-id environment resolution, host identity, repository allowlist and
+telemetry-writer credential. Consent is specific to this invocation: it does
+not enable background uploads, discover other sessions or change hook privacy.
+The session must already exist in telemetry on this host. Runner sessions,
+unsupported formats, mixed-session files, symlinks and files over 5 MiB are refused.
+
+`lcars session archive --revoke` immediately invalidates the current session's
+archive pointer and attempts deletion of its current snapshot. A capture token
+fences an upload racing revocation or another snapshot. Hook writes preserve
+this archive state, and task history/session details retain their existing
+reader behavior. Commands return nonzero on failure and redact provider errors.
+
+The existing flusher bundle owns Firestore and Storage access, keeping the
+interactive hook bundle free of those clients. The writer checks the deployed
+bucket metadata for the reviewed seven-day Delete rule covering all versions
+under `cli-consented-v1/` before uploading. Terraform owns that narrow lifecycle
+rule and the writer's bucket-metadata read grant; apply them through the owning
+operator workflow before installing the updated CLI/flusher pair. No old
+`AGENT_TELEMETRY_CLI_ARCHIVE_POLICY` setting restores the retired daemon.
+
+Console access expires seven days after capture. Object deletion is asynchronous;
+noncurrent versions and any bucket soft-delete retention can outlive console
+access. Revocation does not promise immediate physical erasure. See
+[Cloud Storage lifecycle behavior](https://docs.cloud.google.com/storage/docs/lifecycle).
+Existing runner archives and historical CLI object prefixes retain their policies.
+
+Rollout acceptance requires the deployed lifecycle/IAM receipt, the installed
+CLI/flusher bundle identities, one explicitly consented real session rendered
+in Console, and revocation verified through the same reader. Source tests do
+not establish those production outcomes.
 
 ## Session titles (issue #1212)
 
