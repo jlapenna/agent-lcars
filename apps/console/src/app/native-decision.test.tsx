@@ -242,7 +242,7 @@ describe('native decision Reply', () => {
   });
 });
 
-it('shows copyable command-first summary bullets beside the complete handoff, and hides them after resume', () => {
+it('discloses historical actions beside the complete handoff, and hides them after resume', () => {
   const actions = [
     { text: 'Inspect the deployment.', command: 'check --production' },
     { text: 'Send the output back to resume.' },
@@ -264,6 +264,8 @@ it('shows copyable command-first summary bullets beside the complete handoff, an
       <NativeDecisionDetail card={summarized} />
     </MantineProvider>,
   );
+  expect(screen.getByText('check --production')).not.toBeVisible();
+  fireEvent.click(screen.getByText('Earlier handoff · AI summary'));
   const summary = screen.getByRole('region', { name: 'Human work summary' });
   expect(within(summary).getAllByRole('listitem')).toHaveLength(2);
   expect(within(summary).getByText('check --production')).toBeVisible();

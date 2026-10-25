@@ -691,7 +691,11 @@ export function ActionItemCard({
           </Text>
         )}
         {item.actionTypes.includes('needs-human') && (
-          <HumanNeededSummary actions={item.humanNeededActions} />
+          <HumanNeededSummary
+            key={`${item.repo.owner}/${item.repo.name}#${item.number}:${JSON.stringify(item.humanNeededActions)}`}
+            actions={item.humanNeededActions}
+            historical
+          />
         )}
         {item.lastCommentBody && item.lastCommentUrl && (
           <ExpandableMarkdown
