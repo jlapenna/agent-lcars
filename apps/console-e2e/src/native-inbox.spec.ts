@@ -59,6 +59,10 @@ test.describe('native and GitHub human decisions', () => {
     await row.getByRole('link').click();
     await expect(page).toHaveURL(new RegExp(`item=work%3A${ID}`));
     const detail = page.getByTestId('native-decision-detail');
+    await expect(detail.getByText('Choose Firestore or GitHub')).toBeHidden();
+    await detail
+      .getByText('Earlier handoff · AI summary', { exact: true })
+      .click();
     const summary = detail.getByRole('region', { name: 'Human work summary' });
     await expect(summary.getByRole('listitem')).toHaveCount(2);
     await expect(summary).toContainText('Choose Firestore or GitHub');

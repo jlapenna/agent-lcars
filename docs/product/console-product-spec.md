@@ -371,8 +371,9 @@ the work that has stopped, and the work in flight.
     must retain their concluding decision request.
   - Keep the original title and complete source context accessible. Generated
     text is a reading aid, never authorization or an executable action.
-    A detail pane may also show the parked run's stored action summary;
-    it is a historical digest of that handoff, not another current decision.
+    A detail pane keeps the parked run's stored action summary in a collapsed
+    **Earlier handoff · AI summary** disclosure. Its historical label and
+    supersession notice remain when the current description is unavailable.
     Neither generated text overrides the latest original context. See the
     [summary types and precedence](../human-needed-summaries.md#summary-types-and-precedence)
     for their separate inputs, refresh behavior, and disagreement handling.
