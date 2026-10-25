@@ -129,7 +129,7 @@ describe('Inbox decision descriptions', () => {
         summarizeInboxDecision(inboxDecisionContext(card)),
       );
       const queued = summarizeInboxDecision(inboxDecisionContext(card));
-      await vi.advanceTimersByTimeAsync(8_000);
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(await queued).toBeUndefined();
       expect(fetchMock).toHaveBeenCalledTimes(4);
       pending.forEach((resolve) =>

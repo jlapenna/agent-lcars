@@ -46,14 +46,16 @@ Configure these three settings together on the Console runtime:
 | `AGENT_LCARS_HANDOFF_SUMMARY_MODEL`   | An endpoint-supported small model with JSON object response support        |
 | `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY` | Dedicated server credential from Secret Manager                            |
 
-This deployment explicitly uses the existing LiteLLM `gemini-flash` route at
+This deployment uses the existing local-only LiteLLM `default` route at
 `https://llm.jlapenna.net/chat/completions`. A dedicated virtual key restricted
-to that route is stored as `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY` in Secret Manager;
+to that route (without a paid fallback) is stored as `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY` in Secret Manager;
 Terraform owns its container, the Console runtime's access and metadata grants,
 and the App Hosting service agent's version-management grant. Provision
 the value before deploying the App Hosting binding. The route must return valid
-summary JSON within the eight-second budget; qualify provider changes with
-the application prompt before updating this binding.
+summary JSON within the 30-second budget; qualify provider changes with
+the application prompt before updating this binding. Local inference has zero
+provider charges. LiteLLM owns the dedicated key’s native $5 weekly cap and
+$4 soft threshold; historical paid calls remain in its spend ledger.
 
 There is no implicit provider, endpoint, or reuse of worker subscription
 credentials. With all three absent, Console keeps the existing full-handoff
@@ -64,7 +66,8 @@ put secret values in application configuration or Terraform.
 
 The request sends only the bounded final handoff message (up to 16 KiB),
 requests JSON with a 1,200-token output cap, permits no tools or redirects,
-and allows at most eight seconds with no retry. The timeout is shortened to
+disables model reasoning for this short extraction task,
+and allows at most 30 seconds with no retry. The timeout is shortened to
 leave five seconds before the effective run deadline for settlement; with five
 seconds or less remaining, Console skips the optional call. The streamed response
 is capped at 64 KiB before decoding or JSON parsing, and must contain exactly
@@ -101,7 +104,7 @@ at 600 characters, and is advisory rather than authorization.
 
 Descriptions stream independently behind Suspense so the queue and reply
 controls do not wait for the model. Up to four requests run concurrently per
-Console process; queue time shares the eight-second request budget. Next's
+Console process; queue time shares the 30-second request budget. Next's
 server cache keys descriptions by the bounded source content and its revision,
 so changed comments, handoffs or decision state select a new summary. Successful
 results revalidate after a day; unavailable results retry after a minute.

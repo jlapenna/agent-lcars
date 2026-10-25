@@ -380,6 +380,11 @@ the work that has stopped, and the work in flight.
   - Changed source content or decision state selects a fresh summary. Opening
     an item must not wait behind summarization of hidden rows, and generation
     must not delay navigation, reply, or other primary actions.
+  - Summarization uses local inference through LiteLLM’s `default` route,
+    restricted by its dedicated key, with no paid-model fallback. Local
+    inference incurs zero provider charges; LiteLLM owns budget accounting.
+    Generation has a shared 30-second deadline including queueing, with
+    reasoning disabled and run-settlement headroom preserved.
   - Provider failure, timeout, invalid output, or absent configuration leaves
     the Inbox usable. Native rows retain their original question or report;
     GitHub items retain their title and source context.
