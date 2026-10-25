@@ -4,14 +4,18 @@ import { Code, Stack, Text } from '@mantine/core';
 /** Model text stays inert; commands are copyable excerpts, never controls. */
 export function HumanNeededSummary({
   actions,
+  historical = false,
 }: {
   actions?: HumanNeededActions;
+  historical?: boolean;
 }) {
   if (!actions?.length) return null;
-  return (
+  const summary = (
     <Stack gap={4} component="section" aria-label="Human work summary">
       <Text size="sm" fw={600}>
-        Human work · AI summary
+        {historical
+          ? 'Actions requested when this run parked'
+          : 'Human work · AI summary'}
       </Text>
       <ul
         style={{
@@ -35,5 +39,20 @@ export function HumanNeededSummary({
         ))}
       </ul>
     </Stack>
+  );
+  if (!historical) return summary;
+  return (
+    <details className="lcars-disclosure">
+      <summary className="lcars-disclosure__summary">
+        Earlier handoff · AI summary
+      </summary>
+      <div className="lcars-disclosure__content">
+        <Text size="xs" c="dimmed">
+          Saved when this run parked. Later comments may supersede these
+          actions; check the latest original context before acting.
+        </Text>
+        {summary}
+      </div>
+    </details>
   );
 }

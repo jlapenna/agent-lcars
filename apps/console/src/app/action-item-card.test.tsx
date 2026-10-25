@@ -69,6 +69,47 @@ function renderCard(
 }
 
 describe('ActionItemCard', () => {
+  it('keeps superseded handoff actions historical while the current description and reply remain visible', () => {
+    const { rerender } = render(
+      <MantineProvider>
+        <ActionItemCard
+          item={makeItem({
+            actionTypes: ['needs-human'],
+            humanNeededActions: [{ text: 'Rotate the old key.' }],
+            lastCommentBody:
+              'The rotation is complete. Confirm the new deployment.',
+            lastCommentUrl:
+              'https://github.com/owner/repo/issues/1#issuecomment-1',
+          })}
+          decisionSummary="Confirm the new deployment."
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByLabelText('Inbox summary')).toHaveTextContent(
+      'Confirm the new deployment.',
+    );
+    expect(screen.getByText('Rotate the old key.')).not.toBeVisible();
+    fireEvent.click(screen.getByText('Earlier handoff · AI summary'));
+    expect(screen.getByText('Rotate the old key.')).toBeVisible();
+    rerender(
+      <MantineProvider>
+        <ActionItemCard
+          item={makeItem({
+            number: 2,
+            actionTypes: ['needs-human'],
+            humanNeededActions: [{ text: 'Inspect the earlier deployment.' }],
+          })}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.queryByLabelText('Inbox summary')).toBeNull();
+    expect(
+      screen.getByText('Inspect the earlier deployment.'),
+    ).not.toBeVisible();
+    fireEvent.click(screen.getByText('Earlier handoff · AI summary'));
+    expect(screen.getByText('Inspect the earlier deployment.')).toBeVisible();
+  });
+
   it('uses one reason badge and progressively discloses labels in workspace mode', () => {
     render(
       <MantineProvider>

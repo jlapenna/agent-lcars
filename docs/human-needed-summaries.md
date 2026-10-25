@@ -15,7 +15,9 @@ descriptions below.
 
 ## Summary types and precedence
 
-Two independent reading aids can appear together in an Inbox detail pane:
+The current decision description is the primary reading aid in an Inbox detail
+pane. A stored action summary is available in a collapsed **Earlier handoff ·
+AI summary** disclosure, explicitly identified as historical:
 
 | Reading aid                                         | Source and lifetime                                                                                                                      | Display                                                                                  |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -25,8 +27,9 @@ Two independent reading aids can appear together in an Inbox detail pane:
 The description explains the current decision (or summarizes a completed
 report). Stored actions preserve what the agent asked at the time it parked;
 a later comment can change the current decision without rewriting that run's
-historical actions. A new run does not inherit them. The UI renders the two
-independently; it does not compare them, merge them, or resolve disagreements.
+historical actions. A new run does not inherit them. The historical disclosure
+keeps old actions from competing with the current description, including when
+the description is unavailable. It does not compare or merge generated text.
 Neither summary is authoritative. If they overlap or disagree, use the latest
 original issue/comment/handoff and its explicit constraints, not whichever
 generated wording is more convenient. Full source context and controls remain
