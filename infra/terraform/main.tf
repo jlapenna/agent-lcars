@@ -323,6 +323,16 @@ resource "google_secret_manager_secret_iam_member" "github_app_webhook_configura
   member    = "serviceAccount:${google_service_account.github_app_webhook_configurator.email}"
 }
 
+# App Hosting imports the already built image; the normal workflow uploads it
+# to this existing Firebase-managed repository without creating a Cloud Build.
+resource "google_artifact_registry_repository_iam_member" "console_image_uploader" {
+  project    = var.project_id
+  location   = var.region
+  repository = "firebaseapphosting-images"
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
 resource "google_project_iam_member" "deployer_roles" {
   for_each = toset([
     "roles/firebase.admin",

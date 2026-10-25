@@ -177,7 +177,7 @@ when a caller omits or empties the legacy override variables.
 
 | Variable                          | This deployment                                                                  | Used by                                                                                         |
 | --------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `CI_RUNNER_LABEL`                 | `agent-lcars-ci`                                                                 | ci (verify, e2e), local App Hosting build/deploy — every self-hosted job                        |
+| `CI_RUNNER_LABEL`                 | `agent-lcars-ci`                                                                 | ci (verify, e2e) — every self-hosted job                                                        |
 | `E2E_ENABLED`                     | `true`                                                                           | CI E2E operational kill switch; only the exact value `true` enables the job                     |
 | `GCP_PROJECT_ID`                  | `agent-lcars`                                                                    | Console credential brokering                                                                    |
 | `GCP_WIF_PROVIDER`                | `projects/611425338852/…/providers/github`                                       | Console-adjacent GitHub workflows only                                                          |
@@ -194,8 +194,13 @@ when a caller omits or empties the legacy override variables.
 | `AGENT_BOT_LOGINS`                | `["claude[bot]","agent-lcars[bot]"]`                                             | agent-automerge — REST-shaped, see `docs/bot-identity-formats.md`                               |
 | `NX_CACHE_URL`                    | homelab Nx cache                                                                 | CI jobs                                                                                         |
 
-`deploy-console.yml` runs its GitHub-only Verify admission check on
-`ubuntu-latest`; only admitted runs enter the shared deployment lock. Inside
+`deploy-console.yml` runs admission, native container construction, and
+App Hosting import as three separate `ubuntu-slim` jobs. Construction and
+import each use the lane's 1 CPU, 5 GiB RAM, 14 GiB storage envelope and a
+15-minute deadline. The build uploads an immutable container artifact;
+the deploy job verifies it before authenticating and imports its registry
+digest without a managed Cloud Build. Only admitted runs enter the shared
+deployment lock. Inside
 that lock, automatic sources must belong to current main history and move
 forward from the last actual rollout. A validated ancestor can deploy while a
 newer tip waits for CI. The same fence applies to `recovered-ci`; explicit

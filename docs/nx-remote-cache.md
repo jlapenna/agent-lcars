@@ -48,16 +48,19 @@ if a build environment supplies an L1 entry, Nx must restore the complete
 declared output instead of inheriting stale files. It is not, by itself, a
 persistence mechanism.
 
-The normal production path uses Firebase's managed App Hosting build. It starts
-cold for the reasons measured above, so the fleet's private-LAN L2 is
-deliberately not part of the production build contract.
+The production deployment workflow builds a native amd64 standalone Console and
+packages it with a pinned Node 24 base using Crane, without a Docker daemon or
+Cloud Build. Its independent `ubuntu-slim` construction and import jobs each
+retain that lane's 1 CPU / 5 GiB / 14 GiB / 15-minute ceiling. The private-LAN L2
+is not a production prerequisite; dependencies and the complete bundle are
+prepared inside the construction job.
 
-`workflow_dispatch` retains `build_mode: prebuilt` only as an explicit
-diagnostic option while the App Hosting prebuilt importer is repaired (#1128).
-That path runs the declared build command on the trusted `agent-lcars-ci` runner,
-uploads only `outputFiles.serverApp.include`, and registers a `locallyBuilt`
-artifact. Its cache and exact-traffic guarantees do not describe the default
-managed production path.
+The importer verifies the exact artifact, uploads its immutable image to the
+existing `firebaseapphosting-images` repository, and registers App Hosting's
+`source.container.image`. Runtime configuration and secret references still
+come from `apphosting.yaml`. The existing serialized source-order guard and
+exact-build, rollout and 100% traffic checks remain the deployment boundary.
+The former managed-build and `locallyBuilt` archive production paths are retired.
 
 ## How a checkout gets configured
 
