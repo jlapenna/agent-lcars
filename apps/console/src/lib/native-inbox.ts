@@ -36,6 +36,7 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
+      if (work.spec.pipeline === 'inbox-summary') continue;
       const report = nativeReportRun(work);
       const freshReport =
         report !== undefined &&

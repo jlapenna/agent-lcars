@@ -1,4 +1,5 @@
 import type { TaskId } from '@agent-lcars/orchestrator';
+import { workRepository } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
 import {
   Anchor,
@@ -76,14 +77,37 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
         <TableTbody>
           {runs.map((run) => (
             <TableTr key={run.runId} id={`run-${run.runId}`}>
-              <TableTd>{run.runId}</TableTd>
+              <TableTd>
+                {run.runId}
+                {run.sourceRevision && (
+                  <details>
+                    <summary>
+                      Input revision · attempt {run.revisionAttempt}
+                    </summary>
+                    <Text size="xs">{run.sourceRevision.key}</Text>
+                    <pre
+                      style={{
+                        whiteSpace: 'pre-wrap',
+                        overflowWrap: 'anywhere',
+                      }}
+                    >
+                      {JSON.stringify(run.sourceRevision.input, null, 2)}
+                    </pre>
+                  </details>
+                )}
+              </TableTd>
               <TableTd>
                 {run.state}
                 <ExecutionStatus run={run} />
               </TableTd>
               <TableTd>
                 <Stack gap={0}>
-                  <Text size="xs">Queue executor · {run.pipeline}</Text>
+                  <Text size="xs">
+                    {run.pipeline === 'inbox-summary'
+                      ? 'Model call'
+                      : 'Queue executor'}{' '}
+                    · {run.pipeline}
+                  </Text>
                   {run.queue?.state === 'claimed' && run.queue.claimedBy && (
                     <Text size="xs" c="dimmed">
                       claimed by {run.queue.claimedBy}
@@ -201,7 +225,7 @@ export function TaskDetailHistory({
           {item.state}
         </Badge>
         <Text size="sm" c="dimmed">
-          {item.spec.target.repo} · effective provider {effectivePipeline}
+          {workRepository(item.spec)} · effective provider {effectivePipeline}
         </Text>
         <Text size="xs" c="dimmed">
           {native ? 'Native work' : `GitHub · ${anchor.repo}#${anchor.issue}`} ·{' '}

@@ -9,7 +9,9 @@ import {
   LIFECYCLE_METRICS_WINDOW_SECONDS,
   lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
+import { workRepository } from '@agent-lcars/work';
 import {
+  inboxSummarySpecSchema,
   itemsContract,
   type MaintenanceTickOutput,
   workPayloadSchema,
@@ -137,7 +139,8 @@ export const workRouter = os.router({
           pipeline: run.pipeline as WorkSpec['pipeline'],
         }) !== undefined ||
         (context.principal.sourceRepository !== undefined &&
-          context.principal.sourceRepository !== payload.data.spec.target.repo)
+          context.principal.sourceRepository !==
+            workRepository(payload.data.spec))
       )
         throw errors.FORBIDDEN();
       const decision = await context.runtime.orchestrator.observeDelivery(
@@ -153,14 +156,15 @@ export const workRouter = os.router({
           const currentWork = workPayloadSchema.safeParse(currentTask.work);
           if (
             !currentWork.success ||
-            currentTask.delivery?.repo !== currentWork.data.spec.target.repo ||
+            currentTask.delivery?.repo !==
+              workRepository(currentWork.data.spec) ||
             forbiddenReason(context.principal, {
               ...currentWork.data.spec,
               pipeline: currentRun.pipeline as WorkSpec['pipeline'],
             }) !== undefined ||
             (context.principal.sourceRepository !== undefined &&
               context.principal.sourceRepository !==
-                currentWork.data.spec.target.repo)
+                workRepository(currentWork.data.spec))
           )
             return false;
           const grant = grantForPrincipal(context.principal.principal);
@@ -311,7 +315,7 @@ export const workRouter = os.router({
       )
       .filter(
         (item) =>
-          input.repo === undefined || item.spec.target.repo === input.repo,
+          input.repo === undefined || workRepository(item.spec) === input.repo,
       )
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, input.limit);
@@ -332,6 +336,10 @@ export const workRouter = os.router({
   cancel: operator.cancel.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
+    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+      throw errors.CONFLICT({
+        message: 'Generated summary work is read-only.',
+      });
     const runs = await context.runtime.store.listRuns({ workId: input.id });
     const state = deriveItemState(task.task, runs);
     if (state === 'done' || state === 'canceled') {
@@ -370,6 +378,10 @@ export const workRouter = os.router({
   update: operator.update.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
+    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+      throw errors.CONFLICT({
+        message: 'Generated summary work is read-only.',
+      });
     const stored = workPayloadSchema.parse(task.task.work);
     // Only the prose is editable: pipeline and target are granted
     // capabilities, so changing them would need the re-authorization
@@ -396,6 +408,10 @@ export const workRouter = os.router({
     async ({ input, context, errors }) => {
       const task = await context.runtime.store.readTask({ workId: input.id });
       if (task === undefined) throw errors.NOT_FOUND();
+      if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+        throw errors.CONFLICT({
+          message: 'Generated summary work is read-only.',
+        });
       const runs = await context.runtime.store.listRuns({ workId: input.id });
       const state = deriveItemState(task.task, runs);
       if (state !== 'parked' && state !== 'failed') {
@@ -512,6 +528,10 @@ export const workRouter = os.router({
     // same way `get` does.
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
+    if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+      throw errors.CONFLICT({
+        message: 'Generated summary work is read-only.',
+      });
     return {
       ...(await view(context, input.id, task.task)),
       admittedRunId: outcome.runId,

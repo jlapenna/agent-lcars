@@ -13,6 +13,7 @@ import type { ReplyAction } from './work/work-actions';
 /** The standalone master/detail surface for work awaiting a decision. */
 export function DecisionInbox({
   yourQueue,
+  sourceObservations,
   selectedCard,
   selectedItemKey,
   mobileDataFreshness,
@@ -23,6 +24,10 @@ export function DecisionInbox({
   toolbarEnd,
 }: {
   yourQueue: InboxCard[];
+  sourceObservations: {
+    native: Record<string, string>;
+    github: Record<string, string>;
+  };
   selectedCard?: InboxCard;
   selectedItemKey?: string;
   mobileDataFreshness?: ReactNode;
@@ -38,12 +43,22 @@ export function DecisionInbox({
     <QueueWorkspace
       cards={renderInboxListMarkdown(yourQueue, selectedItemKey).map((card) =>
         !selectedItemKey || inboxCardKey(card) === selectedItemKey
-          ? withInboxDecisionSummary(card)
+          ? withInboxDecisionSummary(
+              card,
+              'work' in card
+                ? sourceObservations.native
+                : sourceObservations.github,
+            )
           : card,
       )}
       selectedCard={
         selectedCard &&
-        withInboxDecisionSummary(renderInboxCardMarkdown(selectedCard))
+        withInboxDecisionSummary(
+          renderInboxCardMarkdown(selectedCard),
+          'work' in selectedCard
+            ? sourceObservations.native
+            : sourceObservations.github,
+        )
       }
       selectedItemKey={selectedItemKey}
       watchedRepos={watchedRepos}

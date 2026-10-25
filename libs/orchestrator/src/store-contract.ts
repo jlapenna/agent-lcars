@@ -86,6 +86,142 @@ export function runOrchestratorStoreContract(
   makeStore: () => OrchestratorStore | Promise<OrchestratorStore>,
 ): void {
   describe(`OrchestratorStore contract: ${name}`, () => {
+    it('binds a source to one time-ordered Work identity under concurrent admission', async () => {
+      const store = await makeStore();
+      const ids = await Promise.all([
+        store.resolveSourceWorkId(
+          'inbox-summary:owner/repo#1',
+          '01J5Z3K9QX8F0N2B4V6C8D1E3G',
+        ),
+        store.resolveSourceWorkId(
+          'inbox-summary:owner/repo#1',
+          '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+        ),
+      ]);
+      expect(ids[0]).toBe(ids[1]);
+      expect(
+        await store.resolveSourceWorkId(
+          'inbox-summary:owner/repo#1',
+          '01J5Z3K9QX8F0N2B4V6C8D1E3J',
+        ),
+      ).toBe(ids[0]);
+    });
+
+    it('shares the finite revision budget between provider failures and expired claims', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3J' };
+      const admitted = await orchestrator.request({
+        taskId,
+        requestId: 'input',
+        pipeline: 'inbox-summary',
+        work: TASK_WORK,
+        sourceRevision: { key: 'input', input: { context: 'input' } },
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      const failure = await orchestrator.report(decidedRun(admitted).runId, {
+        ok: false,
+      });
+      if (isRefusal(failure)) throw new Error(failure.reason);
+      clock.advanceMinutes(121);
+      expect((await orchestrator.sweepExpired()).retried).toHaveLength(1);
+      clock.advanceMinutes(121);
+      expect((await orchestrator.sweepExpired()).retried).toHaveLength(0);
+      expect((await store.readTask(taskId))?.task.activeRunId).toBeUndefined();
+      expect(await store.listRuns(taskId)).toHaveLength(3);
+    });
+
+    it('coalesces source revisions durably and fences stale publication across clients', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const first = new Orchestrator(store, clock);
+      const second = new Orchestrator(store, clock);
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' };
+      const request = (owner: Orchestrator, key: string) =>
+        owner.request({
+          taskId,
+          requestId: key,
+          pipeline: 'inbox-summary',
+          work: TASK_WORK,
+          sourceRevision: { key, input: { context: key } },
+        });
+      const a = await request(first, 'a');
+      if (isRefusal(a)) throw new Error(a.reason);
+      const runA = decidedRun(a);
+      await store.enqueueRun({ runId: runA.runId, now: T0 });
+      await first.confirmDispatch(runA.runId);
+      const claimed = await store.claimQueuedRun({
+        pipelines: ['inbox-summary'],
+        now: T0,
+        claimedBy: 'summary',
+        tokenHash: 'a'.repeat(64),
+      });
+      expect(claimed?.runId).toBe(runA.runId);
+      await request(second, 'b');
+      await request(first, 'c');
+      expect(await request(second, 'b')).toMatchObject({
+        refused: true,
+        reason: 'duplicate-request',
+      });
+      const done = await first.report(
+        runA.runId,
+        { ok: true, message: 'obsolete' },
+        'a'.repeat(64),
+      );
+      if (isRefusal(done)) throw new Error(done.reason);
+      expect(done.run?.result).toEqual({
+        ok: true,
+        summary: 'superseded',
+        message: 'obsolete',
+      });
+      expect(done.additionalRuns).toHaveLength(1);
+      expect(done.additionalRuns?.[0]?.sourceRevision).toEqual({
+        key: 'c',
+        input: { context: 'c' },
+      });
+      const history = await store.listRuns(taskId);
+      expect(history.map((run) => run.sourceRevision?.key)).toEqual(['a', 'c']);
+      expect((await store.readTask(taskId))?.task.activeRunId).toBe(
+        done.additionalRuns?.[0]?.runId,
+      );
+      expect(await request(second, 'a')).toMatchObject({
+        refused: true,
+        reason: 'duplicate-request',
+      });
+    });
+
+    it('finishes a source revision after its finite failed model attempts', async () => {
+      const store = await makeStore();
+      const orchestrator = new Orchestrator(store, new TestClock(T0));
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3H' };
+      const admitted = await orchestrator.request({
+        taskId,
+        requestId: 'input',
+        pipeline: 'inbox-summary',
+        work: TASK_WORK,
+        sourceRevision: { key: 'input', input: { context: 'input' } },
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      let run = decidedRun(admitted);
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const result = await orchestrator.report(run.runId, {
+          ok: false,
+          summary: 'summary-unavailable',
+        });
+        if (isRefusal(result)) throw new Error(result.reason);
+        expect(result.run?.result?.ok).toBe(false);
+        if (attempt < 3) {
+          expect(result.additionalRuns).toHaveLength(1);
+          const successor = result.additionalRuns?.[0];
+          if (successor === undefined) throw new Error('Missing retry');
+          run = successor;
+          expect(run.sourceRevision?.key).toBe('input');
+        } else expect(result.task.activeRunId).toBeUndefined();
+      }
+      expect(await store.listRuns(taskId)).toHaveLength(3);
+    });
+
     async function fixture() {
       const clock = new TestClock(T0);
       const store = await makeStore();

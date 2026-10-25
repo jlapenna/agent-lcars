@@ -11,7 +11,7 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
-import { workPayloadSchema } from '@agent-lcars/work';
+import { inboxSummarySpecSchema, workPayloadSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
@@ -521,6 +521,14 @@ async function handleReportOutcome(
     isWorkAnchor(run.task) || run.state === 'lost'
       ? (await store.readTask(run.task))?.task
       : undefined;
+  if (
+    task !== undefined &&
+    inboxSummarySpecSchema.safeParse(task.work['spec']).success
+  ) {
+    await settleClaim(deps, entry, 'done');
+    result.reported.push(run.runId);
+    return;
+  }
   let target: AnchorTarget;
   try {
     target = anchorTarget(run, task);

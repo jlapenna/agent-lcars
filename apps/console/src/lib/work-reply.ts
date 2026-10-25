@@ -13,6 +13,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
+  inboxSummarySpecSchema,
   WORK_DESCRIPTION_MAX,
   workPayloadSchema,
   type WorkSpec,
@@ -169,6 +170,12 @@ export async function requestReply(
   if (task === undefined)
     return { ok: false, code: 'NOT_FOUND', message: 'no such item' };
 
+  if (inboxSummarySpecSchema.safeParse(task.task.work['spec']).success)
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Internal summary work does not accept coding replies',
+    };
   const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
 

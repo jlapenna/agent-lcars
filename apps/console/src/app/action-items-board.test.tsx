@@ -74,7 +74,13 @@ describe('Decision Inbox and Bridge surfaces', () => {
   it('shows the empty-queue message when nothing needs the maintainer', () => {
     render(
       <MantineProvider>
-        <DecisionInbox yourQueue={[]} />
+        <DecisionInbox
+          sourceObservations={{
+            native: { source: '2026-10-25T00:00:00Z' },
+            github: { source: '2026-10-25T00:00:00Z' },
+          }}
+          yourQueue={[]}
+        />
       </MantineProvider>,
     );
     expect(screen.getByText('Nothing needs you right now.')).toBeTruthy();
@@ -84,6 +90,10 @@ describe('Decision Inbox and Bridge surfaces', () => {
     render(
       <MantineProvider>
         <DecisionInbox
+          sourceObservations={{
+            native: { source: '2026-10-25T00:00:00Z' },
+            github: { source: '2026-10-25T00:00:00Z' },
+          }}
           yourQueue={[
             card(
               makeItem({

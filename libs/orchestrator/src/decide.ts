@@ -20,6 +20,7 @@ import {
   taskKey,
   type WorkAnchor,
   type WorkPayload,
+  type WorkRevision,
 } from './model';
 
 /**
@@ -183,6 +184,8 @@ export interface RequestRunInput {
   intervention?: OperationalIntervention;
   work?: WorkPayload;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
+  sourceRevision?: WorkRevision;
+  revisionAttempt?: number;
 }
 
 /**
@@ -241,6 +244,14 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
       : { delivery: input.task.delivery }),
     // Written once: only the request that creates the task may set `work`.
     work,
+    ...(input.sourceRevision === undefined
+      ? {}
+      : {
+          desiredRevision: input.sourceRevision,
+          ...(input.sourceRevision.observedAt === undefined
+            ? {}
+            : { sourceObservedAt: input.sourceRevision.observedAt }),
+        }),
     ...(input.task?.providerRouting === undefined
       ? {}
       : { providerRouting: input.task.providerRouting }),
@@ -257,7 +268,120 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     params: input.params,
     intervention: input.intervention,
     providerFallback: input.providerFallback,
+    sourceRevision: input.sourceRevision,
+    revisionAttempt: input.revisionAttempt,
   });
+}
+
+/** Coalesce source updates under the existing task mutex. An unclaimed
+ * attempt can be superseded; an executing claim retains ownership until it
+ * settles. Admission receipts in the store preserve even skipped revisions. */
+export function requestRevisionRun(
+  input: RequestRunInput & { sourceRevision: WorkRevision },
+): Decision | Refusal {
+  const { task, activeRun, sourceRevision, now } = input;
+  if (task?.closedAt !== undefined) return refused('task-closed');
+  if (task !== undefined && sourceRevision.observedAt !== undefined) {
+    const older = Object.entries(task.sourceObservedAt ?? {}).some(
+      ([source, observedAt]) =>
+        (sourceRevision.observedAt?.[source] ?? '') < observedAt,
+    );
+    if (older) return { task, outbox: [] };
+    if (
+      JSON.stringify(task.desiredRevision?.input) ===
+      JSON.stringify(sourceRevision.input)
+    ) {
+      if (
+        JSON.stringify(task.sourceObservedAt) ===
+        JSON.stringify(sourceRevision.observedAt)
+      )
+        return refused('duplicate-request');
+      return {
+        task: { ...task, sourceObservedAt: sourceRevision.observedAt },
+        outbox: [],
+      };
+    }
+    if (
+      task.sourceObservedAt !== undefined &&
+      !Object.entries(sourceRevision.observedAt).some(
+        ([source, observedAt]) =>
+          observedAt > (task.sourceObservedAt?.[source] ?? ''),
+      )
+    )
+      return { task, outbox: [] };
+  }
+  if (
+    task !== undefined &&
+    activeRun !== undefined &&
+    isLive(activeRun.state)
+  ) {
+    const desiredTask = {
+      ...task,
+      desiredRevision: sourceRevision,
+      ...(sourceRevision.observedAt === undefined
+        ? {}
+        : { sourceObservedAt: sourceRevision.observedAt }),
+      updatedAt: now,
+    };
+    if (activeRun.queue?.state === 'claimed')
+      return { task: desiredTask, outbox: [] };
+    const canceled = cancelRun({
+      now,
+      task: desiredTask,
+      run: activeRun,
+      note: 'Superseded by a newer source revision',
+    });
+    if (isRefusal(canceled)) return canceled;
+    const next = requestRun({
+      ...input,
+      task: canceled.task,
+      activeRun: undefined,
+    });
+    if (isRefusal(next)) return next;
+    return {
+      ...next,
+      additionalRuns: [decidedRun(canceled)],
+      outbox: [...canceled.outbox, ...next.outbox],
+    };
+  }
+  return requestRun(input);
+}
+
+/** Settlement and successor admission share a transaction; a crash cannot
+ * leave the desired input stranded after its predecessor releases the claim. */
+function advanceSourceRevision(decision: Decision, now: string): Decision {
+  const run = decidedRun(decision);
+  const desired = decision.task.desiredRevision;
+  if (
+    run.sourceRevision === undefined ||
+    desired === undefined ||
+    decision.task.closedAt !== undefined
+  )
+    return decision;
+  const superseded = run.sourceRevision.key !== desired.key;
+  const retry =
+    !superseded &&
+    run.state === 'finished' &&
+    run.result?.ok === false &&
+    (run.revisionAttempt ?? 1) <= MAX_AUTO_RETRIES;
+  if (!superseded && !retry) return decision;
+  const next = mintRun({
+    now,
+    taskId: run.task,
+    task: resetLossBudgets(decision.task),
+    requestId: superseded ? desired.key : `retry:${run.runId}`,
+    requestSource: superseded ? 'caller' : 'auto-retry',
+    pipeline: run.pipeline,
+    priority: run.priority,
+    sourceRevision: desired,
+    revisionAttempt: superseded ? 1 : (run.revisionAttempt ?? 1) + 1,
+  });
+  return {
+    ...decision,
+    task: next.task,
+    additionalRuns: [decidedRun(next)],
+    outbox: [...decision.outbox, ...next.outbox],
+  };
 }
 
 /** Starts a fresh run for a task that has no live run and takes the lock. */
@@ -272,6 +396,8 @@ function mintRun(input: {
   params?: Record<string, string>;
   intervention?: OperationalIntervention;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
+  sourceRevision?: WorkRevision;
+  revisionAttempt?: number;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -285,6 +411,12 @@ function mintRun(input: {
     priority: queuePrioritySchema.parse(input.priority ?? 'normal'),
     requestId,
     requestSource: requestSource ?? 'caller',
+    ...(input.sourceRevision === undefined
+      ? {}
+      : {
+          sourceRevision: input.sourceRevision,
+          revisionAttempt: input.revisionAttempt ?? 1,
+        }),
     ...(params === undefined ? {} : { params }),
     ...(input.providerFallback === undefined ||
     input.providerFallback.allowedPipelines.length === 0
@@ -586,7 +718,11 @@ export function reportResult(input: {
   const settled: Run = {
     ...withoutPending,
     state: 'finished',
-    result,
+    result:
+      run.sourceRevision !== undefined &&
+      task.desiredRevision?.key !== run.sourceRevision.key
+        ? { ...result, summary: 'superseded' }
+        : result,
     events: [...run.events, { at: now, to: 'finished', by: 'report' }],
     updatedAt: now,
   };
@@ -620,7 +756,7 @@ export function reportResult(input: {
       outbox: [...decision.outbox, ...deliveryOutbox],
     };
   }
-  return decision;
+  return advanceSourceRevision(decision, now);
 }
 
 /** An operator stops a run and releases the lock; reports onward. */
@@ -921,10 +1057,17 @@ function settleLostAndRetry(
 ): Decision | Refusal {
   if (lossRefused(loss)) return loss;
   const lost = loss.decision;
+  const desired = advanceSourceRevision(lost, input.now);
+  if (desired !== lost) return desired;
   if (!loss.recovered && lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
     return lost;
   }
   const lostRun = decidedRun(lost);
+  if (
+    lostRun.sourceRevision !== undefined &&
+    (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES
+  )
+    return lost;
   const retry = mintRun({
     now: input.now,
     taskId: lostRun.task,
@@ -933,6 +1076,11 @@ function settleLostAndRetry(
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
     priority: lostRun.priority ?? 'normal',
+    sourceRevision: lostRun.sourceRevision,
+    revisionAttempt:
+      lostRun.sourceRevision === undefined
+        ? undefined
+        : (lostRun.revisionAttempt ?? 1) + 1,
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}

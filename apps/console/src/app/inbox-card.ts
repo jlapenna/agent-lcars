@@ -1,3 +1,4 @@
+import { workRepository } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import type { ReactNode } from 'react';
 
@@ -122,7 +123,7 @@ export function inboxDetailMarkdownKeys(
 
 export function inboxCardMetadata(card: InboxCard) {
   if ('work' in card) {
-    const [owner, name] = card.work.spec.target.repo.split('/');
+    const [owner, name] = workRepository(card.work.spec).split('/');
     return {
       repo: { owner, name },
       updatedAt: nativeCardTime(card),
@@ -131,7 +132,7 @@ export function inboxCardMetadata(card: InboxCard) {
         card.kind === 'report' ? 'report-ready' : 'needs-human',
       ] as const,
       rank: card.kind === 'report' ? actionTypeMeta('report-ready').rank : 0,
-      search: `${card.work.id} ${card.work.spec.title} ${card.work.spec.target.repo} ${nativeCardText(card)}`,
+      search: `${card.work.id} ${card.work.spec.title} ${workRepository(card.work.spec)} ${nativeCardText(card)}`,
     };
   }
   return {

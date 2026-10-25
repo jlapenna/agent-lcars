@@ -10,26 +10,32 @@ import { type InboxCard, nativeCardText } from './inbox-card';
 
 export async function InboxDecisionDescription({
   context,
+  observedAt,
   fallback,
 }: {
   context: string;
+  observedAt: Record<string, string>;
   fallback: string;
 }) {
-  const description = await getInboxDecisionSummary(context);
-  return description ? (
+  const summary = await getInboxDecisionSummary(context, observedAt);
+  return summary?.description ? (
     <span title="AI-generated summary; verify against the original context">
-      {description}
+      {summary.description}
     </span>
   ) : (
     <span role="status" aria-label="Decision summary">
-      Summary unavailable. {fallback}
+      {summary?.pending ? 'Generating summary…' : 'Summary unavailable.'}{' '}
+      {fallback}
     </span>
   );
 }
 
 /** Server-rendered slot: the queue and its reply controls remain usable while
  * the optional model call is pending. Never ship credentials to the client. */
-export function withInboxDecisionSummary(card: InboxCard): InboxCard {
+export function withInboxDecisionSummary(
+  card: InboxCard,
+  observedAt: Record<string, string>,
+): InboxCard {
   const fallback =
     'work' in card
       ? nativeCardText(card)
@@ -46,6 +52,7 @@ export function withInboxDecisionSummary(card: InboxCard): InboxCard {
       >
         <InboxDecisionDescription
           context={inboxDecisionContext(card)}
+          observedAt={observedAt}
           fallback={fallback}
         />
       </Suspense>

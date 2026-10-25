@@ -20,6 +20,7 @@ import type {
   Run,
   Task,
   TaskId,
+  WorkRevision,
 } from './model';
 import { taskKey } from './model';
 import { providerIsCoolingDown } from './provider-cooldown';
@@ -276,6 +277,7 @@ export interface OrchestratorStore {
      * history lookup and any new Run. */
     requestBinding?: RequestBinding;
     readProviderRouting?: boolean;
+    sourceRevision?: WorkRevision;
     decide(state: RequestTransactionState): Decision | Refusal;
   }): Promise<Decision | Refusal>;
 
@@ -417,6 +419,12 @@ export interface OrchestratorStore {
    * task past the newest `limit`, however that page's items were later
    * filtered).
    */
+  /** Stable source identity mapped once to a time-ordered native Work ID. */
+  resolveSourceWorkId(
+    sourceKey: string,
+    candidateWorkId: string,
+  ): Promise<string>;
+
   listNativeTasks(limit?: number, before?: string): Promise<VersionedTask[]>;
 
   /**
@@ -551,6 +559,7 @@ export interface RequestTransactionState {
   readonly requestId: string;
   /** A previous run for this task with the resolved request id. */
   readonly previousRun: Run | undefined;
+  readonly previousSourceRevision?: WorkRevision;
 }
 
 /** Fail closed rather than omit an owner from label routing. */

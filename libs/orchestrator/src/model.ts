@@ -451,6 +451,34 @@ export const deliveryBindingSchema = z.strictObject({
 });
 export type DeliveryBinding = z.infer<typeof deliveryBindingSchema>;
 
+/**
+ * A native work item's payload -- who asked and what for. The orchestrator
+ * stores it and never interprets it, exactly as it treats `Run.params`;
+ * `libs/work` owns the shape. Bounded so a runaway caller cannot bloat the
+ * task document towards Firestore's 1 MiB limit.
+ */
+export const WORK_PAYLOAD_MAX_BYTES = 32_768;
+
+export const workPayloadSchema = z
+  .record(z.string().max(64), z.unknown())
+  .refine(
+    (value) =>
+      new TextEncoder().encode(JSON.stringify(value)).length <=
+      WORK_PAYLOAD_MAX_BYTES,
+    {
+      message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
+    },
+  );
+export type WorkPayload = z.infer<typeof workPayloadSchema>;
+
+/** An immutable source revision; retries retain its key and input. */
+export const workRevisionSchema = z.strictObject({
+  key: z.string().min(1).max(128),
+  input: workPayloadSchema,
+  observedAt: z.record(z.string(), z.iso.datetime()).optional(),
+});
+export type WorkRevision = z.infer<typeof workRevisionSchema>;
+
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
@@ -471,6 +499,8 @@ export const runSchema = z.strictObject({
    *  persisted here without a later `runSchema.parse` read throwing on the
    *  run that stored it. */
   params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
+  sourceRevision: workRevisionSchema.optional(),
+  revisionAttempt: z.number().int().positive().optional(),
   /** Explicit provider alternatives and the exact fresh-attempt provenance. */
   providerFallback: providerFallbackSchema.optional(),
   /** Queue claim state -- see `runQueueSchema`. */
@@ -506,26 +536,6 @@ export function runRequestHistoryKey(
   return requestHistoryKey(run.requestSource, run.requestId);
 }
 
-/**
- * A native work item's payload -- who asked and what for. The orchestrator
- * stores it and never interprets it, exactly as it treats `Run.params`;
- * `libs/work` owns the shape. Bounded so a runaway caller cannot bloat the
- * task document towards Firestore's 1 MiB limit.
- */
-export const WORK_PAYLOAD_MAX_BYTES = 32_768;
-
-export const workPayloadSchema = z
-  .record(z.string().max(64), z.unknown())
-  .refine(
-    (value) =>
-      new TextEncoder().encode(JSON.stringify(value)).length <=
-      WORK_PAYLOAD_MAX_BYTES,
-    {
-      message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
-    },
-  );
-export type WorkPayload = z.infer<typeof workPayloadSchema>;
-
 export const taskSchema = z.strictObject({
   task: taskIdSchema,
   delivery: deliveryBindingSchema.optional(),
@@ -549,6 +559,9 @@ export const taskSchema = z.strictObject({
    *  its first request and never modified by the orchestrator afterward.
    *  A native anchor and a GitHub anchor both carry one. */
   work: workPayloadSchema,
+  /** Latest admitted source input; updated under the same task mutex. */
+  desiredRevision: workRevisionSchema.optional(),
+  sourceObservedAt: z.record(z.string(), z.iso.datetime()).optional(),
   providerRouting: providerRoutingSchema.optional(),
   /** Native anchors only: set by `closeTask` when an operator closes an
    *  item that has no live run. A closed task refuses further requests. */

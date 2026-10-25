@@ -1,3 +1,4 @@
+import { workRepository } from '@agent-lcars/work';
 import { itemStateSchema, workIdSchema } from '@agent-lcars/work';
 
 export const WORK_PAGE_LIMIT = 200;
@@ -45,7 +46,7 @@ export function matchesWorkView(
   item: {
     id: string;
     updatedAt: string;
-    spec: { title: string; pipeline: string; target: { repo: string } };
+    spec: { title: string; pipeline: string; target?: { repo: string } };
     origin: { principal: string };
     runs: readonly { pipeline: string }[];
   },
@@ -70,7 +71,7 @@ export function matchesWorkView(
     const haystack = [
       item.id,
       item.spec.title,
-      item.spec.target.repo,
+      workRepository(item.spec),
       item.origin.principal,
     ]
       .join(' ')

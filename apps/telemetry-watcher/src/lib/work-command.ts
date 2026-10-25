@@ -24,6 +24,7 @@ import {
   workIdSchema,
   workReplyRequestIdSchema,
   workReplyTextSchema,
+  workRepository,
   workSpecSchema,
 } from '@agent-lcars/work';
 import { createORPCClient, ORPCError } from '@orpc/client';
@@ -113,7 +114,7 @@ interface ItemSummary {
     title: string;
     pipeline: string;
     priority?: QueuePriority;
-    target: { repo: string };
+    target?: { repo: string };
   };
 }
 
@@ -125,7 +126,7 @@ function line(item: ItemSummary): string {
     delivery.state !== 'complete'
       ? `delivery:${delivery.state}`
       : item.state;
-  return `${item.id}  ${state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${item.spec.target.repo}  ${item.spec.title}`;
+  return `${item.id}  ${state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${workRepository(item.spec)}  ${item.spec.title}`;
 }
 
 function readDescription(rest: string[]): string | undefined {

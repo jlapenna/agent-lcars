@@ -1,6 +1,6 @@
 # Unified work-item dataflow: declarative intent, observed verification, any agent
 
-Status: proposed design, revised 2026-10-24. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends [native work items](2026-08-23-native-work-items-design.md) (#1502) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
+Status: proposed design, revised 2026-10-25. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends [native work items](2026-08-23-native-work-items-design.md) (#1502) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
 
 ## Problem
 
@@ -228,6 +228,12 @@ that same idempotent path; it must not create a second inference queue.
   fields per operation: unrelated metadata and this operation's own output must
   not cause an endless feedback loop. Comments and review state that affect a
   decision must participate in a summary revision.
+- For request-time summaries, order snapshots by the observations of every
+  contributing source, captured before fetching and cached with the data. Reject
+  a snapshot if any source regresses, or if changed content has no advancing
+  observation. Unchanged content advances the observation watermark without
+  generating another attempt. A later A → B → A transition is a new occurrence,
+  while a delayed replay of the first A cannot replace B.
 - Coalesce pending revisions for a source to the latest eligible input. Preserve
   attempt history. An older running attempt may finish, but cannot publish over
   a newer revision; cancellation and supersession are distinct from provider
@@ -295,18 +301,25 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
 
 ## Phases
 
-1. **Shared contract and admission.** Add operation/input/result contracts,
-   source revisions, trusted policies and the runtime registry to Work. Artifact
-   validation is required before any artifact-producing adapter is enabled. Resolve
-   the existing pipeline/target migration in one coherent API cutover, including
-   existing Console, CLI, Slack and schedule producers/consumers in the same
-   phase. Do not create a parallel queue. Preserve task identity and existing
-   coding behavior; phase 4 adds new choices, not delayed client compatibility.
-2. **Lightweight execution and summaries.** Implement the `model-call` adapter,
-   enforce persist-only delivery,
-   durable retries and revision-fenced artifact publication. Migrate Inbox and
-   handoff summaries, preserving their existing usability and source-grounding
-   requirements. Remove direct Console inference after qualification.
+1. **Inbox summaries through existing Work.** Add an internal Inbox-summary
+   specification alongside the public coding specification. Reuse the existing
+   task/run store, queue claims, token fencing, outbox and maintenance. Preserve
+   coding write contracts and direct-runner Jobs. Store immutable source revisions,
+   coalesce pending inputs, fence stale results and cap retries across failures and
+   lost claims. Summary outcomes are persisted without notifications. Work read
+   views accept both specifications; coding mutation routes reject internal work.
+   Admission from an Inbox request is durable before returning; framework-owned
+   post-response execution provides prompt service and maintenance recovers it.
+   Original context stays usable while a summary is pending or unavailable.
+   Each execution pass claims at most four model calls; the existing maintenance
+   pass drains subsequent retries and superseding inputs. Work history exposes
+   the executed revision and attempt.
+2. **Handoff summaries and shared operations.** Migrate handoff summaries through
+   the qualified lifecycle. Extract shared operation contracts only where both
+   consumers need them. Qualify source-event intake separately from request-time
+   admission. Remove each direct inference path when its replacement is qualified.
+   Defer public pipeline/target migration and a general runtime registry until the
+   agent surfaces require them; update all affected clients together at that time.
 3. **Event-driven triage.** Connect durable GitHub intake to bounded issue work,
    qualify the selected agent adapter and idempotent effects, and backfill through
    the same admission path. If OpenClaw is selected, qualify the bridge on the

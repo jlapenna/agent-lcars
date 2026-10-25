@@ -1,5 +1,6 @@
 'use client';
 
+import { workRepository } from '@agent-lcars/work';
 import { Anchor, Button, Stack, Text, Textarea, Title } from '@mantine/core';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -57,7 +58,7 @@ export function NativeDecisionRow({
           </span>
           <div className="ops-inbox__meta">
             <span className="ops-ref">
-              {work.spec.target.repo} / {work.id}
+              {workRepository(work.spec)} / {work.id}
             </span>
             <span>{work.spec.pipeline}</span>
             {report ? (
@@ -141,7 +142,7 @@ export function NativeDecisionDetail({
         {work.spec.title}
       </Title>
       <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
-        {work.spec.target.repo} / {work.id}
+        {workRepository(work.spec)} / {work.id}
       </Text>
       <Text size="sm" c="dimmed">
         {work.state === 'parked'

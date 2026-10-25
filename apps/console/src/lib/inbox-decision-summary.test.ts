@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { BoardCard } from '../app/board-card';
 import {
+  getInboxDecisionSummary,
   inboxDecisionContext,
-  summarizeInboxDecision,
 } from './inbox-decision-summary';
+import { summarizeInboxDecision } from './inbox-summary-model';
 
 const card: BoardCard = {
   item: {
@@ -46,6 +47,16 @@ afterEach(() => {
 });
 
 describe('Inbox decision descriptions', () => {
+  it('keeps optional rendering available with partial provider configuration', async () => {
+    vi.stubEnv('AGENT_LCARS_HANDOFF_SUMMARY_MODEL', '');
+    await expect(
+      getInboxDecisionSummary(inboxDecisionContext(card), {
+        source: card.item.updatedAt,
+      }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('summarizes the pending question with source evidence without changing the item', async () => {
     const original = structuredClone(card);
     fetchMock.mockResolvedValue(
@@ -118,29 +129,6 @@ describe('Inbox decision descriptions', () => {
     expect(context.latestComment.length).toBeLessThanOrEqual(6_000);
   });
 
-  it('expires queued work without sending another provider request', async () => {
-    vi.useFakeTimers();
-    const pending: Array<(response: Response) => void> = [];
-    try {
-      fetchMock.mockImplementation(
-        () => new Promise<Response>((resolve) => pending.push(resolve)),
-      );
-      const running = Array.from({ length: 4 }, () =>
-        summarizeInboxDecision(inboxDecisionContext(card)),
-      );
-      const queued = summarizeInboxDecision(inboxDecisionContext(card));
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(await queued).toBeUndefined();
-      expect(fetchMock).toHaveBeenCalledTimes(4);
-      pending.forEach((resolve) =>
-        resolve(response({ description: 'Choose retention.' })),
-      );
-      await Promise.all(running);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it.each([
     { description: '' },
     { description: 'x'.repeat(601) },
@@ -177,25 +165,5 @@ describe('Inbox decision descriptions', () => {
     expect(
       await summarizeInboxDecision(inboxDecisionContext(card)),
     ).toBeUndefined();
-  });
-
-  it('bounds concurrent provider calls and releases slots after failures', async () => {
-    const pending: Array<(response: Response) => void> = [];
-    fetchMock.mockImplementation(
-      () => new Promise<Response>((resolve) => pending.push(resolve)),
-    );
-    const summaries = Array.from({ length: 5 }, () =>
-      summarizeInboxDecision(inboxDecisionContext(card)),
-    );
-    expect(fetchMock).toHaveBeenCalledTimes(4);
-    pending.shift()!(new Response('refused', { status: 503 }));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
-    pending.forEach((resolve) =>
-      resolve(response({ description: 'Choose 30 or 90 days.' })),
-    );
-    expect(await Promise.all(summaries)).toEqual([
-      undefined,
-      ...Array(4).fill('Choose 30 or 90 days.'),
-    ]);
   });
 });
