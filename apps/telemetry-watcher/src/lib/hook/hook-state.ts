@@ -150,9 +150,8 @@ export function markHookSessionDelivered(
   writeHookSessionState(stateDirectory, {
     version: 1,
     sessionId,
-    seq: state?.seq ?? 0,
-    ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
-    ...(state?.lastKind && { lastKind: state.lastKind }),
+    seq: 0,
+    ...state,
     lastDeliveredAt: now,
     updatedAt: now,
   });

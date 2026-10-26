@@ -552,6 +552,7 @@ async function handleRuntimeHook(
     log('ignored', `session=${sessionTag} lock busy`);
     return { action: 'ignored', detail: 'lock busy' };
   }
+  let lockHeld = true;
   try {
     if (isHookFenced(stateDirectory)) {
       log('fenced', `session=${sessionTag} event=${payload.hookEventName}`);
@@ -711,6 +712,10 @@ async function handleRuntimeHook(
       updatedAt: now,
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);
+    // The flusher marks delivery under this same lock; release it first so
+    // an inline flush cannot wait on its own hook.
+    releaseFileLock(lockPath);
+    lockHeld = false;
     if (inline) {
       await deps.runFlusher();
     } else {
@@ -722,7 +727,7 @@ async function handleRuntimeHook(
     }
     return { action: 'spooled', detail: `${kind} seq=${seq}` };
   } finally {
-    releaseFileLock(lockPath);
+    if (lockHeld) releaseFileLock(lockPath);
   }
 }
 
