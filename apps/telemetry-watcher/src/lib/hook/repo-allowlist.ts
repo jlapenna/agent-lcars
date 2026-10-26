@@ -1,3 +1,5 @@
+import * as path from 'node:path';
+
 /**
  * The hook client's privacy boundary (docs/hooks-telemetry-design.md §4.1
  * step 2). Hooks fire for every project on a workstation; only sessions
@@ -23,6 +25,29 @@ export function matchesRepoAllowlist(
     if (ownerMatches && nameMatches) return true;
   }
   return false;
+}
+
+/**
+ * The privacy boundary for a session that is not inside any git checkout,
+ * such as one started in a directory that holds many checkouts (`~/p`).
+ * Such a session has no repository to allowlist, so it ships, without a
+ * repo, only when its cwd is at or below a configured workspace root. A cwd
+ * inside a checkout never reaches this check: an unlisted repository stays
+ * private even under a workspace root.
+ */
+export function matchesWorkspaceAllowlist(
+  cwd: string,
+  workspaces: readonly string[],
+): boolean {
+  if (!path.isAbsolute(cwd)) return false;
+  const resolved = path.resolve(cwd);
+  return workspaces.some((root) => {
+    const relative = path.relative(root, resolved);
+    return (
+      relative === '' ||
+      (!relative.startsWith('..') && !path.isAbsolute(relative))
+    );
+  });
 }
 
 /**

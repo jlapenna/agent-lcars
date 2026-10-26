@@ -169,6 +169,17 @@ always exits 0. Every decision is one line in
    `AGENT_TELEMETRY_REPO_ALIASES` rename entries apply first and are stored
    verbatim.
 
+   A session started outside every git checkout (in `~/p`, say) has no
+   repository to match. Listing a root in `workspaces` admits such a session
+   without a repo; Console shows it as a host-scoped session. A cwd inside a
+   checkout still needs a `repos` match, even under a workspace root, and a
+   relative root is ignored. `LCARS_TELEMETRY_WORKSPACES` (comma-separated)
+   overrides the file:
+
+   ```json
+   { "repos": ["jlapenna/*"], "workspaces": ["~"] }
+   ```
+
 2. `~/.config/agent-lcars/writer-key.json` (mode 0600) holds the
    `telemetry-writer` key, the value of `AGENT_TELEMETRY_WRITER_KEY_JSON`.
    The environment variable of that name overrides the file; on a runner,

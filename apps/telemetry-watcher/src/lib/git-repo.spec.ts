@@ -1,7 +1,11 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 import { execFile } from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveGitRepo } from './git-repo';
+import { isInsideGitCheckout, resolveGitRepo } from './git-repo';
 
 vi.mock('child_process', () => ({ execFile: vi.fn() }));
 
@@ -163,5 +167,34 @@ describe('resolveGitRepo', () => {
     mockExecFileError(new Error('No such remote'));
 
     await expect(resolveGitRepo(cwd)).resolves.toBeUndefined();
+  });
+});
+
+describe('isInsideGitCheckout', () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  function tree(): string {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-git-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, 'p/repo/.git'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'p/repo/src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'p/worktree/src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'p/worktree/.git'), 'gitdir: x\n');
+    fs.mkdirSync(path.join(root, 'p/notes'), { recursive: true });
+    return root;
+  }
+
+  it.each([
+    ['p/repo', true],
+    ['p/repo/src', true],
+    ['p/worktree/src', true],
+    ['p/notes', false],
+    ['p', false],
+  ])('%s → %s', (dir, expected) => {
+    expect(isInsideGitCheckout(path.join(tree(), dir))).toBe(expected);
   });
 });

@@ -19,7 +19,10 @@ import {
 
 import { resolveGitBranch as defaultResolveGitBranch } from '../git-branch';
 import { applyGitContext } from '../git-context';
-import { resolveGitRepo as defaultResolveGitRepo } from '../git-repo';
+import {
+  isInsideGitCheckout,
+  resolveGitRepo as defaultResolveGitRepo,
+} from '../git-repo';
 import { resolvePublicationCheckouts } from '../publication-checkouts';
 import { readTranscriptLines as defaultReadTranscriptLines } from '../read-transcript-lines';
 import {
@@ -45,7 +48,10 @@ import {
   shouldShipEvent,
   writeHookSessionState,
 } from './hook-state';
-import { matchesRepoAllowlist } from './repo-allowlist';
+import {
+  matchesRepoAllowlist,
+  matchesWorkspaceAllowlist,
+} from './repo-allowlist';
 import { appendToSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
@@ -92,6 +98,8 @@ export interface HookCommandDependencies {
     watchedRepos: readonly string[],
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
+  /** True when `cwd` is inside any git checkout, resolvable or not. */
+  isInsideGitCheckout: (cwd: string) => boolean;
   /** Read from the hook credential, never the transcript. Failure is unknown. */
   resolveGithubActor?: () => Promise<string | undefined>;
   resolvePublicationCheckouts?: (
@@ -132,6 +140,7 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
+    isInsideGitCheckout,
     resolvePublicationCheckouts,
     resolveGithubActor: () =>
       new Promise((resolve) => {
@@ -518,7 +527,14 @@ async function handleRuntimeHook(
     repo = payload.cwd
       ? await deps.resolveGitRepo(payload.cwd, config.repos)
       : undefined;
-    if (!repo || !matchesRepoAllowlist(repo, config.repos)) {
+    // A session outside every checkout (one started in `~/p`, say) has no
+    // repository to allowlist; a configured workspace root admits it.
+    const admitted = repo
+      ? matchesRepoAllowlist(repo, config.repos)
+      : payload.cwd !== undefined &&
+        matchesWorkspaceAllowlist(payload.cwd, config.workspaces) &&
+        !deps.isInsideGitCheckout(payload.cwd);
+    if (!admitted) {
       log(
         'skipped-unlisted',
         `session=${sessionTag} event=${payload.hookEventName}`,
@@ -624,7 +640,7 @@ async function handleRuntimeHook(
               .resolvePublicationCheckouts?.(payload.cwd)
               .catch(() => undefined)
           : undefined;
-      if (checkouts && githubActor)
+      if (checkouts && githubActor && repo)
         deliverables.publicationCheckouts = checkouts.map((checkout) => ({
           ...checkout,
           repo,

@@ -74,6 +74,7 @@ function deps(
     findCodexRollout: () => undefined,
     resolveGitRepo: async () => ({ owner: 'jlapenna', name: 'agent-lcars' }),
     resolveGitBranch: async () => 'feat/hooks',
+    isInsideGitCheckout: () => true,
     runFlusher: vi.fn(async () => undefined),
     spawnFlusher: vi.fn(),
     randomId: () => 'evt-fixed',
@@ -244,6 +245,75 @@ describe('lcars hook claude', () => {
       false,
     );
     expect(d.spawnFlusher).not.toHaveBeenCalled();
+  });
+
+  describe('a session outside every checkout', () => {
+    function workspaceHome(workspaces: string[]): string {
+      const home = tempHome();
+      fs.writeFileSync(
+        path.join(home, '.config/agent-lcars/config.json'),
+        JSON.stringify({ repos: ['jlapenna/*'], workspaces }),
+      );
+      return home;
+    }
+    const outsideGit = {
+      resolveGitRepo: async () => undefined,
+      resolveGitBranch: async () => undefined,
+      isInsideGitCheckout: () => false,
+    };
+
+    it('ships without a repo when its cwd is under a workspace root', async () => {
+      const home = workspaceHome(['~/p']);
+      const cwd = path.join(home, 'p');
+      const d = deps(home, payload('PostToolUse', { cwd }), outsideGit);
+      expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+      const [event] = spooledEvents(home);
+      expect(event.summary?.cwd).toBe(cwd);
+      expect(event.summary?.repo).toBeUndefined();
+      expect(event.summary?.branch).toBeUndefined();
+    });
+
+    it.each([
+      ['no workspace is configured', [], 'p'],
+      ['the cwd is a sibling sharing the root prefix', ['~/p'], 'p2'],
+      ['the root is relative', ['p'], 'p'],
+    ])('skips it when %s', async (_case, workspaces, dir) => {
+      const home = workspaceHome(workspaces);
+      const d = deps(
+        home,
+        payload('PostToolUse', { cwd: path.join(home, dir) }),
+        outsideGit,
+      );
+      expect((await executeHookCommand(['claude'], d)).action).toBe(
+        'skipped-unlisted',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+    });
+
+    it('keeps an unresolvable checkout under a workspace root private', async () => {
+      const home = workspaceHome(['~']);
+      const d = deps(
+        home,
+        payload('PostToolUse', { cwd: path.join(home, 'p/local-only') }),
+        { resolveGitRepo: async () => undefined },
+      );
+      expect((await executeHookCommand(['claude'], d)).action).toBe(
+        'skipped-unlisted',
+      );
+      expect(spooledEvents(home)).toEqual([]);
+    });
+
+    it('keeps an unlisted repository under a workspace root private', async () => {
+      const home = workspaceHome(['~']);
+      const d = deps(
+        home,
+        payload('PostToolUse', { cwd: path.join(home, 'p/private') }),
+        { resolveGitRepo: async () => ({ owner: 'someone', name: 'private' }) },
+      );
+      expect((await executeHookCommand(['claude'], d)).action).toBe(
+        'skipped-unlisted',
+      );
+    });
   });
 
   it('skips subagent payloads and unknown events', async () => {

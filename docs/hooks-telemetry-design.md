@@ -183,8 +183,9 @@ Pipeline per invocation, target under 300 ms for the hot path:
 1. Parse stdin. Unknown `hook_event_name` → exit 0.
 2. **Privacy gate.** Resolve `git -C <cwd> config --get remote.origin.url`
    and match `owner/name` against `~/.config/agent-lcars/config.json`
-   `repos: ["jlapenna/*", ...]`. Non-git cwd or no match → exit 0 and write
-   nothing. This replaces the checkout-root path allowlist with the same
+   `repos: ["jlapenna/*", ...]`. No match → exit 0 and write nothing. A cwd
+   outside every checkout ships without a repo only when it is at or below a
+   configured `workspaces` root; otherwise it is dropped the same way. This replaces the checkout-root path allowlist with the same
    identity the daemon already resolves per tick (`SessionSummary.repo`).
    Runner mode (`LCARS_RUN_ID` set) bypasses the gate, exactly as
    `runnerWatchRoots` allowlists `['*']` today.
