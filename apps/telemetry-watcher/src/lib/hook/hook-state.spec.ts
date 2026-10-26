@@ -71,13 +71,22 @@ describe('hook session state', () => {
       version: 1,
       sessionId: 's1',
       seq: 1,
+      lastShippedAt: '2026-10-10T11:59:00.000Z',
+      lastKind: 'stop',
+      repoScoped: true,
       updatedAt: '2026-10-10T12:00:00.000Z',
     });
     expect(readHookSessionState(dir, 's1')?.lastDeliveredAt).toBeUndefined();
     markHookSessionDelivered(dir, 's1', '2026-10-10T12:00:00.000Z');
-    expect(readHookSessionState(dir, 's1')).toMatchObject({
+    expect(readHookSessionState(dir, 's1')).toEqual({
+      version: 1,
+      sessionId: 's1',
       seq: 1,
+      lastShippedAt: '2026-10-10T11:59:00.000Z',
+      lastKind: 'stop',
+      repoScoped: true,
       lastDeliveredAt: '2026-10-10T12:00:00.000Z',
+      updatedAt: '2026-10-10T12:00:00.000Z',
     });
   });
 });

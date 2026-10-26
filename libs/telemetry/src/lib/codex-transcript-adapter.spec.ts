@@ -85,7 +85,7 @@ describe('codexAdapter', () => {
     });
   });
 
-  it('infers a title from current response_item user inputs, skipping injected repository instructions', () => {
+  it('infers a title from current response_item user inputs, skipping injected repository instructions and environment context', () => {
     const lines = [
       JSON.stringify({
         type: 'session_meta',
@@ -100,6 +100,19 @@ describe('codexAdapter', () => {
             {
               type: 'input_text',
               text: '# AGENTS.md instructions for /repo\n<INSTRUCTIONS>\nignored\n</INSTRUCTIONS>',
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: 'response_item',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: '<environment_context>\n  <current_date>2026-10-25</current_date>\n</environment_context>',
             },
           ],
         },

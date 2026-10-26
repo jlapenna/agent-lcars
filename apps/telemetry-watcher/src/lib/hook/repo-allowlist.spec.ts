@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { canonicalRepoSpelling, matchesRepoAllowlist } from './repo-allowlist';
+import {
+  canonicalRepoSpelling,
+  matchesRepoAllowlist,
+  matchesWorkspaceAllowlist,
+} from './repo-allowlist';
 
 describe('matchesRepoAllowlist', () => {
   const repo = { owner: 'jlapenna', name: 'agent-lcars' };
@@ -40,5 +44,20 @@ describe('canonicalRepoSpelling', () => {
     [[], mixedCase],
   ])('%j → %j', (patterns, expected) => {
     expect(canonicalRepoSpelling(mixedCase, patterns)).toEqual(expected);
+  });
+});
+
+describe('matchesWorkspaceAllowlist', () => {
+  it.each([
+    ['/home/dev/p', ['/home/dev/p'], true],
+    ['/home/dev/p/notes', ['/home/dev/p'], true],
+    ['/home/dev/p/../p/notes', ['/home/dev/p'], true],
+    ['/home/dev/p2', ['/home/dev/p'], false],
+    ['/home/dev', ['/home/dev/p'], false],
+    ['/home/dev/p/../secret', ['/home/dev/p'], false],
+    ['p/notes', ['/home/dev/p'], false],
+    ['/home/dev/p', [], false],
+  ])('%s under %j → %s', (cwd, workspaces, expected) => {
+    expect(matchesWorkspaceAllowlist(cwd, workspaces)).toBe(expected);
   });
 });

@@ -1,15 +1,17 @@
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { type SessionEventV1 } from '@agent-lcars/telemetry';
 
 import { SESSION_STATE_DIRECTORY } from '../session-title-paths';
+import { acquireFileLock, releaseFileLock } from './file-lock';
 import {
   type HookWriterCredentials,
   loadHookClientConfig,
 } from './hook-config';
 import { appendHookLog } from './hook-log';
-import { markHookSessionDelivered } from './hook-state';
+import { hookSessionLockPath, markHookSessionDelivered } from './hook-state';
 import { createHookEventWriter, type HookEventWriter } from './hook-store';
 import { drainSpool, spoolPath } from './spool';
 
@@ -80,12 +82,25 @@ export async function runFlush(deps: FlushDependencies): Promise<FlushResult> {
       );
       return 'drop';
     }
+    // Under the hook's per-session lock, so this read-modify-write cannot
+    // drop a field (`seq`, `repoScoped`) a concurrent hook just wrote.
+    const lockPath = hookSessionLockPath(
+      stateDirectory,
+      sessionEvent.sessionId,
+    );
     try {
-      markHookSessionDelivered(
-        stateDirectory,
-        sessionEvent.sessionId,
-        deps.now().toISOString(),
-      );
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+      if (await acquireFileLock(lockPath, { waitMs: 5_000, staleMs: 30_000 })) {
+        try {
+          markHookSessionDelivered(
+            stateDirectory,
+            sessionEvent.sessionId,
+            deps.now().toISOString(),
+          );
+        } finally {
+          releaseFileLock(lockPath);
+        }
+      }
     } catch {
       // State is advisory; the write already happened.
     }

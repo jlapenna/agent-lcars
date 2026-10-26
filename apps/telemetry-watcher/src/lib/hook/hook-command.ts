@@ -19,7 +19,10 @@ import {
 
 import { resolveGitBranch as defaultResolveGitBranch } from '../git-branch';
 import { applyGitContext } from '../git-context';
-import { resolveGitRepo as defaultResolveGitRepo } from '../git-repo';
+import {
+  isInsideGitCheckout,
+  resolveGitRepo as defaultResolveGitRepo,
+} from '../git-repo';
 import { resolvePublicationCheckouts } from '../publication-checkouts';
 import { readTranscriptLines as defaultReadTranscriptLines } from '../read-transcript-lines';
 import {
@@ -45,7 +48,10 @@ import {
   shouldShipEvent,
   writeHookSessionState,
 } from './hook-state';
-import { matchesRepoAllowlist } from './repo-allowlist';
+import {
+  matchesRepoAllowlist,
+  matchesWorkspaceAllowlist,
+} from './repo-allowlist';
 import { appendToSpool, spoolPath } from './spool';
 
 /** Bumped when the event the client emits changes shape or semantics. */
@@ -92,6 +98,8 @@ export interface HookCommandDependencies {
     watchedRepos: readonly string[],
   ) => Promise<{ owner: string; name: string } | undefined>;
   resolveGitBranch: (cwd: string) => Promise<string | undefined>;
+  /** True when `cwd` is inside any git checkout, resolvable or not. */
+  isInsideGitCheckout: (cwd: string) => boolean;
   /** Read from the hook credential, never the transcript. Failure is unknown. */
   resolveGithubActor?: () => Promise<string | undefined>;
   resolvePublicationCheckouts?: (
@@ -132,6 +140,7 @@ export function defaultHookCommandDependencies(
     findCodexRollout,
     resolveGitRepo: defaultResolveGitRepo,
     resolveGitBranch: defaultResolveGitBranch,
+    isInsideGitCheckout,
     resolvePublicationCheckouts,
     resolveGithubActor: () =>
       new Promise((resolve) => {
@@ -518,7 +527,14 @@ async function handleRuntimeHook(
     repo = payload.cwd
       ? await deps.resolveGitRepo(payload.cwd, config.repos)
       : undefined;
-    if (!repo || !matchesRepoAllowlist(repo, config.repos)) {
+    // A session outside every checkout (one started in `~/p`, say) has no
+    // repository to allowlist; a configured workspace root admits it.
+    const admitted = repo
+      ? matchesRepoAllowlist(repo, config.repos)
+      : payload.cwd !== undefined &&
+        matchesWorkspaceAllowlist(payload.cwd, config.workspaces) &&
+        !deps.isInsideGitCheckout(payload.cwd);
+    if (!admitted) {
       log(
         'skipped-unlisted',
         `session=${sessionTag} event=${payload.hookEventName}`,
@@ -536,12 +552,20 @@ async function handleRuntimeHook(
     log('ignored', `session=${sessionTag} lock busy`);
     return { action: 'ignored', detail: 'lock busy' };
   }
+  let lockHeld = true;
   try {
     if (isHookFenced(stateDirectory)) {
       log('fenced', `session=${sessionTag} event=${payload.hookEventName}`);
       return { action: 'ignored', detail: 'fenced' };
     }
     const state = readHookSessionState(stateDirectory, payload.sessionId);
+    if (!config.runner && !repo && state?.repoScoped) {
+      log(
+        'skipped-unlisted',
+        `session=${sessionTag} event=${payload.hookEventName} repo-scoped`,
+      );
+      return { action: 'skipped-unlisted' };
+    }
     if (!shouldShipEvent(kind, state, now)) {
       writeHookSessionState(stateDirectory, {
         version: 1,
@@ -549,6 +573,7 @@ async function handleRuntimeHook(
         seq: state?.seq ?? 0,
         ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
         ...(state?.lastKind && { lastKind: state.lastKind }),
+        ...(state?.repoScoped && { repoScoped: true }),
         updatedAt: now,
       });
       log('throttled', `session=${sessionTag}`);
@@ -611,9 +636,29 @@ async function handleRuntimeHook(
           ? await deps.resolveGithubActor?.().catch(() => undefined)
           : undefined;
       delete withGit.githubActor;
+      // The transcript's worktree may lie inside a checkout this session
+      // left; with no checkout of its own a host-scoped session keeps none.
+      if (!repo) delete withGit.worktree;
       // A reducer can supply provider identity, never host checkout facts.
       const deliverables = { ...withGit.deliverables };
       delete deliverables.publicationCheckouts;
+      // A workspace-admitted session has no checkout that vouches for what
+      // its transcript names. Keep only PRs in allowlisted repositories and
+      // drop the evidence that names no repository at all.
+      if (!repo) {
+        const listed = <T extends { repo: { owner: string; name: string } }>(
+          prs: T[],
+        ) => prs.filter((pr) => matchesRepoAllowlist(pr.repo, config.repos));
+        deliverables.prNumbers = [];
+        deliverables.commitShas = [];
+        delete deliverables.branch;
+        if (deliverables.qualifiedPRs)
+          deliverables.qualifiedPRs = listed(deliverables.qualifiedPRs);
+        if (deliverables.publicationCandidates)
+          deliverables.publicationCandidates = listed(
+            deliverables.publicationCandidates,
+          );
+      }
       const checkouts =
         githubActor &&
         payload.cwd &&
@@ -624,7 +669,7 @@ async function handleRuntimeHook(
               .resolvePublicationCheckouts?.(payload.cwd)
               .catch(() => undefined)
           : undefined;
-      if (checkouts && githubActor)
+      if (checkouts && githubActor && repo)
         deliverables.publicationCheckouts = checkouts.map((checkout) => ({
           ...checkout,
           repo,
@@ -663,9 +708,14 @@ async function handleRuntimeHook(
       seq,
       lastShippedAt: now,
       lastKind: kind,
+      ...((repo || state?.repoScoped) && { repoScoped: true }),
       updatedAt: now,
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);
+    // The flusher marks delivery under this same lock; release it first so
+    // an inline flush cannot wait on its own hook.
+    releaseFileLock(lockPath);
+    lockHeld = false;
     if (inline) {
       await deps.runFlusher();
     } else {
@@ -677,7 +727,7 @@ async function handleRuntimeHook(
     }
     return { action: 'spooled', detail: `${kind} seq=${seq}` };
   } finally {
-    releaseFileLock(lockPath);
+    if (lockHeld) releaseFileLock(lockPath);
   }
 }
 

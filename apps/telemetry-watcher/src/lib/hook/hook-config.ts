@@ -28,6 +28,9 @@ export interface HookWriterCredentials {
 export interface HookClientConfig {
   /** `owner/name` allowlist patterns, see `matchesRepoAllowlist`. */
   readonly repos: readonly string[];
+  /** Absolute directory roots whose non-git sessions ship without a repo,
+   * see `matchesWorkspaceAllowlist`. */
+  readonly workspaces: readonly string[];
   /** Where the flusher writes; absent means "spool only". */
   readonly writer?: HookWriterCredentials;
   /** Host label recorded on each event. */
@@ -61,18 +64,39 @@ function readOptional(
   }
 }
 
-function parseRepos(raw: string | undefined): string[] {
+function parseStringList(
+  raw: string | undefined,
+  key: 'repos' | 'workspaces',
+): string[] {
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return [];
-    const repos = (parsed as { repos?: unknown }).repos;
-    return Array.isArray(repos)
-      ? repos.filter((entry): entry is string => typeof entry === 'string')
+    const entries = (parsed as Record<string, unknown>)[key];
+    return Array.isArray(entries)
+      ? entries.filter((entry): entry is string => typeof entry === 'string')
       : [];
   } catch {
     return [];
   }
+}
+
+function splitList(raw: string | undefined): string[] | undefined {
+  const entries = raw
+    ?.split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return entries && entries.length > 0 ? entries : undefined;
+}
+
+/** Expands a leading `~` against `home`; anything still relative is
+ * dropped so a typo can never widen the boundary to the hook's cwd. */
+function resolveWorkspaceRoot(entry: string, home: string): string | undefined {
+  const expanded =
+    entry === '~' || entry.startsWith('~/')
+      ? path.join(home, entry.slice(1))
+      : entry;
+  return path.isAbsolute(expanded) ? path.resolve(expanded) : undefined;
 }
 
 function parseRepoSlug(
@@ -91,13 +115,17 @@ export function loadHookClientConfig(
   const readFile =
     dependencies.readFile ?? ((filePath) => fs.readFileSync(filePath, 'utf8'));
   const configDir = path.join(home, HOOK_CONFIG_DIRECTORY);
-  const fileRepos = parseRepos(
-    readOptional(readFile, path.join(configDir, HOOK_CONFIG_FILE)),
+  const configFile = readOptional(
+    readFile,
+    path.join(configDir, HOOK_CONFIG_FILE),
   );
-  const envRepos = env['LCARS_TELEMETRY_REPOS']
-    ?.split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
+  const repos =
+    splitList(env['LCARS_TELEMETRY_REPOS']) ??
+    parseStringList(configFile, 'repos');
+  const workspaces = (
+    splitList(env['LCARS_TELEMETRY_WORKSPACES']) ??
+    parseStringList(configFile, 'workspaces')
+  ).flatMap((entry) => resolveWorkspaceRoot(entry, home) ?? []);
   const runId = env['LCARS_RUN_ID'];
   const runnerRepo = parseRepoSlug(
     env['LCARS_REPO'] ?? env['GITHUB_REPOSITORY'],
@@ -115,7 +143,8 @@ export function loadHookClientConfig(
       : undefined;
   const writer = resolveWriter(env, readFile, configDir, runner !== undefined);
   return {
-    repos: envRepos && envRepos.length > 0 ? envRepos : fileRepos,
+    repos,
+    workspaces,
     ...(writer && { writer }),
     host:
       env['AGENT_TELEMETRY_HOST'] ??

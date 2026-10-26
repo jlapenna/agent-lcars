@@ -1,3 +1,6 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { optional } from '@agent-lcars/env';
 import { execFile } from 'child_process';
 
@@ -163,5 +166,21 @@ export async function resolveGitRepo(
     );
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Whether `cwd` or any ancestor holds a `.git` entry (a directory, or the
+ * file a linked worktree or submodule uses). Read from the filesystem rather
+ * than `git`, so a checkout git refuses to read (dubious ownership, a broken
+ * config) still counts as one and is never mistaken for a plain directory.
+ */
+export function isInsideGitCheckout(cwd: string): boolean {
+  let dir = path.resolve(cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return true;
+    const parent = path.dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
   }
 }
