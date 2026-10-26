@@ -116,13 +116,15 @@ function userMessageText(payload: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/** Codex prepends repository instructions as a user-role input. They are
- * context, not the user's task, so using them as a session title produces a
+/** Codex prepends repository instructions and its environment context
+ * (date, timezone, workspace roots) as user-role inputs. They are context,
+ * not the user's task, so using them as a session title produces a
  * misleading label and hides the first real request. */
-function isInjectedRepositoryInstructions(message: string): boolean {
+function isInjectedContext(message: string): boolean {
   return (
-    message.startsWith('# AGENTS.md instructions') &&
-    message.includes('<INSTRUCTIONS>')
+    (message.startsWith('# AGENTS.md instructions') &&
+      message.includes('<INSTRUCTIONS>')) ||
+    message.startsWith('<environment_context>')
   );
 }
 
@@ -202,7 +204,7 @@ export const codexAdapter: TranscriptAdapter = {
         if (payloadType === 'task_started') turns += 1;
         if (payloadType === 'user_message' && !title) {
           const message = userMessageText(payload);
-          if (message && !isInjectedRepositoryInstructions(message)) {
+          if (message && !isInjectedContext(message)) {
             title = truncateTitle(message);
           }
         }
@@ -240,7 +242,7 @@ export const codexAdapter: TranscriptAdapter = {
         !title
       ) {
         const message = userMessageText(payload);
-        if (message && !isInjectedRepositoryInstructions(message)) {
+        if (message && !isInjectedContext(message)) {
           title = truncateTitle(message);
         }
       }
