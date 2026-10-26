@@ -165,6 +165,12 @@ Console’s selected cumulative-session subtotal. The
 threshold. Its local-only `default` route has zero provider charges and no paid
 fallback. LiteLLM owns budget enforcement and the weekly reset.
 
+The key belongs to the native `agent-lcars-handoff-summary` team, also restricted
+to `default`; the team adds no separate budget. Keep that assignment when
+rotating the key: the installed LiteLLM initializer excludes keys with no team
+([upstream #37292](https://github.com/BerriAI/litellm/issues/37292)). Qualify both
+budget gauges after a scheduled refresh without making an inference request.
+
 Homelab enables LiteLLM’s native five-minute budget-gauge refresh and uses the
 existing Prometheus scrape and Alertmanager Slack receiver in `#oc-oncall`.
 Alerts cover 80% usage, exhaustion, and missing budget gauges; they omit hashed
