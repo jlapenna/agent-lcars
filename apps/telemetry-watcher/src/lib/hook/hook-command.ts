@@ -558,6 +558,13 @@ async function handleRuntimeHook(
       return { action: 'ignored', detail: 'fenced' };
     }
     const state = readHookSessionState(stateDirectory, payload.sessionId);
+    if (!config.runner && !repo && state?.repoScoped) {
+      log(
+        'skipped-unlisted',
+        `session=${sessionTag} event=${payload.hookEventName} repo-scoped`,
+      );
+      return { action: 'skipped-unlisted' };
+    }
     if (!shouldShipEvent(kind, state, now)) {
       writeHookSessionState(stateDirectory, {
         version: 1,
@@ -565,6 +572,7 @@ async function handleRuntimeHook(
         seq: state?.seq ?? 0,
         ...(state?.lastShippedAt && { lastShippedAt: state.lastShippedAt }),
         ...(state?.lastKind && { lastKind: state.lastKind }),
+        ...(state?.repoScoped && { repoScoped: true }),
         updatedAt: now,
       });
       log('throttled', `session=${sessionTag}`);
@@ -627,6 +635,9 @@ async function handleRuntimeHook(
           ? await deps.resolveGithubActor?.().catch(() => undefined)
           : undefined;
       delete withGit.githubActor;
+      // The transcript's worktree may lie inside a checkout this session
+      // left; with no checkout of its own a host-scoped session keeps none.
+      if (!repo) delete withGit.worktree;
       // A reducer can supply provider identity, never host checkout facts.
       const deliverables = { ...withGit.deliverables };
       delete deliverables.publicationCheckouts;
@@ -639,6 +650,7 @@ async function handleRuntimeHook(
         ) => prs.filter((pr) => matchesRepoAllowlist(pr.repo, config.repos));
         deliverables.prNumbers = [];
         deliverables.commitShas = [];
+        delete deliverables.branch;
         if (deliverables.qualifiedPRs)
           deliverables.qualifiedPRs = listed(deliverables.qualifiedPRs);
         if (deliverables.publicationCandidates)
@@ -695,6 +707,7 @@ async function handleRuntimeHook(
       seq,
       lastShippedAt: now,
       lastKind: kind,
+      ...((repo || state?.repoScoped) && { repoScoped: true }),
       updatedAt: now,
     });
     log('spooled', `session=${sessionTag} kind=${kind} seq=${seq}`);

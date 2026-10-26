@@ -265,12 +265,57 @@ describe('lcars hook claude', () => {
     it('ships without a repo when its cwd is under a workspace root', async () => {
       const home = workspaceHome(['~/p']);
       const cwd = path.join(home, 'p');
-      const d = deps(home, payload('PostToolUse', { cwd }), outsideGit);
+      // The fixture's lines carry `gitBranch: main`; a checkout the session
+      // visited must not surface through the transcript either.
+      const d = deps(home, payload('PostToolUse', { cwd }), {
+        ...outsideGit,
+        readTranscriptLines: () => [
+          ...fs.readFileSync(FIXTURE, 'utf8').split('\n'),
+          JSON.stringify({
+            type: 'system',
+            sessionId: SESSION_ID,
+            timestamp: '2026-07-10T10:00:09.000Z',
+            worktreeSession: { worktreePath: '/home/dev/p/private-wt' },
+          }),
+        ],
+      });
       expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
       const [event] = spooledEvents(home);
       expect(event.summary?.cwd).toBe(cwd);
       expect(event.summary?.repo).toBeUndefined();
       expect(event.summary?.branch).toBeUndefined();
+      expect(event.summary?.worktree).toBeUndefined();
+      expect(event.summary?.deliverables.branch).toBeUndefined();
+    });
+
+    it('never reverts a session that shipped under a repository', async () => {
+      const home = workspaceHome(['~/p']);
+      const inRepo = deps(
+        home,
+        payload('Stop', { cwd: path.join(home, 'p/agent-lcars') }),
+      );
+      expect((await executeHookCommand(['claude'], inRepo)).action).toBe(
+        'spooled',
+      );
+      const atRoot = deps(
+        home,
+        payload('Stop', { cwd: path.join(home, 'p') }),
+        outsideGit,
+      );
+      expect((await executeHookCommand(['claude'], atRoot)).action).toBe(
+        'skipped-unlisted',
+      );
+      expect(spooledEvents(home).map((e) => e.summary?.repo)).toEqual([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+      ]);
+      // A throttled event keeps the marker too.
+      const throttled = deps(home, payload('PostToolUse'));
+      expect((await executeHookCommand(['claude'], throttled)).action).toBe(
+        'throttled',
+      );
+      expect((await executeHookCommand(['claude'], atRoot)).action).toBe(
+        'skipped-unlisted',
+      );
     });
 
     it('ships only PR evidence from allowlisted repositories', async () => {

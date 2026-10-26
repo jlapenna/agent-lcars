@@ -21,6 +21,10 @@ export interface HookSessionState {
    * Unlike `updatedAt`, this records that the hook path really delivered. */
   readonly lastDeliveredAt?: string;
   readonly lastKind?: SessionEventKind;
+  /** Set once an event shipped with a repository. Such a session never
+   * reverts to host-scoped: a later event from a workspace root is skipped
+   * so it cannot clear the repository evidence the stored doc holds. */
+  readonly repoScoped?: true;
   readonly updatedAt: string;
 }
 
@@ -66,6 +70,7 @@ export function readHookSessionState(
     const lastShippedAt = record['lastShippedAt'];
     const lastDeliveredAt = record['lastDeliveredAt'];
     const lastKind = record['lastKind'];
+    const repoScoped = record['repoScoped'] === true;
     return {
       version: 1,
       sessionId,
@@ -76,6 +81,7 @@ export function readHookSessionState(
       ...(typeof lastKind === 'string' && {
         lastKind: lastKind as SessionEventKind,
       }),
+      ...(repoScoped && { repoScoped }),
     };
   } catch {
     return undefined;
