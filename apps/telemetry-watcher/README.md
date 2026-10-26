@@ -171,9 +171,11 @@ always exits 0. Every decision is one line in
 
    A session started outside every git checkout (in `~/p`, say) has no
    repository to match. Listing a root in `workspaces` admits such a session
-   without a repo; Console shows it as a host-scoped session. A cwd inside a
-   checkout still needs a `repos` match, even under a workspace root, and a
-   relative root is ignored. `LCARS_TELEMETRY_WORKSPACES` (comma-separated)
+   without a repo; Console shows it as a host-scoped session. The boundary
+   is the cwd: a session started inside a checkout still needs a `repos`
+   match, even under a workspace root, and a relative root is ignored. Its
+   title, tokens and tool counts ship; of its PR and commit evidence, only
+   PRs in a `repos`-matching repository are kept. `LCARS_TELEMETRY_WORKSPACES` (comma-separated)
    overrides the file:
 
    ```json

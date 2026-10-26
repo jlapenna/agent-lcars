@@ -630,6 +630,22 @@ async function handleRuntimeHook(
       // A reducer can supply provider identity, never host checkout facts.
       const deliverables = { ...withGit.deliverables };
       delete deliverables.publicationCheckouts;
+      // A workspace-admitted session has no checkout that vouches for what
+      // its transcript names. Keep only PRs in allowlisted repositories and
+      // drop the evidence that names no repository at all.
+      if (!repo) {
+        const listed = <T extends { repo: { owner: string; name: string } }>(
+          prs: T[],
+        ) => prs.filter((pr) => matchesRepoAllowlist(pr.repo, config.repos));
+        deliverables.prNumbers = [];
+        deliverables.commitShas = [];
+        if (deliverables.qualifiedPRs)
+          deliverables.qualifiedPRs = listed(deliverables.qualifiedPRs);
+        if (deliverables.publicationCandidates)
+          deliverables.publicationCandidates = listed(
+            deliverables.publicationCandidates,
+          );
+      }
       const checkouts =
         githubActor &&
         payload.cwd &&

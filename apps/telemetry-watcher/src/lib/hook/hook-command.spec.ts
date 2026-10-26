@@ -273,6 +273,77 @@ describe('lcars hook claude', () => {
       expect(event.summary?.branch).toBeUndefined();
     });
 
+    it('ships only PR evidence from allowlisted repositories', async () => {
+      const home = workspaceHome(['~/p']);
+      const at = '2026-10-10T11:59:00.000Z';
+      const created = (callId: string, url: string) => [
+        {
+          type: 'response_item',
+          timestamp: at,
+          payload: {
+            type: 'function_call',
+            name: 'exec_command',
+            call_id: callId,
+            arguments: JSON.stringify({ cmd: 'gh pr create' }),
+          },
+        },
+        {
+          type: 'response_item',
+          timestamp: at,
+          payload: {
+            type: 'function_call_output',
+            call_id: callId,
+            output: url,
+          },
+        },
+      ];
+      const transcript = path.join(home, 'rollout.jsonl');
+      fs.writeFileSync(
+        transcript,
+        [
+          {
+            type: 'session_meta',
+            timestamp: at,
+            payload: { id: SESSION_ID, cwd: path.join(home, 'p') },
+          },
+          ...created(
+            'listed',
+            'https://github.com/jlapenna/agent-lcars/pull/8',
+          ),
+          ...created('unlisted', 'https://github.com/someone/private/pull/7'),
+          {
+            type: 'response_item',
+            timestamp: at,
+            payload: {
+              type: 'function_call_output',
+              call_id: 'mention',
+              output: `[main ${'a'.repeat(40)}] secret commit`,
+            },
+          },
+        ]
+          .map((line) => JSON.stringify(line))
+          .join('\n'),
+      );
+      const d = deps(
+        home,
+        payload('PostToolUse', {
+          cwd: path.join(home, 'p'),
+          transcript_path: transcript,
+        }),
+        outsideGit,
+      );
+      expect((await executeHookCommand(['codex'], d)).action).toBe('spooled');
+      const deliverables = spooledEvents(home)[0].summary?.deliverables;
+      expect(deliverables?.qualifiedPRs).toEqual([
+        { repo: { owner: 'jlapenna', name: 'agent-lcars' }, number: 8 },
+      ]);
+      expect(deliverables?.publicationCandidates ?? []).not.toContainEqual(
+        expect.objectContaining({ number: 7 }),
+      );
+      expect(deliverables?.prNumbers).toEqual([]);
+      expect(deliverables?.commitShas).toEqual([]);
+    });
+
     it.each([
       ['no workspace is configured', [], 'p'],
       ['the cwd is a sibling sharing the root prefix', ['~/p'], 'p2'],

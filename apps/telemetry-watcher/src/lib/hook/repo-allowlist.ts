@@ -32,8 +32,10 @@ export function matchesRepoAllowlist(
  * such as one started in a directory that holds many checkouts (`~/p`).
  * Such a session has no repository to allowlist, so it ships, without a
  * repo, only when its cwd is at or below a configured workspace root. A cwd
- * inside a checkout never reaches this check: an unlisted repository stays
- * private even under a workspace root.
+ * inside a checkout never reaches this check, so a session started in an
+ * unlisted checkout stays private even under a workspace root. The boundary
+ * is the cwd: the hook also drops transcript evidence that names an unlisted
+ * repository or no repository from a session admitted here.
  */
 export function matchesWorkspaceAllowlist(
   cwd: string,
