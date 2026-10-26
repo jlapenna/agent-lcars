@@ -131,7 +131,8 @@ warning, near budget, or at/above budget. Missing prices or archive coverage
 prevent a below-warning assessment. A known subtotal already above a threshold
 still proves the threshold is reached even if additional spend is unknown.
 
-An operator-owned alert integration must use the same selection, rate source,
+An operator-owned alert integration **for this Console subtotal** must use the
+same selection, rate source,
 reported/estimated distinction and coverage state. Record the limit, warning
 percentage, selection, evaluation interval, alert owner and destination in its
 reviewed configuration. Alert at/above the limit or near the warning threshold;
@@ -152,7 +153,25 @@ observation time, configured limit/warning, the shared machine assessment,
 reported/estimated known subtotal and coverage. It reuses the Costs archive and
 `estimateCostUsd`; the consumer must not independently reprice sessions.
 
-Homelab owns collection, Prometheus/Alertmanager rules and delivery through its
-existing oncall route. The readout itself sends nothing. R10 remains partial
-until a reviewed fixed selection and dollar limit are configured and external
-delivery/recovery are qualified. Missing configuration remains unavailable.
+The readout itself sends nothing. A subtotal collector must be explicitly
+configured before it can evaluate this selection; the existing Homelab
+collector is disabled. Missing configuration remains unavailable.
+
+### Native inference budget delivery
+
+The approved inference budget uses LiteLLM’s existing key accounting, not the
+Console’s selected cumulative-session subtotal. The
+`agent-lcars-handoff-summary` key has a **$5 / 7d** cap and **$4** warning
+threshold. Its local-only `default` route has zero provider charges and no paid
+fallback. LiteLLM owns budget enforcement and the weekly reset.
+
+Homelab enables LiteLLM’s native five-minute budget-gauge refresh and uses the
+existing Prometheus scrape and Alertmanager Slack receiver in `#oc-oncall`.
+Alerts cover 80% usage, exhaustion, and missing budget gauges; they omit hashed
+key labels. This covers that inference key, not all coding subscriptions or the
+Console’s cumulative session estimates. No second spend ledger or custom cost
+collector is needed.
+
+The deployed contract and qualification belong to
+[Homelab’s LiteLLM guide](https://github.com/jlapenna/homelab/blob/main/docs/litellm.md#lcars-inference-budget-alerts)
+and [#3000](https://github.com/jlapenna/agent-lcars/issues/3000).

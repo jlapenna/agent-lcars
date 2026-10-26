@@ -650,7 +650,7 @@ CLI sessions and dispatched runs.
   model, route, and resolved backend; permission mode; turns, tokens, and
   cost; timing; host, cwd, worktree, and branch; run and issue; deliverables;
   and resume notes.
-- **FE-SE-4 [Partial]** Transcripts render (`TranscriptTimelineView`, from GCS)
+- **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView`, from GCS)
   for dispatched `issue-agent` sessions whose agent is in
   `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, and OpenCode (archived
   OpenCode exports, #2253). An archive that is neither shows "Session archive
@@ -659,8 +659,10 @@ CLI sessions and dispatched runs.
   unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
   not-enabled or unavailable. The explicit `lcars session archive --consent`
   writer creates one current-session snapshot, with a seven-day reader expiry,
-  deployed lifecycle prerequisite and revocation. Installation and live qualification
-  remain pending; the retired watcher daemon is not restored. See
+  deployed lifecycle prerequisite and revocation. The installed writer and real
+  upload, Console rendering, revocation and object deletion are qualified
+  ([#2999](https://github.com/jlapenna/agent-lcars/issues/2999)); the retired
+  watcher daemon is not restored. See
   [archived CLI transcripts](../../apps/telemetry-watcher/README.md#archived-cli-transcripts).
 - **FE-SE-5 [Shipped]** A session's title is the transcript's own title
   (Claude Code's `aiTitle`) unless `lcars session title` sets an override, and
@@ -683,11 +685,13 @@ CLI sessions and dispatched runs.
   repository's today and seven-day known spend, sessions and spend per
   session; seven-day figures are withheld when the window is under 7 days,
   and today's when it is under a day.
-- **FE-CO-2 [Partial]** Costs shows spend by pipeline, requested model, and
+- **FE-CO-2 [Shipped]** Costs shows spend by pipeline, requested model, and
   resolved model; cost per merged deliverable with a per-deliverable list; and
   budget warning states when `AGENT_LCARS_COST_BUDGET_USD` is configured
-  (`app/costs/spend-breakdowns.tsx`, #2304). External budget alert delivery is
-  an operator-owned integration that this repository does not create. The exact
+  (`app/costs/spend-breakdowns.tsx`, #2304). External inference-budget alerts use LiteLLM’s native
+  $5/week accounting for the local-only summarizer key, delivered through
+  Homelab’s existing Prometheus/Alertmanager Slack route. That weekly budget
+  is separate from the selected-session subtotal displayed here. The exact
   activity-window, reported/estimated, deduplication, attribution, unavailable
   data and operator-owned alert contract is [Session spend](../cost-ledger.md).
 
@@ -702,7 +706,7 @@ CLI sessions and dispatched runs.
 | `/api/console/shell-readouts`               | session; fleet figures require admin                               | Identity and shared frame readouts; non-admin sessions receive identity only |
 | `/costs/export`                             | admin session                                                      | Filtered cost ledger CSV (FE-CO-3)                                           |
 | `/api/dashboard/stream`                     | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)           |
-| `/api/work/v1/costs/budget`                 | `costs.reader` Work grant                                          | Fixed-selection cost budget readout for operator alerts (R10)                |
+| `/api/work/v1/costs/budget`                 | `costs.reader` Work grant                                          | Optional fixed-selection cost budget readout for operator integrations       |
 | `/api/inbox-notifications`                  | admin session                                                      | Inbox notification snapshot (R11)                                            |
 | `/api/quick-task-evidence/v1/[id]`          | capability ID                                                      | Screenshot evidence bytes; revocable                                         |
 | `/api/logs/error`                           | public                                                             | Browser error reporting                                                      |
@@ -808,17 +812,15 @@ deployment.
 ## 10. Gaps and roadmap
 
 Priorities follow the expert-maintainer design center. This table lists only
-remaining work. Completed roadmap entries R1, R3–R5, and R7–R9 are retired;
+remaining work. Completed roadmap entries R1, R3–R10 are retired;
 their behavior is owned by the corresponding destination requirements above.
 R2 now identifies the live qualification gap rather than repeating shipped E2E
 coverage. Existing IDs are not reused.
 
-| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                             | Priority |
-| --- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                               | P0       |
-| R6  | Restore production of new CLI transcript archives (FE-SE-4)                      | Qualify the explicit CLI snapshot writer, deployed lifecycle/IAM, installed CLI/flusher pair and real consent/revocation journey. Existing archive rendering and OpenCode support already exist | P1       |
-| R10 | Deliver external budget alerts (FE-CO-2)                                         | Qualify the operator-owned alert integration described in [Session spend](../cost-ledger.md); Console breakdowns and warning states already exist                                               | P2       |
-| R11 | Deliver notifications when no Inbox tab is open                                  | Web Push implementation in progress; deployed key provisioning and explicit browser opt-in/closed-tab delivery verification remain required. [Notification contract](../inbox-notifications.md) | P3       |
+| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                                             | Priority |
+| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                                               | P0       |
+| R11 | Deliver notifications when no Inbox tab is open                                  | Web Push and its signing key are deployed behind opt-in; real browser opt-in, closed-tab OS delivery and authenticated click-through remain to be qualified. [Notification contract](../inbox-notifications.md) | P3       |
 
 ## 11. Success metrics
 
