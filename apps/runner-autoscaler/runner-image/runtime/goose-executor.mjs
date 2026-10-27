@@ -10,12 +10,15 @@ export function gooseExecutor({
   executable = 'goose',
   assertAllocation,
   environment,
+  workingDirectory,
   onProviderStarted,
 }) {
   if (typeof assertAllocation !== 'function')
     throw new Error('an enforced allocation verifier is required');
   if (!environment?.HOME || !environment.GOOSE_PATH_ROOT)
     throw new Error('isolated profile environment is required');
+  if (!workingDirectory)
+    throw new Error('repository working directory is required');
   return async ({
     run,
     baseline,
@@ -28,7 +31,7 @@ export function gooseExecutor({
       const recipe = join(directory, 'recipe.yaml');
       await writeFile(recipe, run.definition.recipeText, { mode: 0o600 });
       await subprocess(executable, ['recipe', 'validate', recipe], {
-        cwd: directory,
+        cwd: workingDirectory,
         signal,
         environment,
       });
@@ -50,7 +53,7 @@ export function gooseExecutor({
       for (const [key, value] of Object.entries(parameters))
         args.push('--params', `${key}=${value}`);
       const output = await subprocess(executable, args, {
-        cwd: directory,
+        cwd: workingDirectory,
         signal,
         environment,
         onSpawn:

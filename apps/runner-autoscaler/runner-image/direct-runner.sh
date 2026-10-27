@@ -253,21 +253,10 @@ if [ "$AGENT_NAME" = "Unknown" ]; then
   echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
   exit 1
 fi
-# Recipe jobs use the same activated worker, startup acknowledgement, heartbeat,
-# failure settlement and capacity retirement as every other supported runtime.
-if [ "$PIPELINE" = goose ]; then
-  [ "$MODE" = recipe ] || { echo 'FATAL: Goose requires recipe mode' >&2; exit 1; }
-  "$PROVIDER_PROCESS_NODE" "$RUNTIME_HELPERS_DIR/goose-job.mjs" &
-  GOOSE_JOB_PID=$!
-  trap 'kill -TERM "$GOOSE_JOB_PID" 2>/dev/null || true; wait "$GOOSE_JOB_PID" 2>/dev/null || true; exit 143' TERM INT
-  wait "$GOOSE_JOB_PID"
-  COMPLETED=1
-  exit 0
-fi
-case "$MODE" in
-  implement|review|reply) ;;
+case "$PIPELINE:$MODE" in
+  goose:recipe|claude:implement|claude:review|claude:reply|codex:implement|codex:review|codex:reply|opencode:implement|opencode:review|opencode:reply) ;;
   *)
-    echo "FATAL: direct runner received unsupported mode '$MODE'" >&2
+    echo "FATAL: direct runner received unsupported mode '$MODE' for pipeline '$PIPELINE'" >&2
     exit 1
     ;;
 esac
@@ -541,6 +530,20 @@ unset CHECKOUT_TOKEN CHECKOUT_AUTH_HEADER GITHUB_TOKEN GH_TOKEN ACTIONS_RERUN_TO
 GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
 git config --local user.name "$GIT_LOGIN"
 git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
+
+# Recipes share checkout, renewable GitHub command wrappers, Git identity and
+# the image's installed tools/skills. Coding dispatch prompts and provider auth
+# below are specific to the coding runtimes, not recipe execution.
+export WORKSPACE="$workspace"
+export REPOSITORY="$TARGET_REPO"
+if [ "$PIPELINE" = goose ]; then
+  "$PROVIDER_PROCESS_NODE" "$RUNTIME_HELPERS_DIR/goose-job.mjs" &
+  GOOSE_JOB_PID=$!
+  trap 'kill -TERM "$GOOSE_JOB_PID" 2>/dev/null || true; wait "$GOOSE_JOB_PID" 2>/dev/null || true; exit 143' TERM INT
+  wait "$GOOSE_JOB_PID"
+  COMPLETED=1
+  exit 0
+fi
 
 # Restore uses the telemetry writer's own store. A caller that asked to
 # resume must never silently become a fresh dispatch: that loses the exact

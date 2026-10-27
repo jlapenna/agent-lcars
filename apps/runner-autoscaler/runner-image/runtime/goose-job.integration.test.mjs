@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ import { test } from 'node:test';
 // Explicit qualification in the supported CI lane (2 CPU / 5 GiB / 20 GiB).
 // Mount fixture provider configuration at /run/secrets and aaa.bbb.ccc at
 // /run/agent-lcars-identity/token. The provider host is http://127.0.0.1:17777.
+// Enable the builtin developer extension and GOOSE_MODE: auto in that config.
 // Uses the installed, real Goose binary; no paid model or network audit.
 const runtime = fileURLToPath(new URL('.', import.meta.url));
 const answer = { report: 'Local transport fixture', findings: { items: [] } };
@@ -44,6 +45,32 @@ for (const cancel of [false, true]) {
       const runId = 'work:fixture/r1';
       const root = `/api/work/v1/runs/${encodeURIComponent(runId)}`;
       const directory = await mkdtemp(join(tmpdir(), 'goose-integration-'));
+      const checkout = join(directory, 'checkout');
+      const home = join(directory, 'home');
+      const bin = join(directory, 'bin');
+      await mkdir(checkout);
+      await mkdir(join(home, '.claude/skills'), { recursive: true });
+      await mkdir(bin);
+      await writeFile(
+        join(home, '.claude/skills/fixture.md'),
+        'installed skill',
+      );
+      const git = (...args) =>
+        execFileSync('git', args, { cwd: checkout, encoding: 'utf8' }).trim();
+      git('init', '-q');
+      git('config', 'user.name', 'fixture');
+      git('config', 'user.email', 'fixture@example.invalid');
+      await writeFile(join(checkout, 'recipe-source.txt'), 'pinned source');
+      git('add', '.');
+      git('commit', '-qm', 'fixture source');
+      const revision = git('rev-parse', 'HEAD');
+      git('remote', 'add', 'origin', checkout);
+      await writeFile(join(checkout, 'recipe-source.txt'), 'newer source');
+      git('commit', '-qam', 'newer default branch');
+      await writeFile(join(bin, 'gh'), '#!/bin/sh\nprintf "%s" "$GH_TOKEN"\n', {
+        mode: 0o700,
+      });
+      let checkoutTokens = 0;
       let activations = 0;
       let starts = 0;
       let submitted;
@@ -89,6 +116,21 @@ for (const cancel of [false, true]) {
                 expiresAt: new Date(Date.now() + 60000).toISOString(),
               });
             }
+            if (req.url === `${root}/checkout-token`) {
+              checkoutTokens++;
+              const rotate = await readFile(
+                join(directory, 'tool-started'),
+              ).then(
+                () => true,
+                () => false,
+              );
+              return json({
+                token: rotate ? 'fixture-token-2' : 'fixture-token-1',
+                expiresAt: new Date(
+                  Date.now() + (rotate ? 3600000 : 1000),
+                ).toISOString(),
+              });
+            }
             if (req.url === `${root}/complete`) {
               failed = body;
               return json({});
@@ -97,6 +139,7 @@ for (const cancel of [false, true]) {
               return json({
                 definition: {
                   recipeText,
+                  revision,
                   job: {
                     inputs: {},
                     execution: {
@@ -141,19 +184,53 @@ for (const cancel of [false, true]) {
           started();
           if (cancel) return;
           const tool = body.tools.find((t) =>
-            /final_output/.test(t.function?.name),
+            (providerCalls === 1 ? /shell$/ : /final_output/).test(
+              t.function?.name,
+            ),
           );
-          assert.ok(tool, 'real Goose must request its structured output tool');
+          if (providerCalls > 1) {
+            assert.equal(
+              await readFile(join(directory, 'tools-proved'), 'utf8'),
+              'ok',
+            );
+            assert.ok(
+              checkoutTokens >= 2,
+              'shared credential refresh must run',
+            );
+          }
+          const command = `set -eu
+            test "$(pwd)" = "$WORKSPACE"
+            test "$REPOSITORY" = fixture/repo
+            test "$(cat recipe-source.txt)" = 'pinned source'
+            test "$(cat "$HOME/.claude/skills/fixture.md")" = 'installed skill'
+            test -z "\${LCARS_RUN_TOKEN:-}\${GH_TOKEN:-}\${GITHUB_TOKEN:-}"
+            test "$(git config user.name)" = 'agent-lcars[bot]'
+            test "$(gh api repos/fixture/repo)" = fixture-token-1
+            touch '${directory}/tool-started'
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              [ "$(gh api repos/fixture/repo)" = fixture-token-2 ] && break
+              sleep 1
+            done
+            test "$(gh api repos/fixture/repo)" = fixture-token-2
+            printf 'protocol=https\\nhost=github.com\\npath=fixture/repo.git\\n\\n' | git credential fill | grep -q 'password=fixture-token-2'
+            printf ok > '${directory}/tools-proved'`;
+
+          assert.ok(
+            tool,
+            'real Goose must expose the requested shell/final-output tool',
+          );
           const delta = {
             role: 'assistant',
             tool_calls: [
               {
                 index: 0,
-                id: 'call_final',
+                id: `call_${providerCalls}`,
                 type: 'function',
                 function: {
                   name: tool.function.name,
-                  arguments: JSON.stringify(answer),
+                  arguments: JSON.stringify(
+                    providerCalls === 1 ? { command } : answer,
+                  ),
                 },
               },
             ],
@@ -164,7 +241,7 @@ for (const cancel of [false, true]) {
             [{}, 'tool_calls'],
           ])
             res.write(
-              `data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture', choices: [{ index: 0, delta: piece, finish_reason: reason }] })}\n\n`,
+              `data: ${JSON.stringify({ id: `fixture-${providerCalls}`, object: 'chat.completion.chunk', created: 1, model: 'fixture', choices: [{ index: 0, delta: piece, finish_reason: reason }] })}\n\n`,
             );
           res.end('data: [DONE]\n\n');
         } catch (error) {
@@ -182,6 +259,11 @@ for (const cancel of [false, true]) {
           detached: true,
           env: {
             ...process.env,
+            HOME: home,
+            PATH: `${bin}:${process.env.PATH}`,
+            GH_TOKEN: 'stale-inherited-token',
+            GITHUB_TOKEN: 'stale-inherited-token',
+            CHECKOUT_TOKEN_REFRESH_MARGIN_SECONDS: '0',
             LCARS_RUN_ID: runId,
             LCARS_RUN_TOKEN: 'fixture',
             LCARS_CONSOLE_URL: 'http://127.0.0.1:17777',

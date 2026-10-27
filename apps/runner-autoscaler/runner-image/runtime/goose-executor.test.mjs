@@ -92,6 +92,7 @@ test('adapter validates before invoking and acknowledges actual provider spawn',
     let starts = 0;
     const execute = gooseExecutor({
       executable,
+      workingDirectory: directory,
       environment: {
         PATH: '/usr/bin:/bin',
         HOME: directory,

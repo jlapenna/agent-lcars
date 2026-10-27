@@ -79,7 +79,12 @@ and normal resource envelope used by the supported stack. There is no separate
 Goose image, bootstrap container, storage receipt or scheduler.
 
 The direct runner performs its existing activation retry, startup heartbeat,
-periodic heartbeat and failure settlement before invoking the recipe adapter.
+periodic heartbeat, repository checkout, renewable GitHub credentials and failure
+settlement before invoking the recipe adapter. Recipes use the same `gh` wrapper,
+Git credential helper and Git identity as coding runtimes. The adapter checks out
+the pinned definition revision and runs Goose in that repository directory;
+relative skills and tool reads therefore match the admitted source. The image
+HOME and installed tools remain available; coding-agent prompts are not injected.
 The adapter checks the admitted CPU/memory allocation, runs Goose once, forwards
 cancellation, bounds output and reports through the token-fenced recipe endpoint.
 Native Queue capacity admission, storage accounting and retirement remain the
@@ -88,7 +93,9 @@ owners of resource enforcement. A failed capped run remains failed.
 The adapter requests Goose's JSON machine envelope, requires completed status,
 and validates only the final assistant result. Intermediate tool output cannot
 be mistaken for success. Provider credentials use the runner's existing projected
-Secret mechanism. The Goose child receives only the configured provider environment;
+Secret mechanism. The Goose child receives the configured provider environment plus the shared
+PATH, HOME and repository paths, without inheriting the run token or static
+GitHub tokens;
 this is the same trusted single-container execution boundary as other runtimes.
 The adapter copies configuration into a private `GOOSE_PATH_ROOT` and removes that
 private state after completion. Profiles must configure the intended tools and model;

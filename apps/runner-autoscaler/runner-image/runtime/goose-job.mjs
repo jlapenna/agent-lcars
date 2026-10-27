@@ -1,9 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cgroupAllocation, gooseExecutor } from './goose-executor.mjs';
+import {
+  cgroupAllocation,
+  gooseExecutor,
+  subprocess,
+} from './goose-executor.mjs';
 
-// Invoked by direct-runner after its ordinary activation and startup heartbeat.
+// Invoked by direct-runner after activation, heartbeat and shared checkout/tool bootstrap.
 // The shell owns periodic heartbeats, failure settlement and container retirement.
 const required = (name) => {
   if (!process.env[name]) throw new Error(`${name} required`);
@@ -61,6 +65,9 @@ try {
     )
   )
     throw new Error('Invalid Goose provider environment');
+  // GitHub authority is supplied by the shared renewable command wrappers.
+  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RERUN_TOKEN'])
+    delete environment[key];
   home = await mkdtemp(join(tmpdir(), 'lcars-goose-profile-'));
   await mkdir(join(home, 'config'), { mode: 0o700 });
   await writeFile(
@@ -70,7 +77,9 @@ try {
   );
   Object.assign(environment, {
     PATH: process.env.PATH,
-    HOME: home,
+    HOME: required('HOME'),
+    WORKSPACE: required('WORKSPACE'),
+    REPOSITORY: required('REPOSITORY'),
     GOOSE_PATH_ROOT: home,
     TMPDIR: tmpdir(),
     GOOSE_DISABLE_KEYRING: 'true',
@@ -79,7 +88,22 @@ try {
     () => controller.abort(),
     parseInt(brief.definition.job.execution.timeout, 10) * 60000,
   );
+  // Use the same credential helper as coding runtimes to materialize the
+  // admitted source revision; relative tool/skill reads must match the recipe.
+  if (!/^[a-f0-9]{40}$/u.test(brief.definition.revision))
+    throw new Error('Invalid recipe source revision');
+  const workingDirectory = required('WORKSPACE');
+  for (const args of [
+    ['fetch', '--no-tags', 'origin', brief.definition.revision],
+    ['checkout', '--detach', brief.definition.revision],
+  ])
+    await subprocess('git', args, {
+      cwd: workingDirectory,
+      environment,
+      signal: controller.signal,
+    });
   const execute = gooseExecutor({
+    workingDirectory,
     environment,
     assertAllocation: cgroupAllocation,
     onProviderStarted: () =>
