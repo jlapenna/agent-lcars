@@ -34,6 +34,8 @@ it.each([
     const writerDone = join(root, 'writer-done');
     const transportEvidence = join(root, 'transport-evidence.json');
     const drainEvidence = join(root, 'drain-evidence.json');
+    const codexSettings = join(root, 'codex-settings.json');
+    const armProfile = !missingStop && !pendingWriter;
     const foreign = join(root, 'unrelated-home');
     mkdirSync(foreign);
     const unrelated = pendingWriter
@@ -45,6 +47,11 @@ it.each([
       : undefined;
     for (const directory of [scratch, lib, sdk, bin, join(sdk, 'node_modules')])
       mkdirSync(directory, { recursive: true });
+    // Exercise the ARM profile in the successful case even on AMD64 CI.
+    if (armProfile)
+      writeFileSync(join(bin, 'uname'), "#!/bin/sh\nprintf 'aarch64\\n'\n", {
+        mode: 0o755,
+      });
     for (const file of [
       'lcars-telemetry.js',
       'package.json',
@@ -57,6 +64,13 @@ it.each([
 if(process.argv.slice(2).join(' ')==='integration install claude') {
 const dir=path.join(process.env.HOME,'.claude');fs.mkdirSync(dir,{recursive:true});
 fs.writeFileSync(path.join(dir,'settings.json'),JSON.stringify({hooks:{SessionEnd:[]}}));
+}
+if(process.argv.slice(2).join(' ')==='integration install codex') {
+const dir=path.join(process.env.HOME,'.codex');fs.mkdirSync(dir,{recursive:true});
+fs.writeFileSync(path.join(dir,'hooks.json'),JSON.stringify({hooks:{
+Stop:[{hooks:[{type:'command',command:'lcars hook codex Stop',timeout:5}]}],
+SessionEnd:[{hooks:[{type:'command',command:'lcars hook codex',timeout:3}]}]
+}}));
 }
 if(process.argv.slice(2).join(' ')==='hook opencode') {
 process.stdout.write(JSON.stringify({writerConfigured:Boolean(process.env.LCARS_TELEMETRY_CREDENTIALS_FILE)}));
@@ -79,6 +93,7 @@ const kinds=command==='claude'?['start','stop','end']:command==='codex'?['start'
 for(const kind of kinds)fs.appendFileSync(path.join(dir,'events.ndjson'),JSON.stringify({
 version:1,agent,kind,sessionId:'owned-session',summary:{sessionId:'owned-session'},
 runner:{runId:'hook-test-run',issueNumber:7,repo:{owner:'hook-test',name:'repo'}}})+'\\n');
+if(command==='codex')fs.copyFileSync(path.join(process.env.HOME,'.codex/hooks.json'),${JSON.stringify(codexSettings)});
 if(command==='claude'){
 const settings=JSON.parse(fs.readFileSync(path.join(process.env.HOME,'.claude/settings.json')));
 for(const entry of settings.hooks.SessionEnd)for(const hook of entry.hooks)fs.writeFileSync(hook.command.slice(6),'');
@@ -249,6 +264,11 @@ process.exit(result.status??1);
       const transport = existsSync(transportEvidence)
         ? JSON.parse(readFileSync(transportEvidence, 'utf8'))
         : undefined;
+      if (armProfile) {
+        const settings = JSON.parse(readFileSync(codexSettings, 'utf8'));
+        expect(settings.hooks.Stop[0].hooks[0].timeout).toBe(30);
+        expect(settings.hooks.SessionEnd[0].hooks[0].timeout).toBe(3);
+      }
       expect(transport).toEqual({
         pluginEnabled: true,
         clientExit: 0,
