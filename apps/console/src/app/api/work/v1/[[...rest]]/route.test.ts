@@ -6,7 +6,8 @@ import {
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   auth,
@@ -94,6 +95,7 @@ const operatorPrincipal = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv('AUTH_URL', 'https://lcars.test');
   authenticateWorkRequest.mockResolvedValue(operatorPrincipal);
   // The regression this guards: `AGENT_LCARS_APP_CLIENT_ID`/
   // `AGENT_LCARS_APP_PRIVATE_KEY` (the GitHub App credential
@@ -104,6 +106,8 @@ beforeEach(() => {
   delete process.env['AGENT_LCARS_APP_CLIENT_ID'];
   delete process.env['AGENT_LCARS_APP_PRIVATE_KEY'];
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('GET /api/work/v1/items', () => {
   it('succeeds with AGENT_LCARS_APP_CLIENT_ID/AGENT_LCARS_APP_PRIVATE_KEY unset', async () => {
@@ -293,6 +297,9 @@ describe('shared Work HTTP origin policy', () => {
     ['/items', '/jobs/invoke', '/schedules', '/future-platform'].flatMap(
       (path) => [
         { path, origin: 'https://foreign.example' },
+        { path, origin: 'http://lcars.test' },
+        { path, origin: 'https://lcars.test:444' },
+        { path, origin: 'null' },
         { path, origin: undefined },
       ],
     ),
@@ -313,6 +320,41 @@ describe('shared Work HTTP origin policy', () => {
       expect(response.headers.get('cache-control')).toBe('no-store');
     },
   );
+
+  it.each(['http://127.0.0.1:4200', 'http://runner.internal:8080'])(
+    'accepts the configured public origin through internal request URL %s',
+    async (internalOrigin) => {
+      const response = await GET(
+        new NextRequest(`${internalOrigin}/api/work/v1/future-platform`, {
+          method: 'POST',
+          headers: { origin: 'https://lcars.test' },
+        }),
+      );
+      expect(response.status).toBe(404);
+    },
+  );
+
+  it('does not trust Host or forwarding headers to authorize a foreign origin', async () => {
+    const response = await GET(
+      new NextRequest(
+        'http://runner.internal:8080/api/work/v1/future-platform',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'https://foreign.example',
+            host: 'foreign.example',
+            'x-forwarded-host': 'foreign.example',
+            'x-forwarded-proto': 'https',
+            forwarded: 'host=foreign.example;proto=https',
+          },
+        },
+      ),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Same-origin request required',
+    });
+  });
 
   it.each(['session', 'google', 'oidc'] as const)(
     'routes permitted %s requests normally',

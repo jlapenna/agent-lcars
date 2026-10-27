@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { required } from '@agent-lcars/util-server';
 import {
   storedWorkPayloadSchema,
   WORK_ID_PATTERN,
@@ -80,7 +81,9 @@ const repositoryBoundOperations: ReadonlyArray<readonly [string, RegExp]> = [
   ['POST', /^\/jobs\/[a-f0-9]{64}\/(?:enable|invoke)$/u],
 ];
 
-/** Cookie authority requires same-origin writes across the entire Work API.
+/** Cookie authority requires the configured public origin across the Work API.
+ * Next can normalize request.url or construct it from an internal hostname;
+ * neither that URL nor client-supplied forwarding headers define our origin.
  * Bearer and run-token authentication retain their existing contracts. */
 export function workRequestForbiddenReason(
   request: Request,
@@ -89,7 +92,7 @@ export function workRequestForbiddenReason(
   if (
     !['GET', 'HEAD', 'OPTIONS'].includes(request.method) &&
     principal?.via === 'session' &&
-    request.headers.get('origin') !== new URL(request.url).origin
+    request.headers.get('origin') !== new URL(required('AUTH_URL')).origin
   )
     return 'Same-origin request required';
   if (principal?.sourceRepository !== undefined) {

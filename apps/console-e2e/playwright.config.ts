@@ -72,7 +72,7 @@ export default defineConfig({
       PORT: '4200',
       HOSTNAME: '127.0.0.1',
       NODE_OPTIONS: '--max-old-space-size=8192',
-      AUTH_URL: 'http://localhost:4200',
+      AUTH_URL: baseURL,
       E2E_TESTING: 'true',
       AGENT_CONSOLE_GITHUB_API_BASE_URL: 'http://localhost:4200/api/e2e/github',
     },
