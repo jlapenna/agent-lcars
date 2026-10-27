@@ -95,6 +95,21 @@ export function runStartDeadlineAt(now: string): string {
   return new Date(Date.parse(now) + RUN_START_TIMEOUT_MS).toISOString();
 }
 
+/** Total placement wait a negotiated claim may renew through, measured from
+ * the claim. Beyond it the start deadline stops moving, the sweep records a
+ * startup loss (not a provider attempt), and the executor retires the Job that
+ * never placed, so one unplaceable Job cannot hold admission indefinitely. */
+export const RUN_PLACEMENT_WAIT_MAX_MS = 60 * 60_000;
+
+function placementStartDeadlineAt(now: string, claimedAt?: string): string {
+  const renewed = Date.parse(runStartDeadlineAt(now));
+  const bound =
+    claimedAt === undefined
+      ? renewed
+      : Date.parse(claimedAt) + RUN_PLACEMENT_WAIT_MAX_MS;
+  return new Date(Math.min(renewed, bound)).toISOString();
+}
+
 export const RUN_LEASE_MS = 2 * 60 * 60 * 1_000;
 
 export function runLeaseExpiresAt(now: string): string {
@@ -595,7 +610,10 @@ export function observeStartupPlacement(input: {
           jobUid,
           observedAt,
         },
-        startDeadlineAt: runStartDeadlineAt(now),
+        // Placement starts the ordinary bootstrap clock; only waiting is capped.
+        startDeadlineAt: placed
+          ? runStartDeadlineAt(now)
+          : placementStartDeadlineAt(now, queue.claimedAt),
       },
       leaseExpiresAt: runLeaseExpiresAt(now),
       updatedAt: now,

@@ -2219,9 +2219,9 @@ export function runOrchestratorStoreContract(
         return { ...f, run, claimant };
       }
 
-      it('preserves the exact Pending claim and retry budget beyond startup and execution leases, then bounds bootstrap', async () => {
+      it('preserves the exact Pending claim and retry budget through the one-hour placement bound, then bounds bootstrap', async () => {
         const f = await placementFixture();
-        for (let minute = 10; minute <= 150; minute += 10) {
+        for (let minute = 10; minute <= 50; minute += 10) {
           f.clock.advanceMinutes(10);
           const result = await f.orchestrator.observeStartupPlacement(
             f.run.runId,

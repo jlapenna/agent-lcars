@@ -253,8 +253,10 @@ Legacy claims retain the fifteen-minute bound from #2188, including placement
 and bootstrap. Display observation traffic cannot extend it. Negotiated
 placement-aware claims use the separately fenced startup operation below. The five-minute maintenance cadence normally settles an expired
 startup within twenty minutes; it records startup loss, not a model failure.
-A normal temporary capacity wait remains placement until that bound. Accepted
-worker heartbeats then use the renewable run lease. Kubernetes' unchanged
+A normal temporary capacity wait remains placement until that bound, renewed by
+each Pending observation for at most one hour from the claim; past that the
+sweep records a startup loss and the executor retires the Job that never
+placed. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
 7200-second execution limit is an independent backstop (a Job deadline for
 legacy claims, a Pod runtime deadline for negotiated claims), not permission to
 run after control-plane settlement. Exact-claim foreground retirement and Pod
