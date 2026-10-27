@@ -131,6 +131,14 @@ export const OUTBOX_BACKOFF_CAP_MS = 30 * 60_000;
  *  before they would otherwise reach delivery. */
 export const OUTBOX_STALE_REPORT_AGE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * How long a waiting delivery monitor sleeps between unprompted GitHub reads.
+ * The App's `pull_request`, `pull_request_review`, `pull_request_review_thread`
+ * and `check_run` webhooks wake the entry the moment its PR changes
+ * (`wakeDeliveryMonitor`), so this clock only covers a dropped webhook.
+ */
+export const DELIVERY_MONITOR_FALLBACK_MS = 60 * 60_000;
+
 export interface DispatchDeps {
   store: OrchestratorStore;
   orchestrator: Orchestrator;
@@ -281,8 +289,26 @@ async function handleMonitorDelivery(
     });
   }
   await settleClaim(deps, entry, 'pending', {
-    nextAttemptAt: new Date(Date.parse(now(deps)) + 5 * 60_000).toISOString(),
+    nextAttemptAt: new Date(
+      Date.parse(now(deps)) + DELIVERY_MONITOR_FALLBACK_MS,
+    ).toISOString(),
   });
+}
+
+/** A PR webhook makes every waiting monitor bound to that PR due now. Returns
+ * the entries woken; the caller drains so the observation follows at once. */
+export async function wakeDeliveryMonitor(
+  deps: Pick<DispatchDeps, 'store' | 'now'>,
+  binding: { repo: string; number: number },
+): Promise<string[]> {
+  const woken: string[] = [];
+  const at = deps.now?.() ?? new Date().toISOString();
+  for (const { task } of await deps.store.readWaitingDeliveryTasks(binding)) {
+    if (task.delivery === undefined) continue;
+    const entryId = `delivery/${task.delivery.runId}`;
+    if (await deps.store.wakeOutbox({ entryId, now: at })) woken.push(entryId);
+  }
+  return woken;
 }
 
 /**

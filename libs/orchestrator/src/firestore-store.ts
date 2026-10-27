@@ -50,6 +50,7 @@ import {
   taskDocumentSchema,
   type TaskId,
   taskKey,
+  wakeOutboxEntry,
   type WorkRevision,
   workRevisionSchema,
 } from './model';
@@ -897,6 +898,35 @@ export class FirestoreStore implements OrchestratorStore {
       tx.set(ref, settled);
       return true;
     });
+  }
+
+  async wakeOutbox(input: { entryId: string; now: string }): Promise<boolean> {
+    const ref = this.#outboxRef(input.entryId);
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (!snapshot.exists) return false;
+      const woken = wakeOutboxEntry(
+        outboxEntrySchema.parse(snapshot.data()),
+        input.now,
+      );
+      if (woken === undefined) return false;
+      tx.set(ref, woken);
+      return true;
+    });
+  }
+
+  /** Equality-only filters on the binding, so no composite index is needed. */
+  async readWaitingDeliveryTasks(binding: {
+    repo: string;
+    number: number;
+  }): Promise<VersionedTask[]> {
+    const snapshot = await this.#tasks
+      .where('task.delivery.state', '==', 'waiting')
+      .where('task.delivery.repo', '==', binding.repo)
+      .where('task.delivery.number', '==', binding.number)
+      .limit(10)
+      .get();
+    return snapshot.docs.map((doc) => taskDocSchema.parse(doc.data()));
   }
 
   async readSourceWorkId(sourceKey: string): Promise<string | undefined> {

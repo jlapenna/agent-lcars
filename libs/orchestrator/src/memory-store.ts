@@ -41,6 +41,7 @@ import {
   runRecoveryDeadline,
   settleOutboxEntry,
   taskKey,
+  wakeOutboxEntry,
 } from './model';
 import {
   type ProviderCooldown,
@@ -635,6 +636,28 @@ export class MemoryStore implements OrchestratorStore {
     if (settled === undefined) return false;
     this.#outbox.set(input.entryId, settled);
     return true;
+  }
+
+  async wakeOutbox(input: { entryId: string; now: string }): Promise<boolean> {
+    const entry = this.#outbox.get(input.entryId);
+    const woken = wakeOutboxEntry(entry, input.now);
+    if (woken === undefined) return false;
+    this.#outbox.set(input.entryId, woken);
+    return true;
+  }
+
+  async readWaitingDeliveryTasks(binding: {
+    repo: string;
+    number: number;
+  }): Promise<VersionedTask[]> {
+    return [...this.#tasks.values()]
+      .filter(
+        (entry) =>
+          entry.task.delivery?.state === 'waiting' &&
+          entry.task.delivery.repo === binding.repo &&
+          entry.task.delivery.number === binding.number,
+      )
+      .map((entry) => structuredClone(entry));
   }
 
   async listNativeTasks(

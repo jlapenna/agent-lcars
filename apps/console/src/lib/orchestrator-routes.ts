@@ -6,6 +6,7 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
+import { z } from 'zod';
 
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
@@ -15,6 +16,7 @@ import {
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import { admitGithubWork } from '@/lib/github-work-admission';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
+import { wakeDeliveryMonitor } from '@/lib/orchestrator-dispatch';
 import {
   githubAnchorClosureFromDelivery,
   interpretDelivery,
@@ -183,11 +185,63 @@ async function refreshGithubAnchorProjectionAfterAdmission(
   }
 }
 
+/** The pull requests a delivery names, for events that can change whether a
+ * waiting delivery binding's PR merged, closed, moved or got feedback. */
+const deliveryPullRequestsSchema = z.object({
+  repository: z.object({ full_name: z.string().min(1) }),
+  pull_request: z.object({ number: z.number().int().positive() }).optional(),
+  check_run: z
+    .object({
+      pull_requests: z.array(z.object({ number: z.number().int().positive() })),
+    })
+    .optional(),
+});
+
+async function wakeDeliveryMonitors(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; payload: unknown },
+): Promise<void> {
+  if (
+    ![
+      'pull_request',
+      'pull_request_review',
+      'pull_request_review_thread',
+      'check_run',
+    ].includes(input.event)
+  )
+    return;
+  const parsed = deliveryPullRequestsSchema.safeParse(input.payload);
+  if (!parsed.success) return;
+  const repo = parsed.data.repository.full_name;
+  const numbers = [
+    ...(parsed.data.pull_request === undefined
+      ? []
+      : [parsed.data.pull_request.number]),
+    ...(parsed.data.check_run?.pull_requests.map((pr) => pr.number) ?? []),
+  ];
+  let woken = 0;
+  for (const number of new Set(numbers))
+    woken += (await wakeDeliveryMonitor(deps, { repo, number })).length;
+  if (woken > 0) await deps.drain(woken);
+}
+
 export async function handleWebhookDelivery(
   deps: OrchestratorRouteDeps,
   input: { event: string; deliveryId: string; payload: unknown },
 ): Promise<RouteResult> {
   try {
+    // Observe a bound PR's change now rather than on the fallback clock. A
+    // failed wake is logged and left to that clock; it never fails intake.
+    try {
+      await wakeDeliveryMonitors(deps, input);
+    } catch (error) {
+      logger.warn(
+        'agent-lcars: delivery monitor wake failed for %s/%s:',
+        input.event,
+        input.deliveryId,
+        error,
+      );
+    }
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'conflict') {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);

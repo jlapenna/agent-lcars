@@ -1,5 +1,7 @@
 import { formatQuickTaskMarker } from '@agent-lcars/dispatch-contracts';
 import {
+  decidedRun,
+  isRefusal,
   MemoryStore,
   Orchestrator,
   type TaskId,
@@ -322,6 +324,104 @@ describe('handleWebhookDelivery', () => {
       ]),
     });
     expect((await store.readTask(ISSUE))?.task.activeRunId).toBeUndefined();
+  });
+
+  it('wakes a waiting delivery monitor when its pull request changes, then drains', async () => {
+    const { deps, store, orchestrator, clock } = fixture();
+    const admitted = await orchestrator.request({
+      taskId: ISSUE,
+      requestId: 'monitored',
+      pipeline: 'claude',
+      work: { spec: { title: 'deliver' } },
+    });
+    if (isRefusal(admitted)) throw new Error(admitted.reason);
+    const run = decidedRun(admitted);
+    const versioned = (await store.readTask(ISSUE))!;
+    const later = new Date(Date.parse(T0) + 60 * 60_000).toISOString();
+    await store.apply({
+      decision: {
+        task: {
+          ...versioned.task,
+          delivery: {
+            runId: run.runId,
+            repo: REPO,
+            number: 99,
+            baseRef: 'main',
+            head: 'a'.repeat(40),
+            state: 'waiting',
+            observedAt: T0,
+          },
+        },
+        outbox: [
+          {
+            entryId: `delivery/${run.runId}`,
+            kind: 'monitor-delivery',
+            task: ISSUE,
+            runId: run.runId,
+            state: 'pending',
+            attempts: 0,
+            nextAttemptAt: later,
+            createdAt: T0,
+            updatedAt: T0,
+          },
+        ],
+      },
+      expectedRevision: versioned.revision,
+    });
+    const drain = vi
+      .fn()
+      .mockResolvedValue({ dispatched: [], reported: [], failed: [] });
+    deps.drain = drain;
+    const claimable = () =>
+      store.claimPendingOutbox({
+        now: clock.now(),
+        leaseExpiresAt: later,
+        limit: 10,
+        excludeEntryIds: new Set(),
+      });
+
+    // Another PR's event wakes nothing.
+    await handleWebhookDelivery(deps, {
+      event: 'check_run',
+      deliveryId: 'other-pr',
+      payload: {
+        action: 'completed',
+        repository: { full_name: REPO },
+        check_run: { pull_requests: [{ number: 98 }] },
+      },
+    });
+    expect(drain).not.toHaveBeenCalled();
+
+    await handleWebhookDelivery(deps, {
+      event: 'check_run',
+      deliveryId: 'bound-pr',
+      payload: {
+        action: 'completed',
+        repository: { full_name: REPO },
+        check_run: { pull_requests: [{ number: 99 }] },
+      },
+    });
+    expect(drain).toHaveBeenCalledWith(1);
+    const woken = (await claimable()).filter(
+      (entry) => entry.kind === 'monitor-delivery',
+    );
+    expect(woken.map((entry) => entry.entryId)).toEqual([
+      `delivery/${run.runId}`,
+    ]);
+
+    // Leased now: a review event is a no-op and never reaches the drain again.
+    await handleWebhookDelivery(deps, {
+      event: 'pull_request_review',
+      deliveryId: 'review',
+      payload: {
+        action: 'submitted',
+        repository: { full_name: REPO },
+        pull_request: { number: 99 },
+        review: { state: 'approved' },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    expect(drain).toHaveBeenCalledTimes(1);
   });
 
   it('cancels queued implementation work when its pull request merges', async () => {

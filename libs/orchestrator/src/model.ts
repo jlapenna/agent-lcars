@@ -678,6 +678,23 @@ export interface OutboxSettlement {
 }
 
 /** Settle only the current lease owner; omitted retry fields retain history. */
+/** A webhook wake: a pending entry still waiting out `nextAttemptAt` becomes
+ * claimable at `now`. Leased, settled, missing or already-due entries are left
+ * exactly as they are, so a wake can never race a drain or revive a retiree. */
+export function wakeOutboxEntry(
+  entry: OutboxEntry | undefined,
+  now: string,
+): OutboxEntry | undefined {
+  if (
+    entry === undefined ||
+    entry.state !== 'pending' ||
+    entry.nextAttemptAt === undefined ||
+    Date.parse(entry.nextAttemptAt) <= Date.parse(now)
+  )
+    return undefined;
+  return { ...entry, nextAttemptAt: now, updatedAt: now };
+}
+
 export function settleOutboxEntry(
   entry: OutboxEntry | undefined,
   input: OutboxSettlement,
