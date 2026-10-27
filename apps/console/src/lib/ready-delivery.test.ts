@@ -1056,6 +1056,30 @@ describe('minted delivery permission and current CI boundaries', () => {
           'Bearer mock-installation-token'
         )
           return Response.json({}, { status: 401 });
+        // GitHub's real shape: HTTP 200, the review commit nulled, and a
+        // FORBIDDEN error naming that field.
+        if (path.endsWith('/graphql') && permissions.contents !== 'read') {
+          const body = await (await base.fetchImpl(input, init)).json();
+          for (const node of body.data.repository.pullRequest.reviews.nodes)
+            node.commit = null;
+          return Response.json({
+            ...body,
+            errors: [
+              {
+                type: 'FORBIDDEN',
+                path: [
+                  'repository',
+                  'pullRequest',
+                  'reviews',
+                  'nodes',
+                  0,
+                  'commit',
+                ],
+                message: 'Resource not accessible by integration',
+              },
+            ],
+          });
+        }
         if (
           (path.includes('/check-runs') && permissions.checks !== 'read') ||
           (path.includes('/rule-suites') &&
@@ -1092,6 +1116,7 @@ describe('minted delivery permission and current CI boundaries', () => {
         pull_requests: 'write',
         administration: 'read',
         checks: 'read',
+        contents: 'read',
       });
       expect(
         scoped.calls.mock.calls.some(([url]) =>
@@ -1100,7 +1125,7 @@ describe('minted delivery permission and current CI boundaries', () => {
       ).toBe(false);
       const ordinary = mintedFixture(false, merged);
       await expect(observeGithubDelivery(ordinary, BINDING)).rejects.toThrow(
-        '403',
+        'Delivery revision or review evidence changed',
       );
       expect(ordinary.permission()).toEqual({
         actions: 'write',
