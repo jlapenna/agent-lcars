@@ -266,6 +266,7 @@ function runFallbackContract(
           pipelines: ['claude'],
           now: NOW,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         }),
       ).toBeUndefined();
@@ -347,6 +348,7 @@ function runFallbackContract(
           pipelines: ['claude', 'codex'],
           now: NOW,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         }),
       ).toBeUndefined();
@@ -363,6 +365,7 @@ function runFallbackContract(
           pipelines: ['codex'],
           now: NOW,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         }),
       ).toMatchObject({ runId: busy.runId });
@@ -386,6 +389,7 @@ function runFallbackContract(
             pipelines: [pipeline],
             now: NOW,
             claimedBy: 'busy-executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'a'.repeat(64),
           }),
         ).toMatchObject({ runId: run.runId });
@@ -430,6 +434,7 @@ function runFallbackContract(
           pipelines: ['codex', 'opencode'],
           now: NOW,
           claimedBy: 'successor-executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         }),
       ).toBeUndefined();
@@ -452,6 +457,7 @@ function runFallbackContract(
           pipelines: ['codex'],
           now: NOW,
           claimedBy: 'successor-executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         }),
       ).toMatchObject({
@@ -504,6 +510,7 @@ function runFallbackContract(
           pipelines: ['codex'],
           now: NOW,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         }),
       ).toBeUndefined();
@@ -513,6 +520,7 @@ function runFallbackContract(
           pipelines: ['codex'],
           now: '2026-10-10T02:16:00.000Z',
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         }),
       ).toMatchObject({ runId: waiting.runId });
@@ -544,6 +552,7 @@ function runFallbackContract(
         pipelines: ['codex'],
         now: NOW,
         claimedBy: 'busy-executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       const waiting = await f.request({
@@ -582,6 +591,7 @@ function runFallbackContract(
           pipelines: PIPELINES,
           now: NOW,
           claimedBy: 'fallback-executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         }),
       ).toMatchObject({ runId: next.runId, pipeline: 'opencode' });
@@ -705,6 +715,7 @@ function runFallbackContract(
         pipelines: ['claude'],
         now: NOW,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       await f.limit(

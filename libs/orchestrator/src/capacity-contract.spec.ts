@@ -2082,6 +2082,7 @@ function contract(
           pipelines: ['claude'],
           now,
           claimedBy: 'legacy',
+          claimedBySubject: 'executor@example.com',
           tokenHash,
         }),
       ).rejects.toThrow('policy');
@@ -2127,6 +2128,7 @@ function contract(
           pipelines: ['claude'],
           now,
           claimedBy: 'legacy-runner',
+          claimedBySubject: 'executor@example.com',
           tokenHash,
         }),
       ).toMatchObject({ runId: legacy.runId });

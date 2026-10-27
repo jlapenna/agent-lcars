@@ -307,9 +307,10 @@ export const runQueueSchema = z.strictObject({
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
   /** The authenticated subject (lower-cased verified identity) of the
-   * executor principal that claimed this run. Only that principal may report
-   * the run's worker exit; a claim recorded without it (written before this
-   * field existed) can only be settled by its outcome report or lease expiry. */
+   * executor principal that claimed this run. Every claim records it; only
+   * that principal may report the run's worker exit. Optional only so
+   * documents persisted before the field existed still parse; such a claim
+   * has no provable owner and refuses every exit report. */
   claimedBySubject: z.string().min(1).max(256).optional(),
   tokenHash: z
     .string()

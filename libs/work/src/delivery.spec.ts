@@ -42,6 +42,7 @@ async function handedOff(
     pipelines: [pipeline],
     now: NOW,
     claimedBy: 'runner',
+    claimedBySubject: 'executor@example.com',
     tokenHash: CLAIM,
   });
   if (!reportReady) return { store, orchestrator, runId: first.runId };
@@ -506,6 +507,7 @@ it('bounds generated correction context while preserving delivery identity and d
     pipelines: ['claude'],
     now: NOW,
     claimedBy: 'correction-runner',
+    claimedBySubject: 'executor@example.com',
     tokenHash: CLAIM,
   });
   expect(claimed?.runId).toBe(correction.runId);

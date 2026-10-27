@@ -608,11 +608,7 @@ describe('executor-reported exit', () => {
     claimFingerprint: 'a'.repeat(64),
   };
 
-  async function claimed(
-    f = fixture(),
-    claimedBySubject: string | null = CLAIMANT.subject,
-    placementAware = false,
-  ) {
+  async function claimed(f = fixture(), placementAware = false) {
     const { run } = await started(f.orchestrator);
     await f.store.enqueueRun({ runId: run.runId, now: T0 });
     await f.orchestrator.confirmDispatch(run.runId);
@@ -620,12 +616,26 @@ describe('executor-reported exit', () => {
       pipelines: ['claude'],
       now: T0,
       claimedBy: CLAIMANT.runner,
-      ...(claimedBySubject === null ? {} : { claimedBySubject }),
+      claimedBySubject: CLAIMANT.subject,
       ...(placementAware ? { placementAware: true } : {}),
       tokenHash: 'a'.repeat(64),
     });
     expect(claim?.runId).toBe(run.runId);
     return { ...f, run };
+  }
+
+  /** A claim document persisted before `claimedBySubject` was recorded: no
+   * claim path writes one any more, so strip the subject from a stored run. */
+  async function legacyClaimed() {
+    const f = await claimed();
+    const versioned = (await f.store.readTask(TASK))!;
+    const run = (await f.store.readRun(f.run.runId))!;
+    const { claimedBySubject: _subject, ...queue } = run.queue!;
+    await f.store.apply({
+      expectedRevision: versioned.revision,
+      decision: { task: versioned.task, run: { ...run, queue }, outbox: [] },
+    });
+    return f;
   }
 
   it('settles a claimed live run lost immediately and mints its bounded retry', async () => {
@@ -704,7 +714,7 @@ describe('executor-reported exit', () => {
   it('refuses every reporter for a claim recorded without a principal', async () => {
     // Claims written before claimedBySubject existed have no provable
     // owner; only their outcome report or lease expiry may settle them.
-    const { store, orchestrator, run } = await claimed(fixture(), null);
+    const { store, orchestrator, run } = await legacyClaimed();
 
     expect(
       await orchestrator.executorExited(run.runId, CLAIMANT),
@@ -714,13 +724,15 @@ describe('executor-reported exit', () => {
     });
   });
 
-  it('answers a settled legacy claim idempotently to any reporter', async () => {
-    const { orchestrator, run } = await claimed(fixture(), null);
+  it('refuses a settled claim recorded without a principal to any reporter', async () => {
+    // Same answer settled as live: `not-claimant` is final for the executor,
+    // so the report stops without a separate idempotent branch.
+    const { orchestrator, run } = await legacyClaimed();
     await orchestrator.report(run.runId, { ok: true });
 
     expect(
       await orchestrator.executorExited(run.runId, CLAIMANT),
-    ).toMatchObject({ refused: true, reason: 'run-not-live' });
+    ).toMatchObject({ refused: true, reason: 'not-claimant' });
   });
 
   it('answers a settled run only to its claimant', async () => {
@@ -875,7 +887,6 @@ describe('executor-reported exit', () => {
     it('refuses recovery when the attested Job is not the recorded placement', async () => {
       const { clock, store, orchestrator, run } = await claimed(
         fixture(),
-        CLAIMANT.subject,
         true,
       );
       expect(
@@ -1256,6 +1267,7 @@ describe('queued provider replacement', () => {
         pipelines: ['claude'],
         now: T0,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
       orchestrator.request({
@@ -1360,6 +1372,7 @@ describe('guarded pre-claim cancellation', () => {
         pipelines: ['claude'],
         now: T0,
         claimedBy: 'executor-that-won',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
       orchestrator.cancelUnclaimedBefore({
@@ -1414,6 +1427,7 @@ describe('startup deadline sweep race', () => {
       pipelines: ['claude'],
       now: T0,
       claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
       tokenHash: 'a'.repeat(64),
     });
     clock.advanceMinutes(15);

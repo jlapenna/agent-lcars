@@ -162,6 +162,7 @@ export function runOrchestratorStoreContract(
         pipelines: ['opencode'],
         now: T0,
         claimedBy: 'summary',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       expect(claimed?.runId).toBe(runA.runId);
@@ -329,6 +330,7 @@ export function runOrchestratorStoreContract(
         pipelines: ['opencode'],
         now: T0,
         claimedBy: 'triage',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       clock.advanceMinutes(1);
@@ -363,6 +365,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: clock.now(),
           claimedBy: 'fixture',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         expect(claimed?.runId).toBe(first.run.runId);
@@ -822,6 +825,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: clock.now(),
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'a'.repeat(64),
           }),
         ).toBeUndefined();
@@ -880,6 +884,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: clock.now(),
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         clock.advanceMinutes(1);
@@ -936,6 +941,7 @@ export function runOrchestratorStoreContract(
                 pipelines: ['claude'],
                 now: clock.now(),
                 claimedBy: 'executor',
+                claimedBySubject: 'executor@example.com',
                 tokenHash: 'a'.repeat(64),
               });
             }
@@ -1137,6 +1143,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: clock.now(),
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         await orchestrator.report(first.run.runId, { ok: true });
@@ -1211,6 +1218,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: clock.now(),
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'a'.repeat(64),
           }),
           orchestrator.request({
@@ -1276,6 +1284,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: T0,
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'a'.repeat(64),
           }),
           orchestrator.request({
@@ -1995,6 +2004,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: clock.now(),
           claimedBy: 'runner-after-capacity',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         expect(claimed?.runId).toBe(queued.run.runId);
@@ -2103,6 +2113,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['codex'],
             now: f.clock.now(),
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'b'.repeat(64),
           }),
         ).toBeUndefined();
@@ -2586,6 +2597,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: f.clock.now(),
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'b'.repeat(64),
           });
           runId = next;
@@ -2641,6 +2653,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: T0,
           claimedBy: 'old-executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         clock.advanceMinutes(15);
@@ -2661,6 +2674,7 @@ export function runOrchestratorStoreContract(
               pipelines: ['claude'],
               now: clock.now(),
               claimedBy: 'new-executor',
+              claimedBySubject: 'executor@example.com',
               tokenHash: 'b'.repeat(64),
             }),
           ).toMatchObject({
@@ -2895,6 +2909,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: f.clock.now(),
             claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'b'.repeat(64),
           }),
         ).toBeUndefined();
@@ -2903,6 +2918,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: f.clock.now(),
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         });
         expect(claimed?.queue?.startDeadlineAt).toBe(
@@ -3182,6 +3198,7 @@ export function runOrchestratorStoreContract(
                   pipelines: ['claude'],
                   now: clock.now(),
                   claimedBy: `priority-runner-${claims.length + index}`,
+                  claimedBySubject: 'executor@example.com',
                   tokenHash: 'a'.repeat(64),
                 }),
               ),
@@ -3235,6 +3252,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: T0,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         });
         expect(claimed?.runId).toBe(live.runId);
@@ -3256,6 +3274,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: clock.now(),
           claimedBy: 'runner-1',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'b'.repeat(64),
         });
         expect(claimed?.runId).toBe(first.runId);
@@ -3307,12 +3326,14 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: T0,
             claimedBy: 'runner-1',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'c'.repeat(64),
           }),
           store.claimQueuedRun({
             pipelines: ['claude'],
             now: T0,
             claimedBy: 'runner-2',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'd'.repeat(64),
           }),
         ]);
@@ -3339,6 +3360,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['claude'],
           now: T0,
           claimedBy: 'uncertain-runner',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'f'.repeat(64),
         });
 
@@ -3375,6 +3397,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: T0,
             claimedBy: 'racing-runner',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'e'.repeat(64),
           }),
           orchestrator.cancelUnclaimedBefore({
@@ -3414,12 +3437,14 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude', 'opencode'],
             now: clock.now(),
             claimedBy: 'runner-1',
+            claimedBySubject: 'executor@example.com',
             tokenHash: '6'.repeat(64),
           }),
           store.claimQueuedRun({
             pipelines: ['claude', 'opencode'],
             now: clock.now(),
             claimedBy: 'runner-2',
+            claimedBySubject: 'executor@example.com',
             tokenHash: '7'.repeat(64),
           }),
         ]);
@@ -3451,12 +3476,14 @@ export function runOrchestratorStoreContract(
               pipelines: [pipeline],
               now: clock.now(),
               claimedBy: 'runner-1',
+              claimedBySubject: 'executor@example.com',
               tokenHash: '4'.repeat(64),
             }),
             store.claimQueuedRun({
               pipelines: [pipeline],
               now: clock.now(),
               claimedBy: 'runner-2',
+              claimedBySubject: 'executor@example.com',
               tokenHash: '5'.repeat(64),
             }),
           ]);
@@ -3489,6 +3516,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: clock.now(),
             claimedBy: 'quota-test',
+            claimedBySubject: 'executor@example.com',
             tokenHash: 'a'.repeat(64),
           };
           await store.claimQueuedRun(claim);
@@ -3549,6 +3577,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['codex'],
           now: clock.now(),
           claimedBy: 'priority-status-test',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         };
         expect(
@@ -3596,6 +3625,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['codex'],
           now: clock.now(),
           claimedBy: 'status-test',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         };
         expect((await store.readQueueAdmissionStatus(claim)).providers).toEqual(
@@ -3685,6 +3715,7 @@ export function runOrchestratorStoreContract(
               ...input,
               now: clock.now(),
               claimedBy: 'reset-test',
+              claimedBySubject: 'executor@example.com',
               tokenHash: 'b'.repeat(64),
             })
           )?.runId,
@@ -3699,6 +3730,7 @@ export function runOrchestratorStoreContract(
           pipelines: ['codex'],
           now: T0,
           claimedBy: 'runner-1',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'e'.repeat(64),
         });
         expect(claimed).toBeUndefined();
@@ -3713,6 +3745,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['claude'],
             now: clock.now(),
             claimedBy: `saturated-${requestId}`,
+            claimedBySubject: 'executor@example.com',
             tokenHash: '8'.repeat(64),
           });
           clock.advanceMinutes(1);
@@ -3747,6 +3780,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['opencode', 'claude'],
             now: clock.now(),
             claimedBy: `runner-${index}`,
+            claimedBySubject: 'executor@example.com',
             tokenHash: String(index).repeat(64),
           });
           if (run !== undefined) claimed.push(run.runId);
@@ -3775,6 +3809,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['opencode'],
             now: clock.now(),
             claimedBy: runner,
+            claimedBySubject: 'executor@example.com',
             tokenHash: tokenDigit.repeat(64),
           });
 
@@ -3799,6 +3834,7 @@ export function runOrchestratorStoreContract(
             pipelines: ['codex'],
             now: clock.now(),
             claimedBy: runner,
+            claimedBySubject: 'executor@example.com',
             tokenHash: tokenDigit.repeat(64),
           });
 

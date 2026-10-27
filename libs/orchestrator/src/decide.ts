@@ -111,7 +111,7 @@ export function claimQueuedRun(
   input: {
     now: string;
     claimedBy: string;
-    claimedBySubject?: string;
+    claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
   },
@@ -133,9 +133,7 @@ export function claimQueuedRun(
           }
         : {}),
       claimedBy: input.claimedBy,
-      ...(input.claimedBySubject === undefined
-        ? {}
-        : { claimedBySubject: input.claimedBySubject }),
+      claimedBySubject: input.claimedBySubject,
       tokenHash: input.tokenHash,
     },
   };
@@ -928,10 +926,11 @@ export interface ExitClaimant {
  * a pipeline grant
  * alone would let any executor kill another's healthy worker by settling
  * its run lost. Ownership is judged first, so even an already-settled run
- * answers its idempotent refusal only to its own claimant. A claim recorded
- * without an authenticated subject (written before subjects were recorded)
- * has no provable owner: while live, only its outcome report or lease
- * expiry settles it; once settled, any report gets the idempotent answer.
+ * answers its idempotent refusal only to its own claimant. Every claim
+ * records its authenticated subject; a document persisted before subjects
+ * were recorded has no provable owner and answers `not-claimant` to every
+ * reporter, which the executor treats as final exactly like the idempotent
+ * answer.
  *
  * A report may carry {@link SchedulerDisruptionEvidence} when the executor can
  * name the exact preempted Job and Pod. That evidence only changes *which*
@@ -959,20 +958,9 @@ function executorLoss(input: {
   disruption?: SchedulerDisruptionEvidence;
 }): LossOutcome {
   const queue = input.run.queue;
-  // A legacy claim (no recorded subject) that already settled changes
-  // nothing whoever asks, so answer it idempotently: the executor that
-  // claimed it before subjects were recorded stops retrying its report.
-  if (
-    queue?.state === 'claimed' &&
-    queue.claimedBySubject === undefined &&
-    !isLive(input.run.state)
-  ) {
-    return refused('run-not-live');
-  }
   if (
     (queue?.state !== 'claimed' &&
       !(queue?.state === 'retired' && !isLive(input.run.state))) ||
-    queue.claimedBySubject === undefined ||
     queue.claimedBySubject !== input.claimant.subject ||
     queue.claimedBy !== input.claimant.runner ||
     (input.claimant.claimFingerprint !== undefined &&

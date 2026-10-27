@@ -795,7 +795,7 @@ export class MemoryStore implements OrchestratorStore {
     pipelines: readonly string[];
     now: string;
     claimedBy: string;
-    claimedBySubject?: string;
+    claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
   }): Promise<Run | undefined> {

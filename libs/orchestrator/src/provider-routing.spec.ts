@@ -144,6 +144,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toBeUndefined();
@@ -160,6 +161,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
       switchProvider(),
@@ -187,6 +189,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ]);
@@ -272,6 +275,7 @@ describe('source-ordered label provider handoff', () => {
           pipelines: ['opencode'],
           now: T1,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         }),
       ).toMatchObject({ runId: queued.runId, pipeline: 'opencode' });
@@ -377,6 +381,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['opencode'],
         now: T1,
         claimedBy: 'old-queue-claim',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toBeUndefined();
@@ -386,6 +391,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['opencode'],
         now: T1,
         claimedBy: 'new-intent-claim',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'b'.repeat(64),
       }),
     ).toMatchObject({ runId: successor.runId, pipeline: 'opencode' });
@@ -548,6 +554,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex', 'opencode'],
         now: '2026-08-15T12:03:00.000Z',
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toMatchObject({ runId: next.runId, pipeline: 'codex' });
@@ -560,6 +567,7 @@ describe('source-ordered label provider handoff', () => {
       pipelines: ['codex'],
       now: T0,
       claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
       tokenHash: 'a'.repeat(64),
     });
     await orchestrator.report(run.runId, { ok: true, summary: 'park' });
