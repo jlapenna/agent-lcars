@@ -13,9 +13,7 @@ import (
 )
 
 func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T) {
-	draining := false
 	source := &queueExecutorStatusSource{
-		draining:      func() bool { return draining },
 		maxConcurrent: 3,
 		activeRuns:    func(context.Context) (int, error) { return 2, nil },
 		logger:        discardLogger(),
@@ -31,9 +29,8 @@ func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T
 	}
 
 	source.ready.Store(true)
-	draining = true
 	ready := source.snapshot(context.Background(), now)
-	if !ready.Ready || !ready.Draining || ready.MaxConcurrent != 3 || ready.ActiveRuns == nil || *ready.ActiveRuns != 2 {
+	if !ready.Ready || ready.Draining || ready.MaxConcurrent != 3 || ready.ActiveRuns == nil || *ready.ActiveRuns != 2 {
 		t.Fatalf("unexpected ready queue status: %#v", ready)
 	}
 

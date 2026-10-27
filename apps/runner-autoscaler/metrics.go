@@ -21,15 +21,15 @@ var (
 
 	queueExecutorReadyGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_queue_executor_ready",
-		Help: "1 when the direct-runner queue executor has a complete configuration and a usable claim token source; 0 when disabled or misconfigured.",
+		Help: "1 when the direct-runner queue executor has a complete configuration, a usable claim token source and a passing Kubernetes preflight; 0 when misconfigured.",
 	})
 	queueExecutorStateGauge = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_queue_executor_state",
-		Help: "One-hot queue executor startup state: disabled, misconfigured, or ready.",
+		Help: "One-hot queue executor startup state: misconfigured or ready.",
 	}, []string{"state"})
 	queueExecutorPollsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_polls_total",
-		Help: "Queue executor claim polls by non-claim outcome: draining, capacity_wait, idle_204, idle_empty, or poll_error.",
+		Help: "Queue executor claim polls by non-claim outcome: capacity_wait, idle_204, idle_empty, or poll_error.",
 	}, []string{"outcome"})
 	queueExecutorClaimsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_claims_total",
@@ -55,7 +55,6 @@ var (
 
 func setQueueExecutorStartupState(state queueExecutorStartupState) {
 	for _, candidate := range []queueExecutorStartupState{
-		queueExecutorStateDisabled,
 		queueExecutorStateMisconfigured,
 		queueExecutorStateReady,
 	} {
@@ -78,7 +77,7 @@ func recordQueueExecutorPollOutcome(outcome queuePollOutcome) {
 		queueExecutorLaunchesTotal.WithLabelValues("success").Inc()
 	case queuePollOutcomeLaunchErr:
 		queueExecutorLaunchesTotal.WithLabelValues("error").Inc()
-	case queuePollOutcomeDraining, queuePollOutcomeCapacityWait, queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty, queuePollOutcomePollError:
+	case queuePollOutcomeCapacityWait, queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty, queuePollOutcomePollError:
 		queueExecutorPollsTotal.WithLabelValues(string(outcome)).Inc()
 	}
 }

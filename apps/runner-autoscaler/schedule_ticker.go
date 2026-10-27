@@ -22,8 +22,8 @@ const scheduleTickInterval = 5 * time.Minute
 
 // scheduleTickResponseBodyLimit prevents an unexpected proxy or server
 // response from making the daemon retain unbounded error data. The ticker
-// reads the same bounded envelope for every status: a 200 can still carry
-// one or more per-schedule failures that need operations attention.
+// reads the same bounded envelope for every status: a 200 schedule tick can
+// still carry one or more per-schedule failures that need operations attention.
 const scheduleTickResponseBodyLimit = 64 << 10
 
 // scheduleTickFailureDetailsLimit bounds the structured failure evidence the
@@ -76,20 +76,22 @@ func tickSchedulesOnce(cfg scheduleTickerConfig) error {
 	})
 }
 
-func tickMaintenanceOnce(cfg scheduleTickerConfig) error {
-	return postCronTick(cfg, "/api/work/v1/maintenance/tick", func(body []byte) error {
-		var result maintenanceTickResponse
+// tickMaintenanceOnce runs one server-owned maintenance tick. A 200 is a
+// successful tick whatever its outboxDrainFailed carries: the Console owns
+// outbox retry and dead-lettering, so an entry it keeps failing is its
+// condition to retire, not this daemon's. The caller logs those entries.
+func tickMaintenanceOnce(cfg scheduleTickerConfig) (maintenanceTickResponse, error) {
+	var result maintenanceTickResponse
+	err := postCronTick(cfg, "/api/work/v1/maintenance/tick", func(body []byte) error {
 		if err := json.Unmarshal(body, &result); err != nil {
 			return fmt.Errorf("decoding maintenance tick response: %w", err)
 		}
 		if result.OutboxProcessed < 0 {
 			return fmt.Errorf("decoding maintenance tick response: invalid outboxProcessed")
 		}
-		if len(result.OutboxDrainFailed) > 0 {
-			return fmt.Errorf("maintenance tick completed with %d outbox failures", len(result.OutboxDrainFailed))
-		}
 		return nil
 	})
+	return result, err
 }
 
 func postCronTick(cfg scheduleTickerConfig, path string, validate func([]byte) error) error {
@@ -195,13 +197,17 @@ func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *sl
 		} else {
 			recordScheduleTick(true)
 		}
-		if err := tickMaintenanceOnce(cfg); err != nil {
+		result, err := tickMaintenanceOnce(cfg)
+		if err != nil {
 			recordMaintenanceTick(false)
 			logger.Warn("maintenance tick failed", slog.String("error", err.Error()))
 			return
 		}
 		recordMaintenanceTick(true)
-		logger.Info("maintenance tick completed")
+		for _, failure := range result.OutboxDrainFailed {
+			logger.Warn("maintenance tick outbox entry failed; the Console retries and retires it", slog.String("entryId", failure.EntryID), slog.String("error", failure.Error))
+		}
+		logger.Info("maintenance tick completed", slog.Int("outboxDrainFailed", len(result.OutboxDrainFailed)))
 	}
 	tick()
 	ticker := time.NewTicker(scheduleTickInterval)

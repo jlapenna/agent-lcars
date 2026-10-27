@@ -127,7 +127,7 @@ func TestTickMaintenanceOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := tickMaintenanceOnce(scheduleTickerConfig{
+	_, err := tickMaintenanceOnce(scheduleTickerConfig{
 		consoleURL: server.URL,
 		idToken:    func() (string, error) { return "google-id-token", nil },
 	})
@@ -139,17 +139,38 @@ func TestTickMaintenanceOnceUsesWorkAPIAndGoogleBearer(t *testing.T) {
 	}
 }
 
-func TestTickMaintenanceOnceReportsOutboxFailures(t *testing.T) {
+// A 200 tick that reports outbox entries the Console could not drain is still
+// a successful tick: the Console owns outbox retry and dead-lettering, so the
+// daemon surfaces the entries for logging without failing its own health.
+func TestTickMaintenanceOnceSucceedsAndSurfacesOutboxFailures(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"lost":[],"retried":[],"dispatched":[],"reported":[],"outboxProcessed":1,"outboxContinuationNeeded":true,"outboxDrainFailed":[{"entryId":"dispatch/run-1","error":"unavailable"}]}`))
 	}))
 	defer server.Close()
-	err := tickMaintenanceOnce(scheduleTickerConfig{
+	result, err := tickMaintenanceOnce(scheduleTickerConfig{
 		consoleURL: server.URL,
 		idToken:    func() (string, error) { return "token", nil },
 	})
-	if err == nil || !strings.Contains(err.Error(), "1 outbox failures") {
-		t.Fatalf("tickMaintenanceOnce error = %v", err)
+	if err != nil {
+		t.Fatalf("tickMaintenanceOnce error = %v, want a successful tick", err)
+	}
+	if len(result.OutboxDrainFailed) != 1 || result.OutboxDrainFailed[0].EntryID != "dispatch/run-1" || result.OutboxDrainFailed[0].Error != "unavailable" {
+		t.Fatalf("outboxDrainFailed = %+v, want the one failed entry surfaced", result.OutboxDrainFailed)
+	}
+}
+
+func TestTickMaintenanceOnceRejectsNonSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("outbox unavailable"))
+	}))
+	defer server.Close()
+	_, err := tickMaintenanceOnce(scheduleTickerConfig{
+		consoleURL: server.URL,
+		idToken:    func() (string, error) { return "token", nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("tickMaintenanceOnce error = %v, want the HTTP failure", err)
 	}
 }
 
@@ -300,11 +321,9 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 		status      int
 		body        string
 		launchErr   error
-		draining    bool
 		wantOutcome queuePollOutcome
 		wantErr     bool
 	}{
-		{name: "draining", draining: true, wantOutcome: queuePollOutcomeDraining},
 		{name: "idle 204", status: http.StatusNoContent, wantOutcome: queuePollOutcomeIdle204},
 		{name: "idle empty", status: http.StatusOK, wantOutcome: queuePollOutcomeIdleEmpty},
 		{name: "poll error", status: http.StatusUnauthorized, wantOutcome: queuePollOutcomePollError, wantErr: true},
@@ -326,9 +345,6 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 				runnerName: "test-runner",
 				idToken:    func() (string, error) { return "fake-id-token", nil },
 				reserve:    reserveFor(func(directRunnerLaunch) error { return tc.launchErr }),
-				draining: func() bool {
-					return tc.draining
-				},
 			})
 			if outcome != tc.wantOutcome {
 				t.Errorf("outcome = %q, want %q", outcome, tc.wantOutcome)
@@ -336,8 +352,8 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 			if (err != nil) != tc.wantErr {
 				t.Errorf("err = %v, want error=%v", err, tc.wantErr)
 			}
-			if tc.draining && calls != 0 {
-				t.Errorf("draining poll made %d HTTP calls, want 0", calls)
+			if calls != 1 {
+				t.Errorf("poll made %d HTTP calls, want 1", calls)
 			}
 		})
 	}
@@ -411,38 +427,6 @@ func TestPollOnceMissingRequiredFieldsLaunchesNothing(t *testing.T) {
 	}
 	if launchCount != 0 {
 		t.Fatalf("expected no launch for a claim response missing runId/token, got %d", launchCount)
-	}
-}
-
-// TestPollOnceDrainingSkipsClaim proves pollOnce short-circuits before ever
-// making the claim HTTP call while cfg.draining reports true -- the
-// SIGUSR1-drain gate (Task's final-review fix). A nil draining (every
-// other test in this file) must keep behaving exactly as before; see those
-// tests for that coverage.
-func TestPollOnceDrainingSkipsClaim(t *testing.T) {
-	calls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	launchCount := 0
-	cfg := queueExecutorConfig{
-		consoleURL: server.URL,
-		runnerName: "test-runner",
-		idToken:    func() (string, error) { return "fake-id-token", nil },
-		reserve:    reserveFor(func(directRunnerLaunch) error { launchCount++; return nil }),
-		draining:   func() bool { return true },
-	}
-	if err := pollOnce(cfg); err != nil {
-		t.Fatalf("pollOnce: %v", err)
-	}
-	if calls != 0 {
-		t.Fatalf("expected pollOnce to skip the claim request entirely while draining, got %d calls", calls)
-	}
-	if launchCount != 0 {
-		t.Fatalf("expected no launch while draining, got %d", launchCount)
 	}
 }
 
@@ -566,28 +550,6 @@ func TestDirectRunnerImage(t *testing.T) {
 	})
 }
 
-func TestQueueExecutorStartupStatusDistinguishesDisabledFromMisconfigured(t *testing.T) {
-	cases := []struct {
-		name       string
-		consoleURL string
-		keyPath    string
-		wantStart  bool
-		wantState  queueExecutorStartupState
-	}{
-		{"no queue deployment", "", "/run/writer.json", false, queueExecutorStateDisabled},
-		{"incomplete queue deployment", "https://lcars.example", "", false, queueExecutorStateMisconfigured},
-		{"ready", "https://lcars.example", "/run/writer.json", true, queueExecutorStateReady},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			start, state, _ := queueExecutorStartupStatus(tc.consoleURL, tc.keyPath)
-			if start != tc.wantStart || state != tc.wantState {
-				t.Fatalf("queueExecutorStartupStatus() = (%v, %q), want (%v, %q)", start, state, tc.wantStart, tc.wantState)
-			}
-		})
-	}
-}
-
 // TestQueueExecutorAudience pins LCARS_WORK_AUDIENCE's default, matching
 // the console's own AGENT_LCARS_WORK_AUDIENCE fallback (route.ts).
 func TestQueueExecutorAudience(t *testing.T) {
@@ -642,52 +604,6 @@ func TestNewDirectRunnerIDTokenSourceErrors(t *testing.T) {
 	_, err := newDirectRunnerIDTokenSource(context.Background(), "/nonexistent/telemetry-writer.json", "agent-lcars-work")
 	if err == nil {
 		t.Fatalf("expected an error building an id token source from a nonexistent key file")
-	}
-}
-
-func TestQueueExecutorPollerCleanupDoesNotBlockClaims(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cleanupStarted := make(chan struct{})
-	cleanupDone := make(chan struct{})
-	claimObserved := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case claimObserved <- struct{}{}:
-		default:
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
-
-	go runQueueExecutorPoller(ctx, queueExecutorConfig{
-		consoleURL: server.URL,
-		runnerName: "test-runner",
-		idToken:    func() (string, error) { return "token", nil },
-		reserve:    reserveFor(func(directRunnerLaunch) error { return nil }),
-		cleanup: func(cleanupCtx context.Context) error {
-			close(cleanupStarted)
-			<-cleanupCtx.Done()
-			close(cleanupDone)
-			return cleanupCtx.Err()
-		},
-	}, 5*time.Millisecond, discardLogger())
-
-	select {
-	case <-cleanupStarted:
-	case <-time.After(time.Second):
-		t.Fatal("cleanup did not start")
-	}
-	select {
-	case <-claimObserved:
-	case <-time.After(time.Second):
-		t.Fatal("claim polling was blocked behind cleanup")
-	}
-	cancel()
-	select {
-	case <-cleanupDone:
-	case <-time.After(time.Second):
-		t.Fatal("cleanup did not stop with the poller context")
 	}
 }
 
@@ -762,37 +678,6 @@ func TestQueueExecutorPollerRecoversEachTickWithoutOverlapOrBlockingClaims(t *te
 	case <-recoveryCtx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("recovery did not honor cancellation")
-	}
-}
-
-func TestQueueExecutorPollerMaintainsWorkersWhileDraining(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	recovery := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		runQueueExecutorPoller(ctx, queueExecutorConfig{
-			draining: func() bool { return true },
-			recover: func(context.Context) error {
-				select {
-				case recovery <- struct{}{}:
-				default:
-				}
-				return nil
-			},
-		}, 5*time.Millisecond, discardLogger())
-	}()
-	select {
-	case <-recovery:
-	case <-time.After(time.Second):
-		t.Fatal("draining executor suppressed claimed-worker maintenance")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("draining poller did not stop")
 	}
 }
 
@@ -908,40 +793,5 @@ func TestPollOnceDoesNotClaimWhenCapacityInventoryFails(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("inventory failure made %d claim requests, want 0", requests)
-	}
-}
-
-func TestReceiptPollerMaintainsClaimedWorkersWhileDraining(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	recovered := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		runQueueExecutorPoller(ctx, queueExecutorConfig{
-			capacity: &queueCapacityClient{}, draining: func() bool { return true },
-			reserve: func() (*directRunnerReservation, error) {
-				t.Error("draining executor reserved new work")
-				return nil, nil
-			},
-			recover: func(context.Context) error {
-				select {
-				case recovered <- struct{}{}:
-				default:
-				}
-				return nil
-			},
-		}, 5*time.Millisecond, discardLogger())
-	}()
-	select {
-	case <-recovered:
-	case <-time.After(time.Second):
-		t.Error("draining suppressed receipt maintenance")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("poller did not stop")
 	}
 }

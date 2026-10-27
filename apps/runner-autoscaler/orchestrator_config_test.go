@@ -84,33 +84,27 @@ func TestOrchestratorConfigValidatesKubernetes(t *testing.T) {
 	}
 }
 
+// Strict decoding rejects every unknown key, including the retired scale-set
+// manager and Docker backend keys, so a stale file can never be mistaken for
+// live configuration.
 func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
-	_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+"unknown: true\n"))
-	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {
-		t.Fatalf("expected strict YAML error, got %v", err)
-	}
-}
-
-// Every key the removed Docker backend and scale-set manager read is rejected
-// by name, so a stale file fails with an instruction to delete the key rather
-// than either silently configuring nothing or a bare decoder error.
-func TestOrchestratorConfigRejectsRetiredKeysByName(t *testing.T) {
 	for key, snippet := range map[string]string{
-		"fleet":             "fleet:\n  hosts:\n    - name: janeway\n      docker: local\n",
-		"github":            "github:\n  app_id: 1\n",
-		"registrations":     "registrations:\n  - name: agent-lcars\n",
-		"scale_sets":        "scale_sets:\n  - name: homelab-autoscale\n",
-		"server.state_path": "server:\n  state_path: /state/checkpoint.json\n",
-		"fleet (empty)":     "fleet:\n",
+		"unknown":    "unknown: true\n",
+		"fleet":      "fleet:\n  hosts:\n    - name: janeway\n",
+		"github":     "github:\n  app_id: 1\n",
+		"scale_sets": "scale_sets:\n  - name: homelab-autoscale\n",
+		"state_path": "server:\n  state_path: /state/checkpoint.json\n",
 	} {
 		t.Run(key, func(t *testing.T) {
 			_, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML+snippet))
-			if err == nil || !strings.Contains(err.Error(), "retired keys") || !strings.Contains(err.Error(), strings.TrimSuffix(key, " (empty)")) {
-				t.Fatalf("expected a retired-key error naming %s, got %v", key, err)
+			if err == nil || !strings.Contains(err.Error(), "field "+key+" not found") {
+				t.Fatalf("expected strict YAML error naming %s, got %v", key, err)
 			}
 		})
 	}
 }
+
+// Every key the removed Docker backend and scale-set manager read is rejected
 
 // TestLoadOrchestratorConfigAcceptsLiveHomelabOrchestratorYAMLShape pins the
 // exact key set homelab's rendered .orchestrator.runtime.yml carries today

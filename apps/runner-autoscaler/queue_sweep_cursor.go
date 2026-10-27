@@ -9,8 +9,8 @@ import (
 
 // A bounded sweep starts after its last attempted identity, even when that
 // Job was deleted or the attempt exhausted the budget. Slow early Jobs must
-// not indefinitely hide a later settled claim. Recovery and cleanup own
-// independent cursors because their single-flight sweeps may overlap.
+// not indefinitely hide a later settled claim. Each single-flight sweep owns
+// its own cursor because the sweeps may overlap.
 type queueSweepCursor struct {
 	mu   sync.Mutex
 	last string

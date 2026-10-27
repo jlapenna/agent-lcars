@@ -16,8 +16,8 @@ import (
 
 // runExitReportedRetention bounds the reporter's memory of runs it already
 // reported per claim generation. It only has to outlive the queue's own evidence retention: a
-// terminal Job older than this has been deleted (TTL and cleanup both stop
-// at queueJobRetentionAge), so it can never be observed again.
+// terminal Job older than this has been deleted by the TTL controller at
+// queueJobRetentionAge, so it can never be observed again.
 const runExitReportedRetention = 2 * queueJobRetentionAge
 
 // runExitReporter tells the Work API the moment a claimed run's worker
@@ -67,12 +67,12 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 // observeTerminated records that the worker for runID is no longer running
 // and reports it asynchronously, unless it was already reported or a report
 // for that exact claim is in flight. fingerprint is the immutable token hash
-// recorded on the original Job; a legacy report without it can only observe
-// an already terminal run. claimedBy is the runner name the run was claimed under (from
-// its Job); the Work API accepts the report only from the claiming principal
-// under that name. Empty falls back to this process's own runner name, for
-// Jobs created before the name was recorded. It never blocks the caller (a
-// claim admission or a status read) on the Work API.
+// recorded on the original Job at creation; the route identifies the claim by
+// it, so an observation without one names no claim and is not reported.
+// claimedBy is the runner name the run was claimed under (from its Job); the
+// Work API accepts the report only from the claiming principal under that
+// name. Empty falls back to this process's own runner name. It never blocks
+// the caller (a claim admission or a status read) on the Work API.
 func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
 	r.observeTerminatedWithDisruption(runID, claimedBy, fingerprint, nil)
 }
@@ -98,7 +98,7 @@ const schedulerPreemptionKind = "scheduler-preemption"
 // attesting that the scheduler preempted it before its worker container
 // started. A nil attestation is the ordinary report.
 func (r *runExitReporter) observeTerminatedWithDisruption(runID, claimedBy, fingerprint string, disruption *exitDisruption) {
-	if r == nil || runID == "" {
+	if r == nil || runID == "" || fingerprint == "" {
 		return
 	}
 	r.mu.Lock()
@@ -163,7 +163,7 @@ func (r *runExitReporter) postContext(ctx context.Context, runID, runner, finger
 	}
 	payload := struct {
 		Runner           string          `json:"runner"`
-		ClaimFingerprint string          `json:"claimFingerprint,omitempty"`
+		ClaimFingerprint string          `json:"claimFingerprint"`
 		Disruption       *exitDisruption `json:"disruption,omitempty"`
 	}{Runner: runner, ClaimFingerprint: fingerprint, Disruption: disruption}
 	body, err := json.Marshal(payload)

@@ -115,27 +115,12 @@ func (q *kubernetesQueue) retireSettledClaim(ctx context.Context, job *batch.Job
 	if (*job.Spec.Suspend && (job.Generation != 1 || queueJobAttempted(job))) || (!*job.Spec.Suspend && job.Generation != 2) {
 		return false, nil
 	}
+	// Every Job this executor creates carries its claim fingerprint from
+	// creation (launch verifies it on read-back, before the Secret exists). A
+	// Job without one cannot prove which claim it is and is never retired.
 	fingerprint := job.Annotations[queueClaimAnnotation]
 	if fingerprint == "" {
-		// Previously-created Jobs can prove their claim using their immutable
-		// owned Secret. A Secret-less legacy shell has no such proof.
-		secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, job.Name, meta.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		owned := false
-		for _, owner := range secret.OwnerReferences {
-			if owner.Kind == "Job" && owner.APIVersion == "batch/v1" && owner.Name == job.Name && owner.UID == job.UID && owner.Controller != nil && *owner.Controller {
-				owned = true
-			}
-		}
-		if !owned || secret.Immutable == nil || !*secret.Immutable || len(secret.Data["run-token"]) == 0 {
-			return false, fmt.Errorf("queue retirement credential identity conflict")
-		}
-		fingerprint = queueClaimFingerprint(string(secret.Data["run-token"]))
+		return false, nil
 	}
 	settled, err := q.claimSettled(ctx, runID, runner, fingerprint)
 	if err != nil || !settled {
