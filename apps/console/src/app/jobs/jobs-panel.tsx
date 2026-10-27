@@ -25,6 +25,9 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
   const [repository, setRepository] = useState(repositories[0] ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [parameters, setParameters] = useState<
+    Record<string, Record<string, string>>
+  >({});
   const [occurrence, setOccurrence] = useState<JobOccurrence>();
   const load = async () => setJobs((await api('')) as CatalogJob[]);
   useEffect(() => {
@@ -109,6 +112,31 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
           >
             {job.enabled ? 'Disable' : 'Enable reviewed definition'}
           </button>
+          {job.definition?.parameters.map((parameter) => (
+            <label key={parameter.key}>
+              {parameter.description}
+              <input
+                aria-label={parameter.key}
+                maxLength={2048}
+                required={
+                  parameter.requirement === 'required' &&
+                  parameter.default === undefined
+                }
+                value={
+                  parameters[job.id]?.[parameter.key] ?? parameter.default ?? ''
+                }
+                onChange={(event) =>
+                  setParameters((current) => ({
+                    ...current,
+                    [job.id]: {
+                      ...current[job.id],
+                      [parameter.key]: event.target.value,
+                    },
+                  }))
+                }
+              />
+            </label>
+          ))}
           <button
             disabled={
               busy || !job.enabled || !job.definition?.job.triggers.manual
@@ -119,6 +147,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
                   (await api(`/${job.id}/invoke`, {
                     digest: job.definition?.digest,
                     requestId: crypto.randomUUID(),
+                    parameters: parameters[job.id] ?? {},
                   })) as JobOccurrence,
                 );
               })

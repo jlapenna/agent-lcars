@@ -18,11 +18,15 @@ title: Transport qualification
 description: Exercise structured result transport
 instructions: Return the requested fixture result.
 parameters:
+  - key: subject
+    input_type: string
+    requirement: required
+    description: Invocation subject
   - key: baseline
     input_type: string
     requirement: required
     description: Prior result
-prompt: 'Return a report and findings. Prior result: {{ baseline }}'
+prompt: 'Subject: {{ subject }}. Return a report and findings. Prior result: {{ baseline }}'
 response:
   json_schema:
     type: object
@@ -105,6 +109,7 @@ for (const cancel of [false, true]) {
                   },
                 },
                 baseline: null,
+                parameters: { subject: 'fixture invocation' },
               });
             if (req.url === `${root}/recipe` && req.method === 'POST') {
               submitted = body;
@@ -125,6 +130,9 @@ for (const cancel of [false, true]) {
               ],
             });
           assert.ok(req.url.endsWith('/chat/completions'));
+          assert.ok(
+            JSON.stringify(body.messages).includes('fixture invocation'),
+          );
           providerCalls++;
           assert.ok(
             providerCalls <= 2,

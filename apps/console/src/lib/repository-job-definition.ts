@@ -18,7 +18,7 @@ const allocation = z.strictObject({
     .regex(/^[1-9][0-9]*Gi$/u)
     .refine((value) => parseInt(value, 10) <= 24),
 });
-const inputs = z
+export const jobInputsSchema = z
   .record(
     z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u),
     z.string().max(2048),
@@ -74,7 +74,7 @@ export const repositoryJobSchema = z.strictObject({
         'requests must equal limits',
       ),
   }),
-  inputs,
+  inputs: jobInputsSchema,
   concurrency: z.strictObject({
     maxRuns: z.literal(1),
     overlap: z.literal('skip'),
@@ -98,6 +98,13 @@ export const repositoryJobSchema = z.strictObject({
     }),
   ]),
 });
+const recipeParameterSchema = z.strictObject({
+  key: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u),
+  description: z.string().min(1),
+  input_type: z.literal('string'),
+  requirement: z.enum(['required', 'optional']),
+  default: z.string().max(2048).optional(),
+});
 export const jobDefinitionSchema = z.strictObject({
   repository,
   name,
@@ -105,6 +112,7 @@ export const jobDefinitionSchema = z.strictObject({
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
   job: repositoryJobSchema,
   recipeText: z.string().max(65536),
+  parameters: z.array(recipeParameterSchema).max(32).default([]),
 });
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export const jobProfileSchema = z.strictObject({
@@ -113,7 +121,7 @@ export const jobProfileSchema = z.strictObject({
   principals: z.array(z.string().min(1).max(128)).min(1),
   allocation,
   // Exact approved input sets keep network and write scopes operator-owned.
-  inputSets: z.array(inputs).min(1).max(100),
+  inputSets: z.array(jobInputsSchema).min(1).max(100),
 });
 export type JobProfile = z.infer<typeof jobProfileSchema>;
 
@@ -157,17 +165,7 @@ export function parseJobDefinition(
       description: z.string().min(1),
       prompt: z.string().min(1),
       instructions: z.string().optional(),
-      parameters: z
-        .array(
-          z.strictObject({
-            key: z.string(),
-            description: z.string().min(1),
-            input_type: z.literal('string'),
-            requirement: z.enum(['required', 'optional']),
-            default: z.string().optional(),
-          }),
-        )
-        .max(33),
+      parameters: z.array(recipeParameterSchema).max(33),
       response: z.record(z.string(), z.unknown()).optional(),
     })
     .parse(yaml(recipeText));
@@ -175,16 +173,27 @@ export function parseJobDefinition(
   const declared = new Set(recipe.parameters.map((parameter) => parameter.key));
   if (
     declared.size !== recipe.parameters.length ||
-    declared.size !== supplied.size ||
-    [...declared].some((key) => !supplied.has(key))
+    [...supplied].some((key) => !declared.has(key))
   )
-    throw new Error('Recipe parameters must exactly match inputs and baseline');
+    throw new Error('Recipe must declare all fixed inputs and baseline');
+  const parameters = recipe.parameters.filter(
+    (parameter) => !supplied.has(parameter.key),
+  );
+  if (
+    job.triggers.schedule &&
+    parameters.some(
+      (parameter) =>
+        parameter.requirement === 'required' && parameter.default === undefined,
+    )
+  )
+    throw new Error('Scheduled recipe parameters need defaults');
   return jobDefinitionSchema.parse({
     repository: repo,
     revision,
     name: jobName,
     job,
     recipeText,
+    parameters,
     digest: jobDigest([jobText, recipeText]),
   });
 }
@@ -240,5 +249,26 @@ export function jobDueAt(definition: JobDefinition, at: Date): boolean {
       local,
       new Date(local.getTime() - 60000),
     ) !== undefined
+  );
+}
+
+/** Goose declares variable parameters; the manifest owns fixed execution scope. */
+export function resolveJobParameters(
+  definition: JobDefinition,
+  values: Record<string, string>,
+): Record<string, string> {
+  jobInputsSchema.parse(values);
+  const declared = new Map(
+    definition.parameters.map((parameter) => [parameter.key, parameter]),
+  );
+  if (Object.keys(values).some((key) => !declared.has(key)))
+    throw new Error('Unknown parameter or attempt to override fixed input');
+  return Object.fromEntries(
+    definition.parameters.map((parameter) => {
+      const value = values[parameter.key] ?? parameter.default;
+      if (value === undefined && parameter.requirement === 'required')
+        throw new Error(`Missing recipe parameter: ${parameter.key}`);
+      return [parameter.key, value ?? ''];
+    }),
   );
 }

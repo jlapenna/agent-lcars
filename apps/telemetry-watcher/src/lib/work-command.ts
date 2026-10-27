@@ -46,6 +46,7 @@ export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
+  '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] | work job get <occurrence-id>\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
@@ -241,6 +242,66 @@ export async function executeWorkCommand(
   const c = client(deps);
   try {
     switch (sub) {
+      case 'job': {
+        const { values, positionals } = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          options: {
+            repo: { type: 'string' },
+            name: { type: 'string' },
+            'request-id': { type: 'string' },
+            parameters: { type: 'string' },
+          },
+        });
+        let path: string;
+        let body: string | undefined;
+        if (
+          positionals[0] === 'invoke' &&
+          positionals.length === 1 &&
+          values.repo &&
+          values.name &&
+          values['request-id']
+        ) {
+          body = JSON.stringify({
+            repository: values.repo,
+            name: values.name,
+            requestId: values['request-id'],
+            parameters: JSON.parse(values.parameters ?? '{}'),
+          });
+          if (Buffer.byteLength(body) > 16384)
+            throw new Error('Job request exceeds 16 KiB');
+          path = '/invoke';
+        } else if (
+          positionals[0] === 'get' &&
+          positionals.length === 2 &&
+          /^[a-f0-9]{64}$/u.test(positionals[1] ?? '') &&
+          !Object.keys(values).length
+        ) {
+          path = `/occurrences/${positionals[1]}`;
+        } else return usageFailure(deps);
+        const response = await deps.fetchImpl(
+          `${deps.origin}/api/work/v1/jobs${path}`,
+          {
+            method: body === undefined ? 'GET' : 'POST',
+            headers: {
+              authorization: `Bearer ${await deps.token()}`,
+              ...(body === undefined
+                ? {}
+                : { 'Content-Type': 'application/json' }),
+            },
+            ...(body === undefined ? {} : { body }),
+            redirect: 'error',
+            signal: AbortSignal.timeout(30000),
+          },
+        );
+        if (!response.ok)
+          throw new Error(`Recipe Work API HTTP ${response.status}`);
+        const text = await response.text();
+        if (Buffer.byteLength(text) > 524288)
+          throw new Error('Job receipt exceeds 512 KiB');
+        deps.stdout(JSON.stringify(JSON.parse(text)));
+        return { ok: true };
+      }
       case 'metrics': {
         if (rest.some((arg) => arg !== '--json') || rest.length > 1)
           return usageFailure(deps);

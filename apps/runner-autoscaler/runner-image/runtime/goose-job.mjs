@@ -88,6 +88,7 @@ try {
   const result = await execute({
     run: { definition: brief.definition },
     baseline: brief.baseline,
+    parameters: brief.parameters,
     signal: controller.signal,
   });
   controller.signal.throwIfAborted();

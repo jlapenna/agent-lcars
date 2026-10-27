@@ -16,7 +16,12 @@ export function gooseExecutor({
     throw new Error('an enforced allocation verifier is required');
   if (!environment?.HOME || !environment.GOOSE_PATH_ROOT)
     throw new Error('isolated profile environment is required');
-  return async ({ run, baseline, signal }) => {
+  return async ({
+    run,
+    baseline,
+    parameters: invocationParameters = {},
+    signal,
+  }) => {
     await assertAllocation(run.definition.job.execution.resources);
     const directory = await mkdtemp(join(tmpdir(), 'lcars-goose-'));
     try {
@@ -36,6 +41,7 @@ export function gooseExecutor({
         'json',
       ];
       const parameters = {
+        ...invocationParameters,
         ...run.definition.job.inputs,
         baseline: JSON.stringify(baseline),
       };

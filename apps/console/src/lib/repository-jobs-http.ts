@@ -5,6 +5,8 @@ import { createDispatchTokenProvider } from './github-app-tokens';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { readJobBody } from './repository-job-body';
 import { refreshJobCatalog } from './repository-job-catalog';
+import { jobInputsSchema } from './repository-job-definition';
+import { RepositoryJobBusyError, RepositoryJobs } from './repository-jobs';
 import { repositoryJobs } from './repository-jobs-runtime';
 import type { WorkPrincipal } from './work-auth';
 
@@ -30,11 +32,25 @@ export async function repositoryJobsHttp(
       { error: 'Same-origin request required' },
       { status: 403 },
     );
-  const jobs = repositoryJobs(createOrchestratorRuntime());
+  const base = repositoryJobs(createOrchestratorRuntime());
+  const matchesRepository = (repository: string) =>
+    !principal.sourceRepository ||
+    principal.sourceRepository.toLowerCase() === repository.toLowerCase();
+  // Bind every transaction, including replay and disabling, to the signed
+  // repository. Never mutate the shared runtime's authorization callback.
+  const jobs = new RepositoryJobs({
+    ...base.deps,
+    granted: (caller, repository) =>
+      matchesRepository(repository) && base.deps.granted(caller, repository),
+  });
   const path = new URL(request.url).pathname.slice('/api/work/v1/jobs'.length);
   try {
     if (request.method === 'GET' && path === '')
-      return Response.json(await jobs.deps.store.list());
+      return Response.json(
+        (await jobs.deps.store.list()).filter((job) =>
+          jobs.deps.granted(principal.principal, job.repository),
+        ),
+      );
     const occurrencePath = /^\/occurrences\/([a-f0-9]{64})$/u.exec(path);
     if (request.method === 'GET' && occurrencePath) {
       const occurrence = await jobs.deps.store.readOccurrence(
@@ -47,13 +63,16 @@ export async function repositoryJobsHttp(
     }
     if (request.method !== 'POST')
       return Response.json({ error: 'Not found' }, { status: 404 });
-    const text = await readJobBody(request, 4096);
+    const text = await readJobBody(request, 16384);
     const body: unknown = JSON.parse(text);
     if (path === '/refresh') {
       const { repository } = z
         .strictObject({ repository: z.string() })
         .parse(body);
-      if (!controlPlaneRepositories().includes(repository))
+      if (
+        !jobs.deps.granted(principal.principal, repository) ||
+        !controlPlaneRepositories().includes(repository)
+      )
         throw new Error('Repository not managed');
       await refreshJobCatalog(
         jobs.deps.store,
@@ -62,6 +81,33 @@ export async function repositoryJobsHttp(
         new Date(),
       );
       return Response.json({ refreshed: repository });
+    }
+    if (path === '/invoke') {
+      const input = z
+        .strictObject({
+          repository: z.string(),
+          name: z.string(),
+          requestId: z.string(),
+          parameters: jobInputsSchema.default({}),
+        })
+        .parse(body);
+      if (!matchesRepository(input.repository))
+        throw new Error('Caller repository does not match job repository');
+      const occurrence = await jobs.invoke(
+        input.repository,
+        input.name,
+        input.requestId,
+        principal.principal,
+        input.parameters,
+      );
+      const runs = occurrence.skipped
+        ? []
+        : await jobs.deps.runtime.store.listRuns({ workId: occurrence.workId });
+      return Response.json({
+        ...occurrence,
+        outcome: occurrence.skipped ? 'busy' : 'accepted',
+        ...(runs[0] ? { runId: runs[0].runId } : {}),
+      });
     }
     const match = /^\/([a-f0-9]{64})\/(enable|invoke)$/u.exec(path);
     if (!match) return Response.json({ error: 'Not found' }, { status: 404 });
@@ -78,7 +124,11 @@ export async function repositoryJobsHttp(
       return Response.json({ enabled: input.enabled });
     }
     const input = z
-      .strictObject({ digest: z.string(), requestId: z.string() })
+      .strictObject({
+        digest: z.string(),
+        requestId: z.string(),
+        parameters: jobInputsSchema.default({}),
+      })
       .parse(body);
     return Response.json(
       await jobs.admit(
@@ -87,9 +137,12 @@ export async function repositoryJobsHttp(
         principal.principal,
         'manual',
         input.digest,
+        input.parameters,
       ),
     );
   } catch (error) {
+    if (error instanceof RepositoryJobBusyError)
+      return Response.json({ outcome: 'busy' });
     return Response.json(
       {
         error: error instanceof Error ? error.message : 'Job operation failed',

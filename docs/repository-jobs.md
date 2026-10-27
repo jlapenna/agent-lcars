@@ -161,3 +161,65 @@ enablement. Disable stops new occurrences; use native Work cancellation to stop
 an admitted occurrence. A lost occurrence is failed and never automatically
 retried. An unreleased retirement keeps the job occupied until the existing
 capacity recovery protocol establishes physical termination.
+
+## Invocation parameters and migrated callers
+
+Goose's `recipe.yaml` parameter declarations also define variable invocation
+inputs. Manifest `inputs` and the `baseline` parameter remain fixed and cannot
+be overridden. Required variable parameters need values; optional defaults are
+resolved and pinned at admission. Schedules require defaults for every required
+variable. Values are bounded string data, not permission to choose tools,
+credentials, resources or repository scope.
+
+The Jobs form renders these parameters. Existing event callers can instead use
+`POST /api/work/v1/jobs/invoke` with `repository`, `name`, `requestId` and
+`parameters`, or the supported CLI:
+
+```sh
+lcars work job invoke --repo OWNER/REPO --name JOB --request-id EVENT_KEY \
+  --parameters '{"parameter":"value"}'
+lcars work job get OCCURRENCE_ID
+```
+
+The CLI reuses normal Work authentication and identity refresh. GitHub Actions
+reuse the existing OIDC POST action. A caller needs a `work.operator`/`goose`
+grant and an approved job profile. GitHub OIDC calls remain bound to their source
+repository. No new shared bearer-token scheme is introduced.
+
+Named-event replay resolves against the first accepted occurrence's pinned
+recipe/defaults, even after a catalog update. Changed caller values under the
+same key conflict. Busy named requests acquire no skipped reservation, so an
+existing outbox can retry that same key. Explicit-digest manual calls and cron
+keep their configured overlap=skip behavior. Variable inputs are included in
+baseline comparison identity to prevent a result from a different target from
+becoming its baseline.
+
+An admission response is not completion. External consumers must wait for
+`reconciledAt` and `successful: true`; a staged artifact alone is insufficient.
+The success field is recorded only after native outcome/digest checks and
+physical worker retirement.
+
+### Migration set
+
+| Repository | Recipe                                   | Existing owner retained                                                                 |
+| ---------- | ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| jclaw      | weekly-security-audit                    | Report-only pilot; old audit stays active until explicit cutover                        |
+| ebayclaw   | judge-listings-joe / judge-listings-katy | Existing event outbox, re-nudges, owner checks, gateway delivery and financial controls |
+| sprinkles  | heal-pr                                  | Workflow eligibility, per-PR attempt ledger, ownership and merge gates                  |
+| sprinkles  | verify-deployment                        | Release selection, issue eligibility, revision proof and dispatch markers               |
+| sync-padd  | refresh-publication                      | Explicit CLI, source checkpoints, PDF review, durable editions and uploader             |
+
+Member repositories own their definitions and caller cutover controls. These
+are local, unactivated migrations. Each README names the concrete tools,
+credentials and persistence boundary that must be qualified before enabling it.
+One shared Goose runtime environment does not provide per-profile tool isolation;
+operator tools must enforce their own repository/owner boundaries.
+
+The source inventory did not identify another bounded agent turn to migrate in
+fleet-runtime, labels, nx-cache-server, messages-control, repo-tools, girosf,
+www, home-assistant-config, telegram-sweeper, wedding, x1c or the printer/design
+and storage integrations. Their build/deploy workflows, deterministic checks,
+pollers, device operations, backups and services retain their existing owners.
+Homelab's retired Node-security polling/assessment path is not recreated.
+LCARS's already-native summaries, triage, queue maintenance and delivery remain
+native Work. Fork contribution checkouts are not first-party migration targets.

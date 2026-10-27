@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import {
   jobDefinitionSchema,
+  jobInputsSchema,
   jobProfileSchema,
 } from './repository-job-definition';
 
@@ -41,9 +42,11 @@ export const jobOccurrenceSchema = z.strictObject({
   definition: jobDefinitionSchema,
   profile: jobProfileSchema,
   comparison: hash,
+  parameters: jobInputsSchema.default({}),
   baselineOccurrence: hash.optional(),
   artifact: jobArtifactSchema.optional(),
   reconciledAt: z.iso.datetime().optional(),
+  successful: z.boolean().optional(),
 });
 export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 // Artifact contents are opaque JSON, not Firestore field values. This preserves

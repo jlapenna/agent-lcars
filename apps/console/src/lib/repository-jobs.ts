@@ -7,7 +7,9 @@ import {
   type JobDefinition,
   jobDigest,
   jobDueAt,
+  jobKey,
   type JobProfile,
+  resolveJobParameters,
 } from './repository-job-definition';
 import type {
   CatalogJob,
@@ -23,6 +25,8 @@ export interface RepositoryJobsDeps {
   granted: (principal: string, repository: string) => boolean;
   now: () => Date;
 }
+export class RepositoryJobBusyError extends Error {}
+
 export class RepositoryJobs {
   constructor(readonly deps: RepositoryJobsDeps) {}
   authorize(definition: JobDefinition, principal: string): JobProfile {
@@ -63,6 +67,8 @@ export class RepositoryJobs {
     principal: string,
     trigger: 'manual' | 'schedule',
     digest: string,
+    values: Record<string, string> = {},
+    deferOverlap = false,
   ): Promise<JobOccurrence> {
     if (!/^[\w:.-]{1,128}$/u.test(requestId))
       throw new Error('Invalid request ID');
@@ -70,18 +76,26 @@ export class RepositoryJobs {
     const occurrenceId = jobDigest([id, principal, trigger, requestId]);
     // Stable even across a crash between the reservation and Work mint.
     const workId = await slotItemId(occurrenceId, at);
-    const requestDigest = jobDigest([digest, trigger]);
+
     const reserved = await this.deps.store.mutate(
       id,
       occurrenceId,
       (job, existing) => {
-        if (!job?.definition) throw new Error('Job not found');
-        const profile = this.authorize(job.definition, principal);
         if (existing) {
-          if (existing.requestDigest !== requestDigest)
-            throw new Error('Request ID reused with different definition');
+          this.authorize(existing.definition, principal);
+          const parameters = resolveJobParameters(existing.definition, values);
+          if (
+            existing.requestDigest !== jobDigest([digest, trigger, parameters])
+          )
+            throw new Error(
+              'Request ID reused with different definition or parameters',
+            );
           return { occurrence: existing };
         }
+        if (!job?.definition) throw new Error('Job not found');
+        const profile = this.authorize(job.definition, principal);
+        const parameters = resolveJobParameters(job.definition, values);
+        const requestDigest = jobDigest([digest, trigger, parameters]);
         if (
           !job.enabled ||
           job.error ||
@@ -91,6 +105,8 @@ export class RepositoryJobs {
           throw new Error('Job disabled, changed, or catalog refresh required');
         if (trigger === 'manual' && !job.definition.job.triggers.manual)
           throw new Error('Manual invocation disabled');
+        if (deferOverlap && job.active !== undefined)
+          throw new RepositoryJobBusyError('Job already active');
         const slot = new Date(requestId);
         if (
           trigger === 'schedule' &&
@@ -105,6 +121,7 @@ export class RepositoryJobs {
         const comparison = jobDigest([
           job.definition.job.inputs,
           job.definition.job.result,
+          parameters,
         ]);
         const occurrence: JobOccurrence = {
           id: occurrenceId,
@@ -118,6 +135,7 @@ export class RepositoryJobs {
           definition: job.definition,
           profile,
           comparison,
+          parameters,
           ...(job.definition.job.state.previousSuccessfulResult &&
           job.baseline?.comparison === comparison
             ? { baselineOccurrence: job.baseline.occurrence }
@@ -137,6 +155,32 @@ export class RepositoryJobs {
     if (!occurrence) throw new Error('Admission reservation missing');
     if (!occurrence.skipped) await this.mint(occurrence);
     return occurrence;
+  }
+  async invoke(
+    repository: string,
+    name: string,
+    requestId: string,
+    principal: string,
+    values: Record<string, string> = {},
+  ): Promise<JobOccurrence> {
+    const id = jobKey(repository, name);
+    const existing = await this.deps.store.readOccurrence(
+      jobDigest([id, principal, 'manual', requestId]),
+    );
+    const definition =
+      existing?.definition ??
+      (await this.deps.store.list()).find((job) => job.id === id)?.definition;
+    if (!definition)
+      throw new Error('Refresh and enable the repository job first');
+    return this.admit(
+      id,
+      requestId,
+      principal,
+      'manual',
+      definition.digest,
+      values,
+      true,
+    );
   }
   async mint(occurrence: JobOccurrence): Promise<void> {
     const existing = await this.deps.runtime.store.readTask({
@@ -230,7 +274,11 @@ export class RepositoryJobs {
               }
             : {}),
         },
-        occurrence: { ...saved, reconciledAt: this.deps.now().toISOString() },
+        occurrence: {
+          ...saved,
+          successful: Boolean(success),
+          reconciledAt: this.deps.now().toISOString(),
+        },
       };
     });
   }

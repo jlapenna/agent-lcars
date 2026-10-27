@@ -70,7 +70,8 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) || item.spec.pipeline === 'goose' ? (
+        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) ||
+        item.spec.pipeline === 'goose' ? (
           <Text>{item.spec.description}</Text>
         ) : (
           <EditWork

@@ -800,3 +800,64 @@ describe('canceled CLI delivery presentation', () => {
     expect(d.out[0]).toContain('delivery:waiting');
   });
 });
+
+describe('repository job CLI', () => {
+  it('uses normal Work authentication and preserves invocation data and receipt', async () => {
+    const receipt = {
+      id: 'a'.repeat(64),
+      workId: 'work-1',
+      skipped: false,
+      outcome: 'accepted',
+    };
+    const d = deps({
+      'POST /api/work/v1/jobs/invoke': (init) => {
+        expect(JSON.parse(String(init.body))).toEqual({
+          repository: 'octo/repo',
+          name: 'audit',
+          requestId: 'event-1',
+          parameters: { target: '42' },
+        });
+        expect(init.redirect).toBe('error');
+        return receipt;
+      },
+      [`GET /api/work/v1/jobs/occurrences/${receipt.id}`]: () => ({
+        ...receipt,
+        successful: true,
+      }),
+    });
+    expect(
+      await executeWorkCommand(
+        [
+          'job',
+          'invoke',
+          '--repo',
+          'octo/repo',
+          '--name',
+          'audit',
+          '--request-id',
+          'event-1',
+          '--parameters',
+          '{"target":"42"}',
+        ],
+        d,
+      ),
+    ).toEqual({ ok: true });
+    expect(JSON.parse(d.out[0]!)).toEqual(receipt);
+    expect(await executeWorkCommand(['job', 'get', receipt.id], d)).toEqual({
+      ok: true,
+    });
+    expect(JSON.parse(d.out[1]!).successful).toBe(true);
+  });
+  it('does not invent an idempotency key for an event caller', async () => {
+    const d = deps({});
+    expect(
+      (
+        await executeWorkCommand(
+          ['job', 'invoke', '--repo', 'octo/repo', '--name', 'audit'],
+          d,
+        )
+      ).ok,
+    ).toBe(false);
+    expect(d.calls).toEqual([]);
+  });
+});

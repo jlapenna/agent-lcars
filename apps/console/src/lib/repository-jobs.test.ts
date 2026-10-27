@@ -52,7 +52,15 @@ class TestStore implements JobStore {
     return result;
   }
 }
-function fixture() {
+function fixture(
+  parameters: {
+    key: string;
+    description: string;
+    input_type: 'string';
+    requirement: 'required' | 'optional';
+    default?: string;
+  }[] = [],
+) {
   let at = new Date('2026-10-27T06:00:00.000Z');
   const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
   const definition = parseJobDefinition(
@@ -64,7 +72,11 @@ function fixture() {
       description: 'Audit inventory',
       triggers: {
         manual: true,
-        schedule: { cron: '0 1 * * *', timezone: 'America/Los_Angeles' },
+        ...(parameters.length
+          ? {}
+          : {
+              schedule: { cron: '0 1 * * *', timezone: 'America/Los_Angeles' },
+            }),
       },
       execution: {
         recipe: './recipe.yaml',
@@ -86,12 +98,15 @@ function fixture() {
       title: 'Audit',
       description: 'Read inventory',
       prompt: 'Report inventory',
-      parameters: ['scope', 'mode', 'baseline'].map((key) => ({
-        key,
-        description: key,
-        input_type: 'string',
-        requirement: 'required',
-      })),
+      parameters: [
+        ...['scope', 'mode', 'baseline'].map((key) => ({
+          key,
+          description: key,
+          input_type: 'string',
+          requirement: 'required',
+        })),
+        ...parameters,
+      ],
     }),
   );
   const profile: JobProfile = {
@@ -356,5 +371,92 @@ describe('production repository job admission', () => {
         await f.native.listRuns({ workId: occurrence.workId }),
       ),
     ).toBe('failed');
+  });
+});
+
+describe('recipe invocation parameters', () => {
+  const parameter = {
+    key: 'pullRequest',
+    description: 'PR number',
+    input_type: 'string' as const,
+    requirement: 'required' as const,
+  };
+  it('pins values and replays the same named event after a catalog update', async () => {
+    const f = fixture([
+      parameter,
+      {
+        ...parameter,
+        key: 'context',
+        requirement: 'optional',
+        default: 'original',
+      },
+    ]);
+    const first = await f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'event-1',
+      'user:joe',
+      { pullRequest: '42' },
+    );
+    expect(first.parameters).toEqual({
+      pullRequest: '42',
+      context: 'original',
+    });
+    const catalog = f.store.jobs.get(f.id)!;
+    f.store.jobs.set(f.id, {
+      ...catalog,
+      definition: {
+        ...f.definition,
+        digest: 'b'.repeat(64),
+        parameters: [{ ...parameter, key: 'newRequiredValue' }],
+      },
+    });
+    expect(
+      await f.jobs.invoke('octo/repo', 'audit', 'event-1', 'user:joe', {
+        pullRequest: '42',
+      }),
+    ).toEqual(first);
+    await expect(
+      f.jobs.invoke('octo/repo', 'audit', 'event-1', 'user:joe', {
+        pullRequest: '43',
+      }),
+    ).rejects.toThrow('Request ID reused');
+  });
+  it('rejects missing, unknown and fixed-scope overrides before creating Work', async () => {
+    const f = fixture([parameter]);
+    for (const values of [
+      {},
+      { pullRequest: '42', scope: 'other' },
+      { pullRequest: '42', baseline: 'forged' },
+      { pullRequest: '42', extra: 'x' },
+    ]) {
+      await expect(
+        f.jobs.invoke('octo/repo', 'audit', 'invalid', 'user:joe', values),
+      ).rejects.toThrow();
+    }
+    expect(f.store.occurrences.size).toBe(0);
+  });
+  it('defers a busy event without recording a permanent skipped occurrence', async () => {
+    const f = fixture([parameter]);
+    await f.jobs.invoke('octo/repo', 'audit', 'event-1', 'user:joe', {
+      pullRequest: '42',
+    });
+    await expect(
+      f.jobs.invoke('octo/repo', 'audit', 'event-2', 'user:joe', {
+        pullRequest: '43',
+      }),
+    ).rejects.toThrow('Job already active');
+    expect(f.store.occurrences.size).toBe(1);
+    const { active: _active, ...idle } = f.store.jobs.get(f.id)!;
+    f.store.jobs.set(f.id, idle);
+    const admitted = await f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'event-2',
+      'user:joe',
+      { pullRequest: '43' },
+    );
+    expect(admitted.skipped).toBe(false);
+    expect(admitted.parameters.pullRequest).toBe('43');
   });
 });

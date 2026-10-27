@@ -650,6 +650,7 @@ export const runsRouter = os.router({
         : await jobs.deps.store.readOccurrence(occurrence.baselineOccurrence);
     return {
       definition: occurrence.definition,
+      parameters: occurrence.parameters,
       profile: occurrence.profile,
       baseline: previous?.artifact?.baseline ?? null,
     };
