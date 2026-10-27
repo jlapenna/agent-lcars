@@ -105,7 +105,7 @@
    pr_number="<PR_NUMBER>"
    reviewed_head="<EXACT_REVIEWED_AND_PUSHED_SHA>"
    gh pr view "$pr_number" -R jlapenna/agent-lcars \
-     --json state,isDraft,headRefOid
+     --json id,state,isDraft,headRefOid
    node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
      jlapenna/agent-lcars "$pr_number" "$reviewed_head" <declared-scope> \
      && gh pr merge "$pr_number" -R jlapenna/agent-lcars \
