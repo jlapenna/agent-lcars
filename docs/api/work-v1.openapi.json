@@ -1181,6 +1181,53 @@
                             "sourceKey"
                           ],
                           "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -1890,6 +1937,53 @@
                             "pipeline",
                             "priority",
                             "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
                           ],
                           "additionalProperties": false
                         }
@@ -2607,6 +2701,53 @@
                             "pipeline",
                             "priority",
                             "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
                           ],
                           "additionalProperties": false
                         }
@@ -3371,6 +3512,53 @@
                                   "sourceKey"
                                 ],
                                 "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
+                                  },
+                                  "description": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 16384
+                                  },
+                                  "pipeline": {
+                                    "type": "string",
+                                    "const": "goose"
+                                  },
+                                  "priority": {
+                                    "type": "string",
+                                    "const": "background"
+                                  },
+                                  "target": {
+                                    "type": "object",
+                                    "properties": {
+                                      "repo": {
+                                        "type": "string",
+                                        "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                      }
+                                    },
+                                    "required": ["repo"],
+                                    "additionalProperties": false
+                                  },
+                                  "jobOccurrence": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  }
+                                },
+                                "required": [
+                                  "title",
+                                  "description",
+                                  "pipeline",
+                                  "priority",
+                                  "target",
+                                  "jobOccurrence"
+                                ],
+                                "additionalProperties": false
                               }
                             ]
                           },
@@ -4081,6 +4269,53 @@
                             "pipeline",
                             "priority",
                             "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
                           ],
                           "additionalProperties": false
                         }
@@ -4818,6 +5053,53 @@
                             "pipeline",
                             "priority",
                             "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
                           ],
                           "additionalProperties": false
                         }
@@ -5603,6 +5885,53 @@
                             "pipeline",
                             "priority",
                             "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
                           ],
                           "additionalProperties": false
                         }
@@ -10408,6 +10737,144 @@
         ]
       }
     },
+    "/runs/{runId}/recipe": {
+      "get": {
+        "operationId": "recipeBrief",
+        "summary": "Fetch an admitted recipe",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
+          }
+        ]
+      },
+      "post": {
+        "operationId": "recipeComplete",
+        "summary": "Complete an admitted recipe",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          },
+          {
+            "name": "x-lcars-worker-identity",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-lcars-worker-generation",
+            "in": "header",
+            "required": false,
+            "description": "Required for receipt-mode runs: exact generation returned by activation.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "result": {}
+                },
+                "required": ["result"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["runId", "state"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
+          }
+        ]
+      }
+    },
     "/runs/{runId}/brief": {
       "get": {
         "operationId": "getRunBrief",
@@ -10459,63 +10926,150 @@
                           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                         },
                         "spec": {
-                          "type": "object",
-                          "properties": {
-                            "title": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            },
-                            "description": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
-                            },
-                            "pipeline": {
-                              "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
-                            },
-                            "priority": {
-                              "default": "normal",
-                              "type": "string",
-                              "enum": ["urgent", "normal", "background"]
-                            },
-                            "fallbackPipelines": {
-                              "maxItems": 2,
-                              "type": "array",
-                              "items": {
-                                "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
-                              }
-                            },
-                            "deliveryRuntime": {
-                              "type": "string",
-                              "enum": ["none", "required"]
-                            },
-                            "deliverable": {
-                              "type": "string",
-                              "enum": ["report"]
-                            },
-                            "target": {
+                          "anyOf": [
+                            {
                               "type": "object",
                               "properties": {
-                                "repo": {
+                                "title": {
                                   "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "pipeline": {
+                                  "type": "string",
+                                  "enum": ["claude", "codex", "opencode"]
+                                },
+                                "priority": {
+                                  "default": "normal",
+                                  "type": "string",
+                                  "enum": ["urgent", "normal", "background"]
+                                },
+                                "fallbackPipelines": {
+                                  "maxItems": 2,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": ["claude", "codex", "opencode"]
+                                  }
+                                },
+                                "deliveryRuntime": {
+                                  "type": "string",
+                                  "enum": ["none", "required"]
+                                },
+                                "deliverable": {
+                                  "type": "string",
+                                  "enum": ["report"]
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "repo": {
+                                      "type": "string",
+                                      "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                    }
+                                  },
+                                  "required": ["repo"],
+                                  "additionalProperties": false
                                 }
                               },
-                              "required": ["repo"],
+                              "required": [
+                                "title",
+                                "description",
+                                "pipeline",
+                                "priority",
+                                "target"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "pipeline": {
+                                  "type": "string",
+                                  "enum": ["inbox-summary", "handoff-summary"]
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "pipeline",
+                                "priority",
+                                "sourceKey"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "pipeline": {
+                                  "type": "string",
+                                  "const": "goose"
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "repo": {
+                                      "type": "string",
+                                      "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                    }
+                                  },
+                                  "required": ["repo"],
+                                  "additionalProperties": false
+                                },
+                                "jobOccurrence": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "pipeline",
+                                "priority",
+                                "target",
+                                "jobOccurrence"
+                              ],
                               "additionalProperties": false
                             }
-                          },
-                          "required": [
-                            "title",
-                            "description",
-                            "pipeline",
-                            "priority",
-                            "target"
-                          ],
-                          "additionalProperties": false
+                          ]
                         },
                         "anchor": {
                           "type": "object",
