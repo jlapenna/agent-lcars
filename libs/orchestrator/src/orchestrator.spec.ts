@@ -912,7 +912,6 @@ describe('executor-reported exit', () => {
     it('bounds a negotiated placement wait to one hour from the claim', async () => {
       const { clock, store, orchestrator, run } = await claimed(
         fixture(),
-        CLAIMANT.subject,
         true,
       );
       const claimedAt = Date.parse(T0);
