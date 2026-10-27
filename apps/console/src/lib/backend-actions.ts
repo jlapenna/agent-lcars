@@ -357,7 +357,6 @@ export async function approveAndMergePr(
   prNumber: number,
 ): Promise<void> {
   const octokit = getGithubClient();
-  const started = performance.now();
 
   await octokit.rest.pulls.createReview({
     owner: repo.owner,
@@ -372,24 +371,10 @@ export async function approveAndMergePr(
     pull_number: prNumber,
     merge_method: 'squash',
   });
-  const mutated = performance.now();
-  await refreshGithubMutation(repo, prNumber);
-  const refreshed = performance.now();
-
   // No run transition is required by a merge. The durable maintenance tick
   // owns expired leases and pending outbox deliveries, independently of this
   // request's lifetime. Never await a whole-fleet sweep to acknowledge it.
-  const elapsed = (start: number, end: number) =>
-    Math.min(300_000, Math.max(0, Math.round(end - start)));
-  logger.info(
-    'agent-lcars: merge acknowledgement phases %s',
-    JSON.stringify({
-      githubMutationMs: elapsed(started, mutated),
-      projectionRefreshMs: elapsed(mutated, refreshed),
-      maintenanceMs: 0,
-      maintenanceOwner: 'work.cron',
-    }),
-  );
+  await refreshGithubMutation(repo, prNumber);
 }
 
 // Resolves the `behind` mergeable_state ("Base branch has moved" in

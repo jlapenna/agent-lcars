@@ -157,15 +157,8 @@ delay a successful merge acknowledgement. Pending entries and expired drain
 leases remain eligible for the next five-minute tick; no request-lifetime
 background promise carries required work.
 
-Successful merges emit one sanitized phase summary: `githubMutationMs` covers
-approval plus squash merge, `projectionRefreshMs` covers the authoritative
-refresh, and `maintenanceMs: 0` records that maintenance is outside the request.
-Durations use a monotonic clock and saturate at 300,000 ms; the summary contains
-no repository, anchor, actor, provider response, or error text. The hermetic
-Inbox journey also records click-to-visible-success separately. These are action
-acknowledgement measurements, distinct from #2201's navigation-to-ready phone
-p95 contract; compare each milestone against itself under the same fixture and
-profile, and retain the 20-second assertion allowance until latency is qualified.
+The hermetic Inbox journey keeps a 20-second merge-action allowance, distinct
+from #2201's navigation-to-ready phone p95 contract.
 
 ## Code map
 
