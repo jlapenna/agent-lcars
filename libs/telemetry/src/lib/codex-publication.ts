@@ -1,5 +1,3 @@
-import { parse } from 'acorn';
-
 import { findQualifiedPRs, isPRPublicationCommand } from './deliverables';
 import type { QualifiedSessionPR } from './types';
 import { asArray, asRecord, asString } from './unknown-value';
@@ -17,7 +15,16 @@ export function codeModeInvocation(
 ): CodexInvocation | undefined {
   if (typeof input !== 'string' || input.length > 100_000) return undefined;
   try {
-    const program = parse(input, {
+    // Only code-mode publication evidence needs the parser. Keep the literal
+    // require visible to bundlers, while native Node ESM resolves from this module.
+    const parser: typeof import('acorn') =
+      typeof require === 'function'
+        ? /* eslint-disable-next-line no-restricted-syntax -- literal synchronous load keeps Acorn bundled; native ESM uses the fallback below */
+          require('acorn')
+        : process.getBuiltinModule('module').createRequire(import.meta.url)(
+            'acorn',
+          );
+    const program = parser.parse(input, {
       ecmaVersion: 'latest',
       sourceType: 'module',
     });

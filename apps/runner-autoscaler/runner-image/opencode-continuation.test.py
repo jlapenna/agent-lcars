@@ -3,6 +3,7 @@
 
 import json
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 fixture = root / "workspace/.claude/worktrees/task/app/fixture.txt"
 request_count = 0
+started = time.monotonic()
 
 
 def chunk(*, content=None, tool_call=None, finish_reason=None):
@@ -62,6 +64,7 @@ class Handler(BaseHTTPRequestHandler):
         )
         observation = {
             "request": request_count,
+            "elapsedSeconds": round(time.monotonic() - started, 3),
             "tools": bool(body.get("tools")),
             "isCompaction": is_compaction,
             "isTitle": not body.get("tools") and not is_compaction,

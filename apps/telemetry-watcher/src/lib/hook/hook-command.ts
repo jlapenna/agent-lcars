@@ -718,7 +718,8 @@ async function handleRuntimeHook(
     lockHeld = false;
     if (inline) {
       await deps.runFlusher();
-    } else {
+    } else if (config.writer) {
+      // Spool-only clients have no destination for an automatic flush.
       try {
         deps.spawnFlusher();
       } catch {

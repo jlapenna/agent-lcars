@@ -89,12 +89,12 @@ describe('lcars integration', () => {
     );
     expect(hooks['SessionStart'][1].hooks[0]).toEqual({
       type: 'command',
-      command: stubCommand('claude'),
+      command: stubCommand('claude', 'Stop'),
       timeout: 10,
     });
     expect(hooks['PostToolUse'][0].hooks[0]).toEqual({
       type: 'command',
-      command: stubCommand('claude'),
+      command: stubCommand('claude', 'Stop'),
       async: true,
     });
     expect(hooks['SessionEnd'][0].hooks[0]).toMatchObject({ timeout: 5 });
@@ -168,7 +168,7 @@ describe('lcars integration', () => {
     expect(refreshedHooks['Stop'][0]).toEqual(hooks['Stop'][0]);
     expect(refreshedHooks['Stop'][1].matcher).toBe('*');
     expect(refreshedHooks['Stop'][1].hooks).toEqual([
-      { type: 'command', command: stubCommand('codex'), timeout: 5 },
+      { type: 'command', command: stubCommand('codex', 'Stop'), timeout: 5 },
       foreign,
     ]);
     expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
@@ -262,8 +262,15 @@ describe('lcars integration', () => {
     ['timeout', 5],
     ['timeout', null],
     ['type', 'prompt'],
-    ['command', stubCommand('claude')],
-    ['command', stubCommand('codex', '$HOME/.codex/previous/lcars-hook.sh')],
+    ['command', stubCommand('claude', 'Stop')],
+    [
+      'command',
+      '[ -x "$HOME/.codex/lcars-hook.sh" ] && sh "$HOME/.codex/lcars-hook.sh" codex || true',
+    ],
+    [
+      'command',
+      stubCommand('codex', 'Stop', '$HOME/.codex/previous/lcars-hook.sh'),
+    ],
   ] as const)(
     'rejects stale managed Codex %s=%s options and refreshes through the existing installer',
     (field, value) => {
@@ -359,7 +366,11 @@ describe('lcars integration', () => {
             {
               hooks: [
                 { type: 'command', command: 'theirs' },
-                { type: 'command', command: stubCommand('codex') },
+                {
+                  type: 'command',
+                  command:
+                    '[ -x "$HOME/.codex/lcars-hook.sh" ] && sh "$HOME/.codex/lcars-hook.sh" codex || true',
+                },
               ],
             },
           ],
@@ -385,7 +396,7 @@ describe('lcars integration', () => {
     expect(hooks['Stop']).toHaveLength(1);
     expect(hooks['Stop'][0].hooks.map((h) => h['command'])).toEqual([
       'theirs',
-      stubCommand('codex'),
+      stubCommand('codex', 'Stop'),
     ]);
     expect(hooks['Notification']).toHaveLength(1);
     uninstallIntegration('codex', home);
@@ -409,7 +420,7 @@ describe('lcars integration', () => {
     ] as Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>;
     const stub = path.join(codexHome, 'lcars-hook.sh');
     expect(codexHooks['Stop'][0].hooks[0]['command']).toBe(
-      stubCommand('codex', stub),
+      stubCommand('codex', 'Stop', stub),
     );
     expect(fs.existsSync(stub)).toBe(true);
     expect(fs.existsSync(path.join(claudeDir, 'hooks', 'lcars-hook.sh'))).toBe(
@@ -465,12 +476,22 @@ describe('lcars integration', () => {
       '.local/state/agent-lcars',
       HOOK_INFLIGHT_DIRECTORY,
     );
-    const runStub = (payload: object) =>
-      spawnSync('sh', [path.join(home, '.codex/lcars-hook.sh'), 'codex'], {
-        input: JSON.stringify(payload),
-        env: { PATH: `${bin}:${process.env['PATH']}`, HOME: home },
-        timeout: 10_000,
-      });
+    const runStub = (payload: { hook_event_name: string }) =>
+      spawnSync(
+        'sh',
+        [
+          path.join(home, '.codex/lcars-hook.sh'),
+          'codex',
+          ...(payload.hook_event_name === 'SessionEnd'
+            ? []
+            : [payload.hook_event_name]),
+        ],
+        {
+          input: JSON.stringify(payload),
+          env: { PATH: `${bin}:${process.env['PATH']}`, HOME: home },
+          timeout: 10_000,
+        },
+      );
     // The client removes its payload when it exits, release or deadline.
     const clientDone = () =>
       vi.waitFor(
@@ -500,6 +521,121 @@ describe('lcars integration', () => {
     };
     expect(runStub(stop).status).toBe(0);
     expect(JSON.parse(fs.readFileSync(received, 'utf8'))).toEqual(stop);
+    const endCommand =
+      '[ -x "$HOME/.codex/lcars-hook.sh" ] && sh "$HOME/.codex/lcars-hook.sh" codex || true';
+    expect(stubCommand('codex', 'SessionEnd')).toBe(endCommand);
+    // A running client may still hold the old command after settings migration.
+    fs.rmSync(received);
+    const cached = spawnSync('sh', ['-c', endCommand], {
+      input: JSON.stringify(stop),
+      env: { PATH: `${bin}:${process.env['PATH']}`, HOME: home },
+      timeout: 10_000,
+    });
+    expect(cached.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(received, 'utf8'))).toEqual(stop);
+    expect(fs.readdirSync(inflight)).toEqual([]);
+  });
+
+  it.each(['claude', 'codex'] as const)(
+    'replaces the %s stub process and leaves failures to the settings boundary',
+    (runtime) => {
+      const home = tempHome();
+      installIntegration(runtime, home, {});
+      const bin = path.join(home, 'bin');
+      const scratch = path.join(home, 'scratch');
+      fs.mkdirSync(bin);
+      fs.mkdirSync(scratch);
+      const received = path.join(home, 'received');
+      const pid = path.join(home, 'pid');
+      fs.writeFileSync(
+        path.join(bin, 'lcars'),
+        `#!/bin/sh\nprintf '%s' "$$" >"${pid}"\ncat >"${received}"\nprintf 'must stay silent'\nprintf 'must stay silent' >&2\nexit 17\n`,
+        { mode: 0o755 },
+      );
+      const payload = '{"hook_event_name":"Stop","text":"exact stdin"}\n';
+      const env = {
+        PATH: `${bin}:${process.env['PATH']}`,
+        HOME: home,
+        // Ordinary hooks must not need a temporary-file relay at all.
+        TMPDIR: path.join(home, 'absent'),
+      };
+      const stub = path.join(
+        home,
+        runtime === 'claude'
+          ? '.claude/hooks/lcars-hook.sh'
+          : '.codex/lcars-hook.sh',
+      );
+      const direct = spawnSync('sh', [stub, runtime, 'Stop'], {
+        input: payload,
+        env,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      expect(direct.error).toBeUndefined();
+      expect(direct.status).toBe(17);
+      expect(fs.readFileSync(pid, 'utf8')).toBe(String(direct.pid));
+      expect(fs.readFileSync(received, 'utf8')).toBe(payload);
+      expect(direct.stdout).toBe('');
+      expect(direct.stderr).toBe('');
+      expect(fs.readdirSync(scratch)).toEqual([]);
+      const registered = spawnSync('sh', ['-c', stubCommand(runtime, 'Stop')], {
+        input: payload,
+        env,
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      expect(registered.error).toBeUndefined();
+      expect(registered.status).toBe(0);
+      expect(registered.stdout).toBe('');
+      expect(registered.stderr).toBe('');
+      expect(fs.readFileSync(received, 'utf8')).toBe(payload);
+      expect(fs.readdirSync(scratch)).toEqual([]);
+    },
+  );
+
+  it('keeps a captured old command usable after normal settings migration', () => {
+    const home = tempHome();
+    const settings = path.join(home, '.codex/hooks.json');
+    const bin = path.join(home, '.local/bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const received = path.join(home, 'received');
+    fs.writeFileSync(
+      path.join(bin, 'lcars'),
+      `#!/bin/sh\ncat >"${received}"\n`,
+      { mode: 0o755 },
+    );
+    installIntegration('codex', home, {});
+    const previous = readJson(settings);
+    const hooks = previous['hooks'] as Record<
+      string,
+      Array<{ hooks: Array<{ command: string }> }>
+    >;
+    const cached =
+      '[ -x "$HOME/.codex/lcars-hook.sh" ] && sh "$HOME/.codex/lcars-hook.sh" codex || true';
+    hooks['Stop'][0].hooks[0].command = cached;
+    fs.writeFileSync(settings, JSON.stringify(previous));
+    const captured = hooks['Stop'][0].hooks[0].command;
+    expect(integrationStatus('codex', home, {}).installed).toBe(false);
+    expect(installIntegration('codex', home, {}).installed).toBe(true);
+    const current = readJson(settings)['hooks'] as typeof hooks;
+    expect(current['Stop'][0].hooks[0].command).toBe(
+      stubCommand('codex', 'Stop'),
+    );
+    // A running client can still invoke its captured command after reinstall.
+    const result = spawnSync('sh', ['-c', captured], {
+      input: '{"hook_event_name":"Stop"}',
+      env: { HOME: home, PATH: '/usr/bin:/bin' },
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+    expect(fs.readFileSync(received, 'utf8')).toBe(
+      '{"hook_event_name":"Stop"}',
+    );
+    expect(integrationStatus('codex', home, {}).installed).toBe(true);
   });
 
   it('exposes install/status/uninstall through the CLI with exit codes', () => {

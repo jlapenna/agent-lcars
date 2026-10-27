@@ -12,8 +12,12 @@ import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
  *
  * The settings entry is a constant launcher stub: Codex hashes the hook
  * entry for trust, not the script it launches, so the entry is trusted once
- * per host and behavior changes ship in the `lcars` bundle. The stub copies
- * stdin to a temp file before anything else and never fails the runtime.
+ * per command and behavior changes ship in the `lcars` bundle. Adding the
+ * installed Codex event argument changes that command hash and needs normal
+ * trust review; this installer never writes trust decisions. The settings
+ * command owns the fail-open boundary; the stub replaces itself with lcars.
+ * New ordinary hooks pass stdin directly. The event-less SessionEnd command
+ * retains its buffered handoff, including for already-loaded old commands.
  */
 export const INTEGRATION_VERSION = 1;
 export const STUB_MARKER = 'lcars-hook.sh';
@@ -116,14 +120,17 @@ export function resolveTarget(
 
 export function stubCommand(
   runtime: SettingsRuntime,
+  event: string,
   stubRef = `$HOME/${path.join(INTEGRATION_TARGETS[runtime].defaultConfigDir, INTEGRATION_TARGETS[runtime].stubFile)}`,
 ): string {
-  return `[ -x "${stubRef}" ] && sh "${stubRef}" ${runtime} || true`;
+  const argument =
+    runtime === 'codex' && event !== 'SessionEnd' ? ` ${event}` : '';
+  return `[ -x "${stubRef}" ] && sh "${stubRef}" ${runtime}${argument} || true`;
 }
 
-/** Exactly the command shape this installer generates, at any stub path. */
+/** Current commands plus the previous event-less command, for managed-entry migration. */
 const OUR_COMMAND_RE =
-  /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex) \|\| true$/u;
+  /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex(?: (?:SessionStart|UserPromptSubmit|PostToolUse|Stop|SubagentStop|Interrupt))?) \|\| true$/u;
 
 export function stubScript(runtime: SettingsRuntime): string {
   return [
@@ -136,9 +143,6 @@ export function stubScript(runtime: SettingsRuntime): string {
     '',
     'set -u',
     `runtime="\${1:-${runtime}}"`,
-    'input="$(mktemp "${TMPDIR:-/tmp}/lcars-hook.XXXXXX")" || exit 0',
-    'trap \'rm -f "$input"\' EXIT HUP INT TERM',
-    'cat >"$input" 2>/dev/null || true',
     'if command -v lcars >/dev/null 2>&1; then',
     '  lcars_bin=lcars',
     'elif [ -x "$HOME/.local/bin/lcars" ]; then',
@@ -146,9 +150,20 @@ export function stubScript(runtime: SettingsRuntime): string {
     'else',
     '  exit 0',
     'fi',
-    ...(runtime === 'codex' ? CODEX_SESSION_END_HANDOFF : []),
-    '"$lcars_bin" hook "$runtime" <"$input" >/dev/null 2>&1 || true',
-    'exit 0',
+    ...(runtime === 'codex'
+      ? [
+          'if [ "${2:-SessionEnd}" = SessionEnd ]; then',
+          'input="$(mktemp "${TMPDIR:-/tmp}/lcars-hook.XXXXXX")" || exit 0',
+          'trap \'rm -f "$input"\' EXIT HUP INT TERM',
+          'cat >"$input" 2>/dev/null || exit 0',
+          ...CODEX_SESSION_END_HANDOFF,
+          'exec <"$input"',
+          'rm -f "$input"',
+          'trap - EXIT HUP INT TERM',
+          'fi',
+        ]
+      : []),
+    'exec "$lcars_bin" hook "$runtime" >/dev/null 2>&1',
     '',
   ].join('\n');
 }
@@ -288,7 +303,7 @@ function ourGroup(
     hooks: [
       {
         type: 'command',
-        command: stubCommand(runtime, stubRef),
+        command: stubCommand(runtime, spec.event, stubRef),
         ...(spec.async && { async: true }),
         ...(spec.timeout !== undefined && { timeout: spec.timeout }),
       },
@@ -396,7 +411,8 @@ function settingsIntegrationStatus(
           (hook) =>
             isRecord(hook) &&
             hook['type'] === 'command' &&
-            hook['command'] === stubCommand(runtime, resolved.stubRef) &&
+            hook['command'] ===
+              stubCommand(runtime, spec.event, resolved.stubRef) &&
             (hook['async'] === undefined ? false : hook['async']) ===
               (spec.async ?? false) &&
             hook['timeout'] === spec.timeout,

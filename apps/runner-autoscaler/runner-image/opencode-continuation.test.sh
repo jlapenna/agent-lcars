@@ -19,7 +19,7 @@ provider_start_timeout_seconds=10
 case "$(uname -m)" in
   aarch64 | arm64)
     version_timeout_seconds=60
-    framework_timeout_seconds=180
+    framework_timeout_seconds=300
     provider_start_timeout_seconds=60
     ;;
 esac
@@ -146,6 +146,8 @@ cat > "$tmp/workspace/opencode.json" <<JSON
 }
 JSON
 
+framework_started_seconds=$SECONDS
+framework_status=0
 env \
   -u OPENCODE_CONFIG \
   -u OPENCODE_CONFIG_CONTENT \
@@ -166,16 +168,18 @@ env \
   --auto \
   --dir "$tmp/workspace" \
   "Read fixture.txt, preserve the task state, and continue after compaction." \
-  >"$tmp/opencode.stdout" 2>"$tmp/opencode.stderr" || {
-    framework_status=$?
-    cat "$tmp/opencode.stderr" >&2
-    if [ -s "$tmp/observations.ndjson" ]; then
-      cat "$tmp/observations.ndjson" >&2
-    else
-      echo "OpenCode continuation observations: 0 (startup did not reach localhost provider)" >&2
-    fi
-    fail "real OpenCode continuation run failed (exit $framework_status)" "$framework_status"
-  }
+  >"$tmp/opencode.stdout" 2>"$tmp/opencode.stderr" || framework_status=$?
+echo "OpenCode continuation CLI: exit=$framework_status elapsed=$((SECONDS - framework_started_seconds))s deadline=${framework_timeout_seconds}s" >&2
+if [ "$framework_status" -ne 0 ]; then
+  cat "$tmp/opencode.stderr" >&2
+  tail -c 8192 "$tmp/opencode.stdout" >&2
+  if [ -s "$tmp/observations.ndjson" ]; then
+    cat "$tmp/observations.ndjson" >&2
+  else
+    echo "OpenCode continuation observations: 0 (startup did not reach localhost provider)" >&2
+  fi
+  fail "real OpenCode continuation run failed (exit $framework_status)" "$framework_status"
+fi
 
 python3 - "$tmp/observations.ndjson" "$tmp/data/opencode/opencode.db" <<'PY'
 import json

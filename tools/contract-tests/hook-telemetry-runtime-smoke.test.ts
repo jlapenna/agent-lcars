@@ -62,6 +62,10 @@ if(process.argv.slice(2).join(' ')==='hook opencode') {
 process.stdout.write(JSON.stringify({writerConfigured:Boolean(process.env.LCARS_TELEMETRY_CREDENTIALS_FILE)}));
 }`,
     );
+    writeFileSync(
+      join(lib, 'lcars-hook.cjs'),
+      readFileSync(join(lib, 'lcars-session-title.cjs')),
+    );
     const fixture = join(bin, 'fixture.cjs');
     writeFileSync(
       fixture,
@@ -123,6 +127,7 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
         'agents/opencode',
         'dist/apps/telemetry-watcher-session-title-cli',
         'dist/apps/telemetry-watcher-hook-flush',
+        'dist/apps/telemetry-watcher-hook',
       ];
       for (const target of targets)
         mkdirSync(join(project, target), { recursive: true });
@@ -143,6 +148,10 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
           'dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs',
         ),
         '',
+      );
+      writeFileSync(
+        join(project, 'dist/apps/telemetry-watcher-hook/lcars-hook.cjs'),
+        readFileSync(join(lib, 'lcars-hook.cjs')),
       );
       writeFileSync(join(project, 'tools/nx'), '#!/bin/sh\nexit 0\n', {
         mode: 0o755,
