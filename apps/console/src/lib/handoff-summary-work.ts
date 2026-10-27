@@ -8,8 +8,14 @@ import {
   type Orchestrator,
   type OrchestratorStore,
   type Run,
+  type TaskId,
 } from '@agent-lcars/orchestrator';
-import { summaryWorkSpecSchema, ulid } from '@agent-lcars/work';
+import {
+  storedWorkPayloadSchema,
+  summaryWorkSpecSchema,
+  ulid,
+  WORK_TITLE_MAX,
+} from '@agent-lcars/work';
 import { z } from 'zod';
 
 export const handoffInputSchema = z.strictObject({
@@ -18,6 +24,30 @@ export const handoffInputSchema = z.strictObject({
 });
 export const handoffMessageHash = (message: string) =>
   createHash('sha256').update(message).digest('hex');
+
+/** A summary row names the task behind it; the exact source ID stays in the
+ * immutable `sourceKey`, which is what the detail view links. A missing or
+ * unreadable source title falls back to that ID rather than hiding it. */
+export function summaryTitle(
+  operation: string,
+  sourceTitle: string | undefined,
+  sourceKey: string,
+): string {
+  const readable = sourceTitle?.trim() || sourceKey;
+  const room = WORK_TITLE_MAX - operation.length - ': '.length;
+  return `${operation}: ${readable.slice(0, room).trimEnd()}`;
+}
+
+/** Reading aid only: the source Task's own work title, when it still exists. */
+async function sourceWorkTitle(
+  store: OrchestratorStore,
+  task: TaskId,
+): Promise<string | undefined> {
+  const stored = (await store.readTask(task))?.task;
+  if (stored === undefined) return undefined;
+  const parsed = storedWorkPayloadSchema.safeParse(stored.work);
+  return parsed.success ? parsed.data.spec.title : undefined;
+}
 
 /** The completion transaction owns the admission event; retrying its delivery
  * cannot mint a second summary or restart an exhausted generation budget. */
@@ -41,7 +71,11 @@ export async function admitHandoffSummary(
     messageHash: handoffMessageHash(run.result.message),
   };
   const spec = summaryWorkSpecSchema.parse({
-    title: `Handoff summary: ${run.runId}`,
+    title: summaryTitle(
+      'Handoff summary',
+      await sourceWorkTitle(runtime.store, run.task),
+      run.runId,
+    ),
     description: 'Summarize the human actions in the original settled handoff.',
     pipeline: 'handoff-summary',
     priority: 'background',

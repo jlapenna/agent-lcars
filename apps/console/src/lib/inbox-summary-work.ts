@@ -10,7 +10,11 @@ import {
 import { summaryWorkSpecSchema, ulid } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import { handoffInputSchema, handoffMessageHash } from './handoff-summary-work';
+import {
+  handoffInputSchema,
+  handoffMessageHash,
+  summaryTitle,
+} from './handoff-summary-work';
 import {
   handoffSummaryConfig,
   MAX_SUMMARY_MS,
@@ -20,8 +24,12 @@ import { summarizeInboxDecision } from './inbox-summary-model';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 
 const sourceSchema = z.union([
-  z.object({ workId: z.string().min(1) }),
-  z.object({ repo: z.string().min(1), number: z.number().int().positive() }),
+  z.object({ workId: z.string().min(1), title: z.string().optional() }),
+  z.object({
+    repo: z.string().min(1),
+    number: z.number().int().positive(),
+    title: z.string().optional(),
+  }),
 ]);
 const inputSchema = z.strictObject({ context: z.string().min(1) });
 
@@ -31,9 +39,11 @@ export async function admitInboxSummary(
   observedAt: Record<string, string>,
 ): Promise<{ description?: string; pending: boolean }> {
   const source = sourceSchema.parse(JSON.parse(context));
+  // A native card carries the console task key, which already reads
+  // `work:<ulid>`; prefixing it again made an unlinkable `work:work:<ulid>`.
   const sourceKey =
     'workId' in source
-      ? `work:${source.workId}`
+      ? `work:${source.workId.replace(/^work:/u, '')}`
       : `${source.repo}#${source.number}`;
   const workId = await runtime.store.resolveSourceWorkId(
     `inbox-summary:${sourceKey}`,
@@ -47,7 +57,7 @@ export async function admitInboxSummary(
     observedAt,
   });
   const spec = summaryWorkSpecSchema.parse({
-    title: `Inbox summary: ${sourceKey}`,
+    title: summaryTitle('Inbox summary', source.title, sourceKey),
     description:
       'Explain the current decision or report using its original source context.',
     pipeline: 'inbox-summary',
