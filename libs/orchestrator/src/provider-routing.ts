@@ -45,15 +45,7 @@ export function decideLabelProviderRequest(
   if (isWorkAnchor(input.taskId)) return refused('not-native');
   const { task, activeRun, latestRun, label, pipeline, now } = input;
   const previous = task?.providerRouting;
-  const acceptedGeneration =
-    previous?.acceptedGeneration ??
-    (previous?.successorRunId === undefined
-      ? undefined
-      : {
-          runId: previous.successorRunId,
-          requestedAt: previous.requestedAt,
-          pipeline: previous.effectivePipeline,
-        });
+  const acceptedGeneration = previous?.acceptedGeneration;
   const effective = input.admittedPipeline;
   const request = providerRoutingSchema.parse({
     requestId: input.requestId,
@@ -169,7 +161,6 @@ export function decideLabelProviderRequest(
         ...request,
         effectivePipeline: successor.pipeline,
         status: 'accepted',
-        successorRunId: successor.runId,
         acceptedGeneration: {
           runId: successor.runId,
           requestedAt: label.requestedAt,
