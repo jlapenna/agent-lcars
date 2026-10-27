@@ -120,10 +120,14 @@ func (g *statusWriteGate) recordWritten(name string, status consoleStatusDocumen
 // retired scale-set schema (v1), which an older console reader could
 // otherwise mistake this for.
 type consoleQueueExecutorStatus struct {
-	SchemaVersion int                 `firestore:"schemaVersion"`
-	Kind          string              `firestore:"kind"`
-	Executor      string              `firestore:"executor"`
-	Ready         bool                `firestore:"ready"`
+	SchemaVersion int    `firestore:"schemaVersion"`
+	Kind          string `firestore:"kind"`
+	Executor      string `firestore:"executor"`
+	Ready         bool   `firestore:"ready"`
+	// Draining is always false: the SIGUSR1 claim pause it reported was
+	// retired (nothing ever sent the signal). The key stays in the v2
+	// document because the console's reader requires a boolean here; drop
+	// both together (apps/console/src/lib/autoscaler-status.ts).
 	Draining      bool                `firestore:"draining"`
 	ActiveRuns    *int                `firestore:"activeRuns,omitempty"`
 	MaxConcurrent int                 `firestore:"maxConcurrent"`

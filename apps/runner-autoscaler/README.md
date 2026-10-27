@@ -128,22 +128,18 @@ kubernetes: # required; see "Kubernetes Jobs" below
 arc_lanes: [] # optional, see above
 ```
 
-Retired keys are rejected by name rather than ignored: `fleet` (the removed
-Docker backend's host inventory, readiness gates, and scale-set placement
-knobs), plus the scale-set manager's `github`, `registrations`, `scale_sets`,
-and `server.state_path`. Startup and `--check-config` fail with an error naming
-each key to delete, so a stale file can never be mistaken for live
-configuration.
-
-Sending the running process `SIGHUP` after replacing `orchestrator.yml` only
-revalidates the file and logs whether a restart would accept it. Every value
-the executor uses is captured at startup; applying a change needs a full
-daemon restart.
+Decoding is strict: any other key, including the retired Docker backend's
+`fleet` stanza and the scale-set manager's `github`, `registrations`,
+`scale_sets` and `server.state_path`, fails startup and `--check-config` with
+the decoder's "field not found" error, so a stale file can never be mistaken
+for live configuration. Every value the executor uses is captured at startup;
+applying a change needs a full daemon restart (homelab's `deploy.sh` runs
+`--check-config` before every restart).
 
 ## LCARS live runner status
 
-The queue executor can publish its current readiness, draining state, and
-active-run count to the LCARS console. It writes one bounded document
+The queue executor can publish its current readiness and active-run count to
+the LCARS console. It writes one bounded document
 (`schemaVersion: 2`, `kind: "queue-executor"`) to the existing
 `agent-telemetry` Firestore database; the console already has read-only
 access there. This keeps the console out of the launch path and does not
@@ -167,9 +163,10 @@ but a sample is written to Firestore only when its content differs from the
 last write or when the 60-second heartbeat is due. The console's Shuttlebay
 panel receives each write through a server-sent stream backed by a Firestore
 listener, not a poll, and stops presenting a snapshot as live after three
-minutes (three heartbeats, also the document's TTL) without one. It reports only generic worker health: readiness, draining,
+minutes (three heartbeats, also the document's TTL) without one. It reports only generic worker health: readiness,
 configured `max_concurrent` capacity, and an unfinished-Job count when the
-Job inventory can be read. It has no pipeline, repository, provider,
+Job inventory can be read. (The document's `draining` key is always `false`;
+the console's v2 reader still requires it.) It has no pipeline, repository, provider,
 credential, or individual-run data -- queue lifecycle counts (queued,
 claimed, running, and outcomes) remain the console's authoritative
 orchestrator Run records, not autoscaler telemetry.
@@ -218,9 +215,7 @@ when the Work API settles that run `lost`, the executor marks the run's
 still-`live`/`idle` session docs `ended` (best effort, only with status
 publication enabled; `lost_run_sessions.go`). A missing credentials file or failed
 install prints a `::warning::` and the run continues without live
-telemetry; there is no polling sidecar fallback. The executor ignores the
-retired `LCARS_HOOK_TELEMETRY_PROVIDERS` variable if a deployment still sets
-it, and no longer forwards it to Jobs.
+telemetry; there is no polling sidecar fallback.
 
 The poller starts only after the Kubernetes preflight below passes, then sends
 a claim body containing only its runner identity. The server derives
@@ -287,12 +282,14 @@ manifest; adopting it requires the published controller image, not a worker-imag
 rebuild, and applies to newly created Jobs.
 
 Before claiming, the controller counts unfinished Jobs (including Pending or
-suspended Jobs), reserves a process-local slot, and checks matching nodes for
-Ready, cordon and taint eligibility plus free CPU/memory/storage/pod requests.
-Accounting includes every namespace and the scheduler's init-container,
-sidecar and pod-overhead rules. API uncertainty or no capacity leaves work
-queued. Kubernetes makes the final placement decision: another workload can
-still consume capacity between this observation and scheduling. Optional
+suspended Jobs), reserves a process-local slot, and checks that a matching
+node is Ready, uncordoned and tolerated and that its total allocatable
+CPU/memory/storage/pod budget fits the Job shape. It does not subtract other
+workloads' requests at admission: it competes with ARC through the native
+scheduler, and keeps at most one claim waiting for placement. API uncertainty
+or no eligible node leaves work queued. Kubernetes makes the final placement
+decision: another workload can still consume capacity between this
+observation and scheduling. Optional
 `tolerations` require explicit keys, `Exists` or `Equal`, and `NoSchedule`;
 do not tolerate deployment readiness, inference-busy, or maintenance taints.
 `max_concurrent` is a cluster-wide bound for the **singleton** queue controller,
@@ -315,28 +312,27 @@ Kubernetes does not promise exactly-once process execution under every node
 failure; Work API authentication, completion fencing and provider credential
 leases remain authoritative. Jobs have a two-hour wall-clock deadline including scheduling and image pulls,
 which bounds infrastructure launch waits independently of worker heartbeat
-renewal or the normal 80-minute agent budget. They retain
-terminated pod logs for a day through the TTL controller, bounded to five
-completed Jobs per configured capacity slot. The same garbage-collection
-sweep retains that finished-Job policy at startup and every 15 minutes.
-Normal 15-second recovery ticks also retire original Jobs whose exact claim
-has settled, including unsuspended Pending Jobs. The read-only Work API
-`GET /runs/{runId}/claim-status` uses the existing executor identity and
-requires the same claimant subject, pipeline grant, runner and SHA-256 token
-fingerprint. The fingerprint is persisted on Job creation, before its Secret;
-legacy Jobs can derive it from their owned immutable Secret. An expired but
-still-live run, an ambiguous response, a missing credential, or a mismatched
-claim never authorizes retirement. UID/resourceVersion preconditions and
-foreground deletion protect replacements and concurrent spec changes;
-admission stays closed while the deleting Job or nonterminal owned Pods remain.
-Executed or re-suspended Jobs are never resumed. A Secret-less legacy shell
-without claim proof uses only the two-hour backstop, with original generation,
-identity, no-attempt and no-owned-Pod checks. Recovery remains single-flight,
-with its 20-second sweep deadline, off the reservation/claim path. Independent
-rotating recovery/cleanup cursors resume after the last attempted Job so slow
-early lookups cannot indefinitely hide a later settled claim. Status token
-acquisition shares one outstanding callback, returns promptly on sweep
-cancellation, and uses the real shared source's bounded OAuth HTTP refresh.
+renewal or the normal 80-minute agent budget. Finished Jobs retain their
+terminated pod logs for a day through the Kubernetes TTL controller
+(`ttlSecondsAfterFinished`), which is the only finished-Job retention.
+Normal 15-second recovery ticks retire original Jobs whose exact claim
+has settled, including unsuspended Pending Jobs and a Job shell left when
+the executor died between creating the Job and its Secret. The read-only
+Work API `GET /runs/{runId}/claim-status` uses the existing executor identity
+and requires the same claimant subject, pipeline grant, runner and SHA-256
+token fingerprint. The fingerprint annotation is persisted on Job creation,
+before its Secret, and verified on read-back; a Job without it names no claim
+and is never retired or exit-reported. An expired but still-live run, an
+ambiguous response, a missing credential, or a mismatched claim never
+authorizes retirement. UID/resourceVersion preconditions and foreground
+deletion protect replacements and concurrent spec changes; admission stays
+closed while the deleting Job or nonterminal owned Pods remain. Executed or
+re-suspended Jobs are never resumed. Recovery remains single-flight, with its
+20-second sweep deadline, off the reservation/claim path. Its rotating cursor
+resumes after the last attempted Job so slow early lookups cannot indefinitely
+hide a later settled claim. Status token acquisition shares one outstanding
+callback, returns promptly on sweep cancellation, and uses the real shared
+source's bounded OAuth HTTP refresh.
 
 A full process restart is required for backend, credentials, topology or
 resource configuration changes. `--check-config` performs the environment
@@ -352,6 +348,14 @@ cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule
 state and admission in the Work API and removes GitHub Actions schedule
 delivery from the ingress path. `github_runner_autoscaler_schedule_ticks_total`
 reports `success` and `error` outcomes for operations monitoring.
+
+The same cadence posts `POST /api/work/v1/maintenance/tick`, which settles
+expired leases and drains the Console's outbox
+(`github_runner_autoscaler_maintenance_ticks_total` and
+`..._maintenance_last_success_timestamp_seconds`). Any HTTP 200 is a
+successful tick: the Console owns outbox retry and dead-lettering, so
+`outboxDrainFailed` entries in the response are logged as warnings, not
+counted as tick errors.
 
 Every healthy autoscaler replica performs this tick; there is deliberately no
 host leader election. The Work API derives one deterministic item/request id
@@ -392,11 +396,11 @@ boundary.md`'s work-grants table). Set both sides together if either ever
 changes; a mismatch fails every claim with 401, not a helpful error naming
 the audience.
 
-**None of this reloads on `SIGHUP`.** Every `LCARS_QUEUE_*`/
+**None of this reloads at runtime.** Every `LCARS_QUEUE_*`/
 `LCARS_CONSOLE_URL`/`LCARS_WORK_AUDIENCE` value above, and the `kubernetes`
 stanza, is read once at process startup inside `runOrchestrator` and closed
-over by the poller goroutine for its whole lifetime. Changing any of them, or
-turning the queue executor on or off, needs a full daemon restart.
+over by the poller goroutine for its whole lifetime. Changing any of them
+needs a full daemon restart; the process handles no reload or pause signal.
 
 `LCARS_QUEUE_RUNNER_IMAGE` is the one container image reference every
 direct-mode run launches, whichever pipeline (Claude, Codex, or OpenCode)
@@ -413,15 +417,13 @@ The metrics endpoint exposes the queue worker's own health:
 
 - `github_runner_autoscaler_queue_executor_ready` is `1` only after the
   queue executor has all required deployment configuration, a claim-token
-  source, and a passing Kubernetes preflight; it is `0` when disabled or
-  misconfigured.
+  source, and a passing Kubernetes preflight; it is `0` when misconfigured.
 - `github_runner_autoscaler_queue_executor_state{state}` is a one-hot state
-  (`disabled`, `misconfigured`, or `ready`). An absent `LCARS_CONSOLE_URL`
-  is disabled; a console URL with a missing required credential is
-  misconfigured.
+  (`misconfigured` or `ready`). An unconfigured executor (absent
+  `LCARS_CONSOLE_URL` or credential) never runs: startup refuses it.
 - `github_runner_autoscaler_queue_executor_polls_total{outcome}` separates a
-  healthy empty queue (`idle_204` or `idle_empty`) from `poll_error` and the
-  intentional `draining` skip.
+  healthy empty queue (`idle_204` or `idle_empty`) from `capacity_wait` and
+  `poll_error`.
 - `github_runner_autoscaler_queue_executor_claims_total{pipeline}` counts valid claims by provider pipeline
   returned by the server. `github_runner_autoscaler_queue_executor_launches_total{outcome}`
   then records whether that claim launched a direct runner (`success` or
@@ -453,10 +455,10 @@ If startup cannot safely complete, a claim without a first heartbeat has a
 `lost` and creates a bounded retry (`MAX_AUTO_RETRIES`, then parked). Subsequent
 normal recovery ticks retire its exact original Job after authoritative
 settlement and Pod drainage, letting a later poll claim the successor. Claims
-that have heartbeated retain the ordinary two-hour renewable lease. Missing
-legacy claim proof or unavailable/mismatched status fails closed; these cases
-can still require the legacy backstop or operator investigation. Recovery does
-not restart an executed attempt or delete on a generic run-token refusal.
+that have heartbeated retain the ordinary two-hour renewable lease. An
+unavailable or mismatched claim status fails closed and may need operator
+investigation. Recovery does not restart an executed attempt or delete on a
+generic run-token refusal.
 
 The regression in `queue_claim_status_test.go`,
 `TestKubernetesRetirementAllowsSuccessorAndUnrelatedLaunch`, exercises the
@@ -466,17 +468,9 @@ Kubernetes API explicitly simulates garbage collection; deployed controller
 adoption, real owned-Pod drainage, and useful successor execution require
 separate live evidence.
 
-**`SIGUSR1` pauses the queue poller from claiming.** The signal toggles an
-in-process flag checked before every claim call and before resuming an
-ordinary suspended Job: the first `SIGUSR1` pauses those actions, a second
-resumes them. Bounded maintenance sweeps continue observing placement and
-retiring settled claims for accepted workers. An already admitted startup
-resume or running bounded sweep may finish. This is a separate, in-memory
-switch from the `queue.state` machine above: it does not cancel running Jobs
-or settle or un-claim existing runs. Nothing else in this repo touches it. A claim minted moments
-before this instance is replaced would just be another launch failure to
-recover from (see above), so pausing before a redeploy avoids that rather
-than preventing it.
+There is no pause signal: a redeploy stops the container, and a claim minted
+moments before that is recovered as a startup handoff (above) by the next
+controller.
 
 ### Delivering the claude CLI's own credential
 

@@ -43,8 +43,8 @@ type queueExecutorConfig struct {
 	runnerName     string
 	httpClient     *http.Client
 	capacity       *queueCapacityClient
-	// recover maintains claimed workers, including placement observations during
-	// drain. The backend suppresses startup resume while draining. A bounded,
+	// recover maintains claimed workers: it retires settled claims, observes
+	// placement and resumes eligible suspended originals. A bounded,
 	// non-overlapping sweep never holds the claim path.
 	recover func(context.Context) error
 	// idToken mints a Google ID token for the console's work audience.
@@ -63,16 +63,6 @@ type queueExecutorConfig struct {
 	// `MAX_AUTO_RETRIES`, then parked) mints a brand new run for the same
 	// task, which a later poll claims instead.
 	reserve func() (*directRunnerReservation, error)
-	// draining reports whether this instance is paused by SIGUSR1 (set in
-	// runOrchestrator's own select loop, via an atomic.Bool the poller
-	// goroutine reads). pollOnce short-circuits to a no-op while true: a
-	// claim minted moments before this instance is replaced would just be
-	// another launch failure to recover from. nil means "never draining".
-	draining func() bool
-	// cleanup garbage-collects backend state off the claim path (see
-	// queueJobCleanupInterval). It must never participate in claiming or
-	// affect a claim's recovery semantics.
-	cleanup func(context.Context) error
 }
 
 type claimResponse struct {
@@ -103,7 +93,6 @@ const claimResponseBodyLimit = 64 << 10
 type queuePollOutcome string
 
 const (
-	queuePollOutcomeDraining     queuePollOutcome = "draining"
 	queuePollOutcomeIdle204      queuePollOutcome = "idle_204"
 	queuePollOutcomeIdleEmpty    queuePollOutcome = "idle_empty"
 	queuePollOutcomePollError    queuePollOutcome = "poll_error"
@@ -128,9 +117,6 @@ func pollOnce(cfg queueExecutorConfig) error {
 // is counted before launch, so a launch failure is visible as both a claimed
 // run and a failed launch rather than being mistaken for an empty queue.
 func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
-	if cfg.draining != nil && cfg.draining() {
-		return queuePollOutcomeDraining, nil
-	}
 	reservation, err := cfg.reserve()
 	if err != nil {
 		return queuePollOutcomePollError, fmt.Errorf("reserving direct-runner capacity: %w", err)
@@ -326,36 +312,6 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 	recoverStartup()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	cleanupTicker := time.NewTicker(queueJobCleanupInterval)
-	defer cleanupTicker.Stop()
-	cleanupRunning := make(chan struct{}, 1)
-	cleanup := func() {
-		if cfg.cleanup == nil {
-			return
-		}
-		// Cleanup lists and may delete several Jobs. It must never hold up the
-		// next work claim, and a slow API server must not accumulate
-		// overlapping cleanup goroutines.
-		select {
-		case cleanupRunning <- struct{}{}:
-			background.Add(1)
-			go func() {
-				defer background.Done()
-				defer func() { <-cleanupRunning }()
-				cleanupCtx, cancel := context.WithTimeout(ctx, queueJobCleanupSweepTimeout)
-				defer cancel()
-				if err := cfg.cleanup(cleanupCtx); err != nil {
-					logger.Warn("queue Job cleanup failed", slog.String("error", err.Error()))
-				}
-			}()
-		default:
-			logger.Debug("queue Job cleanup still running; skipping overlapping sweep")
-		}
-	}
-	// Sweep a finite pre-existing backlog immediately rather than waiting for
-	// the first interval. Only exact settled claims or legacy never-started
-	// shells may retire; this has no durable claim side effect.
-	cleanup()
 	for {
 		select {
 		case <-ctx.Done():
@@ -367,45 +323,23 @@ func runQueueExecutorPoller(ctx context.Context, cfg queueExecutorConfig, interv
 			if err != nil {
 				logger.Warn("queue executor poll failed", slog.String("error", err.Error()))
 			}
-		case <-cleanupTicker.C:
-			cleanup()
 		}
 	}
 }
 
-// queueExecutorStartupState gates the durable poller on every
-// deployment-owned connection and credential path it needs. Which pipelines
-// it may claim is intentionally absent here: the authenticated work.executor
-// grant is the single server-side capability source.
+// queueExecutorStartupState is the running executor's one-hot startup state
+// (the queue_executor_state metric). An unconfigured executor never reaches
+// runOrchestrator: validateQueueExecutorEnvironment refuses startup first, so
+// the running process is either misconfigured (a credential, token source or
+// Kubernetes preflight failed) or ready. Which pipelines it may claim is
+// intentionally absent here: the authenticated work.executor grant is the
+// single server-side capability source.
 type queueExecutorStartupState string
 
 const (
-	queueExecutorStateDisabled      queueExecutorStartupState = "disabled"
 	queueExecutorStateMisconfigured queueExecutorStartupState = "misconfigured"
 	queueExecutorStateReady         queueExecutorStartupState = "ready"
 )
-
-// queueExecutorStartupStatus distinguishes an intentionally absent queue
-// deployment (no console URL) from an incomplete deployment. Operators can
-// alert on the latter without treating a host that has never been configured
-// for queue work as a failed worker.
-func queueExecutorStartupStatus(consoleURL, credentialsFile string) (start bool, state queueExecutorStartupState, reason string) {
-	if strings.TrimSpace(consoleURL) == "" {
-		return false, queueExecutorStateDisabled, "LCARS_CONSOLE_URL is required for the queue executor"
-	}
-	for _, required := range []struct {
-		name  string
-		value string
-	}{
-		{"LCARS_CONSOLE_URL", consoleURL},
-		{"GOOGLE_APPLICATION_CREDENTIALS", credentialsFile},
-	} {
-		if strings.TrimSpace(required.value) == "" {
-			return false, queueExecutorStateMisconfigured, required.name + " is required for the queue executor"
-		}
-	}
-	return true, queueExecutorStateReady, ""
-}
 
 // queueExecutorAudience resolves the Google ID token audience the queue
 // executor's claim calls are minted for: LCARS_WORK_AUDIENCE if set,
@@ -440,29 +374,17 @@ func queueExecutorRunnerName(hostname string, err error) string {
 // emptyDir (see kubernetesQueue.job), discarded when the Pod ends.
 const directRunnerCodexVolatileMountPath = "/run/agent-lcars-codex"
 
-// Bounded post-exit evidence for terminated queue Jobs. The Job TTL controller
-// removes every finished Job after queueJobRetentionAge; kubernetesQueue.cleanup
-// additionally keeps at most queueJobRetentionPerSlot finished Jobs per
-// max_concurrent slot, so a burst of failures cannot accumulate unbounded Jobs
-// inside that window.
 const (
 	// queueClaimPollInterval is how often the executor reserves local
 	// capacity and asks the Work API for the next admitted run.
 	// schedule-justification: the executor pulls admitted runs from POST /api/work/v1/runs/claim, so this bounds how long admitted work waits to start. No event channel reaches the executor without new IAM, and a held long-poll would keep the request-billed console instance billable 100% of the time (measured 7.4% today) against a $5/month budget.
 	queueClaimPollInterval = 15 * time.Second
 
-	queueJobRetentionAge     = 24 * time.Hour
-	queueJobRetentionPerSlot = 5
-	// queueJobCleanupInterval is the garbage-collection backstop for the one
-	// Kubernetes state nothing else reaps: a suspended, never-started Job shell
-	// left behind when the executor died between creating the Job and its
-	// run-token Secret. Such a shell counts against max_concurrent until removed.
-	// This is a local Kubernetes API list, never a Work API call.
-	// schedule-justification: garbage collection for crash-orphaned suspended Job shells, which no Kubernetes controller or event reaps; a local API list, not a Work API call.
-	queueJobCleanupInterval = 15 * time.Minute
-	// queueJobCleanupSweepTimeout caps one cleanup sweep. It runs off the claim
-	// loop, so a slow API server never delays a claim.
-	queueJobCleanupSweepTimeout = 30 * time.Second
+	// queueJobRetentionAge is the finished-Job TTL (TTLSecondsAfterFinished)
+	// every queue Job carries: the Kubernetes TTL controller is the only
+	// finished-Job retention, keeping terminated Pod logs for a day.
+	queueJobRetentionAge = 24 * time.Hour
+
 	queueStartupRecoveryTimeout = 20 * time.Second
 )
 

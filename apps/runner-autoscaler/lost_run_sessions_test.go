@@ -232,7 +232,7 @@ func TestRunExitReporterEndsSessionsOnlyWhenSettledLost(t *testing.T) {
 			}}
 			reporter.sessions, _ = newTestLostRunSessionEnder(store)
 
-			reporter.observeTerminated(lostRunID, "", "")
+			reporter.observeTerminated(lostRunID, "", testClaimFingerprint)
 			reporter.wg.Wait()
 
 			if got := store.liveness("ses_live"); got != tc.wantLive {
@@ -247,10 +247,10 @@ func TestRunExitReporterSessionFailureDoesNotFailTheReport(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 	reporter.sessions, _ = newTestLostRunSessionEnder(&fakeLostRunSessionStore{listErr: errors.New("unavailable")})
 
-	reporter.observeTerminated(lostRunID, "", "")
+	reporter.observeTerminated(lostRunID, "", testClaimFingerprint)
 	reporter.wg.Wait()
 	// Recorded as delivered: a second observation does not re-report.
-	reporter.observeTerminated(lostRunID, "", "")
+	reporter.observeTerminated(lostRunID, "", testClaimFingerprint)
 	reporter.wg.Wait()
 
 	if got := len(recorder.requests()); got != 1 {

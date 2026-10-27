@@ -172,7 +172,6 @@ type kubernetesQueue struct {
 	mu                      sync.Mutex
 	held                    int
 	recoveryCursor          queueSweepCursor
-	cleanupCursor           queueSweepCursor
 	capacity                *queueCapacityClient
 	receiptMu               sync.Mutex
 	receiptCursor           queueSweepCursor
@@ -182,11 +181,8 @@ type kubernetesQueue struct {
 	placementCursor         queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
-	verifyRun    func(context.Context, string, string) error
-	claimSettled func(context.Context, string, string, string) (bool, error)
-	// draining suppresses ordinary suspended-Job resume while maintenance and
-	// placement observations continue for already accepted workers.
-	draining               func() bool
+	verifyRun              func(context.Context, string, string) error
+	claimSettled           func(context.Context, string, string, string) (bool, error)
 	reportStartupPlacement func(context.Context, placementObservation) error
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
@@ -423,6 +419,10 @@ func (q *kubernetesQueue) tolerations() []core.Toleration {
 	}
 	return out
 }
+
+// readyNodes is the preflight's read of the Nodes and cluster-wide Pods
+// inventory with free-room accounting. Admission (reserve) uses nodesFit
+// without it: the scheduler owns free-room placement there.
 func (q *kubernetesQueue) readyNodes(ctx context.Context) (bool, error) {
 	return q.nodesFit(ctx, true)
 }
@@ -595,21 +595,16 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (reservation *directRunne
 	if pending {
 		return nil, nil
 	}
-	ready, err := q.readyNodes(ctx)
+	// Compete with ARC through the native scheduler instead of racing its
+	// already-Pending Pods for a free slot every poll. Require only a Ready,
+	// uncordoned, tolerated node whose total allocatable budget fits the shape;
+	// a node with free room satisfies that too, so this is the whole predicate.
+	fits, err := q.nodesFit(ctx, false)
 	if err != nil {
 		return nil, err
 	}
-	if !ready {
-		// Compete with ARC through the native scheduler instead of racing its
-		// already-Pending Pods for a free slot every poll. Still require a
-		// Ready, uncordoned, tolerated node whose total budget fits the shape.
-		ready, err = q.nodesFit(ctx, false)
-		if err != nil {
-			return nil, err
-		}
-		if !ready {
-			return nil, nil
-		}
+	if !fits {
+		return nil, nil
 	}
 	q.held++
 	var once sync.Once
@@ -647,7 +642,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	mode := int32(0440)
 	no := false
 	yes := true
-	ttl := int32(86400)
+	// The TTL controller is the only finished-Job retention: it removes every
+	// finished Job (and its Pod logs) after queueJobRetentionAge.
+	ttl := int32(queueJobRetentionAge / time.Second)
 	deadline := int64(7200)
 	one := int32(1)
 	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, {Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}}
@@ -877,107 +874,9 @@ func (q *kubernetesQueue) recover(ctx context.Context) error {
 		if queueJobTerminal(j) || j.Spec.Suspend == nil || !*j.Spec.Suspend {
 			continue
 		}
-		if q.draining != nil && q.draining() {
-			continue
-		}
 		if err := q.resume(ctx, &j); err != nil {
 			errs = append(errs, fmt.Errorf("recovering suspended queue Job: %w", err))
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// Completed Jobs retain pod logs for a day through the TTL controller. A
-// crash before Secret creation leaves a suspended Job: after the execution
-// lease window its run cannot execute, so remove that never-started shell.
-func (q *kubernetesQueue) cleanup(ctx context.Context) error {
-	if q.capacity != nil {
-		return nil
-	} // Retirement owns all receipt-mode cleanup; never delete on age.
-	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
-	if err != nil {
-		return err
-	}
-	var completed []batch.Job
-	// Preserve terminal retention independently of active-claim authority:
-	// a denied/unavailable status must never pin finished logs until TTL.
-	for _, job := range jobs.Items {
-		if queueJobTerminal(job) {
-			completed = append(completed, job)
-		}
-	}
-	sort.Slice(completed, func(i, j int) bool { return queueJobFinishedAt(completed[i]).After(queueJobFinishedAt(completed[j])) })
-	// Keep a bounded number of recent finished Jobs (and their Pod logs) per
-	// capacity slot; the Job TTL controller removes the rest after a day.
-	for i, j := range completed {
-		finished := queueJobFinishedAt(j)
-		if finished.IsZero() || (i < q.config.MaxConcurrent*queueJobRetentionPerSlot && time.Since(finished) < queueJobRetentionAge) {
-			continue
-		}
-		uid, rv := j.UID, j.ResourceVersion
-		if err := q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)}); err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-	}
-	for _, j := range q.cleanupCursor.ordered(jobs.Items) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		q.cleanupCursor.visit(j.Name)
-		if queueJobTerminal(j) {
-			continue
-		}
-		retired, retireErr := q.retireSettledClaim(ctx, &j)
-		if retireErr != nil {
-			return retireErr
-		}
-		if retired {
-			continue
-		}
-		if j.Spec.Suspend == nil || !*j.Spec.Suspend || j.Generation != 1 || queueJobAttempted(&j) || j.Annotations[queueClaimAnnotation] != "" || time.Since(j.CreationTimestamp.Time) < 2*time.Hour {
-			continue
-		}
-		// Only legacy Secret-less, never-started shells use the age backstop.
-		if j.UID == "" || j.ResourceVersion == "" || j.Name != queueJobName(j.Annotations[queueRunAnnotation]) || j.Annotations[queueRunAnnotation] == "" {
-			continue
-		}
-		if _, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{}); !apierrors.IsNotFound(err) {
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		pods, err := q.client.CoreV1().Pods(q.config.Namespace).List(ctx, meta.ListOptions{})
-		if err != nil {
-			return err
-		}
-		ownedPod := false
-		for _, pod := range pods.Items {
-			for _, owner := range pod.OwnerReferences {
-				if owner.Kind == "Job" && owner.UID == j.UID {
-					ownedPod = true
-				}
-			}
-		}
-		if ownedPod {
-			continue
-		}
-		uid := j.UID
-		rv := j.ResourceVersion
-		err = q.client.BatchV1().Jobs(q.config.Namespace).Delete(ctx, j.Name, meta.DeleteOptions{Preconditions: &meta.Preconditions{UID: &uid, ResourceVersion: &rv}, PropagationPolicy: ptr(meta.DeletePropagationBackground)})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return err
-		}
-	}
-	return nil
-}
-
-func queueJobFinishedAt(job batch.Job) time.Time {
-	var finished time.Time
-	for _, c := range job.Status.Conditions {
-		if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == core.ConditionTrue && c.LastTransitionTime.Time.After(finished) {
-			finished = c.LastTransitionTime.Time
-		}
-	}
-	return finished
 }

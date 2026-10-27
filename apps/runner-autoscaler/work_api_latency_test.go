@@ -63,7 +63,7 @@ func TestWorkAPITimingTransportRecordsAnsweredAndTimedOutWorkAPICalls(t *testing
 
 func TestQueueExecutorStatusPublishesWorkAPILatencyWindow(t *testing.T) {
 	recorder := newLatencyRecorder([]float64{0.1, 1})
-	source := newQueueExecutorStatusSource(nil, slog.Default())
+	source := newQueueExecutorStatusSource(slog.Default())
 	source.claimCounters = nil
 	source.latency = recorder.histogram
 	start := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)

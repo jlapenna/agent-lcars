@@ -15,11 +15,8 @@ import (
 )
 
 func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
-	for _, scenario := range []struct {
-		cleanup     bool
-		statusError bool
-	}{{false, false}, {true, false}, {false, true}, {true, true}} {
-		t.Run(fmt.Sprintf("cleanup=%v/statusError=%v", scenario.cleanup, scenario.statusError), func(t *testing.T) {
+	for _, statusError := range []bool{false, true} {
+		t.Run(fmt.Sprintf("statusError=%v", statusError), func(t *testing.T) {
 			q, c := kubeQueueFixture(queueReadyNode())
 			ctx := context.Background()
 			var jobs []*batch.Job
@@ -64,7 +61,7 @@ func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
 				// An earlier live lookup or API failure consumes the whole sweep.
 				// Cancellation pins this boundary without a flaky wall-clock race.
 				exhaust()
-				if scenario.statusError {
+				if statusError {
 					return false, statusErr
 				}
 				return false, nil
@@ -72,14 +69,9 @@ func TestKubernetesBoundedSweepsEventuallyReachLaterSettledClaim(t *testing.T) {
 			for i := range 5 {
 				sweep, cancel := context.WithCancel(ctx)
 				exhaust = cancel
-				var err error
-				if scenario.cleanup {
-					err = q.cleanup(sweep)
-				} else {
-					err = q.recover(sweep)
-				}
+				err := q.recover(sweep)
 				cancel()
-				if scenario.statusError && i < 4 && !errors.Is(err, statusErr) {
+				if statusError && i < 4 && !errors.Is(err, statusErr) {
 					t.Fatalf("sweep lost claim-status API error: %v", err)
 				}
 			}
