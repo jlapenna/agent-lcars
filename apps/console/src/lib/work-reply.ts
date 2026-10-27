@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 
 import {
   decidedRun,
+  deliveryWaiting,
   isRefusal,
   isWorkAnchor,
   type OperationalIntervention,
@@ -239,8 +240,7 @@ export async function requestReply(
   const settledDeliveryWaiting =
     task.task.activeRunId === undefined &&
     latest?.state === 'finished' &&
-    task.task.delivery !== undefined &&
-    task.task.delivery.state !== 'complete';
+    deliveryWaiting(task.task);
   const replaceQueuedRunId =
     request.pipeline !== undefined &&
     activeRun?.queue?.state === 'queued' &&

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import { deliveryWaiting } from '@agent-lcars/orchestrator';
 import type { anchorOwnerSchema } from '@agent-lcars/work';
 import { toItemView } from '@agent-lcars/work/derive';
 import type { z } from 'zod';
@@ -91,8 +92,7 @@ export async function readAnchorOwner(
   );
   const verdict: AnchorOwner['verdict'] =
     task?.activeRunId !== undefined ||
-    (versioned?.task.delivery !== undefined &&
-      versioned.task.delivery.state !== 'complete')
+    (versioned !== undefined && deliveryWaiting(versioned.task))
       ? 'fleet-run'
       : matching.some(isActive)
         ? 'interactive-session'

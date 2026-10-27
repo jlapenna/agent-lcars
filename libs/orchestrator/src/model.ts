@@ -241,6 +241,15 @@ export function isLive(state: RunState): boolean {
   return LIVE_STATES.includes(state);
 }
 
+/** The one owner of "an unfinished delivery still owns this task": a bound PR
+ * that has not merged. It blocks reuse, keeps the item running and names the
+ * fleet as the anchor owner until the PR merges or the binding is dropped. */
+export function deliveryWaiting(task: {
+  delivery?: { state: 'waiting' | 'complete' } | undefined;
+}): boolean {
+  return task.delivery?.state === 'waiting';
+}
+
 /**
  * Whatever the run reported, recorded verbatim and never interpreted.
  * `summary` is bounded so a runaway report cannot bloat the record.

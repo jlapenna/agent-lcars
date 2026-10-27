@@ -1,5 +1,6 @@
 import {
   type DeliveryBinding,
+  deliveryWaiting,
   isLive,
   MAX_AUTO_RETRIES,
   type ProviderFallback,
@@ -49,11 +50,7 @@ export function deriveItemState(
   const latest = latestRun(runs);
   if (task.closedAt !== undefined || latest?.state === 'canceled')
     return 'canceled';
-  if (
-    task.delivery !== undefined &&
-    task.delivery.state !== 'complete' &&
-    latest?.state !== 'lost'
-  ) {
+  if (deliveryWaiting(task) && latest?.state !== 'lost') {
     if (latest?.state === 'finished' && latest.result?.ok === false)
       return 'failed';
     if (latest?.state === 'finished' && latest.result?.summary === 'park')

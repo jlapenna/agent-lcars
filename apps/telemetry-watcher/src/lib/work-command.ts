@@ -121,10 +121,8 @@ interface ItemSummary {
 function line(item: ItemSummary): string {
   const delivery = item.runs?.at(-1)?.delivery;
   const state =
-    item.state === 'running' &&
-    delivery !== undefined &&
-    delivery.state !== 'complete'
-      ? `delivery:${delivery.state}`
+    item.state === 'running' && delivery?.state === 'waiting'
+      ? 'delivery:waiting'
       : item.state;
   return `${item.id}  ${state.padEnd(8)}  ${item.spec.pipeline.padEnd(8)}  ${workRepository(item.spec)}  ${item.spec.title}`;
 }
