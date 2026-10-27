@@ -143,6 +143,28 @@ describe('handoff summary Work', () => {
     expect(deliverOutcomeWebhook).toHaveBeenCalledTimes(1);
   });
 
+  it('names the summary after its source task and keeps the run id as its source key', async () => {
+    const { runtime, sourceId } = await fixture();
+    const resolve = runtime.store.resolveSourceWorkId.bind(runtime.store);
+    let summaryWorkId = '';
+    vi.spyOn(runtime.store, 'resolveSourceWorkId').mockImplementation(
+      async (key, candidate) => {
+        const workId = await resolve(key, candidate);
+        if (key.startsWith('handoff-summary:')) summaryWorkId = workId;
+        return workId;
+      },
+    );
+    await runtime.drain();
+    expect(
+      (await runtime.store.readTask({ workId: summaryWorkId }))?.task.work,
+    ).toMatchObject({
+      spec: {
+        title: 'Handoff summary: Real handoff shape',
+        sourceKey: sourceId,
+      },
+    });
+  });
+
   it('releases the same attempt when reading the source consumes the model budget', async () => {
     vi.useFakeTimers();
     const { runtime, sourceId } = await fixture();

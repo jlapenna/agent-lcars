@@ -2,6 +2,7 @@
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { summaryTitle } from './handoff-summary-work';
 import {
   admitInboxSummary as admit,
   executeSummaries as execute,
@@ -248,6 +249,61 @@ describe('Inbox summaries through Work', () => {
       pending: false,
       description: 'Choose a.',
     });
+  });
+
+  it('names the summary after its source and keeps one linkable source key', async () => {
+    const { runtime } = fixture();
+    const admitted: string[] = [];
+    const resolve = runtime.store.resolveSourceWorkId.bind(runtime.store);
+    vi.spyOn(runtime.store, 'resolveSourceWorkId').mockImplementation(
+      async (sourceKey, candidate) => {
+        const workId = await resolve(sourceKey, candidate);
+        admitted.push(workId);
+        return workId;
+      },
+    );
+    await admitInboxSummary(
+      runtime,
+      JSON.stringify({
+        workId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+        title: 'Reconcile the parked dispatch',
+        updatedAt: '2026-10-25T00:00:00.000Z',
+      }),
+    );
+    await admitInboxSummary(
+      runtime,
+      JSON.stringify({
+        repo: 'owner/repo',
+        number: 7,
+        updatedAt: '2026-10-25T00:00:00.000Z',
+      }),
+    );
+    const specs = await Promise.all(
+      admitted.map(
+        async (workId) => (await runtime.store.readTask({ workId }))?.task.work,
+      ),
+    );
+    expect(specs[0]).toMatchObject({
+      spec: {
+        title: 'Inbox summary: Reconcile the parked dispatch',
+        sourceKey: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      },
+    });
+    expect(specs[1]).toMatchObject({
+      spec: { title: 'Inbox summary: owner/repo#7', sourceKey: 'owner/repo#7' },
+    });
+  });
+
+  it('bounds a long source title inside the shared work title limit', () => {
+    expect(
+      summaryTitle('Inbox summary', '界'.repeat(400), 'owner/repo#7'),
+    ).toHaveLength(256);
+    expect(summaryTitle('Inbox summary', '   ', 'owner/repo#7')).toBe(
+      'Inbox summary: owner/repo#7',
+    );
+    expect(summaryTitle('Handoff summary', undefined, 'work:a/r1')).toBe(
+      'Handoff summary: work:a/r1',
+    );
   });
 
   it('retains source fallback after finite failures instead of restarting on each render', async () => {
