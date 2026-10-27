@@ -1758,7 +1758,7 @@ func (a *receiptDeathAPI) serve(w http.ResponseWriter, req *http.Request) {
 			a.mu.Lock()
 			return
 		}
-		json.NewEncoder(w).Encode(capacityClaimReply{Kind: "claim", Receipt: &a.r.capacityFence, RunID: a.r.RunID, JobName: a.r.JobName, Pipeline: a.r.Pipeline, Token: receiptFixtureToken})
+		json.NewEncoder(w).Encode(capacityClaimReply{Kind: "claim", PlacementAware: true, Receipt: &a.r.capacityFence, RunID: a.r.RunID, JobName: a.r.JobName, Pipeline: a.r.Pipeline, Token: receiptFixtureToken})
 		return
 	}
 	if req.Method != http.MethodPost || req.URL.Path != "/api/work/v1/runs/capacity" {

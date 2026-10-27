@@ -31,7 +31,6 @@ import (
 
 const queueJobLabel = "agent-lcars.queue-job"
 const queueRunAnnotation = "agent-lcars.run-id"
-const queuePlacementAnnotation = "agent-lcars.placement-aware"
 const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 
 // queueRunnerAnnotation records the runner name the run was claimed under,
@@ -672,9 +671,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
 	}
 	annotations := map[string]string{queueRunAnnotation: l.runID}
-	if l.placementAware {
-		annotations[queuePlacementAnnotation] = "true"
-	}
 	if l.runToken != "" {
 		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
 	}
@@ -691,8 +687,8 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		},
 		Spec: batch.JobSpec{
 			Suspend: &yes, BackoffLimit: &zero, Completions: &one, Parallelism: &one,
-			TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline,
-			PodReplacementPolicy: ptr(batch.Failed),
+			TTLSecondsAfterFinished: &ttl,
+			PodReplacementPolicy:    ptr(batch.Failed),
 			PodFailurePolicy: &batch.PodFailurePolicy{Rules: []batch.PodFailurePolicyRule{{
 				Action:          batch.PodFailurePolicyActionFailJob,
 				OnPodConditions: []batch.PodFailurePolicyOnPodConditionsPattern{{Type: core.DisruptionTarget, Status: core.ConditionTrue}},
@@ -700,8 +696,13 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 			Template: core.PodTemplateSpec{
 				ObjectMeta: meta.ObjectMeta{Labels: map[string]string{queueJobLabel: "true"}, Annotations: map[string]string{queueRunAnnotation: l.runID}},
 				Spec: core.PodSpec{
-					RestartPolicy:      core.RestartPolicyNever,
-					ServiceAccountName: q.config.ServiceAccount, AutomountServiceAccountToken: &no,
+					// The execution limit is on the Pod, whose kubelet clock starts
+					// after assignment: every claim is placement-aware, so the server
+					// fences unassigned Pending time through placement observations
+					// and the Job needs no scheduling-inclusive deadline of its own.
+					ActiveDeadlineSeconds: &deadline,
+					RestartPolicy:         core.RestartPolicyNever,
+					ServiceAccountName:    q.config.ServiceAccount, AutomountServiceAccountToken: &no,
 					NodeSelector: q.config.NodeSelector, Tolerations: q.tolerations(),
 					SecurityContext: &core.PodSecurityContext{RunAsUser: &uid, RunAsGroup: &gid, RunAsNonRoot: &yes, FSGroup: &gid},
 					// Query external API names before cluster search suffixes; musl can
@@ -719,20 +720,11 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 			},
 		},
 	}
-	if l.placementAware {
-		// Pod runtime starts on the assigned kubelet; Job runtime also counts
-		// unassigned Pending time. Keep the same execution limit after placement.
-		job.Spec.ActiveDeadlineSeconds = nil
-		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
-	}
 	if l.receipt != nil {
 		q.configureReceiptJob(job, l)
 	}
 	if l.pipeline == "goose" {
 		deadline = 1800
-		if !l.placementAware {
-			job.Spec.ActiveDeadlineSeconds = &deadline
-		}
 		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
 	}
 

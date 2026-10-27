@@ -135,7 +135,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			go func() {
 				defer close(pollDone)
 				runQueueExecutorPoller(ctx, queueExecutorConfig{
-					consoleURL: consoleURL, runnerName: runnerName, placementAware: true,
+					consoleURL: consoleURL, runnerName: runnerName,
 					idToken:  func() (string, error) { return idTokenFromSource(tokenSource) },
 					reserve:  func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
 					capacity: queue.capacity, recover: queue.recover,

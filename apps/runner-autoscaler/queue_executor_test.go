@@ -41,11 +41,12 @@ func TestPollOnceClaimsAndLaunches(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"runId":     "work:01QUEUEEXECUTORTESTFIX01/r1",
-			"workId":    "01QUEUEEXECUTORTESTFIX01",
-			"pipeline":  "claude",
-			"token":     "test-token",
-			"expiresAt": "2026-08-27T01:00:00.000Z",
+			"runId":          "work:01QUEUEEXECUTORTESTFIX01/r1",
+			"workId":         "01QUEUEEXECUTORTESTFIX01",
+			"pipeline":       "claude",
+			"token":          "test-token",
+			"placementAware": true,
+			"expiresAt":      "2026-08-27T01:00:00.000Z",
 		})
 	}))
 	defer server.Close()
@@ -327,8 +328,8 @@ func TestPollOnceWithOutcomeDistinguishesIdleClaimAndLaunchFailure(t *testing.T)
 		{name: "idle 204", status: http.StatusNoContent, wantOutcome: queuePollOutcomeIdle204},
 		{name: "idle empty", status: http.StatusOK, wantOutcome: queuePollOutcomeIdleEmpty},
 		{name: "poll error", status: http.StatusUnauthorized, wantOutcome: queuePollOutcomePollError, wantErr: true},
-		{name: "claimed and launched", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, wantOutcome: queuePollOutcomeClaimed},
-		{name: "claimed launch error", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude"}`, launchErr: errors.New("job create failed"), wantOutcome: queuePollOutcomeLaunchErr, wantErr: true},
+		{name: "claimed and launched", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude","placementAware":true}`, wantOutcome: queuePollOutcomeClaimed},
+		{name: "claimed launch error", status: http.StatusOK, body: `{"runId":"work:01QUEUEOUTCOME/r1","token":"token","pipeline":"claude","placementAware":true}`, launchErr: errors.New("job create failed"), wantOutcome: queuePollOutcomeLaunchErr, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -484,6 +485,9 @@ func TestPollOnceClaimRequestBodyShape(t *testing.T) {
 	if gotBody["runner"] != "runner-a" {
 		t.Fatalf("expected runner %q, got %v", "runner-a", gotBody)
 	}
+	if gotBody["placementAware"] != true {
+		t.Fatalf("every claim must negotiate placement-aware startup, got %v", gotBody)
+	}
 	if _, supplied := gotBody["pipelines"]; supplied {
 		t.Fatalf("claim request body must not supply pipelines, got %v", gotBody)
 	}
@@ -506,11 +510,12 @@ func TestPollOnceClaimResponseTooLargeIsError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"runId":     "work:01QUEUEEXECUTORTESTFIX05/r1",
-			"workId":    hugeWorkID,
-			"pipeline":  "claude",
-			"token":     "test-token",
-			"expiresAt": "2026-08-27T01:00:00.000Z",
+			"runId":          "work:01QUEUEEXECUTORTESTFIX05/r1",
+			"workId":         hugeWorkID,
+			"pipeline":       "claude",
+			"token":          "test-token",
+			"placementAware": true,
+			"expiresAt":      "2026-08-27T01:00:00.000Z",
 		})
 	}))
 	defer server.Close()
@@ -686,7 +691,7 @@ func TestPollOnceLeavesClaimQueuedUntilReservedCapacityIsAvailable(t *testing.T)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"runId":"work:01CAPACITYWAIT/r1","token":"token","pipeline":"opencode"}`)
+		_, _ = io.WriteString(w, `{"runId":"work:01CAPACITYWAIT/r1","token":"token","pipeline":"opencode","placementAware":true}`)
 	}))
 	defer server.Close()
 
@@ -742,7 +747,7 @@ func TestPollOnceReleasesReservationOnEveryExit(t *testing.T) {
 		{name: "idle empty", status: http.StatusOK, body: `{}`},
 		{name: "authentication error", tokenErr: errors.New("no identity"), wantError: true},
 		{name: "claim rejected", status: http.StatusUnauthorized, wantError: true},
-		{name: "launch error", status: http.StatusOK, body: `{"runId":"work:01RELEASE/r1","token":"token","pipeline":"codex"}`, launchErr: errors.New("job create failed"), wantError: true},
+		{name: "launch error", status: http.StatusOK, body: `{"runId":"work:01RELEASE/r1","token":"token","pipeline":"codex","placementAware":true}`, launchErr: errors.New("job create failed"), wantError: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

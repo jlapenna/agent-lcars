@@ -390,7 +390,7 @@ func testReceiptStopReplyRecovery(t *testing.T, admit bool) {
 			old := q.capacity.producerID
 			oldRequest := ""
 			nextFence := capacityFence{PoolID: "pool", Slot: 0, Revision: 2, RunID: "work:after-stop/r1", Nonce: "next-receipt-nonce-123456"}
-			next := capacityClaimReply{Kind: "claim", RunID: nextFence.RunID, JobName: queueJobName(nextFence.RunID), Receipt: &nextFence, Pipeline: "codex", Token: "next-run-token"}
+			next := capacityClaimReply{Kind: "claim", PlacementAware: true, RunID: nextFence.RunID, JobName: queueJobName(nextFence.RunID), Receipt: &nextFence, Pipeline: "codex", Token: "next-run-token"}
 			q.capacity.registered = true
 			r.Producers = []capacityProducer{{ProducerID: old, Subject: "subject", PendingWrites: []string{}}}
 			j, _ := q.job(directRunnerLaunch{runID: r.RunID, runToken: "original-token", pipeline: r.Pipeline, runner: r.Runner, receipt: &r.capacityFence})

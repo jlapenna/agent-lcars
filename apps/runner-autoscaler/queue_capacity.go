@@ -333,7 +333,7 @@ func (c *queueCapacityClient) ensureRegistered(ctx context.Context) error {
 	c.registered = true
 	return nil
 }
-func (c *queueCapacityClient) claim(ctx context.Context, runner string, placementAware ...bool) (capacityClaimReply, error) {
+func (c *queueCapacityClient) claim(ctx context.Context, runner string) (capacityClaimReply, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var x capacityClaimReply
@@ -353,10 +353,7 @@ func (c *queueCapacityClient) claim(ctx context.Context, runner string, placemen
 	if c.requestID == "" {
 		c.requestID = newCapacityIdentity()
 	}
-	body := map[string]any{"runner": runner, "capacityVersion": c.config.Version, "producerId": c.producerID, "claimRequestId": c.requestID}
-	if len(placementAware) != 0 && placementAware[0] {
-		body["placementAware"] = true
-	}
+	body := map[string]any{"runner": runner, "capacityVersion": c.config.Version, "producerId": c.producerID, "claimRequestId": c.requestID, "placementAware": true}
 	if err := c.call(ctx, http.MethodPost, "/claim", body, &x); err != nil {
 		return x, err
 	}

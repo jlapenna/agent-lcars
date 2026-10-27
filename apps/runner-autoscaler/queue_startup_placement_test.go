@@ -14,10 +14,10 @@ import (
 )
 
 func TestPlacementObservationsRequireSingleOwnedLivePod(t *testing.T) {
-	for _, scenario := range []string{"pending", "assigned", "absent", "foreign", "duplicate", "terminal", "deleting", "started-unassigned", "suspended", "legacy", "modified-job"} {
+	for _, scenario := range []string{"pending", "assigned", "absent", "foreign", "duplicate", "terminal", "deleting", "started-unassigned", "suspended", "modified-job"} {
 		t.Run(scenario, func(t *testing.T) {
 			q, _ := kubeQueueFixture()
-			job, err := q.job(directRunnerLaunch{runID: "octo/example#7/r1", runToken: "token", pipeline: "opencode", runner: "executor", placementAware: true})
+			job, err := q.job(directRunnerLaunch{runID: "octo/example#7/r1", runToken: "token", pipeline: "opencode", runner: "executor"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,8 +41,6 @@ func TestPlacementObservationsRequireSingleOwnedLivePod(t *testing.T) {
 			case "suspended":
 				job.Spec.Suspend = ptr(true)
 				job.Generation = 1
-			case "legacy":
-				delete(job.Annotations, queuePlacementAnnotation)
 			case "modified-job":
 				job.Generation = 3
 			}
@@ -75,26 +73,20 @@ func TestPlacementObservationsRequireSingleOwnedLivePod(t *testing.T) {
 	}
 }
 
-func TestPlacementMovesRuntimeDeadlineWithoutChangingResourceEnvelope(t *testing.T) {
+// Every Job bounds runtime on the Pod (kubelet clock, after assignment), never
+// on the Job's scheduling-inclusive clock: unassigned Pending time is fenced by
+// the server's placement observations instead.
+func TestPlacementRuntimeDeadlineIsOnThePod(t *testing.T) {
 	q, _ := kubeQueueFixture()
-	legacy, err := q.job(directRunnerLaunch{runID: "octo/example#7/r1", pipeline: "opencode"})
+	job, err := q.job(directRunnerLaunch{runID: "octo/example#7/r1", pipeline: "opencode"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	negotiated, err := q.job(directRunnerLaunch{runID: "octo/example#7/r1", pipeline: "opencode", placementAware: true})
-	if err != nil {
-		t.Fatal(err)
+	if job.Spec.ActiveDeadlineSeconds != nil || job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 7200 {
+		t.Fatal("runtime unbounded or counts Job scheduling wait")
 	}
-	if legacy.Spec.ActiveDeadlineSeconds == nil || *legacy.Spec.ActiveDeadlineSeconds != 7200 || legacy.Spec.Template.Spec.ActiveDeadlineSeconds != nil {
-		t.Fatal("legacy deadline changed")
-	}
-	if negotiated.Spec.ActiveDeadlineSeconds != nil || negotiated.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *negotiated.Spec.Template.Spec.ActiveDeadlineSeconds != 7200 {
-		t.Fatal("placement-aware runtime unbounded or counts Job scheduling wait")
-	}
-	a, _ := json.Marshal(legacy.Spec.Template.Spec.Containers[0].Resources)
-	b, _ := json.Marshal(negotiated.Spec.Template.Spec.Containers[0].Resources)
-	if string(a) != string(b) {
-		t.Fatal("placement changed resource envelope")
+	if _, retired := job.Annotations["agent-lcars.placement-aware"]; retired {
+		t.Fatal("placement negotiation annotation is retired; every Job is placement-aware")
 	}
 }
 
@@ -146,11 +138,8 @@ func TestPlacementClaimNegotiationRequiresAcknowledgement(t *testing.T) {
 			}))
 			defer srv.Close()
 			calls := 0
-			cfg := queueExecutorConfig{consoleURL: srv.URL, runnerName: "executor", placementAware: true, idToken: func() (string, error) { return "executor-token", nil }, reserve: reserveFor(func(l directRunnerLaunch) error {
+			cfg := queueExecutorConfig{consoleURL: srv.URL, runnerName: "executor", idToken: func() (string, error) { return "executor-token", nil }, reserve: reserveFor(func(directRunnerLaunch) error {
 				calls++
-				if !l.placementAware {
-					t.Fatal("lost negotiated mode")
-				}
 				return nil
 			})}
 			_, err := pollOnceWithOutcome(cfg)
