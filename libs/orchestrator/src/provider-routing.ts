@@ -11,8 +11,13 @@ import {
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
 
-/** A legacy terminal claim has no retirement writer. Preserve the fence only
- * for a live owner or durable capacity/credential debt, not its queue history. */
+/** A terminal claim has no retirement writer outside the capacity protocol.
+ * Preserve the fence only for a live owner or durable capacity/credential
+ * debt, not its queue history. A restore receipt
+ * (`credentialRestoredClaimFingerprint`) is proof that restore succeeded, not
+ * unreleased debt: the lease itself is released by the cleanup operation,
+ * which is reserved on every terminal transition and fences here until it
+ * finishes. */
 export function retainsPhysicalClaim(
   run: Run,
   capacity: CapacityState,
@@ -21,7 +26,6 @@ export function retainsPhysicalClaim(
     run.queue?.state === 'claimed' &&
     (isLive(run.state) ||
       run.credentialOperation !== undefined ||
-      run.credentialRestoredClaimFingerprint !== undefined ||
       capacity.receipts.some((receipt) => receipt.runId === run.runId))
   );
 }
@@ -41,15 +45,7 @@ export function decideLabelProviderRequest(
   if (isWorkAnchor(input.taskId)) return refused('not-native');
   const { task, activeRun, latestRun, label, pipeline, now } = input;
   const previous = task?.providerRouting;
-  const acceptedGeneration =
-    previous?.acceptedGeneration ??
-    (previous?.successorRunId === undefined
-      ? undefined
-      : {
-          runId: previous.successorRunId,
-          requestedAt: previous.requestedAt,
-          pipeline: previous.effectivePipeline,
-        });
+  const acceptedGeneration = previous?.acceptedGeneration;
   const effective = input.admittedPipeline;
   const request = providerRoutingSchema.parse({
     requestId: input.requestId,
@@ -126,12 +122,14 @@ export function decideLabelProviderRequest(
     return reject('credential-operation-pending');
 
   let decision: Decision | Refusal;
+  // `activeRun` is derived from `task.activeRunId`, so a live active run
+  // implies the task exists; the clause only narrows.
   if (
+    task !== undefined &&
     activeRun !== undefined &&
     isLive(activeRun.state) &&
     pipeline !== effective
   ) {
-    if (task === undefined) return refused('unknown-task');
     if (activeRun.queue?.state !== 'queued') return reject('task-busy');
     const canceled = cancelRun({
       now,
@@ -165,7 +163,6 @@ export function decideLabelProviderRequest(
         ...request,
         effectivePipeline: successor.pipeline,
         status: 'accepted',
-        successorRunId: successor.runId,
         acceptedGeneration: {
           runId: successor.runId,
           requestedAt: label.requestedAt,

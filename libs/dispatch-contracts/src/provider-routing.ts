@@ -19,5 +19,7 @@ export const providerRoutingSchema = z.strictObject({
       pipeline: z.string().min(1).max(128),
     })
     .optional(),
+  /** Historical only: records written before `acceptedGeneration` existed
+   * carry it. Nothing reads or writes it any more. */
   successorRunId: z.string().min(1).max(1_024).optional(),
 });

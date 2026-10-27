@@ -958,6 +958,7 @@ describe('minted delivery permission and current CI boundaries', () => {
         pipelines: ['claude'],
         now: NOW,
         claimedBy: 'runner',
+        claimedBySubject: 'executor@example.com',
         tokenHash: claim,
       });
       expect(

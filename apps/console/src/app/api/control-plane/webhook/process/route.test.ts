@@ -226,6 +226,7 @@ describe('POST /api/control-plane/webhook/process', () => {
         pipelines: ['claude'],
         now: instant,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       expect(claimed?.runId).toBe(runId);

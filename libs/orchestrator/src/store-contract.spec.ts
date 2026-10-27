@@ -108,6 +108,7 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         pipelines: ['claude'],
         now,
         claimedBy: 'priority-test',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       };
       expect((await store.claimQueuedRun(claim))?.priority).toBe('urgent');

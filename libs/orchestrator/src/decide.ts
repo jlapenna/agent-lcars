@@ -1,6 +1,7 @@
 import {
   type DeliveryBinding,
   deliveryWaiting,
+  isClaimant,
   isLive,
   isWorkAnchor,
   type OperationalIntervention,
@@ -9,6 +10,7 @@ import {
   type ProviderFallbackRequest,
   type QueuePriority,
   queuePrioritySchema,
+  recoveryDeadlineElapsed,
   requestHistoryKey,
   type RequestSource,
   type Run,
@@ -124,7 +126,7 @@ export function claimQueuedRun(
   input: {
     now: string;
     claimedBy: string;
-    claimedBySubject?: string;
+    claimedBySubject: string;
     tokenHash: string;
     placementAware?: boolean;
   },
@@ -146,9 +148,7 @@ export function claimQueuedRun(
           }
         : {}),
       claimedBy: input.claimedBy,
-      ...(input.claimedBySubject === undefined
-        ? {}
-        : { claimedBySubject: input.claimedBySubject }),
+      claimedBySubject: input.claimedBySubject,
       tokenHash: input.tokenHash,
     },
   };
@@ -541,8 +541,9 @@ export function confirmDispatch(input: {
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (run.state === 'running') return { task, run, outbox: [] }; // idempotent
+  // A `pending` run is always the task's active run: every transition that
+  // changes `activeRunId` also leaves `pending`.
   if (run.state !== 'pending') return refused('run-not-live');
-  if (task.activeRunId !== run.runId) return refused('stale-lease');
   return {
     task: { ...task, updatedAt: now },
     run: {
@@ -571,21 +572,17 @@ export function observeStartupPlacement(input: {
   const { now, task, run, claimant, jobUid, observedAt, placed } = input;
   const queue = run.queue;
   if (
-    queue?.state !== 'claimed' ||
-    queue.startupPlacement === undefined ||
+    claimant.claimFingerprint === undefined ||
+    !isClaimant(run, claimant.claimFingerprint) ||
+    queue?.startupPlacement === undefined ||
     queue.claimedBy !== claimant.runner ||
     queue.claimedBySubject !== claimant.subject ||
-    queue.tokenHash !== claimant.claimFingerprint ||
     (queue.startupPlacement.jobUid !== undefined &&
       queue.startupPlacement.jobUid !== jobUid)
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
-  if (
-    task.activeRunId !== run.runId ||
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (task.activeRunId !== run.runId || recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   // Reject delayed/replayed observations before extending any clock. The
   // executor's clock is not deadline authority: deadlines use server time.
@@ -635,8 +632,7 @@ export function renewLease(input: {
   const { now, task, run } = input;
   if (
     input.claimFingerprint !== undefined &&
-    (run.queue?.state !== 'claimed' ||
-      run.queue.tokenHash !== input.claimFingerprint)
+    !isClaimant(run, input.claimFingerprint)
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
@@ -645,11 +641,7 @@ export function renewLease(input: {
   // Token-authenticated callbacks must retain their live deadline through
   // commit as well as the fingerprint; internal server operations keep their
   // existing lease policy.
-  if (
-    input.claimFingerprint !== undefined &&
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (input.claimFingerprint !== undefined && recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   return {
     task,
@@ -686,19 +678,14 @@ export function observePlacement(input: {
 }): Decision | Refusal {
   const { now, task, run, claimant } = input;
   if (
-    run.queue?.state !== 'claimed' ||
-    run.queue.claimedBySubject !== claimant.subject ||
-    run.queue.claimedBy !== claimant.runner ||
     claimant.claimFingerprint === undefined ||
-    run.queue.tokenHash !== claimant.claimFingerprint
+    !isClaimant(run, claimant.claimFingerprint) ||
+    run.queue?.claimedBySubject !== claimant.subject ||
+    run.queue.claimedBy !== claimant.runner
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
-  if (
-    task.activeRunId !== run.runId ||
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (task.activeRunId !== run.runId || recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   const observed = Date.parse(input.placement.observedAt);
   if (
@@ -733,8 +720,7 @@ export function reportResult(input: {
   const { now, task, run, result } = input;
   if (
     input.claimFingerprint !== undefined &&
-    (run.queue?.state !== 'claimed' ||
-      run.queue.tokenHash !== input.claimFingerprint)
+    !isClaimant(run, input.claimFingerprint)
   )
     return refused('not-claimant');
   if (run.state === 'finished') return refused('run-not-live', run);
@@ -763,18 +749,18 @@ export function reportResult(input: {
   // existing lease policy.
   if (
     input.claimFingerprint !== undefined &&
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(admittedAt)
+    recoveryDeadlineElapsed(run, admittedAt)
   )
     return refused('stale-lease');
   if (run.credentialOperation !== undefined) {
-    if (run.queue?.tokenHash === undefined) return refused('not-claimant');
+    // An operation is reserved only on the exact claimant, so its fingerprint
+    // is the claim's token hash; a release refuses while it is outstanding.
     return {
       task,
       run: {
         ...run,
         credentialPendingResult: pending ?? {
-          claimFingerprint: run.queue.tokenHash,
+          claimFingerprint: run.credentialOperation.claimFingerprint,
           requestedAt: now,
           result,
         },
@@ -958,10 +944,11 @@ export interface ExitClaimant {
  * a pipeline grant
  * alone would let any executor kill another's healthy worker by settling
  * its run lost. Ownership is judged first, so even an already-settled run
- * answers its idempotent refusal only to its own claimant. A claim recorded
- * without an authenticated subject (written before subjects were recorded)
- * has no provable owner: while live, only its outcome report or lease
- * expiry settles it; once settled, any report gets the idempotent answer.
+ * answers its idempotent refusal only to its own claimant. Every claim
+ * records its authenticated subject; a document persisted before subjects
+ * were recorded has no provable owner and answers `not-claimant` to every
+ * reporter, which the executor treats as final exactly like the idempotent
+ * answer.
  *
  * A report may carry {@link SchedulerDisruptionEvidence} when the executor can
  * name the exact preempted Job and Pod. That evidence only changes *which*
@@ -989,20 +976,9 @@ function executorLoss(input: {
   disruption?: SchedulerDisruptionEvidence;
 }): LossOutcome {
   const queue = input.run.queue;
-  // A legacy claim (no recorded subject) that already settled changes
-  // nothing whoever asks, so answer it idempotently: the executor that
-  // claimed it before subjects were recorded stops retrying its report.
-  if (
-    queue?.state === 'claimed' &&
-    queue.claimedBySubject === undefined &&
-    !isLive(input.run.state)
-  ) {
-    return refused('run-not-live');
-  }
   if (
     (queue?.state !== 'claimed' &&
       !(queue?.state === 'retired' && !isLive(input.run.state))) ||
-    queue.claimedBySubject === undefined ||
     queue.claimedBySubject !== input.claimant.subject ||
     queue.claimedBy !== input.claimant.runner ||
     (input.claimant.claimFingerprint !== undefined &&

@@ -144,6 +144,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toBeUndefined();
@@ -160,6 +161,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
       switchProvider(),
@@ -187,6 +189,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex'],
         now: T1,
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ]);
@@ -272,6 +275,7 @@ describe('source-ordered label provider handoff', () => {
           pipelines: ['opencode'],
           now: T1,
           claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
           tokenHash: 'a'.repeat(64),
         }),
       ).toMatchObject({ runId: queued.runId, pipeline: 'opencode' });
@@ -377,6 +381,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['opencode'],
         now: T1,
         claimedBy: 'old-queue-claim',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toBeUndefined();
@@ -386,6 +391,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['opencode'],
         now: T1,
         claimedBy: 'new-intent-claim',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'b'.repeat(64),
       }),
     ).toMatchObject({ runId: successor.runId, pipeline: 'opencode' });
@@ -548,6 +554,7 @@ describe('source-ordered label provider handoff', () => {
         pipelines: ['codex', 'opencode'],
         now: '2026-08-15T12:03:00.000Z',
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toMatchObject({ runId: next.runId, pipeline: 'codex' });
@@ -560,6 +567,7 @@ describe('source-ordered label provider handoff', () => {
       pipelines: ['codex'],
       now: T0,
       claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
       tokenHash: 'a'.repeat(64),
     });
     await orchestrator.report(run.runId, { ok: true, summary: 'park' });
@@ -573,6 +581,43 @@ describe('source-ordered label provider handoff', () => {
       },
     });
     expect(await store.listRuns(taskId)).toHaveLength(1);
+  });
+
+  it('finished codex run after cleanup finish accepts a handoff', async () => {
+    // The restore receipt proves restore succeeded; it is not unreleased
+    // debt. Once the terminal cleanup operation finishes, nothing physical
+    // remains and the next label may route the task elsewhere.
+    const { store, orchestrator, run, switchProvider } = await fixture();
+    const tokenHash = 'a'.repeat(64);
+    await store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: T0,
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
+      tokenHash,
+    });
+    await orchestrator.report(run.runId, { ok: true, summary: 'park' });
+    const settled = (await store.readRun(run.runId))!;
+    expect(settled.credentialOperation).toMatchObject({ kind: 'cleanup' });
+    const finished = await orchestrator.finishCredentialOperation({
+      runId: run.runId,
+      operationId: settled.credentialOperation!.id,
+      claimFingerprint: tokenHash,
+      restored: true,
+      leaseRetiredAtSequence: settled.credentialOperation!.mutationSequence,
+      now: () => T0,
+    });
+    if (isRefusal(finished)) throw new Error(finished.reason);
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'finished',
+      queue: { state: 'claimed' },
+      credentialRestoredClaimFingerprint: tokenHash,
+    });
+    expect(await switchProvider()).toMatchObject({
+      run: { pipeline: 'opencode' },
+      task: { providerRouting: { status: 'accepted' } },
+    });
+    expect(await store.listRuns(taskId)).toHaveLength(2);
   });
 
   it('starts a fresh provider on a settled unclaimed terminal task without rewriting history', async () => {

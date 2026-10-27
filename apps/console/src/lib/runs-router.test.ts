@@ -1513,6 +1513,7 @@ describe.each([
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const response = await call(
@@ -1566,6 +1567,7 @@ describe('brief', () => {
       pipelines: ['opencode'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1636,6 +1638,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1688,6 +1691,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1729,6 +1733,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const r = await call(
@@ -1762,6 +1767,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const r = await call(
@@ -1793,6 +1799,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const r = await call(
@@ -1816,6 +1823,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1842,6 +1850,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1866,6 +1875,7 @@ describe('brief', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -1890,6 +1900,7 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(mintRunToken()),
     });
     const ctx: RunsContext = { store, orchestrator, now, ...context };
@@ -1924,6 +1935,7 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(mintRunToken()),
     });
     const ctx: RunsContext = {
@@ -1955,6 +1967,7 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     await forceLeaseExpired(store, runId);
@@ -1977,6 +1990,7 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const ctx: RunsContext = {
@@ -2025,6 +2039,7 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const canceled = await orchestrator.cancel(runId);
@@ -2067,12 +2082,14 @@ describe('run-token gate', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(tokenA),
     });
     await store.claimQueuedRun({
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-2',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(tokenB),
     });
     const r = await call(
@@ -2103,6 +2120,7 @@ describe('heartbeat', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const before = (await store.readRun(runId))!.leaseExpiresAt;
@@ -2136,6 +2154,7 @@ describe('heartbeat', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const ctx = { store, orchestrator, now, ...context, bearerToken: token };
@@ -2198,6 +2217,7 @@ describe('heartbeat', () => {
       pipelines: ['codex'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const takeLease = vi.fn(context.codexAuth.takeLease);
@@ -2549,8 +2569,10 @@ describe('exit', () => {
   );
 
   it('refuses every reporter for a claim recorded without a claimant subject', async () => {
-    // Claims made before `claimedBySubject` existed have no provable owner:
-    // only their own outcome report or lease expiry may settle them.
+    // Claims persisted before `claimedBySubject` existed have no provable
+    // owner: only their own outcome report or lease expiry may settle them.
+    // No claim path writes one any more, so strip the subject from the
+    // stored run.
     const { store, orchestrator, now } = fixture();
     const runId = await seedQueuedRun(store, orchestrator, {
       workId: wid('exit-legacy'),
@@ -2560,7 +2582,19 @@ describe('exit', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(mintRunToken()),
+    });
+    const versioned = (await store.readTask({ workId: wid('exit-legacy') }))!;
+    const claimed = (await store.readRun(runId))!;
+    const { claimedBySubject: _subject, ...queue } = claimed.queue!;
+    await store.apply({
+      expectedRevision: versioned.revision,
+      decision: {
+        task: versioned.task,
+        run: { ...claimed, queue },
+        outbox: [],
+      },
     });
 
     const response = await call(
@@ -2808,6 +2842,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const handler = createRunsHandler();
@@ -2869,6 +2904,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -2919,6 +2955,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     // `requireRunToken` only checks the run's own state/lease, not
@@ -2959,6 +2996,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
 
@@ -3000,6 +3038,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     return { store, orchestrator, now, runId, token };
@@ -3058,6 +3097,7 @@ describe('complete', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const ready = vi.fn(async () => {
@@ -3109,6 +3149,7 @@ describe('checkoutToken', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(runToken),
     });
     const expiresAt = '2026-08-26T10:53:21.000Z';
@@ -3186,6 +3227,7 @@ describe('checkoutToken', () => {
         pipelines: ['claude'],
         now: NOW,
         claimedBy: 'runner-1',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
         tokenHash: hashRunToken(runToken),
       });
       const expiresAt = '2026-08-26T10:53:21.000Z';
@@ -3289,6 +3331,7 @@ describe('codexAuth', () => {
       pipelines: ['codex'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     return { store, orchestrator, now, runId, token };
@@ -3367,6 +3410,7 @@ describe('codexAuth', () => {
       pipelines: ['claude'],
       now: NOW,
       claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(token),
     });
     const r = await call(
@@ -3618,6 +3662,7 @@ describe('codexAuth', () => {
       pipelines: ['codex'],
       now: NOW,
       claimedBy: 'runner-2',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(secondToken),
     });
     const read = vi.fn(context.codexAuth.read);
@@ -3662,6 +3707,7 @@ describe('codexAuth', () => {
       pipelines: ['codex'],
       now: NOW,
       claimedBy: 'runner-2',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
       tokenHash: hashRunToken(secondToken),
     });
     const takeLease = vi.fn(context.codexAuth.takeLease);
@@ -3715,6 +3761,7 @@ describe('startup deadline run-token fence', () => {
         pipelines: [pipeline],
         now: NOW,
         claimedBy: 'runner-1',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
         tokenHash,
       });
       const before = (await store.readRun(runId))!;
@@ -3775,6 +3822,7 @@ describe('startup deadline run-token fence', () => {
         pipelines: [pipeline],
         now: NOW,
         claimedBy: 'runner-1',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
         tokenHash: hashRunToken(token),
       });
       const ctx = { store, orchestrator, now, ...context, bearerToken: token };
@@ -5768,6 +5816,8 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
               pipelines: ['codex'],
               now: NOW,
               claimedBy: 'same-runner',
+              claimedBySubject:
+                'google:autoscaler@example.iam.gserviceaccount.com',
               tokenHash: 'f'.repeat(64),
             });
             const exit = await call(f.ctx, 'POST', runPath(f.runId, '/exit'), {
@@ -6537,6 +6587,8 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             pipelines: ['codex'],
             now: NOW,
             claimedBy: 'same-runner',
+            claimedBySubject:
+              'google:autoscaler@example.iam.gserviceaccount.com',
             tokenHash: f.fingerprint,
           });
         await f.orchestrator.cancel(runId);

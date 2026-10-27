@@ -69,6 +69,7 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
             pipelines: ['codex'],
             now: NOW,
             claimedBy: 'exact-worker',
+            claimedBySubject: 'executor@example.com',
             tokenHash: HASH,
           }),
         ).toMatchObject({ runId });
