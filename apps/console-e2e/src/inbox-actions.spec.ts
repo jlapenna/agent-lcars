@@ -1,10 +1,4 @@
-import type {
-  APIRequestContext,
-  Page,
-  Request,
-  Response,
-  Route,
-} from '@playwright/test';
+import type { APIRequestContext, Page, Request, Route } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, usePopulatedFixtures } from './seed';
@@ -107,8 +101,6 @@ async function expectResolvedMergeRefusal(
   // an unfinished action nor missing/incorrect feedback is accepted.
   const actionTimeout = 20_000;
   const renderTimeout = 5_000;
-  const started = performance.now();
-  const phases: { phase: string; elapsedMs: number; status?: number }[] = [];
   // Match the action's public arguments, not Next's opaque action ID. The
   // live dashboard submits a separate refresh action to this same URL.
   const isMergeAction = (request: Request) => {
@@ -133,27 +125,8 @@ async function expectResolvedMergeRefusal(
   };
   let intendedRequest: Request | undefined;
   let delayApplied = false;
-  const record = (phase: string, status?: number) => {
-    if (phases.length < 12) {
-      phases.push({
-        phase,
-        elapsedMs: Math.round(performance.now() - started),
-        ...(status === undefined ? {} : { status }),
-      });
-    }
-  };
   const onRequest = (request: Request) => {
-    if (!intendedRequest && isMergeAction(request)) {
-      intendedRequest = request;
-      record('action-request');
-    }
-  };
-  const onResponse = (response: Response) => {
-    if (response.request() === intendedRequest)
-      record('action-response', response.status());
-  };
-  const onFailed = (request: Request) => {
-    if (request === intendedRequest) record('action-request-failed');
+    if (!intendedRequest && isMergeAction(request)) intendedRequest = request;
   };
   const delayResponse = async (route: Route) => {
     // Preserve the earlier fixture-auth route for refreshes and other work.
@@ -169,7 +142,6 @@ async function expectResolvedMergeRefusal(
       },
       maxRedirects: 0,
     });
-    record('controlled-upstream-response', response.status());
     expect(response.status()).toBe(200);
     expect(response.headers()['content-type']).toContain('text/x-component');
     await expect(
@@ -177,13 +149,10 @@ async function expectResolvedMergeRefusal(
         .locator('.queue-workspace__detail')
         .getByRole('button', { name: 'Approve & Merge', exact: true }),
     ).toBeDisabled({ timeout: renderTimeout });
-    record('controlled-response-held');
     await new Promise((resolve) => setTimeout(resolve, controlledDelayMs));
     await route.fulfill({ response });
   };
   page.on('request', onRequest);
-  page.on('response', onResponse);
-  page.on('requestfailed', onFailed);
   try {
     if (controlledDelayMs) {
       // Bounded fault injection for the observed >5s readiness boundary,
@@ -198,41 +167,23 @@ async function expectResolvedMergeRefusal(
       (response) => response.request() === intendedRequest,
       { timeout: actionTimeout },
     );
-    record('confirmation-start');
     const [response] = await Promise.all([completed, click()]);
     expect(response.status()).toBe(200);
     expect(response.headers()['content-type']).toContain('text/x-component');
-    record('action-response-accepted');
     if (controlledDelayMs) expect(delayApplied).toBe(true);
     await Promise.all([
       expect(
         page
           .locator('.queue-workspace__detail')
           .getByRole('button', { name: 'Approve & Merge', exact: true }),
-      )
-        .toBeEnabled({ timeout: renderTimeout })
-        .then(() => record('pending-cleared')),
-      expect(page.getByText(message, { exact: true }))
-        .toBeVisible({ timeout: renderTimeout })
-        .then(() => record('refusal-visible')),
+      ).toBeEnabled({ timeout: renderTimeout }),
+      expect(page.getByText(message, { exact: true })).toBeVisible({
+        timeout: renderTimeout,
+      }),
     ]);
   } finally {
     page.off('request', onRequest);
-    page.off('response', onResponse);
-    page.off('requestfailed', onFailed);
     if (controlledDelayMs) await page.unroute('**/inbox?**', delayResponse);
-    // Attach on the first attempt as well as retries, including timeout.
-    // Numeric phase facts only: no headers, URL/query, cookies or bodies.
-    await test.info().attach('merge-refusal-phases', {
-      body: JSON.stringify({
-        retry: test.info().retry,
-        actionTimeoutMs: actionTimeout,
-        renderTimeoutMs: renderTimeout,
-        controlledDelayMs,
-        phases,
-      }),
-      contentType: 'application/json',
-    });
   }
 }
 
@@ -643,22 +594,7 @@ test.describe('Inbox authorized action journeys', () => {
             requestedReviewerLogins: requestedReviewers,
           });
           const url = await selectItem(page, number);
-          const interactionStarted = performance.now();
           await observeFeedback(page, request, controlledDelayMs);
-          const clickToNoticeMs = Math.round(
-            performance.now() - interactionStarted,
-          );
-          test.info().annotations.push({
-            type: `${action}-click-to-notice-ms`,
-            description: String(clickToNoticeMs),
-          });
-          console.log(
-            JSON.stringify({
-              journey: `${action}-click-to-notice`,
-              rejected,
-              durationMs: clickToNoticeMs,
-            }),
-          );
           expect(await journal(request)).toEqual(expectedEffects);
           const issue = await request.get(
             `${GITHUB}/${pathFor(`issues/${number}`)}`,

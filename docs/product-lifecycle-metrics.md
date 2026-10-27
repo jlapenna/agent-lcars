@@ -232,49 +232,6 @@ rate, phone decision reach and end-to-end traceability also remain unknown:
 they need their own durable receipt/decision/render/identity joins. This PR
 does not turn process-local executor launch counters into those facts.
 
-## Testable monitoring handoff
-
-The reviewed, unapplied template and deterministic rule tests live in
-`tools/observability/product-slo.rules.yml` and
-`tools/observability/product-slo.rules.test.yml`. Use an approved Prometheus
-`promtool` to run:
-
-```sh
-promtool check rules tools/observability/product-slo.rules.yml
-promtool test rules tools/observability/product-slo.rules.test.yml
-```
-
-The collector should poll once a minute using an existing approved identity,
-extract the `prometheus` field without changing its values, and publish it
-to a single logical scrape target. Incomplete snapshots must be published
-even though the CLI exits nonzero; retaining the last good file hides a
-current truncation. On HTTP/auth/network failure, remove/invalidate stale
-output so missing/stale-data alerts can fire. Collection credentials, an
-exporter/textfile collector service, its timeout, and alert installation are
-Homelab's reviewed handoff, not operations performed by this repository.
-
-The template gates operational alerts on a complete observation younger than
-three minutes. Missing/incomplete/stale collection warns after ten minutes;
-silent-loss and dead-letter stocks warn after ten minutes of valid data.
-Admission's proposed 95% within **60 seconds inclusive** budget uses at
-least 30 known samples in one hour and zero unknown duration samples, then
-warns at a bad fraction above 5% sustained fifteen minutes. This is a
-low-volume operational warning, not a certified 30-day SLO burn-rate page.
-The queue-delay distribution is diagnostic only: the conditional eligibility
-clock is missing and capacity waits must not be attributed to launch latency.
-
-After durable trustworthy events and longitudinal data exist, the suggested
-30-day SLO handoff is a reviewed dual-window budget burn: fast 14.4x on both
-1h/5m and slow 6x on both 6h/30m, with minimum-volume and unknown-data gates.
-The current overlapping 1h gauges cannot implement those independent windows;
-the template deliberately does not pretend to do so. The original #2200
-source acceptance requires the definitions, measurements, accounting tests and
-operator handoff. Missing authoritative event producers remain source gaps;
-collection installation and elapsed SLO qualification are separate Homelab
-operational work, not additional original source-closure requirements.
-Prometheus owns the [rule-test format](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/)
-and [alert `for` semantics](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/).
-
 ## Session cost proxy
 
 The same authenticated export appends `lcars_product_session_cost_*` gauges
