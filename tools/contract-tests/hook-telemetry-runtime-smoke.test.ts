@@ -53,6 +53,10 @@ it.each([
         mode: 0o755,
       });
     for (const file of [
+      'opencode.json',
+      'instructions.md',
+      'context-lifecycle.js',
+      'lcars-session.js',
       'lcars-telemetry.js',
       'package.json',
       'package-lock.json',
@@ -86,6 +90,7 @@ process.stdout.write(JSON.stringify({writerConfigured:Boolean(process.env.LCARS_
       `#!/usr/bin/env node
 const fs=require('node:fs'),path=require('node:path'),http=require('node:http');
 const command=path.basename(process.argv[1]);
+if(process.argv[2]==='--version'){console.log(${JSON.stringify(readFileSync(resolve('apps/runner-autoscaler/runner-image/opencode-version'), 'utf8').trim().replace(/^v/, ''))});process.exit(0);}
 const agent=command==='claude'?'claude-code':command;
 const dir=path.join(process.env.HOME,'.local/state/agent-lcars/spool');
 fs.mkdirSync(dir,{recursive:true});
@@ -115,11 +120,29 @@ const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].sp
 fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib}));
 child.unref();
 }
-const config=JSON.parse(fs.readFileSync(path.join(process.env.HOME,'.config/opencode/opencode.json')));
-const url=config.provider['hook-test'].options.baseURL+'/chat/completions?private-query';
-const request=http.request(url,{method:'POST',headers:{authorization:'private-credential'}},response=>{
-response.resume();response.on('end',()=>console.log('private-model-body Error: private-error-detail'));
-});request.end('private-request-body');
+const workspace=process.argv[process.argv.indexOf('--dir')+1];
+const config=JSON.parse(fs.readFileSync(path.join(workspace,'opencode.json')));
+const url=config.provider['continuation-contract'].options.baseURL+'/chat/completions?private-query';
+const system='Commit and push at the first working slice ROOT_INSTRUCTION_SENTINEL';
+const tool={role:'tool',content:'CHILD_INSTRUCTION_SENTINEL LINE-120 LINE-121 LINE-200'};
+const requests=[
+{tools:[{}],messages:[{role:'system',content:system}]},
+{max_tokens:4096,messages:[{role:'system',content:'You are a context summarization agent'}]},
+{tools:[{}],messages:[{role:'system',content:system},{role:'user',content:'COMPACTED_STATE_SENTINEL Continue if you have next steps'}]},
+{tools:[{}],messages:[{role:'system',content:system},{role:'user',content:'COMPACTED_STATE_SENTINEL'},tool]}
+];
+const db=require('node:child_process').spawnSync('python3',['-c',
+'import sqlite3,json,sys; c=sqlite3.connect(sys.argv[1]); c.execute("insert into part(data) values (?)",(json.dumps({"type":"tool","tool":"read","state":{"status":"completed","input":{"limit":200},"output":"ROOT_INSTRUCTION_SENTINEL"}}),)); c.commit()',
+path.join(process.env.XDG_DATA_HOME,'opencode/opencode.db')],{encoding:'utf8'});
+if(db.status!==0)process.exit(1);
+(async()=>{
+for(const body of requests)await new Promise((resolve,reject)=>{
+const bytes=JSON.stringify(body);
+const request=http.request(url,{method:'POST',headers:{authorization:'private-credential','content-length':Buffer.byteLength(bytes)}},response=>{
+response.resume();response.on('end',resolve);
+});request.on('error',reject);request.end(bytes);
+});console.log('private-model-body Error: private-error-detail');
+})().catch(()=>{process.exitCode=1;});
 }
 `,
       { mode: 0o755 },
@@ -146,10 +169,32 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       ];
       for (const target of targets)
         mkdirSync(join(project, target), { recursive: true });
-      mkdirSync(join(sourceSdk, 'node_modules'), { recursive: true });
+      const installedPlugin = join(
+        sourceSdk,
+        'node_modules/@opencode-ai/plugin',
+      );
+      mkdirSync(installedPlugin, { recursive: true });
+      writeFileSync(
+        join(installedPlugin, 'package.json'),
+        JSON.stringify({
+          version: readFileSync(
+            resolve('apps/runner-autoscaler/runner-image/opencode-version'),
+            'utf8',
+          )
+            .trim()
+            .replace(/^v/, ''),
+        }),
+      );
       for (const file of ['package.json', 'package-lock.json'])
         writeFileSync(join(sourceSdk, file), '{}');
-      writeFileSync(join(project, 'agents/opencode/lcars-telemetry.js'), '{}');
+      for (const file of [
+        'opencode.json',
+        'instructions.md',
+        'context-lifecycle.js',
+        'lcars-session.js',
+        'lcars-telemetry.js',
+      ])
+        writeFileSync(join(project, 'agents/opencode', file), '{}');
       writeFileSync(
         join(
           project,
@@ -174,9 +219,19 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
       for (const file of [
         'tools/hook-telemetry-runtime-smoke.sh',
         'apps/runner-autoscaler/runner-image/hook-telemetry.test.sh',
+        'apps/runner-autoscaler/runner-image/hook-telemetry-assertions.sh',
+        'apps/runner-autoscaler/runner-image/opencode-continuation.test.sh',
+        'apps/runner-autoscaler/runner-image/opencode-continuation.test.py',
+        'apps/runner-autoscaler/runner-image/opencode-version',
         'apps/runner-autoscaler/runner-image/drain-hook-test-clients.py',
       ])
         writeFileSync(join(project, file), readFileSync(resolve(file)));
+      // A source pin update must still test the installed CLI/SDK pair in CI,
+      // without requiring the unpublished future image to validate its source.
+      writeFileSync(
+        join(project, 'apps/runner-autoscaler/runner-image/opencode-version'),
+        'future-version\n',
+      );
       if (refuseDrain)
         // Run the actual helper. Refuse only after it owns a real PIDFD, then
         // observe its finally block closing that descriptor without raw errors.
@@ -184,6 +239,16 @@ response.resume();response.on('end',()=>console.log('private-model-body Error: p
           join(bin, 'python3'),
           `#!/usr/bin/env node
 const fs=require('node:fs'),child=require('node:child_process');
+if(!process.argv[2].endsWith('/drain-hook-test-clients.py')){
+// Keep the provider PID owned by the fixture: a waiting forwarding parent
+// would leave Python holding output pipes after cleanup kills that parent.
+const env={...process.env,PATH:process.env.PATH.split(':').slice(1).join(':')};
+const python=env.PATH.split(':').map(dir=>require('node:path').resolve(dir,'python3')).find(file=>{
+try{fs.accessSync(file,fs.constants.X_OK);return fs.statSync(file).isFile();}catch{return false;}
+});
+if(!python)throw new Error('python3 missing from fixture forwarding PATH');
+process.execve(python,[python,...process.argv.slice(2)],env);
+}
 const prelude=${JSON.stringify(`import atexit, errno, json, os, pathlib, select
 original_select = select.select
 observed = []
@@ -215,11 +280,24 @@ process.exit(result.status??1);
         );
       smoke = join(project, 'tools/hook-telemetry-runtime-smoke.sh');
     }
+    const bakedStore = join(fixtureHome, '.local/share/opencode');
+    mkdirSync(bakedStore, { recursive: true });
+    const store = spawnSync(
+      'python3',
+      [
+        '-c',
+        'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE part (data TEXT)"); c.commit()',
+        join(bakedStore, 'opencode.db'),
+      ],
+      { encoding: 'utf8' },
+    );
+    expect(store.status).toBe(0);
     try {
       const result = spawnSync('bash', [smoke], {
         env: {
           ...process.env,
           HOME: fixtureHome,
+          XDG_DATA_HOME: join(fixtureHome, '.local/share'),
           PATH: `${bin}:${process.env.PATH}`,
           TMPDIR: scratch,
           HOOK_TEST_LIB_DIR: lib,

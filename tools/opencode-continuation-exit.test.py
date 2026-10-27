@@ -49,6 +49,7 @@ class ContinuationExitTest(unittest.TestCase):
             'exit "$FIXTURE_RUN_EXIT"\n'
         )
         self.cli.chmod(0o755)
+        self.cli_template = self.cli.read_text()
 
     def run_wrapper(self, **overrides):
         env = {
@@ -64,6 +65,12 @@ class ContinuationExitTest(unittest.TestCase):
             "FIXTURE_RUN_EXIT": "37",
             **overrides,
         }
+        # The framework run now has the same clean environment as the real
+        # hook smoke. Encode fixture outcomes in the owned shim, not that env.
+        self.cli.write_text(self.cli_template
+            .replace("${FIXTURE_VERSION_EXIT:-0}", env.get("FIXTURE_VERSION_EXIT", "0"))
+            .replace("$FIXTURE_VERSION", env["FIXTURE_VERSION"])
+            .replace("$FIXTURE_RUN_EXIT", env["FIXTURE_RUN_EXIT"]))
         # The real wrapper owns version/provider/framework deadlines and EXIT
         # cleanup. The enclosing job supervises its whole cgroup; a Python
         # timeout would kill only the wrapper and strand its provider child.
