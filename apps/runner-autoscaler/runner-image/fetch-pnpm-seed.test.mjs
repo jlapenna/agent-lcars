@@ -241,14 +241,20 @@ test(
           await readFile(join(project, 'package.json'), 'utf8'),
           manifest,
         );
-        const version = await run('pnpm', ['--version'], project);
-        assert.equal(version.code, 0, version.output);
-        assert.equal(
-          version.output.trim(),
-          pin.slice('pnpm@'.length).split('+')[0],
-        );
       });
     }
+    // All cases use the same packageManager pin; verify it once instead of
+    // starting another Corepack/pnpm process for every architecture case.
+    const version = await run(
+      'pnpm',
+      ['--version'],
+      join(root, 'default-arm64'),
+    );
+    assert.equal(version.code, 0, version.output);
+    assert.equal(
+      version.output.trim(),
+      pin.slice('pnpm@'.length).split('+')[0],
+    );
     await t.test('unsupported target fails before fetching', async () => {
       requests.length = 0;
       const result = await run(process.execPath, [helper, 'riscv64'], root);

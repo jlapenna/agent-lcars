@@ -130,7 +130,9 @@ describe('lcars hook claude', () => {
   });
   it('reduces the transcript, enriches it, and spools a summary-only event', async () => {
     const home = tempHome();
-    const d = deps(home, payload('PostToolUse'));
+    const d = deps(home, payload('PostToolUse'), {
+      env: { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' },
+    });
     const result = await executeHookCommand(['claude'], d);
     expect(result.action).toBe('spooled');
     expect(d.spawnFlusher).toHaveBeenCalledOnce();
@@ -579,6 +581,15 @@ describe('lcars hook claude', () => {
       issueNumber: 77,
       repo: { owner: 'supersprinklesracing', name: 'www' },
     });
+  });
+
+  it('keeps spool-only events without starting a writer process', async () => {
+    const home = tempHome();
+    const d = deps(home, payload('Stop'));
+    expect((await executeHookCommand(['claude'], d)).action).toBe('spooled');
+    expect(spooledEvents(home).map((event) => event.kind)).toEqual(['stop']);
+    expect(d.spawnFlusher).not.toHaveBeenCalled();
+    expect(d.runFlusher).not.toHaveBeenCalled();
   });
 
   it('--inline runs the flusher in the foreground instead of spawning it', async () => {

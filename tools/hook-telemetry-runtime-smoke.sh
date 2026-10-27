@@ -10,6 +10,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
 
 ./tools/nx session-title-cli @agent-lcars/telemetry-watcher
+./tools/nx hook-cli @agent-lcars/telemetry-watcher
 ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # `lcars hook` starts the flusher from beside its own bundle, as in the image.
@@ -23,6 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cp dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
+  dist/apps/telemetry-watcher-hook/lcars-hook.cjs \
   dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs "$lib_dir/"
 
 # This checkout's OpenCode plugin beside the runner's baked plugin SDK.

@@ -121,18 +121,15 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 ENV HUSKY=0 CI=true
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
-# agent-lcars#1289 added the second `nx` call below: the `lcars` CLI's own
-# bundle (`session-title-cli` target, apps/telemetry-watcher/project.json),
-# a second, independent esbuild entry point from the same checkout --
-# `session-title-cli.ts` pulls in only `session-title-annotation-command.ts`
-# and its own dependency graph (local-filesystem annotation read/write, no
-# Firestore/GCS client), so this is a second small bundle, not a second
-# copy of sidecar.cjs's much larger one. Both `nx` invocations share one
-# `RUN` (one extra layer per stage is negligible on its own, but #1246's
-# disk audit is the reason to default to not adding one anyway when
-# combining is this cheap).
+# Build the telemetry sidecar and the three CLI entry points from one checkout.
+# session-title-cli is the full operator CLI, including session, Work and
+# integration commands. hook-cli imports the shared hook handler directly so
+# frequent hook calls avoid initializing those operator command dependencies.
+# hook-flush-cli handles asynchronous delivery from beside either CLI bundle.
+# Keep these builds in one RUN to avoid unnecessary image layers.
 RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx session-title-cli @agent-lcars/telemetry-watcher && \
+    ./tools/nx hook-cli @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # Action archives are immutable repository tarballs, never extracted or executed
@@ -176,7 +173,7 @@ COPY fetch-pnpm-seed.mjs fetch-pnpm-seed.test.mjs ./
 COPY pnpm-seed/fleet/jlapenna__agent-lcars/package.json ./pnpm-seed/fleet/jlapenna__agent-lcars/package.json
 RUN corepack enable && \
     corepack install --global "$(node -p 'require("./pnpm-seed/fleet/jlapenna__agent-lcars/package.json").packageManager')"
-RUN node --test fetch-pnpm-seed.test.mjs && printf 'passed\n' > /proof/cpu-selection.ok
+RUN --network=none node --test fetch-pnpm-seed.test.mjs && printf 'passed\n' > /proof/cpu-selection.ok
 
 FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-store-seed
 COPY --from=pnpm-cpu-regression /proof/cpu-selection.ok /proof/cpu-selection.ok
@@ -615,17 +612,17 @@ RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh
 # `node <path>`, never executed directly -- but the launcher below does,
 # since that's what a dispatched agent actually types.
 #
-# This CLI's dependency graph is deliberately narrow (local-filesystem
-# annotation read/write only -- no Firestore/GCS client, unlike sidecar.cjs
-# and finalize's watch-root/adapter code), so its bundle is small: measured
-# at 16 KB from the equivalent host-side build
-# (apps/telemetry-watcher/bin/install-session-title-cli.sh's own output
-# on this checkout's watcher host), a few hundred bytes to BuildKit's
-# layer/manifest bookkeeping on top of that. Negligible against the
-# per-host disk budget #1246 tightened.
+# The full operator CLI serves interactive commands and integration setup.
+# The launcher routes hook calls to the dedicated bundle below, preserving
+# the same handler while avoiding the operator CLI's broader startup work.
+# Keep the flusher beside both entry points for sibling-path resolution.
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs \
     /usr/local/lib/agent-lcars/lcars-session-title.cjs
+# Hook calls avoid initializing the operator CLI; the flusher stays adjacent.
+COPY --from=telemetry-watcher-build \
+    /repo/dist/apps/telemetry-watcher-hook/lcars-hook.cjs \
+    /usr/local/lib/agent-lcars/lcars-hook.cjs
 # The hook flusher bundle: `lcars hook` spawns it from beside the CLI bundle
 # so hook invocations never load the Firestore client.
 COPY --from=telemetry-watcher-build --chown=runner:runner \

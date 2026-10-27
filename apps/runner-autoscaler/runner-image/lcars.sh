@@ -30,4 +30,7 @@
 # the same "just call node" assumption sidecar-lifecycle.sh already makes
 # for sidecar.cjs. A bare `exec node` is the correct match for THIS image,
 # not a missed opportunity to copy the host script verbatim.
+if [ "${1:-}" = hook ]; then
+  exec node /usr/local/lib/agent-lcars/lcars-hook.cjs "$@"
+fi
 exec node /usr/local/lib/agent-lcars/lcars-session-title.cjs "$@"

@@ -68,7 +68,7 @@ trap cleanup EXIT
 
 # The hook stubs run `lcars` from PATH; point it at this image's bundle.
 mkdir -p "$tmp/bin" "$tmp/work"
-printf '#!/bin/sh\nunset LCARS_TELEMETRY_CREDENTIALS_FILE\nexec node %q "$@"\n' "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
+printf '#!/bin/sh\nunset LCARS_TELEMETRY_CREDENTIALS_FILE\nif [ "${1:-}" = hook ]; then\n  exec node %q "$@"\nfi\nexec node %q "$@"\n' "$lib_dir/lcars-hook.cjs" "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
 chmod +x "$tmp/bin/lcars"
 
 cat > "$tmp/provider.mjs" <<'JS'
@@ -200,7 +200,7 @@ await_kinds() {
   while :; do
     missing=""
     for kind in "$@"; do
-      spooled "$home" | jq -e --arg k "$kind" 'select(.kind == $k)' > /dev/null || missing="$missing $kind"
+      spooled "$home" | jq -se --arg k "$kind" 'any(.[]; .kind == $k)' > /dev/null || missing="$missing $kind"
     done
     [ -z "$missing" ] && return 0
     if [ "$SECONDS" -ge "$deadline" ]; then

@@ -94,6 +94,34 @@
         "passWithNoTests": true
       }
     },
+    "hook-cli": {
+      "executor": "@nx/esbuild:esbuild",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "platform": "node",
+        "outputPath": "dist/apps/telemetry-watcher-hook",
+        "outputFileName": "lcars-hook.cjs",
+        "format": ["cjs"],
+        "bundle": true,
+        "thirdParty": true,
+        "target": "node24",
+        "main": "apps/telemetry-watcher/src/hook-cli.ts",
+        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
+        "skipTypeCheck": true,
+        "esbuildOptions": {
+          "sourcemap": false
+        }
+      },
+      "configurations": {
+        "development": {},
+        "production": {
+          "esbuildOptions": {
+            "sourcemap": false
+          }
+        }
+      }
+    },
     "hook-flush-cli": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],
