@@ -1876,6 +1876,44 @@ export function runOrchestratorStoreContract(
         });
       });
 
+      it('forgets failure history on a recovered settlement but keeps the new release clock', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
+        const first = onlyClaim(await claimOutbox(store, clock.now()));
+        expect(
+          await store.settleOutbox({
+            entryId: first.entryId,
+            claimId: first.claimId,
+            state: 'pending',
+            now: clock.now(),
+            firstFailedAt: clock.now(),
+            nextAttemptAt: clock.now(),
+            deliveryFailures: 2,
+          }),
+        ).toBe(true);
+        const failing = onlyClaim(await claimOutbox(store, clock.now()));
+        const later = new Date(Date.parse(clock.now()) + 60_000).toISOString();
+        expect(
+          await store.settleOutbox({
+            entryId: failing.entryId,
+            claimId: failing.claimId,
+            state: 'pending',
+            now: clock.now(),
+            nextAttemptAt: later,
+            recovered: true,
+          }),
+        ).toBe(true);
+        expect(await claimOutbox(store, clock.now())).toHaveLength(0);
+        const recovered = onlyClaim(await claimOutbox(store, later));
+        expect(recovered).toMatchObject({
+          entryId: first.entryId,
+          nextAttemptAt: later,
+          attempts: 3,
+        });
+        expect(recovered).not.toHaveProperty('firstFailedAt');
+        expect(recovered).not.toHaveProperty('deliveryFailures');
+      });
+
       it('claims a never-attempted entry over a larger set of already-attempted, due entries (starvation)', async () => {
         const { clock, store, orchestrator } = await fixture();
 

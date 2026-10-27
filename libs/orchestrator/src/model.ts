@@ -680,9 +680,13 @@ export interface OutboxSettlement {
   firstFailedAt?: string;
   nextAttemptAt?: string;
   deliveryFailures?: number;
+  /** This attempt succeeded, so the entry's failure clock starts over: a
+   *  pending entry that is re-released after a success (a delivery monitor
+   *  that read its PR and is still waiting) must not carry an old
+   *  `firstFailedAt` toward retirement. */
+  recovered?: boolean;
 }
 
-/** Settle only the current lease owner; omitted retry fields retain history. */
 /** A webhook wake: a pending entry still waiting out `nextAttemptAt` becomes
  * claimable at `now`. Leased, settled, missing or already-due entries are left
  * exactly as they are, so a wake can never race a drain or revive a retiree. */
@@ -700,6 +704,8 @@ export function wakeOutboxEntry(
   return { ...entry, nextAttemptAt: now, updatedAt: now };
 }
 
+/** Settle only the current lease owner; omitted retry fields retain history
+ * unless the settlement is `recovered`. */
 export function settleOutboxEntry(
   entry: OutboxEntry | undefined,
   input: OutboxSettlement,
@@ -712,8 +718,13 @@ export function settleOutboxEntry(
     return undefined;
   }
   const { claimId: _claimId, leaseExpiresAt: _leaseExpiresAt, ...rest } = entry;
+  const {
+    firstFailedAt: _firstFailedAt,
+    deliveryFailures: _deliveryFailures,
+    ...recovered
+  } = rest;
   return {
-    ...rest,
+    ...(input.recovered ? recovered : rest),
     state: input.state,
     updatedAt: input.now,
     ...(input.firstFailedAt === undefined

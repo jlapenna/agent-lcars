@@ -224,8 +224,7 @@ export async function drainOutbox(
       } else if (entry.kind === 'dispatch-run') {
         await handleDispatchRun(deps, entry, result);
       } else if (entry.kind === 'monitor-delivery') {
-        await handleMonitorDelivery(deps, entry, result);
-        failedThisDrain.add(entry.entryId);
+        await handleMonitorDelivery(deps, entry);
       } else {
         await handleReportOutcome(deps, entry, result);
       }
@@ -234,8 +233,13 @@ export async function drainOutbox(
     }
     // Excluded from this invocation's remaining claims only -- not stopped
     // entirely -- so forward progress continues on every other pending
-    // entry. A later, separate `drainOutbox` call is free to reclaim it.
-    if (result.failed.length > failuresBefore) {
+    // entry. A later, separate `drainOutbox` call is free to reclaim it. A
+    // delivery monitor that observed its PR still waiting is not a failure,
+    // but it was released `pending` the same way and is excluded alike.
+    if (
+      result.failed.length > failuresBefore ||
+      entry.kind === 'monitor-delivery'
+    ) {
       failedThisDrain.add(entry.entryId);
     }
   }
@@ -244,12 +248,17 @@ export async function drainOutbox(
 }
 
 /** A durable lightweight wait, not a failed worker or a second capacity ledger.
- * Uncertain external evidence keeps this entry retryable without the generic
- * outcome-delivery retirement budget. Every mutation rechecks Task+Run fencing. */
+ * A PR that is readable and still waiting is re-released on the fallback
+ * clock with its failure history cleared, for as long as it takes. Evidence
+ * that cannot be read at all -- an unreadable PR, a GitHub outage, a
+ * schema change -- throws into `drainOutbox`'s ordinary retryable-failure
+ * path: logged, backed off, and retired (`failed`) once it has been failing
+ * for `OUTBOX_RETIRE_AFTER_MS`, exactly like every other outbox kind, rather
+ * than polling an unreadable PR forever. Every mutation rechecks Task+Run
+ * fencing. */
 async function handleMonitorDelivery(
   deps: DispatchDeps,
   entry: LeasedOutboxEntry,
-  result: DrainOutboxResult,
 ): Promise<void> {
   const run = await deps.store.readRun(entry.runId);
   const task =
@@ -263,35 +272,29 @@ async function handleMonitorDelivery(
     await settleClaim(deps, entry, 'done');
     return;
   }
-  try {
-    const observed = await observeGithubDelivery(deps, task.delivery);
-    const permission =
-      observed.kind === 'correction' && !deliveryCorrectionAuthorized(task, run)
-        ? await readGithubIntakePermission(deps, task, run)
-        : undefined;
-    const decision = await deps.orchestrator.observeDelivery(
-      run.runId,
-      observed,
-      (currentTask, currentRun) =>
-        deliveryCorrectionAuthorized(currentTask, currentRun, permission),
-    );
-    if (
-      ('refused' in decision && decision.reason === 'task-closed') ||
-      (!('refused' in decision) && decision.task.delivery?.state !== 'waiting')
-    ) {
-      await settleClaim(deps, entry, 'done');
-      return;
-    }
-  } catch {
-    result.failed.push({
-      entryId: entry.entryId,
-      error: 'Delivery evidence unavailable; ownership retained',
-    });
+  const observed = await observeGithubDelivery(deps, task.delivery);
+  const permission =
+    observed.kind === 'correction' && !deliveryCorrectionAuthorized(task, run)
+      ? await readGithubIntakePermission(deps, task, run)
+      : undefined;
+  const decision = await deps.orchestrator.observeDelivery(
+    run.runId,
+    observed,
+    (currentTask, currentRun) =>
+      deliveryCorrectionAuthorized(currentTask, currentRun, permission),
+  );
+  if (
+    ('refused' in decision && decision.reason === 'task-closed') ||
+    (!('refused' in decision) && decision.task.delivery?.state !== 'waiting')
+  ) {
+    await settleClaim(deps, entry, 'done');
+    return;
   }
   await settleClaim(deps, entry, 'pending', {
     nextAttemptAt: new Date(
       Date.parse(now(deps)) + DELIVERY_MONITOR_FALLBACK_MS,
     ).toISOString(),
+    recovered: true,
   });
 }
 
@@ -1323,6 +1326,8 @@ async function settleClaim(
     firstFailedAt?: string;
     nextAttemptAt?: string;
     deliveryFailures?: number;
+    /** The attempt succeeded: forget the entry's failure history. */
+    recovered?: boolean;
   },
 ): Promise<boolean> {
   return deps.store.settleOutbox({
@@ -1333,5 +1338,6 @@ async function settleClaim(
     firstFailedAt: failureState?.firstFailedAt,
     nextAttemptAt: failureState?.nextAttemptAt,
     deliveryFailures: failureState?.deliveryFailures,
+    recovered: failureState?.recovered,
   });
 }

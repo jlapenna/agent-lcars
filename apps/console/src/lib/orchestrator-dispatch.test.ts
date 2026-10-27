@@ -1021,6 +1021,145 @@ describe('native delivery finalization reuses terminal outcome and session expir
       ),
     ).toBe(false);
   });
+  /** An open, draft PR carrying the run's attempt claim: `observeGithubDelivery`
+   *  reports `waiting` from the PR read alone, no further GitHub calls. */
+  function openDraftPr(runId: string) {
+    return Response.json({
+      number: 12,
+      body: `<!-- attempt-claim:g1:${runId} -->`,
+      state: 'open',
+      draft: true,
+      head: { sha: HEAD },
+      base: { ref: 'main' },
+      user: { login: 'author' },
+      merged: false,
+      merge_commit_sha: null,
+      auto_merge: null,
+    });
+  }
+  const HOUR = 60 * 60_000;
+  // `reportResult` mints the monitor due one minute after the report.
+  const DUE = 60_000;
+  const at = (offsetMs: number) =>
+    new Date(Date.parse(NOW) + offsetMs).toISOString();
+  async function pendingMonitors(
+    store: MemoryStore,
+    now: string,
+  ): Promise<{ entryId: string; firstFailedAt?: string }[]> {
+    const claimed = await store.claimPendingOutbox({
+      now,
+      leaseExpiresAt: new Date(Date.parse(now) + 60_000).toISOString(),
+      limit: 20,
+    });
+    const monitors = claimed.filter(
+      (entry) => entry.kind === 'monitor-delivery',
+    );
+    // Hand the leases straight back so the next drain can claim them again.
+    for (const entry of claimed)
+      await store.settleOutbox({
+        entryId: entry.entryId,
+        claimId: entry.claimId,
+        state: 'pending',
+        now,
+      });
+    return monitors.map(({ entryId, firstFailedAt }) => ({
+      entryId,
+      ...(firstFailedAt === undefined ? {} : { firstFailedAt }),
+    }));
+  }
+  it('a readable PR that stays waiting is re-observed on the fallback clock and never retires', async () => {
+    const f = await waiting();
+    const fetchImpl = vi.fn(async () => openDraftPr(f.run.runId));
+    const deps = { ...f.deps, fetchImpl };
+    for (const [index, offset] of [
+      0,
+      HOUR + 1,
+      2 * HOUR + 2,
+      80 * HOUR,
+      200 * HOUR,
+    ].entries()) {
+      const drained = await drainOutbox({
+        ...deps,
+        now: () => at(DUE + offset),
+      });
+      expect(drained.failed).toEqual([]);
+      expect(fetchImpl).toHaveBeenCalledTimes(index + 1);
+      // Released `pending` for an hour, not `failed`, and carrying no
+      // failure clock that could ever reach `OUTBOX_RETIRE_AFTER_MS`.
+      expect(await pendingMonitors(f.store, at(DUE + offset + 60_000))).toEqual(
+        [],
+      );
+      expect(await pendingMonitors(f.store, at(DUE + offset + HOUR))).toEqual([
+        { entryId: `delivery/${f.run.runId}` },
+      ]);
+    }
+    expect((await f.store.readTask(f.run.task))!.task.delivery).toMatchObject({
+      state: 'waiting',
+    });
+  });
+  it('an unreadable PR backs off like any other failing entry and retires after the 72-hour budget', async () => {
+    const f = await waiting();
+    const fetchImpl = vi.fn(
+      async () => new Response('upstream unavailable', { status: 502 }),
+    );
+    const deps = { ...f.deps, fetchImpl };
+    const entryId = `delivery/${f.run.runId}`;
+
+    const first = await drainOutbox({ ...deps, now: () => at(DUE) });
+    expect(first.failed).toEqual([
+      { entryId, error: 'Delivery read refused (502)' },
+    ]);
+    // Backed off one minute, with the failure clock started.
+    expect(await pendingMonitors(f.store, at(DUE + 30_000))).toEqual([]);
+    expect(await pendingMonitors(f.store, at(DUE + 60_000))).toEqual([
+      { entryId, firstFailedAt: at(DUE) },
+    ]);
+
+    // Still failing inside the budget: released again, never `failed`.
+    const inside = await drainOutbox({
+      ...deps,
+      now: () => at(DUE + 71 * HOUR),
+    });
+    expect(inside.failed).toHaveLength(1);
+    expect(await pendingMonitors(f.store, at(DUE + 72 * HOUR))).toEqual([
+      { entryId, firstFailedAt: at(DUE) },
+    ]);
+
+    // Past the budget: retired, exactly like a report that GitHub kept
+    // refusing, instead of polling an unreadable PR forever.
+    const retired = await drainOutbox({
+      ...deps,
+      now: () => at(DUE + 72 * HOUR),
+    });
+    expect(retired.failed).toHaveLength(1);
+    expect(await pendingMonitors(f.store, at(DUE + 500 * HOUR))).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    // Retirement is the outbox entry's alone: the binding still records the
+    // unmerged PR for a human to resolve.
+    expect((await f.store.readTask(f.run.task))!.task.delivery).toMatchObject({
+      state: 'waiting',
+      runId: f.run.runId,
+    });
+  });
+  it('a successful observation after failures forgets the failure clock', async () => {
+    const f = await waiting();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(async () => openDraftPr(f.run.runId));
+    const deps = { ...f.deps, fetchImpl };
+    const entryId = `delivery/${f.run.runId}`;
+
+    expect((await drainOutbox({ ...deps, now: () => at(DUE) })).failed).toEqual(
+      [{ entryId, error: 'Delivery read refused (503)' }],
+    );
+    expect(
+      (await drainOutbox({ ...deps, now: () => at(DUE + 60_000) })).failed,
+    ).toEqual([]);
+    expect(await pendingMonitors(f.store, at(DUE + 60_000 + HOUR))).toEqual([
+      { entryId },
+    ]);
+  });
   async function laterPark(f: Awaited<ReturnType<typeof waiting>>, ok = true) {
     const request = await f.orchestrator.request({
       taskId: f.run.task,
