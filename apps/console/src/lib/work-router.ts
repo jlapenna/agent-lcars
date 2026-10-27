@@ -127,7 +127,6 @@ const ownerReader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
-
   lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
     async ({ context }) => {
       const observedAt = context.now().toISOString();
