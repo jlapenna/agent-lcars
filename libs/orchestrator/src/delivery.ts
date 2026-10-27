@@ -80,7 +80,9 @@ export function advanceDelivery(input: {
   if (observation.kind === 'protected-merge') {
     const delivery: DeliveryBinding = {
       ...binding,
-      state: binding.runtimeGate === 'none' ? 'complete' : 'runtime-required',
+      // Only an explicit intake policy holds ownership for a runtime receipt.
+      state:
+        binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
       mergeCommit: observation.mergeCommit,
       observedAt: now,
     };

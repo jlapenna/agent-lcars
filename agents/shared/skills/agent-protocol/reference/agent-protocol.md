@@ -534,16 +534,14 @@ on the same currently authorized provider. Corrections retain existing claim,
 credential and physical-retirement admission barriers. A PR, auto-merge arm or
 executor exit never makes this handoff logically done.
 
-Only independent exact-head GitHub review, resolved threads and exact protected
-merge evidence can advance final landing. Known same-head actionable feedback
+Only exact protected merge evidence with resolved threads and no change requests
+can advance final landing; branch protection decides what review a merge needs. Known same-head actionable feedback
 remains a bounded correction while delivery is waiting, including after merge;
 completed delivery is not reopened. The immutable intake
 `deliveryRuntime: none|required` declares the runtime policy; an omitted policy
-retains an unknown gate. A worker cannot waive it. Required or unknown runtime
+needs no runtime receipt. A worker cannot waive a required gate. Required runtime
 work stays owned until an authenticated operator records the exact merged-head
-runtime receipt through `/api/work/v1/delivery/{runId}/evidence`. Use the existing
-Work create `--delivery-runtime none` only when the authorized intake explicitly
-establishes that no runtime verification is needed (for example documentation).
+runtime receipt through `/api/work/v1/delivery/{runId}/evidence`.
 
 ## 7. Budget discipline
 

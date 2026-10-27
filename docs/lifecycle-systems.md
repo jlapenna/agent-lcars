@@ -334,12 +334,11 @@ claims remain owned by the existing queue/capacity barriers.
 Protected landing requires a passing rules suite at the actual merge commit,
 including passing required-check evaluations; a merged flag or an arm alone is
 insufficient. Trusted immutable Work intake may name deliveryRuntime:none or
-required (CLI create --delivery-runtime). Missing policy remains unknown.
-Required/unknown runtime work stays running after landing until the operator-only
-POST /api/work/v1/delivery/{runId}/evidence records the exact head, merge commit
-and runtime receipt. This route is a source capability, not authorization to
-perform a live mutation or deploy. Existing work is not silently assigned a
-no-runtime policy.
+required (CLI create --delivery-runtime); a missing policy is recorded as
+unknown and needs no runtime receipt. Only required runtime work stays running
+after landing until the operator-only POST /api/work/v1/delivery/{runId}/evidence
+records the exact head, merge commit and runtime receipt. This route is a source
+capability, not authorization to perform a live mutation or deploy.
 
 Native logical completion emits a distinct `delivery-outcome/<runId>` event
 through the existing outcome outbox and session-expiry owner. The original

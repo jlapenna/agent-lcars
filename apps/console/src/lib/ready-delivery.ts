@@ -375,7 +375,8 @@ export async function readyDeliveryBinding(
     return {
       ...binding,
       mergeCommit: landed.mergeCommit,
-      state: binding.runtimeGate === 'none' ? 'complete' : 'runtime-required',
+      state:
+        binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
     };
   }
   return binding;

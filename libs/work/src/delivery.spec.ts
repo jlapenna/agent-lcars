@@ -187,23 +187,8 @@ describe('ready deliverable logical ownership', () => {
     expect((await f.store.listRuns(TASK)).length).toBe(1);
   });
 
-  it('finishes logical delivery only after exact protected landing and a trusted no-runtime intake', async () => {
-    const f = await handedOff();
-    await f.orchestrator.observeDelivery(
-      f.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
-      () => false,
-    );
-    expect(
-      deriveItemState(
-        (await f.store.readTask(TASK))!.task,
-        await f.store.listRuns(TASK),
-      ),
-    ).toBe('done');
-  });
-
-  it.each(['unknown', 'required'] as const)(
-    'retains %s runtime ownership after protected merge until an authenticated receipt',
+  it.each(['none', 'unknown'] as const)(
+    'finishes logical delivery after exact protected landing with %s runtime policy',
     async (runtimeGate) => {
       const f = await handedOff(runtimeGate);
       await f.orchestrator.observeDelivery(
@@ -216,26 +201,41 @@ describe('ready deliverable logical ownership', () => {
           (await f.store.readTask(TASK))!.task,
           await f.store.listRuns(TASK),
         ),
-      ).toBe('running');
-      const receipt = {
-        kind: 'runtime-evidence' as const,
-        head: HEAD,
-        mergeCommit: MERGE,
-        principal: 'user:operator',
-        ref: 'https://example.com/runtime-receipt',
-      };
-      expect(
-        await f.orchestrator.observeDelivery(f.runId, receipt, () => false),
-      ).toMatchObject({ refused: true });
-      await f.orchestrator.observeDelivery(f.runId, receipt, () => true);
-      expect(
-        deriveItemState(
-          (await f.store.readTask(TASK))!.task,
-          await f.store.listRuns(TASK),
-        ),
       ).toBe('done');
     },
   );
+
+  it('retains required runtime ownership after protected merge until an authenticated receipt', async () => {
+    const f = await handedOff('required');
+    await f.orchestrator.observeDelivery(
+      f.runId,
+      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      () => false,
+    );
+    expect(
+      deriveItemState(
+        (await f.store.readTask(TASK))!.task,
+        await f.store.listRuns(TASK),
+      ),
+    ).toBe('running');
+    const receipt = {
+      kind: 'runtime-evidence' as const,
+      head: HEAD,
+      mergeCommit: MERGE,
+      principal: 'user:operator',
+      ref: 'https://example.com/runtime-receipt',
+    };
+    expect(
+      await f.orchestrator.observeDelivery(f.runId, receipt, () => false),
+    ).toMatchObject({ refused: true });
+    await f.orchestrator.observeDelivery(f.runId, receipt, () => true);
+    expect(
+      deriveItemState(
+        (await f.store.readTask(TASK))!.task,
+        await f.store.listRuns(TASK),
+      ),
+    ).toBe('done');
+  });
 });
 
 it('retains a parked correction binding while the existing authenticated human reply path resumes it', async () => {
