@@ -1,6 +1,6 @@
 # Delivery transport recovery
 
-Use this reference when Git publication or queue-only auto-merge fails.
+Use this reference when Git publication or auto-merge fails.
 [pr.md](pr.md) owns exact-head review/queueing and merge qualification;
 [stacked-prs.md](stacked-prs.md) owns permitted unique-commit replay. Shared
 delivery tools remain owned by `@jlapenna/repo-tools`; do not copy them here.
@@ -102,11 +102,10 @@ that followed the disarm, are two failures, and neither is quota or transport.
 Preserving the existing exact-head queue avoids the second one entirely.
 
 For that unchanged-head case, reconcile actual head, queue state, review state,
-closing scope and current checks, then act on what actually changed: qualify the
-real source composition at a fresh revision and arm that reviewed head through
-[pr.md](pr.md), rather than repeating the same arming request on a head GitHub
-already considers clean. Repeated identical queueing is a retry loop, not
-recovery.
+closing scope and current checks, then use the guarded CLI sequence in
+[pr.md](pr.md). `gh pr merge --auto` can merge an already-eligible head normally;
+it does not imply `--admin`. Do not manufacture a new revision just to satisfy
+the queue-only API. Repeating the same refused mutation is not recovery.
 
 Query the same login's visible quota independently:
 
@@ -124,8 +123,10 @@ with visible quota, as in #2329. Honor explicit Retry-After/reset guidance;
 elapsed time alone does not establish recovery.
 
 If state still proves an approved exact-head request is needed, allow at most
-one queue-only recovery. Prepare the same mutation/variables from [pr.md](pr.md)
-in a private JSON request file, including `expectedHeadOid`. This invocation
+one retry of the same operation after the state checks in [pr.md](pr.md).
+If the failed operation was a queue-only GraphQL request, preserve its exact
+mutation and variables in a private JSON request file, including
+`expectedHeadOid`. This invocation
 retains allowed metadata/categories without printing arbitrary response data:
 
 ```bash
