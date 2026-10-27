@@ -95,7 +95,7 @@ test('adapter validates before invoking and acknowledges actual provider spawn',
       environment: {
         PATH: '/usr/bin:/bin',
         HOME: directory,
-        GOOSE_CONFIG_DIR: directory,
+        GOOSE_PATH_ROOT: directory,
       },
       assertAllocation: async () => {
         /* This fixture exercises process handling only. */

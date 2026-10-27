@@ -114,7 +114,6 @@ export const jobProfileSchema = z.strictObject({
   allocation,
   // Exact approved input sets keep network and write scopes operator-owned.
   inputSets: z.array(inputs).min(1).max(100),
-  image: z.string().regex(/^\S+@sha256:[a-f0-9]{64}$/u),
 });
 export type JobProfile = z.infer<typeof jobProfileSchema>;
 

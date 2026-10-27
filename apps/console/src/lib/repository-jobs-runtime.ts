@@ -36,11 +36,6 @@ export function repositoryJobs(runtime: OrchestratorRouteDeps): RepositoryJobs {
             profiles.length,
           'Profile names must be unique',
         )
-        .refine(
-          (profiles) =>
-            new Set(profiles.map((profile) => profile.image)).size <= 1,
-          'Version 1 supports one Goose execution image',
-        )
         .parse(JSON.parse(process.env['AGENT_LCARS_JOB_PROFILES'] ?? '[]')),
     granted: (principal, repo) => {
       const grant = grantForPrincipal(principal);

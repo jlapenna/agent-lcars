@@ -22,7 +22,11 @@ import {
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
-import { runsContract, workPayloadSchema } from '@agent-lcars/work';
+import {
+  runsContract,
+  storedWorkPayloadSchema,
+  workPayloadSchema,
+} from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -692,7 +696,12 @@ export const runsRouter = os.router({
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
     const mode = run.params?.['mode'];
-    if (!mode || !['implement', 'review', 'reply'].includes(mode)) {
+    if (
+      !mode ||
+      !(run.pipeline === 'goose'
+        ? mode === 'recipe'
+        : ['implement', 'review', 'reply'].includes(mode))
+    ) {
       throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
     }
     const resumeSessionId = run.params?.['resumeSessionId'];
@@ -770,7 +779,7 @@ export const runsRouter = os.router({
     // an already-stored task, or corrupted data). Logged with the parse
     // issues for diagnosis; the caller gets only the generic 500, never the
     // detail or raw stored value.
-    const parsed = workPayloadSchema.safeParse(work);
+    const parsed = storedWorkPayloadSchema.safeParse(work);
     if (!parsed.success) {
       logger.error(
         'agent-lcars: claimed run has stored Work that no longer parses',

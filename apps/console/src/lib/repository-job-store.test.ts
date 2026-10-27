@@ -55,7 +55,6 @@ describe.skipIf(!emulatorHost)(
         principals: ['operator'],
         allocation,
         inputSets: [{}],
-        image: `example/goose@sha256:${id}`,
       });
       const artifact = validateJobResult(definition, {
         report: 'Nested JSON',

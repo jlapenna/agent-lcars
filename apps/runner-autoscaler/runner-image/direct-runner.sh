@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Direct-mode bootstrap for one claimed QueueExecutor run. It invokes the
-# `claude`, `codex`, and `opencode` providers through the run-token-
+# `claude`, `codex`, `opencode`, and `goose` providers through the run-token-
 # authenticated /api/work/v1/runs/* routes. Exact Claude SDK parity (its
 # internal max_turns enforcement, MCP wiring) is out of scope for this
 # sub-project -- ruling, recorded in the design spec.
@@ -104,6 +104,7 @@ case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;
   opencode) AGENT_NAME=OpenCode ;;
+  goose) AGENT_NAME=Goose ;;
   *) AGENT_NAME=Unknown ;;
 esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
@@ -251,6 +252,17 @@ HEARTBEAT_PID=$!
 if [ "$AGENT_NAME" = "Unknown" ]; then
   echo "FATAL: direct runner does not support pipeline '$PIPELINE'" >&2
   exit 1
+fi
+# Recipe jobs use the same activated worker, startup acknowledgement, heartbeat,
+# failure settlement and capacity retirement as every other supported runtime.
+if [ "$PIPELINE" = goose ]; then
+  [ "$MODE" = recipe ] || { echo 'FATAL: Goose requires recipe mode' >&2; exit 1; }
+  "$PROVIDER_PROCESS_NODE" "$RUNTIME_HELPERS_DIR/goose-job.mjs" &
+  GOOSE_JOB_PID=$!
+  trap 'kill -TERM "$GOOSE_JOB_PID" 2>/dev/null || true; wait "$GOOSE_JOB_PID" 2>/dev/null || true; exit 143' TERM INT
+  wait "$GOOSE_JOB_PID"
+  COMPLETED=1
+  exit 0
 fi
 case "$MODE" in
   implement|review|reply) ;;

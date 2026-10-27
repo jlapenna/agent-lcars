@@ -100,7 +100,6 @@ function fixture() {
     repositories: ['octo/repo'],
     principals: ['user:joe'],
     inputSets: [{ scope: 'inventory', mode: 'report' }],
-    image: `example/worker@sha256:${'b'.repeat(64)}`,
   };
   const store = new TestStore();
   const native = new MemoryStore();

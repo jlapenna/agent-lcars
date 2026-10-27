@@ -1,14 +1,9 @@
 package main
 
-import (
-	core "k8s.io/api/core/v1"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestGooseJobRequiresReceiptAndIsolatesCredentials(t *testing.T) {
+func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 	q, _ := kubeQueueFixture()
-	t.Setenv("LCARS_GOOSE_IMAGE", "registry.example/goose@sha256:"+strings.Repeat("a", 64))
 	launch := directRunnerLaunch{runID: "work:recipe/r1", pipeline: "goose"}
 	if _, err := q.job(launch); err == nil {
 		t.Fatal("accepted recipe without capacity receipt")
@@ -21,46 +16,40 @@ func TestGooseJobRequiresReceiptAndIsolatesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	container := job.Spec.Template.Spec.Containers[0]
-	if len(job.Spec.Template.Spec.Containers) != 2 || job.Spec.Template.Spec.ShareProcessNamespace == nil || *job.Spec.Template.Spec.ShareProcessNamespace {
-		t.Fatal("recipe must have a separate process namespace")
+	if len(job.Spec.Template.Spec.Containers) != 1 {
+		t.Fatal("Goose must use the normal single runner")
 	}
-	recipe := job.Spec.Template.Spec.Containers[1]
-	if len(recipe.Env) != 1 || recipe.Env[0].Name != "LCARS_JOB_ROLE" {
-		t.Fatal("recipe received control-plane environment")
-	}
-	for _, mount := range recipe.VolumeMounts {
-		if mount.Name == "worker-identity" {
-			t.Fatal("recipe received worker identity")
-		}
-	}
-	for _, mount := range container.VolumeMounts {
-		if mount.Name == "credentials" {
-			t.Fatal("bootstrap received tool credentials")
-		}
+	c := job.Spec.Template.Spec.Containers[0]
+	if c.Image != q.image || len(c.Command) != 0 {
+		t.Fatal("Goose bypassed the supported runner entrypoint")
 	}
 	for name, expected := range queueResources(q.config.Requests) {
-		sum := container.Resources.Requests[name]
-		sum.Add(recipe.Resources.Requests[name])
-		bootstrapLimit := container.Resources.Limits[name]
-		recipeLimit := recipe.Resources.Limits[name]
-		if sum.Cmp(expected) != 0 || bootstrapLimit.Cmp(container.Resources.Requests[name]) != 0 || recipeLimit.Cmp(recipe.Resources.Requests[name]) != 0 {
-			t.Fatal("container resources do not equal the whole-job allocation")
+		request, limit := c.Resources.Requests[name], c.Resources.Limits[name]
+		if request.Cmp(expected) != 0 || limit.Cmp(expected) != 0 {
+			t.Fatal("allocation differs from normal lane")
 		}
 	}
-	if container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
-		t.Fatal("writable root")
-	}
-	if len(container.Command) != 2 || !strings.HasSuffix(container.Command[1], "goose-worker.mjs") {
-		t.Fatal("wrong worker")
-	}
-	for _, volume := range job.Spec.Template.Spec.Volumes {
-		if volume.Name == "credentials" && volume.Secret.SecretName != "lcars-goose-profile" {
-			t.Fatal("coding credentials exposed")
+	found := map[string]bool{}
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Secret != nil {
+			for _, item := range v.Secret.Items {
+				found[item.Key] = true
+			}
 		}
-		if volume.Name == "work" && volume.EmptyDir.Medium != core.StorageMediumMemory {
-			t.Fatal("scratch has no hard boundary")
-		}
+	}
+	if !found["goose-config.yaml"] || !found["goose-environment.json"] || found["claude-code-oauth-token"] || found["opencode-llm-api-key"] {
+		t.Fatal("wrong provider credentials projected")
+	}
+	if *job.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
+		t.Fatal("recipe deadline not bounded")
+	}
+	launch.placementAware = true
+	queued, err := q.job(launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued.Spec.ActiveDeadlineSeconds != nil || *queued.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
+		t.Fatal("queue wait consumed recipe execution deadline")
 	}
 	q.config.Limits["cpu"] = "3"
 	if _, err = q.job(launch); err == nil {

@@ -72,24 +72,27 @@ current direct-agent lane is 2 CPU / 6 GiB / 24 GiB. Setup, tools, process
 descendants, credentials, image layers, caches, scratch and artifacts are counted
 together. No accelerator or second host contributes capacity.
 
-Goose runs in its own container beside the authenticated bootstrap container in
-one QueueExecutor Pod, with separate PID namespaces and no run-token or worker
-identity mount in the recipe container. The bootstrap receives 0.1 CPU and
-256 MiB; Goose receives the remainder of the declared whole-job allocation.
-Requests equal limits for both containers and their sum equals the manifest.
-Both use an immutable image, a read-only root and bounded memory-backed scratch.
-The adapter verifies its actual component cgroup and the complete image/scratch
-storage envelope before executing. Kubernetes ephemeral
-storage declarations alone are not hard quota proof. Unsupported enforcement or
-profile configuration refuses execution. Failures retain their resource cause;
-no retry increases the allocation. Production deployment must supply and qualify
-the hard storage boundary before activation.
+Goose is installed, versioned and published in the normal LCARS runner image,
+using `goose-version` and checksum-verified Linux release artifacts for amd64
+and arm64. Native QueueExecutor launches the same single direct-runner container
+and normal resource envelope used by the supported stack. There is no separate
+Goose image, bootstrap container, storage receipt or scheduler.
+
+The direct runner performs its existing activation retry, startup heartbeat,
+periodic heartbeat and failure settlement before invoking the recipe adapter.
+The adapter checks the admitted CPU/memory allocation, runs Goose once, forwards
+cancellation, bounds output and reports through the token-fenced recipe endpoint.
+Native Queue capacity admission, storage accounting and retirement remain the
+owners of resource enforcement. A failed capped run remains failed.
 
 The adapter requests Goose's JSON machine envelope, requires completed status,
 and validates only the final assistant result. Intermediate tool output cannot
-be mistaken for success. Transcript and artifact bounds fail closed. Run tokens
-stay in the bootstrap container. Only recipe inputs, the baseline and bounded
-output artifacts cross the shared scratch volume.
+be mistaken for success. Provider credentials use the runner's existing projected
+Secret mechanism. The Goose child receives only the configured provider environment;
+this is the same trusted single-container execution boundary as other runtimes.
+The adapter copies configuration into a private `GOOSE_PATH_ROOT` and removes that
+private state after completion. Profiles must configure the intended tools and model;
+their names alone grant no capabilities.
 
 ## Operator surface and rollout
 
@@ -123,26 +126,27 @@ outside this local implementation task.
 
 `AGENT_LCARS_JOB_PROFILES` is a JSON array of operator-owned profiles. Each entry
 names `name`, allowed `repositories`, allowed LCARS `principals`, exact
-`allocation` (`cpu`, `memory`, `storage`), approved `inputSets`, and a digest-pinned
-`image`. Input sets are exact string maps; the job cannot widen them at invocation.
-The operator and executor Work grants must explicitly include `goose`. Public
-coding intake still accepts only coding pipelines.
+`allocation` (`cpu`, `memory`, `storage`) and approved `inputSets`. Input sets are
+exact string maps; the job cannot widen them at invocation. The operator and
+executor Work grants must explicitly include `goose`. Public coding intake still
+accepts only coding pipelines; Goose is selected by repository recipe admission.
 
-A receipt-backed QueueExecutor pool selects `LCARS_GOOSE_IMAGE`. Its resource
-configuration must match the profile's whole-job allocation. One pool supplies
-one tool/credential environment through the `lcars-goose-profile` Secret, with
-`environment.json` and `config.yaml`. Profiles assigned to that pool must share
-that environment and image. Version 1 has one Goose execution environment across
+A receipt-backed QueueExecutor pool uses its normal configured runner image and
+resources. Its whole-job allocation must match the execution profile. The existing
+runner credential Secret supplies `goose-environment.json` (a string-valued map of
+provider environment variables) and `goose-config.yaml` (the operator-owned Goose
+configuration). Version 1 supports one shared Goose tool/model environment across
 the fleet; profiles narrow repository/principal/input admission, not tool authority.
-Routing distinct tool environments is outside this version. The recipe container copies the configuration into private writable
-scratch. The bootstrap container never mounts that Secret.
+Do not add model credentials to repository recipes. The image publication lifecycle
+is the existing supported stack lifecycle; this local change does not publish it.
 
-Build `apps/runner-autoscaler/runner-image/Goose.Dockerfile` with a qualified
-digest-pinned `GOOSE_BASE_IMAGE` containing Node, Goose and the approved tools.
-The final image flattens inherited layers and records its measured immutable
-filesystem budget. The runtime reserves both compressed and unpacked image
-storage, the complete memory-backed scratch envelope and runtime overhead.
-Publishing an image and qualifying the generated Pod are separate release actions.
+To qualify a candidate runtime, install the pinned Goose release with
+`install-goose-release.sh`, then run `node --test runtime/goose-job.integration.test.mjs`
+from the runner-image directory inside the supported worker allocation with the
+fixture credentials mounted as documented by that test. The fixture exercises the
+real CLI and bootstrap without contacting a paid provider or scanning a network.
+A real audit and schedule cutover remain deployment acceptance, not a claim made by
+the transport fixture.
 
 The authenticated `/jobs` screen uses these Work API endpoints:
 

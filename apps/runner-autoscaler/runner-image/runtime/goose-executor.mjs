@@ -14,7 +14,7 @@ export function gooseExecutor({
 }) {
   if (typeof assertAllocation !== 'function')
     throw new Error('an enforced allocation verifier is required');
-  if (!environment?.HOME || !environment.GOOSE_CONFIG_DIR)
+  if (!environment?.HOME || !environment.GOOSE_PATH_ROOT)
     throw new Error('isolated profile environment is required');
   return async ({ run, baseline, signal }) => {
     await assertAllocation(run.definition.job.execution.resources);
@@ -167,9 +167,8 @@ export async function subprocess(
 }
 
 // Linux allocation guard. This verifies inherited CPU/memory/swap enforcement;
-// filesystem enforcement must be verified by the host adapter too. A k8s
-// ephemeral-storage declaration alone is deliberately not accepted as proof.
-export async function cgroupAllocation(resources, { verifyStorage }) {
+// storage admission and enforcement belong to the existing native Queue lane.
+export async function cgroupAllocation(resources) {
   const membership = await readFile('/proc/self/cgroup', 'utf8');
   const relative = membership
     .trim()
@@ -201,11 +200,5 @@ export async function cgroupAllocation(resources, { verifyStorage }) {
     throw new Error(
       'execution is not inside the required CPU/memory/no-swap limits',
     );
-  }
-  if (
-    typeof verifyStorage !== 'function' ||
-    !(await verifyStorage(resources.limits.storage))
-  ) {
-    throw new Error('hard storage enforcement is not verified');
   }
 }

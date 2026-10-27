@@ -1005,7 +1005,7 @@ const runBriefSharedSchema = {
  * branch rolls out. */
 const nativeRunBriefSchema = z.strictObject({
   id: workIdSchema,
-  spec: workSpecSchema,
+  spec: storedWorkSpecSchema,
   anchor: z.strictObject({
     type: z.literal('work'),
     id: workIdSchema,

@@ -634,8 +634,8 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	case "opencode":
 		providerKey = "opencode-llm-api-key"
 	case "goose":
-		if l.receipt == nil || q.config.Capacity == nil || !strings.Contains(os.Getenv("LCARS_GOOSE_IMAGE"), "@sha256:") {
-			return nil, fmt.Errorf("goose requires receipt-backed capacity and an immutable LCARS_GOOSE_IMAGE")
+		if l.receipt == nil || q.config.Capacity == nil {
+			return nil, fmt.Errorf("goose requires receipt-backed capacity")
 		}
 		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
 			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
@@ -651,6 +651,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	items := []core.KeyToPath{{Key: "telemetry-writer.json", Path: "telemetry-writer.json"}}
 	if providerKey != "" {
 		items = append(items, core.KeyToPath{Key: providerKey, Path: providerKey})
+	}
+	if l.pipeline == "goose" {
+		items = append(items, core.KeyToPath{Key: "goose-environment.json", Path: "goose-environment.json"}, core.KeyToPath{Key: "goose-config.yaml", Path: "goose-config.yaml"})
 	}
 	zero := int32(0)
 	uid := int64(1001)
@@ -729,63 +732,13 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		q.configureReceiptJob(job, l)
 	}
 	if l.pipeline == "goose" {
-		container := &job.Spec.Template.Spec.Containers[0]
-		container.Image = os.Getenv("LCARS_GOOSE_IMAGE")
-		container.Command = []string{"node", "/usr/local/lib/agent-lcars/runtime/goose-worker.mjs"}
-		container.Env = append(container.Env, core.EnvVar{Name: "LCARS_GOOSE_IMAGE", Value: container.Image})
-		container.SecurityContext.ReadOnlyRootFilesystem = &yes
-		container.Env = append(container.Env, core.EnvVar{Name: "LCARS_JOB_ROLE", Value: "bootstrap"})
-		// Goose gets only its profile configuration, never coding-provider or
-		// telemetry credentials. The run identity remains bootstrap-owned.
-		for i := range job.Spec.Template.Spec.Volumes {
-			v := &job.Spec.Template.Spec.Volumes[i]
-			if v.Name == "credentials" {
-				v.Secret = &core.SecretVolumeSource{SecretName: "lcars-goose-profile", DefaultMode: &mode}
-			}
-			if v.Name == "work" {
-				size := resource.MustParse("1Gi")
-				v.EmptyDir = &core.EmptyDirVolumeSource{Medium: core.StorageMediumMemory, SizeLimit: &size}
-			}
-		}
-		for i := range container.VolumeMounts {
-			if container.VolumeMounts[i].Name == "credentials" {
-				container.VolumeMounts[i].MountPath = "/etc/lcars/goose"
-			}
-			if container.VolumeMounts[i].Name == "work" {
-				container.VolumeMounts[i].MountPath = "/tmp"
-			}
-		}
-		// Split one allocation, never add a second allocation or share process
-		// namespaces. Only the bootstrap receives the run token/worker identity.
-		recipe := container.DeepCopy()
-		recipe.Name = "goose"
-		recipe.Env = []core.EnvVar{{Name: "LCARS_JOB_ROLE", Value: "recipe"}}
-		recipe.VolumeMounts = []core.VolumeMount{{Name: "work", MountPath: "/tmp"}, {Name: "credentials", MountPath: "/etc/lcars/goose", ReadOnly: true}}
-		bootstrapMounts := []core.VolumeMount{}
-		for _, mount := range container.VolumeMounts {
-			if mount.Name != "credentials" {
-				bootstrapMounts = append(bootstrapMounts, mount)
-			}
-		}
-		container.VolumeMounts = bootstrapMounts
-		bootstrapResources := core.ResourceList{core.ResourceCPU: resource.MustParse("100m"), core.ResourceMemory: resource.MustParse("256Mi"), core.ResourceEphemeralStorage: resource.MustParse("1Gi")}
-		recipeResources := queueResources(q.config.Requests)
-		for name, amount := range bootstrapResources {
-			remaining := recipeResources[name]
-			remaining.Sub(amount)
-			if remaining.Sign() <= 0 {
-				return nil, fmt.Errorf("recipe allocation cannot fit bootstrap and Goose")
-			}
-			recipeResources[name] = remaining
-		}
-		container.Resources = core.ResourceRequirements{Requests: bootstrapResources, Limits: bootstrapResources.DeepCopy()}
-		recipe.Resources = core.ResourceRequirements{Requests: recipeResources, Limits: recipeResources.DeepCopy()}
-		job.Spec.Template.Spec.ShareProcessNamespace = &no
-		job.Spec.Template.Spec.Containers = append(job.Spec.Template.Spec.Containers, *recipe)
 		deadline = 1800
-		job.Spec.ActiveDeadlineSeconds = &deadline
+		if !l.placementAware {
+			job.Spec.ActiveDeadlineSeconds = &deadline
+		}
 		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
 	}
+
 	return job, nil
 }
 func ptr[T any](v T) *T { return &v }
