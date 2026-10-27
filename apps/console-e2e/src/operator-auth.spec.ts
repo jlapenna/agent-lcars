@@ -202,7 +202,10 @@ test.describe('Work operator access', () => {
       page
         .getByRole('navigation', { name: 'Console sections' })
         .getByRole('link'),
-    ).toHaveCount(7);
+    ).toHaveCount(8);
+    await expect(
+      page.getByRole('link', { name: 'Jobs', exact: true }),
+    ).toHaveAttribute('href', '/jobs');
     expect((await page.request.get('/api/runner-status')).status()).toBe(200);
     await page.goto('/login');
     await expect(page).toHaveURL('/');

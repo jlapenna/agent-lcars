@@ -132,6 +132,7 @@ test.describe('LCARS pill nav interaction states', () => {
       'Agents',
       'Shuttlebay',
       'Work',
+      'Jobs',
       'Sessions',
       'Costs',
     ]) {

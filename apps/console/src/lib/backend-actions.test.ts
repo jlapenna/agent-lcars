@@ -6,8 +6,20 @@ import {
   quickTaskDigest as contractQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from 'vitest';
 
+import {
+  configureTestWatchedRepos,
+  TEST_HOME_REPOSITORY,
+} from '../test-support/watched-repos';
 import {
   ActionError,
   approveAndMergePr,
@@ -66,9 +78,12 @@ vi.mock('./orchestrator-runtime', () => ({
 }));
 
 beforeEach(() => {
+  configureTestWatchedRepos([TEST_HOME_REPOSITORY, DEFAULT_REPO]);
   (createOrchestratorRuntime as Mock).mockReset();
   refreshCurrentGithubAnchorProjection.mockReset();
 });
+
+afterEach(() => configureTestWatchedRepos([TEST_HOME_REPOSITORY]));
 
 /** Builds a fresh orchestrator runtime the same shape
  * `orchestrator-runtime.ts`'s `createOrchestratorRuntime` does - a
