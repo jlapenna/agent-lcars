@@ -732,7 +732,7 @@ never prints the secret.
 The CLI is packaged with `apps/telemetry-watcher`. It is the terminal
 counterpart of the Work destination.
 
-- `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>] [--deliverable report]`
+- `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--deliverable report]`
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id> [--fallback-pipelines <ordered,csv|none>]`
 - `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`

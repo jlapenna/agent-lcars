@@ -760,7 +760,7 @@ async function deliverNativeOutcome(
       run.state === 'finished' && run.result?.summary === PARK_OUTCOME_SUMMARY,
     ...(finalDelivery
       ? {
-          message: `Delivery complete: protected merge ${run.delivery?.mergeCommit}.${run.delivery?.runtimeEvidence === undefined ? '' : ` Runtime receipt: ${run.delivery.runtimeEvidence.ref}.`}`,
+          message: `Delivery complete: protected merge ${run.delivery?.mergeCommit}.`,
         }
       : run.result?.message === undefined
         ? {}

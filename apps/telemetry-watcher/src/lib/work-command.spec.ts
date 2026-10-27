@@ -741,7 +741,7 @@ import { join } from 'node:path';
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 
 describe('canceled CLI delivery presentation', () => {
-  it.each(['waiting', 'runtime-required'] as const)(
+  it.each(['waiting'] as const)(
     'canceled CLI commands retain canceled state with %s history',
     async (deliveryState) => {
       const value = {
@@ -760,11 +760,7 @@ describe('canceled CLI delivery presentation', () => {
               baseRef: 'main',
               head: 'a'.repeat(40),
               state: deliveryState,
-              runtimeGate: 'required',
               observedAt: 't',
-              ...(deliveryState === 'runtime-required'
-                ? { mergeCommit: 'b'.repeat(40) }
-                : {}),
             },
           },
         ],

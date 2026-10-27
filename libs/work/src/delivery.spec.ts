@@ -20,7 +20,6 @@ const MERGE = 'b'.repeat(40);
 const CLAIM = 'c'.repeat(64);
 
 async function handedOff(
-  runtimeGate: DeliveryBinding['runtimeGate'] = 'none',
   pipeline = 'claude',
   taskId: TaskId = TASK,
   state: 'waiting' | 'complete' = 'waiting',
@@ -54,7 +53,6 @@ async function handedOff(
     head: HEAD,
     state,
     ...(state === 'complete' ? { mergeCommit: MERGE } : {}),
-    runtimeGate,
     observedAt: NOW,
   };
   const settled = await orchestrator.report(
@@ -99,7 +97,7 @@ describe('ready deliverable logical ownership', () => {
   });
 
   it('does not replace unresolved Codex cleanup debt with delivery state', async () => {
-    const f = await handedOff('none', 'codex');
+    const f = await handedOff('codex');
     expect((await f.store.readRun(f.runId))?.credentialOperation).toMatchObject(
       {
         kind: 'cleanup',
@@ -207,48 +205,13 @@ describe('ready deliverable logical ownership', () => {
     expect((await f.store.listRuns(TASK)).length).toBe(1);
   });
 
-  it.each(['none', 'unknown'] as const)(
-    'finishes logical delivery after exact protected landing with %s runtime policy',
-    async (runtimeGate) => {
-      const f = await handedOff(runtimeGate);
-      await f.orchestrator.observeDelivery(
-        f.runId,
-        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
-        () => false,
-      );
-      expect(
-        deriveItemState(
-          (await f.store.readTask(TASK))!.task,
-          await f.store.listRuns(TASK),
-        ),
-      ).toBe('done');
-    },
-  );
-
-  it('retains required runtime ownership after protected merge until an authenticated receipt', async () => {
-    const f = await handedOff('required');
+  it('finishes logical delivery when its PR merges', async () => {
+    const f = await handedOff();
     await f.orchestrator.observeDelivery(
       f.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
-    expect(
-      deriveItemState(
-        (await f.store.readTask(TASK))!.task,
-        await f.store.listRuns(TASK),
-      ),
-    ).toBe('running');
-    const receipt = {
-      kind: 'runtime-evidence' as const,
-      head: HEAD,
-      mergeCommit: MERGE,
-      principal: 'user:operator',
-      ref: 'https://example.com/runtime-receipt',
-    };
-    expect(
-      await f.orchestrator.observeDelivery(f.runId, receipt, () => false),
-    ).toMatchObject({ refused: true });
-    await f.orchestrator.observeDelivery(f.runId, receipt, () => true);
     expect(
       deriveItemState(
         (await f.store.readTask(TASK))!.task,
@@ -298,7 +261,7 @@ it('retains a parked correction binding while the existing authenticated human r
 describe('native delivery terminal authority', () => {
   const native = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' };
   it('immediate native complete handoff retains execution and emits the distinct final event', async () => {
-    const f = await handedOff('none', 'claude', native, 'complete');
+    const f = await handedOff('claude', native, 'complete');
     const entries = await f.store.claimPendingOutbox({
       now: '2026-10-13T10:01:00.000Z',
       leaseExpiresAt: '2026-10-13T10:02:00.000Z',
@@ -325,13 +288,13 @@ describe('native delivery terminal authority', () => {
     });
   });
   it.each([
-    { kind: 'protected-merge' as const, head: HEAD, mergeCommit: MERGE },
+    { kind: 'merged' as const, head: HEAD, mergeCommit: MERGE },
     { kind: 'revision' as const, head: HEAD, newHead: MERGE },
     { kind: 'correction' as const, head: HEAD, reason: 'red checks' },
   ])(
     'closed native delivery rejects $kind without changing history',
     async (observation) => {
-      const f = await handedOff('none', 'claude', native);
+      const f = await handedOff('claude', native);
       const original = (await f.store.readRun(f.runId))!;
       const binding = (await f.store.readTask(native))!.task.delivery;
       expect(isRefusal(await f.orchestrator.close(native))).toBe(false);
@@ -363,26 +326,15 @@ describe('native delivery terminal authority', () => {
       ).toBe(true);
     },
   );
-  it('closed native delivery refuses a later runtime receipt for its protected merge', async () => {
-    const f = await handedOff('required', 'claude', native);
-    await f.orchestrator.observeDelivery(
-      f.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
-      () => true,
-    );
+  it('closed native delivery refuses a later merge observation', async () => {
+    const f = await handedOff('claude', native);
     const binding = (await f.store.readTask(native))!.task.delivery;
-    expect(binding?.state).toBe('runtime-required');
+    expect(binding?.state).toBe('waiting');
     expect(isRefusal(await f.orchestrator.close(native))).toBe(false);
     expect(
       await f.orchestrator.observeDelivery(
         f.runId,
-        {
-          kind: 'runtime-evidence',
-          head: HEAD,
-          mergeCommit: MERGE,
-          principal: 'user:operator',
-          ref: 'https://example.test/proof',
-        },
+        { kind: 'merged', head: HEAD, mergeCommit: MERGE },
         () => true,
       ),
     ).toMatchObject({ refused: true, reason: 'task-closed' });
@@ -393,7 +345,7 @@ describe('native delivery terminal authority', () => {
 describe('native item cancellation intent preserves run-only semantics', () => {
   const native = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4H' };
   async function activeRecovery(kind: 'correction' | 'reply') {
-    const f = await handedOff('none', 'claude', native);
+    const f = await handedOff('claude', native);
     const correction = await f.orchestrator.observeDelivery(
       f.runId,
       { kind: 'correction', head: HEAD, reason: 'review change' },
@@ -437,7 +389,7 @@ describe('native item cancellation intent preserves run-only semantics', () => {
       expect(
         await f.orchestrator.observeDelivery(
           f.runId,
-          { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+          { kind: 'merged', head: HEAD, mergeCommit: MERGE },
           () => true,
         ),
       ).toMatchObject({ refused: true, reason: 'task-closed' });
@@ -469,7 +421,7 @@ describe('native item cancellation intent preserves run-only semantics', () => {
     expect((await f.store.readRun(f.recovery.runId))!.state).toBe('canceled');
   });
   it('native cancellation credential operation remains blocked by the existing reservation', async () => {
-    const f = await handedOff('none', 'codex', native, 'waiting', false);
+    const f = await handedOff('codex', native, 'waiting', false);
     const reservation = await f.store.transactRun({
       runId: f.runId,
       decide: ({ task, run }) => {

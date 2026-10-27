@@ -141,7 +141,7 @@ cycles, and cross-provider successors drop session/transcript resume artifacts
 while retaining the human request and context. Work/task/conversation views
 and outcome delivery identify fresh fallback attempts. Source tests and local
 emulator proof qualify this mechanism; protected CI, normal deployment and a
-real provider-limit journey remain separate delivery and runtime gates.
+real provider-limit journey remain separate delivery gates.
 
 ## Console acknowledgement and maintenance
 
@@ -307,8 +307,8 @@ monitoring; nothing re-verifies or corrects a merged PR. Actionable same-head
 feedback on an open PR remains a bounded correction. Normal Run
 settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
-ownership; Run.delivery exposes waiting, runtime-required or complete separately
-from physical Run execution. The durable monitor-delivery outbox is consumed by
+ownership; Run.delivery exposes waiting or complete separately from physical
+Run execution. The durable monitor-delivery outbox is consumed by
 the existing maintenance/drain clock, not another worker or capacity ledger.
 
 Current exact-head GitHub reads advance the binding under the existing Task+Run
@@ -323,12 +323,10 @@ and repository policy. Credential debt and physically retained
 claims remain owned by the existing queue/capacity barriers.
 
 An auto-merge arm alone is not landing; the merged PR and its merge commit are.
-Trusted immutable Work intake may name deliveryRuntime:none or
-required (CLI create --delivery-runtime); a missing policy is recorded as
-unknown and needs no runtime receipt. Only required runtime work stays running
-after landing until the operator-only POST /api/work/v1/delivery/{runId}/evidence
-records the exact head, merge commit and runtime receipt. This route is a source
-capability, not authorization to perform a live mutation or deploy.
+A delivery binding has two states: waiting until the PR merges, then complete.
+A PR closed without merging, or merged into a branch other than the bound
+target, drops the binding. There is no runtime-receipt state; a WorkSpec's
+legacy `deliveryRuntime` field is accepted and ignored.
 
 Native logical completion emits a distinct `delivery-outcome/<runId>` event
 through the existing outcome outbox and session-expiry owner. The original

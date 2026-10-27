@@ -39,8 +39,8 @@ export const workSpecSchema = z
     /** Every operator may select priority; absence preserves historical FIFO. */
     priority: z.enum(QUEUE_PRIORITIES).default('normal'),
     fallbackPipelines: fallbackPipelinesSchema.optional(),
-    /** Trusted immutable intake policy. Omitted legacy/implicit requests retain
-     * an unknown runtime gate rather than letting a worker waive evidence. */
+    /** Retired runtime-receipt policy; ignored. Still accepted because stored
+     * items and schedules are immutable and some carry it. */
     deliveryRuntime: z.enum(['none', 'required']).optional(),
     /** Trusted immutable intake for read-only work whose result is findings,
      * not a change: the worker's final message is the report and the item

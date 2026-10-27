@@ -280,7 +280,6 @@ export async function readyDeliveryBinding(
     baseRef: pr.base.ref,
     head: pr.head.sha,
     state: 'waiting',
-    runtimeGate: payload.spec.deliveryRuntime ?? 'unknown',
     observedAt: now,
   };
   if (pr.merged) {
@@ -289,8 +288,7 @@ export async function readyDeliveryBinding(
     return {
       ...binding,
       mergeCommit: pr.merge_commit_sha,
-      state:
-        binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
+      state: 'complete',
     };
   }
   return binding;
@@ -440,7 +438,7 @@ export async function observeGithubDelivery(
     return { kind: 'withdrawn', head: binding.head };
   if (pr.merged && pr.merge_commit_sha !== null)
     return {
-      kind: 'protected-merge',
+      kind: 'merged',
       head: binding.head,
       mergeCommit: pr.merge_commit_sha,
     };

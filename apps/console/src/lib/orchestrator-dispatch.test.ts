@@ -785,10 +785,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
   const HEAD = 'a'.repeat(40),
     MERGE = 'b'.repeat(40);
   afterEach(() => vi.unstubAllEnvs());
-  async function reported(
-    runtimeGate: 'none' | 'required' = 'none',
-    state: 'waiting' | 'complete' = 'waiting',
-  ) {
+  async function reported(state: 'waiting' | 'complete' = 'waiting') {
     vi.stubEnv(
       'AGENT_LCARS_OUTCOME_WEBHOOKS',
       JSON.stringify({
@@ -821,7 +818,6 @@ describe('native delivery finalization reuses terminal outcome and session expir
         head: HEAD,
         state,
         ...(state === 'complete' ? { mergeCommit: MERGE } : {}),
-        runtimeGate,
         observedAt: NOW,
       },
     );
@@ -842,8 +838,8 @@ describe('native delivery finalization reuses terminal outcome and session expir
     if (isRefusal(decision)) throw new Error(decision.reason);
     return { ...f, run, original, fetchImpl, deliver, deps, decision };
   }
-  async function waiting(runtimeGate: 'none' | 'required' = 'none') {
-    const f = await reported(runtimeGate);
+  async function waiting() {
+    const f = await reported();
     await drainOutbox(f.deps);
     expect(f.fetchImpl).not.toHaveBeenCalled();
     expect(f.deliver).toHaveBeenCalledOnce();
@@ -851,10 +847,10 @@ describe('native delivery finalization reuses terminal outcome and session expir
     return f;
   }
   it('emits one distinct final native event and expiry after none runtime gating, preserving the original result', async () => {
-    const f = await waiting('none');
+    const f = await waiting();
     const landing = await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
     expect(isRefusal(landing)).toBe(false);
@@ -873,7 +869,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
     await drainOutbox(f.deps);
@@ -881,28 +877,14 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect(f.fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it('emits one distinct final native event and expiry after required runtime gating, preserving the original result', async () => {
-    const f = await waiting('required');
+  it('emits one distinct final native event and expiry on merge, preserving the original result', async () => {
+    const f = await waiting();
     const landing = await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
     expect(isRefusal(landing)).toBe(false);
-    expect((await drainOutbox(f.deps)).reported).toEqual([]);
-    expect(f.fetchImpl).not.toHaveBeenCalled();
-    const runtime = await f.orchestrator.observeDelivery(
-      f.run.runId,
-      {
-        kind: 'runtime-evidence',
-        head: HEAD,
-        mergeCommit: MERGE,
-        principal: 'user:operator',
-        ref: 'https://example.test/runtime-proof',
-      },
-      () => true,
-    );
-    expect(isRefusal(runtime)).toBe(false);
 
     const final = await drainOutbox(f.deps);
     expect(final.reported).toEqual([f.run.runId]);
@@ -919,7 +901,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect((await f.store.readRun(f.run.runId))?.result).toEqual(f.original);
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
     await drainOutbox(f.deps);
@@ -930,7 +912,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     const f = await waiting();
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => false,
     );
     f.deliver.mockRejectedValueOnce(new Error('lost response'));
@@ -949,7 +931,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect(f.deliver).toHaveBeenCalledTimes(3);
   });
   it('immediate native complete delivery emits one final marker and owns expiry once', async () => {
-    const f = await reported('none', 'complete');
+    const f = await reported('complete');
     expect(f.decision.outbox.map((entry) => entry.entryId)).toContain(
       `outcome/${f.run.runId}`,
     );
@@ -1060,7 +1042,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     const f = await waiting();
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => true,
     );
     const later = await laterPark(f);
@@ -1082,7 +1064,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     const f = await waiting();
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => true,
     );
     await drainOutbox(f.deps);
@@ -1137,7 +1119,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     expect(
       await f.orchestrator.observeDelivery(
         f.run.runId,
-        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        { kind: 'merged', head: HEAD, mergeCommit: MERGE },
         () => true,
       ),
     ).toMatchObject({ refused: true, reason: 'task-closed' });
@@ -1147,7 +1129,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
     const f = await waiting();
     await f.orchestrator.observeDelivery(
       f.run.runId,
-      { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+      { kind: 'merged', head: HEAD, mergeCommit: MERGE },
       () => true,
     );
     const originalBinding = (await f.store.readRun(f.run.runId))!.delivery;
@@ -1297,7 +1279,7 @@ describe('native delivery finalization reuses terminal outcome and session expir
       const f = await waiting();
       await f.orchestrator.observeDelivery(
         f.run.runId,
-        { kind: 'protected-merge', head: HEAD, mergeCommit: MERGE },
+        { kind: 'merged', head: HEAD, mergeCommit: MERGE },
         () => true,
       );
       const task = (await f.store.readTask(f.run.task))!;

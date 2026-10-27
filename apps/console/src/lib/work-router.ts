@@ -15,7 +15,6 @@ import {
   itemsContract,
   type MaintenanceTickOutput,
   workPayloadSchema,
-  type WorkSpec,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
@@ -27,7 +26,6 @@ import { githubDispatchRouter } from './github-dispatch-router';
 import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
-import { grantForPrincipal } from './work-grants';
 import {
   forbiddenReason,
   isWorkOperatorPrincipal,
@@ -123,64 +121,6 @@ const ownerReader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
-  deliveryEvidence: operator.deliveryEvidence.handler(
-    async ({ input, context, errors }) => {
-      const run = await context.runtime.store.readRun(input.runId);
-      const task =
-        run === undefined
-          ? undefined
-          : (await context.runtime.store.readTask(run.task))?.task;
-      const payload = workPayloadSchema.safeParse(task?.work);
-      if (
-        run === undefined ||
-        !payload.success ||
-        forbiddenReason(context.principal, {
-          ...payload.data.spec,
-          pipeline: run.pipeline as WorkSpec['pipeline'],
-        }) !== undefined ||
-        (context.principal.sourceRepository !== undefined &&
-          context.principal.sourceRepository !==
-            workRepository(payload.data.spec))
-      )
-        throw errors.FORBIDDEN();
-      const decision = await context.runtime.orchestrator.observeDelivery(
-        run.runId,
-        {
-          kind: 'runtime-evidence',
-          head: input.head,
-          mergeCommit: input.mergeCommit,
-          principal: context.principal.principal,
-          ref: input.ref,
-        },
-        (currentTask, currentRun) => {
-          const currentWork = workPayloadSchema.safeParse(currentTask.work);
-          if (
-            !currentWork.success ||
-            currentTask.delivery?.repo !==
-              workRepository(currentWork.data.spec) ||
-            forbiddenReason(context.principal, {
-              ...currentWork.data.spec,
-              pipeline: currentRun.pipeline as WorkSpec['pipeline'],
-            }) !== undefined ||
-            (context.principal.sourceRepository !== undefined &&
-              context.principal.sourceRepository !==
-                workRepository(currentWork.data.spec))
-          )
-            return false;
-          const grant = grantForPrincipal(context.principal.principal);
-          return (
-            grant?.scopes.includes('work.operator') === true &&
-            grant.pipelines.includes(
-              currentRun.pipeline as 'claude' | 'codex' | 'opencode',
-            )
-          );
-        },
-      );
-      if (isRefusal(decision)) throw errors.CONFLICT();
-      await context.runtime.drain();
-      return { runId: run.runId, state: 'complete' as const };
-    },
-  ),
   lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
     async ({ context }) => {
       const observedAt = context.now().toISOString();

@@ -12,19 +12,14 @@ import { type DeliveryBinding, type Run, type Task } from './model';
 /** Exact server observation; partial GitHub/projection data has no authority. */
 export type DeliveryObservation =
   | { kind: 'waiting'; head: string }
-  /** The PR was closed without merging: nothing left to deliver. */
+  | { kind: 'merged'; head: string; mergeCommit: string }
+  /** Closed without merging, or merged into another branch: nothing landed. */
   | { kind: 'withdrawn'; head: string }
-  | { kind: 'protected-merge'; head: string; mergeCommit: string }
   | { kind: 'revision'; head: string; newHead: string }
-  | { kind: 'correction'; head: string; reason: string }
-  | {
-      kind: 'runtime-evidence';
-      head: string;
-      mergeCommit: string;
-      principal: string;
-      ref: string;
-    };
+  | { kind: 'correction'; head: string; reason: string };
 
+/** A binding is `waiting` until its PR merges (`complete`) or is withdrawn
+ * (binding dropped). Only a waiting binding moves. */
 export function advanceDelivery(input: {
   now: string;
   task: Task;
@@ -46,30 +41,9 @@ export function advanceDelivery(input: {
     !run.result?.ok
   )
     return refused('stale-lease');
-  if (observation.kind === 'runtime-evidence') {
-    if (
-      !input.correctionAuthorized ||
-      binding.state !== 'runtime-required' ||
-      observation.mergeCommit !== binding.mergeCommit
-    )
-      return refused('not-claimant');
-    const delivery: DeliveryBinding = {
-      ...binding,
-      state: 'complete',
-      observedAt: now,
-      runtimeEvidence: {
-        principal: observation.principal,
-        ref: observation.ref,
-        observedAt: now,
-      },
-    };
-    return {
-      task: { ...task, delivery, updatedAt: now },
-      run: { ...run, delivery, updatedAt: now },
-      outbox: finalDeliveryOutbox(task, run, delivery, now),
-    };
-  }
-  if (observation.kind === 'revision' && binding.state === 'waiting') {
+  if (binding.state !== 'waiting' || observation.kind === 'waiting')
+    return { task, run, outbox: [] };
+  if (observation.kind === 'revision') {
     const delivery = { ...binding, head: observation.newHead, observedAt: now };
     return {
       task: { ...task, delivery, updatedAt: now },
@@ -77,23 +51,10 @@ export function advanceDelivery(input: {
       outbox: [],
     };
   }
-  if (binding.state !== 'waiting' || observation.kind === 'waiting')
-    return { task, run, outbox: [] };
-  if (observation.kind === 'withdrawn') {
-    const { delivery: _task, ...released } = task;
-    const { delivery: _run, ...releasedRun } = run;
-    return {
-      task: { ...released, updatedAt: now },
-      run: { ...releasedRun, updatedAt: now },
-      outbox: [],
-    };
-  }
-  if (observation.kind === 'protected-merge') {
+  if (observation.kind === 'merged') {
     const delivery: DeliveryBinding = {
       ...binding,
-      // Only an explicit intake policy holds ownership for a runtime receipt.
-      state:
-        binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
+      state: 'complete',
       mergeCommit: observation.mergeCommit,
       observedAt: now,
     };
@@ -103,7 +64,15 @@ export function advanceDelivery(input: {
       outbox: finalDeliveryOutbox(task, run, delivery, now),
     };
   }
-  if (observation.kind !== 'correction') return { task, run, outbox: [] };
+  if (observation.kind === 'withdrawn') {
+    const { delivery: _task, ...released } = task;
+    const { delivery: _run, ...releasedRun } = run;
+    return {
+      task: { ...released, updatedAt: now },
+      run: { ...releasedRun, updatedAt: now },
+      outbox: [],
+    };
+  }
   if (!input.correctionAuthorized) return refused('not-claimant');
   if (binding.correctionRunId !== undefined) return refused('run-not-live');
   // Credential debt and physical retirement remain on the original Run. The

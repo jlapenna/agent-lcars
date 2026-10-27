@@ -65,7 +65,6 @@ function delivered(
       head: 'a'.repeat(40),
       mergeCommit: 'b'.repeat(40),
       state: 'complete',
-      runtimeGate: 'none',
       observedAt: deliveryAt,
       ...over,
     },
@@ -392,7 +391,7 @@ describe('durable lifecycle metric accounting', () => {
       },
       run: original,
       observation: {
-        kind: 'protected-merge',
+        kind: 'merged',
         head: 'a'.repeat(40),
         mergeCommit: 'b'.repeat(40),
       },
@@ -407,55 +406,11 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 1\n',
     );
   });
-  it.each(['required'] as const)(
-    'requires the authorized matching runtime observation for gate %s',
-    (runtimeGate) => {
-      const original = delivered({ state: 'runtime-required', runtimeGate });
-      const task = {
-        task: original.task,
-        delivery: original.delivery,
-        runCount: 1,
-        consecutiveLost: 0,
-        work: {},
-        updatedAt: finishedAt,
-      };
-      expect(deliveryMeasurements(original)).toEqual({
-        completed: '0',
-        unknown: '1',
-      });
-      const decision = advanceDelivery({
-        now: deliveryAt,
-        task,
-        run: original,
-        observation: {
-          kind: 'runtime-evidence',
-          head: 'a'.repeat(40),
-          mergeCommit: 'b'.repeat(40),
-          principal: 'user:operator',
-          ref: 'https://example.test/verified-runtime',
-        },
-        correctionAuthorized: true,
-      });
-      if (isRefusal(decision)) throw new Error(decision.reason);
-      expect(deliveryMeasurements(decidedRun(decision))).toEqual({
-        completed: '1',
-        unknown: '0',
-      });
-    },
-  );
   it.each([
     { name: 'wrong run', binding: { runId: 'private/repo#42/r2' } },
     { name: 'missing merge', binding: { mergeCommit: undefined } },
     { name: 'invalid head', binding: { head: 'not-a-head' } },
     { name: 'waiting', binding: { state: 'waiting' as const } },
-    {
-      name: 'runtime pending',
-      binding: { state: 'runtime-required' as const },
-    },
-    {
-      name: 'required without evidence',
-      binding: { runtimeGate: 'required' as const },
-    },
     { name: 'invalid observation', binding: { observedAt: 'invalid' } },
     {
       name: 'future observation',
@@ -468,28 +423,6 @@ describe('durable lifecycle metric accounting', () => {
     {
       name: 'after run revision',
       binding: { observedAt: '2026-10-10T11:50:00.001Z' },
-    },
-    {
-      name: 'runtime clock mismatch',
-      binding: {
-        runtimeGate: 'required' as const,
-        runtimeEvidence: {
-          principal: 'user:operator',
-          ref: 'https://example.test/runtime',
-          observedAt: finishedAt,
-        },
-      },
-    },
-    {
-      name: 'future runtime evidence',
-      binding: {
-        runtimeGate: 'required' as const,
-        runtimeEvidence: {
-          principal: 'user:operator',
-          ref: 'https://example.test/runtime',
-          observedAt: '2026-10-10T12:00:00.001Z',
-        },
-      },
     },
   ])('keeps $name delivery evidence unknown', ({ binding }) => {
     expect(deliveryMeasurements(delivered(binding))).toEqual({
@@ -567,7 +500,7 @@ describe('durable lifecycle metric accounting', () => {
     const newer = {
       ...original,
       updatedAt: '2026-10-10T11:51:00.000Z',
-      delivery: { ...original.delivery, state: 'runtime-required' as const },
+      delivery: { ...original.delivery, state: 'waiting' as const },
     };
     expect(snapshot([original, newer])).toContain(
       'lcars_product_completed_pr_delivery_window{pipeline="claude"} 0\n',
@@ -615,7 +548,6 @@ describe('durable lifecycle metric accounting', () => {
   it('keeps unqualified members unknown rather than zero-latency or reported success', () => {
     const bindingChanges: Partial<DeliveryBinding>[] = [
       { state: 'waiting' },
-      { state: 'runtime-required', runtimeGate: 'required' },
       { runId: 'wrong-run' },
       { mergeCommit: undefined },
       { observedAt: 'invalid' },
@@ -645,17 +577,14 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_latency_window_observations{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
     );
     expect(text).toContain(
-      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 10\n',
+      'lcars_product_latency_window_unknown{pipeline="claude",stage="admission_to_completed_pr_delivery"} 9\n',
     );
     expect(text).toContain(
       'lcars_product_latency_window_duration_seconds{pipeline="claude",stage="admission_to_completed_pr_delivery"} 0\n',
     );
   });
-  it('uses authorized runtime completion time and newest revision once per attempt', () => {
-    const waiting = delivered({
-      state: 'runtime-required',
-      runtimeGate: 'required',
-    });
+  it('uses the merge observation time and newest revision once per attempt', () => {
+    const waiting = delivered({ state: 'waiting', mergeCommit: undefined });
     const decision = advanceDelivery({
       now: '2026-10-10T11:55:00.000Z',
       task: {
@@ -668,13 +597,11 @@ describe('durable lifecycle metric accounting', () => {
       },
       run: waiting,
       observation: {
-        kind: 'runtime-evidence',
+        kind: 'merged',
         head: waiting.delivery.head,
         mergeCommit: 'b'.repeat(40),
-        principal: 'user:operator',
-        ref: 'https://example.test/runtime',
       },
-      correctionAuthorized: true,
+      correctionAuthorized: false,
     });
     if (isRefusal(decision)) throw new Error(decision.reason);
     const completed = decidedRun(decision);

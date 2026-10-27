@@ -43,7 +43,7 @@ export interface WorkCommandDeps {
 }
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--delivery-runtime <none|required>] [--deliverable report]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
@@ -343,12 +343,6 @@ export async function executeWorkCommand(
         ) {
           return usageFailure(deps);
         }
-        const deliveryRuntime = flag(rest, '--delivery-runtime');
-        if (
-          rest.includes('--delivery-runtime') &&
-          !['none', 'required'].includes(deliveryRuntime ?? '')
-        )
-          return usageFailure(deps);
         const deliverable = flag(rest, '--deliverable');
         if (rest.includes('--deliverable') && deliverable !== 'report')
           return usageFailure(deps);
@@ -374,9 +368,6 @@ export async function executeWorkCommand(
             pipeline: pipeline as 'claude' | 'codex' | 'opencode',
             priority: (priority ?? 'normal') as QueuePriority,
             ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
-            ...(deliveryRuntime === undefined
-              ? {}
-              : { deliveryRuntime: deliveryRuntime as 'none' | 'required' }),
             ...(deliverable === undefined ? {} : { deliverable: 'report' }),
             target: { repo },
           },

@@ -75,9 +75,8 @@ make it `failed` or `parked`. Only the unbound compatibility path can settle
 `done` directly from a successful finished Run. An optional `runs[n].delivery`
 records the Run binding when present; its absence alone proves neither landing
 nor completion. See [the owning derivation](../libs/work/src/derive.ts).
-A binding whose runtime gate is `unknown` does not establish that no runtime
-acceptance is needed. Preserve actual delivery ownership and do not infer Task
-completion from a merge or invent runtime evidence.
+Preserve actual delivery ownership: a Task is complete when its bound PR merges
+and the binding records `state: complete` with the merge commit.
 
 | Observation                 | What you actually look at                                                                                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -148,9 +147,8 @@ path, not as one green light:
 
 - **Implementation (PR) path:** the latest successful Run's `state: finished`,
   `result.summary: pull-request`, and PR `result.ref` record publication.
-  Independently confirm required CI and protected merge on the PR, then actual
-  remaining delivery/runtime acceptance before treating the Task as complete.
-  A merge alone does not resolve a runtime gate recorded as `unknown`.
+  Independently confirm the merge on the PR, then that the binding reached
+  `state: complete`, before treating the Task as complete.
 - **Report path:** confirm the private
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in
   the same private outcome file **and** complete final findings in the same

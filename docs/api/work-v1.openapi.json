@@ -172,113 +172,6 @@
   },
   "openapi": "3.2.0",
   "paths": {
-    "/delivery/{runId}/evidence": {
-      "post": {
-        "operationId": "recordDeliveryRuntimeEvidence",
-        "summary": "Record an operator verified exact-merge runtime receipt",
-        "tags": ["items"],
-        "parameters": [
-          {
-            "in": "path",
-            "required": true,
-            "name": "runId",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 175
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "head": {
-                    "type": "string",
-                    "pattern": "^[a-f0-9]{40}$"
-                  },
-                  "mergeCommit": {
-                    "type": "string",
-                    "pattern": "^[a-f0-9]{40}$"
-                  },
-                  "ref": {
-                    "type": "string",
-                    "maxLength": 2048,
-                    "format": "uri"
-                  }
-                },
-                "required": ["head", "mergeCommit", "ref"]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "runId": {
-                      "type": "string"
-                    },
-                    "state": {
-                      "type": "string",
-                      "const": "complete"
-                    }
-                  },
-                  "required": ["runId", "state"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Principal may not verify this delivery",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Forbidden"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Delivery binding changed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Conflict"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/anchors/github/owner": {
       "get": {
         "operationId": "getGithubAnchorOwner",
@@ -476,18 +369,10 @@
                                 },
                                 "state": {
                                   "type": "string",
-                                  "enum": [
-                                    "waiting",
-                                    "runtime-required",
-                                    "complete"
-                                  ]
+                                  "enum": ["waiting", "complete"]
                                 },
                                 "correctionRunId": {
                                   "type": "string"
-                                },
-                                "runtimeGate": {
-                                  "type": "string",
-                                  "enum": ["none", "required", "unknown"]
                                 },
                                 "observedAt": {
                                   "type": "string"
@@ -495,27 +380,6 @@
                                 "mergeCommit": {
                                   "type": "string",
                                   "pattern": "^[a-f0-9]{40}$"
-                                },
-                                "runtimeEvidence": {
-                                  "type": "object",
-                                  "properties": {
-                                    "principal": {
-                                      "type": "string"
-                                    },
-                                    "ref": {
-                                      "type": "string",
-                                      "format": "uri"
-                                    },
-                                    "observedAt": {
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "principal",
-                                    "ref",
-                                    "observedAt"
-                                  ],
-                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -525,7 +389,6 @@
                                 "baseRef",
                                 "head",
                                 "state",
-                                "runtimeGate",
                                 "observedAt"
                               ],
                               "additionalProperties": false
@@ -1527,18 +1390,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -1546,23 +1401,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -1572,7 +1410,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
@@ -2264,18 +2101,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -2283,23 +2112,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -2309,7 +2121,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
@@ -3007,18 +2818,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -3026,23 +2829,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -3052,7 +2838,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
@@ -3805,18 +3590,10 @@
                                     },
                                     "state": {
                                       "type": "string",
-                                      "enum": [
-                                        "waiting",
-                                        "runtime-required",
-                                        "complete"
-                                      ]
+                                      "enum": ["waiting", "complete"]
                                     },
                                     "correctionRunId": {
                                       "type": "string"
-                                    },
-                                    "runtimeGate": {
-                                      "type": "string",
-                                      "enum": ["none", "required", "unknown"]
                                     },
                                     "observedAt": {
                                       "type": "string"
@@ -3824,27 +3601,6 @@
                                     "mergeCommit": {
                                       "type": "string",
                                       "pattern": "^[a-f0-9]{40}$"
-                                    },
-                                    "runtimeEvidence": {
-                                      "type": "object",
-                                      "properties": {
-                                        "principal": {
-                                          "type": "string"
-                                        },
-                                        "ref": {
-                                          "type": "string",
-                                          "format": "uri"
-                                        },
-                                        "observedAt": {
-                                          "type": "string"
-                                        }
-                                      },
-                                      "required": [
-                                        "principal",
-                                        "ref",
-                                        "observedAt"
-                                      ],
-                                      "additionalProperties": false
                                     }
                                   },
                                   "required": [
@@ -3854,7 +3610,6 @@
                                     "baseRef",
                                     "head",
                                     "state",
-                                    "runtimeGate",
                                     "observedAt"
                                   ],
                                   "additionalProperties": false
@@ -4537,18 +4292,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -4556,23 +4303,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -4582,7 +4312,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
@@ -5300,18 +5029,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -5319,23 +5040,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -5345,7 +5049,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
@@ -6111,18 +5814,10 @@
                               },
                               "state": {
                                 "type": "string",
-                                "enum": [
-                                  "waiting",
-                                  "runtime-required",
-                                  "complete"
-                                ]
+                                "enum": ["waiting", "complete"]
                               },
                               "correctionRunId": {
                                 "type": "string"
-                              },
-                              "runtimeGate": {
-                                "type": "string",
-                                "enum": ["none", "required", "unknown"]
                               },
                               "observedAt": {
                                 "type": "string"
@@ -6130,23 +5825,6 @@
                               "mergeCommit": {
                                 "type": "string",
                                 "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "runtimeEvidence": {
-                                "type": "object",
-                                "properties": {
-                                  "principal": {
-                                    "type": "string"
-                                  },
-                                  "ref": {
-                                    "type": "string",
-                                    "format": "uri"
-                                  },
-                                  "observedAt": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": ["principal", "ref", "observedAt"],
-                                "additionalProperties": false
                               }
                             },
                             "required": [
@@ -6156,7 +5834,6 @@
                               "baseRef",
                               "head",
                               "state",
-                              "runtimeGate",
                               "observedAt"
                             ],
                             "additionalProperties": false
