@@ -307,11 +307,12 @@ the existing delivery path. Already merged legacy PR completions require the
 same exact protected-merge readback, while unmerged ready handoff uses the
 new contract. An authenticated native implementation completion with an open PR
 artifact establishes exact attempt-marker identity, ready state, protected
-target policy and squash arming. Pending independent review transfers to the
+target policy and squash arming. Pending review and CI transfer to the
 existing durable monitor; it does not retain the implementation executor or
-declare delivery complete. Already merged artifacts and final logical landing
-still require independent current-head review, resolved threads and exact
-protected-merge evidence. Actionable same-head feedback remains a bounded correction
+declare delivery complete. The target's branch protection decides what review a
+merge needs: already merged artifacts and final logical landing require exact
+protected-merge evidence and no outstanding change requests or unresolved
+threads, not an extra approval. Actionable same-head feedback remains a bounded correction
 even when it arrives after merge, while delivery is still waiting. Normal Run
 settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical

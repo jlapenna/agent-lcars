@@ -501,30 +501,24 @@ spend your own turn budget on the actual work instead.
 Only when its trusted brief advertises `deliveryHandoffVersion: 1`, a native
 implementation can end its provider turn after publishing an OPEN, exact
 attempt-marked, ready PR with protected target policy and squash delivery armed.
-Pending asynchronous independent GitHub review and CI transfer to the durable
+Pending asynchronous GitHub review and CI transfer to the durable
 monitor; do not retain the implementation executor solely waiting for them.
 The authenticated finalizer verifies the exact marker, head, ready state,
 protected target and squash arming before accepting this waiting handoff. It
 settles execution through normal credential cleanup and positive physical
-retirement. Already merged initial handoffs with independent exact-head GitHub
-review, resolved threads and exact protected landing follow the normal delivery
-path. Two narrow exceptions settle an initial ordinary pull-request result
-without durable delivery ownership. Both require authoritative reads proving the
-run's own exact attempt-marked, ready PR in its stored target repository with an
-established protected target policy:
+retirement. Already merged initial handoffs with resolved threads, no change
+requests and exact protected landing follow the normal delivery path; branch
+protection, not a separate approval, decides what review a merge needs. One
+narrow exception settles an initial ordinary pull-request result without durable
+delivery ownership: authoritative reads prove the run's own exact
+attempt-marked, ready, open PR in its stored target repository with an
+established protected target policy that merely has no auto-merge arm yet (for
+example, a repository workflow arms it after the executor exits).
 
-- The PR is open and merely has no auto-merge arm yet (for example, a repository
-  workflow arms it after the executor exits).
-- The PR already merged without independent approval, but exact protected merge
-  proof shows actively enforced, passing `pull_request` and
-  `required_status_checks` evaluations, an unchanged authoritative reread and no
-  unresolved threads or changes requested.
-
-These are initial-result settlement exceptions, not a review bypass before
-publication or arming, and do not change ordinary independently reviewed merged
-handoffs. Unreadable or malformed evidence, wrong identities, markers or target,
-failed or missing protection, and non-squash arms remain refused. These exceptions
-never admit corrections, foreign delivery ownership, or merged-deliverable claims;
+This is an initial-result settlement exception, not a review bypass before
+publication or arming. Unreadable or malformed evidence, wrong identities,
+markers or target, failed or missing protection, and non-squash arms remain
+refused. The exception never admits corrections, foreign delivery ownership, or merged-deliverable claims;
 those require the normal fully qualified delivery binding. The semantic owners are
 [`readyDeliveryBinding`](../../../../../apps/console/src/lib/ready-delivery.ts)
 and the initial-result fence in

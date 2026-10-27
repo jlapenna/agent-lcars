@@ -20,7 +20,6 @@ import {
 import {
   deliveryCorrectionAuthorized,
   observeGithubDelivery,
-  ProtectedMergeWithoutReviewError,
   readGithubIntakePermission,
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
@@ -303,7 +302,7 @@ describe('authenticated ready delivery evidence', () => {
     },
   );
 
-  it('keeps waiting ownership when an armed pending-review PR merges during verification', async () => {
+  it('keeps waiting ownership when an armed PR merges during verification, then settles its protected landing', async () => {
     const review = {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
     };
@@ -330,12 +329,13 @@ describe('authenticated ready delivery evidence', () => {
     ).toEqual(BINDING);
     expect(prReads).toBe(2);
     expect(await observeGithubDelivery(merged, BINDING)).toEqual({
-      kind: 'waiting',
+      kind: 'protected-merge',
       head: HEAD,
+      mergeCommit: MERGE,
     });
   });
 
-  it('keeps a pending-review handoff waiting after merge until independent review qualifies landing', async () => {
+  it('settles an armed handoff on protected merge without an approval', async () => {
     const review = {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
     };
@@ -355,10 +355,6 @@ describe('authenticated ready delivery evidence', () => {
     expect(
       await observeGithubDelivery(fixture({ pr, review }), binding),
     ).toEqual({
-      kind: 'waiting',
-      head: HEAD,
-    });
-    expect(await observeGithubDelivery(fixture({ pr }), binding)).toEqual({
       kind: 'protected-merge',
       head: HEAD,
       mergeCommit: MERGE,
@@ -453,13 +449,13 @@ describe('authenticated ready delivery evidence', () => {
       now: NOW,
     };
 
-    it('settles only with exact protected-merge proof and no review feedback', async () => {
-      const error = await readyDeliveryBinding(
-        fixture({ pr: merged, review: noApproval }),
-        input,
-      ).catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(ProtectedMergeWithoutReviewError);
-      expect(error).toBeInstanceOf(UnqualifiedDeliveryError);
+    it('settles with exact protected-merge proof and no review feedback, without an approval', async () => {
+      expect(
+        await readyDeliveryBinding(
+          fixture({ pr: merged, review: noApproval }),
+          input,
+        ),
+      ).toEqual({ ...BINDING, mergeCommit: MERGE, state: 'complete' });
     });
 
     it.each([
@@ -540,7 +536,7 @@ describe('authenticated ready delivery evidence', () => {
     }
   });
 
-  it('rejects incomplete review reads and author-only approval for already merged handoff', async () => {
+  it('rejects incomplete review reads and feedback for an already merged handoff', async () => {
     const merged = {
       state: 'closed',
       merged: true,
@@ -553,23 +549,6 @@ describe('authenticated ready delivery evidence', () => {
           reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
         },
         unqualified: false,
-      },
-      {
-        review: {
-          reviews: {
-            pageInfo: { hasPreviousPage: false },
-            nodes: [
-              {
-                state: 'APPROVED',
-                author: { login: 'author' },
-                commit: { oid: HEAD },
-              },
-            ],
-          },
-        },
-        // Protection gated the merge; with no feedback outstanding the
-        // missing independent approval is settled by protected-merge proof.
-        unqualified: true,
       },
       {
         review: {
@@ -647,32 +626,8 @@ describe('authenticated ready delivery evidence', () => {
     ).toMatchObject({ kind: 'correction', head: HEAD });
   });
 
-  it('rebinds only a newly independently reviewed revision against the old fence', async () => {
-    const deps = fixture({
-      pr: { head: { sha: MERGE } },
-      review: {
-        headRefOid: MERGE,
-        reviews: {
-          pageInfo: { hasPreviousPage: false },
-          nodes: [
-            {
-              state: 'COMMENTED',
-              author: { login: 'reviewer' },
-              commit: { oid: MERGE },
-            },
-          ],
-        },
-      },
-    });
-    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-      kind: 'revision',
-      head: HEAD,
-      newHead: MERGE,
-    });
-  });
-
   it.each(['open', 'merged'] as const)(
-    'retains the old fence for an unreviewed %s new head despite protected landing evidence',
+    'rebinds a changed %s head against the old fence before reading review or landing evidence',
     async (state) => {
       const deps = fixture({
         pr: {
@@ -687,74 +642,18 @@ describe('authenticated ready delivery evidence', () => {
         },
       });
       expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-        kind: 'waiting',
+        kind: 'revision',
         head: HEAD,
+        newHead: MERGE,
       });
       expect(BINDING.head).toBe(HEAD);
-      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-        expect.stringContaining('/rule-suites'),
-        expect.anything(),
-      );
+      for (const path of ['/graphql', '/rule-suites'])
+        expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+          expect.stringContaining(path),
+          expect.anything(),
+        );
     },
   );
-
-  it.each([
-    'old-head',
-    'self-review',
-    'changes-requested',
-    'unresolved',
-  ] as const)(
-    'retains the old fence when new-head review is %s',
-    async (cause) => {
-      const deps = fixture({
-        pr: { head: { sha: MERGE } },
-        review: {
-          headRefOid: MERGE,
-          reviews: {
-            pageInfo: { hasPreviousPage: false },
-            nodes: [
-              {
-                state:
-                  cause === 'changes-requested'
-                    ? 'CHANGES_REQUESTED'
-                    : 'APPROVED',
-                author: {
-                  login: cause === 'self-review' ? 'author' : 'reviewer',
-                },
-                commit: { oid: cause === 'old-head' ? HEAD : MERGE },
-              },
-            ],
-          },
-          reviewThreads: {
-            pageInfo: { hasNextPage: false },
-            nodes: cause === 'unresolved' ? [{ isResolved: false }] : [],
-          },
-        },
-      });
-      expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-        kind: 'waiting',
-        head: HEAD,
-      });
-    },
-  );
-
-  it('retains the old fence when the revision changes during review or review is truncated', async () => {
-    for (const review of [
-      { headRefOid: HEAD },
-      {
-        headRefOid: MERGE,
-        reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
-      },
-    ]) {
-      await expect(
-        observeGithubDelivery(
-          fixture({ pr: { head: { sha: MERGE } }, review }),
-          BINDING,
-        ),
-      ).rejects.toThrow();
-      expect(BINDING.head).toBe(HEAD);
-    }
-  });
 
   it('requires passing exact-merge protected evaluations; merged flags and bypasses do not complete work', async () => {
     const pr = { merged: true, state: 'closed', merge_commit_sha: MERGE };
@@ -1342,54 +1241,22 @@ describe('current review and paginated protected landing evidence', () => {
     result: 'pass',
   }));
 
-  it('revalidates a dismissed sole review after handoff before unchanged-head landing', async () => {
-    const review = {
-      reviews: { pageInfo: { hasPreviousPage: false }, nodes: [approved] },
-    };
-    const binding = await readyDeliveryBinding(fixture({ review }), {
-      run: RUN,
-      task: TASK,
-      repo: BINDING.repo,
-      number: BINDING.number,
-      now: NOW,
-    });
-    review.reviews.nodes = [{ ...approved, state: 'DISMISSED' }];
-    const deps = fixture({ pr: merged, review });
-    expect(await observeGithubDelivery(deps, binding)).toEqual({
-      kind: 'waiting',
-      head: HEAD,
-    });
-    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('/rule-suites'),
-      expect.anything(),
-    );
-    review.reviews.nodes = [approved];
-    expect(await observeGithubDelivery(deps, binding)).toEqual({
-      kind: 'protected-merge',
-      head: HEAD,
-      mergeCommit: MERGE,
-    });
-  });
-
   it.each([
     ['missing', []],
     ['self', [{ ...approved, author: { login: 'author' } }]],
     ['stale', [{ ...approved, commit: { oid: MERGE } }]],
   ] as const)(
-    'retains unchanged-head merged delivery without current %s independent review',
+    'settles unchanged-head protected landing without a current %s approval',
     async (_cause, nodes) => {
       const deps = fixture({
         pr: merged,
         review: { reviews: { pageInfo: { hasPreviousPage: false }, nodes } },
       });
       expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-        kind: 'waiting',
+        kind: 'protected-merge',
         head: HEAD,
+        mergeCommit: MERGE,
       });
-      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-        expect.stringContaining('/rule-suites'),
-        expect.anything(),
-      );
     },
   );
 
@@ -1407,18 +1274,13 @@ describe('current review and paginated protected landing evidence', () => {
         nodes: [{ isResolved: false }],
       },
     },
-  ])(
-    'retains actionable same-head negative feedback without an independent approval: %j',
-    async (review) => {
-      expect(await observeGithubDelivery(fixture({ review }), BINDING)).toEqual(
-        {
-          kind: 'correction',
-          head: HEAD,
-          reason: 'Review feedback requires correction',
-        },
-      );
-    },
-  );
+  ])('retains actionable same-head negative feedback: %j', async (review) => {
+    expect(await observeGithubDelivery(fixture({ review }), BINDING)).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+  });
 
   it('finds the exact protected landing on a later rule-suite page', async () => {
     const deps = fixture({
@@ -2423,7 +2285,7 @@ describe('same-head review feedback before unavailable check evidence', () => {
       ).rejects.toThrow();
     },
   );
-  it('retains changed-head independent-review fence before actionable old-head feedback', async () => {
+  it('rebinds a changed head before reading actionable old-head feedback', async () => {
     expect(
       await observeGithubDelivery(
         unavailableEvidence(
@@ -2435,7 +2297,7 @@ describe('same-head review feedback before unavailable check evidence', () => {
         ),
         BINDING,
       ),
-    ).toEqual({ kind: 'waiting', head: HEAD });
+    ).toEqual({ kind: 'revision', head: HEAD, newHead: MERGE });
   });
   it('retains merged same-head review feedback as correction before unavailable checks', async () => {
     expect(
@@ -2479,7 +2341,7 @@ describe('nullable historical review identities', () => {
   const review = (nodes: object[]) => ({
     reviews: { pageInfo: { hasPreviousPage: false }, nodes },
   });
-  it('accepts a valid exact-head independent handoff despite nullable historical identities', async () => {
+  it('accepts an exact-head handoff despite nullable historical identities', async () => {
     expect(
       await readyDeliveryBinding(
         fixture({ review: review([...history, valid]) }),
@@ -2498,9 +2360,9 @@ describe('nullable historical review identities', () => {
       ),
     ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
   });
-  it('never treats nullable-only identities as independent approval', async () => {
-    await expect(
-      readyDeliveryBinding(
+  it('never treats nullable-only identities as review feedback', async () => {
+    expect(
+      await readyDeliveryBinding(
         fixture({
           pr: {
             state: 'closed',
@@ -2518,7 +2380,7 @@ describe('nullable historical review identities', () => {
           now: NOW,
         },
       ),
-    ).rejects.toThrow();
+    ).toEqual({ ...BINDING, mergeCommit: MERGE, state: 'complete' });
     expect(
       await observeGithubDelivery(
         fixture({
@@ -2527,53 +2389,44 @@ describe('nullable historical review identities', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'waiting', head: HEAD });
+    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
   });
-  it.each([
-    { state: 'DISMISSED', expected: { kind: 'waiting', head: HEAD } },
-    {
-      state: 'CHANGES_REQUESTED',
-      expected: {
-        kind: 'correction',
-        head: HEAD,
-        reason: 'Review feedback requires correction',
-      },
-    },
-  ])(
-    'retains valid reviewer $state authority beside nullable history',
-    async ({ state, expected }) => {
-      const nodes = [valid, ...history, { ...valid, state }];
-      await expect(
-        readyDeliveryBinding(
-          fixture({
-            pr: {
-              state: 'closed',
-              merged: true,
-              merge_commit_sha: MERGE,
-              auto_merge: null,
-            },
-            review: review(nodes),
-          }),
-          {
-            run: RUN,
-            task: TASK,
-            repo: 'octo/example',
-            number: 12,
-            now: NOW,
+  it('retains valid reviewer change requests beside nullable history', async () => {
+    const nodes = [valid, ...history, { ...valid, state: 'CHANGES_REQUESTED' }];
+    await expect(
+      readyDeliveryBinding(
+        fixture({
+          pr: {
+            state: 'closed',
+            merged: true,
+            merge_commit_sha: MERGE,
+            auto_merge: null,
           },
-        ),
-      ).rejects.toThrow();
-      expect(
-        await observeGithubDelivery(
-          fixture({
-            pr: { merged: true, merge_commit_sha: MERGE },
-            review: review(nodes),
-          }),
-          BINDING,
-        ),
-      ).toEqual(expected);
-    },
-  );
+          review: review(nodes),
+        }),
+        {
+          run: RUN,
+          task: TASK,
+          repo: 'octo/example',
+          number: 12,
+          now: NOW,
+        },
+      ),
+    ).rejects.toThrow();
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          pr: { merged: true, merge_commit_sha: MERGE },
+          review: review(nodes),
+        }),
+        BINDING,
+      ),
+    ).toEqual({
+      kind: 'correction',
+      head: HEAD,
+      reason: 'Review feedback requires correction',
+    });
+  });
   it('keeps unresolved threads actionable beside nullable history', async () => {
     expect(
       await observeGithubDelivery(
