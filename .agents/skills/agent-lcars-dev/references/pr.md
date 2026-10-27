@@ -90,55 +90,51 @@
    A PR pushed under the maintainer's own login — every interactive Claude
    Code, Codex, or cloud session — is **not** armed by that workflow. Arm
    it yourself when the reviewed, pushed PR is open and ready (a draft cannot
-   be armed), before watching CI or handing off. Interactive maintainer
-   sessions use the **queue-only mutation**, never `gh pr merge --auto`:
-   that CLI command can merge immediately under an administrator's bypass
-   authority even without `--admin`. On #2298, the ready-event checks were
-   still queued and the rules suite recorded a bypass with all four required
-   checks missing. The flag alone does not prove protected delivery.
+   be armed), before watching CI or handing off. Use `gh pr merge --auto`
+   with `--squash` and `--match-head-commit` to bind delivery to the reviewed,
+   pushed revision. `--auto` does not imply `--admin`: it requests automatic
+   merging once requirements are met; `--admin` separately requests an
+   administrative bypass. See the [GitHub CLI manual](https://cli.github.com/manual/gh_pr_merge).
+   An immediate merge alone is not evidence of bypass. Diagnose any suspected
+   bypass from the actual rules evaluation, not from the use of `--auto`.
 
    Read back the PR state, draft flag and head. Match its head to the exact
-   independently reviewed and pushed revision, then bind the mutation to that
-   revision so a concurrent push cannot silently change what you arm:
+   reviewed and pushed revision, then chain arming to the closing-scope guard:
 
    ```bash
    pr_number="<PR_NUMBER>"
    reviewed_head="<EXACT_REVIEWED_AND_PUSHED_SHA>"
    gh pr view "$pr_number" -R jlapenna/agent-lcars \
-     --json id,state,isDraft,headRefOid,autoMergeRequest
-   pr_node="$(gh pr view "$pr_number" -R jlapenna/agent-lcars --json id --jq .id)"
+     --json id,state,isDraft,headRefOid
    node agents/shared/skills/agent-protocol/scripts/check-pr-closing-references.mjs \
      jlapenna/agent-lcars "$pr_number" "$reviewed_head" <declared-scope> \
-     && gh api graphql \
-     -f query='mutation($id: ID!, $head: GitObjectID!) {
-       enablePullRequestAutoMerge(input: {
-         pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH
-       }) {
-         pullRequest { id state headRefOid autoMergeRequest { enabledAt mergeMethod } }
-       }
-     }' \
-     -f id="$pr_node" -f head="$reviewed_head" \
-     && gh pr view "$pr_number" -R jlapenna/agent-lcars \
-     --json state,isDraft,headRefOid,autoMergeRequest
+     && gh pr merge "$pr_number" -R jlapenna/agent-lcars \
+     --auto --squash --match-head-commit "$reviewed_head" \
+     && gh api graphql -F number="$pr_number" -f query='
+       query($number: Int!) {
+         repository(owner: "jlapenna", name: "agent-lcars") {
+           pullRequest(number: $number) {
+             state isDraft headRefOid mergedAt mergeCommit { oid }
+             autoMergeRequest { enabledAt mergeMethod }
+           }
+         }
+       }'
    ```
 
-   Require an open, ready PR at `reviewed_head` before the mutation and a
-   non-null SQUASH `autoMergeRequest` at that same head afterward. Execute the
-   closing-scope guard and the arming mutation only as the `&&`-chained
-   sequence above — a rejected, incomplete or changed-scope read must stop the
-   chain, not merely precede it. This arms
-   delivery; it does not declare checks passed. If queueing fails, re-read the
-   exact PR/head and diagnose the error. Do not fall back to a direct/admin
-   merge, relax checks or treat an unarmed PR as delivered. If the PR merged
-   during the request, inspect its exact merge evidence and rules evaluation
-   instead of assuming that the arming command enforced protection.
+   Require an open, ready PR at `reviewed_head` before arming. Afterward,
+   confirm either a non-null SQUASH `autoMergeRequest` at that same head or
+   an actual merge of that head. Execute the closing-scope guard and arming
+   only as the `&&`-chained sequence above: a rejected, incomplete or
+   changed-scope read must stop the chain. Arming does not declare checks
+   passed; an already-eligible PR can merge immediately. If arming fails,
+   re-read the exact PR/head and diagnose the error. Never add `--admin`,
+   relax checks or treat an unarmed PR as delivered. Verify actual merge
+   evidence and rules evaluation before reporting protected delivery.
 
    For API errors, lost responses or Git publication stalls, follow
    [delivery-recovery.md](delivery-recovery.md) before retrying. It owns bounded
-   sanitized diagnostics and exact-ref/state recovery; this workflow still
-   owns the reviewed-head, queue-only and protection requirements. A
-   deterministic state refusal is not one of those transport failures — see
-   below before treating it as a retryable queueing error.
+   sanitized diagnostics and exact-ref/state recovery; this workflow owns
+   the reviewed-head and protection requirements.
 
    **Preserve a valid queue across unchanged-head infrastructure retries.**
    When an already-armed PR at its independently reviewed `reviewed_head` fails
@@ -153,12 +149,12 @@
    `UNPROCESSABLE` (`Pull request ... is in clean status`) while the PR still
    reads OPEN/ready with all required checks green. Record that refusal as a
    state change, not transport loss: it repeats
-   identically, so re-issuing it is a blind retry. Recover by qualifying the
-   actual source composition at a fresh revision — merge current `main` into the
-   branch so checks and queueing evaluate a head that can be queued — and by
-   re-arming that new reviewed head through the sequence above. Never answer it
-   with a direct/admin merge, relaxed or fabricated checks/statuses, a policy
-   edit, or a new wrapper, credential or helper introduced merely to arm.
+   identically, so re-issuing it is a blind retry. Re-read the head, closing
+   scope, reviews and required checks, then use the guarded CLI sequence
+   above; it can merge the already-eligible head normally. Do not manufacture
+   a new revision merely to make the queue-only API accept the request.
+   Never add `--admin`, relax or fabricate checks/statuses, change policy,
+   or introduce a wrapper or credential merely to arm.
    Disarm only when the source, closing scope, review/approval state or
    intended delivery actually changes; recorded case
    [#2558](https://github.com/jlapenna/agent-lcars/issues/2558) on PR #2551
@@ -206,7 +202,7 @@
    here is consumed by sprinkles' E2E, not by this repo's workflows).
    Admins (`RepositoryRole:5`) hold `bypass_mode: always` as a deliberate
    escape hatch. It is not routine delivery authority. Keep interactive
-   arming on the queue-only path above; if checks or queueing refuse an
+   delivery on the protected path above; if checks or arming refuse an
    operation, diagnose and let the required checks run.
 
    After merging, identify the rules suite whose `after_sha` is the exact

@@ -90,12 +90,10 @@ non-strict rule.
    ```bash
    gh pr edit <dependent-N> --base main
    ```
-6. **Re-arm auto-merge on the independently reviewed new head** using the
-   exact-head queue-only mutation in [pr.md](pr.md). Interactive maintainers
-   must not use `gh pr merge --auto`: it can immediately exercise their
-   administrator bypass authority. Go back to step 2 for this dependent —
-   and only it. Repeat until the
-   stack is empty.
+6. **Re-arm auto-merge on the reviewed new head** using the guarded
+   `gh pr merge --auto --squash --match-head-commit` sequence in
+   [pr.md](pr.md). Go back to step 2 for this dependent — and only it.
+   Repeat until the stack is empty.
 
 The train's purpose is ordering and clean squash-tax recovery, not
 preventing independent PRs from going `BEHIND`.
