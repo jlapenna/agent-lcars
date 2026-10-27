@@ -8,7 +8,7 @@ content instead of downloading it (agent-lcars#2076). This script copies, as
 data, exactly what `pnpm fetch --frozen-lockfile` needs from each repository
 listed in pnpm-seed/fleet.json at its default branch head:
 
-  pnpm-lock.yaml       without its patch map or patch-qualified identities
+  pnpm-lock.yaml       without patches or authenticated GitHub Packages
   package.json         only name/private/packageManager (corepack version)
   pnpm-workspace.yaml  only supportedArchitectures
 
@@ -20,6 +20,10 @@ consistently too: frozen pnpm rejects hashes without their patch map. Files are 
 through `gh api` with the raw media type (lockfiles exceed the 1 MB JSON
 contents limit). GH_TOKEN_<OWNER> (owner upper-cased, `-` as `_`) is used for
 that owner's repositories when set, otherwise GH_TOKEN.
+
+GitHub Packages entries and their dependency edges are omitted from the shared
+anonymous cache. Their public dependencies remain seeded; consuming jobs fetch
+the omitted content with their own credentials and original lockfiles.
 
 Usage: sync-runner-pnpm-seed.py [--seed-dir DIR]
 Prints one `<repository> <commit>` line per synced repository.
@@ -35,6 +39,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -143,6 +148,48 @@ def validate_seed_lockfile(repo: str, lockfile: str) -> None:
         raise ValueError(f"{repo} seed lockfile still references patches")
 
 
+def without_github_packages(lockfile: str) -> str:
+    """Leave authenticated GitHub Packages to the consuming job's own store.
+
+    The shared image fetches anonymously. Preserve every other package, even
+    public dependencies used only by an omitted package; this is a content
+    cache, not a runnable copy of the consumer's dependency graph.
+    """
+    documents = list(yaml.safe_load_all(lockfile))
+    changed = False
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        packages = document.get("packages", {})
+        excluded = {
+            key
+            for key, package in packages.items()
+            if urlsplit(package.get("resolution", {}).get("tarball", "")).hostname
+            == "npm.pkg.github.com"
+        }
+        if not excluded:
+            continue
+        changed = True
+        for key in excluded:
+            del packages[key]
+        snapshots = document.get("snapshots", {})
+        for key in list(snapshots):
+            if key.split("(", 1)[0] in excluded:
+                del snapshots[key]
+        for node in [*document.get("importers", {}).values(), *snapshots.values()]:
+            for field in ("dependencies", "devDependencies", "optionalDependencies"):
+                edges = node.get(field, {})
+                for name, edge in list(edges.items()):
+                    version = edge.get("version", "") if isinstance(edge, dict) else edge
+                    identity = version.split("(", 1)[0]
+                    # Aliases use the full package identity as their version.
+                    if identity in excluded or f"{name}@{identity}" in excluded:
+                        del edges[name]
+    if not changed:
+        return lockfile
+    return yaml.safe_dump_all(documents, sort_keys=False)
+
+
 def sync_repository(repo: str, destination: Path) -> str:
     owner = repo.split("/", 1)[0]
     branch = gh(owner, f"repos/{repo}", "--jq", ".default_branch").strip()
@@ -163,7 +210,7 @@ def sync_repository(repo: str, destination: Path) -> str:
         raw_file(repo, owner, "pnpm-workspace.yaml", commit) or "{}"
     ) or {}
     seed_workspace = {key: workspace[key] for key in WORKSPACE_KEYS if key in workspace}
-    seed_lockfile = without_patched_dependencies(lockfile)
+    seed_lockfile = without_github_packages(without_patched_dependencies(lockfile))
     validate_seed_lockfile(repo, seed_lockfile)
 
     if destination.exists():

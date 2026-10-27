@@ -44,6 +44,10 @@ while IFS= read -r repository_dir; do
     echo "$repository_dir seed lockfile still references patches (run tools/sync-runner-pnpm-seed.py)" >&2
     exit 1
   fi
+  if grep -Fq 'npm.pkg.github.com/' "$lockfile"; then
+    echo "$repository_dir seeds authenticated GitHub Packages content (run tools/sync-runner-pnpm-seed.py)" >&2
+    exit 1
+  fi
   package_manager="$(node -p "require(process.argv[1]).packageManager" "$seed_dir/fleet/$repository_dir/package.json")"
   if [[ "$package_manager" != pnpm@11.* ]]; then
     echo "$repository_dir seeds $package_manager; the image seeds the pnpm 11 (v11) store" >&2

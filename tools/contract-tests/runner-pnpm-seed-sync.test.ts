@@ -83,6 +83,56 @@ const patchedLockfile =
   "lockfileVersion: '9.0'\n\npatchedDependencies:\n  left@1.0.0:\n    hash: abc\n    path: patches/left.patch\n\npackages:\n  left@1.0.0:\n    resolution: {integrity: sha512-left}\n";
 
 describe('runner pnpm seed sync', () => {
+  it('leaves authenticated packages to jobs while retaining all public content', () => {
+    const source = `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      public: {specifier: 1.0.0, version: 1.0.0(@club/design@1.0.0)}
+      '@club/design': {specifier: 1.0.0, version: 1.0.0}
+    devDependencies:
+      alias: {specifier: 'npm:@club/design@1.0.0', version: '@club/design@1.0.0'}
+packages:
+  public@1.0.0: {resolution: {integrity: sha512-public}}
+  child@2.0.0: {resolution: {integrity: sha512-child}}
+  '@club/design@1.0.0':
+    resolution: {tarball: 'https://npm.pkg.github.com/download/@club/design/1.0.0/abc', integrity: sha512-private}
+snapshots:
+  public@1.0.0(@club/design@1.0.0):
+    dependencies: {'@club/design': 1.0.0}
+    optionalDependencies: {alias: '@club/design@1.0.0', child: 2.0.0}
+  '@club/design@1.0.0': {dependencies: {child: 2.0.0}}
+  child@2.0.0: {}
+`;
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': source,
+        '.npmrc': '//npm.pkg.github.com/:_authToken=must-not-copy',
+      },
+    });
+    f.run(['acme/app']);
+    const result = parse(f.read('fleet/acme__app/pnpm-lock.yaml'));
+    expect(result.packages).toEqual({
+      'public@1.0.0': { resolution: { integrity: 'sha512-public' } },
+      'child@2.0.0': { resolution: { integrity: 'sha512-child' } },
+    });
+    expect(result.importers['.']).toEqual({
+      dependencies: {
+        public: { specifier: '1.0.0', version: '1.0.0(@club/design@1.0.0)' },
+      },
+      devDependencies: {},
+    });
+    expect(result.snapshots).toEqual({
+      'public@1.0.0(@club/design@1.0.0)': {
+        dependencies: {},
+        optionalDependencies: { child: '2.0.0' },
+      },
+      'child@2.0.0': {},
+    });
+    expect(existsSync(path.join(f.seed, 'fleet/acme__app/.npmrc'))).toBe(false);
+  });
+
   it('copies only what pnpm fetch needs from each repository', () => {
     const f = fixture({
       'acme/app': {

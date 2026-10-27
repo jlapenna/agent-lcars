@@ -1,7 +1,7 @@
 # Runner pnpm-store seed
 
 The generic ephemeral runner image carries a pnpm content store seeded with
-the union of every fleet JavaScript repository's lockfile, so a job's
+the anonymously fetchable packages in the fleet JavaScript repositories' lockfiles, so a job's
 `pnpm install --frozen-lockfile` reuses image content instead of downloading
 it (agent-lcars#2076). Jobs keep their own writable container layer: matching
 packages are read from the immutable seed layer, and misses are fetched into
@@ -18,6 +18,14 @@ script, patch, or build context is copied (the store holds unpatched package
 content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
+
+GitHub Packages requires authentication and may contain private packages. The
+sync omits its package records and dependency edges from this shared cache,
+retaining all other package content, including public dependencies of omitted
+packages. A consuming job keeps its original lockfile and fetches these cache
+misses with its own registry credentials. No consumer credentials or private
+GitHub Packages content are baked into the generic runner. The fetch command
+and pnpm supply-chain validation are unchanged; failures still fail the build.
 
 The image also carries pnpm's registry-metadata mirror from the same fetch.
 pnpm 11 verifies every locked package against its supply-chain policies on
