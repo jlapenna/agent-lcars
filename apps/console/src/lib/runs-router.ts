@@ -12,6 +12,7 @@ import {
   CapacityProtocol,
   type CapacityWorkerPermit,
   type DeliveryBinding,
+  deliveryWaiting,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -1042,9 +1043,9 @@ export const runsRouter = os.router({
     }
     const deliveryCorrection =
       run.params?.deliveryPredecessor !== undefined ||
-      (task?.delivery !== undefined &&
-        task.delivery.state !== 'complete' &&
-        task.delivery.runId !== run.runId);
+      (task !== undefined &&
+        deliveryWaiting(task) &&
+        task.delivery?.runId !== run.runId);
     if (
       deliveryCorrection &&
       result.ok &&

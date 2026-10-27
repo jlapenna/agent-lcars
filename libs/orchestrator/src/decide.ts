@@ -1,5 +1,6 @@
 import {
   type DeliveryBinding,
+  deliveryWaiting,
   isLive,
   isWorkAnchor,
   type OperationalIntervention,
@@ -210,8 +211,8 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     return refused('task-closed');
   }
   if (
-    input.task?.delivery !== undefined &&
-    input.task.delivery.state !== 'complete' &&
+    input.task !== undefined &&
+    deliveryWaiting(input.task) &&
     !(
       input.params?.mode === 'reply' &&
       input.params.replyPrincipal !== undefined
@@ -219,7 +220,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     !(
       input.requestSource !== undefined &&
       input.requestSource !== 'caller' &&
-      input.params?.deliveryPredecessor === input.task.delivery.runId
+      input.params?.deliveryPredecessor === input.task.delivery?.runId
     )
   )
     return refused('task-busy');
@@ -854,10 +855,7 @@ export function cancelRun(input: {
     updatedAt: now,
   };
   const released = resetLossBudgets(releaseLock(task, run.runId, now));
-  const closeDelivery =
-    input.nativeTask !== undefined &&
-    task.delivery !== undefined &&
-    task.delivery.state !== 'complete';
+  const closeDelivery = input.nativeTask !== undefined && deliveryWaiting(task);
   return settle(
     closeDelivery ? { ...released, closedAt: now } : released,
     settled,

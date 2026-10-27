@@ -80,26 +80,18 @@ const runResultSchema = z.strictObject({
   humanNeededActions: humanNeededActionsSchema.optional(),
 });
 
-const deliveryBindingSchema = z.strictObject({
+const deliveryBindingSchema = z.object({
   runId: z.string(),
   repo: z.string(),
   number: z.number().int().positive(),
   baseRef: z.string().min(1).max(255),
   head: z.string().regex(/^[a-f0-9]{40}$/u),
-  state: z.enum(['waiting', 'runtime-required', 'complete']),
+  state: z.enum(['waiting', 'complete']),
   correctionRunId: z.string().optional(),
-  runtimeGate: z.enum(['none', 'required', 'unknown']),
   observedAt: z.string(),
   mergeCommit: z
     .string()
     .regex(/^[a-f0-9]{40}$/u)
-    .optional(),
-  runtimeEvidence: z
-    .strictObject({
-      principal: z.string(),
-      ref: z.string().url(),
-      observedAt: z.string(),
-    })
     .optional(),
 });
 
@@ -293,31 +285,6 @@ export const anchorOwnerSchema = z.strictObject({
 export type AnchorOwner = z.output<typeof anchorOwnerSchema>;
 
 export const itemsContract = {
-  deliveryEvidence: base
-    .meta(
-      openapi({
-        method: 'POST',
-        path: '/delivery/{runId}/evidence',
-        operationId: 'recordDeliveryRuntimeEvidence',
-        summary: 'Record an operator verified exact-merge runtime receipt',
-      }),
-    )
-    .errors({
-      FORBIDDEN: { message: 'Principal may not verify this delivery' },
-      CONFLICT: { message: 'Delivery binding changed' },
-    })
-    .input(
-      z.strictObject({
-        runId: z.string().min(1).max(175),
-        head: z.string().regex(/^[a-f0-9]{40}$/u),
-        mergeCommit: z.string().regex(/^[a-f0-9]{40}$/u),
-        ref: z.string().url().max(2048),
-      }),
-    )
-    .output(
-      z.strictObject({ runId: z.string(), state: z.literal('complete') }),
-    ),
-
   anchorOwner: base
     .meta(
       openapi({

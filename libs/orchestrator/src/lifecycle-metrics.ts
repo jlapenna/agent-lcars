@@ -158,14 +158,7 @@ function completedPullRequestDelivery(run: Run, now: number): boolean {
     observation > now
   )
     return false;
-  if (binding.runtimeGate !== 'required')
-    return binding.runtimeEvidence === undefined;
-  // advanceDelivery records both clocks from the same authorized observation.
-  return (
-    binding.runtimeEvidence !== undefined &&
-    Number.isFinite(Date.parse(binding.runtimeEvidence.observedAt)) &&
-    Date.parse(binding.runtimeEvidence.observedAt) === observation
-  );
+  return true;
 }
 
 export interface LifecycleMetricRecords {

@@ -395,6 +395,15 @@ export interface OrchestratorStore {
    * permanent failure) omits all three and so never touches them.
    */
   settleOutbox(input: OutboxSettlement): Promise<boolean>;
+  /** Makes a pending entry that is waiting out `nextAttemptAt` claimable now.
+   * Returns false when the entry is missing, not pending, or already due, so
+   * a webhook wake never touches a leased or settled entry. */
+  wakeOutbox(input: { entryId: string; now: string }): Promise<boolean>;
+  /** Tasks whose waiting delivery binding is this exact pull request. */
+  readWaitingDeliveryTasks(binding: {
+    repo: string;
+    number: number;
+  }): Promise<VersionedTask[]>;
 
   /** Live runs whose startup or execution deadline expired at `now`; excludes queued waits. */
   listExpiredRuns(now: string): Promise<Run[]>;

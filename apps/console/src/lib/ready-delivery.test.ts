@@ -42,7 +42,6 @@ const TASK = {
       description: 'ship',
       pipeline: 'claude',
       target: { repo: 'octo/example' },
-      deliveryRuntime: 'none',
     },
   },
 } as unknown as Task;
@@ -53,7 +52,6 @@ const BINDING: DeliveryBinding = {
   baseRef: 'main',
   head: HEAD,
   state: 'waiting',
-  runtimeGate: 'none',
   observedAt: NOW,
 };
 
@@ -261,7 +259,7 @@ describe('authenticated ready delivery evidence', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
+    ).toEqual({ kind: 'merged', head: HEAD, mergeCommit: MERGE });
   });
 
   it('hands off an armed PR with one PR read, then settles its protected landing', async () => {
@@ -291,7 +289,7 @@ describe('authenticated ready delivery evidence', () => {
     ).toEqual(BINDING);
     expect(prReads).toBe(1);
     expect(await observeGithubDelivery(merged, BINDING)).toEqual({
-      kind: 'protected-merge',
+      kind: 'merged',
       head: HEAD,
       mergeCommit: MERGE,
     });
@@ -317,7 +315,7 @@ describe('authenticated ready delivery evidence', () => {
     expect(
       await observeGithubDelivery(fixture({ pr, review }), binding),
     ).toEqual({
-      kind: 'protected-merge',
+      kind: 'merged',
       head: HEAD,
       mergeCommit: MERGE,
     });
@@ -546,7 +544,7 @@ describe('authenticated ready delivery evidence', () => {
       },
     });
     expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-      kind: 'protected-merge',
+      kind: 'merged',
       head: HEAD,
       mergeCommit: MERGE,
     });
@@ -837,7 +835,7 @@ describe('minted delivery permission and current CI boundaries', () => {
   it('ends monitoring at merge with the narrow default token', async () => {
     expect(
       (await observeGithubDelivery(mintedFixture(false, true), BINDING)).kind,
-    ).toBe('protected-merge');
+    ).toBe('merged');
   });
   it('mints existing declared delivery reads while default remains narrow', async () => {
     const merged = false;
@@ -1105,7 +1103,7 @@ describe('current review and protected landing evidence', () => {
         review: { reviews: { pageInfo: { hasPreviousPage: false }, nodes } },
       });
       expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-        kind: 'protected-merge',
+        kind: 'merged',
         head: HEAD,
         mergeCommit: MERGE,
       });
@@ -2106,7 +2104,7 @@ describe('nullable historical review identities', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
+    ).toEqual({ kind: 'merged', head: HEAD, mergeCommit: MERGE });
   });
   it('never treats nullable-only identities as review feedback', async () => {
     expect(
@@ -2137,7 +2135,7 @@ describe('nullable historical review identities', () => {
         }),
         BINDING,
       ),
-    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
+    ).toEqual({ kind: 'merged', head: HEAD, mergeCommit: MERGE });
   });
   it('retains valid reviewer change requests beside nullable history', async () => {
     const nodes = [valid, ...history, { ...valid, state: 'CHANGES_REQUESTED' }];

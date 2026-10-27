@@ -535,11 +535,7 @@ executor exit never makes this handoff logically done.
 
 The merge is final landing and ends monitoring; branch protection decides what
 review and checks a merge needs. Known same-head actionable feedback on an open
-PR remains a bounded correction; a merged or completed delivery is not reopened. The immutable intake
-`deliveryRuntime: none|required` declares the runtime policy; an omitted policy
-needs no runtime receipt. A worker cannot waive a required gate. Required runtime
-work stays owned until an authenticated operator records the exact merged-head
-runtime receipt through `/api/work/v1/delivery/{runId}/evidence`.
+PR remains a bounded correction; a merged or completed delivery is not reopened.
 
 ## 7. Budget discipline
 

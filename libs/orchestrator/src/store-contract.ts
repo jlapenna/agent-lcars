@@ -1634,6 +1634,99 @@ export function runOrchestratorStoreContract(
     });
 
     describe('the outbox', () => {
+      it('wakes only a pending entry that is still waiting out its backoff', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        await started(orchestrator);
+        const entry = onlyClaim(await claimOutbox(store, clock.now()));
+        const later = new Date(Date.parse(clock.now()) + 60 * 60_000);
+        // A leased entry is never woken.
+        expect(
+          await store.wakeOutbox({ entryId: entry.entryId, now: clock.now() }),
+        ).toBe(false);
+        await store.settleOutbox({
+          entryId: entry.entryId,
+          claimId: entry.claimId,
+          state: 'pending',
+          now: clock.now(),
+          nextAttemptAt: later.toISOString(),
+        });
+        expect(await claimOutbox(store, clock.now())).toEqual([]);
+        expect(
+          await store.wakeOutbox({ entryId: entry.entryId, now: clock.now() }),
+        ).toBe(true);
+        // Already due: a second wake is a no-op, and the entry is claimable.
+        expect(
+          await store.wakeOutbox({ entryId: entry.entryId, now: clock.now() }),
+        ).toBe(false);
+        expect(
+          await store.wakeOutbox({ entryId: 'missing', now: clock.now() }),
+        ).toBe(false);
+        expect(await claimOutbox(store, clock.now())).toHaveLength(1);
+      });
+
+      it('finds the tasks whose waiting delivery is bound to an exact pull request', async () => {
+        const { clock, store, orchestrator } = await fixture();
+        const { run } = await started(orchestrator);
+        const versioned = (await store.readTask(run.task))!;
+        const binding = {
+          runId: run.runId,
+          repo: 'octo/example',
+          number: 12,
+          baseRef: 'main',
+          head: 'a'.repeat(40),
+          state: 'waiting' as const,
+          observedAt: clock.now(),
+        };
+        await store.apply({
+          decision: {
+            task: { ...versioned.task, delivery: binding },
+            outbox: [],
+          },
+          expectedRevision: versioned.revision,
+        });
+        expect(
+          (
+            await store.readWaitingDeliveryTasks({
+              repo: 'octo/example',
+              number: 12,
+            })
+          ).map((entry) => entry.task.task),
+        ).toEqual([run.task]);
+        expect(
+          await store.readWaitingDeliveryTasks({
+            repo: 'octo/example',
+            number: 13,
+          }),
+        ).toEqual([]);
+        expect(
+          await store.readWaitingDeliveryTasks({
+            repo: 'octo/other',
+            number: 12,
+          }),
+        ).toEqual([]);
+        const current = (await store.readTask(run.task))!;
+        await store.apply({
+          decision: {
+            task: {
+              ...current.task,
+              delivery: {
+                ...binding,
+                state: 'complete',
+                mergeCommit: 'b'.repeat(40),
+              },
+            },
+            outbox: [],
+          },
+          expectedRevision: current.revision,
+        });
+        expect(
+          await store.readWaitingDeliveryTasks({
+            repo: 'octo/example',
+            number: 12,
+          }),
+        ).toEqual([]);
+      });
+
       it('gives exactly one of two concurrent claimants each entry', async () => {
         const { clock, store, orchestrator } = await fixture();
         await started(orchestrator);

@@ -241,6 +241,15 @@ export function isLive(state: RunState): boolean {
   return LIVE_STATES.includes(state);
 }
 
+/** The one owner of "an unfinished delivery still owns this task": a bound PR
+ * that has not merged. It blocks reuse, keeps the item running and names the
+ * fleet as the anchor owner until the PR merges or the binding is dropped. */
+export function deliveryWaiting(task: {
+  delivery?: { state: 'waiting' | 'complete' } | undefined;
+}): boolean {
+  return task.delivery?.state === 'waiting';
+}
+
 /**
  * Whatever the run reported, recorded verbatim and never interpreted.
  * `summary` is bounded so a runaway report cannot bloat the record.
@@ -426,28 +435,21 @@ export interface ProviderFallbackRequest {
 }
 
 /** Logical delivery ownership survives normal execution settlement. Only trusted
- * exact-head GitHub reads may advance this binding; it is not capacity state. */
-export const deliveryBindingSchema = z.strictObject({
+ * exact-head GitHub reads may advance this binding; it is not capacity state.
+ * Not strict: bindings stored before the runtime gate was retired still carry
+ * `runtimeGate`/`runtimeEvidence`, which parsing drops. */
+export const deliveryBindingSchema = z.object({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   repo: githubAnchorSchema.shape.repo,
   number: githubAnchorSchema.shape.issue,
   baseRef: z.string().min(1).max(255),
   head: z.string().regex(/^[a-f0-9]{40}$/u),
-  state: z.enum(['waiting', 'runtime-required', 'complete']),
-  /** Absence of a trusted intake policy retains the runtime gate. */
+  state: z.enum(['waiting', 'complete']),
   correctionRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH).optional(),
-  runtimeGate: z.enum(['none', 'required', 'unknown']),
   observedAt: isoUtc,
   mergeCommit: z
     .string()
     .regex(/^[a-f0-9]{40}$/u)
-    .optional(),
-  runtimeEvidence: z
-    .strictObject({
-      principal: z.string().min(1).max(128),
-      ref: z.string().url().max(2048),
-      observedAt: isoUtc,
-    })
     .optional(),
 });
 export type DeliveryBinding = z.infer<typeof deliveryBindingSchema>;
@@ -676,6 +678,23 @@ export interface OutboxSettlement {
 }
 
 /** Settle only the current lease owner; omitted retry fields retain history. */
+/** A webhook wake: a pending entry still waiting out `nextAttemptAt` becomes
+ * claimable at `now`. Leased, settled, missing or already-due entries are left
+ * exactly as they are, so a wake can never race a drain or revive a retiree. */
+export function wakeOutboxEntry(
+  entry: OutboxEntry | undefined,
+  now: string,
+): OutboxEntry | undefined {
+  if (
+    entry === undefined ||
+    entry.state !== 'pending' ||
+    entry.nextAttemptAt === undefined ||
+    Date.parse(entry.nextAttemptAt) <= Date.parse(now)
+  )
+    return undefined;
+  return { ...entry, nextAttemptAt: now, updatedAt: now };
+}
+
 export function settleOutboxEntry(
   entry: OutboxEntry | undefined,
   input: OutboxSettlement,
