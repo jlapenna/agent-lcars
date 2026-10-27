@@ -36,6 +36,7 @@ import {
   byOutboxClaimFairness,
   type GithubAnchorProjection,
   githubAnchorProjectionSchema,
+  isClaimant,
   isLive,
   isWorkAnchor,
   type LeasedOutboxEntry,
@@ -1291,9 +1292,8 @@ export class FirestoreStore implements OrchestratorStore {
       if (
         !isLive(run.state) ||
         run.credentialOperation !== undefined ||
-        run.queue?.state !== 'claimed' ||
-        run.queue.claimedBy !== input.claimedBy ||
-        run.queue.tokenHash !== input.tokenHash
+        !isClaimant(run, input.tokenHash) ||
+        run.queue?.claimedBy !== input.claimedBy
       ) {
         return false;
       }

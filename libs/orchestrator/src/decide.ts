@@ -1,6 +1,7 @@
 import {
   type DeliveryBinding,
   deliveryWaiting,
+  isClaimant,
   isLive,
   isWorkAnchor,
   type OperationalIntervention,
@@ -9,6 +10,7 @@ import {
   type ProviderFallbackRequest,
   type QueuePriority,
   queuePrioritySchema,
+  recoveryDeadlineElapsed,
   requestHistoryKey,
   type RequestSource,
   type Run,
@@ -557,21 +559,17 @@ export function observeStartupPlacement(input: {
   const { now, task, run, claimant, jobUid, observedAt, placed } = input;
   const queue = run.queue;
   if (
-    queue?.state !== 'claimed' ||
-    queue.startupPlacement === undefined ||
+    claimant.claimFingerprint === undefined ||
+    !isClaimant(run, claimant.claimFingerprint) ||
+    queue?.startupPlacement === undefined ||
     queue.claimedBy !== claimant.runner ||
     queue.claimedBySubject !== claimant.subject ||
-    queue.tokenHash !== claimant.claimFingerprint ||
     (queue.startupPlacement.jobUid !== undefined &&
       queue.startupPlacement.jobUid !== jobUid)
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
-  if (
-    task.activeRunId !== run.runId ||
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (task.activeRunId !== run.runId || recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   // Reject delayed/replayed observations before extending any clock. The
   // executor's clock is not deadline authority: deadlines use server time.
@@ -618,8 +616,7 @@ export function renewLease(input: {
   const { now, task, run } = input;
   if (
     input.claimFingerprint !== undefined &&
-    (run.queue?.state !== 'claimed' ||
-      run.queue.tokenHash !== input.claimFingerprint)
+    !isClaimant(run, input.claimFingerprint)
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
@@ -628,11 +625,7 @@ export function renewLease(input: {
   // Token-authenticated callbacks must retain their live deadline through
   // commit as well as the fingerprint; internal server operations keep their
   // existing lease policy.
-  if (
-    input.claimFingerprint !== undefined &&
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (input.claimFingerprint !== undefined && recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   return {
     task,
@@ -669,19 +662,14 @@ export function observePlacement(input: {
 }): Decision | Refusal {
   const { now, task, run, claimant } = input;
   if (
-    run.queue?.state !== 'claimed' ||
-    run.queue.claimedBySubject !== claimant.subject ||
-    run.queue.claimedBy !== claimant.runner ||
     claimant.claimFingerprint === undefined ||
-    run.queue.tokenHash !== claimant.claimFingerprint
+    !isClaimant(run, claimant.claimFingerprint) ||
+    run.queue?.claimedBySubject !== claimant.subject ||
+    run.queue.claimedBy !== claimant.runner
   )
     return refused('not-claimant');
   if (!isLive(run.state)) return refused('run-not-live');
-  if (
-    task.activeRunId !== run.runId ||
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(now)
-  )
+  if (task.activeRunId !== run.runId || recoveryDeadlineElapsed(run, now))
     return refused('stale-lease');
   const observed = Date.parse(input.placement.observedAt);
   if (
@@ -716,8 +704,7 @@ export function reportResult(input: {
   const { now, task, run, result } = input;
   if (
     input.claimFingerprint !== undefined &&
-    (run.queue?.state !== 'claimed' ||
-      run.queue.tokenHash !== input.claimFingerprint)
+    !isClaimant(run, input.claimFingerprint)
   )
     return refused('not-claimant');
   if (run.state === 'finished') return refused('run-not-live', run);
@@ -746,8 +733,7 @@ export function reportResult(input: {
   // existing lease policy.
   if (
     input.claimFingerprint !== undefined &&
-    Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-      Date.parse(admittedAt)
+    recoveryDeadlineElapsed(run, admittedAt)
   )
     return refused('stale-lease');
   if (run.credentialOperation !== undefined) {

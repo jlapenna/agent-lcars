@@ -35,6 +35,7 @@ import type {
 import {
   byOutboxClaimFairness,
   githubAnchorProjectionSchema,
+  isClaimant,
   isLive,
   isWorkAnchor,
   requestHistoryKey,
@@ -861,9 +862,8 @@ export class MemoryStore implements OrchestratorStore {
       run === undefined ||
       !isLive(run.state) ||
       run.credentialOperation !== undefined ||
-      run.queue?.state !== 'claimed' ||
-      run.queue.claimedBy !== input.claimedBy ||
-      run.queue.tokenHash !== input.tokenHash
+      !isClaimant(run, input.tokenHash) ||
+      run.queue?.claimedBy !== input.claimedBy
     ) {
       return false;
     }

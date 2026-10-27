@@ -783,3 +783,19 @@ export function startDeadlineElapsed(run: Run, now: string): boolean {
     Date.parse(run.queue.startDeadlineAt) <= Date.parse(now)
   );
 }
+
+/** The claimed run's recovery deadline has passed at `now`. A queued run has
+ * no deadline and never elapses; callers fence the claim first. */
+export function recoveryDeadlineElapsed(run: Run, now: string): boolean {
+  const deadline = runRecoveryDeadline(run);
+  return deadline !== undefined && Date.parse(deadline) <= Date.parse(now);
+}
+
+/** The exact queue claimant: the run is claimed and `claimFingerprint` is its
+ * claim token hash. Every token-authenticated callback fences on this before
+ * it may touch the run. */
+export function isClaimant(run: Run, claimFingerprint: string): boolean {
+  return (
+    run.queue?.state === 'claimed' && run.queue.tokenHash === claimFingerprint
+  );
+}
