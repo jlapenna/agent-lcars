@@ -70,7 +70,7 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) ? (
+        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) || item.spec.pipeline === 'goose' ? (
           <Text>{item.spec.description}</Text>
         ) : (
           <EditWork
@@ -91,6 +91,7 @@ export function WorkDetailViewContent({
               spec: item.spec,
             }) ? undefined : (
               <WorkActions
+                recipe={item.spec.pipeline === 'goose'}
                 id={item.id}
                 latestRunId={latestRun(item.runs)?.runId}
                 state={item.state}

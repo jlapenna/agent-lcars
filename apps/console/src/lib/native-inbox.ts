@@ -60,6 +60,9 @@ export async function getNativeInboxCards(
       } catch {
         logger.warn('agent-lcars: human-needed summary read unavailable');
       }
+      // Repository jobs expose artifacts and invocation through Jobs; coding
+      // replies must not create a second attempt of an effectful occurrence.
+      if (work.spec.pipeline === 'goose') continue;
       cards.push({
         humanNeededActions,
         work: { ...work, anchor: work.anchor },

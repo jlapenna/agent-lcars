@@ -22,7 +22,7 @@ const workScopeSchema = z.enum([
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
  *  `AGENT_LCARS_WORK_GRANTS` is a startup config error, not a silently inert
  *  grant discovered later by a principal who mysteriously has no access. */
-const pipelineNameSchema = z.enum(PIPELINES);
+const pipelineNameSchema = z.enum([...PIPELINES, 'goose']);
 
 /** A channel checked against the same closed set `workOriginSchema.channel`
  *  requires (`libs/work/src/spec.ts`'s `WORK_CHANNELS`) -- the same

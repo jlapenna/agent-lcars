@@ -25,6 +25,7 @@ import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
+import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed
@@ -108,6 +109,9 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
     orchestrator,
     reconcileIssueTriage: (anchor, deleted) =>
       reconcileFleetTriage({ store, orchestrator }, anchor, deleted),
+    executeRepositoryJobs: async (deadline) => {
+      await maintainRepositoryJobs(deadline, createOrchestratorRuntime());
+    },
     executeModelWork: (deadline) =>
       executeSummaries(createOrchestratorRuntime(), undefined, deadline),
     recoverCredentialOperations: () =>

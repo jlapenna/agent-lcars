@@ -99,9 +99,18 @@ export const summaryWorkSpecSchema = z.strictObject({
   priority: z.literal('background'),
   sourceKey: z.string().min(1).max(256),
 });
+export const recipeWorkSpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  pipeline: z.literal('goose'),
+  priority: z.literal('background'),
+  target: workTargetSchema,
+  jobOccurrence: z.string().regex(/^[a-f0-9]{64}$/u),
+});
 export const storedWorkSpecSchema = z.union([
   workSpecSchema,
   summaryWorkSpecSchema,
+  recipeWorkSpecSchema,
 ]);
 export type StoredWorkSpec = z.infer<typeof storedWorkSpecSchema>;
 export const storedWorkPayloadSchema = z.strictObject({

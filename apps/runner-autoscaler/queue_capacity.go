@@ -385,7 +385,7 @@ func (c *queueCapacityClient) claim(ctx context.Context, runner string, placemen
 		if x.Receipt == nil || !x.Receipt.valid(c.config.PoolID, x.RunID) || x.JobName != queueJobName(x.RunID) {
 			return x, fmt.Errorf("capacity claim fence invalid")
 		}
-		if x.Kind == "claim" && (x.Token == "" || (x.Pipeline != "claude" && x.Pipeline != "codex" && x.Pipeline != "opencode")) {
+		if x.Kind == "claim" && (x.Token == "" || (x.Pipeline != "claude" && x.Pipeline != "codex" && x.Pipeline != "opencode" && x.Pipeline != "goose")) {
 			return x, fmt.Errorf("capacity claim credential invalid")
 		}
 		// Resolve the request only after observing the exact durable answer. Launch

@@ -1107,6 +1107,30 @@ export const runsContract = {
     .output(
       z.union([runClaimResponseSchema, capacityClaimResponseSchema]).optional(),
     ),
+  recipeBrief: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/recipe',
+        operationId: 'recipeBrief',
+        summary: 'Fetch an admitted recipe',
+        spec: withRunToken,
+      }),
+    )
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(z.record(z.string(), z.unknown())),
+  recipeComplete: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/recipe',
+        operationId: 'recipeComplete',
+        summary: 'Complete an admitted recipe',
+        spec: withRunToken,
+      }),
+    )
+    .input(z.strictObject({ runId: runIdSchema, result: z.unknown() }))
+    .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
   brief: runBase
     .meta(
       openapi({

@@ -42,6 +42,7 @@ export interface OrchestratorRouteDeps {
     anchor: Extract<TaskId, { repo: string }>,
     deleted?: boolean,
   ) => Promise<void>;
+  executeRepositoryJobs?: (deadline: number) => Promise<void>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -445,6 +446,7 @@ export async function handleReconcile(
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
     await deps.executeModelWork?.(modelDeadline);
+    await deps.executeRepositoryJobs?.(modelDeadline);
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +

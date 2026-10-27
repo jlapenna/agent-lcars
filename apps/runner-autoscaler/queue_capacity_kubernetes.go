@@ -413,9 +413,11 @@ func (q *kubernetesQueue) installAbsentBarrier(ctx context.Context, r capacityRe
 		return nil, err
 	}
 	j.Annotations[queueBarrierAnnotation] = r.Nonce
-	j.Spec.Template.Spec.Containers[0].Command = []string{"/bin/false"}
-	j.Spec.Template.Spec.Containers[0].Env = nil
-	j.Spec.Template.Spec.Containers[0].VolumeMounts = nil
+	for i := range j.Spec.Template.Spec.Containers {
+		j.Spec.Template.Spec.Containers[i].Command = []string{"/bin/false"}
+		j.Spec.Template.Spec.Containers[i].Env = nil
+		j.Spec.Template.Spec.Containers[i].VolumeMounts = nil
+	}
 	j.Spec.Template.Spec.Volumes = nil
 	created, err := q.client.BatchV1().Jobs(q.config.Namespace).Create(ctx, j, meta.CreateOptions{})
 	if err == nil {

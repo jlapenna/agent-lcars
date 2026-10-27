@@ -14,6 +14,7 @@ import {
   isSourceManagedWork,
   itemsContract,
   type MaintenanceTickOutput,
+  recipeWorkSpecSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -318,6 +319,11 @@ export const workRouter = os.router({
   update: operator.update.handler(async ({ input, context, errors }) => {
     const task = await context.runtime.store.readTask({ workId: input.id });
     if (task === undefined) throw errors.NOT_FOUND();
+    if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+      throw errors.CONFLICT({
+        message:
+          'Recipe occurrences are immutable; update the repository definition.',
+      });
     if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
         message: 'Source-managed work is read-only.',
@@ -348,6 +354,10 @@ export const workRouter = os.router({
     async ({ input, context, errors }) => {
       const task = await context.runtime.store.readTask({ workId: input.id });
       if (task === undefined) throw errors.NOT_FOUND();
+      if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+        throw errors.CONFLICT({
+          message: 'Invoke a new occurrence from Jobs after retirement.',
+        });
       if (isSourceManagedWork(task.task.work))
         throw errors.CONFLICT({
           message: 'Source-managed work is read-only.',

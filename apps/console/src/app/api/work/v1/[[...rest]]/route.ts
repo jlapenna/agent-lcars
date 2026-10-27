@@ -24,6 +24,7 @@ import {
   createOrchestratorRuntime,
   createScheduleStore,
 } from '@/lib/orchestrator-runtime';
+import { repositoryJobsHttp } from '@/lib/repository-jobs-http';
 import { createRunsHandler } from '@/lib/runs-router';
 import {
   authenticateWorkRequest,
@@ -95,6 +96,9 @@ async function handle(request: Request): Promise<Response> {
   if (new URL(request.url).pathname === `${PREFIX}/costs/budget`)
     return withNoStore(await costBudgetResponse(request, principal));
 
+  const pathname = new URL(request.url).pathname;
+  if (pathname === `${PREFIX}/jobs` || pathname.startsWith(`${PREFIX}/jobs/`))
+    return withNoStore(await repositoryJobsHttp(request, principal));
   const runtime = createOrchestratorRuntime();
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,
