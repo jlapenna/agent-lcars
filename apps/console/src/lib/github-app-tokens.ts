@@ -120,14 +120,13 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   pull_requests: 'write',
 };
 
-/** Existing outbox writes plus exact-head protected delivery observations.
+/** Existing outbox writes plus exact-head delivery observations.
  * These read grants already belong to the declared App; legacy commit statuses
  * are outside its declared capability and are never requested here.
  * `contents: read` is what GraphQL requires for a review's `commit { oid }`;
  * without it every reviewed PR's delivery read fails as FORBIDDEN. */
 export const ORCHESTRATOR_GITHUB_PERMISSIONS: Record<string, string> = {
   ...DEFAULT_PERMISSIONS,
-  administration: 'read',
   checks: 'read',
   contents: 'read',
 };

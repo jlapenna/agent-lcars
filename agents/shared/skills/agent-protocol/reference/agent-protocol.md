@@ -506,9 +506,8 @@ monitor; do not retain the implementation executor solely waiting for them.
 The authenticated finalizer verifies the exact marker, head, ready state,
 protected target and squash arming before accepting this waiting handoff. It
 settles execution through normal credential cleanup and positive physical
-retirement. Already merged initial handoffs with resolved threads, no change
-requests and exact protected landing follow the normal delivery path; branch
-protection, not a separate approval, decides what review a merge needs. One
+retirement. An already merged initial handoff completes with its merge commit;
+branch protection, not a separate approval, decides what review a merge needs. One
 narrow exception settles an initial ordinary pull-request result without durable
 delivery ownership: authoritative reads prove the run's own exact
 attempt-marked, ready, open PR in its stored target repository with an
@@ -534,16 +533,13 @@ on the same currently authorized provider. Corrections retain existing claim,
 credential and physical-retirement admission barriers. A PR, auto-merge arm or
 executor exit never makes this handoff logically done.
 
-Only independent exact-head GitHub review, resolved threads and exact protected
-merge evidence can advance final landing. Known same-head actionable feedback
-remains a bounded correction while delivery is waiting, including after merge;
-completed delivery is not reopened. The immutable intake
+The merge is final landing and ends monitoring; branch protection decides what
+review and checks a merge needs. Known same-head actionable feedback on an open
+PR remains a bounded correction; a merged or completed delivery is not reopened. The immutable intake
 `deliveryRuntime: none|required` declares the runtime policy; an omitted policy
-retains an unknown gate. A worker cannot waive it. Required or unknown runtime
+needs no runtime receipt. A worker cannot waive a required gate. Required runtime
 work stays owned until an authenticated operator records the exact merged-head
-runtime receipt through `/api/work/v1/delivery/{runId}/evidence`. Use the existing
-Work create `--delivery-runtime none` only when the authorized intake explicitly
-establishes that no runtime verification is needed (for example documentation).
+runtime receipt through `/api/work/v1/delivery/{runId}/evidence`.
 
 ## 7. Budget discipline
 

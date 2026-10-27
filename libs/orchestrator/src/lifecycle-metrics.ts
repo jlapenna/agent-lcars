@@ -158,7 +158,7 @@ function completedPullRequestDelivery(run: Run, now: number): boolean {
     observation > now
   )
     return false;
-  if (binding.runtimeGate === 'none')
+  if (binding.runtimeGate !== 'required')
     return binding.runtimeEvidence === undefined;
   // advanceDelivery records both clocks from the same authorized observation.
   return (

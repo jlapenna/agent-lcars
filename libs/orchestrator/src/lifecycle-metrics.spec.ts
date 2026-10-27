@@ -407,7 +407,7 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 1\n',
     );
   });
-  it.each(['required', 'unknown'] as const)(
+  it.each(['required'] as const)(
     'requires the authorized matching runtime observation for gate %s',
     (runtimeGate) => {
       const original = delivered({ state: 'runtime-required', runtimeGate });
@@ -455,10 +455,6 @@ describe('durable lifecycle metric accounting', () => {
     {
       name: 'required without evidence',
       binding: { runtimeGate: 'required' as const },
-    },
-    {
-      name: 'unknown without evidence',
-      binding: { runtimeGate: 'unknown' as const },
     },
     { name: 'invalid observation', binding: { observedAt: 'invalid' } },
     {

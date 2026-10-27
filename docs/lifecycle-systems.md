@@ -296,17 +296,15 @@ prove deployed behavior.
 
 The authenticated brief advertises deliveryHandoffVersion:1; the baked runner
 propagates it into provider context. Workers without that capability retain
-the existing delivery path. Already merged legacy PR completions require the
-same exact protected-merge readback, while unmerged ready handoff uses the
-new contract. An authenticated native implementation completion with an open PR
+the existing delivery path. An already merged PR completion records its merge
+commit, while unmerged ready handoff uses the new contract. An authenticated native implementation completion with an open PR
 artifact establishes exact attempt-marker identity, ready state, protected
 target policy and squash arming. Pending review and CI transfer to the
 existing durable monitor; it does not retain the implementation executor or
-declare delivery complete. The target's branch protection decides what review a
-merge needs: already merged artifacts and final logical landing require exact
-protected-merge evidence and no outstanding change requests or unresolved
-threads, not an extra approval. Actionable same-head feedback remains a bounded correction
-even when it arrives after merge, while delivery is still waiting. Normal Run
+declare delivery complete. The target's branch protection decides what review
+and checks a merge needs, so the merge itself is final logical landing and ends
+monitoring; nothing re-verifies or corrects a merged PR. Actionable same-head
+feedback on an open PR remains a bounded correction. Normal Run
 settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
 ownership; Run.delivery exposes waiting, runtime-required or complete separately
@@ -324,15 +322,13 @@ Temporary provider fallback still requires its existing current source grant
 and repository policy. Credential debt and physically retained
 claims remain owned by the existing queue/capacity barriers.
 
-Protected landing requires a passing rules suite at the actual merge commit,
-including passing required-check evaluations; a merged flag or an arm alone is
-insufficient. Trusted immutable Work intake may name deliveryRuntime:none or
-required (CLI create --delivery-runtime). Missing policy remains unknown.
-Required/unknown runtime work stays running after landing until the operator-only
-POST /api/work/v1/delivery/{runId}/evidence records the exact head, merge commit
-and runtime receipt. This route is a source capability, not authorization to
-perform a live mutation or deploy. Existing work is not silently assigned a
-no-runtime policy.
+An auto-merge arm alone is not landing; the merged PR and its merge commit are.
+Trusted immutable Work intake may name deliveryRuntime:none or
+required (CLI create --delivery-runtime); a missing policy is recorded as
+unknown and needs no runtime receipt. Only required runtime work stays running
+after landing until the operator-only POST /api/work/v1/delivery/{runId}/evidence
+records the exact head, merge commit and runtime receipt. This route is a source
+capability, not authorization to perform a live mutation or deploy.
 
 Native logical completion emits a distinct `delivery-outcome/<runId>` event
 through the existing outcome outbox and session-expiry owner. The original
@@ -345,5 +341,6 @@ through its dedicated token purpose. Required GitHub Actions failures must
 belong to the current workflow run and attempt's exact check IDs; canceled
 draft CI and superseded attempts cannot authorize a successor. Private legacy
 commit-status contexts remain unknown without an undeclared grant. Independent
-current review feedback remains actionable. An unmerged draft, closed, or
-unarmed PR retains delivery ownership and does not request correction.
+current review feedback remains actionable. A PR closed without merging
+releases delivery ownership; an open draft or unarmed PR retains it and does not
+request correction.
