@@ -1117,6 +1117,11 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
+      CONFLICT: { message: 'Worker generation refused' },
+    })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(z.record(z.string(), z.unknown())),
   recipeComplete: runBase
@@ -1129,6 +1134,11 @@ export const runsContract = {
         spec: withRunToken,
       }),
     )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      FORBIDDEN: { message: 'Not a recipe occurrence' },
+      CONFLICT: { message: 'Worker generation or completion refused' },
+    })
     .input(z.strictObject({ runId: runIdSchema, result: z.unknown() }))
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
   brief: runBase

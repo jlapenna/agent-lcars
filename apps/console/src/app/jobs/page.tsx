@@ -28,6 +28,7 @@ const JobsView = withConsolePageShell(
   ({ watchedRepos }: JobsViewProps) => ({
     current: 'jobs',
     title: 'Repository jobs',
+    subtitle: 'Recipes, schedules and results',
     utilities: (
       <>
         <div className="console-utilities--desktop">
