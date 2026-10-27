@@ -1,11 +1,12 @@
+/* eslint-disable vitest/no-import-node-test -- qualification executes the installed runner with node --test, without Vitest. */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 // Explicit qualification in the supported CI lane (2 CPU / 5 GiB / 20 GiB).
 // Mount fixture provider configuration at /run/secrets and aaa.bbb.ccc at
@@ -321,7 +322,7 @@ for (const cancel of [false, true]) {
           try {
             process.kill(-child.pid, 'SIGKILL');
           } catch (error) {
-            if (error.code !== 'ESRCH') throw error;
+            assert.equal(error.code, 'ESRCH');
           }
         }
         server.closeAllConnections();
