@@ -178,13 +178,3 @@ stale revision returns 409 without applying the change. The `work-create`
 workflow's `schedule-disable` action reads the revision first and fails on
 409 so a concurrent operator change cannot be reported as a successful
 disable.
-
-## Historical smoke ledgers
-
-The dated smoke ledgers from 2026-08-27 through 2026-09-07 (native item
-creation, parked work, cron ingress, QueueExecutor canaries, ingress
-unification, session resume and reaper, resumable conversations, tagged-gate
-re-gating, OpenCode/Codex session continuity and Slack threads) were evidence
-for their own fixes and predate the QueueExecutor cutover. They are retained
-at the [pre-fold revision](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#historical-evidence-pre-cutover-non-executable),
-not in this runbook; issues and PRs preserve the chronology.

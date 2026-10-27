@@ -77,6 +77,57 @@ Public routes use opaque errors with only these statuses: `400`, `401`, `404`,
 application logs, traces, metric labels, analytics, user-facing errors, or
 public verification notes.
 
+### Revoke one evidence object
+
+Revocation is an operator-only storage action; there is no public revocation
+HTTP route. `tools/quick-task-evidence-revoke.mjs` is dry-run by default and
+refuses to proceed unless the schema version, evidence ID, request ID, numeric
+repository ID, and object generation all match the object's stored binding.
+Run it from a private terminal and keep every identifier, output, and error
+file in a private temporary directory; never publish them.
+
+1. Obtain the repository ID and the observed object generation privately:
+
+   ```
+   TMP_DIR="$(mktemp -d)"
+   trap 'rm -rf -- "$TMP_DIR"' EXIT
+   BASE_URL='https://lcars.jlapenna.net'
+   BUCKET='agent-lcars-quick-task-evidence'
+   REPOSITORY_ID="$(gh api "repos/$REPOSITORY_OWNER/$REPOSITORY_NAME" --jq .id)"
+   GENERATION="$(gcloud storage objects describe "gs://$BUCKET/objects/v1/$EVIDENCE_ID.webp" --format='value(generation)')"
+   ```
+
+   The request ID comes from the object's stored request binding; do not infer
+   or invent any identifier.
+
+2. Run the audit/dry-run, omitting `--apply`:
+
+   ```
+   node tools/quick-task-evidence-revoke.mjs --bucket "$BUCKET" --repository-id "$REPOSITORY_ID" --request-id "$REQUEST_ID" --evidence-id "$EVIDENCE_ID" --generation "$GENERATION" > "$TMP_DIR/revoke-dry-run.json" 2> "$TMP_DIR/revoke-dry-run.err"
+   ```
+
+   The result includes the request ID, repository ID, generation, and action;
+   only the evidence ID is redacted. A binding or generation mismatch is a
+   hard stop: do not use `--apply` or delete the object by hand.
+
+3. After the dry-run passes and the maintainer has approved mutation, run the
+   same command once with `--apply` (writing to `revoke-apply.json` and
+   `revoke-apply.err`). It writes the permanent tombstone with a create-only
+   precondition, then deletes only the observed generation. A repeated
+   tombstone write is safe only when the existing tombstone has the exact
+   binding; do not rerun after a successful deletion.
+
+4. Verify both unauthenticated routes now return the same empty `404` as a
+   malformed or missing ID:
+
+   ```
+   curl -sS -D "$TMP_DIR/revoked-get.headers" -o "$TMP_DIR/revoked-get.body" "$BASE_URL/api/quick-task-evidence/v1/$EVIDENCE_ID"
+   curl -sS -I "$BASE_URL/api/quick-task-evidence/v1/$EVIDENCE_ID" > "$TMP_DIR/revoked-head.headers"
+   ```
+
+   This read-after-revocation check confirms the public route checks the
+   tombstone before reading the object.
+
 ## Deployment boundary
 
 The bucket is private with uniform bucket-level access and public-access

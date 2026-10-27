@@ -99,21 +99,11 @@ its supported worker control `LCARS_CONSOLE_BUILD_CPUS` rather than a smaller
 plan that omits the build. "No local build" is a correct plan only when
 `apps/console` is unaffected.
 
-Recorded case: source `bfbd72e8` passed 23 normal lint/typecheck tasks inside a
-publication plan that omitted the affected Console build; the normal hook then
-entered that real production build and the supervisor stopped only its own unit
-`lcars-root-2200-provider-clock-publish-01a11f2d` after 164.612 s wall with
-162.557 CPU seconds and 1.4 GiB peak / no swap, main terminating on SIGTERM 15.
-Systemd's requested-stop result `success` was not publication success and the
-exact remote branch was absent; no OOM kill and no failed application assertion
-was observed. The same change later published through the complete hook — one
-supported build worker, the real production build and the isolated
-seven-externals and HTTP 401 smoke — passing in 138.254 s wall with 133.640 CPU
-seconds and 1.9 GiB peak / no swap. Keep the two receipts distinct: the first
-is an interrupted partial phase, the second the successful complete-hook
-publication ([#2550](https://github.com/jlapenna/agent-lcars/issues/2550)). No
-document-literal test mirrors this guidance; the hook and the two smoke scripts
-stay the executable owners.
+A plan that omitted the affected Console build was stopped inside that build
+and published nothing; a requested-stop `success` from the supervisor is not
+publication success ([#2550](https://github.com/jlapenna/agent-lcars/issues/2550)).
+No document-literal test mirrors this guidance; the hook and the two smoke
+scripts stay the executable owners.
 
 Before each local phase, record fresh, read-only host and cluster occupancy for
 that selected host: supported capacity and reserves, systemd/cgroup, container
@@ -186,18 +176,11 @@ storage guards. Requalifying turnover cannot authorize source substitution,
 hidden jobs, unsupported resource requests, or counting a reserve and its
 covered nested workload twice.
 
-The positive case recorded in [#2429](https://github.com/jlapenna/agent-lcars/issues/2429)
-was same-envelope default Pod replacement: fresh qualification retained four
-default workers at 6 CPU / 7 GiB, one E2E worker at 6 CPU / 12 GiB and one LCARS
-default worker at 4 CPU / 6 GiB. Of 63 worker subsets, six were
-scheduler-feasible and none had unsafe full-envelope overlap; the phase's
-source, author worktree, native ownership and hooks were unchanged. That
-turnover permitted continuation after qualification. In contrast, the
-default + ci-light combination recorded in
-[Homelab #1770](https://github.com/jlapenna/homelab/issues/1770) exceeded supported
-CPU capacity at full envelope before adding any local job. Request-feasible
-placement cannot make that overlap safe: hold the local phase. These are
-recorded cases, not reusable capacity receipts for a future launch.
+Same-envelope default Pod replacement with unchanged phase bindings may
+continue after fresh qualification ([#2429](https://github.com/jlapenna/agent-lcars/issues/2429)).
+A worker combination whose full envelopes already exceed supported CPU capacity
+before any local job is added cannot be made safe by request-feasible
+placement: hold the local phase ([Homelab #1770](https://github.com/jlapenna/homelab/issues/1770)).
 
 Ordinary fast checks retain the commands in [CI delegation](#ci-delegation);
 this repository does not ship a general resource-accounting supervisor.
@@ -214,8 +197,7 @@ or bypass verification.
 Launch each such transient unit with `--collect` (`CollectMode=inactive-or-failed`)
 alongside `--wait`. Without it, a unit that ends in failure stays loaded in
 `systemctl --failed` indefinitely and masks real service failures in the
-host's health signal; homelab#2685 recorded 19 such residues from one day of
-agent verification. `--collect` does not hide the outcome: `systemd-run --wait`
+host's health signal (homelab#2685). `--collect` does not hide the outcome: `systemd-run --wait`
 still exits with the unit's status and prints its result, main-process exit,
 runtime, CPU time and memory peak, and the unit's journal stays available via
 `journalctl -u <unit>`. Record that summary in the phase receipt before the
@@ -257,15 +239,9 @@ Record setup and
 observer exits separately: a postsetup assertion does not erase successful
 installation or justify reinstalling an unchanged worktree.
 
-Recorded case: in #2880 a `du --summarize` observer selected the shared
-pnpm store together with the whole home cache root; publication had
-exited 0 with the remote SHA verified when the sample exceeded its 40 s
-timeout, and the supervising phase then exited 1. The home cache root was
-the selection the phase never made; the selected shared store still
-needed the per-sample qualification above because other consumers can
-grow it. Keep the completed publication receipt and the failed observer
-receipt as separate records. #2520's setup made the same
-whole-cache-root selection and traversed unrelated paths.
+When an observer fails after its workload completed, keep the completed
+publication receipt and the failed observer receipt as separate records
+([#2880](https://github.com/jlapenna/agent-lcars/issues/2880)).
 
 Propagate startup and later measurement failures to the supervisor. A required
 monitor exiting unexpectedly, including exit 0, fails the phase and stops only
@@ -284,9 +260,8 @@ memory and elapsed time to the complete declared phase when qualifying its
 envelope. Keep the monitor's memory and per-sample walk bounded and
 independent of cache size. Do not keep a set of every inode across
 shared pnpm, Go or other caches on each sample: that memory grows with the
-caches, not the workload. In homelab#2674, such a walker reached 1.6 GiB and
-was OOM-killed under 1–2 GiB caps. The caps were meant for the build, and the
-kills fired the controller's `MemcgOOMKill` alert. Walk only the actual
+caches, not the workload; such a walker was OOM-killed under caps meant for
+the build and fired the controller's `MemcgOOMKill` alert (homelab#2674). Walk only the actual
 selected consumer paths, resolved as above: that keeps the walk off
 unrelated caches, and because a selected shared path can still grow from
 other consumers, the finite per-sample qualification above is what bounds
@@ -318,14 +293,10 @@ receipt as two records, and do not republish to reconcile them.
 
 Login-shell availability does not qualify a supervised phase. A phase whose
 tools were proven by `command -v` in the launching shell still starts its unit
-in the manager's environment, not that shell's. Recorded case: unit
-`lcars-root-phone-2201-publication-01a11f2d` (invocation
-`bfd6e91e20e946009e4645129bdce868`) exited 127 after 207 ms wall and 29 ms CPU
-with `pnpm: command not found` at
-[`tools/setup-worktree.sh`](../../../../tools/setup-worktree.sh) line 22, having
-completed no dependency, test, commit or push phase; the login shell resolved
-`node` and `pnpm` from version-manager multishell bins a default user unit never
-inherits ([#2525](https://github.com/jlapenna/agent-lcars/issues/2525)). Qualify
+in the manager's environment, not that shell's: a default user unit never
+inherits version-manager multishell bins, so such a unit can fail with
+`pnpm: command not found` before any setup
+([#2525](https://github.com/jlapenna/agent-lcars/issues/2525)). Qualify
 the executable environment the supervisor actually hands the child, then prove
 it from inside that child.
 
@@ -363,10 +334,6 @@ setup witness. A qualified one starts the harmless witness and reports both
 resolved paths and exact versions. Guidance
 text, a login-shell lookup, or a fixture that only re-reads this section proves
 the document, never the boundary.
-[`tools/contract-tests/supervised-child-env-qualification.test.ts`](../../../../tools/contract-tests/supervised-child-env-qualification.test.ts)
-covers those cases through a real transient user unit where a manager is
-reachable, and through a child environment with no inherited PATH everywhere
-else.
 
 ### Qualify native-binding cache ancestors
 
@@ -414,13 +381,9 @@ not a full process report or environment. Choose qualified locations without
 changing host controls or bypassing SDK checks. Readiness does not replace normal
 affected lint/typechecks, selected Console build/smoke or publication.
 
-Recorded [#2662](https://github.com/jlapenna/agent-lcars/issues/2662): SWC
-`1.16.18` rejected the verifier's XDG/TMP locations beneath a mode `0775`
-ancestor. A private `0700` cache beneath trusted sticky `/tmp` loaded the same
-installed module and completed the unchanged-source normal push, including the
-one-worker production Console build, seven traced external packages and HTTP
-401 smoke. Preserve the original failed hook receipt separately; neither a
-missing payload nor a need to reinstall was established.
+A group-writable ancestor alone can make SWC reject an otherwise installed
+module; a private `0700` cache beneath trusted sticky `/tmp` resolves it
+without reinstalling ([#2662](https://github.com/jlapenna/agent-lcars/issues/2662)).
 
 ### Qualify the workload shape a CPU bound covers
 
@@ -432,16 +395,9 @@ imports and component transitions also depend on event-loop progress within
 their assertion timeouts; throttling is one possible source of delay. A
 sub-core ceiling is neither automatically adequate for static work nor
 categorically inadequate for DOM work: its measured result qualifies only
-the workload and conditions tested. Recorded case: phase
-`lcars-root-priority-2189-verify-publish-01a11f2d` (invocation
-`2fdcca9e911542e59cb64db2ee98fe41`) was supervised at `CPUQuota=10%` (100m),
-exited 1 after 325.509 s wall with 32.156 CPU seconds and 630.1 MiB/no swap,
-and reported 78 orchestrator, 36 Work and 175 Console cases passing, 45
-connected-Firestore cases skipped, and 3 failures in
-[`apps/console/src/app/quick-task-button.test.tsx`](../../../../apps/console/src/app/quick-task-button.test.tsx):
-two saw the lazily loaded trigger still `aria-busy` with no dialog at the wait
-deadline and one retained the closed modal inside its 200 ms exit transition.
-Source, assertions and timeouts were unchanged
+the workload and conditions tested. Under a 100m bound, lazily loaded Console
+dialogs were still busy at their wait deadlines with source, assertions and
+timeouts unchanged
 ([#2529](https://github.com/jlapenna/agent-lcars/issues/2529)).
 
 Classify each selected local phase by shape before recording its CPU bound, and
@@ -471,31 +427,12 @@ qualify deadline-sensitive DOM diagnostics as their own shape:
   a controlled comparison or direct evidence that distinguishes competing
   causes. A separate failure remains under its own anchor.
 
-The same-source UI checks passed on supported-runner CI run `38218317094` (Full
-verification job `114708282485`), which executed that file at the priority head
-with source, assertions and timeouts unchanged: 8/8 cases passed in 6999 ms and
-the required browser lane passed. The same full run separately failed the
-connected-Firestore fixture tracked under
-[#2536](https://github.com/jlapenna/agent-lcars/issues/2536), so it is exact-file
-evidence for those UI waits, not an overall green claim; the 100m receipt above
-stays as recorded and was not rerun. This supported-context pass does not
-isolate the cause of the earlier 100m failure.
-
 ### Return the admission verdict a launch gates on
 
 A composed verification command's aggregate exit status is not an admission
-verdict: whichever command runs last carries it. Recorded case: one shell ran
-the envelope assertion and then a read-only occupancy probe. The assertion
-refused the actual envelope — planned 2 CPU / 2 Gi over 9.1 CPU / 22656 Mi of
-native demand against 23833168 Ki of post-reserve memory, after a new 2 Gi
-control worker arrived — and exited nonzero, while the trailing probe exited 0
-and became the shell's result. The caller read that aggregate zero as approval
-and launched its own normal publication and setup phase from an earlier accepted
-snapshot: unit `lcars-root-inbox-publication-01a11f2d` (invocation
-`4233bb705590459fb47d5d9c7aa5e51d`) ran 19.103 s wall with 18.591 CPU seconds
-and 371.6 MiB/no swap before SIGTERM during dependency setup, and systemd
-reported the requested stop as successful
-([#2511](https://github.com/jlapenna/agent-lcars/issues/2511)).
+verdict: whichever command runs last carries it. A refused admission followed
+by a read-only probe that exits 0 reads as approval to a caller that checks
+only the aggregate ([#2511](https://github.com/jlapenna/agent-lcars/issues/2511)).
 
 Capture the admission's numeric result before anything else runs, and return
 that captured value as the composition's own explicit exit. Emit it in
@@ -517,13 +454,6 @@ completed operation to erase it. Keep hooks, native workers, isolation and
 resource accounting exactly as qualified, and keep the contract in the owning
 composition and its own consumer — do not add a generic wrapper, a shared helper
 lane, or a policy-literal test that only re-reads this section.
-[`tools/contract-tests/refused-admission-fails-closed.test.ts`](../../../../tools/contract-tests/refused-admission-fails-closed.test.ts)
-drives the real composition and its consumer over the recorded rows for an
-accepted envelope, a refusal masked by a trailing read-only probe, a propagated
-refusal, probe-first ordering, and a refusal against an earlier accepted
-receipt, asserting the numeric exit, the gate report, whether the owned setup
-witness exists, the read-only observation, and that the rows and receipt are
-unchanged.
 
 ## Frozen Console test reviews
 
