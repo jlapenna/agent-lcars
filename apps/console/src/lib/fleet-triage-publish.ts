@@ -187,7 +187,10 @@ export async function publishFleetTriage(
       page,
     });
     for (const label of labels.data)
-      if (/^(type|component):/u.test(label.name) && label.name !== 'type:bug')
+      if (
+        /^(type|component|app):/u.test(label.name) &&
+        label.name !== 'type:bug'
+      )
         allowed.add(label.name);
     if (labels.data.length < 100) break;
     if (page === 5) throw new Error('Repository label read exceeds bound');
