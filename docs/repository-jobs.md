@@ -119,8 +119,8 @@ source removal, timezone boundaries, canceled/lost completion fencing and real
 Goose envelope parsing. Exercise the production service with deterministic
 in-memory ports and the Firestore transaction adapter against its emulator.
 Typecheck/build the console and verify the worker/QueueExecutor contract under
-enforced local caps. Live scans, deployments, PR updates and code submission are
-outside this local implementation task.
+enforced local caps. Live scans and schedule cutover require separate runtime qualification;
+source verification does not establish deployed tool access.
 
 ## Configuration and operation
 
@@ -138,7 +138,7 @@ provider environment variables) and `goose-config.yaml` (the operator-owned Goos
 configuration). Version 1 supports one shared Goose tool/model environment across
 the fleet; profiles narrow repository/principal/input admission, not tool authority.
 Do not add model credentials to repository recipes. The image publication lifecycle
-is the existing supported stack lifecycle; this local change does not publish it.
+is the existing supported stack lifecycle; source merging does not bypass its publication or activation holds.
 
 To qualify a candidate runtime, install the pinned Goose release with
 `install-goose-release.sh`, then run `node --test runtime/goose-job.integration.test.mjs`
@@ -210,7 +210,7 @@ physical worker retirement.
 | sync-padd  | refresh-publication                      | Explicit CLI, source checkpoints, PDF review, durable editions and uploader             |
 
 Member repositories own their definitions and caller cutover controls. These
-are local, unactivated migrations. Each README names the concrete tools,
+are opt-in migrations that remain inactive until qualified. Each README names the concrete tools,
 credentials and persistence boundary that must be qualified before enabling it.
 One shared Goose runtime environment does not provide per-profile tool isolation;
 operator tools must enforce their own repository/owner boundaries.
@@ -223,3 +223,12 @@ pollers, device operations, backups and services retain their existing owners.
 Homelab's retired Node-security polling/assessment path is not recreated.
 LCARS's already-native summaries, triage, queue maintenance and delivery remain
 native Work. Fork contribution checkouts are not first-party migration targets.
+
+Catalog refresh and model summaries start independently within the same bounded
+maintenance window. Catalogs refresh oldest-first in batches of at most four,
+while occurrence settlement and scheduling start independently. A second
+deadline-checked tick admits current schedule slots after a stale catalog
+refreshes; occurrence IDs make replay idempotent. Refresh timestamps and disabled
+failures persist progress across ticker instances. The batch admission threshold
+allows for the 20-second source fetch budget; token and storage calls retain
+their own timeouts.

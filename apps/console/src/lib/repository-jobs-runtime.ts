@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import { createDispatchTokenProvider } from './github-app-tokens';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
-import { refreshJobCatalog } from './repository-job-catalog';
+import { refreshEnabledJobCatalogs } from './repository-job-catalog';
 import { jobProfileSchema } from './repository-job-definition';
 import { FirestoreJobStore } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
@@ -54,26 +54,24 @@ export async function maintainRepositoryJobs(
   runtime: OrchestratorRouteDeps,
 ): Promise<void> {
   const jobs = repositoryJobs(runtime);
-  const catalog = await jobs.deps.store.list();
-  const repositories = [
-    ...new Set(
-      catalog.filter((job) => job.enabled).map((job) => job.repository),
+  const tick = async () => {
+    if (Date.now() < deadline)
+      for (const failure of await jobs.tick(deadline))
+        logger.error('Repository jobs: %s', failure);
+  };
+  // Settlement and refresh each start with the full maintenance window. Wait
+  // for both even on failure so neither continues after this request returns.
+  const results = await Promise.allSettled([
+    refreshEnabledJobCatalogs(
+      jobs.deps.store,
+      () => createDispatchTokenProvider(process.env, { contents: 'read' }),
+      deadline,
     ),
-  ];
-  for (const repository of repositories) {
-    if (Date.now() + 21000 > deadline) break;
-    try {
-      await refreshJobCatalog(
-        jobs.deps.store,
-        repository,
-        createDispatchTokenProvider(process.env, { contents: 'read' }),
-        new Date(),
-      );
-    } catch {
-      logger.error('Repository job source refresh failed: %s', repository);
-    }
-  }
-  if (Date.now() < deadline)
-    for (const failure of await jobs.tick(deadline))
-      logger.error('Repository jobs: %s', failure);
+    tick(),
+  ]);
+  for (const result of results)
+    if (result.status === 'rejected') throw result.reason;
+  // A previously stale catalog may now admit this minute's schedule. The
+  // deterministic occurrence ID makes replay of the first tick idempotent.
+  await tick();
 }

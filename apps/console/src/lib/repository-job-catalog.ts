@@ -1,3 +1,4 @@
+import { logger } from '@agent-lcars/logging';
 import { z } from 'zod';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
@@ -152,5 +153,37 @@ export async function refreshJobCatalog(
         },
       }));
     throw error;
+  }
+}
+
+/** Refresh oldest enabled repositories first, at most four network reads at
+ * once. Start a batch only with room for its 20-second source fetch budget
+ * plus headroom; shared token/store operations retain their own timeouts.
+ * Successful refresh timestamps persist fairness across processes and ticks. */
+export async function refreshEnabledJobCatalogs(
+  store: JobStore,
+  tokens: () => DispatchTokenProvider,
+  deadline: number,
+): Promise<void> {
+  const oldest = new Map<string, number>();
+  for (const job of await store.list()) {
+    if (!job.enabled) continue;
+    const at = Date.parse(job.refreshedAt);
+    oldest.set(job.repository, Math.min(oldest.get(job.repository) ?? at, at));
+  }
+  const repositories = [...oldest]
+    .sort(([a, at], [b, bt]) => at - bt || a.localeCompare(b))
+    .map(([repository]) => repository);
+  for (let offset = 0; offset < repositories.length; offset += 4) {
+    if (Date.now() + 25_000 > deadline) break;
+    await Promise.all(
+      repositories.slice(offset, offset + 4).map(async (repository) => {
+        try {
+          await refreshJobCatalog(store, repository, tokens(), new Date());
+        } catch {
+          logger.error('Repository job source refresh failed: %s', repository);
+        }
+      }),
+    );
   }
 }
