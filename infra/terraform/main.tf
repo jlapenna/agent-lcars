@@ -111,7 +111,8 @@ resource "google_firestore_index" "sessions_source_repo_last_activity" {
 # Controller state is isolated from worker telemetry at the Firestore database
 # boundary. IAM Conditions below grant every runtime identity access to exactly
 # one database; a worker-held telemetry credential can therefore never mutate
-# dispatchTasks or dispatchLaunchOutbox.
+# the orchestrator's `orchestrator-*` collections (tasks, runs, outbox,
+# GitHub anchors).
 resource "google_firestore_database" "dispatch_controller" {
   provider                = google-beta
   project                 = var.project_id
