@@ -132,6 +132,26 @@ describe('ready deliverable logical ownership', () => {
     ).toBe(false);
   });
 
+  it('releases the task when its PR closes without merging', async () => {
+    const f = await handedOff();
+    await f.orchestrator.observeDelivery(
+      f.runId,
+      { kind: 'withdrawn', head: HEAD },
+      () => false,
+    );
+    expect((await f.store.readTask(TASK))?.task.delivery).toBeUndefined();
+    expect((await f.store.readRun(f.runId))?.delivery).toBeUndefined();
+    expect(
+      isRefusal(
+        await f.orchestrator.request({
+          taskId: TASK,
+          requestId: 'after-close',
+          pipeline: 'claude',
+        }),
+      ),
+    ).toBe(false);
+  });
+
   it('creates one fresh, same-provider correction for real failed checks or review, fenced against replay', async () => {
     const f = await handedOff();
     const observation = {

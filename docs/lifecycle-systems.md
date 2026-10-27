@@ -348,5 +348,6 @@ through its dedicated token purpose. Required GitHub Actions failures must
 belong to the current workflow run and attempt's exact check IDs; canceled
 draft CI and superseded attempts cannot authorize a successor. Private legacy
 commit-status contexts remain unknown without an undeclared grant. Independent
-current review feedback remains actionable. An unmerged draft, closed, or
-unarmed PR retains delivery ownership and does not request correction.
+current review feedback remains actionable. A PR closed without merging
+releases delivery ownership; an open draft or unarmed PR retains it and does not
+request correction.

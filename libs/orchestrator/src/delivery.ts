@@ -12,6 +12,8 @@ import { type DeliveryBinding, type Run, type Task } from './model';
 /** Exact server observation; partial GitHub/projection data has no authority. */
 export type DeliveryObservation =
   | { kind: 'waiting'; head: string }
+  /** The PR was closed without merging: nothing left to deliver. */
+  | { kind: 'withdrawn'; head: string }
   | { kind: 'protected-merge'; head: string; mergeCommit: string }
   | { kind: 'revision'; head: string; newHead: string }
   | { kind: 'correction'; head: string; reason: string }
@@ -77,6 +79,15 @@ export function advanceDelivery(input: {
   }
   if (binding.state !== 'waiting' || observation.kind === 'waiting')
     return { task, run, outbox: [] };
+  if (observation.kind === 'withdrawn') {
+    const { delivery: _task, ...released } = task;
+    const { delivery: _run, ...releasedRun } = run;
+    return {
+      task: { ...released, updatedAt: now },
+      run: { ...releasedRun, updatedAt: now },
+      outbox: [],
+    };
+  }
   if (observation.kind === 'protected-merge') {
     const delivery: DeliveryBinding = {
       ...binding,

@@ -271,20 +271,8 @@ export async function readyDeliveryBinding(
   if (!pr.merged && pr.auto_merge === null)
     throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
   // An open, armed artifact transfers waiting ownership to the durable
-  // monitor, rather than the implementation executor.
-  const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
-  if (
-    final.head.sha !== pr.head.sha ||
-    final.base.ref !== pr.base.ref ||
-    // An armed open artifact may auto-merge during verification. That
-    // same-head transition keeps the waiting binding for the monitor.
-    (pr.merged && !final.merged) ||
-    (!final.merged && final.state !== 'open') ||
-    final.draft ||
-    (!final.merged && final.auto_merge?.merge_method !== 'squash') ||
-    final.body !== pr.body
-  )
-    throw new Error('Ready delivery changed during verification');
+  // monitor, rather than the implementation executor. Its next read handles a
+  // later merge, close, revision or disarm.
   const binding: DeliveryBinding = {
     runId: run.runId,
     repo,
@@ -296,11 +284,11 @@ export async function readyDeliveryBinding(
     observedAt: now,
   };
   if (pr.merged) {
-    if (final.merge_commit_sha === null)
+    if (pr.merge_commit_sha === null)
       throw new Error('Merge commit not established');
     return {
       ...binding,
-      mergeCommit: final.merge_commit_sha,
+      mergeCommit: pr.merge_commit_sha,
       state:
         binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
     };
@@ -449,6 +437,9 @@ export async function observeGithubDelivery(
       head: binding.head,
       mergeCommit: pr.merge_commit_sha,
     };
+  // Closing without merging is final too; reopening is a fresh human decision.
+  if (pr.state === 'closed' && !pr.merged)
+    return { kind: 'withdrawn', head: binding.head };
   const generation = parseRunGeneration(binding.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: binding.runId });
@@ -457,11 +448,7 @@ export async function observeGithubDelivery(
     !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Delivery artifact identity changed');
-  if (
-    pr.state !== 'open' ||
-    pr.draft ||
-    pr.auto_merge?.merge_method !== 'squash'
-  )
+  if (pr.draft || pr.auto_merge?.merge_method !== 'squash')
     return { kind: 'waiting', head: binding.head };
   if (pr.head.sha !== binding.head)
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };

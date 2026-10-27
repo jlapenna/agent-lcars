@@ -264,7 +264,7 @@ describe('authenticated ready delivery evidence', () => {
     ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
   });
 
-  it('keeps waiting ownership when an armed PR merges during verification, then settles its protected landing', async () => {
+  it('hands off an armed PR with one PR read, then settles its protected landing', async () => {
     const review = {
       reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
     };
@@ -289,7 +289,7 @@ describe('authenticated ready delivery evidence', () => {
         { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
       ),
     ).toEqual(BINDING);
-    expect(prReads).toBe(2);
+    expect(prReads).toBe(1);
     expect(await observeGithubDelivery(merged, BINDING)).toEqual({
       kind: 'protected-merge',
       head: HEAD,
@@ -1027,9 +1027,24 @@ describe('minted delivery permission and current CI boundaries', () => {
 });
 
 describe('maintainer withdrawal of ready delivery', () => {
+  it('releases ownership of a PR closed without merging', async () => {
+    const deps = fixture({ pr: { state: 'closed' } });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'withdrawn',
+      head: HEAD,
+    });
+    expect(vi.mocked(deps.fetchImpl).mock.calls).toHaveLength(1);
+  });
+  it('never treats a merge awaiting its merge commit as withdrawn', async () => {
+    const deps = fixture({
+      pr: { state: 'closed', merged: true, merge_commit_sha: null },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).not.toMatchObject({
+      kind: 'withdrawn',
+    });
+  });
   it.each([
     { draft: true },
-    { state: 'closed' },
     { auto_merge: null },
     { auto_merge: { merge_method: 'merge' } },
   ])('retains ownership without correcting withdrawn PR %j', async (pr) => {
@@ -2033,7 +2048,7 @@ describe('same-head review feedback before unavailable check evidence', () => {
       ),
     ).toEqual({ kind: 'revision', head: HEAD, newHead: MERGE });
   });
-  it.each([{ draft: true }, { state: 'closed' }, { auto_merge: null }])(
+  it.each([{ draft: true }, { auto_merge: null }])(
     'retains withdrawn PR waiting before review feedback: %j',
     async (pr) => {
       const deps = unavailableEvidence('refused checks', unresolved, pr);
