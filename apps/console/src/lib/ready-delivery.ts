@@ -431,15 +431,19 @@ export async function observeGithubDelivery(
     throw new Error('Delivery artifact identity changed');
   // A merge ends monitoring: GitHub already applied the target's branch
   // protection, and nothing after it changes what landed.
+  // Closing without merging, or merging into a branch other than the bound
+  // target, is final too and delivered nothing; reopening is a fresh decision.
+  if (
+    (pr.state === 'closed' && !pr.merged) ||
+    (pr.merged && pr.base.ref !== binding.baseRef)
+  )
+    return { kind: 'withdrawn', head: binding.head };
   if (pr.merged && pr.merge_commit_sha !== null)
     return {
       kind: 'protected-merge',
       head: binding.head,
       mergeCommit: pr.merge_commit_sha,
     };
-  // Closing without merging is final too; reopening is a fresh human decision.
-  if (pr.state === 'closed' && !pr.merged)
-    return { kind: 'withdrawn', head: binding.head };
   const generation = parseRunGeneration(binding.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: binding.runId });

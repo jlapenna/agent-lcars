@@ -1035,6 +1035,20 @@ describe('maintainer withdrawal of ready delivery', () => {
     });
     expect(vi.mocked(deps.fetchImpl).mock.calls).toHaveLength(1);
   });
+  it('releases ownership of a PR merged into another branch without delivering it', async () => {
+    const deps = fixture({
+      pr: {
+        state: 'closed',
+        merged: true,
+        merge_commit_sha: MERGE,
+        base: { ref: 'release' },
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
+      kind: 'withdrawn',
+      head: HEAD,
+    });
+  });
   it('never treats a merge awaiting its merge commit as withdrawn', async () => {
     const deps = fixture({
       pr: { state: 'closed', merged: true, merge_commit_sha: null },
