@@ -40,16 +40,9 @@ func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 	if !found["goose-config.yaml"] || !found["goose-environment.json"] || found["claude-code-oauth-token"] || found["opencode-llm-api-key"] {
 		t.Fatal("wrong provider credentials projected")
 	}
-	if *job.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
-		t.Fatal("recipe deadline not bounded")
-	}
-	launch.placementAware = true
-	queued, err := q.job(launch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if queued.Spec.ActiveDeadlineSeconds != nil || *queued.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
-		t.Fatal("queue wait consumed recipe execution deadline")
+	// The recipe deadline is on the Pod only: queue wait never consumes it.
+	if job.Spec.ActiveDeadlineSeconds != nil || job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
+		t.Fatal("recipe deadline not bounded on the Pod alone")
 	}
 	q.config.Limits["cpu"] = "3"
 	if _, err = q.job(launch); err == nil {

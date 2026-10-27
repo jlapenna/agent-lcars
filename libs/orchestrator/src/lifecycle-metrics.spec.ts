@@ -790,7 +790,6 @@ describe('durable lifecycle metric accounting', () => {
       'provider-limit',
       'pull-request',
       'merged-deliverable',
-      'unknown-success',
     ].map((summary, i) =>
       run({
         runId: `private/repo#${50 + i}/r1`,
@@ -811,16 +810,41 @@ describe('durable lifecycle metric accounting', () => {
       'provider-limit',
       'pull-request',
       'merged-deliverable',
-      'unknown-success',
     ])
       expect(text).toContain(
         `lcars_product_reported_outcome_window{pipeline="claude",outcome="${outcome}"} 1\n`,
       );
     expect(text).toContain(
-      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 7\n',
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="verified_evidence"} 6\n',
     );
     expect(text).toContain(
-      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="useful_outcome"} 7\n',
+      'lcars_product_measurement_unknown_window{pipeline="claude",measurement="useful_outcome"} 6\n',
+    );
+  });
+  it('labels every failure outcome the runner emits instead of folding it into other', () => {
+    const failures = [
+      'runner-failed',
+      'agent-failed',
+      'agent-timeout',
+      'no-deliverable',
+      'verification-failed',
+      'provider-capacity',
+    ];
+    const runs = failures.map((summary, i) =>
+      run({
+        runId: `private/repo#${70 + i}/r1`,
+        state: 'finished',
+        result: { ok: false, summary },
+        events: [{ at: createdAt, to: 'finished', by: 'report' }],
+      }),
+    );
+    const text = snapshot(runs);
+    for (const outcome of failures)
+      expect(text).toContain(
+        `lcars_product_reported_outcome_window{pipeline="claude",outcome="${outcome}"} 1\n`,
+      );
+    expect(text).toContain(
+      'lcars_product_reported_outcome_window{pipeline="claude",outcome="other"} 0\n',
     );
   });
   it('does not count outbox claims or expired lease recovery as delivery failures', () => {

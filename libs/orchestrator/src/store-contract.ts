@@ -3540,12 +3540,12 @@ export function runOrchestratorStoreContract(
           minutes: 15,
         },
         {
-          summary: 'no-deliverable',
+          summary: 'provider-limit',
           message: "You've hit your weekly limit · resets 12am (UTC)",
           minutes: 720,
         },
       ])(
-        'holds only the quota-limited provider after $summary until its deadline',
+        'holds only the quota-limited provider after $summary ($message) until its deadline',
         async ({ summary, message, minutes }) => {
           const { store, orchestrator, clock } = await fixture();
           const failed = await queuedRun(orchestrator, 'q901');

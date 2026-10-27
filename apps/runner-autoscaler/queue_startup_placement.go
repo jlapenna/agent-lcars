@@ -74,7 +74,7 @@ func queueStartupPlacementReporter(consoleURL string, idToken func() (string, er
 // suspended/modified Job, terminal attempt or API failure cannot renew waiting.
 // Assignment starts bootstrap even if image pull or container startup stalls.
 func (q *kubernetesQueue) observeJobStartupPlacement(ctx context.Context, job *batch.Job, pods *core.PodList) error {
-	if q.reportStartupPlacement == nil || job.Annotations[queuePlacementAnnotation] != "true" {
+	if q.reportStartupPlacement == nil {
 		return nil
 	}
 	runID := job.Annotations[queueRunAnnotation]

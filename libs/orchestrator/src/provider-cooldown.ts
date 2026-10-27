@@ -60,16 +60,12 @@ export function providerCooldownForRun(
 ): ProviderCooldown | undefined {
   if (run.state !== 'finished' || run.result?.ok !== false) return undefined;
   const message = run.result.message?.trim() ?? '';
-  // Old images reported this exact CLI response as no-deliverable. Support
-  // those reports during rollout without treating arbitrary failures as quota.
-  const legacyClaudeQuota =
-    run.pipeline === 'claude' &&
-    run.result.summary === 'no-deliverable' &&
-    /^You've hit your weekly limit\s*·\s*resets [^\n]+ \(UTC\)$/u.test(message);
+  // Only the runner's own classification opens a cooldown: the direct runner
+  // reports a provider quota or capacity stop as provider-limit or
+  // provider-capacity, never as an unclassified failure.
   if (
     run.result.summary !== 'provider-limit' &&
-    run.result.summary !== 'provider-capacity' &&
-    !legacyClaudeQuota
+    run.result.summary !== 'provider-capacity'
   )
     return undefined;
   const now = Date.parse(run.updatedAt);

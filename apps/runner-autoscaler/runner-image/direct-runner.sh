@@ -110,8 +110,6 @@ esac
 ATTEMPT_ID="$(jq -r '.attemptId' <<<"$brief")"
 INTENT_ID="$(jq -r '.intentId' <<<"$brief")"
 MODE="$(jq -er '.mode' <<<"$brief")"
-# Only a serving authority advertising this contract enables the baked handoff.
-export DELIVERY_HANDOFF_VERSION="$(jq -r 'if .deliveryHandoffVersion == 1 then "1" else "" end' <<<"$brief")"
 REPLY="$(jq -r '.reply // ""' <<<"$brief")"
 RUNBOOK="$(jq -r '.runbook // ""' <<<"$brief")"
 CONTEXT="$(jq -r '.context // ""' <<<"$brief")"
@@ -571,12 +569,9 @@ fi
 
 export WORKSPACE="$workspace"
 export REPOSITORY="$TARGET_REPO"
-export RUNTIME_OUTPUT="$RUNNER_TEMP/runtime-output"
 export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
-: > "$RUNTIME_OUTPUT"
 : > "$RUNTIME_ENV"
-export PRIOR_TERMINAL_STATE=null
-export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
+export BUDGET_MINUTES=80
 export AGENT="$AGENT_NAME"
 
 bash "$PREPARE_DISPATCH"
@@ -1376,12 +1371,17 @@ if AGENT="$AGENT_NAME" REPO="$TARGET_REPO" NUM="$ISSUE" MODE="$MODE" ATTEMPT_ID=
   VERIFIED_OUTCOME_FILE="$VERIFIED_OUTCOME_FILE" \
   bash "$VERIFY_OUTCOME" >"$VERIFY_OUTPUT" 2>&1; then
   cat "$VERIFY_OUTPUT"
-  OUTCOME=unknown-success
   if [ -s "$VERIFIED_OUTCOME_FILE" ] && jq -e '
     .outcome | IN("pull-request", "comment", "review", "park", "no-op")
   ' "$VERIFIED_OUTCOME_FILE" >/dev/null; then
     OUTCOME="$(jq -r .outcome "$VERIFIED_OUTCOME_FILE")"
     OUTCOME_REFERENCE="$(jq -c .outcomeReference "$VERIFIED_OUTCOME_FILE")"
+  else
+    # The verifier writes that file before every zero exit, with one of the
+    # five outcomes above. Reaching here is a runner defect, never an
+    # unverified success.
+    echo "::error::verify-outcome.sh exited 0 without a verified outcome" >&2
+    OUTCOME=runner-failed
   fi
 elif [ "$ANCHOR_TYPE" = "work" ]; then
   # A native Work terminal outcome is a deliberately narrow replacement for
@@ -1489,6 +1489,6 @@ COMPLETED=1
 # the structured no-op/park paths; their successful `/complete` callbacks
 # must not turn into container-level failures after the fact.
 case "$OUTCOME" in
-  pull-request | report | comment | review | no-op | park | unknown-success) ;;
+  pull-request | report | comment | review | no-op | park) ;;
   *) exit 1 ;;
 esac

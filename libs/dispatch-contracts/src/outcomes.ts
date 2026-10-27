@@ -10,5 +10,4 @@
  * (`outcomeFromRunResult` in `apps/console/src/lib/task-detail.ts`);
  * an unsuccessful run reports no outcome kind at all.
  */
-export type DispatchOutcomeKind =
-  'pull-request' | 'merged-deliverable' | 'unknown-success';
+export type DispatchOutcomeKind = 'pull-request' | 'merged-deliverable';

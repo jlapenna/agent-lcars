@@ -498,9 +498,9 @@ spend your own turn budget on the actual work instead.
 
 ### Ready delivery handoff
 
-Only when its trusted brief advertises `deliveryHandoffVersion: 1`, a native
-implementation can end its provider turn after publishing an OPEN, exact
-attempt-marked, ready PR with protected target policy and squash delivery armed.
+A native implementation can end its provider turn after publishing an OPEN,
+exact attempt-marked, ready PR with protected target policy and squash
+delivery armed.
 Pending asynchronous GitHub review and CI transfer to the durable
 monitor; do not retain the implementation executor solely waiting for them.
 The authenticated finalizer verifies the exact marker, head, ready state,

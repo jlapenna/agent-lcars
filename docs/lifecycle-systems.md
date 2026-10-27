@@ -259,9 +259,9 @@ A normal temporary capacity wait remains placement until that bound, renewed by
 each Pending observation for at most one hour from the claim; past that the
 sweep records a startup loss and the executor retires the Job that never
 placed. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
-7200-second execution limit is an independent backstop (a Job deadline for
-legacy claims, a Pod runtime deadline for negotiated claims), not permission to
-run after control-plane settlement. Exact-claim foreground retirement and Pod
+7200-second execution limit is an independent backstop (a Pod runtime deadline
+on every executor Job; the executor negotiates placement on every claim), not
+permission to run after control-plane settlement. Exact-claim foreground retirement and Pod
 drain still precede admission of a successor. The one-Pending gate, provider
 serialization, requests, selectors, taints and `max_concurrent` are unchanged.
 
@@ -274,10 +274,11 @@ and console; fixture/browser evidence does not claim live placement capacity.
 
 ### Queue placement and startup clocks
 
-Executors negotiate `placementAware: true` on claim; the Console echoes it
-only when the durable claim carries startupPlacement state. Old callers retain their
-claim-time 15-minute first-heartbeat deadline. New callers fail closed if the
-claim response does not acknowledge the contract.
+The executor sends `placementAware: true` on every claim; the Console echoes it
+only when the durable claim carries startupPlacement state, and the executor
+fails the poll closed if the response does not acknowledge it. Callers that
+omit the flag (console-internal pipelines) retain the claim-time 15-minute
+first-heartbeat deadline.
 
 A fresh executor-authenticated `/runs/{runId}/startup-placement` report for the exact
 claim fingerprint and bound Job UID renews the finite 15-minute observation
@@ -289,7 +290,7 @@ placement reports cannot renew bootstrap or an accepted worker heartbeat.
 A stopped observer therefore still expires; placement never records worker
 heartbeat or provider startup.
 
-Negotiated Jobs retain the two-hour runtime limit on the Pod, whose kubelet
+Every executor Job carries the two-hour runtime limit on the Pod, whose kubelet
 clock starts after assignment, rather than on the Job's scheduling clock.
 Resources, bounded Pending admission, exact retirement authority and receipt
 fences remain unchanged. Live qualification requires compatible Console and
@@ -298,10 +299,11 @@ prove deployed behavior.
 
 ## Ready deliverable ownership
 
-The authenticated brief advertises deliveryHandoffVersion:1; the baked runner
-propagates it into provider context. Workers without that capability retain
-the existing delivery path. An already merged PR completion records its merge
-commit, while unmerged ready handoff uses the new contract. An authenticated native implementation completion with an open PR
+The ready delivery handoff is unconditional: every deployed worker uses it
+(the brief's `deliveryHandoffVersion: 1` field remains in the Work API
+contract only until the runner image built without it is in service). An
+already merged PR completion records its merge commit, while unmerged ready
+handoff uses the handoff contract. An authenticated native implementation completion with an open PR
 artifact establishes exact attempt-marker identity, ready state, protected
 target policy and squash arming. Pending review and CI transfer to the
 existing durable monitor; it does not retain the implementation executor or

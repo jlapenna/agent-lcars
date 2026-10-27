@@ -152,12 +152,6 @@ export WORKER_ACTIVATION_HELPER="$baked/runtime/worker-activation.sh"
 sed -i 's|^WORKER_IDENTITY_FILE=.*|WORKER_IDENTITY_FILE="${FIXTURE_WORKER_IDENTITY_FILE:-/run/agent-lcars-identity/token}"|' "$WORKER_ACTIVATION_HELPER"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
 export HOOK_TELEMETRY_HELPER="$baked/runtime/hook-telemetry-bootstrap.sh"
-# An image rebuilt from an older context pairs an old direct-runner.sh, which
-# still asks hook_telemetry_selected, with this helper from main. It must say
-# yes, or that runner starts the retired (no-op) sidecar and loses live
-# telemetry.
-( . "$HOOK_TELEMETRY_HELPER"; PIPELINE=codex hook_telemetry_selected ) ||
-  { echo "FAIL: hook_telemetry_selected compatibility shim missing" >&2; exit 1; }
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
 export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
