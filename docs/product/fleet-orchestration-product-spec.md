@@ -512,8 +512,9 @@ consumed by every dispatched run in every member repository.
 
 - **FL-RC-1 [Shipped]** A _round_ is one run. Round 1's human turn is
   `spec.description`, and round n's is `params.reply` (up to 16 KiB). The run
-  records `replyChannel` (`github`, `slack`, `console`, or `api`),
-  `replyPrincipal`, and `replyRef`.
+  records `replyChannel` (`github`, `slack`, `console`, or `api`) and
+  `replyPrincipal`; the channel address of the turn (a comment URL, a Slack
+  ts) lives only in the run's idempotent `requestId` (`reply:<ref>`).
 - **FL-RC-2 [Shipped]** A reply resumes the prior provider session
   (`resumeSessionId`) when its transcript is archived. If it is not, the reply
   starts a fresh session and passes the reply text through, and the console

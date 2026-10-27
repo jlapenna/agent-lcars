@@ -517,17 +517,13 @@ export const runsRouter = os.router({
       return claimed;
     }
 
-    // `claimQueuedRun` claims by `queue.state === 'queued'` alone; it says
-    // nothing about whether the run itself is still live. Cancellation and
-    // the lease-expiry sweep both settle a run (and release its task's
-    // lock) without touching `Run.queue` -- see the design spec's queue
-    // state machine -- so a claim can legitimately land on a run that is
-    // already `canceled`/`lost`/`finished`. Each attempt still moves that
-    // entry to `claimed` (taking it out of future claims), so retrying is
-    // enough to skip past it rather than needing a separate "release"
-    // call the store has no method for; bounded at
-    // `MAX_CLAIM_ATTEMPTS` so one pathological run of stale queue entries
-    // cannot spin unboundedly before answering "nothing queued".
+    // `claimQueuedRun` only ever hands back a live run
+    // (`isQueueAdmissionCandidate`): a canceled or lost run keeps its stale
+    // `queue.state: 'queued'` record, but selection never sees it. The loop
+    // exists for the one case this handler settles itself -- a freshly
+    // claimed GitHub run whose anchor is confirmed closed, cancel refused --
+    // bounded at `MAX_CLAIM_ATTEMPTS` so a pathological backlog cannot spin
+    // unboundedly before answering "nothing queued".
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt++) {
       // Mint the token BEFORE the one claimQueuedRun call: minting is a
       // local crypto.randomBytes call, not a network round trip, so the
@@ -551,7 +547,6 @@ export const runsRouter = os.router({
         'claim',
       );
       if (claimed === undefined) return undefined;
-      if (!isLive(claimed.state)) continue;
       if (
         !isWorkAnchor(claimed.task) &&
         claimed.params?.['mode'] === 'implement' &&

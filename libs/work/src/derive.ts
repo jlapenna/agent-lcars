@@ -166,87 +166,112 @@ export interface WorkSummary {
   runs: ItemRunView[];
 }
 
+/** The public projection of one run, shared by the item view and the work
+ *  summary. Copies every optional field only when present, so the two views
+ *  stay key-for-key identical. The `reply*` human-turn fields are the item
+ *  view's alone (`toItemView`). */
+function toItemRunView(r: Run): ItemRunView {
+  return {
+    runId: r.runId,
+    state: r.state,
+    pipeline: r.pipeline,
+    priority: r.priority ?? 'normal',
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+    ...(r.result === undefined ? {} : { result: r.result }),
+    ...(r.sourceRevision === undefined
+      ? {}
+      : {
+          sourceRevision: r.sourceRevision,
+          revisionAttempt: r.revisionAttempt,
+        }),
+    ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
+    ...(r.triagePublication === undefined
+      ? {}
+      : { triagePublication: r.triagePublication }),
+    ...(r.providerFallback === undefined
+      ? {}
+      : {
+          providerFallback: {
+            allowedPipelines: [...r.providerFallback.allowedPipelines],
+            attemptedPipelines: [...r.providerFallback.attemptedPipelines],
+            originalRunId: r.providerFallback.originalRunId,
+            ...(r.providerFallback.fromRunId === undefined
+              ? {}
+              : { fromRunId: r.providerFallback.fromRunId }),
+            ...(r.providerFallback.trigger === undefined
+              ? {}
+              : { trigger: { ...r.providerFallback.trigger } }),
+          },
+        }),
+    ...(r.queue === undefined
+      ? {}
+      : {
+          queue: {
+            state: r.queue.state,
+            ...(r.queue.startDeadlineAt === undefined
+              ? {}
+              : { startDeadlineAt: r.queue.startDeadlineAt }),
+            ...(r.queue.placement === undefined
+              ? {}
+              : { placement: r.queue.placement }),
+            ...(r.queue.claimedAt === undefined
+              ? {}
+              : { claimedAt: r.queue.claimedAt }),
+            ...(r.queue.firstHeartbeatAt === undefined
+              ? {}
+              : { firstHeartbeatAt: r.queue.firstHeartbeatAt }),
+            ...(r.queue.providerProcessStartedAt === undefined
+              ? {}
+              : {
+                  providerProcessStartedAt: r.queue.providerProcessStartedAt,
+                }),
+            ...(r.queue.claimedBy === undefined
+              ? {}
+              : { claimedBy: r.queue.claimedBy }),
+          },
+        }),
+  };
+}
+
+/** The task-level fields both projections share, in the key order they
+ *  always had. */
+function toItemHeader(
+  task: Task,
+  runs: readonly Run[],
+): Pick<
+  WorkSummary,
+  'state' | 'spec' | 'origin' | 'providerRouting' | 'createdAt' | 'updatedAt'
+> &
+  Partial<Pick<WorkSummary, 'closedAt'>> & { ordered: Run[] } {
+  const payload = storedWorkPayloadSchema.parse(task.work);
+  const ordered = [...runs].sort(compareRunOrder);
+  return {
+    state: deriveItemState(task, runs),
+    spec: payload.spec,
+    origin: payload.origin,
+    ...(task.providerRouting === undefined
+      ? {}
+      : { providerRouting: task.providerRouting }),
+    createdAt: ordered[0]?.createdAt ?? task.updatedAt,
+    updatedAt: task.updatedAt,
+    ...(task.closedAt === undefined ? {} : { closedAt: task.closedAt }),
+    ordered,
+  };
+}
+
 export function toItemView(input: {
   workId: string;
   task: Task;
   runs: readonly Run[];
   sessions?: readonly ItemSessionView[];
 }): ItemView {
-  const payload = storedWorkPayloadSchema.parse(input.task.work);
-  const runs = [...input.runs].sort(compareRunOrder);
+  const { ordered, ...header } = toItemHeader(input.task, input.runs);
   return {
     id: input.workId,
-    state: deriveItemState(input.task, input.runs),
-    spec: payload.spec,
-    origin: payload.origin,
-    ...(input.task.providerRouting === undefined
-      ? {}
-      : { providerRouting: input.task.providerRouting }),
-    createdAt: runs[0]?.createdAt ?? input.task.updatedAt,
-    updatedAt: input.task.updatedAt,
-    ...(input.task.closedAt === undefined
-      ? {}
-      : { closedAt: input.task.closedAt }),
-    runs: runs.map((r) => ({
-      runId: r.runId,
-      state: r.state,
-      pipeline: r.pipeline,
-      priority: r.priority ?? 'normal',
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-      ...(r.result === undefined ? {} : { result: r.result }),
-      ...(r.sourceRevision === undefined
-        ? {}
-        : {
-            sourceRevision: r.sourceRevision,
-            revisionAttempt: r.revisionAttempt,
-          }),
-      ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
-      ...(r.triagePublication === undefined
-        ? {}
-        : { triagePublication: r.triagePublication }),
-      ...(r.providerFallback === undefined
-        ? {}
-        : {
-            providerFallback: {
-              allowedPipelines: [...r.providerFallback.allowedPipelines],
-              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
-              originalRunId: r.providerFallback.originalRunId,
-              ...(r.providerFallback.fromRunId === undefined
-                ? {}
-                : { fromRunId: r.providerFallback.fromRunId }),
-              ...(r.providerFallback.trigger === undefined
-                ? {}
-                : { trigger: { ...r.providerFallback.trigger } }),
-            },
-          }),
-      ...(r.queue === undefined
-        ? {}
-        : {
-            queue: {
-              state: r.queue.state,
-              ...(r.queue.startDeadlineAt === undefined
-                ? {}
-                : { startDeadlineAt: r.queue.startDeadlineAt }),
-              ...(r.queue.placement === undefined
-                ? {}
-                : { placement: r.queue.placement }),
-              ...(r.queue.claimedAt === undefined
-                ? {}
-                : { claimedAt: r.queue.claimedAt }),
-              ...(r.queue.firstHeartbeatAt === undefined
-                ? {}
-                : { firstHeartbeatAt: r.queue.firstHeartbeatAt }),
-              ...(r.queue.providerProcessStartedAt === undefined
-                ? {}
-                : {
-                    providerProcessStartedAt: r.queue.providerProcessStartedAt,
-                  }),
-              ...(r.queue.claimedBy === undefined
-                ? {}
-                : { claimedBy: r.queue.claimedBy }),
-            },
-          }),
+    ...header,
+    runs: ordered.map((r) => ({
+      ...toItemRunView(r),
       // The human turn that opened a `mode: reply` round -- round 1's is
       // `spec.description`, not on `params` at all.
       ...(r.params?.['reply'] === undefined
@@ -268,82 +293,11 @@ export function toWorkSummary(input: {
   task: Task;
   runs: readonly Run[];
 }): WorkSummary {
-  const payload = storedWorkPayloadSchema.parse(input.task.work);
-  const runs = [...input.runs].sort(compareRunOrder);
+  const { ordered, ...header } = toItemHeader(input.task, input.runs);
   return {
     id: taskKey(input.task.task),
     anchor: input.task.task,
-    state: deriveItemState(input.task, input.runs),
-    spec: payload.spec,
-    origin: payload.origin,
-    ...(input.task.providerRouting === undefined
-      ? {}
-      : { providerRouting: input.task.providerRouting }),
-    createdAt: runs[0]?.createdAt ?? input.task.updatedAt,
-    updatedAt: input.task.updatedAt,
-    ...(input.task.closedAt === undefined
-      ? {}
-      : { closedAt: input.task.closedAt }),
-    runs: runs.map((r) => ({
-      runId: r.runId,
-      state: r.state,
-      pipeline: r.pipeline,
-      priority: r.priority ?? 'normal',
-      createdAt: r.createdAt,
-      updatedAt: r.updatedAt,
-      ...(r.result === undefined ? {} : { result: r.result }),
-      ...(r.sourceRevision === undefined
-        ? {}
-        : {
-            sourceRevision: r.sourceRevision,
-            revisionAttempt: r.revisionAttempt,
-          }),
-      ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
-      ...(r.triagePublication === undefined
-        ? {}
-        : { triagePublication: r.triagePublication }),
-      ...(r.providerFallback === undefined
-        ? {}
-        : {
-            providerFallback: {
-              allowedPipelines: [...r.providerFallback.allowedPipelines],
-              attemptedPipelines: [...r.providerFallback.attemptedPipelines],
-              originalRunId: r.providerFallback.originalRunId,
-              ...(r.providerFallback.fromRunId === undefined
-                ? {}
-                : { fromRunId: r.providerFallback.fromRunId }),
-              ...(r.providerFallback.trigger === undefined
-                ? {}
-                : { trigger: { ...r.providerFallback.trigger } }),
-            },
-          }),
-      ...(r.queue === undefined
-        ? {}
-        : {
-            queue: {
-              state: r.queue.state,
-              ...(r.queue.startDeadlineAt === undefined
-                ? {}
-                : { startDeadlineAt: r.queue.startDeadlineAt }),
-              ...(r.queue.placement === undefined
-                ? {}
-                : { placement: r.queue.placement }),
-              ...(r.queue.claimedAt === undefined
-                ? {}
-                : { claimedAt: r.queue.claimedAt }),
-              ...(r.queue.firstHeartbeatAt === undefined
-                ? {}
-                : { firstHeartbeatAt: r.queue.firstHeartbeatAt }),
-              ...(r.queue.providerProcessStartedAt === undefined
-                ? {}
-                : {
-                    providerProcessStartedAt: r.queue.providerProcessStartedAt,
-                  }),
-              ...(r.queue.claimedBy === undefined
-                ? {}
-                : { claimedBy: r.queue.claimedBy }),
-            },
-          }),
-    })),
+    ...header,
+    runs: ordered.map(toItemRunView),
   };
 }

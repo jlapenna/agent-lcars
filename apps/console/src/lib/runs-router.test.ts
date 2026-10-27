@@ -868,7 +868,7 @@ describe('claim', () => {
     expect((await store.readRun(claudeRunId))?.queue?.state).toBe('queued');
   });
 
-  it('skips a non-live queued run and returns the next live one', async () => {
+  it('never claims a non-live queued run: selection skips it, not a re-claim', async () => {
     const { store, orchestrator, now } = fixture();
     const staleRunId = await seedQueuedRun(store, orchestrator, {
       workId: wid('work-stale'),
@@ -876,7 +876,9 @@ describe('claim', () => {
     });
     // Cancellation settles the run without touching `Run.queue` (Task 7's
     // own report, deviation 2) -- so this run stays `queue.state: 'queued'`
-    // while `run.state` is no longer live.
+    // while `run.state` is no longer live. `isQueueAdmissionCandidate`
+    // filters it out of selection, so the stale record is never moved to
+    // `claimed`; the handler needs no retry to step past it.
     const canceled = await orchestrator.cancel(staleRunId);
     expect('refused' in canceled).toBe(false);
     const liveRunId = await seedQueuedRun(store, orchestrator, {
@@ -897,6 +899,10 @@ describe('claim', () => {
     );
     expect(r.status).toBe(200);
     expect((r.json as { runId: string }).runId).toBe(liveRunId);
+    expect(await store.readRun(staleRunId)).toMatchObject({
+      state: 'canceled',
+      queue: { state: 'queued' },
+    });
   });
 
   it('settles at most one closed GitHub backlog item per claim request', async () => {
