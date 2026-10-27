@@ -66,9 +66,6 @@ function fixture(
     rules?: unknown;
     rulePages?: Record<number, unknown>;
     review?: object;
-    suites?: unknown;
-    suitePages?: Record<number, unknown>;
-    suite?: unknown;
   } = {},
 ) {
   const pr = {
@@ -181,34 +178,6 @@ function fixture(
       );
     if (path.includes('/status?'))
       return Response.json({ total_count: 0, statuses: [] });
-    if (path.includes('/rule-suites/5'))
-      return Response.json(
-        overrides.suite ?? {
-          result: 'pass',
-          after_sha: MERGE,
-          rule_evaluations: [
-            {
-              rule_type: 'required_status_checks',
-              result: 'pass',
-              enforcement: 'active',
-            },
-            {
-              rule_type: 'pull_request',
-              result: 'pass',
-              enforcement: 'active',
-            },
-          ],
-        },
-      );
-    if (path.includes('/rule-suites?'))
-      return Response.json(
-        overrides.suitePages?.[
-          Number(new URL(path).searchParams.get('page') ?? '1')
-        ] ??
-          overrides.suites ?? [
-            { id: 5, after_sha: MERGE, ref: 'refs/heads/main', result: 'pass' },
-          ],
-      );
     throw Error(`Unexpected fixture request: ${path}`);
   });
   return {
@@ -278,29 +247,22 @@ describe('authenticated ready delivery evidence', () => {
         },
       },
     },
-  ])(
-    'corrects late $name on an already merged waiting artifact',
-    async ({ review }) => {
-      expect(
-        await observeGithubDelivery(
-          fixture({
-            pr: {
-              state: 'closed',
-              merged: true,
-              merge_commit_sha: MERGE,
-              auto_merge: null,
-            },
-            review,
-          }),
-          BINDING,
-        ),
-      ).toEqual({
-        kind: 'correction',
-        head: HEAD,
-        reason: 'Review feedback requires correction',
-      });
-    },
-  );
+  ])('ends monitoring at merge despite late $name', async ({ review }) => {
+    expect(
+      await observeGithubDelivery(
+        fixture({
+          pr: {
+            state: 'closed',
+            merged: true,
+            merge_commit_sha: MERGE,
+            auto_merge: null,
+          },
+          review,
+        }),
+        BINDING,
+      ),
+    ).toEqual({ kind: 'protected-merge', head: HEAD, mergeCommit: MERGE });
+  });
 
   it('keeps waiting ownership when an armed PR merges during verification, then settles its protected landing', async () => {
     const review = {
@@ -463,31 +425,6 @@ describe('authenticated ready delivery evidence', () => {
         name: 'a failed protected rule suite',
         rules: new Response(null, { status: 502 }),
       },
-      {
-        name: 'unresolved review threads',
-        review: {
-          ...noApproval,
-          reviewThreads: {
-            pageInfo: { hasNextPage: false },
-            nodes: [{ isResolved: false }],
-          },
-        },
-      },
-      {
-        name: 'requested changes',
-        review: {
-          reviews: {
-            pageInfo: { hasPreviousPage: false },
-            nodes: [
-              {
-                state: 'CHANGES_REQUESTED',
-                author: { login: 'reviewer' },
-                commit: { oid: HEAD },
-              },
-            ],
-          },
-        },
-      },
       { name: 'a foreign attempt marker', body: '<!-- attempt-claim:old -->' },
       { name: 'a wrong PR number', number: 13 },
       { name: 'a missing merge commit', merge_commit_sha: null },
@@ -536,62 +473,6 @@ describe('authenticated ready delivery evidence', () => {
     }
   });
 
-  it('rejects incomplete review reads and feedback for an already merged handoff', async () => {
-    const merged = {
-      state: 'closed',
-      merged: true,
-      merge_commit_sha: MERGE,
-      auto_merge: null,
-    };
-    for (const { review, rules, unqualified } of [
-      {
-        review: {
-          reviewThreads: { pageInfo: { hasNextPage: true }, nodes: [] },
-        },
-        unqualified: false,
-      },
-      {
-        review: {
-          reviews: {
-            pageInfo: { hasPreviousPage: false },
-            nodes: [
-              {
-                state: 'CHANGES_REQUESTED',
-                author: { login: 'reviewer' },
-                commit: { oid: HEAD },
-              },
-            ],
-          },
-        },
-        unqualified: false,
-      },
-      {
-        review: {
-          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
-          reviewThreads: {
-            pageInfo: { hasNextPage: false },
-            nodes: [{ isResolved: false }],
-          },
-        },
-        unqualified: false,
-      },
-      {
-        review: {
-          reviews: { pageInfo: { hasPreviousPage: false }, nodes: [] },
-        },
-        rules: new Response(null, { status: 502 }),
-        unqualified: false,
-      },
-    ]) {
-      const error = await readyDeliveryBinding(
-        fixture({ review, pr: merged, rules }),
-        { run: RUN, task: TASK, repo: 'octo/example', number: 12, now: NOW },
-      ).catch((caught: unknown) => caught);
-      expect(error).toBeInstanceOf(Error);
-      expect(error instanceof UnqualifiedDeliveryError).toBe(unqualified);
-    }
-  });
-
   it('requests correction only for actual failed required checks or review feedback', async () => {
     expect(
       await observeGithubDelivery(
@@ -626,7 +507,7 @@ describe('authenticated ready delivery evidence', () => {
     ).toMatchObject({ kind: 'correction', head: HEAD });
   });
 
-  it.each(['open', 'merged'] as const)(
+  it.each(['open'] as const)(
     'rebinds a changed %s head against the old fence before reading review or landing evidence',
     async (state) => {
       const deps = fixture({
@@ -647,76 +528,29 @@ describe('authenticated ready delivery evidence', () => {
         newHead: MERGE,
       });
       expect(BINDING.head).toBe(HEAD);
-      for (const path of ['/graphql', '/rule-suites'])
-        expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-          expect.stringContaining(path),
-          expect.anything(),
-        );
+      expect(deps.fetchImpl).not.toHaveBeenCalledWith(
+        expect.stringContaining('/graphql'),
+        expect.anything(),
+      );
     },
   );
 
-  it('requires passing exact-merge protected evaluations; merged flags and bypasses do not complete work', async () => {
-    const pr = { merged: true, state: 'closed', merge_commit_sha: MERGE };
-    await expect(
-      observeGithubDelivery(
-        fixture({
-          pr,
-          suites: [
-            {
-              id: 5,
-              after_sha: MERGE,
-              ref: 'refs/heads/main',
-              result: 'bypass',
-            },
-          ],
-        }),
-        BINDING,
-      ),
-    ).rejects.toThrow();
-    await expect(
-      observeGithubDelivery(
-        fixture({
-          pr,
-          suite: {
-            result: 'pass',
-            after_sha: MERGE,
-            rule_evaluations: [
-              { rule_type: 'required_status_checks', result: 'fail' },
-            ],
-          },
-        }),
-        BINDING,
-      ),
-    ).rejects.toThrow();
-    await expect(
-      observeGithubDelivery(
-        fixture({
-          pr,
-          suite: {
-            result: 'pass',
-            after_sha: MERGE,
-            rule_evaluations: [
-              {
-                rule_type: 'required_status_checks',
-                result: 'pass',
-                enforcement: 'active',
-              },
-              {
-                rule_type: 'pull_request',
-                result: 'pass',
-                enforcement: 'evaluate',
-              },
-            ],
-          },
-        }),
-        BINDING,
-      ),
-    ).rejects.toThrow('Protected checks did not pass');
-    expect(await observeGithubDelivery(fixture({ pr }), BINDING)).toEqual({
+  it('ends monitoring at merge, including a moved head, without review or rule-suite reads', async () => {
+    const deps = fixture({
+      pr: {
+        merged: true,
+        state: 'closed',
+        merge_commit_sha: MERGE,
+        head: { sha: MERGE },
+        body: 'edited after merge',
+      },
+    });
+    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
       kind: 'protected-merge',
       head: HEAD,
       mergeCommit: MERGE,
     });
+    expect(deps.fetchImpl).toHaveBeenCalledOnce();
   });
 });
 
@@ -981,8 +815,6 @@ describe('minted delivery permission and current CI boundaries', () => {
         }
         if (
           (path.includes('/check-runs') && permissions.checks !== 'read') ||
-          (path.includes('/rule-suites') &&
-            permissions.administration !== 'read') ||
           path.includes('/status?')
         )
           return Response.json({}, { status: 403 });
@@ -1002,37 +834,35 @@ describe('minted delivery permission and current CI boundaries', () => {
       calls: fetchImpl,
     };
   }
-  it.each([false, true])(
-    'mints existing declared delivery reads for merged=%s while default remains narrow',
-    async (merged) => {
-      const scoped = mintedFixture(true, merged);
-      expect((await observeGithubDelivery(scoped, BINDING)).kind).toBe(
-        merged ? 'protected-merge' : 'waiting',
-      );
-      expect(scoped.permission()).toEqual({
-        actions: 'write',
-        issues: 'write',
-        pull_requests: 'write',
-        administration: 'read',
-        checks: 'read',
-        contents: 'read',
-      });
-      expect(
-        scoped.calls.mock.calls.some(([url]) =>
-          String(url).includes('/status?'),
-        ),
-      ).toBe(false);
-      const ordinary = mintedFixture(false, merged);
-      await expect(observeGithubDelivery(ordinary, BINDING)).rejects.toThrow(
-        'Delivery revision or review evidence changed',
-      );
-      expect(ordinary.permission()).toEqual({
-        actions: 'write',
-        issues: 'write',
-        pull_requests: 'write',
-      });
-    },
-  );
+  it('ends monitoring at merge with the narrow default token', async () => {
+    expect(
+      (await observeGithubDelivery(mintedFixture(false, true), BINDING)).kind,
+    ).toBe('protected-merge');
+  });
+  it('mints existing declared delivery reads while default remains narrow', async () => {
+    const merged = false;
+    const scoped = mintedFixture(true, merged);
+    expect((await observeGithubDelivery(scoped, BINDING)).kind).toBe('waiting');
+    expect(scoped.permission()).toEqual({
+      actions: 'write',
+      issues: 'write',
+      pull_requests: 'write',
+      checks: 'read',
+      contents: 'read',
+    });
+    expect(
+      scoped.calls.mock.calls.some(([url]) => String(url).includes('/status?')),
+    ).toBe(false);
+    const ordinary = mintedFixture(false, merged);
+    await expect(observeGithubDelivery(ordinary, BINDING)).rejects.toThrow(
+      'Delivery revision or review evidence changed',
+    );
+    expect(ordinary.permission()).toEqual({
+      actions: 'write',
+      issues: 'write',
+      pull_requests: 'write',
+    });
+  });
   it.each(['queued', 'success', 'failure'] as const)(
     'ignores cancelled draft wrappers when current ready CI is %s',
     async (state) => {
@@ -1227,20 +1057,13 @@ describe('maintainer withdrawal of ready delivery', () => {
   });
 });
 
-describe('current review and paginated protected landing evidence', () => {
+describe('current review and protected landing evidence', () => {
   const merged = { merged: true, state: 'closed', merge_commit_sha: MERGE };
   const approved = {
     state: 'APPROVED',
     author: { login: 'reviewer' },
     commit: { oid: HEAD },
   };
-  const fullPage = Array.from({ length: 100 }, (_, index) => ({
-    id: 1000 + index,
-    after_sha: index.toString(16).padStart(40, '0'),
-    ref: 'refs/heads/main',
-    result: 'pass',
-  }));
-
   it.each([
     ['missing', []],
     ['self', [{ ...approved, author: { login: 'author' } }]],
@@ -1280,95 +1103,6 @@ describe('current review and paginated protected landing evidence', () => {
       head: HEAD,
       reason: 'Review feedback requires correction',
     });
-  });
-
-  it('finds the exact protected landing on a later rule-suite page', async () => {
-    const deps = fixture({
-      pr: merged,
-      suitePages: {
-        1: fullPage,
-        2: [
-          { id: 5, after_sha: MERGE, ref: 'refs/heads/main', result: 'pass' },
-        ],
-      },
-    });
-    expect(await observeGithubDelivery(deps, BINDING)).toEqual({
-      kind: 'protected-merge',
-      head: HEAD,
-      mergeCommit: MERGE,
-    });
-    expect(deps.fetchImpl).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'ref=refs%2Fheads%2Fmain&rule_suite_result=pass&evaluate_status=active&time_period=month&per_page=100&page=2',
-      ),
-      expect.anything(),
-    );
-    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('page=3'),
-      expect.anything(),
-    );
-  });
-
-  it('retains unknown when a short final page has no exact protected landing', async () => {
-    const deps = fixture({ pr: merged, suitePages: { 1: fullPage, 2: [] } });
-    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
-      'Protected merge evidence unavailable',
-    );
-    expect(deps.fetchImpl).toHaveBeenCalledWith(
-      expect.stringContaining('page=2'),
-      expect.anything(),
-    );
-    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('page=3'),
-      expect.anything(),
-    );
-  });
-
-  it('retains unknown after the bounded ten full rule-suite pages', async () => {
-    const deps = fixture({ pr: merged, suites: fullPage });
-    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow(
-      'Protected merge evidence exceeds bounded read',
-    );
-    expect(deps.fetchImpl).toHaveBeenCalledWith(
-      expect.stringContaining('page=10'),
-      expect.anything(),
-    );
-    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('page=11'),
-      expect.anything(),
-    );
-  });
-
-  it('retains unknown when a later rule-suite page read is refused', async () => {
-    const deps = fixture({ pr: merged, suitePages: { 1: fullPage } });
-    const original = deps.fetchImpl;
-    const fetchImpl = vi.fn(
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (String(input).includes('page=2'))
-          return new Response('', { status: 503 });
-        return original(input, init);
-      },
-    );
-    await expect(
-      observeGithubDelivery({ ...deps, fetchImpl }, BINDING),
-    ).rejects.toThrow('Delivery read refused (503)');
-    expect(fetchImpl).toHaveBeenCalledWith(
-      expect.stringContaining('page=2'),
-      expect.anything(),
-    );
-    expect(fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('page=3'),
-      expect.anything(),
-    );
-  });
-
-  it('retains unknown for malformed later-page evidence', async () => {
-    const deps = fixture({ pr: merged, suitePages: { 1: fullPage, 2: [{}] } });
-    await expect(observeGithubDelivery(deps, BINDING)).rejects.toThrow();
-    expect(deps.fetchImpl).not.toHaveBeenCalledWith(
-      expect.stringContaining('/rule-suites/5'),
-      expect.anything(),
-    );
   });
 });
 
@@ -2299,21 +2033,6 @@ describe('same-head review feedback before unavailable check evidence', () => {
       ),
     ).toEqual({ kind: 'revision', head: HEAD, newHead: MERGE });
   });
-  it('retains merged same-head review feedback as correction before unavailable checks', async () => {
-    expect(
-      await observeGithubDelivery(
-        unavailableEvidence('refused checks', changesRequested, {
-          merged: true,
-          merge_commit_sha: MERGE,
-        }),
-        BINDING,
-      ),
-    ).toEqual({
-      kind: 'correction',
-      head: HEAD,
-      reason: 'Review feedback requires correction',
-    });
-  });
   it.each([{ draft: true }, { state: 'closed' }, { auto_merge: null }])(
     'retains withdrawn PR waiting before review feedback: %j',
     async (pr) => {
@@ -2393,34 +2112,8 @@ describe('nullable historical review identities', () => {
   });
   it('retains valid reviewer change requests beside nullable history', async () => {
     const nodes = [valid, ...history, { ...valid, state: 'CHANGES_REQUESTED' }];
-    await expect(
-      readyDeliveryBinding(
-        fixture({
-          pr: {
-            state: 'closed',
-            merged: true,
-            merge_commit_sha: MERGE,
-            auto_merge: null,
-          },
-          review: review(nodes),
-        }),
-        {
-          run: RUN,
-          task: TASK,
-          repo: 'octo/example',
-          number: 12,
-          now: NOW,
-        },
-      ),
-    ).rejects.toThrow();
     expect(
-      await observeGithubDelivery(
-        fixture({
-          pr: { merged: true, merge_commit_sha: MERGE },
-          review: review(nodes),
-        }),
-        BINDING,
-      ),
+      await observeGithubDelivery(fixture({ review: review(nodes) }), BINDING),
     ).toEqual({
       kind: 'correction',
       head: HEAD,

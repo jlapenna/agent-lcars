@@ -223,79 +223,6 @@ async function reviews(
   };
 }
 
-/** Proves the exact merge commit passed the active protected-branch rule
- * suite, including required status checks and the pull-request rule. */
-async function verifyProtectedMerge(
-  deps: DeliveryGithubDeps,
-  binding: DeliveryBinding,
-  mergeCommit: string,
-): Promise<void> {
-  const suiteSchema = z.object({
-    id: z.number(),
-    after_sha: sha,
-    result: z.string(),
-    ref: z.string(),
-  });
-  let suite: z.infer<typeof suiteSchema> | undefined;
-  // The longest documented window is one month. Missing older evidence and
-  // more than ten full pages retain ownership; they never qualify landing.
-  for (let page = 1; page <= 10; page++) {
-    const query = new URLSearchParams({
-      ref: `refs/heads/${binding.baseRef}`,
-      rule_suite_result: 'pass',
-      evaluate_status: 'active',
-      time_period: 'month',
-      per_page: '100',
-      page: String(page),
-    });
-    const suites = z
-      .array(suiteSchema)
-      .max(100)
-      .parse(await github(deps, binding.repo, `rulesets/rule-suites?${query}`));
-    suite = suites.find(
-      (candidate) =>
-        candidate.after_sha === mergeCommit &&
-        candidate.ref === `refs/heads/${binding.baseRef}` &&
-        candidate.result === 'pass',
-    );
-    if (suite !== undefined) break;
-    if (suites.length < 100)
-      throw new Error('Protected merge evidence unavailable');
-  }
-  if (suite === undefined)
-    throw new Error('Protected merge evidence exceeds bounded read');
-  const details = z
-    .object({
-      result: z.literal('pass'),
-      after_sha: sha,
-      rule_evaluations: z
-        .array(
-          z.object({
-            rule_type: z.string(),
-            result: z.string(),
-            enforcement: z.string().optional(),
-          }),
-        )
-        .min(1),
-    })
-    .parse(
-      await github(deps, binding.repo, `rulesets/rule-suites/${suite.id}`),
-    );
-  // An evaluate-only ruleset reports a pass it never enforced, so only
-  // actively enforced required-check and pull-request rules qualify.
-  const enforced = (ruleType: string) =>
-    details.rule_evaluations.some(
-      (rule) => rule.rule_type === ruleType && rule.enforcement === 'active',
-    );
-  if (
-    details.after_sha !== mergeCommit ||
-    details.rule_evaluations.some((rule) => rule.result !== 'pass') ||
-    !enforced('required_status_checks') ||
-    !enforced('pull_request')
-  )
-    throw new Error('Protected checks did not pass');
-}
-
 /** Thrown only after an authoritative read proved the run's own exact
  * attempt-marked, non-draft, open PR in its target repository with an
  * established protected target policy, which merely has no auto-merge arm
@@ -369,12 +296,11 @@ export async function readyDeliveryBinding(
     observedAt: now,
   };
   if (pr.merged) {
-    const landed = await observeGithubDelivery(deps, binding);
-    if (landed.kind !== 'protected-merge')
-      throw new Error('Protected landing not established');
+    if (final.merge_commit_sha === null)
+      throw new Error('Merge commit not established');
     return {
       ...binding,
-      mergeCommit: landed.mergeCommit,
+      mergeCommit: final.merge_commit_sha,
       state:
         binding.runtimeGate === 'required' ? 'runtime-required' : 'complete',
     };
@@ -513,43 +439,39 @@ export async function observeGithubDelivery(
   const pr = prSchema.parse(
     await github(deps, binding.repo, `pulls/${binding.number}`),
   );
+  if (pr.number !== binding.number)
+    throw new Error('Delivery artifact identity changed');
+  // A merge ends monitoring: GitHub already applied the target's branch
+  // protection, and nothing after it changes what landed.
+  if (pr.merged && pr.merge_commit_sha !== null)
+    return {
+      kind: 'protected-merge',
+      head: binding.head,
+      mergeCommit: pr.merge_commit_sha,
+    };
   const generation = parseRunGeneration(binding.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: binding.runId });
   if (
-    pr.number !== binding.number ||
     pr.base.ref !== binding.baseRef ||
     !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
   )
     throw new Error('Delivery artifact identity changed');
   if (
-    !pr.merged &&
-    (pr.state !== 'open' ||
-      pr.draft ||
-      pr.auto_merge?.merge_method !== 'squash')
+    pr.state !== 'open' ||
+    pr.draft ||
+    pr.auto_merge?.merge_method !== 'squash'
   )
     return { kind: 'waiting', head: binding.head };
   if (pr.head.sha !== binding.head)
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
   const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
-  // Late same-head feedback remains actionable while delivery is waiting,
-  // even if checks allowed the artifact to merge before review arrived.
   if (review.changesRequested || review.unresolved)
     return {
       kind: 'correction',
       head: binding.head,
       reason: 'Review feedback requires correction',
     };
-  // The target's branch protection decides what review a merge needs; a merge
-  // it accepted is delivery, with or without an approval.
-  if (pr.merged && pr.merge_commit_sha !== null) {
-    await verifyProtectedMerge(deps, binding, pr.merge_commit_sha);
-    return {
-      kind: 'protected-merge',
-      head: binding.head,
-      mergeCommit: pr.merge_commit_sha,
-    };
-  }
   const required = await protectedChecks(deps, binding.repo, pr.base.ref);
   const checkRuns = await currentCheckRuns(deps, binding);
   const candidateFailures = checkRuns.filter(
