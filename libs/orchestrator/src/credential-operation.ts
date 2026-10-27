@@ -3,9 +3,10 @@ import {
   type CredentialMutation,
   type CredentialOperation,
   type CredentialWriteReceipt,
+  isClaimant,
   isLive,
+  recoveryDeadlineElapsed,
   type Run,
-  runRecoveryDeadline,
   type Task,
 } from './model';
 
@@ -24,21 +25,13 @@ export function reserveCredentialOperation(input: {
   kind: CredentialOperation['kind'];
 }): Decision | Refusal {
   const { run, task, now } = input;
-  if (
-    run.pipeline !== 'codex' ||
-    run.queue?.state !== 'claimed' ||
-    run.queue.tokenHash !== input.claimFingerprint
-  )
+  if (run.pipeline !== 'codex' || !isClaimant(run, input.claimFingerprint))
     return refused('not-claimant');
   if (run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
   if (input.kind !== 'cleanup') {
     if (!isLive(run.state)) return refused('run-not-live');
-    if (
-      task.activeRunId !== run.runId ||
-      Date.parse(runRecoveryDeadline(run) ?? run.leaseExpiresAt) <=
-        Date.parse(now)
-    ) {
+    if (task.activeRunId !== run.runId || recoveryDeadlineElapsed(run, now)) {
       return refused('stale-lease');
     }
   }
@@ -88,8 +81,7 @@ export function changeCredentialOperation(input: {
   if (
     op?.id !== input.id ||
     op.claimFingerprint !== input.claimFingerprint ||
-    run.queue?.state !== 'claimed' ||
-    run.queue.tokenHash !== input.claimFingerprint
+    !isClaimant(run, input.claimFingerprint)
   ) {
     return refused('not-claimant');
   }

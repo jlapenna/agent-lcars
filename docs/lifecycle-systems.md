@@ -42,11 +42,13 @@ source clock must advance past the latest label request. The transaction reads
 the active attempt, latest attempt and retained physical claims before deciding.
 It cancels only unclaimed queued work and mints one fresh requested-provider
 attempt; Work and predecessor provider facts remain unchanged. Claimed/running
-owners, unresolved credential operations and retained physical claims refuse.
-Parked and terminal tasks may start fresh only with those gates clear. Refused
-requests are visible in task history and require a new label application; they
-never become automatic deferred execution. Ordinary provider claim and capacity
-fences still apply to the successor.
+owners, unresolved credential operations and capacity receipts refuse. A
+settled claim whose credential cleanup has finished retains nothing physical,
+so a later label may route it; a restore receipt alone never fences. Parked and
+terminal tasks may start fresh only with those gates clear. Refused requests are
+visible in task history; they never become automatic deferred execution, so the
+next label application decides afresh once the gate that refused has cleared.
+Ordinary provider claim and capacity fences still apply to the successor.
 
 ## Worker startup acknowledgement
 
@@ -253,8 +255,10 @@ Legacy claims retain the fifteen-minute bound from #2188, including placement
 and bootstrap. Display observation traffic cannot extend it. Negotiated
 placement-aware claims use the separately fenced startup operation below. The five-minute maintenance cadence normally settles an expired
 startup within twenty minutes; it records startup loss, not a model failure.
-A normal temporary capacity wait remains placement until that bound. Accepted
-worker heartbeats then use the renewable run lease. Kubernetes' unchanged
+A normal temporary capacity wait remains placement until that bound, renewed by
+each Pending observation for at most one hour from the claim; past that the
+sweep records a startup loss and the executor retires the Job that never
+placed. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
 7200-second execution limit is an independent backstop (a Job deadline for
 legacy claims, a Pod runtime deadline for negotiated claims), not permission to
 run after control-plane settlement. Exact-claim foreground retirement and Pod

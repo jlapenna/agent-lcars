@@ -26,7 +26,9 @@ import (
 func suspendedStartupFixture(t *testing.T) (*kubernetesQueue, *fake.Clientset, *batch.Job, *core.Secret) {
 	t.Helper()
 	q, c := kubeQueueFixture()
-	j, err := q.job(directRunnerLaunch{runID: "work:startup/r1", runner: "executor", pipeline: "codex"})
+	// As in launch, the Job carries its claim fingerprint from creation; the
+	// owned Secret below holds the matching token.
+	j, err := q.job(directRunnerLaunch{runID: "work:startup/r1", runner: "executor", pipeline: "codex", runToken: "private-token"})
 	if err != nil {
 		t.Fatal(err)
 	}

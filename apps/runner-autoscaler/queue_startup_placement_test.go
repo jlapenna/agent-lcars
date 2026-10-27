@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	core "k8s.io/api/core/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -159,85 +158,5 @@ func TestPlacementClaimNegotiationRequiresAcknowledgement(t *testing.T) {
 				t.Fatalf("calls=%d err=%v", calls, err)
 			}
 		})
-	}
-}
-
-// Exercise the real poller/backend boundary: drain retains the accepted Pending
-// worker's observer without resuming another suspended original or claiming work.
-func TestPlacementDrainKeepsObservingWithoutResumingOrClaiming(t *testing.T) {
-	q, client, suspended, _ := suspendedStartupFixture(t)
-	draining := true
-	q.draining = func() bool { return draining }
-	pending, err := q.job(directRunnerLaunch{runID: "work:placement/r1", runToken: "placement-token", pipeline: "opencode", runner: "executor", placementAware: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pending, err = client.BatchV1().Jobs(q.config.Namespace).Create(context.Background(), pending, meta.CreateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The shared fake Create reactor assigns one default UID to every Job.
-	// Normalize this second fixture to its own identity before observation.
-	pending.UID = "pending-original"
-	pending.Generation = 2
-	pending.Spec.Suspend = ptr(false)
-	pending, err = client.BatchV1().Jobs(q.config.Namespace).Update(context.Background(), pending, meta.UpdateOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pod := &core.Pod{ObjectMeta: meta.ObjectMeta{Name: "pending-worker", UID: "pending-pod", OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: pending.Name, UID: pending.UID, Controller: ptr(true)}}}, Status: core.PodStatus{Phase: core.PodPending}}
-	if _, err := client.CoreV1().Pods(q.config.Namespace).Create(context.Background(), pod, meta.CreateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	observations := make(chan placementObservation, 1)
-	q.reportStartupPlacement = func(_ context.Context, o placementObservation) error {
-		select {
-		case observations <- o:
-		default:
-		}
-		return nil
-	}
-	client.ClearActions()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		runQueueExecutorPoller(ctx, queueExecutorConfig{draining: q.draining, recover: q.recover, reserve: func() (*directRunnerReservation, error) { t.Error("drain reserved new work"); return nil, nil }}, 5*time.Millisecond, discardLogger())
-	}()
-	deadline := time.After(time.Second)
-	for observed := 0; observed < 2; observed++ {
-		select {
-		case o := <-observations:
-			if o.RunID != "work:placement/r1" || o.JobUID != string(pending.UID) || o.Placed {
-				t.Errorf("wrong Pending observation: %+v", o)
-			}
-		case <-deadline:
-			t.Error("drain lost owned Pending placement observations")
-			observed = 2
-		}
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("draining poller did not terminate")
-	}
-	for _, action := range client.Actions() {
-		if action.GetVerb() == "update" && action.GetResource().Resource == "jobs" {
-			t.Fatal("drain updated or resumed a Job")
-		}
-	}
-	stored, err := client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), suspended.Name, meta.GetOptions{})
-	if err != nil || stored.UID != suspended.UID || stored.Spec.Suspend == nil || !*stored.Spec.Suspend {
-		t.Fatal("drain resumed or replaced the original suspended Job", err)
-	}
-	draining = false
-	if err := q.recover(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	stored, err = client.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), suspended.Name, meta.GetOptions{})
-	if err != nil || stored.UID != suspended.UID || stored.Spec.Suspend == nil || *stored.Spec.Suspend {
-		t.Fatal("leaving drain did not recover the original suspended Job", err)
 	}
 }

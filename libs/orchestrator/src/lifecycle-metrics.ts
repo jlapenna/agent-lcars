@@ -528,13 +528,16 @@ export function lifecycleMetricSnapshot(
           entries.filter((entry) => entry.state === state).length,
           { kind, state },
         );
+      // Age is a liveness signal for entries the drain can still deliver. A
+      // dead-lettered `failed` entry is counted above but never ages this
+      // gauge: it has no further transition, so it would pin the age forever.
       gauge(
         'outbox_oldest_seconds',
         Math.max(
           0,
-          ...entries.map(
-            (entry) => (now - Date.parse(entry.createdAt)) / 1_000,
-          ),
+          ...entries
+            .filter((entry) => entry.state !== 'failed')
+            .map((entry) => (now - Date.parse(entry.createdAt)) / 1_000),
         ),
         { kind },
       );

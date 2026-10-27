@@ -16,10 +16,9 @@ import (
 // queue executor. It is intentionally separate from Run lifecycle state:
 // queued/claimed/running counts are server-authoritative orchestrator data,
 // while this source can truthfully report only whether this host-side worker
-// is ready, draining, and how many unfinished queue Jobs the Kubernetes inventory currently shows.
+// is ready and how many unfinished queue Jobs the Kubernetes inventory currently shows.
 type queueExecutorStatusSource struct {
 	ready         atomic.Bool
-	draining      func() bool
 	mu            sync.RWMutex
 	maxConcurrent int
 	activeRuns    func(context.Context) (int, error)
@@ -52,12 +51,8 @@ func newConsoleClaimWindow(counts [3]uint64, start, end time.Time) *consoleClaim
 	}
 }
 
-func newQueueExecutorStatusSource(
-	draining func() bool,
-	logger *slog.Logger,
-) *queueExecutorStatusSource {
+func newQueueExecutorStatusSource(logger *slog.Logger) *queueExecutorStatusSource {
 	return &queueExecutorStatusSource{
-		draining:      draining,
 		logger:        logger,
 		claimCounters: currentQueueClaimCounters,
 		latency:       workAPILatency.histogram,
@@ -80,7 +75,6 @@ func (s *queueExecutorStatusSource) snapshot(ctx context.Context, now time.Time)
 		Kind:          "queue-executor",
 		Executor:      "queue",
 		Ready:         ready,
-		Draining:      s.draining != nil && s.draining(),
 		UpdatedAt:     now.UTC().Format(time.RFC3339Nano),
 		ExpireAt:      now.Add(consoleStatusTTL),
 	}

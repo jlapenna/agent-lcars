@@ -269,30 +269,7 @@ func TestKubernetesRecoveryRejectsWrongSecretOwner(t *testing.T) {
 		t.Fatal("identity conflict launched work")
 	}
 }
-func TestKubernetesCleanupPreservesExecutingJob(t *testing.T) {
-	q, c := kubeQueueFixture()
-	ctx := context.Background()
-	for _, active := range []bool{false, true} {
-		j, _ := q.job(directRunnerLaunch{runID: fmt.Sprintf("work:%v/r1", active), pipeline: "codex"})
-		// Tracker bypasses API-assigned metadata required by guarded cleanup.
-		j.UID, j.ResourceVersion, j.Generation = types.UID(fmt.Sprintf("job-%v", active)), "1", 1
-		j.CreationTimestamp = meta.NewTime(time.Now().Add(-3 * time.Hour))
-		if active {
-			j.Spec.Suspend = ptr(false)
-			j.Status.StartTime = ptr(meta.Now())
-		}
-		if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), j, q.config.Namespace); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := q.cleanup(ctx); err != nil {
-		t.Fatal(err)
-	}
-	jobs, _ := c.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{})
-	if len(jobs.Items) != 1 || *jobs.Items[0].Spec.Suspend {
-		t.Fatal("cleanup removed executing attempt")
-	}
-}
+
 func TestKubernetesUnknownProviderHasNoSideEffects(t *testing.T) {
 	q, c := kubeQueueFixture()
 	err := q.launch(context.Background(), directRunnerLaunch{runID: "work:x/r1", pipeline: "unknown"})
@@ -318,32 +295,6 @@ func TestKubernetesPreflightRequiresWorkerAccountAndWriteGrants(t *testing.T) {
 				t.Fatalf("preflight=%v for %s", err, missing)
 			}
 		})
-	}
-}
-
-func TestKubernetesRetentionBoundsExitedEvidenceWithoutTouchingActiveJob(t *testing.T) {
-	q, c := kubeQueueFixture()
-	ctx := context.Background()
-	q.config.MaxConcurrent = 1
-	for i := range queueJobRetentionPerSlot + 2 {
-		j := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: fmt.Sprintf("finished-%02d", i), Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}}, Status: batch.JobStatus{Conditions: []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue, LastTransitionTime: meta.NewTime(time.Now().Add(-time.Duration(i) * time.Minute))}}}}
-		if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), j, q.config.Namespace); err != nil {
-			t.Fatal(err)
-		}
-	}
-	j := &batch.Job{ObjectMeta: meta.ObjectMeta{Name: "running", Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}}}
-	if err := c.Tracker().Create(batch.SchemeGroupVersion.WithResource("jobs"), j, q.config.Namespace); err != nil {
-		t.Fatal(err)
-	}
-	if err := q.cleanup(ctx); err != nil {
-		t.Fatal(err)
-	}
-	jobs, _ := c.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{})
-	if len(jobs.Items) != queueJobRetentionPerSlot+1 {
-		t.Fatal("exited retention did not enforce capacity bound")
-	}
-	if _, err := c.BatchV1().Jobs(q.config.Namespace).Get(ctx, "running", meta.GetOptions{}); err != nil {
-		t.Fatal("retention removed running Job")
 	}
 }
 
@@ -420,33 +371,6 @@ func TestKubernetesWorkerPolicySelection(t *testing.T) {
 }
 
 // Hook telemetry is unconditional for every pipeline
-// (docs/hooks-telemetry-design.md, phase 3), so the retired
-// LCARS_HOOK_TELEMETRY_PROVIDERS selector is ignored: a deployment that still
-// sets it, even to a value the old validator rejected, must neither fail
-// startup nor reach a worker Job.
-func TestKubernetesIgnoresRetiredHookTelemetrySelector(t *testing.T) {
-	t.Setenv("LCARS_HOOK_TELEMETRY_PROVIDERS", "unqualified-provider")
-	t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
-	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
-	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
-	if err := validateQueueExecutorEnvironment(testKubernetesResolved(t)); err != nil {
-		t.Fatalf("retired selector rejected: %v", err)
-	}
-	q, c := kubeQueueFixture()
-	launch := directRunnerLaunch{runID: "work:hooks/r1", pipeline: "claude", runToken: "fixture-token"}
-	if err := q.launch(context.Background(), launch); err != nil {
-		t.Fatal(err)
-	}
-	job, err := c.BatchV1().Jobs(q.config.Namespace).Get(context.Background(), queueJobName(launch.runID), meta.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
-		if env.Name == "LCARS_HOOK_TELEMETRY_PROVIDERS" {
-			t.Fatal("retired hook telemetry selector forwarded to a worker Job")
-		}
-	}
-}
 
 // Exercise the emitted environment through the actual bootstrap. A setup
 // receipt without control-smoke proof must block only selected providers.

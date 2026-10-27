@@ -174,6 +174,7 @@ async function claimDispatchedRun(
     pipelines: ['claude'],
     now: T0,
     claimedBy: 'test-executor',
+    claimedBySubject: 'executor@example.com',
     tokenHash: 'test-token-hash',
   });
   expect(claimed?.runId).toBe(runId);
@@ -1075,6 +1076,7 @@ describe('handleWebhookDelivery', () => {
         pipelines: ['claude', 'opencode'],
         now: clock.now(),
         claimedBy: 'executor',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       }),
     ).toMatchObject({ runId: result.body['runId'], pipeline: 'opencode' });
@@ -1093,6 +1095,7 @@ describe('handleWebhookDelivery', () => {
       pipelines: ['claude'],
       now: clock.now(),
       claimedBy: 'executor',
+      claimedBySubject: 'executor@example.com',
       tokenHash: 'a'.repeat(64),
     });
     clock.advanceMinutes(1);

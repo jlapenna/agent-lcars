@@ -855,6 +855,39 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_outbox_recorded_delivery_failures{kind="report-outcome"} 3\n',
     );
   });
+  it('ages outbox_oldest_seconds over deliverable entries only, never a dead letter', () => {
+    const pending: OutboxEntry = {
+      entryId: 'report/private/repo#42/r2',
+      kind: 'report-outcome',
+      task: { repo: 'private/repo', issue: 42 },
+      runId: 'private/repo#42/r2',
+      state: 'pending',
+      attempts: 0,
+      createdAt: '2026-10-10T11:55:00.000Z',
+      updatedAt: '2026-10-10T11:55:00.000Z',
+    };
+    const failed: OutboxEntry = {
+      ...pending,
+      entryId: 'report/private/repo#42/r1',
+      runId: 'private/repo#42/r1',
+      state: 'failed',
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+    };
+    const text = snapshot([], { outstandingOutbox: [pending, failed] });
+    expect(text).toContain(
+      'lcars_product_outbox_entries{kind="report-outcome",state="pending"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_outbox_entries{kind="report-outcome",state="failed"} 1\n',
+    );
+    expect(text).toContain(
+      'lcars_product_outbox_oldest_seconds{kind="report-outcome"} 300\n',
+    );
+    expect(snapshot([], { outstandingOutbox: [failed] })).toContain(
+      'lcars_product_outbox_oldest_seconds{kind="report-outcome"} 0\n',
+    );
+  });
   it('suppresses healthy-looking series on truncation and folds arbitrary provider names into unknown', () => {
     const arbitrary = run({ pipeline: 'private-provider-user-123' });
     expect(snapshot([arbitrary])).toContain(

@@ -203,7 +203,7 @@ const OUTBOX_ENTRY_ID_MAX_LENGTH =
  */
 export const runStateSchema = z.enum([
   'pending', // decided, dispatch not yet confirmed
-  'running', // dispatch confirmed or first report received
+  'running', // dispatch confirmed: handed to the queue, not proof a worker runs
   'finished', // the run reported a terminal result
   'canceled', // an operator asked for it to stop
   'lost', // lease expired with no report
@@ -307,9 +307,10 @@ export const runQueueSchema = z.strictObject({
    * the claim and must match a later exit report, but grants nothing alone. */
   claimedBy: z.string().min(1).max(256).optional(),
   /** The authenticated subject (lower-cased verified identity) of the
-   * executor principal that claimed this run. Only that principal may report
-   * the run's worker exit; a claim recorded without it (written before this
-   * field existed) can only be settled by its outcome report or lease expiry. */
+   * executor principal that claimed this run. Every claim records it; only
+   * that principal may report the run's worker exit. Optional only so
+   * documents persisted before the field existed still parse; such a claim
+   * has no provable owner and refuses every exit report. */
   claimedBySubject: z.string().min(1).max(256).optional(),
   tokenHash: z
     .string()
@@ -333,7 +334,10 @@ export type OperationalIntervention = z.infer<
 export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
-  /** Who caused the transition. */
+  /** Which path caused the transition. `operator` names the cancel path,
+   * not a person: anchor-close webhooks, provider switches, label handoffs
+   * and workflow cancels all write it. Only `intervention` records a human
+   * act. */
   by: z.enum([
     'request',
     'dispatch',
@@ -603,8 +607,9 @@ const outboxEntryBaseSchema = z.strictObject({
    *  handed to a worker, not how many times delivery was actually
    *  attempted (a claim can be lost to a crash before a single GitHub call
    *  happens). Retirement/backoff below deliberately do NOT key off this
-   *  field for that reason; it remains purely descriptive bookkeeping
-   *  (surfaced in `orchestrator-dispatch.ts`'s failure logging). */
+   *  field for that reason. It is the primary claim-fairness sort key
+   *  (`byOutboxClaimFairness`: never-handed entries go first) and is
+   *  surfaced in `orchestrator-dispatch.ts`'s failure logging. */
   attempts: z.number().int().nonnegative(),
   /** #1548 follow-up: when this entry first failed an *actual* delivery
    *  attempt -- set once, by `orchestrator-dispatch.ts`'s
@@ -781,5 +786,21 @@ export function startDeadlineElapsed(run: Run, now: string): boolean {
     run.queue.firstHeartbeatAt === undefined &&
     run.queue.startDeadlineAt !== undefined &&
     Date.parse(run.queue.startDeadlineAt) <= Date.parse(now)
+  );
+}
+
+/** The claimed run's recovery deadline has passed at `now`. A queued run has
+ * no deadline and never elapses; callers fence the claim first. */
+export function recoveryDeadlineElapsed(run: Run, now: string): boolean {
+  const deadline = runRecoveryDeadline(run);
+  return deadline !== undefined && Date.parse(deadline) <= Date.parse(now);
+}
+
+/** The exact queue claimant: the run is claimed and `claimFingerprint` is its
+ * claim token hash. Every token-authenticated callback fences on this before
+ * it may touch the run. */
+export function isClaimant(run: Run, claimFingerprint: string): boolean {
+  return (
+    run.queue?.state === 'claimed' && run.queue.tokenHash === claimFingerprint
   );
 }

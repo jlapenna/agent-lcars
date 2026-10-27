@@ -763,6 +763,7 @@ describe('items routes', () => {
         pipelines: ['claude'],
         now: later,
         claimedBy: 'available-runner',
+        claimedBySubject: 'executor@example.com',
         tokenHash: 'a'.repeat(64),
       });
       expect(claimed).toBeDefined();

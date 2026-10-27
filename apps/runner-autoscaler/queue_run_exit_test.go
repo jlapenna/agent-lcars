@@ -66,6 +66,10 @@ func (r *exitReportRecorder) requests() []string {
 	return append([]string(nil), r.paths...)
 }
 
+// testClaimFingerprint stands in for the claim-fingerprint annotation every
+// queue Job carries; an observation names its claim by it.
+var testClaimFingerprint = queueClaimFingerprint("fixture-run-token")
+
 func testExitReporter(url string) *runExitReporter {
 	return newRunExitReporter(url, "executor-1", func() (string, error) { return "google-id-token", nil }, discardLogger())
 }
@@ -76,7 +80,7 @@ func TestRunExitReporterReportsEachRunOnceWithExecutorIdentity(t *testing.T) {
 
 	// A native run id contains a slash; it must stay one escaped segment.
 	for range 3 {
-		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1", "", "")
+		reporter.observeTerminated("work:01QUEUEEXITREPORT00000001/r1", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -94,7 +98,7 @@ func TestRunExitReporterRetriesAFailedReportOnTheNextObservation(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-retry", "", "")
+		reporter.observeTerminated("run-retry", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -108,7 +112,7 @@ func TestRunExitReporterTreatsUnknownRunAsDelivered(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-gone", "", "")
+		reporter.observeTerminated("run-gone", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -122,7 +126,7 @@ func TestRunExitReporterTreatsNotClaimant403AsFinal(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-claimed-elsewhere", "", "")
+		reporter.observeTerminated("run-claimed-elsewhere", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -138,7 +142,7 @@ func TestRunExitReporterRetriesAPipelineGrant403(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 3 {
-		reporter.observeTerminated("run-grant-restored", "", "")
+		reporter.observeTerminated("run-grant-restored", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -154,7 +158,7 @@ func TestRunExitReporterReportsUnderTheClaimedRunnerName(t *testing.T) {
 
 	// A Job claimed by an earlier executor process (another container
 	// hostname) must be reported under that claim's name, not this one's.
-	reporter.observeTerminated("run-from-previous-process", "executor-0", "")
+	reporter.observeTerminated("run-from-previous-process", "executor-0", testClaimFingerprint)
 	reporter.wg.Wait()
 
 	if len(recorder.runners) != 1 || recorder.runners[0] != "executor-0" {
@@ -167,7 +171,7 @@ func TestRunExitReporterRetriesARouteMissing404(t *testing.T) {
 	reporter := testExitReporter(recorder.server(t).URL)
 
 	for range 2 {
-		reporter.observeTerminated("run-before-console-rollout", "", "")
+		reporter.observeTerminated("run-before-console-rollout", "", testClaimFingerprint)
 		reporter.wg.Wait()
 	}
 
@@ -182,10 +186,10 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
 	reporter.now = func() time.Time { return now }
 
-	reporter.observeTerminated("run-old", "", "")
+	reporter.observeTerminated("run-old", "", testClaimFingerprint)
 	reporter.wg.Wait()
 	now = now.Add(runExitReportedRetention + time.Minute)
-	reporter.observeTerminated("run-new", "", "")
+	reporter.observeTerminated("run-new", "", testClaimFingerprint)
 	reporter.wg.Wait()
 
 	reporter.mu.Lock()
@@ -198,7 +202,7 @@ func TestRunExitReporterForgetsRunsPastEvidenceRetention(t *testing.T) {
 
 func TestNilRunExitReporterIsANoOp(t *testing.T) {
 	var reporter *runExitReporter
-	reporter.observeTerminated("run", "", "")
+	reporter.observeTerminated("run", "", testClaimFingerprint)
 }
 
 func queueJobFor(runID string, condition batch.JobConditionType) *batch.Job {
@@ -206,7 +210,7 @@ func queueJobFor(runID string, condition batch.JobConditionType) *batch.Job {
 		Name:        queueJobName(runID),
 		Namespace:   "lcars-work",
 		Labels:      map[string]string{queueJobLabel: "true"},
-		Annotations: map[string]string{queueRunAnnotation: runID},
+		Annotations: map[string]string{queueRunAnnotation: runID, queueClaimAnnotation: testClaimFingerprint},
 	}}
 	if condition != "" {
 		job.Status.Conditions = []batch.JobCondition{{Type: condition, Status: core.ConditionTrue}}
@@ -331,11 +335,11 @@ func TestRunExitReporterAttestsSchedulerPreemptionInTheReportBody(t *testing.T) 
 	t.Cleanup(server.Close)
 	reporter := testExitReporter(server.URL)
 
-	reporter.observeTerminatedWithDisruption("run-attested", "", "", &exitDisruption{
+	reporter.observeTerminatedWithDisruption("run-attested", "", testClaimFingerprint, &exitDisruption{
 		JobUID: "job-uid", PodUID: "pod-uid", ObservedAt: "2026-08-15T12:00:00Z", Kind: schedulerPreemptionKind,
 	})
 	reporter.wg.Wait()
-	reporter.observeTerminated("run-unattested", "", "")
+	reporter.observeTerminated("run-unattested", "", testClaimFingerprint)
 	reporter.wg.Wait()
 
 	if len(bodies) != 2 {
