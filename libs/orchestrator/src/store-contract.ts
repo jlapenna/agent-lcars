@@ -1073,7 +1073,12 @@ export function runOrchestratorStoreContract(
             });
           const receiptBefore = await readReceipts();
           const result = await request('label-successor');
-          if (debt === 'none' || debt === 'unrelated-receipt') {
+          // A restore receipt proves restore succeeded; it is not debt.
+          if (
+            debt === 'none' ||
+            debt === 'unrelated-receipt' ||
+            debt === 'restored-credential'
+          ) {
             expect(result).toMatchObject({
               run: { pipeline: 'opencode' },
               task: {

@@ -11,8 +11,13 @@ import {
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
 
-/** A legacy terminal claim has no retirement writer. Preserve the fence only
- * for a live owner or durable capacity/credential debt, not its queue history. */
+/** A terminal claim has no retirement writer outside the capacity protocol.
+ * Preserve the fence only for a live owner or durable capacity/credential
+ * debt, not its queue history. A restore receipt
+ * (`credentialRestoredClaimFingerprint`) is proof that restore succeeded, not
+ * unreleased debt: the lease itself is released by the cleanup operation,
+ * which is reserved on every terminal transition and fences here until it
+ * finishes. */
 export function retainsPhysicalClaim(
   run: Run,
   capacity: CapacityState,
@@ -21,7 +26,6 @@ export function retainsPhysicalClaim(
     run.queue?.state === 'claimed' &&
     (isLive(run.state) ||
       run.credentialOperation !== undefined ||
-      run.credentialRestoredClaimFingerprint !== undefined ||
       capacity.receipts.some((receipt) => receipt.runId === run.runId))
   );
 }
