@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { stringify } from 'yaml';
 
-import { refreshEnabledJobCatalogs } from './repository-job-catalog';
+import {
+  refreshEnabledJobCatalogs,
+  refreshJobCatalog,
+} from './repository-job-catalog';
 import { jobKey, parseJobDefinition } from './repository-job-definition';
 import type { CatalogJob, JobStore } from './repository-job-store';
 
@@ -10,10 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('refreshes oldest repositories first within a bounded batch and advances on the next tick', async () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(new Date('2026-10-27T12:00:00Z'));
-  const now = Date.now();
+function catalogFiles() {
   const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
   const manifest = stringify({
     version: 1,
@@ -48,6 +48,14 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
       },
     ],
   });
+  return { manifest, recipe };
+}
+
+it('refreshes oldest repositories first within a bounded batch and advances on the next tick', async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-27T12:00:00Z'));
+  const now = Date.now();
+  const { manifest, recipe } = catalogFiles();
   const id = (i: number) => jobKey(`owner/repo${i}`, 'audit');
   const rows = new Map<string, CatalogJob>();
   for (let i = 0; i < 6; i++)
@@ -150,3 +158,123 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
   ]);
   expect([...rows.values()].every((row) => row.enabled)).toBe(true);
 });
+
+it.each(['success', 'removal', 'failure'] as const)(
+  'preserves a newer reviewed catalog when an older refresh finishes with %s',
+  async (outcome) => {
+    const repository = 'owner/repo';
+    const id = jobKey(repository, 'audit');
+    const { manifest, recipe } = catalogFiles();
+    const rows = new Map<string, CatalogJob>([
+      [
+        id,
+        {
+          id,
+          repository,
+          name: 'audit',
+          enabled: true,
+          definition: parseJobDefinition(
+            repository,
+            'a'.repeat(40),
+            'audit',
+            manifest,
+            recipe,
+          ),
+          refreshedAt: '2026-10-27T11:59:00.000Z',
+        },
+      ],
+    ]);
+    const store: JobStore = {
+      list: async () => [...rows.values()],
+      readOccurrence: async () => undefined,
+      history: async () => [],
+      mutate: async (key, _occurrence, change) => {
+        const next = change(rows.get(key), undefined);
+        if (next.job) rows.set(key, next.job);
+        return next;
+      },
+    };
+    let releaseOlder!: () => void;
+    let olderWaiting = false;
+    const olderRead = new Promise<void>((resolve) => {
+      releaseOlder = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        const older =
+          new Headers(init.headers).get('Authorization') === 'Bearer older';
+        if (url.includes('git/trees')) {
+          if (older) {
+            olderWaiting = true;
+            await olderRead;
+            if (outcome === 'failure')
+              return new Response('Unavailable', { status: 503 });
+            if (outcome === 'removal') return Response.json({ tree: [] });
+          }
+          return Response.json({
+            tree: [
+              {
+                path: '.lcars/jobs/audit/job.yaml',
+                mode: '100644',
+                type: 'blob',
+                sha: 'manifest',
+                size: Buffer.byteLength(manifest),
+              },
+              {
+                path: '.lcars/jobs/audit/recipe.yaml',
+                mode: '100644',
+                type: 'blob',
+                sha: 'recipe',
+                size: Buffer.byteLength(recipe),
+              },
+            ],
+          });
+        }
+        if (url.includes('git/blobs/'))
+          return Response.json({
+            encoding: 'base64',
+            content: Buffer.from(
+              url.endsWith('/manifest') ? manifest : recipe,
+            ).toString('base64'),
+          });
+        if (url.includes('commits/'))
+          return Response.json({
+            sha: (older ? 'a' : 'b').repeat(40),
+            commit: { tree: { sha: 'tree' } },
+          });
+        return Response.json({ default_branch: 'main' });
+      }),
+    );
+    const older = refreshJobCatalog(
+      store,
+      repository,
+      { tokenFor: async () => 'older' },
+      new Date('2026-10-27T12:00:00.000Z'),
+    );
+    await vi.waitFor(() => expect(olderWaiting).toBe(true));
+    await refreshJobCatalog(
+      store,
+      repository,
+      { tokenFor: async () => 'newer' },
+      new Date('2026-10-27T12:00:01.000Z'),
+    );
+    // An operator can review and enable the newer result before the older
+    // request resumes; neither old source nor old errors may undo that state.
+    await store.mutate(id, undefined, (job) => ({
+      job: { ...job!, enabled: true, enabledBy: 'user:joe' },
+    }));
+    const reviewed = structuredClone(rows.get(id));
+    releaseOlder();
+    const error = await older.then(
+      () => undefined,
+      (reason: Error) => reason.message,
+    );
+    expect(error).toBe(
+      outcome === 'failure' ? 'Catalog source HTTP 503' : undefined,
+    );
+    expect(rows.get(id)).toEqual(reviewed);
+    expect(rows.get(id)?.definition?.revision).toBe('b'.repeat(40));
+    expect(rows.get(id)?.enabled).toBe(true);
+  },
+);

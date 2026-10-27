@@ -117,41 +117,54 @@ export async function refreshJobCatalog(
       rows.push(row);
     }
     // Publish after the complete read so a partial fetch cannot remove jobs.
+    // A slow older refresh must not replace a newer source observation.
     for (const row of rows)
-      await store.mutate(row.id, undefined, (current) => ({
-        job: {
-          ...current,
-          ...row,
-          error: row.error,
-          definition: row.definition,
-          enabled: Boolean(
-            current?.enabled &&
-            !row.error &&
-            current.definition?.digest === row.definition?.digest,
-          ),
-        },
-      }));
+      await store.mutate(row.id, undefined, (current) => {
+        if (current && Date.parse(current.refreshedAt) > now.getTime())
+          return {};
+        return {
+          job: {
+            ...current,
+            ...row,
+            error: row.error,
+            definition: row.definition,
+            enabled: Boolean(
+              current?.enabled &&
+              !row.error &&
+              current.definition?.digest === row.definition?.digest,
+            ),
+          },
+        };
+      });
     for (const removed of existing.filter(
       (job) => !rows.some((row) => row.id === job.id),
     ))
-      await store.mutate(removed.id, undefined, (current) => ({
-        job: {
-          ...current!,
-          enabled: false,
-          error: 'Definition removed',
-          refreshedAt: now.toISOString(),
-        },
-      }));
+      await store.mutate(removed.id, undefined, (current) => {
+        if (current && Date.parse(current.refreshedAt) > now.getTime())
+          return {};
+        return {
+          job: {
+            ...current!,
+            enabled: false,
+            error: 'Definition removed',
+            refreshedAt: now.toISOString(),
+          },
+        };
+      });
   } catch (error) {
     for (const job of existing)
-      await store.mutate(job.id, undefined, (current) => ({
-        job: {
-          ...current!,
-          enabled: false,
-          error: 'Source refresh failed',
-          refreshedAt: now.toISOString(),
-        },
-      }));
+      await store.mutate(job.id, undefined, (current) => {
+        if (current && Date.parse(current.refreshedAt) > now.getTime())
+          return {};
+        return {
+          job: {
+            ...current!,
+            enabled: false,
+            error: 'Source refresh failed',
+            refreshedAt: now.toISOString(),
+          },
+        };
+      });
     throw error;
   }
 }
