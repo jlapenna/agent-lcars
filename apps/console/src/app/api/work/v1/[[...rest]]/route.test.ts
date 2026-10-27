@@ -289,13 +289,20 @@ describe('a work.reader-only principal (#2502)', () => {
 });
 
 describe('shared Work HTTP origin policy', () => {
-  it.each(['/items', '/jobs/invoke', '/schedules', '/future-platform'])(
-    'rejects cookie writes to %s before routing',
-    async (path) => {
+  it.each(
+    ['/items', '/jobs/invoke', '/schedules', '/future-platform'].flatMap(
+      (path) => [
+        { path, origin: 'https://foreign.example' },
+        { path, origin: undefined },
+      ],
+    ),
+  )(
+    'rejects cookie writes to $path with origin $origin before routing',
+    async ({ path, origin }) => {
       const response = await GET(
         new Request(`https://lcars.test/api/work/v1${path}`, {
           method: 'POST',
-          headers: { origin: 'https://foreign.example' },
+          headers: origin === undefined ? {} : { origin },
           body: 'invalid json',
         }),
       );

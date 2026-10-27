@@ -13,6 +13,12 @@ export const WORK_ADMIN_HEADERS = {
   'X-e2e-auth-user': 'e2e-agent-lcars-admin',
 };
 
+/** APIRequestContext does not supply the Origin that browser writes carry. */
+export function workAdminHeaders(baseURL: string | undefined) {
+  if (!baseURL) throw new Error('Work API fixtures require baseURL');
+  return { ...WORK_ADMIN_HEADERS, Origin: new URL(baseURL).origin };
+}
+
 // These helpers touch only the hermetic emulator. Never fall back to a live
 // project or Application Default Credentials when a test is run incorrectly.
 function emulatorOptions() {

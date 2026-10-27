@@ -160,6 +160,8 @@ test.describe('LCARS pill nav interaction states', () => {
     await page.keyboard.press('Tab');
     await expect(workPill(page)).toBeFocused();
     await page.keyboard.press('Tab');
+    await expect(nav(page).getByRole('link', { name: 'Jobs' })).toBeFocused();
+    await page.keyboard.press('Tab');
     await expect(
       nav(page).getByRole('link', { name: 'Sessions' }),
     ).toBeFocused();
