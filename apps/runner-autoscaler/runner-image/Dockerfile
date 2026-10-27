@@ -749,11 +749,12 @@ COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
     /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
     /repo/apps/runner-autoscaler/runner-image/opencode-version \
-    /usr/local/lib/agent-lcars/opencode-continuation-test/
+    /usr/local/lib/agent-lcars/
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.py \
     /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.test.py \
     /repo/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh \
+    /repo/apps/runner-autoscaler/runner-image/hook-telemetry-assertions.sh \
     /usr/local/lib/agent-lcars/
 
 USER runner
@@ -786,16 +787,10 @@ RUN --network=none bash /usr/local/lib/agent-lcars/prepare-opencode-store.sh
 # The script documents why bare concurrent startups are a lock race (#2071).
 RUN --network=none bash /usr/local/lib/agent-lcars/check-opencode-concurrent-readers.sh
 
-# Exercise the exact installed CLI and global config through a deterministic
-# localhost provider. Unit-importing the hooks cannot prove that OpenCode
-# reloads instructions and hooks after its own automatic compaction boundary.
-# No registry connection may hide an unprepared dependency during this proof.
-RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh
-
-# Claude Code and Codex are installed unpinned above. Drive all three agent
-# CLIs through a localhost provider with the hook telemetry this image
-# installs, so a release that stops running our hooks or changes their
-# payloads fails publication instead of silently dropping live sessions.
+# The hook fixture runs the real Claude/Codex clients, then one real OpenCode
+# run that proves both telemetry and automatic compaction/continuation with the
+# global instructions/plugins. Every assertion gates publication; no registry
+# connection may hide an unprepared dependency during this proof.
 RUN --network=none python3 /usr/local/lib/agent-lcars/drain-hook-test-clients.test.py && \
     bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh
 

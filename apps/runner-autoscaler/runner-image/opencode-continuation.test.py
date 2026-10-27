@@ -46,6 +46,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global request_count
         request_count += 1
+        lifecycle = root / "provider-lifecycle.ndjson"
+        if request_count <= 21:
+            with lifecycle.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"route": "/v1/chat/completions", "stage": "request"}) + "\n")
         length = int(self.headers.get("content-length", "0"))
         body = json.loads(self.rfile.read(length))
         messages = body.get("messages", [])
@@ -119,6 +123,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+        if request_count <= 21:
+            with lifecycle.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps({"route": "/v1/chat/completions", "stage": "response", "status": 200, "completed": True}) + "\n")
 
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

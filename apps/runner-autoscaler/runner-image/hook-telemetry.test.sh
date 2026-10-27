@@ -6,19 +6,16 @@
 # changes its payload or stops running it must fail publication here instead
 # of silently dropping live sessions (docs/hooks-telemetry-design.md).
 #
-# A localhost provider answers every model request with "ok"; nothing leaves
+# A localhost provider answers Claude/Codex requests with "ok"; nothing leaves
 # the container. No writer is configured for Claude Code and Codex, so the
-# flusher leaves their events in the spool. OpenCode's plugin only reports
-# once LCARS_TELEMETRY_CREDENTIALS_FILE is set. Its parent gets a placeholder
-# path to activate the plugin; the test-owned lcars stub clears that transport
-# credential so the real hook client stays spool-only, with no Firestore writes.
+# flusher leaves their events in the spool. OpenCode's continuation fixture
+# finishes this gate with the same real telemetry assertions, using one framework
+# run for both compaction/continuation and telemetry instead of two cold starts.
 set -euo pipefail
 
 lib_dir="${HOOK_TEST_LIB_DIR:-/usr/local/lib/agent-lcars}"
 claude_bin="${CLAUDE_BIN:-$(command -v claude)}"
 codex_bin="${CODEX_BIN:-$(command -v codex)}"
-opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
-opencode_config_dir="${HOOK_TEST_OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 run_timeout_seconds=60
 event_timeout_seconds=30
 # Claude Code gives SessionEnd hooks 1.5s by default. The arm64 image is
@@ -58,13 +55,10 @@ cleanup() {
     return 1
   fi
   rm -rf "$tmp"
-  # The wrapper owns a writable private bundle directory; direct image tests
-  # keep the default library read-only and need no acknowledgement file.
-  if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
-    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
-  fi
 }
-trap cleanup EXIT
+trap 'cleanup && { if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+  printf "drained\n" > "$lib_dir/.hook-smoke-drained"
+fi; }' EXIT
 
 # The hook stubs run `lcars` from PATH; point it at this image's bundle.
 mkdir -p "$tmp/bin" "$tmp/work"
@@ -87,7 +81,7 @@ const record = (value) => {
 const server = http.createServer((req, res) => {
   // Only the mock provider's lifecycle is diagnostic: never retain headers,
   // model inputs, outputs, or arbitrary request URLs.
-  const route = ['/v1/messages', '/v1/responses', '/v1/chat/completions']
+  const route = ['/v1/messages', '/v1/responses']
     .find((path) => req.url.startsWith(path)) ?? 'unknown';
   record({ route, stage: 'request' });
   res.on('finish', () => record({ route, stage: 'response', status: res.statusCode, completed: true }));
@@ -112,14 +106,6 @@ const server = http.createServer((req, res) => {
         ['response.created', { type: 'response.created', response: { ...response, status: 'in_progress', output: [] } }],
         ['response.output_item.done', { type: 'response.output_item.done', output_index: 0, item }],
         ['response.completed', { type: 'response.completed', response }],
-      ]);
-    }
-    if (req.url.startsWith('/v1/chat/completions')) {
-      const chunk = { id: 'chat_1', object: 'chat.completion.chunk', created: 1, model: 'test' };
-      return sse(res, [
-        [null, { ...chunk, choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] }],
-        [null, { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }],
-        [null, '[DONE]'],
       ]);
     }
     res.writeHead(404);
@@ -147,88 +133,7 @@ run_env() {
     "$@"
 }
 
-# Events from the spool, including any a failed flush moved to pending.
-spooled() {
-  local spool="$1/.local/state/agent-lcars/spool"
-  cat "$spool/events.pending.ndjson" "$spool/events.ndjson" 2>/dev/null || true
-}
-
-# Print only bounded metadata from files this smoke owns. CLI output includes
-# model text even against the mock provider, so raw output is never published.
-failure_diagnostics() {
-  local agent="$1"
-  node - "$tmp" "$agent" <<'JS'
-const fs = require('node:fs');
-const path = require('node:path');
-const [root, agent] = process.argv.slice(2);
-const read = (name) => {
-  try {
-    const fd = fs.openSync(path.join(root, name), 'r');
-    try {
-      const bytes = Buffer.alloc(65536);
-      const size = fs.fstatSync(fd).size;
-      const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
-      return { size, text: bytes.subarray(0, length).toString('utf8') };
-    } finally { fs.closeSync(fd); }
-  } catch { return { size: 0, text: '' }; }
-};
-const output = read(`${agent === 'claude-code' ? 'claude' : agent}.out`);
-const cli = read(`${agent}.exit`);
-const provider = read('provider-lifecycle.ndjson');
-const counts = { error: 0, warning: 0, timeout: 0, connection: 0 };
-for (const line of output.text.split('\n')) {
-  for (const key of Object.keys(counts)) {
-    if (new RegExp(`\\b${key === 'warning' ? 'warn(?:ing)?' : key}\\b`, 'i').test(line)) counts[key]++;
-  }
-}
-console.error('hook smoke lifecycle: ' + JSON.stringify({
-  agent, cliExit: /^\d+\s*$/.test(cli.text) ? Number(cli.text) : null,
-  outputBytes: output.size, inspectedBytes: Math.min(output.size, 65536),
-  outputCategories: counts,
-  provider: provider.text.trim().split('\n').filter(Boolean).slice(-64).map((line) => {
-    try { return JSON.parse(line); } catch { return { malformed: true }; }
-  }),
-}));
-JS
-}
-
-# Background hooks finish after their CLI exits; wait for the expected kinds.
-await_kinds() {
-  local home="$1" agent="$2"
-  shift 2
-  local deadline=$((SECONDS + event_timeout_seconds)) kind missing
-  while :; do
-    missing=""
-    for kind in "$@"; do
-      spooled "$home" | jq -se --arg k "$kind" 'any(.[]; .kind == $k)' > /dev/null || missing="$missing $kind"
-    done
-    [ -z "$missing" ] && return 0
-    if [ "$SECONDS" -ge "$deadline" ]; then
-      failure_diagnostics "$agent"
-      echo "$agent spool:" >&2
-      spooled "$home" >&2
-      cat "$home/.local/state/agent-lcars/hook.log" >&2 2>/dev/null || true
-      fail "$agent session is missing hook events:$missing"
-    fi
-    sleep 0.5
-  done
-}
-
-# Each event names the agent and the dispatched run, and carries a summary.
-check_events() {
-  local home="$1" agent="$2"
-  spooled "$home" | jq -se --arg agent "$agent" '
-    length > 0 and all(.[];
-      .version == 1 and .agent == $agent and .summary.sessionId == .sessionId
-      and .runner.runId == "hook-test-run" and .runner.issueNumber == 7
-      and .runner.repo == { owner: "hook-test", name: "repo" })
-    and ([.[].sessionId] | unique | length) == 1
-  ' > /dev/null || {
-    spooled "$home" >&2
-    fail "$agent hook events do not describe the dispatched session"
-  }
-  echo "ok: $agent $(spooled "$home" | jq -sr 'map(.kind) | join(",")')"
-}
+source "$(dirname "${BASH_SOURCE[0]}")/hook-telemetry-assertions.sh"
 
 # --- Claude Code ------------------------------------------------------------
 claude_home="$tmp/claude-home"
@@ -315,38 +220,9 @@ while compgen -G "$inflight/*" > /dev/null; do
   sleep 0.5
 done
 
-# --- OpenCode ---------------------------------------------------------------
-opencode_home="$tmp/opencode-home"
-mkdir -p "$opencode_home/.config/opencode" "$tmp/opencode-data" "$tmp/opencode-state" "$tmp/opencode-cache"
-# The runner's plugin and its build-installed SDK. Without the SDK OpenCode
-# installs it over the network on a cold start; missing preparation fails
-# here instead (as in opencode-continuation.test.sh).
-cp -R "$opencode_config_dir/lcars-telemetry.js" "$opencode_config_dir/package.json" \
-  "$opencode_config_dir/package-lock.json" "$opencode_config_dir/node_modules" \
-  "$opencode_home/.config/opencode/" || fail "runner OpenCode plugin or SDK is missing"
-jq -n --arg url "$base_url" '{
-  plugin: ["./lcars-telemetry.js"],
-  provider: { "hook-test": {
-    npm: "@ai-sdk/openai-compatible", name: "hook-test",
-    options: { baseURL: $url, apiKey: "hook-test" },
-    models: { test: { name: "test" } } } }
-}' > "$opencode_home/.config/opencode/opencode.json"
-printf '{}\n' > "$tmp/opencode-models.json"
-printf '{}\n' > "$tmp/not-a-credential.json"
-# `opencode run` ends on its first idle, which the plugin reports as stop.
-(
-  cd "$tmp/work"
-  run_env "$opencode_home" XDG_CONFIG_HOME="$opencode_home/.config" \
-    XDG_DATA_HOME="$tmp/opencode-data" XDG_STATE_HOME="$tmp/opencode-state" \
-    XDG_CACHE_HOME="$tmp/opencode-cache" OPENCODE_DISABLE_AUTOUPDATE=true \
-    OPENCODE_DISABLE_MODELS_FETCH=true OPENCODE_MODELS_PATH="$tmp/opencode-models.json" \
-    LCARS_TELEMETRY_CREDENTIALS_FILE="$tmp/not-a-credential.json" \
-    timeout -k 2s "${run_timeout_seconds}s" "$opencode_bin" run --model hook-test/test "say ok" < /dev/null
-) > "$tmp/opencode.out" 2>&1 || {
-  status=$?
-  cat "$tmp/opencode.out" >&2
-  fail "opencode run exited $status against the localhost provider"
-}
-printf '0\n' > "$tmp/opencode.exit"
-await_kinds "$opencode_home" opencode start stop
-check_events "$opencode_home" opencode
+# The continuation fixture owns OpenCode's real framework run and telemetry
+# assertions together. Retire these clients before transferring cleanup ownership;
+# a refused OpenCode drain must not acknowledge safe removal of shared bundles.
+cleanup
+trap - EXIT
+exec bash "$(dirname "${BASH_SOURCE[0]}")/opencode-continuation.test.sh"

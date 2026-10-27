@@ -8,6 +8,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 opencode_bin="${OPENCODE_BIN:-/usr/local/bin/opencode}"
 expected_version="$(tr -d '\r\n' < "$here/opencode-version")"
 expected_version="${expected_version#v}"
+lib_dir="${HOOK_TEST_LIB_DIR:-/usr/local/lib/agent-lcars}"
+event_timeout_seconds=30
 framework_timeout_seconds=60
 version_timeout_seconds=10
 provider_start_timeout_seconds=10
@@ -20,6 +22,7 @@ case "$(uname -m)" in
   aarch64 | arm64)
     version_timeout_seconds=60
     framework_timeout_seconds=300
+    event_timeout_seconds=90
     provider_start_timeout_seconds=60
     ;;
 esac
@@ -48,12 +51,22 @@ cleanup() {
   # Keep the scratch intact when ownership or retirement cannot be established.
   python3 "$here/drain-hook-test-clients.py" "$tmp" || return 1
   rm -rf "$tmp"
+  if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
+  fi
 }
 trap cleanup EXIT
 
-source_config_dir="$HOME/.config/opencode"
+source "${here}/hook-telemetry-assertions.sh"
+source_config_dir="${HOOK_TEST_OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 test -f "$source_config_dir/opencode.json" || fail "runner-global OpenCode config is missing"
 mkdir -p "$tmp/workspace" "$tmp/data" "$tmp/state" "$tmp/cache" "$tmp/home/.config/opencode"
+# Activate the real telemetry plugin, but keep its real hook client spool-only.
+# This is the same private transport boundary used by the other CLI fixtures.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\nunset LCARS_TELEMETRY_CREDENTIALS_FILE\nif [ "${1:-}" = hook ]; then\n  exec node %q "$@"\nfi\nexec node %q "$@"\n' "$lib_dir/lcars-hook.cjs" "$lib_dir/lcars-session-title.cjs" > "$tmp/bin/lcars"
+chmod +x "$tmp/bin/lcars"
+printf '{}\n' > "$tmp/not-a-credential.json"
 # Exercise continuation from the baked empty schema, not a fresh migration.
 # SQLite backup includes any checkpoint state without copying transient WALs.
 mkdir -p "$tmp/data/opencode"
@@ -148,11 +161,10 @@ JSON
 
 framework_started_seconds=$SECONDS
 framework_status=0
-env \
-  -u OPENCODE_CONFIG \
-  -u OPENCODE_CONFIG_CONTENT \
-  -u OPENCODE_CONFIG_DIR \
-  -u OPENCODE_LLM_API_KEY \
+env -i \
+  PATH="$tmp/bin:$PATH" \
+  LCARS_RUN_ID=hook-test-run LCARS_REPO=hook-test/repo LCARS_ISSUE_NUMBER=7 \
+  LCARS_TELEMETRY_CREDENTIALS_FILE="$tmp/not-a-credential.json" \
   OPENCODE_DISABLE_AUTOUPDATE=true \
   OPENCODE_DISABLE_MODELS_FETCH=true \
   OPENCODE_DISABLE_TERMINAL_TITLE=true \
@@ -168,11 +180,11 @@ env \
   --auto \
   --dir "$tmp/workspace" \
   "Read fixture.txt, preserve the task state, and continue after compaction." \
-  >"$tmp/opencode.stdout" 2>"$tmp/opencode.stderr" || framework_status=$?
+  >"$tmp/opencode.out" 2>&1 || framework_status=$?
+printf '%s\n' "$framework_status" > "$tmp/opencode.exit"
 echo "OpenCode continuation CLI: exit=$framework_status elapsed=$((SECONDS - framework_started_seconds))s deadline=${framework_timeout_seconds}s" >&2
 if [ "$framework_status" -ne 0 ]; then
-  cat "$tmp/opencode.stderr" >&2
-  tail -c 8192 "$tmp/opencode.stdout" >&2
+  tail -c 8192 "$tmp/opencode.out" >&2
   if [ -s "$tmp/observations.ndjson" ]; then
     cat "$tmp/observations.ndjson" >&2
   else
@@ -247,3 +259,6 @@ assert all(state["input"]["limit"] == 200 for state in reads)
 PY
 
 echo "OpenCode real-framework compaction and continuation contract: OK"
+
+await_kinds "$tmp/home" opencode start stop
+check_events "$tmp/home" opencode
