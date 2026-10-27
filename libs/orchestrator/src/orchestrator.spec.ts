@@ -898,6 +898,47 @@ describe('executor-reported exit', () => {
       });
     });
 
+    it('bounds a negotiated placement wait to one hour from the claim', async () => {
+      const { clock, store, orchestrator, run } = await claimed(
+        fixture(),
+        CLAIMANT.subject,
+        true,
+      );
+      const claimedAt = Date.parse(T0);
+      for (const minutes of [10, 20, 30, 40, 50]) {
+        clock.advanceMinutes(10);
+        expect(
+          await orchestrator.observeStartupPlacement(run.runId, CLAIMANT, {
+            jobUid: 'job-uid-1',
+            observedAt: clock.now(),
+            placed: false,
+          }),
+        ).not.toMatchObject({ refused: true });
+        const deadline = Date.parse(
+          (await store.readRun(run.runId))!.queue!.startDeadlineAt!,
+        );
+        expect(deadline).toBe(
+          Math.min(
+            Date.parse(clock.now()) + 15 * 60_000,
+            claimedAt + 60 * 60_000,
+          ),
+        );
+        expect(deadline - claimedAt).toBeLessThanOrEqual(60 * 60_000);
+        expect(minutes).toBeGreaterThan(0);
+      }
+      // The cap is a deadline: after it, waiting reports are no longer
+      // authority and the sweep records a startup loss.
+      clock.advanceMinutes(11);
+      expect(
+        await orchestrator.observeStartupPlacement(run.runId, CLAIMANT, {
+          jobUid: 'job-uid-1',
+          observedAt: clock.now(),
+          placed: false,
+        }),
+      ).toMatchObject({ refused: true, reason: 'stale-lease' });
+      expect((await orchestrator.sweepExpired()).lost).toHaveLength(1);
+    });
+
     it('refuses recovery for a receipt outside this attempt own window', async () => {
       const { clock, store, orchestrator, run } = await claimed();
       clock.advanceMinutes(3);
