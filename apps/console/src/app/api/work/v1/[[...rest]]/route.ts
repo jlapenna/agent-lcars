@@ -31,6 +31,7 @@ import {
   googleIdTokenVerifier,
   rawBearerToken,
 } from '@/lib/work-auth';
+import { workRequestForbiddenReason } from '@/lib/work-authorization';
 import { workGrants } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import {
@@ -92,6 +93,10 @@ async function handle(request: Request): Promise<Response> {
     session: async () => (await auth()) as { user?: { login?: string } } | null,
     grants: workGrants,
   });
+
+  const forbidden = workRequestForbiddenReason(request, principal);
+  if (forbidden !== undefined)
+    return withNoStore(Response.json({ error: forbidden }, { status: 403 }));
 
   if (new URL(request.url).pathname === `${PREFIX}/costs/budget`)
     return withNoStore(await costBudgetResponse(request, principal));

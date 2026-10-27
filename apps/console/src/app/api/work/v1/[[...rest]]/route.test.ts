@@ -37,6 +37,7 @@ vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/deployment', () => ({
   controlPlaneRepository,
   controlPlaneRepositories: () => ['jlapenna/agent-lcars'],
+  isControlPlaneRepository: (repo: string) => repo === 'jlapenna/agent-lcars',
 }));
 vi.mock('@/lib/github-actions-oidc', () => ({ verifySessionExpiryOidcToken }));
 vi.mock('@/lib/work-auth', () => ({
@@ -285,3 +286,79 @@ describe('a work.reader-only principal (#2502)', () => {
     },
   );
 });
+
+describe('shared Work HTTP origin policy', () => {
+  it.each(['/items', '/jobs/invoke', '/schedules', '/future-platform'])(
+    'rejects cookie writes to %s before routing',
+    async (path) => {
+      const response = await GET(
+        new Request(`https://lcars.test/api/work/v1${path}`, {
+          method: 'POST',
+          headers: { origin: 'https://foreign.example' },
+          body: 'invalid json',
+        }),
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: 'Same-origin request required',
+      });
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    },
+  );
+
+  it.each(['session', 'google', 'oidc'] as const)(
+    'routes permitted %s requests normally',
+    async (via) => {
+      authenticateWorkRequest.mockResolvedValue({ ...operatorPrincipal, via });
+      const response = await GET(
+        new Request('https://lcars.test/api/work/v1/future-platform', {
+          method: 'POST',
+          headers: via === 'session' ? { origin: 'https://lcars.test' } : {},
+        }),
+      );
+      expect(response.status).toBe(404);
+    },
+  );
+});
+
+it('fails closed for a new operation with a repository-bound identity', async () => {
+  authenticateWorkRequest.mockResolvedValue({
+    ...operatorPrincipal,
+    via: 'oidc',
+    sourceRepository: 'jlapenna/agent-lcars',
+  });
+  for (const path of [
+    '/future-platform',
+    '/jobs/future-operation',
+    '/maintenance/tick',
+  ]) {
+    const response = await GET(
+      new Request(`https://lcars.test/api/work/v1${path}`, { method: 'POST' }),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Operation does not declare repository-bound access',
+    });
+  }
+  const response = await GET(
+    new Request('https://lcars.test/api/work/v1/items'),
+  );
+  expect(response.status).toBe(200);
+});
+
+it.each(['/items/export', '/schedules/history', '/delivery/export/evidence'])(
+  'does not pre-authorize a future static operation at %s',
+  async (path) => {
+    authenticateWorkRequest.mockResolvedValue({
+      ...operatorPrincipal,
+      via: 'oidc',
+      sourceRepository: 'jlapenna/agent-lcars',
+    });
+    const response = await GET(
+      new Request(`https://lcars.test/api/work/v1${path}`, {
+        method: path.startsWith('/delivery') ? 'POST' : 'GET',
+      }),
+    );
+    expect(response.status).toBe(403);
+  },
+);

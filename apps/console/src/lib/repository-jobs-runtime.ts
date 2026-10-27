@@ -5,13 +5,13 @@ import { required } from '@agent-lcars/util-server';
 import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
-import { isControlPlaneRepository } from './deployment';
 import { createDispatchTokenProvider } from './github-app-tokens';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { refreshJobCatalog } from './repository-job-catalog';
 import { jobProfileSchema } from './repository-job-definition';
 import { FirestoreJobStore } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
+import { workForbiddenReason } from './work-authorization';
 import { grantForPrincipal } from './work-grants';
 
 let store: FirestoreJobStore | undefined;
@@ -40,11 +40,10 @@ export function repositoryJobs(runtime: OrchestratorRouteDeps): RepositoryJobs {
     granted: (principal, repo) => {
       const grant = grantForPrincipal(principal);
       return (
-        isControlPlaneRepository(repo) &&
-        Boolean(
-          grant?.scopes.includes('work.operator') &&
-          grant.pipelines.includes('goose'),
-        )
+        grant !== undefined &&
+        grant.scopes.includes('work.operator') &&
+        workForbiddenReason(grant, { pipeline: 'goose', target: { repo } }) ===
+          undefined
       );
     },
   });

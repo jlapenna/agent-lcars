@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-import { controlPlaneRepositories } from './deployment';
 import { createDispatchTokenProvider } from './github-app-tokens';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { readJobBody } from './repository-job-body';
@@ -9,6 +8,7 @@ import { jobInputsSchema } from './repository-job-definition';
 import { RepositoryJobBusyError, RepositoryJobs } from './repository-jobs';
 import { repositoryJobs } from './repository-jobs-runtime';
 import type { WorkPrincipal } from './work-auth';
+import { scopedWorkGrant } from './work-authorization';
 
 export async function repositoryJobsHttp(
   request: Request,
@@ -22,26 +22,10 @@ export async function repositoryJobsHttp(
       { error: 'Goose operator grant required' },
       { status: 403 },
     );
-  // Cookie-authenticated writes must come from this console origin.
-  if (
-    request.method !== 'GET' &&
-    principal.via === 'session' &&
-    request.headers.get('origin') !== new URL(request.url).origin
-  )
-    return Response.json(
-      { error: 'Same-origin request required' },
-      { status: 403 },
-    );
   const base = repositoryJobs(createOrchestratorRuntime());
-  const matchesRepository = (repository: string) =>
-    !principal.sourceRepository ||
-    principal.sourceRepository.toLowerCase() === repository.toLowerCase();
-  // Bind every transaction, including replay and disabling, to the signed
-  // repository. Never mutate the shared runtime's authorization callback.
   const jobs = new RepositoryJobs({
     ...base.deps,
-    granted: (caller, repository) =>
-      matchesRepository(repository) && base.deps.granted(caller, repository),
+    granted: scopedWorkGrant(principal, base.deps.granted),
   });
   const path = new URL(request.url).pathname.slice('/api/work/v1/jobs'.length);
   try {
@@ -69,10 +53,7 @@ export async function repositoryJobsHttp(
       const { repository } = z
         .strictObject({ repository: z.string() })
         .parse(body);
-      if (
-        !jobs.deps.granted(principal.principal, repository) ||
-        !controlPlaneRepositories().includes(repository)
-      )
+      if (!jobs.deps.granted(principal.principal, repository))
         throw new Error('Repository not managed');
       await refreshJobCatalog(
         jobs.deps.store,
@@ -91,8 +72,6 @@ export async function repositoryJobsHttp(
           parameters: jobInputsSchema.default({}),
         })
         .parse(body);
-      if (!matchesRepository(input.repository))
-        throw new Error('Caller repository does not match job repository');
       const occurrence = await jobs.invoke(
         input.repository,
         input.name,

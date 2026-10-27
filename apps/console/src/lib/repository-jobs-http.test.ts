@@ -22,7 +22,8 @@ vi.mock('./github-app-tokens', () => ({
   createDispatchTokenProvider: vi.fn(),
 }));
 vi.mock('./deployment', () => ({
-  controlPlaneRepositories: () => ['octo/other', 'octo/source'],
+  isControlPlaneRepository: (repo: string) =>
+    ['octo/other', 'octo/source'].includes(repo),
 }));
 
 const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
