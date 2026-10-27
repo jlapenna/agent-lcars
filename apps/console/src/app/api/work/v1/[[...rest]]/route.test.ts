@@ -209,6 +209,7 @@ describe('a work.reader-only principal (#2502)', () => {
       },
       jobUid: 'job-1',
     },
+    recipeComplete: { result: {} },
     completeRun: { outcome: { ok: true, summary: 'done' } },
     persistRunCodexAuth: {
       generation: '1',
