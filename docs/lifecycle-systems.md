@@ -309,7 +309,10 @@ settlement, credential cleanup and positive physical
 retirement release implementation resources. Task.delivery retains logical
 ownership; Run.delivery exposes waiting or complete separately from physical
 Run execution. The durable monitor-delivery outbox is consumed by
-the existing maintenance/drain clock, not another worker or capacity ledger.
+the existing drain, not another worker or capacity ledger. The App's
+`pull_request`, `pull_request_review`, `pull_request_review_thread` and
+`check_run` webhooks wake the bound PR's entry and drain at once; the hourly
+fallback read only covers a dropped webhook.
 
 Current exact-head GitHub reads advance the binding under the existing Task+Run
 transaction. Revision changes rebind both records conditionally; stale polls
