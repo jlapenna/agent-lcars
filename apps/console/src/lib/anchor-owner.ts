@@ -1,7 +1,6 @@
 import 'server-only';
 
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
-import { deliveryWaiting } from '@agent-lcars/orchestrator';
 import type { anchorOwnerSchema } from '@agent-lcars/work';
 import { toItemView } from '@agent-lcars/work/derive';
 import type { z } from 'zod';
@@ -90,9 +89,13 @@ export async function readAnchorOwner(
   const matching = cli.sessions.filter((session) =>
     sessionReferencesItemNumber(session, item),
   );
+  // The fleet owns the anchor exactly when the item is `running`: a live run
+  // holds the mutex, or a settled run's PR is still waiting to merge
+  // (`deriveItemState`). A parked or failed item with that same waiting
+  // binding is back in a human's court, so the binding alone is not a
+  // verdict.
   const verdict: AnchorOwner['verdict'] =
-    task?.activeRunId !== undefined ||
-    (versioned !== undefined && deliveryWaiting(versioned.task))
+    task?.state === 'running'
       ? 'fleet-run'
       : matching.some(isActive)
         ? 'interactive-session'
