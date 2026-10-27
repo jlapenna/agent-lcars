@@ -1,3 +1,4 @@
+import { isSourceManagedWork } from '@agent-lcars/work';
 import { type ItemView, latestRun } from '@agent-lcars/work/derive';
 import { Stack, Text } from '@mantine/core';
 import { notFound, redirect } from 'next/navigation';
@@ -69,7 +70,7 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        {'sourceKey' in item.spec ? (
+        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) ? (
           <Text>{item.spec.description}</Text>
         ) : (
           <EditWork
@@ -85,7 +86,10 @@ export function WorkDetailViewContent({
           item={item}
           canViewSessions={isAdmin}
           actions={
-            'sourceKey' in item.spec ? undefined : (
+            isSourceManagedWork({
+              origin: item.origin,
+              spec: item.spec,
+            }) ? undefined : (
               <WorkActions
                 id={item.id}
                 latestRunId={latestRun(item.runs)?.runId}

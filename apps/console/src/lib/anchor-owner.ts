@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { OrchestratorStore } from '@agent-lcars/orchestrator';
 import type { anchorOwnerSchema } from '@agent-lcars/work';
 import { toItemView } from '@agent-lcars/work/derive';
 import type { z } from 'zod';
@@ -43,7 +44,8 @@ function toOwnerSession(
  * are still reported as evidence.
  */
 export async function readAnchorOwner(
-  context: Pick<WorkContext, 'runtime' | 'sessionsFor' | 'now'> & {
+  context: Pick<WorkContext, 'sessionsFor' | 'now'> & {
+    runtime: { store: OrchestratorStore };
     cliSessions: WorkContext['cliSessions'];
   },
   anchor: { repo: string; issue: number },

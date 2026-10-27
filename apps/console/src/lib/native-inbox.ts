@@ -2,6 +2,7 @@ import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import { isSourceManagedWork } from '@agent-lcars/work';
 import { toWorkSummary } from '@agent-lcars/work/derive';
 
 import {
@@ -37,7 +38,11 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
-      if ('sourceKey' in work.spec) continue;
+      if (
+        'sourceKey' in work.spec ||
+        isSourceManagedWork({ origin: work.origin, spec: work.spec })
+      )
+        continue;
       const report = nativeReportRun(work);
       const freshReport =
         report !== undefined &&

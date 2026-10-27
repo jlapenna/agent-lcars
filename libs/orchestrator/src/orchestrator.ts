@@ -12,6 +12,7 @@ import {
   executorExitedAndRetry,
   type ExitClaimant,
   expireLeaseAndRetry,
+  invalidateSourceRevision,
   isRefusal,
   observePlacement,
   observeStartupPlacement,
@@ -412,6 +413,8 @@ export class Orchestrator {
     workerPermit?: CapacityWorkerPermit,
     /** Validated server-only ready handoff, never a raw worker field. */
     delivery?: DeliveryBinding,
+    /** Set only after the triage owner validates this exact report/revision. */
+    publishTriage?: boolean,
   ): Promise<Decision | Refusal> {
     if (this.fallbackAuthority !== undefined && !result.ok) {
       return this.transactOnRun(
@@ -475,7 +478,13 @@ export class Orchestrator {
         return reportResult({
           now: this.clock.now(),
           task,
-          run: delivery === undefined ? run : { ...run, delivery },
+          run: {
+            ...run,
+            ...(delivery === undefined ? {} : { delivery }),
+            ...(publishTriage && result.ok
+              ? { triagePublication: { state: 'pending' as const } }
+              : {}),
+          },
           result,
           ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
         });
@@ -703,6 +712,20 @@ export class Orchestrator {
   async close(taskId: TaskId): Promise<Decision | Refusal> {
     return this.transact(taskId, async (task, activeRun) =>
       closeTask({ now: this.clock.now(), task: task?.task, activeRun }),
+    );
+  }
+
+  async invalidateSource(
+    runId: string,
+    observedAt: Record<string, string>,
+  ): Promise<Decision | Refusal> {
+    return this.transactOnRun(runId, (task, run) =>
+      invalidateSourceRevision({
+        now: this.clock.now(),
+        task,
+        run,
+        observedAt,
+      }),
     );
   }
 

@@ -347,8 +347,57 @@ export function requestRevisionRun(
   return requestRun(input);
 }
 
-/** Settlement and successor admission share a transaction; a crash cannot
- * leave the desired input stranded after its predecessor releases the claim. */
+/** Ordered source ineligibility fences effects without abandoning a running
+ * worker's claim or permanently closing the source's Work item. */
+export function invalidateSourceRevision(input: {
+  now: string;
+  task: Task;
+  run: Run;
+  observedAt: Record<string, string>;
+}): Decision | Refusal {
+  const { now, task, run, observedAt } = input;
+  if (run.runId !== `${taskKey(task.task)}/r${task.runCount}`)
+    return refused('stale-lease');
+  if (run.sourceRevision === undefined) return refused('work-spec-mismatch');
+  if (
+    Object.entries(task.sourceObservedAt ?? {}).some(
+      ([source, at]) => (observedAt[source] ?? '') < at,
+    ) ||
+    !Object.entries(observedAt).some(
+      ([source, at]) => at > (task.sourceObservedAt?.[source] ?? ''),
+    )
+  )
+    return { task, outbox: [] };
+  const { desiredRevision: _desired, ...rest } = task;
+  const invalidated = { ...rest, sourceObservedAt: observedAt, updatedAt: now };
+  // A claimed worker retains its logical/physical ownership until settlement.
+  // Clearing desiredRevision already prevents it from publishing or retrying.
+  if (isLive(run.state) && run.queue?.state !== 'claimed')
+    return cancelRun({
+      now,
+      task: invalidated,
+      run,
+      note: 'Source is no longer eligible',
+    });
+  return {
+    task: invalidated,
+    ...(run.triagePublication?.state === 'pending'
+      ? {
+          run: {
+            ...run,
+            triagePublication: {
+              ...run.triagePublication,
+              state: 'superseded' as const,
+            },
+            updatedAt: now,
+          },
+        }
+      : {}),
+    outbox: [],
+  };
+}
+
+/** Settlement and successor admission share a transaction. */
 function advanceSourceRevision(decision: Decision, now: string): Decision {
   const run = decidedRun(decision);
   const desired = decision.task.desiredRevision;
@@ -373,6 +422,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     requestSource: superseded ? 'caller' : 'auto-retry',
     pipeline: run.pipeline,
     priority: run.priority,
+    params: run.params,
     sourceRevision: desired,
     revisionAttempt: superseded ? 1 : (run.revisionAttempt ?? 1) + 1,
   });
@@ -718,6 +768,10 @@ export function reportResult(input: {
   const settled: Run = {
     ...withoutPending,
     state: 'finished',
+    ...(run.triagePublication !== undefined &&
+    task.desiredRevision?.key !== run.sourceRevision?.key
+      ? { triagePublication: { ...run.triagePublication, state: 'superseded' } }
+      : {}),
     result:
       run.sourceRevision !== undefined &&
       task.desiredRevision?.key !== run.sourceRevision.key
@@ -1065,7 +1119,8 @@ function settleLostAndRetry(
   const lostRun = decidedRun(lost);
   if (
     lostRun.sourceRevision !== undefined &&
-    (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES
+    (lost.task.desiredRevision === undefined ||
+      (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)
   )
     return lost;
   const retry = mintRun({
@@ -1166,6 +1221,17 @@ function settle(releasedTask: Task, settledRun: Run, now: string): Decision {
     run: settledRun,
     outbox: [
       outcomeEntry(settledRun, now),
+      ...(settledRun.state === 'finished' &&
+      settledRun.result?.ok &&
+      settledRun.triagePublication?.state === 'pending'
+        ? [
+            {
+              ...outcomeEntry(settledRun, now),
+              entryId: `triage/${settledRun.runId}`,
+              kind: 'publish-triage' as const,
+            },
+          ]
+        : []),
       ...(settledRun.state === 'finished' &&
       settledRun.result?.summary === 'park' &&
       settledRun.result.message?.trim()

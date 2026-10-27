@@ -40,7 +40,10 @@ export function latestRun<T extends RunOrder>(
  * First match wins, in the order the design spec's table lists them.
  */
 export function deriveItemState(
-  task: Pick<Task, 'closedAt' | 'consecutiveLost' | 'delivery'>,
+  task: Pick<
+    Task,
+    'closedAt' | 'consecutiveLost' | 'delivery' | 'desiredRevision'
+  >,
   runs: readonly Run[],
 ): ItemState {
   const latest = latestRun(runs);
@@ -59,6 +62,12 @@ export function deriveItemState(
   }
   if (latest === undefined) return 'running';
   if (isLive(latest.state)) return 'running';
+  if (latest.triagePublication?.state === 'complete') return 'done';
+  if (latest.sourceRevision !== undefined && task.desiredRevision === undefined)
+    return 'canceled';
+  if (latest.triagePublication?.state === 'pending') return 'running';
+  if (latest.triagePublication?.state === 'failed') return 'failed';
+  if (latest.triagePublication?.state === 'superseded') return 'canceled';
   if (
     task.delivery?.state === 'complete' &&
     task.delivery.runId === latest.runId
@@ -79,6 +88,7 @@ export function deriveItemState(
 }
 
 export interface ItemRunView {
+  triagePublication?: Run['triagePublication'];
   runId: string;
   state: Run['state'];
   pipeline: string;
@@ -195,6 +205,9 @@ export function toItemView(input: {
             revisionAttempt: r.revisionAttempt,
           }),
       ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
+      ...(r.triagePublication === undefined
+        ? {}
+        : { triagePublication: r.triagePublication }),
       ...(r.providerFallback === undefined
         ? {}
         : {
@@ -289,6 +302,9 @@ export function toWorkSummary(input: {
             revisionAttempt: r.revisionAttempt,
           }),
       ...(r.delivery === undefined ? {} : { delivery: r.delivery }),
+      ...(r.triagePublication === undefined
+        ? {}
+        : { triagePublication: r.triagePublication }),
       ...(r.providerFallback === undefined
         ? {}
         : {

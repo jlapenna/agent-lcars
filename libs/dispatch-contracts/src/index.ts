@@ -5,6 +5,7 @@
  * Import this, do not re-derive it. See ../README.md.
  */
 
+export * from './fleet-triage';
 export {
   type HumanNeededActions,
   humanNeededActionsSchema,

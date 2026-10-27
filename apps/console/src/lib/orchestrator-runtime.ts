@@ -23,6 +23,7 @@ import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
 import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
+import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
 
 /**
@@ -105,6 +106,8 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
   cached = {
     store,
     orchestrator,
+    reconcileIssueTriage: (anchor, deleted) =>
+      reconcileFleetTriage({ store, orchestrator }, anchor, deleted),
     executeModelWork: (deadline) =>
       executeSummaries(createOrchestratorRuntime(), undefined, deadline),
     recoverCredentialOperations: () =>

@@ -1,4 +1,4 @@
-import { workRepository } from '@agent-lcars/work';
+import { isSourceManagedWork, workRepository } from '@agent-lcars/work';
 import type { WorkSummary } from '@agent-lcars/work/derive';
 import { Anchor, Group, Stack, Text } from '@mantine/core';
 
@@ -122,7 +122,10 @@ export function ParkedWorkPanel({
                     {item.state} {formatRelativeTime(item.updatedAt)}
                   </Text>
                 </Stack>
-                {'sourceKey' in item.spec ? null : 'workId' in item.anchor ? (
+                {isSourceManagedWork({
+                  origin: item.origin,
+                  spec: item.spec,
+                }) ? null : 'workId' in item.anchor ? (
                   <WorkActions
                     id={item.anchor.workId}
                     state={item.state}
