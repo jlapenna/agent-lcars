@@ -9,7 +9,6 @@ const OK_OUTCOMES: ReadonlySet<string> = new Set([
   'no-op',
   'park',
   'report',
-  'unknown-success',
 ]);
 
 const REPORT_ITEM_OUTCOMES: ReadonlySet<string> = new Set([

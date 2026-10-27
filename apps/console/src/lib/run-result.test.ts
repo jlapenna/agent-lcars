@@ -132,13 +132,7 @@ describe('verified exact artifact references', () => {
     ).toBe(url);
   });
   it('does not invent links for historical or native file results', () => {
-    for (const outcome of [
-      'comment',
-      'review',
-      'park',
-      'no-op',
-      'unknown-success',
-    ]) {
+    for (const outcome of ['comment', 'review', 'park', 'no-op']) {
       expect(toRunResult('octo/example', outcome, null)).toEqual({
         ok: true,
         summary: outcome,
@@ -223,7 +217,6 @@ describe('declared native report (#2845 bridge to #2810 intent: report)', () => 
     for (const [outcome, reference] of [
       ['pull-request', { kind: 'pull-request', number: 12 }],
       ['merged-deliverable', { kind: 'pull-request', number: 12 }],
-      ['unknown-success', null],
     ] as const) {
       expect(
         toRunResult('octo/example', outcome, reference, '# Findings', report)

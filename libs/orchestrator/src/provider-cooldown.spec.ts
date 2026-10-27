@@ -12,12 +12,24 @@ const run = {
   updatedAt: '2026-09-12T01:00:00.000Z',
   result: {
     ok: false,
-    summary: 'no-deliverable',
+    summary: 'provider-limit',
     message: "You've hit your weekly limit · resets Sep 13, 12am (UTC)",
   },
 };
 
 describe('provider quota holds', () => {
+  it('never derives a cooldown from an unclassified failure, even with quota text', () => {
+    for (const pipeline of ['claude', 'codex']) {
+      expect(
+        providerCooldownForRun({
+          ...run,
+          pipeline,
+          result: { ...run.result, summary: 'no-deliverable' },
+        }),
+      ).toBeUndefined();
+    }
+  });
+
   it.each([
     ['Sep 13, 12am', '2026-09-13T00:00:00.000Z'],
     ['12am', '2026-09-13T00:00:00.000Z'],
@@ -78,7 +90,7 @@ describe('provider quota holds', () => {
     },
   );
 
-  it('does not turn other failures, successful artifacts, or quoted task prose into provider holds', () => {
+  it('does not turn other failures or successful artifacts into provider holds', () => {
     expect(
       providerCooldownForRun({
         ...run,
@@ -87,18 +99,6 @@ describe('provider quota holds', () => {
     ).toBeUndefined();
     expect(
       providerCooldownForRun({ ...run, result: { ...run.result, ok: true } }),
-    ).toBeUndefined();
-    expect(
-      providerCooldownForRun({ ...run, pipeline: 'codex' }),
-    ).toBeUndefined();
-    expect(
-      providerCooldownForRun({
-        ...run,
-        result: {
-          ...run.result,
-          message: `The task mentioned: ${run.result.message}`,
-        },
-      }),
     ).toBeUndefined();
   });
 

@@ -23,8 +23,9 @@ const OUTCOMES = [
   'provider-capacity',
   'runner-failed',
   'agent-failed',
+  'agent-timeout',
   'no-deliverable',
-  'unknown-success',
+  'verification-failed',
   'other',
 ] as const;
 const BUCKETS = [60, 120, 300, 900, 3_600] as const;

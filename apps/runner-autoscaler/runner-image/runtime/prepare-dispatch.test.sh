@@ -31,7 +31,6 @@ run_prepare_dispatch() {
   export RUNNER_TEMP="$dir/runner-temp"
   export RUNTIME_HELPERS_DIR="$baked/runtime"
   export WORKSPACE="$dir/workspace"
-  export RUNTIME_OUTPUT="$dir/runtime-output"
   export RUNTIME_ENV="$dir/runtime-env"
   # Not `jlapenna/agent-lcars`, so assert-consumer-boundaries.sh takes its
   # fast "any other repository" path instead of requiring the canonical
@@ -40,8 +39,7 @@ run_prepare_dispatch() {
   export GH_TOKEN="fake-gh-token"
   export CONSOLE_URL="https://lcars.test"
   export AGENT="Claude"
-  export BUDGET_MINUTES=80 ARTIFACT_CHECKPOINT_MINUTES=15 FINALIZE_CHECKPOINT_MINUTES=70
-  : > "$RUNTIME_OUTPUT"
+  export BUDGET_MINUTES=80
   : > "$RUNTIME_ENV"
 
   bash "$RUNTIME_HELPERS_DIR/prepare-dispatch.sh"
@@ -85,12 +83,12 @@ jq -e '(.truncated // []) | index("reply") == null' "$context_path" >/dev/null |
 
 echo "scenario native-reply-long: OK"
 
-unset DELIVERY_HANDOFF_VERSION
-run_prepare_dispatch legacy-delivery-capability
-jq -e 'has("deliveryHandoffVersion") | not' "$context_path" >/dev/null || fail "legacy brief falsely enabled ready handoff"
-export DELIVERY_HANDOFF_VERSION=1
-run_prepare_dispatch ready-delivery-capability
-jq -e '.deliveryHandoffVersion == 1' "$context_path" >/dev/null || fail "advertised ready handoff lost before provider execution"
-unset DELIVERY_HANDOFF_VERSION
+# --- Runtime block carries only what the protocol reads ------------------
+jq -e '.runtime | keys == ["budget_minutes", "deadline", "started_at"] and .budget_minutes == 80' "$context_path" >/dev/null ||
+  fail "runtime block drifted from started_at/deadline/budget_minutes ($(jq -c .runtime "$context_path"))"
+jq -e '(has("prior_terminal_state") or has("deliveryHandoffVersion")) | not' "$context_path" >/dev/null ||
+  fail "brief still carries a retired field ($(jq -c 'keys' "$context_path"))"
+
+echo "scenario runtime-block: OK"
 
 echo "prepare-dispatch.test.sh: all scenarios passed"
