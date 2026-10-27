@@ -203,7 +203,7 @@ const OUTBOX_ENTRY_ID_MAX_LENGTH =
  */
 export const runStateSchema = z.enum([
   'pending', // decided, dispatch not yet confirmed
-  'running', // dispatch confirmed or first report received
+  'running', // dispatch confirmed: handed to the queue, not proof a worker runs
   'finished', // the run reported a terminal result
   'canceled', // an operator asked for it to stop
   'lost', // lease expired with no report
@@ -334,7 +334,10 @@ export type OperationalIntervention = z.infer<
 export const runEventSchema = z.strictObject({
   at: isoUtc,
   to: runStateSchema,
-  /** Who caused the transition. */
+  /** Which path caused the transition. `operator` names the cancel path,
+   * not a person: anchor-close webhooks, provider switches, label handoffs
+   * and workflow cancels all write it. Only `intervention` records a human
+   * act. */
   by: z.enum([
     'request',
     'dispatch',
@@ -604,8 +607,9 @@ const outboxEntryBaseSchema = z.strictObject({
    *  handed to a worker, not how many times delivery was actually
    *  attempted (a claim can be lost to a crash before a single GitHub call
    *  happens). Retirement/backoff below deliberately do NOT key off this
-   *  field for that reason; it remains purely descriptive bookkeeping
-   *  (surfaced in `orchestrator-dispatch.ts`'s failure logging). */
+   *  field for that reason. It is the primary claim-fairness sort key
+   *  (`byOutboxClaimFairness`: never-handed entries go first) and is
+   *  surfaced in `orchestrator-dispatch.ts`'s failure logging. */
   attempts: z.number().int().nonnegative(),
   /** #1548 follow-up: when this entry first failed an *actual* delivery
    *  attempt -- set once, by `orchestrator-dispatch.ts`'s
