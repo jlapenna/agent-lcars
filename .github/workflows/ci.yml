@@ -6,6 +6,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      compile_receipt_kubernetes_binary:
+        description: Compile and export the opt-in receipt Kubernetes test binary without running it
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -393,6 +399,73 @@ jobs:
         run: >-
           ./tools/nx run-many -t test typecheck build test-race --all
           --exclude="$NX_CONSOLE_SHARD_PROJECTS" --parallel=2
+
+      # The real-cluster receipt suite is build-tagged out of ordinary Go
+      # verification. Its staging owner consumes this binary separately;
+      # compilation needs no Kubernetes credentials and never runs the binary.
+      # Keep setup, compiler/cache and export in this existing capped ARC job.
+      - name: Compile receipt Kubernetes test binary (no execution)
+        if: github.event_name == 'workflow_dispatch' && inputs.compile_receipt_kubernetes_binary
+        working-directory: apps/runner-autoscaler
+        env:
+          CGO_ENABLED: '1'
+          LCARS_RECEIPT_ARTIFACT_DIR: ${{ runner.temp }}/receipt-kubernetes-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -- "$LCARS_RECEIPT_ARTIFACT_DIR"
+          go test -tags=kubernetes_integration -run '^$' -c \
+            -o "$LCARS_RECEIPT_ARTIFACT_DIR/runner-autoscaler-kubernetes.test" .
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import subprocess
+
+          directory = pathlib.Path(os.environ['LCARS_RECEIPT_ARTIFACT_DIR'])
+          binary = directory / 'runner-autoscaler-kubernetes.test'
+          with binary.open('rb') as stream:
+              elf_header = stream.read(20)
+              stream.seek(0)
+              binary_sha256 = hashlib.file_digest(stream, 'sha256').hexdigest()
+          assert len(elf_header) == 20 and elf_header[:4] == b'\x7fELF'
+          elf_class_bits = {1: 32, 2: 64}[elf_header[4]]
+          elf_endianness = {1: 'little', 2: 'big'}[elf_header[5]]
+          proof = {
+              'scope': 'tagged-compile-only-no-test-binary-execution',
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'sourceSHA': os.environ['GITHUB_SHA'],
+              'runID': os.environ['GITHUB_RUN_ID'],
+              'runAttempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'goVersion': subprocess.check_output(['go', 'version'], text=True).strip(),
+              'goEnvironment': json.loads(subprocess.check_output(
+                  ['go', 'env', '-json', 'GOVERSION', 'GOOS', 'GOARCH', 'CGO_ENABLED'],
+                  text=True,
+              )),
+              'binary': {
+                  'name': binary.name,
+                  'bytes': binary.stat().st_size,
+                  'sha256': binary_sha256,
+                  'elf': {
+                      'first20BytesHex': elf_header.hex(),
+                      'classBits': elf_class_bits,
+                      'endianness': elf_endianness,
+                      'machine': int.from_bytes(elf_header[18:20], elf_endianness),
+                  },
+              },
+          }
+          (directory / 'build-proof.json').write_text(json.dumps(proof, indent=2) + '\n')
+          PY
+
+      - name: Export receipt Kubernetes test binary and compile proof
+        if: github.event_name == 'workflow_dispatch' && inputs.compile_receipt_kubernetes_binary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: receipt-kubernetes-test-binary-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/receipt-kubernetes-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Stop live CI log stream
         if: always()
