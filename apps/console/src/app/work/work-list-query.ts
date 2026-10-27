@@ -1,5 +1,8 @@
 import { workRepository } from '@agent-lcars/work';
 import { itemStateSchema, workIdSchema } from '@agent-lcars/work';
+import type { ItemRunView } from '@agent-lcars/work/derive';
+
+import { isEventWork } from './event-work';
 
 export const WORK_PAGE_LIMIT = 200;
 export interface WorkListParams {
@@ -11,6 +14,7 @@ export interface WorkListParams {
   agent?: string;
   window?: string;
   q?: string;
+  activity?: string;
 }
 
 export const WORK_WINDOWS = ['1h', '24h', '7d'] as const;
@@ -22,6 +26,7 @@ const WINDOW_MS: Record<WorkWindow, number> = {
 };
 
 export interface WorkViewFilters {
+  activity?: 'events';
   agent?: string;
   window?: WorkWindow;
   q?: string;
@@ -39,7 +44,12 @@ export function parseWorkViewFilters(params: WorkListParams): WorkViewFilters {
     ? (params.window as WorkWindow)
     : undefined;
   const q = params.q?.trim().slice(0, 128) || undefined;
-  return { agent, window, q };
+  return {
+    agent,
+    window,
+    q,
+    ...(params.activity === 'events' ? { activity: 'events' as const } : {}),
+  };
 }
 
 export function matchesWorkView(
@@ -48,11 +58,12 @@ export function matchesWorkView(
     updatedAt: string;
     spec: { title: string; pipeline: string; target?: { repo: string } };
     origin: { principal: string };
-    runs: readonly { pipeline: string }[];
+    runs: readonly Pick<ItemRunView, 'pipeline' | 'sourceRevision'>[];
   },
   filters: WorkViewFilters,
   now: number,
 ): boolean {
+  if (filters.activity === 'events' && !isEventWork(item)) return false;
   if (
     filters.agent &&
     item.spec.pipeline !== filters.agent &&

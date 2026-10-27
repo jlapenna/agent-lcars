@@ -58,6 +58,7 @@ const readWorkView = cache(async (key: string) => {
     input.state ||
     input.repo ||
     input.principal ||
+    filters.activity ||
     filters.agent ||
     filters.window ||
     filters.q,
@@ -162,9 +163,13 @@ function WorkViewContent({
           <ConsoleToolbar
             action="/work"
             folded={
-              [query.repo, query.agent, query.state, query.principal].filter(
-                Boolean,
-              ).length
+              [
+                query.repo,
+                query.agent,
+                query.state,
+                query.principal,
+                query.activity,
+              ].filter(Boolean).length
             }
             primary={
               <QuickTaskButton watchedRepos={watchedRepos} size="sm" primary />
@@ -197,6 +202,15 @@ function WorkViewContent({
                 })),
               ]}
             />
+            <ToolbarSelect
+              name="activity"
+              label="Activity"
+              value={query.activity}
+              options={[
+                { value: '', label: 'All work' },
+                { value: 'events', label: 'Event-driven work' },
+              ]}
+            />
             <ToolbarWindow
               name="window"
               label="Window"
@@ -221,7 +235,7 @@ function WorkViewContent({
               <summary className="console-toolbar__field">
                 More filters
                 {query.state || query.principal
-                  ? ` · ${[query.state, query.principal].filter(Boolean).length}`
+                  ? ` · ${[query.state, query.principal, query.activity].filter(Boolean).length}`
                   : ''}
               </summary>
               <div className="console-toolbar__more-panel">

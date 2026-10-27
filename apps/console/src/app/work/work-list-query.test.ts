@@ -20,6 +20,47 @@ const item = {
 };
 
 describe('Work view filters', () => {
+  it('filters source-driven work without mistaking ordinary coding for an event', () => {
+    const filters = parseWorkViewFilters({ activity: 'events' });
+    expect(matchesWorkView(item, filters, now)).toBe(false);
+    expect(
+      matchesWorkView(
+        {
+          ...item,
+          runs: [
+            {
+              pipeline: 'opencode',
+              sourceRevision: {
+                key: 'revision',
+                input: { operation: 'fleet-triage:v1' },
+              },
+            },
+          ],
+        },
+        filters,
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      matchesWorkView(
+        {
+          ...item,
+          runs: [
+            {
+              pipeline: 'inbox-summary',
+              sourceRevision: { key: 'revision', input: { context: '{}' } },
+            },
+          ],
+        },
+        filters,
+        now,
+      ),
+    ).toBe(true);
+    expect(parseWorkListQuery({ activity: 'events' })).not.toHaveProperty(
+      'activity',
+    );
+  });
+
   it('keeps view filters out of the Work API input', () => {
     const input = parseWorkListQuery({
       repo: 'a/b',

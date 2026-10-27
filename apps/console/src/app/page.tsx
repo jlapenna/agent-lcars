@@ -101,6 +101,9 @@ import { parseStoppedWorkCursor, stoppedWorkHref } from './stopped-work-query';
 import { withConsolePageShell } from './with-console-page-shell';
 import { cancelItem, redispatchItem } from './work/actions';
 import { context as workContext } from './work/context';
+import { isEventWork } from './work/event-work';
+import { EventWorkActivity } from './work/event-work-activity';
+import { matchesWorkView, parseWorkViewFilters } from './work/work-list-query';
 
 function toCard(item: ActionItem): BoardCard {
   return {
@@ -124,8 +127,10 @@ function toCard(item: ActionItem): BoardCard {
 async function getParkedWork(
   repo?: string,
   rawCursor?: string,
+  view: AgentsViewFilters = {},
 ): Promise<{
   items: WorkSummary[];
+  eventItems: WorkSummary[];
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
@@ -133,12 +138,25 @@ async function getParkedWork(
   try {
     const work = await workContext();
     if (!work.principal?.scopes.has('work.operator')) {
-      return { items: [], hasMoreTasks: false };
+      return { items: [], eventItems: [], hasMoreTasks: false };
     }
     const page = await listWorkSummaries(work.runtime.store, {
       limit: 200,
       cursor: parseStoppedWorkCursor(rawCursor),
     });
+    const recent = rawCursor
+      ? await listWorkSummaries(work.runtime.store, { limit: 200 })
+      : page;
+    const eventItems = recent.items
+      .filter(
+        (item) =>
+          'workId' in item.anchor &&
+          isEventWork(item) &&
+          (!repo || workRepository(item.spec) === repo) &&
+          matchesWorkView(item, parseWorkViewFilters(view), Date.now()),
+      )
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, 10);
     const items = await excludeClosedGithubAnchors(
       work.runtime.store,
       page.items.filter(
@@ -149,6 +167,7 @@ async function getParkedWork(
     );
     return {
       items,
+      eventItems,
       hasMoreTasks: page.nextCursor !== undefined,
       nextCursor: page.nextCursor,
     };
@@ -159,6 +178,7 @@ async function getParkedWork(
     logger.error('agent-lcars: parked work panel unavailable:', error);
     return {
       items: [],
+      eventItems: [],
       hasMoreTasks: false,
       error:
         'Could not load stopped work. Retry or reset the stopped-work page.',
@@ -216,6 +236,7 @@ async function IndexBody({
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
     {
       items: parkedWorkItems,
+      eventItems,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -229,7 +250,7 @@ async function IndexBody({
     getCachedAgentActivity(),
     getCliSessions({ exhaustive: true }),
     getRunnerSessionsByRunId(),
-    getParkedWork(repoFilterKey, stoppedCursor),
+    getParkedWork(repoFilterKey, stoppedCursor, view),
     getNativeInboxEvidence(async () => {
       const context = await workContext();
       return { store: context.runtime.store, principal: context.principal };
@@ -501,6 +522,12 @@ async function IndexBody({
                   View all outcomes →
                 </Anchor>
               }
+            />
+            <EventWorkActivity
+              items={eventItems}
+              error={stoppedError}
+              repo={repoFilterKey}
+              view={view}
             />
             <ParkedWorkPanel
               items={stoppedItems}

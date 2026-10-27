@@ -599,11 +599,19 @@ GitHub issues, and manage recurring work.
   The Apply button shows only until the page hydrates.
   Scope is preserved across navigation between these pages.
 
-- **FE-WK-7 [Planned] Generalized dispatched work.** Coding tasks, bounded
+- **FE-WK-7 [Shipped] Generalized dispatched work.** Coding tasks, bounded
   issue triage and model-generated summaries share durable admission, attempts,
   cancellation, concurrency limits and finite retries. Work detail identifies
   the operation, trigger/source revision, executor, result and failure reason;
   a superseded result is distinguishable from a current result or failed attempt.
+  Work exposes an Event-driven work filter and operation labels. Source activity
+  shows admitted attempts, recorded source observations, failure summaries and
+  triage publication status with a direct published-report link. These are
+  semantic source revisions, not an exhaustive webhook-delivery log.
+  Bridge shows the latest ten matching event-driven items from its latest
+  200-task read, with honest empty/error states and a link to older activity in
+  Work; paging stopped work does not shift the recent-activity window. Existing
+  repository, agent, time and search scope applies.
   A repository is required only when the operation needs one. Lightweight
   inference needs no coding checkout. Internal summary work is inspectable
   without adding human-decision cards or chat notifications for every result.

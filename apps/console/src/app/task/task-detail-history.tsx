@@ -20,6 +20,7 @@ import type { ReactNode } from 'react';
 import { ExecutionStatus } from '../execution-status';
 import { OpsPanel } from '../ops-primitives';
 import { Conversation } from '../work/conversation';
+import { WorkSourceEvents } from '../work/event-work-activity';
 import { resultRefs } from '../work/result-refs';
 import { safeHttpUrl } from '../work/safe-url';
 
@@ -267,6 +268,7 @@ export function TaskDetailHistory({
                 : ' · Reapply the intended label after ownership settles and physical retirement completes.')}
         </Text>
       )}
+      <WorkSourceEvents item={item} />
       <OpsPanel title="Conversation">
         {item.runs.length === 0 ? (
           <Text size="sm" c="dimmed">

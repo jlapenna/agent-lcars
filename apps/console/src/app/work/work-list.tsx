@@ -21,6 +21,7 @@ import {
 
 import { ExecutionStatus } from '../execution-status';
 import { RelativeTime } from '../relative-time';
+import { eventOperation } from './event-work';
 
 /** parked < running < done < canceled - a parked item is the one most
  *  likely to need attention (it settled without success and nobody has
@@ -102,11 +103,15 @@ function StateMark({ item }: { item: ItemView }) {
 }
 
 function ItemCell({ item }: { item: ItemView }) {
+  const run = latestRun(item.runs);
   return (
     <>
       <span className="work-item-ref">
         {workRepository(item.spec)} · {item.origin.principal}
       </span>
+      {run?.sourceRevision && (
+        <Text size="xs">Event-driven · {eventOperation(run)}</Text>
+      )}
       <Anchor href={`/work/${item.id}`} className="work-item-title">
         {item.spec.title}
       </Anchor>
