@@ -308,6 +308,7 @@ describe('production repository job admission', () => {
       pipelines: ['goose'],
       now: at,
       claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
       tokenHash: 'a'.repeat(64),
     });
     await f.orchestrator.report(run.runId, { ok: false }, 'a'.repeat(64));
