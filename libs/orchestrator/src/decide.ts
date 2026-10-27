@@ -526,8 +526,9 @@ export function confirmDispatch(input: {
 }): Decision | Refusal {
   const { now, task, run } = input;
   if (run.state === 'running') return { task, run, outbox: [] }; // idempotent
+  // A `pending` run is always the task's active run: every transition that
+  // changes `activeRunId` also leaves `pending`.
   if (run.state !== 'pending') return refused('run-not-live');
-  if (task.activeRunId !== run.runId) return refused('stale-lease');
   return {
     task: { ...task, updatedAt: now },
     run: {
@@ -750,13 +751,14 @@ export function reportResult(input: {
   )
     return refused('stale-lease');
   if (run.credentialOperation !== undefined) {
-    if (run.queue?.tokenHash === undefined) return refused('not-claimant');
+    // An operation is reserved only on the exact claimant, so its fingerprint
+    // is the claim's token hash; a release refuses while it is outstanding.
     return {
       task,
       run: {
         ...run,
         credentialPendingResult: pending ?? {
-          claimFingerprint: run.queue.tokenHash,
+          claimFingerprint: run.credentialOperation.claimFingerprint,
           requestedAt: now,
           result,
         },

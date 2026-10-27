@@ -122,12 +122,14 @@ export function decideLabelProviderRequest(
     return reject('credential-operation-pending');
 
   let decision: Decision | Refusal;
+  // `activeRun` is derived from `task.activeRunId`, so a live active run
+  // implies the task exists; the clause only narrows.
   if (
+    task !== undefined &&
     activeRun !== undefined &&
     isLive(activeRun.state) &&
     pipeline !== effective
   ) {
-    if (task === undefined) return refused('unknown-task');
     if (activeRun.queue?.state !== 'queued') return reject('task-busy');
     const canceled = cancelRun({
       now,
