@@ -61,8 +61,8 @@ boundaries and [`docs/README.md`](docs/README.md) for the documentation index.
 | A failed or stuck agent run                                           | [`debug-agent-run`](.agents/skills/debug-agent-run/SKILL.md); [`issue-triage`](.agents/skills/issue-triage/SKILL.md) for a requested issue-queue audit                                                                         |
 | Approved live authenticated console verification                      | [`verifying-console-session`](.agents/skills/verifying-console-session/SKILL.md)                                                                                                                                               |
 
-`docs/superpowers/plans/` and the dated audit/evidence documents listed under
-[plans and evidence](docs/README.md#plans-evidence-and-generated-contracts)
+`docs/superpowers/specs/` and the dated audit/evidence documents listed under
+[designs and evidence](docs/README.md#designs-evidence-and-generated-contracts)
 describe a specific design or observation. They are not automatically current
 policy; reconcile them against live code and canonical contracts.
 

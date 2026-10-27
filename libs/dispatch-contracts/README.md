@@ -15,7 +15,7 @@ and invisible in others.
 This package is where those definitions live now. **Import it; do not
 re-derive it.**
 
-Covered today (reviewed against `e4b1baa`, 2026-10-09):
+Covered today:
 
 | Contract                                                  | Current owner and consumers                                                                              |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -27,20 +27,12 @@ Covered today (reviewed against `e4b1baa`, 2026-10-09):
 [`marker.spec.ts`](src/marker.spec.ts) protect the registry and marker formats.
 Historical broker and worker-workflow copies are retired, not current consumers.
 
-`recovery-observation.ts` (the `recovery/v1:<domain>:...` operation-key
-contract) was removed in #1015 Wave 4: its only consumer,
-`apps/console/src/lib/hosted-recovery-observation.ts`, was deleted along
-with the console ingestion endpoint it backed (no workflow in this repo or
-a consumer repo ever gained trust to call it — see #870). `pr-heal.yml`'s
-`pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s
+`pr-heal.yml`'s `pr-heal-ledger:v1` comment and `post-deploy-verify.yml`'s
 `post-deploy-verify-dispatch:<sha>` marker in
 `supersprinklesracing/sprinkles` remain their own independently-invented
 idempotency keys (see [#864](https://github.com/jlapenna/agent-lcars/issues/864));
 sharing a contract for them is unbuilt, not landed here.
-
-The provider-neutral Lifecycle Control Plane v1 boundary that used to live
-under `src/control-plane/` was deleted with the lifecycle control plane
-itself (#1171); [`libs/orchestrator`](../orchestrator) owns admission now.
+[`libs/orchestrator`](../orchestrator) owns admission.
 
 ## Why it has zero dependencies
 

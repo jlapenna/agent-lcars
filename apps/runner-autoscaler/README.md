@@ -114,43 +114,6 @@ snapshots without inventory remain visible as individual Shuttlebay lanes but
 cannot establish complete fleet totals; Bridge and Agents report unavailable
 until the current producer contract arrives. Homelab owns producer delivery.
 
-### ARC inventory runtime qualification
-
-Source tests establish the fail-closed contract; qualifying a deployment also
-requires evidence from its actual producer and console. Record the following
-against the issue tracking runtime acceptance:
-
-1. Bind the producer image digest/revision and console rollout revision to the
-   inventory correction. Record exact-main CI and required PR check results;
-   inspect the merge commit's GitHub rule suite before describing the merge as
-   protected. A successful deployment workflow alone does not prove that the
-   producer is running the correction or that the UI consumed its samples.
-2. Compare the running producer's validated `arc_lanes` with read-only
-   `runner-status` samples. Every configured lane must have a fresh v3 sample
-   repeating the same sorted `expectedLanes` inventory. Record sample times
-   and the configured names, plus Bridge/Agents totals and Shuttlebay lanes.
-3. With a maintainer-approved, Homelab-owned outage operation, leave one
-   configured lane unable to publish while another continues publishing.
-   Preserve the configured inventory. After the failed lane's original
-   three-minute freshness deadline, totals must become unavailable while the
-   surviving fresh lane remains visible. Repeat the observation after TTL
-   actually removes the failed lane's document; TTL deletion is asynchronous,
-   so elapsed freshness alone does not establish absent-document coverage.
-4. After the approved restoration, record fresh samples for every configured
-   lane and the return of complete totals. When the complete live inventory
-   naturally reports zero, confirm that zero remains visible. Keep missing
-   legacy inventory, malformed/duplicate inventory and inconsistent snapshots
-   covered by the focused producer/consumer regressions; distinguish that
-   synthetic evidence from any cases observed in the deployed system.
-
-Retain timestamped read-only samples and UI evidence for baseline, outage,
-absent document and restoration. Do not delete or rewrite telemetry documents
-to manufacture production proof. Outage/restoration and producer delivery
-need the specific operational approval required by the repository and Homelab;
-this checklist grants none. Leave runtime acceptance open when approval,
-read access or a required observation is missing, and state the exact resume
-trigger.
-
 `orchestrator.yml`'s whole schema is:
 
 ```yaml

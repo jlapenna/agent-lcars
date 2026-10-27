@@ -2,11 +2,10 @@
 
 This repo's "Protect main" ruleset squash-merges onto `main`. Its current
 required-status-check rule does **not** require PR branches to remain up to
-date (`strict_required_status_checks_policy: false`, verified 2026-08-08),
-so independent auto-merge-armed PRs no longer restart merely because another
-PR landed first. A true stack — each PR based on the previous PR's branch —
-still levies a squash tax (see issue #534, written up from the 2026-08-04
-sweep, retro #521):
+date (`strict_required_status_checks_policy: false`), so independent
+auto-merge-armed PRs do not restart merely because another PR landed first.
+A true stack — each PR based on the previous PR's branch — still levies a
+squash tax (#534):
 
 - **The squash tax.** Squash-merging a PR replaces all of its commits with
   one new commit on `main`. Every PR stacked on top of it now has its base
@@ -98,11 +97,8 @@ non-strict rule.
    and only it. Repeat until the
    stack is empty.
 
-Under the former strict-update rule, this serialized CI load to one PR's
-restart cycle at a time — measured during the 2026-08-04 sweep at roughly
-half the `Verify` runs against the shared `agent-lcars-ci` pool. For a stack under
-today's rule, its purpose is ordering and clean squash-tax recovery rather
-than preventing independent PRs from going `BEHIND`.
+The train's purpose is ordering and clean squash-tax recovery, not
+preventing independent PRs from going `BEHIND`.
 
 ## Chain collapse
 

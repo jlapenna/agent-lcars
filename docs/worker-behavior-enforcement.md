@@ -2,9 +2,8 @@
 
 Status: implemented interception and isolated canary harnesses; **no provider is
 graduated and production activation is not authorized**. The source default for
-`LCARS_WORKER_POLICY_PROVIDERS` remains empty. Dated observations below are
-historical evidence, not a readback of current production configuration. The
-folded image qualification ledgers and dated acceptance checkpoints live in
+`LCARS_WORKER_POLICY_PROVIDERS` remains empty. The receipt below is not a
+readback of current production configuration. The folded image qualification ledgers and dated acceptance checkpoints live in
 [#2181 (comment)](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6257748989).
 
 ## Current qualification boundary
@@ -35,126 +34,26 @@ per provider; normal artifacts and their verified digests are retained. This
 completes isolated qualification for that candidate, not policy-enabled dispatch
 or production activation.
 
-The [2026-10-17 useful-work receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6228476076)
-binds Claude CLI 2.1.302, Work `01M53SRA2AE75PY9PAWNA9MT1S/r1`, its actual
-ARM64 Pod and normal published image index
-`sha256:6769b237e7164419c71b734aba3d7d39bb09d40bcc0dfcd7d264b26cd07acb8e`
-to source `6a3cc432ae4a8b3d5fbcf44a8683a68f862e17c5`. The useful report finished
-`done` / `report` / `ok:true` with policy off. It qualifies that provider execution,
-not enabled-policy behavior, the native/setup/failure-consumer suites, another
-provider or a later candidate image. The private-engine incident and its recovery
-are separately owned by #2848; replacing that retired facility is not a provider
-graduation prerequisite when an existing supported native carrier can perform
-the qualification.
-
 The source inventory contains 78 Claude, 79 Codex and 81 OpenCode native
 observations, plus three setup-negative cases per provider. Inventory lives in
 `tools/probes/qualification-modes.mjs`, consumed by execution and the evidence
 gate; selective passing reports cannot satisfy it. See the
 [qualification and bounded rollout artifact](worker-policy-rollout.md) for
-independent commands, provenance, metrics and approval targets.
-
-The [2026-10-09 source evidence record](worker-policy-source-evidence-2026-10-09.json)
-retains every passing mode, sanitized phase timing, exact CLI versions and
-source/module/helper/harness hashes: Claude **78/78**, Codex **79/79**, OpenCode
-**81/81**, plus **3/3 setup-negative cases each**. It also retains the initial
-Codex catalog failures and pre-fix Claude/Codex exhaustion failures. The raw
-runner-local directories are temporary; the committed record does not claim
-an inspected image identity, complete durable fixture bundles or a live dispatch.
-That source-only record does not establish candidate-image qualification or
-failure consumption.
-
-The [accepted Codex offline receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6256439638)
-binds Work `01M58GRR662DGGDBB72VNJ2QYP/r1`, source
-`37ceafcbc015eb254cc029d239d6248303026525`, CLI `codex-cli 0.163.0` and imageID
-`sha256:d714279ad545542f927d4aa53c56e4488bcbd24db737928c10b65156c00db6bc`.
-All 79 native cases, three setup-negative cases and both typed failure-consumer
-controls passed. The complete source/baked bindings, full durable fixture
-archive and positive original-container exit-0 receipt were verified. The
-receipt retains the receiver's initial mode-comparison failure, the outer
-worker's credential-output violation and the limits of the byte-only custody
-ACK; it does not credit the whole outer run as procedurally compliant.
-The evaluator remains `offlinePassed: true`, `graduated: false` and
-`activationAuthorized: false`. This qualifies that exact Codex offline evidence,
-not another image/provider or policy-enabled dispatch. The ordinary-CI receipt
-above supplies the later three-provider qualification without changing this
-historical result.
-
-The earlier 2026-10-18 in-job Codex run adds partial observations, not complete
-qualification evidence. Work `01M5666ND109DH80NVB9AN2WRQ/r2` ran as UID 1001
-with equal 2 CPU/6Gi/24Gi requests and limits on ARM64, at source
-`0a100485a47a9fe44ae6161360fb8ea4396bb990`. The allocation's inspected Pod
-imageID was
-`docker-registry.lan.jlapenna.net/homelab-runner@sha256:2e0cf0c1310626fe52cb8d47cd1d74808c6fb0b64d62b03feedbda2234ebf564`
-(manifest/config distinction unverified), with CLI `codex-cli 0.163.0`.
-Native logs record both wrappers returning exit 0 and reporting 79 native and
-3 setup-negative cases passing against image-baked handlers. The complete
-40-input group checks matched, the evaluator reported
-`offlinePassed: true, graduated: false, activationAuthorized: false`, and the
-correctly invoked failure consumer passed one test using the native report.
-Earlier consumer invocations failed; the final passing log overwrote the
-complete failed consumer log, while their actual tool outputs remain in the
-normal private provider archive. These are in-process consumer checks of the
-production code paths, not live production dispatch evidence.
-
-The probe commands inherited the outer environment and HOME instead of the
-required `env -i` and isolated HOME boundary. Isolation is therefore
-unqualified; the reported behavioral passes do not retrospectively prove it.
-The uploaded partial bundle is asset `652145397` on draft release `416141863`,
-133302 bytes with reported server digest
-`sha256:2bd9cd8c1f77206c4c912178792683f0b478e043ac3dde8d1df0040b03725249`.
-It contains the two wrapper diagnostic directories but omits the separate
-`nativeReport.evidenceDirectory` fixture/dependency trees, the required phase
-and exit records, and version stderr. It is not a complete untrimmed bundle;
-independent semantic verification and the complete private raw/index export
-were not established. The omitted in-Pod evidence was not recovered before
-the exact Job and Pod became absent, so full retention remains unqualified.
-
-The canonical provider clock starts at `2026-10-18T01:31:01.740Z`; the run
-finished at `2026-10-18T01:45:28.068Z`. Its uploaded local binding record's
-`01:30:58Z` start is not that canonical timestamp. The later Codex result does
-not repair this earlier run's isolation or incomplete retention. Useful
-policy-enabled dispatch and activation remain separate unqualified gates.
-No graduation or activation is authorized.
+independent commands, provenance, metrics and approval targets. Earlier
+per-image receipts, partial in-job runs and the source-only evidence record are
+retained in [#2181](https://github.com/jlapenna/agent-lcars/issues/2181)
+comments; none of them qualifies a later candidate image.
 
 The native fixture uses one monotonic budget across initial execution,
-correction, explicit resume and failure finalization. Its 30/60-second limits
-and denial assertions are unchanged. The source run exposed a separate fixture
-clock issue: Codex and Claude exhaustion observations failed with `Date.now()`;
-all three targeted observations pass with the shared monotonic budget. This
-fixture correction is separate from the adopted production budget below.
-
+correction, explicit resume and failure finalization, with 30/60-second limits.
 Codex's localhost model fixture supplies an isolated `model_catalog_json` with
-its expected tool metadata. The current CLI no longer includes the fixture's
-old model name in its bundled catalog; the initial authorized-edit probe failed
-without `apply_patch` metadata. The scratch catalog corrects the fixture, with
-no production model configuration change. See the [official config reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+its expected tool metadata because the current CLI's bundled catalog no longer
+includes the fixture's model; this is a fixture correction, not a production
+model configuration change. See the [official config reference](https://learn.chatgpt.com/docs/config-file/config-reference).
 
-The shared provider budget now uses monotonic `/proc/uptime` deadlines.
-[#2223](https://github.com/jlapenna/agent-lcars/issues/2223) is closed: deterministic
-clock, correction, credential-wait and verifier controls passed, and the adopted
-runner image `sha256:42dac0f2ece61b34e280ee7d155f44dae45608d80d2eafa4dd805e6ef5489eae`
-is bound to source `3d6492a8366f71566867302521cc7de72a37c33c`, including the
-monotonic-budget fix. One real OpenCode run, #2325/r2, completed useful work under
-the observed 7200-second timeout. This establishes adoption of that budget;
-it does not establish a live wall-clock-step experiment, deadline exhaustion or
-policy-enabled provider graduation. The retained wall-clock CI failures and
-[#2217](https://github.com/jlapenna/agent-lcars/issues/2217)'s diagnostics remain
-historical evidence. The host-clock investigation remains independently owned by
-[Homelab #2186](https://github.com/jlapenna/homelab/issues/2186).
-
-The later [#2409](https://github.com/jlapenna/agent-lcars/issues/2409) provider
-OS-spawn clock wrapper is present in source
-`8aec097bb898fde306f09cacd768a553f74f66e8`; the observed `42dac` runner predates
-it, so source delivery does not establish adoption of that wrapper. Likewise,
-the controller observed on 2026-10-10 runs source
-`9a4badfa89c008f4c0f7cae4e1d30bc40dd1cdd9`.
-[#2273](https://github.com/jlapenna/agent-lcars/issues/2273) and
-[#2275](https://github.com/jlapenna/agent-lcars/issues/2275) retain the separate
-controller-adoption gates for token refresh and terminal-run retention. Their
-source fixes landed in [#2264](https://github.com/jlapenna/agent-lcars/pull/2264);
-Console deployment does not deliver the controller binary. The production policy
-selector default remains empty. Isolated candidate qualification does not
+The shared provider budget uses monotonic `/proc/uptime` deadlines
+([#2223](https://github.com/jlapenna/agent-lcars/issues/2223)). The production
+policy selector default remains empty. Isolated candidate qualification does not
 establish useful policy-enabled dispatch or approved activation.
 
 ## Scope and decisions

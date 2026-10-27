@@ -117,13 +117,8 @@ curl -sG "http://localhost:3100/loki/api/v1/query_range" \
   --data-urlencode "step=300"
 ```
 
-Rough calibration measured 2026-08-16, one OpenCode agent, thinking disabled:
-**~1.5 completions/min**. A bucket near zero while the run is live means
-throttling or a wedged engine, not thinking.
-
-**Serialise subscription Codex dispatches while #1903 is unresolved.** Its
-global credential lease is exclusive; simultaneous starts currently return
-409 and fail before a model turn. Never bypass that lease.
+A bucket near zero while the run is live means throttling or a wedged engine,
+not thinking.
 
 **Serialise inference-backed OpenCode dispatches.** Two concurrent OpenCode runs measured ~2.3
 completions/min _combined_ — roughly half throughput each, with a five-minute
@@ -134,11 +129,8 @@ you were measuring.
 ### Do not attribute background noise to your run
 
 Check the rate over hours before blaming anything on the run in front of you.
-LiteLLM has logged a steady **240 auth rejections per 30 minutes, all day**
-(`401: LiteLLM Virtual Key expected ... expected to start with 'sk-'`), plus
-recurring `CryptoError` on its `GENERIC_*` SSO keys. Both are unrelated to
-agent dispatches. A flat rate across a window where runs both succeeded and
-failed is the tell.
+LiteLLM logs steady background errors unrelated to agent dispatches. A flat
+rate across a window where runs both succeeded and failed is the tell.
 
 Useful error greps against `{container="litellm"}`: `capacity`, `503`,
 `ServiceUnavailable`, `429`. The runner's `default` route has **no fallback

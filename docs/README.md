@@ -6,20 +6,19 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## System and operations
 
-| Need                                                               | Canonical document                                                             |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| Human-needed handoff summaries and LLM configuration               | [`human-needed-summaries.md`](human-needed-summaries.md)                       |
-| Dispatch ownership and failure routing                             | [`lifecycle-systems.md`](lifecycle-systems.md)                                 |
-| Application/deployment/Homelab boundary                            | [`deployment-boundary.md`](deployment-boundary.md)                             |
-| Work API access and parked-item cleanup                            | [`../OPERATIONS.md`](../OPERATIONS.md)                                         |
-| Product lifecycle measurement and SLO handoff                      | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)                 |
-| Published actions and reusable workflows                           | [`published-actions.md`](published-actions.md)                                 |
-| CI control flags                                                   | [`ci-control-flags.md`](ci-control-flags.md)                                   |
-| Runner image publication                                           | [`image-publish-routing.md`](image-publish-routing.md)                         |
-| Nx remote cache                                                    | [`nx-remote-cache.md`](nx-remote-cache.md)                                     |
-| Provider-process start event contract                              | [`provider-process-measurement.md`](provider-process-measurement.md)           |
-| Native Work production smoke (maintainer-approved runbook)         | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)                 |
-| Screenshot evidence production smoke (maintainer-approved runbook) | [`quick-task-evidence-smoke-runbook.md`](quick-task-evidence-smoke-runbook.md) |
+| Need                                                       | Canonical document                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| Human-needed handoff summaries and LLM configuration       | [`human-needed-summaries.md`](human-needed-summaries.md)             |
+| Dispatch ownership and failure routing                     | [`lifecycle-systems.md`](lifecycle-systems.md)                       |
+| Application/deployment/Homelab boundary                    | [`deployment-boundary.md`](deployment-boundary.md)                   |
+| Work API access and parked-item cleanup                    | [`../OPERATIONS.md`](../OPERATIONS.md)                               |
+| Product lifecycle measurement and SLO handoff              | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)       |
+| Published actions and reusable workflows                   | [`published-actions.md`](published-actions.md)                       |
+| CI control flags                                           | [`ci-control-flags.md`](ci-control-flags.md)                         |
+| Runner image publication                                   | [`image-publish-routing.md`](image-publish-routing.md)               |
+| Nx remote cache                                            | [`nx-remote-cache.md`](nx-remote-cache.md)                           |
+| Provider-process start event contract                      | [`provider-process-measurement.md`](provider-process-measurement.md) |
+| Native Work production smoke (maintainer-approved runbook) | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)       |
 
 ## Identity, credentials, and security
 
@@ -38,19 +37,19 @@ Use this index to retrieve the smallest current contract for a task.
 Repeatable local procedures live in [`playbooks/`](playbooks/README.md), starting
 with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
-| Need                             | Canonical document                                                                              |
-| -------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                                      |
-| Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md)                    |
-| Console visual system            | [`console-design-system.md`](console-design-system.md)                                          |
-| Console design prototypes        | [`../design/README.md`](../design/README.md)                                                    |
-| Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                                                |
-| Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                                        |
-| E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                                      |
-| Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)                              |
-| Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                                          |
-| OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                                        |
-| Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md) (phase 3 shipped; host daemon deleted) |
+| Need                             | Canonical document                                                           |
+| -------------------------------- | ---------------------------------------------------------------------------- |
+| Repository onboarding            | [`onboarding-repo.md`](onboarding-repo.md)                                   |
+| Console and telemetry onboarding | [`onboarding-console-and-telemetry.md`](onboarding-console-and-telemetry.md) |
+| Console visual system            | [`console-design-system.md`](console-design-system.md)                       |
+| Console design prototypes        | [`../design/README.md`](../design/README.md)                                 |
+| Inbox phone interaction budget   | [`inbox-phone-budget.md`](inbox-phone-budget.md)                             |
+| Fleet testing policy             | [`testing-policy.md`](testing-policy.md)                                     |
+| E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |
+| Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
+| Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                       |
+| OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
+| Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md)                     |
 
 ## Product specification
 
@@ -62,19 +61,16 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | Inbox notifications and delivery handoff    | [`inbox-notifications.md`](inbox-notifications.md)                                           |
 | Fleet orchestration product spec (part 2)   | [`product/fleet-orchestration-product-spec.md`](product/fleet-orchestration-product-spec.md) |
 
-## Plans, evidence, and generated contracts
+## Designs, evidence, and generated contracts
 
-- `superpowers/specs/` and `superpowers/plans/` record scoped designs and
-  implementation plans. Reconcile them with the resulting code and canonical
-  docs before treating them as current behavior.
+- `superpowers/specs/` records scoped designs. Reconcile them with the
+  resulting code and canonical docs before treating them as current behavior.
 - [QueueExecutor failover design](superpowers/specs/2026-10-10-queue-executor-ha-design.md)
   selects proposed durable capacity ownership for R8; implementation and Homelab
   qualification remain separate gates.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state:
-  [scale-set Support evidence](scale-set-support-evidence.md) (#1716) and the
-  [2026-10-09 worker-policy source evidence](worker-policy-source-evidence-2026-10-09.json)
-  read through [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md).
+  [scale-set Support evidence](scale-set-support-evidence.md) (#1716).
 - [`api/work-v1.openapi.json`](api/work-v1.openapi.json) is generated from the
   Work contract. Regenerate it through the repository command rather than
   editing it by hand.
