@@ -20,6 +20,7 @@ set -euo pipefail
 case "$1 $2" in
   'api graphql')
     if [[ "$*" != *enablePullRequestAutoMerge* ]]; then
+      [[ "$*" != *autoMergeRequest* ]] || printf ran > "$READBACK_WITNESS"
       printf read > "$FAKE_GH_CALLS"
       cat "$FAKE_RESPONSE"
       exit
@@ -42,7 +43,28 @@ case "$1 $2" in
     fi
     exit ;;
   'pr ready') printf ran > "$MUTATION_WITNESS"; exit ;;
-  'pr merge') echo 'Published arming must use queue-only GraphQL' >&2; exit 64 ;;
+  'pr merge')
+    expected='' auto=false squash=false
+    shift 2
+    while (($#)); do
+      case "$1" in
+        --auto) auto=true; shift ;;
+        --squash) squash=true; shift ;;
+        --match-head-commit) expected=$2; shift 2 ;;
+        --admin) echo 'Administrative bypass is not protected arming' >&2; exit 64 ;;
+        *) shift ;;
+      esac
+    done
+    if [[ "$auto" != true || "$squash" != true || -z "$expected" ]]; then
+      echo 'CLI arming requires auto, squash and the supplied expected head' >&2
+      exit 64
+    fi
+    if [[ "$expected" != "$FAKE_MUTATION_HEAD" ]]; then
+      echo 'Head changed at the arming boundary' >&2
+      exit 1
+    fi
+    printf ran > "$MUTATION_WITNESS"
+    exit ;;
   *) exit 64 ;;
 esac
 # Model only the public arming API's expected-head precondition. This is a
