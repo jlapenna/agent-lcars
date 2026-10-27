@@ -2548,23 +2548,26 @@ describe('exhausted delivery correction recovery', () => {
     ).toEqual(f.delivery);
     expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
   });
-  it('retains running while the automatic lost retry budget remains', async () => {
+  it('admits authenticated reply recovery while the lost retry budget remains, since only the transaction guards the lock', async () => {
+    // `settleLostAndRetry` mints the successor in the same Decision as the
+    // loss, so a lost run with budget remaining always has a live successor
+    // that `requestRun` refuses `task-busy` on. This fixture's shape -- lost,
+    // budget remaining, no successor -- exists only here; the route no longer
+    // re-derives a busy verdict from item state that would leave it with no
+    // exit (redispatch needs `parked|failed`).
     const f = await lostCorrection(1);
     expect(await call(f.ctx, 'GET', `/items/${ID}`)).toMatchObject({
       status: 200,
       json: { state: 'running' },
     });
     expect(
-      (
-        await call(f.ctx, 'POST', `/items/${ID}/reply`, {
-          text: 'Race the pending automatic retry.',
-        })
-      ).status,
-    ).toBe(409);
-    expect(
-      (await f.ctx.runtime.store.readTask(f.anchor))!.task.delivery,
-    ).toEqual(f.delivery);
-    expect(await f.ctx.runtime.store.readRun(`work:${ID}/r3`)).toBeUndefined();
+      await call(f.ctx, 'POST', `/items/${ID}/reply`, {
+        text: 'Recover the lost correction early.',
+      }),
+    ).toMatchObject({ status: 200, json: { admittedRunId: `work:${ID}/r3` } });
+    const task = (await f.ctx.runtime.store.readTask(f.anchor))!.task;
+    expect(task.delivery).toEqual(f.delivery);
+    expect(task.activeRunId).toBe(`work:${ID}/r3`);
   });
 });
 

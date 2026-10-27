@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto';
 
 import {
   decidedRun,
-  deliveryWaiting,
   isRefusal,
   isWorkAnchor,
   type OperationalIntervention,
@@ -49,9 +48,10 @@ export interface ReplyRequest {
   text: string;
   channel: 'api' | 'console' | 'github' | 'slack';
   principal: string;
-  /** Channel address of the human turn: a comment URL, a Slack ts. Used to
-   *  derive an idempotent request id so a redelivered webhook or a
-   *  double-clicked button maps back to the run it already minted. */
+  /** Channel address of the human turn: a comment URL, a Slack ts. Used
+   *  only to derive an idempotent request id (`reply:<ref>`, on
+   *  `Run.requestId`) so a redelivered webhook or a double-clicked button
+   *  maps back to the run it already minted. */
   ref?: string;
   /** Optional native API retry key; scoped to task and verified principal. */
   requestId?: string;
@@ -234,28 +234,18 @@ export async function requestReply(
     return { ok: false, code: 'FORBIDDEN', message: forbidden };
 
   const activeRun = runs.find((run) => run.runId === task.task.activeRunId);
-  // Only settled execution with unfinished delivery is a false busy signal.
-  // Keep other derived-running barriers, including a lost run whose automatic
-  // retry budget remains, and let the transaction recheck live ownership.
-  const settledDeliveryWaiting =
-    task.task.activeRunId === undefined &&
-    latest?.state === 'finished' &&
-    deliveryWaiting(task.task);
+  // An explicit provider switch may replace queued work, but never an
+  // executing conversation. Admission itself -- a live run holds the lock,
+  // or an unmerged delivery still owns the task -- is decided once, inside
+  // `requestRun`'s transaction (`task-busy`), which rechecks this exact run
+  // and its claim state so a concurrent executor or newer request wins
+  // safely; this route only selects the replacement candidate.
   const replaceQueuedRunId =
     request.pipeline !== undefined &&
     activeRun?.queue?.state === 'queued' &&
     activeRun.pipeline !== pipeline
       ? activeRun.runId
       : undefined;
-  // An explicit provider switch may replace queued work, but never an
-  // executing conversation. The transaction rechecks this exact run and
-  // its claim state so a concurrent executor or newer request wins safely.
-  if (
-    state === 'running' &&
-    !settledDeliveryWaiting &&
-    replaceQueuedRunId === undefined
-  )
-    return { ok: false, code: 'CONFLICT', message: 'task-busy' };
 
   // Cross-CLI resume is meaningless: a Codex thread cannot continue a
   // Claude session. Switching pipeline is allowed, it just starts fresh.
@@ -292,7 +282,6 @@ export async function requestReply(
       reply: request.text.slice(0, REPLY_MAX),
       replyChannel: request.channel,
       replyPrincipal: request.principal,
-      ...(request.ref === undefined ? {} : { replyRef: request.ref }),
       ...(request.requestId === undefined
         ? {}
         : {

@@ -487,11 +487,14 @@ describe('requestReply', () => {
       reply: 'Also cover the merged follow-up.',
       replyChannel: 'github',
       replyPrincipal: 'github:jlapenna',
-      replyRef:
-        'https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
       resumeSessionId: 'sess-oc-1',
       resumeTranscriptGcsUri: 'gs://b/runs/r1/opencode/sess-oc-1.export.json',
     });
+    // The comment address is provenance on the idempotent request id only.
+    expect(admitted?.requestId).toBe(
+      'reply:https://github.com/jlapenna/agent-lcars/issues/42#issuecomment-2',
+    );
+    expect(admitted?.params).not.toHaveProperty('replyRef');
     // The immutable Work is untouched and the waiting delivery is carried
     // forward -- the reply must neither rewrite Work nor forge a fresh delivery.
     expect((await store.readTask(ANCHOR))?.task.work).toEqual(first.task.work);
