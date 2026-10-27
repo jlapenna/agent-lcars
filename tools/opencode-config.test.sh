@@ -83,8 +83,16 @@ node "$repo_root/tools/opencode-context.test.mjs"
 python3 "$repo_root/tools/opencode-continuation-exit.test.py"
 grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the context lifecycle plugin"
-grep -Fq 'RUN --network=none bash /usr/local/lib/agent-lcars/opencode-continuation-test/opencode-continuation.test.sh' "$runner_dockerfile" ||
-  fail "runner image must exercise the real OpenCode continuation contract without registry access"
+# The full three-client gate owns OpenCode via an unconditional exec tail.
+# Check both links so composing the proofs cannot silently drop continuation.
+python3 - "$runner_dockerfile" "$repo_root/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh" <<'PYTHON'
+import pathlib, sys
+image, hook = (pathlib.Path(name).read_text() for name in sys.argv[1:])
+logical_lines = image.replace('\\\n', '').splitlines()
+expected = 'RUN --network=none python3 /usr/local/lib/agent-lcars/drain-hook-test-clients.test.py && bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh'
+assert any(line.split() == expected.split() for line in logical_lines), 'runner image must execute the full hook gate without registry access'
+assert hook.rstrip().splitlines()[-1] == 'exec bash "$(dirname "${BASH_SOURCE[0]}")/opencode-continuation.test.sh"', 'full hook gate must unconditionally transfer to real OpenCode continuation'
+PYTHON
 
 # --- agent.*.prompt must stay unset ------------------------------------------
 # Measured 2026-08-16 against opencode 1.18.18 by capturing the wire request:
@@ -150,8 +158,8 @@ touch -d '1 hour ago' "$plugin_tmp/tmp/lcars-opencode-stale01"
 cat > "$plugin_tmp/home/.local/bin/lcars" <<'FAKE'
 #!/bin/sh
 n="$(date +%s%N)"
-cat > "$CAPTURE_DIR/$n.payload"
-snapshot="$(jq -r '.transcript_path // empty' "$CAPTURE_DIR/$n.payload")"
+cat > "$CAPTURE_DIR/$n.pending"
+snapshot="$(jq -r '.transcript_path // empty' "$CAPTURE_DIR/$n.pending")"
 # Lifecycle-only reports (SessionEnd) carry no snapshot. Only ever remove a
 # plugin snapshot directory under this test's TMPDIR.
 case "$snapshot" in
@@ -160,6 +168,8 @@ case "$snapshot" in
     rm -rf "$(dirname "$snapshot")"
     ;;
 esac
+# Publish only after this detached client has finished owning its snapshot.
+mv "$CAPTURE_DIR/$n.pending" "$CAPTURE_DIR/$n.payload"
 FAKE
 chmod +x "$plugin_tmp/home/.local/bin/lcars"
 HOME="$plugin_tmp/home" TMPDIR="$plugin_tmp/tmp" CAPTURE_DIR="$plugin_tmp/capture" \
