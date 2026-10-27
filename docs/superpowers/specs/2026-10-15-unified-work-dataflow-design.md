@@ -1,6 +1,6 @@
 # Unified work-item dataflow: declarative intent, observed verification, any agent
 
-Status: proposed design, revised 2026-10-25. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends [native work items](2026-08-23-native-work-items-design.md) (#1502) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
+Status: proposed design, revised 2026-10-27. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends [native work items](2026-08-23-native-work-items-design.md) (#1502) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
 
 ## Problem
 
@@ -10,7 +10,7 @@ Native work items made `work` the source of task text for every anchor (sub-proj
 2. **Execution.** `pipeline` is a closed enum of three CLIs, each needing a repository checkout. Work can't go to an agent whose access lives outside GitHub, such as Joe's OpenClaw agents with their own workspaces, memory and host access.
 3. **Completion.** "Done" means the agent wrote `<!-- attempt-claim:<id> -->` into a bot-authored artifact, and `runtime/verify-outcome.sh` found it. That checks that a token was written, not that the requested state exists.
 
-Inbox summaries now use durable Work admission, claims and revision fencing while executing bounded model calls in the Console. Handoff summaries are the next consumer of that lifecycle. Fleet triage has used an hourly OpenClaw sweep. Giving either its own durable queue would duplicate admission, retries and failure visibility. Execution remains sized to the task.
+Inbox and handoff summaries now use durable Work admission, claims and revision fencing while executing bounded model calls in the Console. Fleet triage has used an hourly OpenClaw sweep. Giving either its own durable queue would duplicate admission, retries and failure visibility. Execution remains sized to the task.
 
 Adding OpenClaw as one more pipeline with a "target is an agent, not a repo" branch would add a fourth fork. This design removes the forks instead.
 
@@ -333,7 +333,10 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    Three Inbox claims plus one handoff claim preserve a four-call aggregate cap;
    maintenance still executes at most one call within its request budget.
    Remove the synchronous inference path from worker completion when this
-   replacement is qualified. Defer public pipeline/target migration and a general runtime registry until the
+   replacement is qualified. Qualified in PR #3018: a real parked run produced
+   summary Work `01M5TQN47G0QC4WM9ZNXY8A9GN` on its second bounded attempt;
+   both the summary and original handoff were verified in the deployed Console.
+   Defer public pipeline/target migration and a general runtime registry until the
    agent surfaces require them; update all affected clients together at that time.
 3. **Event-driven triage.** Connect existing durable GitHub intake to one
    background Work item per `fleet-triage:v1` issue source. Use the existing
@@ -360,7 +363,10 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    ownership checks, updates the stable `fleet-triage:v1` comment, applies only
    permitted existing labels and reads back effects. Adding `agent:opencode`
    happens last and uses normal label intake; never remove/re-add a control
-   label to redispatch. Issue closure and assignment changes are outside this
+   label to redispatch. Prior coding runs on the GitHub anchor, including manual
+   runs, and prior triage dispatch receipts both prevent automatic redispatch.
+   Recheck coding history immediately before requesting the dispatch label.
+   Issue closure and assignment changes are outside this
    slice.
 
    A narrow `Run.triagePublication` record tracks pending, complete, superseded

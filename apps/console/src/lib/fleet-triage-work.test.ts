@@ -299,6 +299,36 @@ describe('event-driven triage effects', () => {
     expect(await f.state()).toBe('done');
   });
 
+  it('does not automatically redispatch an issue with a settled manual coding run', async () => {
+    const f = await fixture();
+    const coding = await f.orchestrator.request({
+      taskId: f.anchor,
+      requestId: 'manual-coding',
+      pipeline: 'codex',
+      work: {
+        origin: { principal: 'test:maintainer', channel: 'api' },
+        spec: {
+          title: 'Manually requested fix',
+          description: 'Investigate the failing request.',
+          pipeline: 'codex',
+          target: { repo: f.anchor.repo },
+        },
+      },
+    });
+    if (isRefusal(coding) || !coding.run)
+      throw new Error('Coding admission failed');
+    const reported = await f.orchestrator.report(coding.run.runId, {
+      ok: true,
+      summary: 'done',
+    });
+    expect(isRefusal(reported)).toBe(false);
+    expect((await f.store.readRun(coding.run.runId))?.state).toBe('finished');
+    await publishFleetTriage(f.store, await f.settle(true), f.load);
+    expect(f.source.labels).not.toContain('agent:opencode');
+    expect(f.source.comments[0]?.body).toContain('no automatic redispatch');
+    expect(await f.state()).toBe('done');
+  });
+
   it('performs no external writes when its outbox lease has insufficient time', async () => {
     const f = await fixture();
     const entry = await f.settle();

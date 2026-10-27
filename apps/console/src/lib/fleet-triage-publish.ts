@@ -100,11 +100,13 @@ export async function publishFleetTriage(
   const github = getGithubClient();
   const marker = triageMarker(anchor);
   const history = await readTriageHistory(store, anchor);
-  let dispatchedBefore = history.runs.some(
-    (previous) =>
-      previous.runId !== entry.runId &&
-      previous.triagePublication?.dispatchObserved,
-  );
+  let dispatchedBefore =
+    (await store.listRuns(anchor)).length > 0 ||
+    history.runs.some(
+      (previous) =>
+        previous.runId !== entry.runId &&
+        previous.triagePublication?.dispatchObserved,
+    );
   for (const previous of history.runs) {
     const requested = previous.triagePublication?.dispatchRequested;
     if (
@@ -282,6 +284,12 @@ export async function publishFleetTriage(
 
   source = await fresh();
   if (source === undefined) return;
+  // A manually requested coding run can settle while this report publishes.
+  // Its removed control labels do not authorize another automatic dispatch.
+  if ((await store.listRuns(anchor)).length > 0) {
+    await record({ state: 'complete' });
+    return;
+  }
   if (
     !(await record({
       dispatchRequested:
