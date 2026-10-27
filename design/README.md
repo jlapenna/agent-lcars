@@ -18,6 +18,9 @@ prototype updates it there too. A maintainer's decision about the console
 outranks an older drawing — record it here rather than let the two disagree.
 Decisions the prototype already carries:
 
+- Bridge includes recent event-driven triage and summaries, linking into Work.
+  Work exposes an event-driven filter and source activity on detail pages; source
+  revisions represent admitted work, not every raw webhook delivery.
 - The Bridge has no repository select; its panels summarise the whole fleet.
 - Every toolbar control applies on change; there is no Apply step.
 - On phones the Inbox list and selected detail grow with their content; the

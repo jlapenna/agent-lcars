@@ -379,6 +379,13 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    not generate another semantic revision, while human edits and ownership
    changes still do. Backfill is bounded and uses this same admission path.
 
+   Work lists event-driven operations explicitly and filters them using existing
+   source revisions. Work detail exposes readable source activity, attempts,
+   observed source times and publication links. Bridge shows bounded recent
+   event-driven activity with links into Work and explicit read failures. Neither
+   surface introduces an event store or claims to enumerate duplicate or ignored
+   webhook deliveries; both render the existing admitted Work history.
+
 4. **General agent surfaces and intent verification.** Expose permitted agents
    and operations through Console, CLI and Slack. Ship observed-state verification
    and remove obsolete marker verification together. Keep replies separate from
