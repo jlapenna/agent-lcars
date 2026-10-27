@@ -71,7 +71,11 @@ async function fixture(initialComment?: string) {
   });
   const labelEvents: { createdAt: string; label: { name: string } }[] = [];
   github.issues.listLabelsForRepo.mockResolvedValue({
-    data: [{ name: 'component:console' }, { name: 'type:bug' }],
+    data: [
+      { name: 'component:console' },
+      { name: 'app:console' },
+      { name: 'type:bug' },
+    ],
   });
   github.issues.addLabels.mockImplementation(
     async ({ labels }: { labels: string[] }) => {
@@ -189,21 +193,25 @@ describe('event-driven triage effects', () => {
     expect(runs[1]?.params?.mode).toBe('implement');
   });
 
-  it('keeps Work running until comment, metadata and final normal coding intake are observed', async () => {
-    const f = await fixture();
-    const entry = await f.settle(true);
-    expect(await f.state()).toBe('running');
-    await publishFleetTriage(f.store, entry, f.load);
-    expect(await f.state()).toBe('done');
-    expect(f.source.labels).toContain('agent:opencode');
-    expect(github.issues.createComment).toHaveBeenCalledTimes(1);
-    expect(github.issues.addLabels.mock.calls.at(-1)?.[0].labels).toEqual([
-      'agent:opencode',
-    ]);
-    await publishFleetTriage(f.store, entry, f.load);
-    expect(github.issues.createComment).toHaveBeenCalledTimes(1);
-    expect(github.issues.addLabels).toHaveBeenCalledTimes(2);
-  });
+  it.each(['component:console', 'app:console'])(
+    'publishes existing metadata %s and completes normal coding intake exactly once',
+    async (label) => {
+      const f = await fixture();
+      const entry = await f.settle(true, [label]);
+      expect(await f.state()).toBe('running');
+      await publishFleetTriage(f.store, entry, f.load);
+      expect(await f.state()).toBe('done');
+      expect(f.source.labels).toContain('agent:opencode');
+      expect(f.source.labels).toContain(label);
+      expect(github.issues.createComment).toHaveBeenCalledTimes(1);
+      expect(github.issues.addLabels.mock.calls.at(-1)?.[0].labels).toEqual([
+        'agent:opencode',
+      ]);
+      await publishFleetTriage(f.store, entry, f.load);
+      expect(github.issues.createComment).toHaveBeenCalledTimes(1);
+      expect(github.issues.addLabels).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('recovers a lost create response without another comment', async () => {
     const f = await fixture();
@@ -340,8 +348,8 @@ describe('event-driven triage effects', () => {
     expect(github.issues.createComment).not.toHaveBeenCalled();
   });
 
-  it.each(['agent:codex', 'type:bug'])(
-    'rejects generated control or eligibility label %s before any GitHub mutation',
+  it.each(['agent:codex', 'type:bug', 'app:missing', 'automation:heal'])(
+    'rejects unavailable, control, or eligibility label %s before any GitHub mutation',
     async (label) => {
       const f = await fixture();
       await publishFleetTriage(f.store, await f.settle(false, [label]), f.load);
