@@ -216,33 +216,11 @@ async function reviews(
       .map((review) => [review.author.login, review]),
   );
   return {
-    approvals: usableReviews.filter(
-      (review) =>
-        review.commit.oid === head &&
-        ['APPROVED', 'COMMENTED'].includes(review.state) &&
-        !['DISMISSED', 'CHANGES_REQUESTED'].includes(
-          latest.get(review.author.login)?.state ?? '',
-        ),
-    ),
     changesRequested: [...latest.values()].some(
       (review) => review.state === 'CHANGES_REQUESTED',
     ),
     unresolved: pr.reviewThreads.nodes.some((thread) => !thread.isResolved),
   };
-}
-
-function hasIndependentReview(
-  review: Awaited<ReturnType<typeof reviews>>,
-  author: string,
-): boolean {
-  return (
-    !review.unresolved &&
-    !review.changesRequested &&
-    review.approvals.some(
-      (approval) =>
-        approval.author.login.toLowerCase() !== author.toLowerCase(),
-    )
-  );
 }
 
 /** Proves the exact merge commit passed the active protected-branch rule
@@ -321,20 +299,9 @@ async function verifyProtectedMerge(
 /** Thrown only after an authoritative read proved the run's own exact
  * attempt-marked, non-draft, open PR in its target repository with an
  * established protected target policy, which merely has no auto-merge arm
- * yet, or (as ProtectedMergeWithoutReviewError) that the PR already merged
- * through actively enforced protection. Every other failure is a generic
- * Error. */
+ * yet. Every other failure is a generic Error. */
 export class UnqualifiedDeliveryError extends Error {
-  override readonly name: string = 'UnqualifiedDeliveryError';
-}
-
-/** Thrown only after an authoritative read proved the run's own exact
- * attempt-marked PR already merged in its target repository, with no review
- * feedback outstanding, and the exact merge commit passed the protected
- * rule suite (required checks and pull-request rule) without an independent
- * approval. Protection, not review, gated that merge. */
-export class ProtectedMergeWithoutReviewError extends UnqualifiedDeliveryError {
-  override readonly name = 'ProtectedMergeWithoutReviewError';
+  override readonly name = 'UnqualifiedDeliveryError';
 }
 
 /** A successful PR artifact is not a completion verdict. This exact server
@@ -376,25 +343,14 @@ export async function readyDeliveryBinding(
   // repository, merely not armed yet.
   if (!pr.merged && pr.auto_merge === null)
     throw new UnqualifiedDeliveryError('Deliverable is not armed yet');
-  // An open, armed artifact transfers waiting ownership; asynchronous review
-  // belongs to the durable monitor, rather than the implementation executor.
-  // Already merged artifacts still require review before accepting landing.
-  let reviewed = true;
-  if (pr.merged) {
-    const review = await reviews(deps, repo, number, pr.head.sha);
-    reviewed = hasIndependentReview(review, pr.user.login);
-    // Missing approval alone may be settled by protected-merge proof below;
-    // outstanding feedback never is.
-    if (!reviewed && (review.unresolved || review.changesRequested))
-      throw new Error('Deliverable requires exact-head independent review');
-  }
+  // An open, armed artifact transfers waiting ownership to the durable
+  // monitor, rather than the implementation executor.
   const final = prSchema.parse(await github(deps, repo, `pulls/${number}`));
   if (
     final.head.sha !== pr.head.sha ||
     final.base.ref !== pr.base.ref ||
     // An armed open artifact may auto-merge during verification. That
-    // same-head transition keeps the waiting binding: the monitor then
-    // requires independent review before accepting the landing.
+    // same-head transition keeps the waiting binding for the monitor.
     (pr.merged && !final.merged) ||
     (!final.merged && final.state !== 'open') ||
     final.draft ||
@@ -412,14 +368,6 @@ export async function readyDeliveryBinding(
     runtimeGate: payload.spec.deliveryRuntime ?? 'unknown',
     observedAt: now,
   };
-  if (pr.merged && !reviewed) {
-    if (final.merge_commit_sha === null || final.merge_commit_sha === undefined)
-      throw new Error('Protected landing not established');
-    await verifyProtectedMerge(deps, binding, final.merge_commit_sha);
-    throw new ProtectedMergeWithoutReviewError(
-      'Deliverable merged through protection without independent review',
-    );
-  }
   if (pr.merged) {
     const landed = await observeGithubDelivery(deps, binding);
     if (landed.kind !== 'protected-merge')
@@ -580,12 +528,9 @@ export async function observeGithubDelivery(
       pr.auto_merge?.merge_method !== 'squash')
   )
     return { kind: 'waiting', head: binding.head };
-  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
-  if (pr.head.sha !== binding.head) {
-    if (!hasIndependentReview(review, pr.user.login))
-      return { kind: 'waiting', head: binding.head };
+  if (pr.head.sha !== binding.head)
     return { kind: 'revision', head: binding.head, newHead: pr.head.sha };
-  }
+  const review = await reviews(deps, binding.repo, binding.number, pr.head.sha);
   // Late same-head feedback remains actionable while delivery is waiting,
   // even if checks allowed the artifact to merge before review arrived.
   if (review.changesRequested || review.unresolved)
@@ -594,9 +539,9 @@ export async function observeGithubDelivery(
       head: binding.head,
       reason: 'Review feedback requires correction',
     };
+  // The target's branch protection decides what review a merge needs; a merge
+  // it accepted is delivery, with or without an approval.
   if (pr.merged && pr.merge_commit_sha !== null) {
-    if (!hasIndependentReview(review, pr.user.login))
-      return { kind: 'waiting', head: binding.head };
     await verifyProtectedMerge(deps, binding, pr.merge_commit_sha);
     return {
       kind: 'protected-merge',
@@ -638,7 +583,7 @@ export async function observeGithubDelivery(
   );
   // The declared App can read Checks, not private-repository commit statuses.
   // Uncovered legacy required contexts remain unknown until protected landing;
-  // available exact-head check failures and independent review stay actionable.
+  // available exact-head check failures and review feedback stay actionable.
   if (failed.length)
     return {
       kind: 'correction',

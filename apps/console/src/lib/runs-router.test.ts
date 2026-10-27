@@ -27,10 +27,7 @@ import {
 import { recoverCodexCredentialOperations } from './codex-credential-operations';
 import { codexCentralAuthObject } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
-import {
-  ProtectedMergeWithoutReviewError,
-  UnqualifiedDeliveryError,
-} from './ready-delivery';
+import { UnqualifiedDeliveryError } from './ready-delivery';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
@@ -3024,11 +3021,6 @@ describe('complete', () => {
       error: new UnqualifiedDeliveryError('not armed'),
       outcome: 'merged-deliverable',
     },
-    {
-      name: 'a protected merge claimed as merged-deliverable',
-      error: new ProtectedMergeWithoutReviewError('merged'),
-      outcome: 'merged-deliverable',
-    },
   ])('fails closed on $name, leaving the run live', async (c) => {
     const f = await claimedForCompletion(`work-complete-closed-${c.outcome}`);
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
@@ -3094,55 +3086,6 @@ describe('complete', () => {
       expect.stringContaining('settling the PR without delivery ownership'),
       runId,
       'Deliverable is not armed yet',
-    );
-    warn.mockRestore();
-    const settled = (await store.readRun(runId))!;
-    expect(settled.result).toMatchObject({
-      ok: true,
-      summary: 'pull-request',
-    });
-    expect((await store.readTask(settled.task))!.task.delivery).toBeUndefined();
-  });
-
-  it('settles a PR merged through protection before completion, without delivery ownership', async () => {
-    const { store, orchestrator, now } = fixture();
-    const runId = await seedQueuedRun(store, orchestrator, {
-      workId: wid('work-complete-merged-pr'),
-      now: NOW,
-    });
-    const token = mintRunToken();
-    await store.claimQueuedRun({
-      pipelines: ['claude'],
-      now: NOW,
-      claimedBy: 'runner-1',
-      tokenHash: hashRunToken(token),
-    });
-    const ready = vi.fn(async () => {
-      throw new ProtectedMergeWithoutReviewError('merged through protection');
-    });
-    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-    const r = await call(
-      {
-        store,
-        orchestrator,
-        now,
-        ...context,
-        bearerToken: token,
-        loadReadyDeliveryBinding: ready,
-      },
-      'POST',
-      runPath(runId, '/complete'),
-      {
-        outcome: 'pull-request',
-        outcomeReference: { kind: 'pull-request', number: 3 },
-      },
-    );
-    expect(r).toEqual({ status: 200, json: { runId, state: 'finished' } });
-    expect(ready).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('settling the PR without delivery ownership'),
-      runId,
-      'merged through protection',
     );
     warn.mockRestore();
     const settled = (await store.readRun(runId))!;

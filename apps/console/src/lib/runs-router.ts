@@ -1083,12 +1083,11 @@ export const runsRouter = os.router({
         );
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        // Fail closed by default. Two relaxations, both for an initial
+        // Fail closed by default. One relaxation, for an initial
         // pull-request result whose own exact attempt-marked PR on a
         // protected target the authoritative read proved: a ready, open PR
         // with no auto-merge arm yet (a repository's arming workflow can land
-        // after the executor exits), or a PR that already merged through
-        // actively enforced protection without an independent review. It settles as an ordinary
+        // after the executor exits). It settles as an ordinary
         // pull-request result without durable delivery ownership instead of
         // discarding the deliverable as runner-failed. Read failures,
         // malformed or missing evidence, corrections and merged-deliverable
