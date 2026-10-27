@@ -392,6 +392,12 @@ RUN set -eux; \
     OPENCODE_VERSION="$OPENCODE_VERSION" TARGETARCH="$TARGETARCH" \
       bash /usr/local/lib/agent-lcars/install-opencode-release.sh
 
+# Goose is a supported runtime in the same image and publication lifecycle.
+COPY goose-version /usr/local/share/agent-lcars-tooling/goose-version
+COPY install-goose-release.sh /usr/local/lib/agent-lcars/install-goose-release.sh
+RUN GOOSE_VERSION="$(cat /usr/local/share/agent-lcars-tooling/goose-version)" \
+    TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-goose-release.sh
+
 # Keep Corepack's selected pnpm version tied to this repo's one
 # packageManager declaration instead of introducing a Dockerfile pin that can
 # drift. The build stage already checked out the exact publishing revision,

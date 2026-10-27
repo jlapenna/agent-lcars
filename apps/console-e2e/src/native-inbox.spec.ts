@@ -2,6 +2,7 @@ import { expect, type Page, test } from '@playwright/test';
 
 import { E2E_ITEM_NUMBERS, resetCliSessions } from './seed';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { workAdminHeaders } from './util/native-work';
 
 /** The decision list is full width until a decision is selected
  * (design/fleet-console.html); open the first row's detail. */
@@ -175,6 +176,7 @@ test.describe('native and GitHub human decisions', () => {
   });
 
   test('keeps a refused reply editable when another operator admitted a run', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -185,7 +187,7 @@ test.describe('native and GitHub human decisions', () => {
     const draft = detail.getByRole('textbox', { name: 'Reply to the agent' });
     await draft.fill('Keep this refused draft.');
     const admitted = await request.post(`/api/work/v1/items/${ID}/reply`, {
-      headers: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+      headers: workAdminHeaders(baseURL),
       data: { text: 'Other operator reply' },
     });
     expect(admitted.ok()).toBe(true);

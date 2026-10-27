@@ -35,6 +35,25 @@ function fixture() {
 }
 
 describe('admitGithubWork', () => {
+  it('rejects an unmanaged repository even without a repository-bound caller', async () => {
+    const runtime = fixture();
+    const anchor = { repo: 'unmanaged/repository', issue: ANCHOR.issue };
+    const payload = work();
+    payload.spec.target = { repo: anchor.repo };
+
+    await expect(
+      admitGithubWork(runtime, {
+        anchor,
+        requestId: 'unmanaged-browser-dispatch',
+        params: { mode: 'implement' },
+        work: payload,
+      }),
+    ).resolves.toMatchObject({ kind: 'forbidden' });
+    expect(await runtime.store.readTask(anchor)).toBeUndefined();
+    expect(await runtime.store.listRuns(anchor)).toEqual([]);
+    expect(runtime.drain).not.toHaveBeenCalled();
+  });
+
   it.each(['implement', 'review'] as const)(
     'refuses conflicting %s label snapshots at shared admission even without interpretation',
     async (mode) => {

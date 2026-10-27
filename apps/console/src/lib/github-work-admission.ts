@@ -18,6 +18,7 @@ import {
   type RoutingLabelConflict,
 } from './github-routing-labels';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
+import { repositoryForbiddenReason } from './work-authorization';
 import { normalizeGithubWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
 import { authorizeProviderFallback } from './work-provider-fallback';
@@ -115,8 +116,8 @@ export async function admitGithubWork(
     };
   }
   if (
-    input.authorization?.sourceRepository !== undefined &&
-    input.authorization.sourceRepository !== anchor.repo
+    repositoryForbiddenReason(input.authorization ?? {}, anchor.repo) !==
+    undefined
   ) {
     return {
       kind: 'forbidden',
@@ -293,8 +294,7 @@ export async function redispatchGithubWork(
   const anchor = parsedAnchor.data;
 
   if (
-    input.authorization.sourceRepository !== undefined &&
-    input.authorization.sourceRepository !== anchor.repo
+    repositoryForbiddenReason(input.authorization, anchor.repo) !== undefined
   ) {
     return {
       kind: 'forbidden',

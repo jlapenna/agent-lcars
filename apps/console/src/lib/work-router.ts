@@ -14,6 +14,7 @@ import {
   isSourceManagedWork,
   itemsContract,
   type MaintenanceTickOutput,
+  recipeWorkSpecSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -27,9 +28,14 @@ import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
 import {
+  mayAccessStoredWork,
+  repositoryForbiddenReason,
+} from './work-authorization';
+import {
   forbiddenReason,
   isWorkOperatorPrincipal,
   mintItem,
+  readWorkTask,
   view,
   type WorkContext,
 } from './work-mint';
@@ -188,11 +194,9 @@ export const workRouter = os.router({
       const repo = controlPlaneRepositories().find(
         (candidate) => candidate.toLowerCase() === input.repo.toLowerCase(),
       );
-      const { sourceRepository } = context.principal;
       if (
         repo === undefined ||
-        (sourceRepository !== undefined &&
-          sourceRepository.toLowerCase() !== repo.toLowerCase())
+        repositoryForbiddenReason(context.principal, repo) !== undefined
       ) {
         throw errors.FORBIDDEN();
       }
@@ -201,7 +205,7 @@ export const workRouter = os.router({
   ),
 
   get: reader.get.handler(async ({ input, context, errors }) => {
-    const task = await context.runtime.store.readTask({ workId: input.id });
+    const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
     return view(context, input.id, task.task);
   }),
@@ -212,7 +216,10 @@ export const workRouter = os.router({
       input.cursor,
     );
     const native = tasks.flatMap(({ task }) =>
-      isWorkAnchor(task.task) ? [{ workId: task.task.workId, task }] : [],
+      isWorkAnchor(task.task) &&
+      mayAccessStoredWork(context.principal, task.work)
+        ? [{ workId: task.task.workId, task }]
+        : [],
     );
     // Cursor for the *next* raw store page, not the filtered one below:
     // walking pages by the store's own newest-first `workId` order is what
@@ -226,7 +233,11 @@ export const workRouter = os.router({
     // page that comes back empty with no `nextCursor`, not an off-by-one.
     const nextCursor =
       tasks.length === input.limit
-        ? native[native.length - 1]?.workId
+        ? tasks
+            .flatMap(({ task }) =>
+              isWorkAnchor(task.task) ? [task.task.workId] : [],
+            )
+            .at(-1)
         : undefined;
 
     // Two passes on purpose. Filtering needs derived state, which needs
@@ -274,7 +285,7 @@ export const workRouter = os.router({
   }),
 
   cancel: operator.cancel.handler(async ({ input, context, errors }) => {
-    const task = await context.runtime.store.readTask({ workId: input.id });
+    const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
     if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
@@ -316,8 +327,13 @@ export const workRouter = os.router({
   }),
 
   update: operator.update.handler(async ({ input, context, errors }) => {
-    const task = await context.runtime.store.readTask({ workId: input.id });
+    const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
+    if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+      throw errors.CONFLICT({
+        message:
+          'Recipe occurrences are immutable; update the repository definition.',
+      });
     if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({
         message: 'Source-managed work is read-only.',
@@ -346,8 +362,12 @@ export const workRouter = os.router({
 
   redispatch: operator.redispatch.handler(
     async ({ input, context, errors }) => {
-      const task = await context.runtime.store.readTask({ workId: input.id });
+      const task = await readWorkTask(context, input.id);
       if (task === undefined) throw errors.NOT_FOUND();
+      if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+        throw errors.CONFLICT({
+          message: 'Invoke a new occurrence from Jobs after retirement.',
+        });
       if (isSourceManagedWork(task.task.work))
         throw errors.CONFLICT({
           message: 'Source-managed work is read-only.',
@@ -466,7 +486,7 @@ export const workRouter = os.router({
     // `Task` -- unlike `create`/`cancel`/`redispatch`, which get one back
     // from the orchestrator call they each make directly. Re-read it, the
     // same way `get` does.
-    const task = await context.runtime.store.readTask({ workId: input.id });
+    const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
     if (isSourceManagedWork(task.task.work))
       throw errors.CONFLICT({

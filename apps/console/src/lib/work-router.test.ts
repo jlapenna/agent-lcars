@@ -2681,3 +2681,73 @@ describe('native cancel retires incomplete delivery recovery', () => {
     ).toBeUndefined();
   });
 });
+
+describe('shared repository authority', () => {
+  it('refuses native admission to another repository before creating a task', async () => {
+    const ctx = context({
+      principal: { ...githubActionsOperator, sourceRepository: 'octo/foreign' },
+    });
+    const result = await call(ctx, 'PUT', `/items/${ID}`, { spec });
+    expect(result.status).toBe(403);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toBeUndefined();
+  });
+
+  it('applies the same restriction to stored reads, writes and paginated lists', async () => {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const before = await ctx.runtime.store.readTask({ workId: ID });
+    ctx.principal = {
+      ...githubActionsOperator,
+      sourceRepository: 'octo/foreign',
+    };
+    for (const [method, suffix, body] of [
+      ['GET', '', undefined],
+      ['POST', '/cancel', undefined],
+      ['PATCH', '', { title: 'changed', description: 'changed' }],
+      ['POST', '/redispatch', undefined],
+      ['POST', '/reply', { text: 'continue', requestId: 'denied' }],
+    ] as const) {
+      expect(
+        (await call(ctx, method, `/items/${ID}${suffix}`, body)).status,
+      ).toBe(403);
+    }
+    const listed = await call(ctx, 'GET', '/items?limit=1');
+    expect(listed.json.items).toEqual([]);
+    expect(listed.json.nextCursor).toBe(ID);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toEqual(before);
+    ctx.principal = {
+      ...githubActionsOperator,
+      sourceRepository: 'JLAPENNA/AGENT-LCARS',
+    };
+    expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(200);
+  });
+});
+
+it('lets a repository-bound caller read its Goose occurrence through the shared item API', async () => {
+  const ctx = context({
+    principal: { ...githubActionsOperator, pipelines: ['goose'] },
+  });
+  await ctx.runtime.orchestrator.request({
+    taskId: { workId: ID },
+    requestId: 'recipe-1',
+    pipeline: 'goose',
+    work: {
+      origin: { principal: githubActionsOperator.principal, channel: 'api' },
+      spec: {
+        ...spec,
+        pipeline: 'goose',
+        priority: 'background',
+        jobOccurrence: 'a'.repeat(64),
+      },
+    },
+  });
+  expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(200);
+  expect((await call(ctx, 'GET', '/items')).json.items).toHaveLength(1);
+  ctx.principal = {
+    ...githubActionsOperator,
+    pipelines: ['goose'],
+    sourceRepository: 'octo/foreign',
+  };
+  expect((await call(ctx, 'GET', `/items/${ID}`)).status).toBe(403);
+  expect((await call(ctx, 'GET', '/items')).json.items).toEqual([]);
+});

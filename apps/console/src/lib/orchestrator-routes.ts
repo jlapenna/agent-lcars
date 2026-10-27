@@ -42,6 +42,7 @@ export interface OrchestratorRouteDeps {
     anchor: Extract<TaskId, { repo: string }>,
     deleted?: boolean,
   ) => Promise<void>;
+  executeRepositoryJobs?: (deadline: number) => Promise<void>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -444,7 +445,14 @@ export async function handleReconcile(
     // ticker continues any larger backlog on its next pass.
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
-    await deps.executeModelWork?.(modelDeadline);
+    // Independent I/O-bound maintenance shares the same wall-clock window.
+    // Await both even on failure; one must not outlive the HTTP request.
+    const maintenance = await Promise.allSettled([
+      deps.executeModelWork?.(modelDeadline),
+      deps.executeRepositoryJobs?.(modelDeadline),
+    ]);
+    for (const result of maintenance)
+      if (result.status === 'rejected') throw result.reason;
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +

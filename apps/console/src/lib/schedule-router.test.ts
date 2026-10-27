@@ -1524,3 +1524,34 @@ describe('tick', () => {
     ).not.toHaveProperty('nextDueAt');
   });
 });
+
+it('keeps shared-principal schedules within the signed repository for reads and mutations', async () => {
+  const ctx = context();
+  const created = await call(ctx, 'PUT', `/schedules/${ID}`, {
+    cron: '0 * * * *',
+    spec,
+  });
+  expect(created.status).toBe(201);
+  const before = await ctx.scheduleStore.readSchedule(ID);
+  ctx.principal = {
+    ...operator,
+    via: 'oidc',
+    sourceRepository: 'octo/foreign',
+  };
+  expect((await call(ctx, 'GET', `/schedules/${ID}`)).status).toBe(403);
+  expect((await call(ctx, 'GET', '/schedules')).json.schedules).toEqual([]);
+  expect(
+    (
+      await call(ctx, 'POST', `/schedules/${ID}/disable`, {
+        expectedRevision: created.json.revision,
+      })
+    ).status,
+  ).toBe(403);
+  expect(await ctx.scheduleStore.readSchedule(ID)).toEqual(before);
+  ctx.principal = {
+    ...operator,
+    via: 'oidc',
+    sourceRepository: 'JLAPENNA/AGENT-LCARS',
+  };
+  expect((await call(ctx, 'GET', `/schedules/${ID}`)).status).toBe(200);
+});

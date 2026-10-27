@@ -14,6 +14,7 @@ import {
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   isSourceManagedWork,
+  recipeWorkSpecSchema,
   WORK_DESCRIPTION_MAX,
   workPayloadSchema,
   type WorkSpec,
@@ -170,6 +171,12 @@ export async function requestReply(
   const task = await context.runtime.store.readTask(request.task);
   if (task === undefined)
     return { ok: false, code: 'NOT_FOUND', message: 'no such item' };
+  if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Invoke a new recipe occurrence from Jobs.',
+    };
 
   if (isSourceManagedWork(task.task.work))
     return {

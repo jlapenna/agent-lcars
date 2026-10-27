@@ -60,6 +60,7 @@ export function WorkActions({
   cancel,
   redispatch,
   reply,
+  recipe = false,
 }: {
   id: string;
   state: ItemState;
@@ -79,6 +80,7 @@ export function WorkActions({
    *  without a reply channel (it has no per-item conversation view to
    *  return to) and keeps its existing Cancel/Redispatch-only behavior. */
   reply?: WorkDetailReplyAction;
+  recipe?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -91,11 +93,12 @@ export function WorkActions({
   }>();
 
   const canCancel = state !== 'done' && state !== 'canceled';
-  const canRedispatch = state === 'parked' || state === 'failed';
+  const canRedispatch = !recipe && (state === 'parked' || state === 'failed');
   // A reply is new information for a stopped item: parked (the agent asked
   // a question) or done ("one more tweak" on a finished item is a reply,
   // not a new item -- spec decision 2).
   const canReply =
+    !recipe &&
     (state === 'parked' || state === 'failed' || state === 'done') &&
     reply !== undefined;
 

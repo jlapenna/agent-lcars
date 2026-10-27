@@ -7,6 +7,7 @@ import {
   NATIVE_WORK_TITLE as TITLE,
   readNativeRuns,
   WORK_ADMIN_HEADERS,
+  workAdminHeaders,
 } from './util/native-work';
 
 const DETAIL = `/work/${ID}`;
@@ -229,6 +230,7 @@ test.describe('native Work mutation journeys', () => {
   });
 
   test('keeps a refused edit and reply when a concurrent operator admits work', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -241,7 +243,7 @@ test.describe('native Work mutation journeys', () => {
       .getByPlaceholder('Reply to the agent...')
       .fill('Keep this refused reply.');
     const admitted = await request.post(`${API}/reply`, {
-      headers: WORK_ADMIN_HEADERS,
+      headers: workAdminHeaders(baseURL),
       data: { text: 'Other operator reply' },
     });
     expect(admitted.ok()).toBe(true);
@@ -275,6 +277,7 @@ test.describe('native Work mutation journeys', () => {
   });
 
   test('rejects stale redispatch after another operator cancels', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -283,7 +286,7 @@ test.describe('native Work mutation journeys', () => {
       page.getByRole('button', { name: 'Redispatch', exact: true }),
     ).toBeVisible();
     const canceled = await request.post(`${API}/cancel`, {
-      headers: WORK_ADMIN_HEADERS,
+      headers: workAdminHeaders(baseURL),
     });
     expect(canceled.ok()).toBe(true);
     await page.getByRole('button', { name: 'Redispatch', exact: true }).click();

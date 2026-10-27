@@ -22,7 +22,11 @@ import {
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
-import { runsContract, workPayloadSchema } from '@agent-lcars/work';
+import {
+  runsContract,
+  storedWorkPayloadSchema,
+  workPayloadSchema,
+} from '@agent-lcars/work';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -54,6 +58,9 @@ import {
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
+import { jobDigest } from './repository-job-definition';
+import { validateJobResult } from './repository-job-result';
+import { repositoryJobs } from './repository-jobs-runtime';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
@@ -608,11 +615,89 @@ export const runsRouter = os.router({
     return undefined;
   }),
 
+  recipeBrief: os.recipeBrief.handler(async ({ input, context }) => {
+    const run = await requireRunToken(context, input.runId);
+    const jobs = repositoryJobs({
+      store: context.store,
+      orchestrator: context.orchestrator,
+      drain: context.drain,
+    });
+    const id = run.params?.['jobOccurrence'];
+    const occurrence =
+      id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
+    if (
+      run.pipeline !== 'goose' ||
+      !occurrence ||
+      !('workId' in run.task) ||
+      occurrence.workId !== run.task.workId
+    )
+      throw new ORPCError('FORBIDDEN', { message: 'Not a recipe occurrence' });
+    if (
+      jobDigest(jobs.authorize(occurrence.definition, occurrence.principal)) !==
+      jobDigest(occurrence.profile)
+    )
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Reserved execution profile changed',
+      });
+    const previous =
+      occurrence.baselineOccurrence === undefined
+        ? undefined
+        : await jobs.deps.store.readOccurrence(occurrence.baselineOccurrence);
+    return {
+      definition: occurrence.definition,
+      parameters: occurrence.parameters,
+      profile: occurrence.profile,
+      baseline: previous?.artifact?.baseline ?? null,
+    };
+  }),
+  recipeComplete: os.recipeComplete.handler(async ({ input, context }) => {
+    const run = await requireRunToken(context, input.runId);
+    const jobs = repositoryJobs({
+      store: context.store,
+      orchestrator: context.orchestrator,
+      drain: context.drain,
+    });
+    const id = run.params?.['jobOccurrence'];
+    const occurrence =
+      id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
+    if (
+      run.pipeline !== 'goose' ||
+      !occurrence ||
+      !('workId' in run.task) ||
+      occurrence.workId !== run.task.workId
+    )
+      throw new ORPCError('FORBIDDEN', { message: 'Not a recipe occurrence' });
+    const artifact = validateJobResult(occurrence.definition, input.result);
+    await jobs.stage(occurrence, artifact);
+    const settled = await context.orchestrator.report(
+      run.runId,
+      {
+        ok: artifact.successful,
+        ref: `job-result:${artifact.digest}`,
+        summary: artifact.successful
+          ? 'Recipe completed'
+          : 'Recipe coverage incomplete',
+        message: String(artifact.artifacts['report.md']).slice(0, 16384),
+      },
+      run.queue?.tokenHash ?? '',
+      undefined,
+      context.workerPermit,
+    );
+    if (isRefusal(settled))
+      throw new ORPCError('CONFLICT', { message: settled.reason });
+    await drainAfterCompletion(context, run.runId);
+    return { runId: run.runId, state: settled.run?.state ?? 'finished' };
+  }),
   brief: os.brief.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
     const mode = run.params?.['mode'];
-    if (!mode || !['implement', 'review', 'reply'].includes(mode)) {
+    if (
+      !mode ||
+      !(run.pipeline === 'goose'
+        ? mode === 'recipe'
+        : ['implement', 'review', 'reply'].includes(mode))
+    ) {
       throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
     }
     const resumeSessionId = run.params?.['resumeSessionId'];
@@ -690,7 +775,7 @@ export const runsRouter = os.router({
     // an already-stored task, or corrupted data). Logged with the parse
     // issues for diagnosis; the caller gets only the generic 500, never the
     // detail or raw stored value.
-    const parsed = workPayloadSchema.safeParse(work);
+    const parsed = storedWorkPayloadSchema.safeParse(work);
     if (!parsed.success) {
       logger.error(
         'agent-lcars: claimed run has stored Work that no longer parses',

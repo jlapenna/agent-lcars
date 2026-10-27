@@ -6,6 +6,7 @@ export type NavKey =
   // 'work' joined the destinations in sub-project 2; the /work pages set it
   // as current.
   | 'work'
+  | 'jobs'
   | 'sessions'
   | 'costs';
 export type NavAccent =
@@ -28,6 +29,7 @@ export const CONSOLE_DESTINATIONS: ReadonlyArray<{
     accent: 'blue',
   },
   { key: 'work', href: '/work', label: 'Work', accent: 'violet' },
+  { key: 'jobs', href: '/jobs', label: 'Jobs', accent: 'violet' },
   { key: 'sessions', href: '/sessions', label: 'Sessions', accent: 'teal' },
   { key: 'costs', href: '/costs', label: 'Costs', accent: 'gold' },
 ];

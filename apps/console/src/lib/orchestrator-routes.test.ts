@@ -1560,3 +1560,38 @@ describe('handleReconcile', () => {
     expect(commentBody.body).toContain('attempt 2 of 3');
   });
 });
+
+it('starts repository maintenance while model work is still pending and awaits both', async () => {
+  const { deps } = fixture();
+  let finishModel: (() => void) | undefined;
+  let finishJobs: (() => void) | undefined;
+  const model = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishModel = resolve;
+      }),
+  );
+  const jobs = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishJobs = resolve;
+      }),
+  );
+  const maintenance = handleReconcile({
+    ...deps,
+    executeModelWork: model,
+    executeRepositoryJobs: jobs,
+  });
+  await vi.waitFor(() => expect(jobs).toHaveBeenCalledOnce());
+  expect(model).toHaveBeenCalledOnce();
+  expect(jobs.mock.calls[0]).toEqual(model.mock.calls[0]);
+  let completed = false;
+  void maintenance.then(() => {
+    completed = true;
+  });
+  finishJobs?.();
+  await Promise.resolve();
+  expect(completed).toBe(false);
+  finishModel?.();
+  expect((await maintenance).status).toBe(200);
+});

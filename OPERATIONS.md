@@ -42,6 +42,26 @@ instead with the owner query, and expect `items` to be refused). Admin status
 alone is not proof. Removing the grant through the same deployment path revokes Work access
 for that identity without having to wait for its sessions to expire.
 
+### Integrating Work platforms
+
+All `/api/work/v1` adapters share authentication and cookie-origin enforcement
+at the catch-all route. Resource authorization lives in
+[`work-authorization.ts`](apps/console/src/lib/work-authorization.ts): admitted
+repository, verified source-repository restriction, and pipeline capability.
+Native minting, GitHub admission, delivery evidence, provider fallback and
+repository jobs consume that policy. Stored-item reads and mutations use
+`readWorkTask`; lists use the same stored-resource policy without changing
+pagination cursors. Unbound operator/reaper read access remains unchanged.
+
+Repository-bound identities are refused at the shared HTTP entry point unless
+the operation declares repository-bound access. Adding an adapter therefore
+does not silently grant it cross-repository authority. Adapters declare their
+operation scope and bind their resource to the shared policy; they do not interpret
+OIDC claims or implement repository comparisons. Services with transaction-time
+grant checks bind their callback with `scopedWorkGrant`, so replay, disabling,
+and concurrent requests keep the authenticated repository boundary. Keep live
+grant revalidation and platform-specific execution/profile validation in place.
+
 ### Authentication options
 
 - Reuse an existing authenticated console session. For dedicated verification

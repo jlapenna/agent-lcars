@@ -8,6 +8,7 @@ import {
   resetSchedules,
   seedLastScheduleItem,
   WORK_ADMIN_HEADERS,
+  workAdminHeaders,
 } from './util/native-work';
 
 useE2eAdminBeforeEach();
@@ -149,6 +150,7 @@ test.describe('Work schedule mutation journeys', () => {
   });
 
   test('rejects unauthorized toggling and preserves the displayed and durable enabled state', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -156,7 +158,7 @@ test.describe('Work schedule mutation journeys', () => {
     const created = await request.put(
       '/api/work/v1/schedules/01J5Z3K9QX8F0N2B4V6C8D1E3J',
       {
-        headers: WORK_ADMIN_HEADERS,
+        headers: workAdminHeaders(baseURL),
         data: {
           id: '01J5Z3K9QX8F0N2B4V6C8D1E3J',
           cron: '0 * * * *',
@@ -217,12 +219,13 @@ test.describe('Work schedule mutation journeys', () => {
   });
 
   test('edits, confirms deletion, and displays labeled UTC and local occurrences', async ({
+    baseURL,
     page,
     request,
   }) => {
     const id = '01J5Z3K9QX8F0N2B4V6C8D1E3J';
     const created = await request.put(`/api/work/v1/schedules/${id}`, {
-      headers: WORK_ADMIN_HEADERS,
+      headers: workAdminHeaders(baseURL),
       data: {
         cron: '* * * * *',
         enabled: true,
@@ -313,6 +316,7 @@ test.describe('Work schedule mutation journeys', () => {
   });
 
   test('retains a stale edit and deletion dialog without claiming success', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -326,7 +330,7 @@ test.describe('Work schedule mutation journeys', () => {
     expect(
       (
         await request.put(`/api/work/v1/schedules/${id}`, {
-          headers: WORK_ADMIN_HEADERS,
+          headers: workAdminHeaders(baseURL),
           data: { cron: '0 * * * *', spec },
         })
       ).ok(),
@@ -344,7 +348,7 @@ test.describe('Work schedule mutation journeys', () => {
     expect(
       (
         await request.patch(`/api/work/v1/schedules/${id}`, {
-          headers: WORK_ADMIN_HEADERS,
+          headers: workAdminHeaders(baseURL),
           data: {
             expectedRevision: 1,
             cron: '0 * * * *',
@@ -380,7 +384,7 @@ test.describe('Work schedule mutation journeys', () => {
     expect(
       (
         await request.post(`/api/work/v1/schedules/${id}/disable`, {
-          headers: WORK_ADMIN_HEADERS,
+          headers: workAdminHeaders(baseURL),
           data: { expectedRevision: 2 },
         })
       ).ok(),

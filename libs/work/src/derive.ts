@@ -77,6 +77,7 @@ export function deriveItemState(
     return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.
+  if (latest.pipeline === 'goose') return 'failed';
   return task.consecutiveLost > MAX_AUTO_RETRIES ||
     (latest.sourceRevision !== undefined &&
       (latest.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)

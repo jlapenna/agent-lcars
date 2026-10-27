@@ -33,6 +33,7 @@ const CONSOLE_DESTINATIONS = [
   'Agents',
   'Shuttlebay',
   'Work',
+  'Jobs',
   'Sessions',
   'Costs',
 ] as const;
@@ -53,6 +54,7 @@ const AUTHENTICATED_VIEWS = [
     overflowMenu: true,
   },
   { name: 'Work', path: '/work', current: 'work', overflowMenu: true },
+  { name: 'Jobs', path: '/jobs', current: 'jobs', overflowMenu: true },
   {
     name: 'sessions by issue',
     path: '/sessions',

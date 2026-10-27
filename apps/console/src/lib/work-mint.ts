@@ -17,12 +17,17 @@ import {
   type ItemView,
   toItemView,
 } from '@agent-lcars/work/derive';
+import { ORPCError } from '@orpc/server';
 
 import type { CliSessionsResult } from './cli-sessions';
-import { isControlPlaneRepository } from './deployment';
 import { withHandoffActions } from './handoff-summary-work';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal } from './work-auth';
+import {
+  mayAccessStoredWork,
+  type WorkAuthority,
+  workForbiddenReason,
+} from './work-authorization';
 import type { WorkGrant } from './work-grants';
 import { authorizeProviderFallback } from './work-provider-fallback';
 
@@ -64,6 +69,17 @@ export interface WorkContext {
   now: () => Date;
 }
 
+/** Common item lookup for API reads and mutations, before side effects. */
+export async function readWorkTask(context: WorkContext, workId: string) {
+  const task = await context.runtime.store.readTask({ workId });
+  if (
+    task !== undefined &&
+    !mayAccessStoredWork(context.principal ?? {}, task.task.work)
+  )
+    throw new ORPCError('FORBIDDEN');
+  return task;
+}
+
 export async function view(
   context: WorkContext,
   workId: string,
@@ -81,11 +97,7 @@ export async function view(
 
 /** Who a mint's grant is checked against: the caller for `items.create`,
  *  a schedule's `createdBy` for `schedules.tick`. */
-export interface GrantsPrincipal {
-  principal: string;
-  pipelines: readonly string[];
-  sourceRepository?: string;
-}
+export type GrantsPrincipal = WorkAuthority;
 
 /** Shared scope gate for every native Work creation adapter. */
 export function isWorkOperatorPrincipal(
@@ -94,37 +106,8 @@ export function isWorkOperatorPrincipal(
   return principal?.scopes.has('work.operator') === true;
 }
 
-/**
- * The two capability checks every run-minting call must clear: invoking a
- * pipeline is granted per principal, and the target repository must be one
- * this control plane admits. Both evaluated against the grants and the
- * repository list **as they stand now** -- see the design spec's
- * `redispatch` rationale, which applies identically to a tick.
- *
- * The repo check is `isControlPlaneRepository()` -- the full
- * `AGENT_LCARS_CONTROL_PLANE_REPOSITORIES` allow-list, not the single
- * `controlPlaneRepository()` entry. Native work targeting any admitted repo
- * is dispatched through the direct worker path, so this narrowed from the
- * original single-repo equality check. A target
- * repo that is *not* on the allow-list at all still cannot be dispatched
- * to -- refuse it at creation instead of minting a run that can never be
- * delivered.
- */
-export function forbiddenReason(
-  principal: GrantsPrincipal,
-  spec: WorkSpec,
-): string | undefined {
-  if (!principal.pipelines.includes(spec.pipeline)) {
-    return `${principal.principal} may not request pipeline ${spec.pipeline}`;
-  }
-  if (!isControlPlaneRepository(spec.target.repo)) {
-    return (
-      `native work items can only target a control-plane repository ` +
-      `(${spec.target.repo} is not admitted)`
-    );
-  }
-  return undefined;
-}
+/** All native admission paths use the common resource policy. */
+export const forbiddenReason = workForbiddenReason;
 
 /** Both sides go through the same schema first, so the comparison is over
  *  normalized values rather than whatever shape the caller happened to

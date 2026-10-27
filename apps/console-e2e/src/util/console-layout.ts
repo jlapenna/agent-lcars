@@ -98,7 +98,7 @@ export async function expectDesktopLcarsElbow(header: Locator) {
   expect(layout.titleLeft).toBeGreaterThan(layout.headRight);
   expect(layout.navTop).toBeGreaterThan(layout.titleTop);
   expect(layout.navLeft).toBeGreaterThan(layout.headRight);
-  expect(layout.modules).toHaveLength(7);
+  expect(layout.modules).toHaveLength(8);
   for (const module of layout.modules) {
     expect(module.top).toBeGreaterThan(layout.armBottom);
     expect(module.background).not.toBe('rgba(0, 0, 0, 0)');

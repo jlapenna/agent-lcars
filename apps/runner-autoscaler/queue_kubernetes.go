@@ -628,6 +628,17 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	case "codex":
 	case "opencode":
 		providerKey = "opencode-llm-api-key"
+	case "goose":
+		if l.receipt == nil || q.config.Capacity == nil {
+			return nil, fmt.Errorf("goose requires receipt-backed capacity")
+		}
+		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
+			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
+			limit, limitErr := resource.ParseQuantity(q.config.Limits[name])
+			if requestErr != nil || limitErr != nil || request.Sign() <= 0 || request.Cmp(limit) != 0 || limit.Cmp(resource.MustParse(ceiling)) > 0 {
+				return nil, fmt.Errorf("goose requests and limits must match within the direct-agent ceiling")
+			}
+		}
 	default:
 		return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", l.pipeline)
 	}
@@ -635,6 +646,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	items := []core.KeyToPath{{Key: "telemetry-writer.json", Path: "telemetry-writer.json"}}
 	if providerKey != "" {
 		items = append(items, core.KeyToPath{Key: providerKey, Path: providerKey})
+	}
+	if l.pipeline == "goose" {
+		items = append(items, core.KeyToPath{Key: "goose-environment.json", Path: "goose-environment.json"}, core.KeyToPath{Key: "goose-config.yaml", Path: "goose-config.yaml"})
 	}
 	zero := int32(0)
 	uid := int64(1001)
@@ -714,6 +728,14 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	if l.receipt != nil {
 		q.configureReceiptJob(job, l)
 	}
+	if l.pipeline == "goose" {
+		deadline = 1800
+		if !l.placementAware {
+			job.Spec.ActiveDeadlineSeconds = &deadline
+		}
+		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
+	}
+
 	return job, nil
 }
 func ptr[T any](v T) *T { return &v }

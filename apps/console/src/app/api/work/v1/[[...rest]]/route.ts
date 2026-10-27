@@ -24,12 +24,14 @@ import {
   createOrchestratorRuntime,
   createScheduleStore,
 } from '@/lib/orchestrator-runtime';
+import { repositoryJobsHttp } from '@/lib/repository-jobs-http';
 import { createRunsHandler } from '@/lib/runs-router';
 import {
   authenticateWorkRequest,
   googleIdTokenVerifier,
   rawBearerToken,
 } from '@/lib/work-auth';
+import { workRequestForbiddenReason } from '@/lib/work-authorization';
 import { workGrants } from '@/lib/work-grants';
 import { createWorkHandler } from '@/lib/work-router';
 import {
@@ -92,9 +94,16 @@ async function handle(request: Request): Promise<Response> {
     grants: workGrants,
   });
 
+  const forbidden = workRequestForbiddenReason(request, principal);
+  if (forbidden !== undefined)
+    return withNoStore(Response.json({ error: forbidden }, { status: 403 }));
+
   if (new URL(request.url).pathname === `${PREFIX}/costs/budget`)
     return withNoStore(await costBudgetResponse(request, principal));
 
+  const pathname = new URL(request.url).pathname;
+  if (pathname === `${PREFIX}/jobs` || pathname.startsWith(`${PREFIX}/jobs/`))
+    return withNoStore(await repositoryJobsHttp(request, principal));
   const runtime = createOrchestratorRuntime();
   const runsResult = await runsHandler.handle(request, {
     prefix: PREFIX,

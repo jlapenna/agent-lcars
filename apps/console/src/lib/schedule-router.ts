@@ -16,6 +16,7 @@ import {
 import { implement, ORPCError } from '@orpc/server';
 
 import { deliverInboxPush } from './inbox-push';
+import { mayAccessStoredWork } from './work-authorization';
 import { grantForPrincipal } from './work-grants';
 import { forbiddenReason, mintItem, type WorkContext } from './work-mint';
 
@@ -179,7 +180,15 @@ function currentSchedule(
   }
   return current;
 }
+function mayAccessSchedule(context: WorkContext, schedule: Schedule) {
+  return mayAccessStoredWork(requiredPrincipal(context), {
+    spec: schedule.spec,
+    origin: { principal: schedule.createdBy, channel: 'api' },
+  });
+}
 function authorizeSchedule(context: WorkContext, schedule: Schedule) {
+  if (!mayAccessSchedule(context, schedule))
+    throw new ORPCError('FORBIDDEN', { message: 'No grant for this schedule' });
   // The creator can remove/repair their invalid or revoked schedule. Other
   // operators require a grant covering its stored pipeline and repository.
   if (context.principal?.principal === schedule.createdBy) return;
@@ -280,16 +289,17 @@ export const scheduleRouter = os.router({
     );
     return viewSafe(currentSchedule(next), context.now());
   }),
-  get: operator.get.handler(async ({ input, context }) =>
-    viewSafe(
-      currentSchedule(await context.scheduleStore.readSchedule(input.id)),
-      context.now(),
-    ),
-  ),
+  get: operator.get.handler(async ({ input, context }) => {
+    const schedule = currentSchedule(
+      await context.scheduleStore.readSchedule(input.id),
+    );
+    if (!mayAccessSchedule(context, schedule)) throw new ORPCError('FORBIDDEN');
+    return viewSafe(schedule, context.now());
+  }),
   list: operator.list.handler(async ({ input, context }) => ({
-    schedules: (await context.scheduleStore.listSchedules(input.limit)).map(
-      (schedule) => viewSafe(schedule, context.now()),
-    ),
+    schedules: (await context.scheduleStore.listSchedules(input.limit))
+      .filter((schedule) => mayAccessSchedule(context, schedule))
+      .map((schedule) => viewSafe(schedule, context.now())),
   })),
   update: operator.update.handler(async ({ input, context }) => {
     authorizeSpec(context, input.spec);

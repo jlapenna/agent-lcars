@@ -1103,6 +1103,9 @@ function settleLostAndRetry(
 ): Decision | Refusal {
   if (lossRefused(loss)) return loss;
   const lost = loss.decision;
+  // Recipes may already have performed effects. A new occurrence requires
+  // explicit admission after physical retirement, never recovery replay.
+  if (decidedRun(lost).pipeline === 'goose') return lost;
   const desired = advanceSourceRevision(lost, input.now);
   if (desired !== lost) return desired;
   if (!loss.recovered && lost.task.consecutiveLost > MAX_AUTO_RETRIES) {

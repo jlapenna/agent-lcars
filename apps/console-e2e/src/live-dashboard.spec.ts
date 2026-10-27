@@ -6,6 +6,7 @@ import {
   startCachedConsole,
 } from './util/cached-console';
 import { useE2eAdminBeforeEach } from './util/e2e-test-utils';
+import { workAdminHeaders } from './util/native-work';
 import {
   finishDashboardRun,
   updateDashboardAnchor,
@@ -137,6 +138,7 @@ test.describe('live authoritative dashboards', () => {
   });
 
   test('does not transfer a selected draft when another operator answers its decision', async ({
+    baseURL,
     page,
     request,
   }) => {
@@ -167,7 +169,7 @@ test.describe('live authoritative dashboards', () => {
     const answered = await request.post(
       '/api/work/v1/items/01J5Z3K9QX8F0N2B4V6C8D1E3G/reply',
       {
-        headers: { 'X-e2e-auth-user': 'e2e-agent-lcars-admin' },
+        headers: workAdminHeaders(baseURL),
         data: { text: 'Another operator answered' },
       },
     );

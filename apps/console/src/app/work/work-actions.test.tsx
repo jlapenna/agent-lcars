@@ -18,6 +18,24 @@ vi.mock('next/navigation', () => ({
 }));
 
 describe('WorkActions', () => {
+  it('keeps cancellation but prohibits coding continuations for recipe occurrences', () => {
+    const noop = vi.fn(async () => [null, undefined] as const);
+    render(
+      <MantineProvider>
+        <WorkActions
+          id="recipe"
+          state="failed"
+          recipe
+          cancel={noop}
+          redispatch={noop}
+          reply={noop}
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getByRole('button', { name: /Cancel/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /Redispatch/ })).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
   it.each(['parked', 'failed'] as const)(
     'offers redispatch for %s and cancel unless settled',
     (state) => {

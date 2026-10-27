@@ -14,6 +14,7 @@ import {
 } from '@agent-lcars/work';
 
 import { isControlPlaneRepository } from './deployment';
+import { repositoryForbiddenReason } from './work-authorization';
 import { grantForPrincipal, type WorkGrant, workGrants } from './work-grants';
 
 /** A trusted ingress supplies identity; callers supply only ordered choices. */
@@ -59,10 +60,9 @@ export function currentFallbackPipelines(
   if (!payload.success) return [];
   const repository = payload.data.spec.target.repo;
   if (
-    !repositoryAdmitted(repository) ||
-    (!isWorkAnchor(task.task) && task.task.repo !== repository) ||
-    (policy.sourceRepository !== undefined &&
-      policy.sourceRepository !== repository)
+    repositoryForbiddenReason(policy, repository, repositoryAdmitted) !==
+      undefined ||
+    (!isWorkAnchor(task.task) && task.task.repo !== repository)
   )
     return [];
   return grant.pipelines.filter((pipeline) =>

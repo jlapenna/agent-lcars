@@ -209,7 +209,11 @@ describe('ConsoleNavRail (standalone)', () => {
     );
     const nav = screen.getByRole('navigation', { name: 'Console sections' });
     const links = within(nav).getAllByRole('link');
-    expect(links).toHaveLength(7);
+    expect(links).toHaveLength(8);
+    expect(within(nav).getByRole('link', { name: 'Jobs' })).toHaveAttribute(
+      'href',
+      '/jobs',
+    );
     expect(within(nav).getByRole('link', { name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',

@@ -230,6 +230,8 @@ describe('runsContract', () => {
         'checkoutToken',
         'codexAuth',
         'persistCodexAuth',
+        'recipeBrief',
+        'recipeComplete',
       ].sort(),
     );
   });
@@ -537,6 +539,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
         '/runs/{runId}/codex-auth',
+        '/runs/{runId}/recipe',
       ].sort(),
     );
     expect(Object.keys(doc.paths['/items/{id}'] ?? {}).sort()).toEqual([
@@ -560,7 +563,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(11);
+    expect(operations).toHaveLength(13);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -576,7 +579,7 @@ describe('generateWorkOpenApi', () => {
         (scheme: Record<string, unknown>) => 'runToken' in scheme,
       ),
     );
-    expect(workers).toHaveLength(7);
+    expect(workers).toHaveLength(9);
     for (const { operation } of workers)
       expect(operation.parameters).toEqual(
         expect.arrayContaining([
@@ -664,6 +667,8 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/activate': ['200', '401', '409'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'GET /runs/{runId}/introspect': ['200', '401', '409'],
+      'GET /runs/{runId}/recipe': ['200', '401', '403', '409'],
+      'POST /runs/{runId}/recipe': ['200', '401', '403', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],
       'POST /runs/{runId}/startup-placement': [
         '200',

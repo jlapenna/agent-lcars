@@ -6,7 +6,8 @@ import {
   MemoryStore,
   Orchestrator,
 } from '@agent-lcars/orchestrator';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   auth,
@@ -37,6 +38,7 @@ vi.mock('@/auth', () => ({ auth }));
 vi.mock('@/lib/deployment', () => ({
   controlPlaneRepository,
   controlPlaneRepositories: () => ['jlapenna/agent-lcars'],
+  isControlPlaneRepository: (repo: string) => repo === 'jlapenna/agent-lcars',
 }));
 vi.mock('@/lib/github-actions-oidc', () => ({ verifySessionExpiryOidcToken }));
 vi.mock('@/lib/work-auth', () => ({
@@ -93,6 +95,7 @@ const operatorPrincipal = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv('AUTH_URL', 'https://lcars.test');
   authenticateWorkRequest.mockResolvedValue(operatorPrincipal);
   // The regression this guards: `AGENT_LCARS_APP_CLIENT_ID`/
   // `AGENT_LCARS_APP_PRIVATE_KEY` (the GitHub App credential
@@ -103,6 +106,8 @@ beforeEach(() => {
   delete process.env['AGENT_LCARS_APP_CLIENT_ID'];
   delete process.env['AGENT_LCARS_APP_PRIVATE_KEY'];
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('GET /api/work/v1/items', () => {
   it('succeeds with AGENT_LCARS_APP_CLIENT_ID/AGENT_LCARS_APP_PRIVATE_KEY unset', async () => {
@@ -208,6 +213,7 @@ describe('a work.reader-only principal (#2502)', () => {
       },
       jobUid: 'job-1',
     },
+    recipeComplete: { result: {} },
     completeRun: { outcome: { ok: true, summary: 'done' } },
     persistRunCodexAuth: {
       generation: '1',
@@ -285,3 +291,124 @@ describe('a work.reader-only principal (#2502)', () => {
     },
   );
 });
+
+describe('shared Work HTTP origin policy', () => {
+  it.each(
+    ['/items', '/jobs/invoke', '/schedules', '/future-platform'].flatMap(
+      (path) => [
+        { path, origin: 'https://foreign.example' },
+        { path, origin: 'http://lcars.test' },
+        { path, origin: 'https://lcars.test:444' },
+        { path, origin: 'null' },
+        { path, origin: undefined },
+      ],
+    ),
+  )(
+    'rejects cookie writes to $path with origin $origin before routing',
+    async ({ path, origin }) => {
+      const response = await GET(
+        new Request(`https://lcars.test/api/work/v1${path}`, {
+          method: 'POST',
+          headers: origin === undefined ? {} : { origin },
+          body: 'invalid json',
+        }),
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({
+        error: 'Same-origin request required',
+      });
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    },
+  );
+
+  it.each(['http://127.0.0.1:4200', 'http://runner.internal:8080'])(
+    'accepts the configured public origin through internal request URL %s',
+    async (internalOrigin) => {
+      const response = await GET(
+        new NextRequest(`${internalOrigin}/api/work/v1/future-platform`, {
+          method: 'POST',
+          headers: { origin: 'https://lcars.test' },
+        }),
+      );
+      expect(response.status).toBe(404);
+    },
+  );
+
+  it('does not trust Host or forwarding headers to authorize a foreign origin', async () => {
+    const response = await GET(
+      new NextRequest(
+        'http://runner.internal:8080/api/work/v1/future-platform',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'https://foreign.example',
+            host: 'foreign.example',
+            'x-forwarded-host': 'foreign.example',
+            'x-forwarded-proto': 'https',
+            forwarded: 'host=foreign.example;proto=https',
+          },
+        },
+      ),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Same-origin request required',
+    });
+  });
+
+  it.each(['session', 'google', 'oidc'] as const)(
+    'routes permitted %s requests normally',
+    async (via) => {
+      authenticateWorkRequest.mockResolvedValue({ ...operatorPrincipal, via });
+      const response = await GET(
+        new Request('https://lcars.test/api/work/v1/future-platform', {
+          method: 'POST',
+          headers: via === 'session' ? { origin: 'https://lcars.test' } : {},
+        }),
+      );
+      expect(response.status).toBe(404);
+    },
+  );
+});
+
+it('fails closed for a new operation with a repository-bound identity', async () => {
+  authenticateWorkRequest.mockResolvedValue({
+    ...operatorPrincipal,
+    via: 'oidc',
+    sourceRepository: 'jlapenna/agent-lcars',
+  });
+  for (const path of [
+    '/future-platform',
+    '/jobs/future-operation',
+    '/maintenance/tick',
+  ]) {
+    const response = await GET(
+      new Request(`https://lcars.test/api/work/v1${path}`, { method: 'POST' }),
+    );
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Operation does not declare repository-bound access',
+    });
+  }
+  const response = await GET(
+    new Request('https://lcars.test/api/work/v1/items'),
+  );
+  expect(response.status).toBe(200);
+});
+
+it.each(['/items/export', '/schedules/history', '/delivery/export/evidence'])(
+  'does not pre-authorize a future static operation at %s',
+  async (path) => {
+    authenticateWorkRequest.mockResolvedValue({
+      ...operatorPrincipal,
+      via: 'oidc',
+      sourceRepository: 'jlapenna/agent-lcars',
+    });
+    const response = await GET(
+      new Request(`https://lcars.test/api/work/v1${path}`, {
+        method: path.startsWith('/delivery') ? 'POST' : 'GET',
+      }),
+    );
+    expect(response.status).toBe(403);
+  },
+);
