@@ -81,9 +81,5 @@
       "matchDepTypes": ["golang"],
       "rangeStrategy": "bump"
     }
-  ],
-  "vulnerabilityAlerts": {
-    "enabled": true,
-    "labels": ["bot:renovate", "type:security"]
-  }
+  ]
 }
