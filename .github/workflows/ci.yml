@@ -359,7 +359,10 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ${{ steps.python-tooling.outputs.cache_dir }}
-          key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ hashFiles('apps/github-actions-exporter/requirements.lock') }}
+          # No `hashFiles()` here: the runner evaluates it with its internal
+          # Node 20, which the fleet images removed (#2980). The detect step
+          # hashes the lock file instead.
+          key: uv-baked-${{ runner.os }}-${{ runner.arch }}-${{ steps.python-tooling.outputs.uv_version }}-${{ steps.python-tooling.outputs.python_version }}-${{ steps.python-tooling.outputs.lock_hash }}
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         if: steps.python-tooling.outputs.ready != 'true'
