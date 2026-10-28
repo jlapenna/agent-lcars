@@ -12,6 +12,7 @@ import {
   jobDueAt,
   jobKey,
   type JobProfile,
+  jobProfileSchema,
   parseJobDefinition,
 } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
@@ -159,6 +160,35 @@ function fixture(
   };
 }
 describe('production repository job admission', () => {
+  it.each([undefined, false, true])(
+    'uses cross-repository credentials only when the operator profile enables them (%s)',
+    async (crossRepo) => {
+      const f = fixture([
+        {
+          key: 'crossRepo',
+          description: 'Caller data, not credential authority',
+          input_type: 'string',
+          requirement: 'optional',
+        },
+      ]);
+      if (crossRepo !== undefined) f.profile.crossRepo = crossRepo;
+      // Parsing old persisted profiles must preserve their digest.
+      expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
+      const occurrence = await f.jobs.admit(
+        f.id,
+        'manual-credential-scope',
+        'user:joe',
+        'manual',
+        f.definition.digest,
+        { crossRepo: crossRepo === true ? 'false' : 'true' },
+      );
+      const runs = await f.native.listRuns({ workId: occurrence.workId });
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.params?.['crossRepo']).toBe(
+        crossRepo === true ? 'true' : undefined,
+      );
+    },
+  );
   it('replays one request, skips overlap, and rejects changed request content', async () => {
     const f = fixture();
     const run = await f.jobs.admit(
