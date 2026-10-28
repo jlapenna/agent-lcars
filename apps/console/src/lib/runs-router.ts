@@ -1281,11 +1281,18 @@ export const runsRouter = os.router({
     // distinct owner among `getWatchedRepos()`, each scoped to every
     // watched repo name under that owner.
     const namesByOwner = new Map<string, string[]>();
-    for (const repo of getWatchedRepos()) {
-      const names = namesByOwner.get(repo.owner);
-      if (names === undefined) namesByOwner.set(repo.owner, [repo.name]);
-      else names.push(repo.name);
-    }
+    const addRepository = (owner: string, name: string) => {
+      const names = namesByOwner.get(owner);
+      if (names === undefined) namesByOwner.set(owner, [name]);
+      else if (!names.includes(name)) names.push(name);
+    };
+    for (const repo of getWatchedRepos()) addRepository(repo.owner, repo.name);
+    // A repository-owned job (docs/repository-jobs.md) is admitted by its
+    // operator profile, not by watched-repo membership, so its anchor may
+    // lie outside `getWatchedRepos()`. The run must still be able to check
+    // out its own source: always cover the anchor in its owner's grant.
+    const slash = target.repo.indexOf('/');
+    addRepository(target.repo.slice(0, slash), target.repo.slice(slash + 1));
     const grants = await Promise.all(
       [...namesByOwner.entries()].map(async ([owner, repositories]) => {
         const token = await context.checkoutTokens.expiringTokenForRepositories(
@@ -1300,14 +1307,13 @@ export const runsRouter = os.router({
         };
       }),
     );
-    const anchorOwner = target.repo.slice(0, target.repo.indexOf('/'));
+    const anchorOwner = target.repo.slice(0, slash);
     const anchorGrant = grants.find((grant) => grant.owner === anchorOwner);
     if (anchorGrant === undefined) {
-      // Invariant: the anchor's own repository is always among the fleet's
-      // watched repos (dispatch only ever admits a watched-repo anchor), so
-      // its owner always has a grant above. A run somehow reaching this
-      // without one has a corrupted anchor/watched-repos config, not a
-      // recoverable per-request condition.
+      // Invariant: the anchor's own repository was added to its owner's
+      // grant above, so that owner always has one. A run somehow reaching
+      // this without one has a corrupted anchor, not a recoverable
+      // per-request condition.
       throw new ORPCError('INTERNAL_SERVER_ERROR', {
         message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant among watched repos`,
       });
