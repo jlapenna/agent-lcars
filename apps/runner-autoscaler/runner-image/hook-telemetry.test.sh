@@ -18,20 +18,6 @@ claude_bin="${CLAUDE_BIN:-$(command -v claude)}"
 codex_bin="${CODEX_BIN:-$(command -v codex)}"
 run_timeout_seconds=60
 event_timeout_seconds=30
-# Claude Code gives SessionEnd hooks 1.5s by default. The arm64 image is
-# built under QEMU, where starting node alone can exceed that. Widen it on
-# arm64 (native arm64 runners only get a looser bound) so the contract under
-# test stays "the hook runs and records the end", not emulator speed.
-claude_end_budget=()
-fixture_hook_timeout_seconds=0
-case "$(uname -m)" in
-  aarch64 | arm64)
-    run_timeout_seconds=180
-    event_timeout_seconds=90
-    fixture_hook_timeout_seconds=30
-    claude_end_budget=(CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000)
-    ;;
-esac
 
 fail() {
   echo "FAIL: $*" >&2
@@ -145,21 +131,13 @@ run_env "$claude_home" lcars integration install claude > /dev/null ||
 # exits with an async Stop hook still running, which on a 2-CPU runner was
 # every run until our Stop entry became synchronous.
 jq --arg marker "$tmp/claude-session-end-ran" \
-  --argjson timeout "$fixture_hook_timeout_seconds" \
-  'if $timeout > 0 then
-    # The CLI-wide SessionEnd budget does not replace per-command deadlines.
-    # Keep production settings unchanged; this private fixture runs under QEMU.
-    .hooks |= with_entries(.value |= map(.hooks |= map(
-      if .type == "command" and .async != true then .timeout = $timeout else . end
-    )))
-  else . end
-  | .hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
+  '.hooks.SessionEnd += [{ hooks: [{ type: "command", command: "touch \($marker)" }] }]' \
   "$claude_home/.claude/settings.json" > "$tmp/settings.json"
 mv "$tmp/settings.json" "$claude_home/.claude/settings.json"
 (
   cd "$tmp/work"
   run_env "$claude_home" ANTHROPIC_BASE_URL="${base_url%/v1}" ANTHROPIC_API_KEY=hook-test \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 "${claude_end_budget[@]}" \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
     timeout -k 2s "${run_timeout_seconds}s" "$claude_bin" -p "say ok" < /dev/null
 ) > "$tmp/claude.out" 2>&1 || {
   status=$?
@@ -186,16 +164,6 @@ env_key = "HOOK_TEST_KEY"
 TOML
 run_env "$codex_home" lcars integration install codex > /dev/null ||
   fail "lcars integration install codex failed"
-# Match the existing ARM fixture allowance for synchronous Claude hooks.
-# Only this private Stop command changes; production stays at 5 s, AMD64
-# fixture runs keep 5 s, and SessionEnd retains its 3 s detached handoff.
-if [ "$fixture_hook_timeout_seconds" -gt 0 ]; then
-  jq --argjson timeout "$fixture_hook_timeout_seconds" \
-    '.hooks.Stop |= map(.hooks |= map(
-      if .type == "command" and .async != true then .timeout = $timeout else . end
-    ))' "$codex_home/.codex/hooks.json" > "$tmp/codex-hooks.json"
-  mv "$tmp/codex-hooks.json" "$codex_home/.codex/hooks.json"
-fi
 # Same flags hook-telemetry-bootstrap.sh passes on a dispatched runner.
 (
   cd "$tmp/work"
