@@ -111,7 +111,8 @@
         "jlapenna/nx-cache-server",
         "jlapenna/sync-padd",
         "jlapenna/messages-control",
-        "jlapenna/labels"
+        "jlapenna/labels",
+        "jlapenna/jclaw"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {

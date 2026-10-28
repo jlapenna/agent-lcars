@@ -124,7 +124,21 @@ env:
   # work.operator; only the maintainer's Google account may impersonate it
   # (infra/terraform/main.tf, work_reader_token_creator).
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.reader","costs.reader"]}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.reader","costs.reader"]}]'
+    availability:
+      - RUNTIME
+
+  # Operator-owned repository job profiles (docs/repository-jobs.md). Each
+  # profile names the repositories and principals that may admit a Goose
+  # recipe, its exact whole-job allocation, and the approved input sets.
+  # homelab-security-audit admits jclaw's manual-only weekly-security-audit
+  # recipe for the maintainer. Its allocation equals the lcars-work executor
+  # pool (jlapenna/homelab github-runner-autoscaler/orchestrator.yml). crossRepo
+  # reuses the renewable cross-repository checkout credential so the recipe's
+  # read-only `gh issue list` on the findings repository works; a recipe input
+  # cannot select it.
+  - variable: AGENT_LCARS_JOB_PROFILES
+    value: '[{"name":"homelab-security-audit","repositories":["jlapenna/jclaw"],"principals":["user:jlapenna"],"crossRepo":true,"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"subnet":"192.168.68.0/24","findingsRepository":"jlapenna/homelab","mode":"report"}]}]'
     availability:
       - RUNTIME
 
@@ -174,7 +188,7 @@ env:
   # PAT this flip was originally probe-verified against (#1190) has been
   # retired.
   - variable: AGENT_LCARS_CONTROL_PLANE_REPOSITORIES
-    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab,supersprinklesracing/www,supersprinklesracing/girosf,jlapenna/nx-cache-server,jlapenna/sync-padd,jlapenna/messages-control,jlapenna/labels'
+    value: 'jlapenna/agent-lcars,supersprinklesracing/sprinkles,jlapenna/homelab,supersprinklesracing/www,supersprinklesracing/girosf,jlapenna/nx-cache-server,jlapenna/sync-padd,jlapenna/messages-control,jlapenna/labels,jlapenna/jclaw'
     availability:
       - RUNTIME
 
@@ -202,8 +216,11 @@ env:
   # AGENT_LCARS_CONTROL_PLANE_REPOSITORIES; either mismatch fails closed.
   # Every watched repository uses the canonical Claude, Codex, and OpenCode
   # integrations. Only `agents: false` opts a repository out entirely.
+  # jlapenna/jclaw is watched only so its repository-owned Goose job
+  # (AGENT_LCARS_JOB_PROFILES below) can target it as native Work; it has
+  # no coding-agent dispatch.
   - variable: AGENT_LCARS_WATCHED_REPOS
-    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"agent-lcars"},{"owner":"jlapenna","name":"homelab","alias":"homelab"},{"owner":"supersprinklesracing","name":"www","alias":"www"},{"owner":"supersprinklesracing","name":"girosf","alias":"girosf"},{"owner":"jlapenna","name":"nx-cache-server","alias":"nx-cache-server"},{"owner":"jlapenna","name":"sync-padd","alias":"sync-padd"},{"owner":"jlapenna","name":"messages-control","alias":"messages-control"},{"owner":"jlapenna","name":"labels","alias":"labels"}]'
+    value: '[{"owner":"supersprinklesracing","name":"sprinkles","alias":"sprinkles"},{"owner":"jlapenna","name":"agent-lcars","alias":"agent-lcars"},{"owner":"jlapenna","name":"homelab","alias":"homelab"},{"owner":"supersprinklesracing","name":"www","alias":"www"},{"owner":"supersprinklesracing","name":"girosf","alias":"girosf"},{"owner":"jlapenna","name":"nx-cache-server","alias":"nx-cache-server"},{"owner":"jlapenna","name":"sync-padd","alias":"sync-padd"},{"owner":"jlapenna","name":"messages-control","alias":"messages-control"},{"owner":"jlapenna","name":"labels","alias":"labels"},{"owner":"jlapenna","name":"jclaw","alias":"jclaw","agents":false}]'
     availability:
       - RUNTIME
 
