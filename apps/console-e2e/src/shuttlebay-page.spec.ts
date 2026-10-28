@@ -118,7 +118,7 @@ test.describe('Shuttlebay live stream', () => {
     await expect(admission.getByText('claude', { exact: true })).toHaveCount(0);
   });
 
-  test('shows cooldown/reset provenance, normal claims, drain and unavailable provider evidence', async ({
+  test('shows cooldown/reset provenance, normal claims, executor pause and unavailable provider evidence', async ({
     page,
   }) => {
     const connections: Array<Promise<Route>> = [];
@@ -152,7 +152,6 @@ test.describe('Shuttlebay live stream', () => {
       kind: 'queue-executor',
       executor: 'queue',
       ready: true,
-      draining: false,
       activeRuns: 0,
       maxConcurrent: 3,
       updatedAt: now,
@@ -196,9 +195,9 @@ test.describe('Shuttlebay live stream', () => {
     await expect(row).toContainText('no active cooldown');
     await send(2, {
       ...healthy,
-      queueExecutor: { ...executor, draining: true },
+      queueExecutor: { ...executor, ready: false },
     });
-    await expect(row).toContainText('executor draining');
+    await expect(row).toContainText('executor not ready');
     await expect(row).toContainText('0 eligible queued');
     await expect(row).toContainText('2 queued');
     await send(3, {
@@ -239,7 +238,6 @@ test.describe('Shuttlebay live stream', () => {
         kind: 'queue-executor',
         executor: 'queue',
         ready: true,
-        draining: false,
         activeRuns,
         maxConcurrent: 4,
         updatedAt,
