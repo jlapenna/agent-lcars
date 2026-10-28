@@ -2031,9 +2031,9 @@ grep -Fq 'Produce the full report and address the reply within it' "$CODEX_ARGS_
   fail "codex native report fresh follow-up: prompt did not ask for the full report ($(cat "$CODEX_ARGS_LOG"))"
 echo "scenario codex-native-report-followup-fresh: OK"
 
-# The QueueExecutor adapter must enforce the two-hour OpenCode bound
+# The QueueExecutor adapter must enforce the OpenCode budget bound
 # locally. A short override makes this regression deterministic without
-# waiting two hours: timeout sends TERM to the trusted CLI, then the runner
+# waiting 80 minutes: timeout sends TERM to the trusted CLI, then the runner
 # finalizes and reports the failed/no-deliverable run instead of wedging a
 # queue slot indefinitely.
 export FAKE_OPENCODE_SLEEP_SECONDS=2
@@ -2461,11 +2461,12 @@ unset FAKE_GH_NO_MATCH FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT
 [ "$rc" -ne 0 ] || fail "capacity in tool output: a provider stop reported success"
 jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "capacity in tool output: transcript text forged a provider stop"
 
-# All default provider invocations receive the same two-hour allowance.
+# All default provider invocations are stopped at the brief's 80-minute
+# budget (BUDGET_MINUTES * 60), inside the Pod's 7200 s backstop.
 for provider in claude codex opencode; do
-  FAKE_CLOCK=1 run_scenario "two-hour-$provider" "$provider"
+  FAKE_CLOCK=1 run_scenario "budget-$provider" "$provider"
   [ "$rc" -eq 0 ] || fail "$provider default runtime: run failed"
-  grep -q -- '--signal=TERM --kill-after=30s 7200s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not two hours"
+  grep -q -- '--signal=TERM --kill-after=30s 4800s' "$scenario_runner_temp/timeout-args.log" || fail "$provider default runtime is not the 80-minute budget"
 done
 
 # A report record whose message is unusable still earns the correction.
