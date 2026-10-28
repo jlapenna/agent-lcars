@@ -12,6 +12,23 @@
         "cwd": "{workspaceRoot}",
         "command": "node tools/firestore-emulator-gate.mjs run"
       }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["build", "^typecheck"],
+      "syncGenerators": ["@nx/js:typescript-sync"],
+      "outputs": [
+        "{projectRoot}/tsconfig.tsbuildinfo",
+        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}",
+        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}.map",
+        "{projectRoot}/dist/tsconfig.lib.tsbuildinfo",
+        "{projectRoot}/dist/tsconfig.spec.tsbuildinfo"
+      ],
+      "options": {
+        "cwd": "libs/orchestrator",
+        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
+      }
     }
   }
 }

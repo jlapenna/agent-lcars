@@ -38,7 +38,7 @@ a serialized wait in front of a check that was going to happen regardless.
 That fast slice is the entire local gate **only when `apps/console` is not
 affected.** The hook's last step is `tools/console-build-smoke.sh`, which
 builds and probes the deployable Console bundle whenever `apps/console` is
-in the affected set: the real production `@nx/next:build` through
+in the affected set: the real production `next build` through
 `@agent-lcars/console:bundle`, then `tools/console-standalone-smoke.sh`
 booting a copy of the standalone bundle from outside the repository, loading
 every external its server chunks traced, and expecting HTTP 401 from the

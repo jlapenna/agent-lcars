@@ -1,7 +1,7 @@
 diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/dist/src/tasks-runner/cache.js
 --- a/node_modules/nx/dist/src/tasks-runner/cache.js
 +++ b/node_modules/nx/dist/src/tasks-runner/cache.js
-@@ -106,7 +106,19 @@
+@@ -106,7 +106,19 @@ class DbCache {
          if (this.remoteCache) {
              // didn't find it locally but we have a remote cache
              // attempt remote cache
@@ -10,7 +10,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 +            // A remote-cache read is an optimization: losing it must fall back
 +            // to recomputing the task locally, not crash the run (a network
 +            // blip here has no way to distinguish itself from a real miss —
-+            // agent-lcars#942, sprinkles#4255).
++            // sprinkles#4255, agent-lcars#942).
 +            let res;
 +            try {
 +                res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
@@ -22,14 +22,14 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
              if (res) {
                  this.applyRemoteCacheResults(task.hash, res, task.outputs);
                  return {
-@@ -158,7 +170,17 @@
+@@ -158,7 +170,17 @@ class DbCache {
          //    Promise.all over individual retrieve() calls.
          if (remoteMisses.length > 0) {
              await Promise.all(remoteMisses.map(async (task) => {
 -                const res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
 +                // See the matching comment in get() above: a remote-cache
 +                // read failure degrades to a local miss, it must not crash
-+                // the run (agent-lcars#942, sprinkles#4255).
++                // the run (sprinkles#4255, agent-lcars#942).
 +                let res;
 +                try {
 +                    res = await this.remoteCache.retrieve(task.hash, this.cache.cacheDirectory);
@@ -41,14 +41,14 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
                  if (res) {
                      this.applyRemoteCacheResults(task.hash, res, task.outputs);
                      results.set(task.hash, {
-@@ -183,7 +205,15 @@
+@@ -183,7 +205,15 @@ class DbCache {
              // Notify TaskIOService of actual output files
              (0, task_io_service_1.getTaskIOService)().notifyTaskOutputs(task.id, expandedOutputs);
              if (this.remoteCache) {
 -                await this.remoteCache.store(task.hash, this.cache.cacheDirectory, terminalOutput, code);
 +                // Same rationale as the read side above: an upload failure
-+                // must not crash an already-successful task (agent-lcars#942,
-+                // sprinkles#4255).
++                // must not crash an already-successful task (sprinkles#4255,
++                // agent-lcars#942).
 +                try {
 +                    await this.remoteCache.store(task.hash, this.cache.cacheDirectory, terminalOutput, code);
 +                }
@@ -58,7 +58,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
              }
              return files;
          });
-@@ -385,7 +415,17 @@
+@@ -385,7 +415,17 @@ class Cache {
          else if (this.options.remoteCache && !this.options.skipRemoteCache) {
              // didn't find it locally but we have a remote cache
              // attempt remote cache
@@ -66,7 +66,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 +            //
 +            // See DbCache.get()'s matching comment: a remote-cache read
 +            // failure must degrade to a local miss, not crash the run
-+            // (agent-lcars#942, sprinkles#4255).
++            // (sprinkles#4255, agent-lcars#942).
 +            try {
 +                await this.options.remoteCache.retrieve(task.hash, this.cachePath);
 +            }
@@ -77,14 +77,14 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
              // try again from local cache
              const res2 = await this.getFromLocalDir(task);
              return res2 ? { ...res2, remote: true } : null;
-@@ -433,7 +473,15 @@
+@@ -433,7 +473,15 @@ class Cache {
              await (0, promises_1.writeFile)((0, path_1.join)(td, 'source'), await (0, machine_id_cache_1.getCurrentMachineId)());
              await (0, promises_1.writeFile)(tdCommit, 'true');
              if (this.options.remoteCache && !this.options.skipRemoteCache) {
 -                await this.options.remoteCache.store(task.hash, this.cachePath);
 +                // See DbCache.put()'s matching comment: an upload failure
-+                // must not crash an already-successful task (agent-lcars#942,
-+                // sprinkles#4255).
++                // must not crash an already-successful task (sprinkles#4255,
++                // agent-lcars#942).
 +                try {
 +                    await this.options.remoteCache.store(task.hash, this.cachePath);
 +                }
@@ -97,7 +97,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 diff --git a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
 --- a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
 +++ b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
-@@ -1529,9 +1529,16 @@
+@@ -2116,9 +2116,16 @@ class TaskOrchestrator {
              const reason = stoppingReason === 'fulfilled' ? 'fulfilled' : 'interrupted';
              await this.completeContinuousTask(task, groupId, ownsRunningTasksService, reason);
          }
