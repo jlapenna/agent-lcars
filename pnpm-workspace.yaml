@@ -57,7 +57,7 @@ minimumReleaseAgeExclude:
 # Transitive Dependabot remediations (#3058): each parent pins a range that
 # excludes the first patched release, so floor the vulnerable range only.
 overrides:
-  'piscina@<4.9.4': 4.9.4
+  'piscina@<4.9.4': 5.3.2
   'proxy-addr@<2.0.8': 2.0.8
   'brace-expansion@>=2 <2.1.6': 2.1.7
   'fast-uri@<3.1.7': 3.1.9
