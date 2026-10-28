@@ -18,20 +18,8 @@ claude_bin="${CLAUDE_BIN:-$(command -v claude)}"
 codex_bin="${CODEX_BIN:-$(command -v codex)}"
 run_timeout_seconds=60
 event_timeout_seconds=30
-# Claude Code gives SessionEnd hooks 1.5s by default. The arm64 image is
-# built under QEMU, where starting node alone can exceed that. Widen it on
-# arm64 (native arm64 runners only get a looser bound) so the contract under
-# test stays "the hook runs and records the end", not emulator speed.
 claude_end_budget=()
 fixture_hook_timeout_seconds=0
-case "$(uname -m)" in
-  aarch64 | arm64)
-    run_timeout_seconds=180
-    event_timeout_seconds=90
-    fixture_hook_timeout_seconds=30
-    claude_end_budget=(CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=30000)
-    ;;
-esac
 
 fail() {
   echo "FAIL: $*" >&2

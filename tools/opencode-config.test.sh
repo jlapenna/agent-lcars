@@ -83,14 +83,17 @@ node "$repo_root/tools/opencode-context.test.mjs"
 python3 "$repo_root/tools/opencode-continuation-exit.test.py"
 grep -Fq '/repo/agents/opencode/context-lifecycle.js' "$runner_dockerfile" ||
   fail "runner image no longer installs the context lifecycle plugin"
-# The full three-client gate owns OpenCode via an unconditional exec tail.
-# Check both links so composing the proofs cannot silently drop continuation.
+# On native builds the full three-client gate owns OpenCode via an unconditional
+# exec tail; arm64 under QEMU runs only version/client probes (#3070). Check both
+# links so composing the proofs cannot silently drop native continuation.
 python3 - "$runner_dockerfile" "$repo_root/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh" <<'PYTHON'
 import pathlib, sys
 image, hook = (pathlib.Path(name).read_text() for name in sys.argv[1:])
-logical_lines = image.replace('\\\n', '').splitlines()
-expected = 'RUN --network=none python3 /usr/local/lib/agent-lcars/drain-hook-test-clients.test.py && bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh'
-assert any(line.split() == expected.split() for line in logical_lines), 'runner image must execute the full hook gate without registry access'
+logical = ' '.join(image.replace('\\\n', '').split())
+expected = ('RUN --network=none python3 /usr/local/lib/agent-lcars/drain-hook-test-clients.test.py && '
+  'case "$(uname -m)" in aarch64 | arm64) claude --version && codex --version && opencode --version ;; '
+  '*) bash /usr/local/lib/agent-lcars/hook-telemetry.test.sh ;; esac')
+assert expected in logical, 'runner image must execute the full hook gate on native builds without registry access'
 assert hook.rstrip().splitlines()[-1] == 'exec bash "$(dirname "${BASH_SOURCE[0]}")/opencode-continuation.test.sh"', 'full hook gate must unconditionally transfer to real OpenCode continuation'
 PYTHON
 

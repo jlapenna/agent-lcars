@@ -13,19 +13,6 @@ event_timeout_seconds=30
 framework_timeout_seconds=60
 version_timeout_seconds=10
 provider_start_timeout_seconds=10
-# The multi-platform publisher executes the arm64 CLI through QEMU on its
-# amd64 BuildKit host. The same deterministic framework sequence takes more
-# than the native deadline there, before the localhost provider sees a first
-# request. This remains a test-process bound; provider and runner limits are
-# unchanged.
-case "$(uname -m)" in
-  aarch64 | arm64)
-    version_timeout_seconds=60
-    framework_timeout_seconds=300
-    event_timeout_seconds=90
-    provider_start_timeout_seconds=60
-    ;;
-esac
 
 fail() {
   echo "FAIL: $1" >&2
