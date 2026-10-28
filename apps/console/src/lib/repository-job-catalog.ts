@@ -19,8 +19,10 @@ export async function refreshJobCatalog(
   const signal = AbortSignal.timeout(20000);
   let token: string;
   const get = async (path: string): Promise<unknown> => {
+    // GitHub answers `/repos/{owner}/{repo}/` (trailing slash) with 404, so
+    // the repository metadata request must omit the separator.
     const response = await fetch(
-      `https://api.github.com/repos/${repository}/${path}`,
+      `https://api.github.com/repos/${repository}${path ? `/${path}` : ''}`,
       {
         headers: {
           Authorization: `Bearer ${token}`,
