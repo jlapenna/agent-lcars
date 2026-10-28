@@ -19,6 +19,7 @@ import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { wakeDeliveryMonitor } from '@/lib/orchestrator-dispatch';
 import {
   githubAnchorClosureFromDelivery,
+  type IngestResult,
   interpretDelivery,
 } from '@/lib/orchestrator-ingest';
 import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
@@ -244,136 +245,155 @@ export async function handleWebhookDelivery(
       );
     }
     const interpreted = interpretDelivery(input);
-    if (interpreted.kind === 'conflict') {
+    if (interpreted.kind === 'ignore')
+      return await handleIgnoredDelivery(deps, input, interpreted);
+    const result = await decideDelivery(deps, input, interpreted);
+    // Every acknowledged outcome refreshes the anchor's projection exactly
+    // once, after the durable decision; a rejected admission (500) is retried
+    // by Cloud Tasks and refreshes on the retry that acknowledges it.
+    if (result.status === 200)
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-      // Permanent intent conflicts are acknowledged, not retried by Cloud
-      // Tasks. No Work, run, label rewrite, or assignment change is requested.
-      return {
-        status: 200,
-        body: {
-          refused: interpreted.reason,
-          namespace: interpreted.namespace,
-          labels: interpreted.labels,
-          message: interpreted.message,
-        },
-      };
-    }
-    if (interpreted.kind === 'ignore') {
-      let canceledRunId: string | undefined;
-      const closure = githubAnchorClosureFromDelivery(input);
-      // An untagged comment lands here (`no-reply-command`) and dispatches
-      // nothing -- the trigger tag is the gate (#1788, #1789); it never
-      // gets a second, implicit chance to resume a parked anchor.
-      try {
-        await refreshGithubAnchorProjection(deps, input);
-      } catch (error) {
-        throw new ProjectionRefreshError(
-          `Projection refresh failed for ${input.event}/${input.deliveryId}`,
-          { cause: error },
-        );
-      }
-      if (
-        closure !== undefined &&
-        !isWorkAnchor(closure.taskId) &&
-        deps.loadGithubAnchorLifecycle !== undefined
-      ) {
-        // Refresh first, then verify current GitHub state. A delayed close
-        // delivery may arrive after the same generation reopened; the old
-        // payload timestamp alone cannot distinguish that case.
-        const lifecycle = await deps.loadGithubAnchorLifecycle(closure.taskId);
-        if (lifecycle?.state === 'closed') {
-          const activeRun = await deps.store.readActiveRun(closure.taskId);
-          // Closed anchors still support explicit review and tagged-reply
-          // semantics. Only never-started implementation work is stale.
-          if (activeRun?.params?.['mode'] === 'implement') {
-            const canceled = await deps.orchestrator.cancelUnclaimedBefore({
-              runId: activeRun.runId,
-              notAfter: lifecycle.sourceUpdatedAt,
-              note: `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
-            });
-            if (!('refused' in canceled) && canceled.run !== undefined) {
-              canceledRunId = canceled.run.runId;
-            }
-          }
+    return result;
+  } catch (error) {
+    if (error instanceof ProjectionRefreshError) throw error;
+    return internalError('webhook delivery', error);
+  }
+}
+
+/** An ignored delivery admits nothing. Its projection refresh runs first so
+ * the close fence below reads the refreshed anchor; a failure is retryable. */
+async function handleIgnoredDelivery(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+  interpreted: Extract<IngestResult, { kind: 'ignore' }>,
+): Promise<RouteResult> {
+  let canceledRunId: string | undefined;
+  const closure = githubAnchorClosureFromDelivery(input);
+  // An untagged comment lands here (`no-reply-command`) and dispatches
+  // nothing -- the trigger tag is the gate (#1788, #1789); it never
+  // gets a second, implicit chance to resume a parked anchor.
+  try {
+    await refreshGithubAnchorProjection(deps, input);
+  } catch (error) {
+    throw new ProjectionRefreshError(
+      `Projection refresh failed for ${input.event}/${input.deliveryId}`,
+      { cause: error },
+    );
+  }
+  if (
+    closure !== undefined &&
+    !isWorkAnchor(closure.taskId) &&
+    deps.loadGithubAnchorLifecycle !== undefined
+  ) {
+    // Refresh first, then verify current GitHub state. A delayed close
+    // delivery may arrive after the same generation reopened; the old
+    // payload timestamp alone cannot distinguish that case.
+    const lifecycle = await deps.loadGithubAnchorLifecycle(closure.taskId);
+    if (lifecycle?.state === 'closed') {
+      const activeRun = await deps.store.readActiveRun(closure.taskId);
+      // Closed anchors still support explicit review and tagged-reply
+      // semantics. Only never-started implementation work is stale.
+      if (activeRun?.params?.['mode'] === 'implement') {
+        const canceled = await deps.orchestrator.cancelUnclaimedBefore({
+          runId: activeRun.runId,
+          notAfter: lifecycle.sourceUpdatedAt,
+          note: `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
+        });
+        if (!('refused' in canceled) && canceled.run !== undefined) {
+          canceledRunId = canceled.run.runId;
         }
       }
-      return {
-        status: 200,
-        body: {
-          ignored: interpreted.reason,
-          ...(canceledRunId === undefined ? {} : { canceledRunId }),
-        },
-      };
     }
+  }
+  return {
+    status: 200,
+    body: {
+      ignored: interpreted.reason,
+      ...(canceledRunId === undefined ? {} : { canceledRunId }),
+    },
+  };
+}
 
-    // A *tagged* reply (`@claude`/`@agent`/`/codex`/`/oc`, matched by
-    // `interpretIssueCommentEvent`) is the only path that can carry
-    // `mode: 'reply'` here -- label-triggered `issues`/`pull_request`
-    // decisions are always `implement`/`review`. Give a PARKED or DONE
-    // anchor a chance to resume its existing session with this comment as
-    // its next turn before falling into the ordinary admission below:
-    // resumable-conversations plan 2 (#1773), re-gated behind the trigger
-    // tag instead of an allowlist (#1789).
-    if (
-      input.event === 'issue_comment' &&
-      interpreted.params['mode'] === 'reply'
-    ) {
-      const resumed = await attemptTaggedReplyResume(deps, {
-        ...input,
-        pipeline: interpreted.pipeline,
-      });
-      if (resumed !== undefined) {
-        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-        return resumed;
-      }
-      // `requestReply` declined -- no task yet (`NOT_FOUND`, the
-      // start-work-by-comment case that must keep working), a closed
-      // task, or a busy task. Fall through to the same
-      // admission every other trigger uses; a still-running anchor
-      // refuses `task-busy` there too (`decide.ts`'s own concurrency
-      // guard), so no second run is ever created.
-    }
+/** The durable decision for a delivery that names work: a routing-label
+ * conflict, a tagged-reply resume, or ordinary admission. Returns the
+ * response body only; the caller owns the single projection refresh. */
+async function decideDelivery(
+  deps: OrchestratorRouteDeps,
+  input: { event: string; deliveryId: string; payload: unknown },
+  interpreted: Exclude<IngestResult, { kind: 'ignore' }>,
+): Promise<RouteResult> {
+  if (interpreted.kind === 'conflict') {
+    // Permanent intent conflicts are acknowledged, not retried by Cloud
+    // Tasks. No Work, run, label rewrite, or assignment change is requested.
+    return {
+      status: 200,
+      body: {
+        refused: interpreted.reason,
+        namespace: interpreted.namespace,
+        labels: interpreted.labels,
+        message: interpreted.message,
+      },
+    };
+  }
 
-    // The first label-triggered run stays byte-for-byte on its existing
-    // prompt path. On a later label request, carry only the previous run's
-    // timestamp; the native runtime uses it to expose a bounded,
-    // author-attributed comment window in the brief.
-    const params = await labelRedispatchParams(deps, {
-      event: input.event,
-      taskId: interpreted.taskId,
-      params: interpreted.params,
+  // A *tagged* reply (`@claude`/`@agent`/`/codex`/`/oc`, matched by
+  // `interpretIssueCommentEvent`) is the only path that can carry
+  // `mode: 'reply'` here -- label-triggered `issues`/`pull_request`
+  // decisions are always `implement`/`review`. Give a PARKED or DONE
+  // anchor a chance to resume its existing session with this comment as
+  // its next turn before falling into the ordinary admission below:
+  // resumable-conversations plan 2 (#1773), re-gated behind the trigger
+  // tag instead of an allowlist (#1789).
+  if (
+    input.event === 'issue_comment' &&
+    interpreted.params['mode'] === 'reply'
+  ) {
+    const resumed = await attemptTaggedReplyResume(deps, {
+      ...input,
+      pipeline: interpreted.pipeline,
     });
+    if (resumed !== undefined) return resumed;
+    // `requestReply` declined -- no task yet (`NOT_FOUND`, the
+    // start-work-by-comment case that must keep working), a closed
+    // task, or a busy task. Fall through to the same
+    // admission every other trigger uses; a still-running anchor
+    // refuses `task-busy` there too (`decide.ts`'s own concurrency
+    // guard), so no second run is ever created.
+  }
 
-    const outcome = await admitGithubWork(deps, {
-      anchor: interpreted.taskId,
-      requestId: interpreted.requestId,
-      params,
-      work: interpreted.work,
-      ...(interpreted.labelRouting === undefined
-        ? {}
-        : { labelRouting: interpreted.labelRouting }),
-      ...(interpreted.requestBinding === undefined
-        ? {}
-        : { requestBinding: interpreted.requestBinding }),
-    });
+  // The first label-triggered run stays byte-for-byte on its existing
+  // prompt path. On a later label request, carry only the previous run's
+  // timestamp; the native runtime uses it to expose a bounded,
+  // author-attributed comment window in the brief.
+  const params = await labelRedispatchParams(deps, {
+    event: input.event,
+    taskId: interpreted.taskId,
+    params: interpreted.params,
+  });
 
-    if (outcome.kind === 'busy') {
-      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+  const outcome = await admitGithubWork(deps, {
+    anchor: interpreted.taskId,
+    requestId: interpreted.requestId,
+    params,
+    work: interpreted.work,
+    ...(interpreted.labelRouting === undefined
+      ? {}
+      : { labelRouting: interpreted.labelRouting }),
+    ...(interpreted.requestBinding === undefined
+      ? {}
+      : { requestBinding: interpreted.requestBinding }),
+  });
+
+  switch (outcome.kind) {
+    case 'busy':
       return { status: 200, body: { refused: 'task-busy' } };
-    }
-    if (outcome.kind === 'duplicate') {
-      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-      return {
-        status: 200,
-        body: { duplicate: true, runId: outcome.runId },
-      };
-    }
-    if (outcome.kind === 'conflict') {
+    case 'duplicate':
+      return { status: 200, body: { duplicate: true, runId: outcome.runId } };
+    case 'conflict':
       if (
         'providerRouting' in outcome &&
         outcome.providerRouting !== undefined
       ) {
-        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
         return {
           status: 200,
           body: {
@@ -382,7 +402,6 @@ export async function handleWebhookDelivery(
           },
         };
       }
-      await refreshGithubAnchorProjectionAfterAdmission(deps, input);
       return {
         status: 200,
         body:
@@ -400,26 +419,18 @@ export async function handleWebhookDelivery(
                     : 'work-spec-mismatch',
               },
       };
-    }
-    if (outcome.kind === 'invalid' || outcome.kind === 'forbidden') {
+    case 'invalid':
+    case 'forbidden':
       logger.error(
         'agent-lcars: GitHub webhook admission rejected',
         outcome.message,
       );
       return { status: 500, body: { error: 'internal' } };
-    }
-
-    await refreshGithubAnchorProjectionAfterAdmission(deps, input);
-    return {
-      status: 200,
-      body: {
-        runId: outcome.runId,
-        dispatched: outcome.dispatched,
-      },
-    };
-  } catch (error) {
-    if (error instanceof ProjectionRefreshError) throw error;
-    return internalError('webhook delivery', error);
+    case 'accepted':
+      return {
+        status: 200,
+        body: { runId: outcome.runId, dispatched: outcome.dispatched },
+      };
   }
 }
 
