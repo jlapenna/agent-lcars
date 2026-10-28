@@ -142,13 +142,11 @@ function ProviderAdmissionRows({
           const executorAccepting =
             executor !== undefined &&
             executor.ready &&
-            !executor.draining &&
             executor.activeRuns !== undefined &&
             executor.activeRuns < executor.maxConcurrent;
           const paused =
             executor !== undefined &&
             (!executor.ready ||
-              executor.draining ||
               (executor.activeRuns !== undefined &&
                 executor.activeRuns >= executor.maxConcurrent));
           const eligible =
@@ -185,11 +183,9 @@ function ProviderAdmissionRows({
                   )}
                   {paused && (
                     <Badge color="yellow" size="xs">
-                      {executor.draining
-                        ? 'executor draining'
-                        : !executor.ready
-                          ? 'executor not ready'
-                          : 'executor at capacity'}
+                      {!executor.ready
+                        ? 'executor not ready'
+                        : 'executor at capacity'}
                     </Badge>
                   )}
                 </Group>
@@ -300,11 +296,8 @@ function QueueExecutorRow({ status }: { status: QueueExecutorStatus }) {
         <span className="ops-host-spec">QueueExecutor</span>
       </td>
       <td>
-        <StateMark
-          tone={!status.ready ? 'fail' : status.draining ? 'warn' : 'ok'}
-        >
+        <StateMark tone={status.ready ? 'ok' : 'fail'}>
           {status.ready ? 'ready' : 'not ready'}
-          {status.draining ? ' · draining' : ''}
         </StateMark>
       </td>
       <td className="ops-mono-dim">{UNAVAILABLE}</td>

@@ -260,7 +260,6 @@ describe('fleetFromAutoscalerStatuses', () => {
         kind: 'queue-executor' as const,
         executor: 'queue' as const,
         ready: true,
-        draining: false,
         maxConcurrent: 3,
         updatedAt: T0,
       },
@@ -270,7 +269,6 @@ describe('fleetFromAutoscalerStatuses', () => {
     expect(fleetFromAutoscalerStatuses(status)).toEqual({
       directExecutor: {
         ready: true,
-        draining: false,
         maxConcurrent: 3,
         expiresAt: '2026-08-28T10:03:00.000Z',
       },
@@ -349,7 +347,6 @@ describe('fleetFromAutoscalerStatuses', () => {
           kind: 'queue-executor',
           executor: 'queue',
           ready: true,
-          draining: false,
           activeRuns: 20,
           maxConcurrent: 3,
           updatedAt: T0,
@@ -358,7 +355,6 @@ describe('fleetFromAutoscalerStatuses', () => {
     ).toEqual({
       directExecutor: {
         ready: true,
-        draining: false,
         maxConcurrent: 3,
         expiresAt: '2026-08-28T10:03:00.000Z',
       },

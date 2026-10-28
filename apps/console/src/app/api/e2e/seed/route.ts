@@ -349,7 +349,6 @@ async function seedRunnerStatus() {
       kind: 'queue-executor',
       executor: 'queue',
       ready: true,
-      draining: false,
       maxConcurrent: 3,
       // The executor's own Work API calls, so the Bridge's Work API p95
       // renders a value and a sparkline bar.

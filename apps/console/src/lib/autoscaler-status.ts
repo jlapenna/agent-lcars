@@ -24,7 +24,6 @@ export interface QueueExecutorStatus {
   kind: 'queue-executor';
   executor: 'queue';
   ready: boolean;
-  draining: boolean;
   activeRuns?: number;
   maxConcurrent: number;
   updatedAt: string;
@@ -205,7 +204,6 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
     status['kind'] !== 'queue-executor' ||
     status['executor'] !== 'queue' ||
     typeof status['ready'] !== 'boolean' ||
-    typeof status['draining'] !== 'boolean' ||
     (status['activeRuns'] !== undefined &&
       typeof status['activeRuns'] !== 'number') ||
     typeof status['maxConcurrent'] !== 'number' ||
@@ -219,7 +217,6 @@ function parseQueueExecutor(value: unknown): QueueExecutorStatus | undefined {
     kind: 'queue-executor',
     executor: 'queue',
     ready: status['ready'],
-    draining: status['draining'],
     ...(typeof status['activeRuns'] === 'number'
       ? { activeRuns: status['activeRuns'] }
       : {}),

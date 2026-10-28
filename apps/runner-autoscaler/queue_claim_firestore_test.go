@@ -90,7 +90,7 @@ func TestQueueClaimWindowFirestoreCommitEncoding(t *testing.T) {
 				assertQueueClaimInteger(t, fields, "schemaVersion", 2)
 				assertQueueClaimInteger(t, fields, "maxConcurrent", 5)
 				assertQueueClaimInteger(t, fields, "activeRuns", 2)
-				if fields["updatedAt"].GetStringValue() != status.UpdatedAt || !fields["expireAt"].GetTimestampValue().AsTime().Equal(status.ExpireAt) || fields["kind"].GetStringValue() != "queue-executor" || fields["executor"].GetStringValue() != "queue" || !fields["ready"].GetBooleanValue() || fields["draining"].GetBooleanValue() {
+				if fields["updatedAt"].GetStringValue() != status.UpdatedAt || !fields["expireAt"].GetTimestampValue().AsTime().Equal(status.ExpireAt) || fields["kind"].GetStringValue() != "queue-executor" || fields["executor"].GetStringValue() != "queue" || !fields["ready"].GetBooleanValue() {
 					t.Fatalf("status metadata changed: %v", fields)
 				}
 				if status.Claims == nil {

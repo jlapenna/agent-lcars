@@ -72,7 +72,6 @@ function records(now = T0, registered = 5) {
       kind: 'queue-executor',
       executor: 'queue',
       ready: true,
-      draining: false,
       activeRuns: 0,
       maxConcurrent: 8,
       updatedAt: new Date(now + 60_000).toISOString(),
@@ -309,7 +308,6 @@ describe('producer freshness in Bridge and Agents', () => {
             githubExpiresAt: 'not-a-date',
             directExecutor: {
               ready: true,
-              draining: false,
               maxConcurrent: 8,
               expiresAt: '',
             },
