@@ -1,6 +1,6 @@
 //@ts-check
 // eslint-disable-next-line no-restricted-syntax
-const { composePlugins, withNx } = require('@nx/next');
+const { PHASE_DEVELOPMENT_SERVER } = require('next/constants');
 // eslint-disable-next-line no-restricted-syntax
 const path = require('node:path');
 // eslint-disable-next-line no-restricted-syntax
@@ -176,5 +176,16 @@ const nextConfig = {
   },
 };
 
-const plugins = [withNx];
-module.exports = composePlugins(...plugins)(nextConfig);
+// Nx 24 removed `withNx`/`composePlugins` and the `@nx/next:build` executor
+// that used to redirect `distDir` into `dist/apps/console`. Keep that layout
+// for production builds and `next start`: apphosting.yaml, the `bundle`
+// target and tools/console-standalone-smoke.sh all read
+// dist/apps/console/.next. Development stays on the project-local `.next`
+// Turbopack expects.
+module.exports = (phase) => ({
+  ...nextConfig,
+  distDir:
+    phase === PHASE_DEVELOPMENT_SERVER
+      ? '.next'
+      : '../../dist/apps/console/.next',
+});

@@ -149,6 +149,23 @@
           }
         }
       }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["^typecheck"],
+      "syncGenerators": ["@nx/js:typescript-sync"],
+      "outputs": [
+        "{projectRoot}/tsconfig.tsbuildinfo",
+        "{workspaceRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}",
+        "{workspaceRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}.map",
+        "{workspaceRoot}/dist/out-tsc/tsconfig.app.tsbuildinfo",
+        "{workspaceRoot}/dist/out-tsc/tsconfig.spec.tsbuildinfo"
+      ],
+      "options": {
+        "cwd": "apps/telemetry-watcher",
+        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
+      }
     }
   }
 }

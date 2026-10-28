@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 // serve target reported `Successfully ran target` and exited 0 after the
 // command had already died on a fatal startup error, because
 // `handleContinuousTaskExit` completed any exit of a task nothing depended on
-// as `fulfilled`. The repair lives in `patches/nx+23.3.0.patch`.
+// as `fulfilled`. The repair lives in `patches/nx+24.0.2.patch`.
 //
 // These run the real installed (patched) nx binary rather than the supervisor,
 // because the false success is produced by the orchestrator above it: a

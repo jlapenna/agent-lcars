@@ -59,23 +59,13 @@
       }
     },
     "build": {
-      "executor": "@nx/next:build",
-      "outputs": ["{options.outputPath}/*"],
+      "outputs": ["{workspaceRoot}/dist/apps/console/.next"],
       "defaultConfiguration": "production",
       "inputs": ["production", "^production", "nativePlatform", "ciBuild"],
-      "options": {
-        "outputPath": "dist/apps/console",
-        "tsConfig": "apps/console/tsconfig.json",
-        "assets": ["apps/console/public"]
-      },
       "configurations": {
-        "production": {
-          "optimization": true,
-          "extractLicenses": true,
-          "inspect": false
-        },
+        "production": {},
         "development": {
-          "debug": true
+          "args": ["--debug"]
         }
       }
     },
@@ -86,11 +76,15 @@
       "options": {
         "commands": [
           "mkdir -p dist/apps/console/.next/standalone/dist/apps/console/.next dist/apps/console/.next/standalone/apps/console",
-          "cp -r dist/apps/console/public dist/apps/console/.next/standalone/apps/console/",
+          "cp -r apps/console/public dist/apps/console/.next/standalone/apps/console/",
           "cp -r dist/apps/console/.next/static dist/apps/console/.next/standalone/dist/apps/console/.next/"
         ],
         "parallel": false
-      }
+      },
+      "outputs": [
+        "{workspaceRoot}/dist/apps/console/.next/standalone/apps/console/public",
+        "{workspaceRoot}/dist/apps/console/.next/standalone/dist/apps/console/.next/static"
+      ]
     },
     "deploy": {
       "executor": "nx:run-commands",
@@ -102,20 +96,19 @@
       }
     },
     "serve": {
-      "executor": "@nx/next:server",
+      "executor": "nx:run-commands",
+      "continuous": true,
       "defaultConfiguration": "development",
       "options": {
-        "buildTarget": "@agent-lcars/console:build",
-        "dev": true
+        "command": "next dev --port=4200",
+        "cwd": "apps/console"
       },
       "configurations": {
         "development": {
-          "buildTarget": "@agent-lcars/console:build:development",
-          "dev": true
+          "command": "next dev --port=4200"
         },
         "production": {
-          "buildTarget": "@agent-lcars/console:build:production",
-          "dev": false
+          "command": "next start --port=4200"
         }
       }
     },

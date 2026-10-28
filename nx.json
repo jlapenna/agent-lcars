@@ -56,13 +56,13 @@
     {
       "plugin": "@nx/next/plugin",
       "options": {
-        "devTargetName": "serve"
+        "devTargetName": "dev"
       }
     },
     {
       "plugin": "@nx/playwright/plugin",
       "options": {
-        "targetName": "playwright-e2e"
+        "targetName": "e2e-run"
       }
     },
     {
@@ -108,6 +108,20 @@
       "cache": true,
       "dependsOn": ["^build"],
       "inputs": ["production", "^production"]
+    },
+    "typecheck": {
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/tsconfig.*.base.json",
+        {
+          "externalDependencies": ["typescript"]
+        },
+        {
+          "dependentTasksOutputFiles": "**/*.{d.ts,d.cts,d.mts,tsbuildinfo}",
+          "transitive": true
+        }
+      ]
     }
   },
   "generators": {
@@ -123,5 +137,8 @@
       }
     }
   },
-  "analytics": true
+  "analytics": true,
+  "affected": {
+    "legacy": true
+  }
 }

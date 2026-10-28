@@ -12,7 +12,7 @@
 # - minutes later, and the same shape of bug shipped four times in one
 # night (retro #521).
 #
-# This runs the real `@nx/next:build` production build - the same one CI
+# This runs the real production `next build` - the same one CI
 # runs - so it catches anything a build actually exercises: bundler
 # resolution failures and prerenderable server/client boundary breaks.
 # Measured at ~15-30s uncached for the build itself (apps/console alone,
