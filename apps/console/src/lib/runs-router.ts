@@ -739,7 +739,6 @@ export const runsRouter = os.router({
       });
     }
     const shared = {
-      deliveryHandoffVersion: 1 as const,
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),

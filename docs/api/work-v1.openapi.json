@@ -11207,10 +11207,6 @@
                           ],
                           "additionalProperties": false
                         },
-                        "deliveryHandoffVersion": {
-                          "type": "number",
-                          "const": 1
-                        },
                         "pipeline": {
                           "type": "string"
                         },
@@ -11367,10 +11363,6 @@
                           },
                           "required": ["spec"],
                           "additionalProperties": false
-                        },
-                        "deliveryHandoffVersion": {
-                          "type": "number",
-                          "const": 1
                         },
                         "pipeline": {
                           "type": "string"

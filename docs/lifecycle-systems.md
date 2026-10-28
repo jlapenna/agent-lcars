@@ -299,9 +299,7 @@ prove deployed behavior.
 
 ## Ready deliverable ownership
 
-The ready delivery handoff is unconditional: every deployed worker uses it
-(the brief's `deliveryHandoffVersion: 1` field remains in the Work API
-contract only until the runner image built without it is in service). An
+The ready delivery handoff is unconditional: every deployed worker uses it. An
 already merged PR completion records its merge commit, while unmerged ready
 handoff uses the handoff contract. An authenticated native implementation completion with an open PR
 artifact establishes exact attempt-marker identity, ready state, protected
