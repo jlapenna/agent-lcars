@@ -448,7 +448,10 @@ RUN set -eux; \
     # Actions execute with their bundled Node, independently of PATH.
     cp /usr/bin/node /home/runner/externals/node24/bin/node; \
     test "$(/home/runner/externals/node24/bin/node -p 'process.versions.node')" = "$NODE_VERSION"; \
-    rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine; \
+    # The runner itself still evaluates hashFiles() with externals/node20, so
+    # replace that binary with the patched one instead of deleting it.
+    cp /usr/bin/node /home/runner/externals/node20/bin/node; \
+    rm -rf /home/runner/externals/node20_alpine; \
     # NodeSource's nodejs package bundles the `corepack` binary but never
     # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
     # as the throwaway telemetry-watcher-build stage above already does for
