@@ -146,9 +146,9 @@ permissions, including writes, across **all currently watched repositories**;
 it is not a read-only or findings-repository-only grant. The profile's
 `repositories` field still controls which repositories may submit jobs, not the
 credential scope. Use this opt-in only for trusted jobs whose operator accepts
-that existing authority. The job repository owner must have at least one
-watched repository; otherwise the checkout credential mint fails and the run
-fails closed during setup. A report-only recipe remains a task instruction within
+that existing authority. The job repository itself is always covered by its
+owner's grant, even when it is not a watched repository, so the run can check
+out its own pinned revision. A report-only recipe remains a task instruction within
 the same trusted shell boundary as other runtimes, not a command sandbox.
 
 Profile changes fence unminted reservations and recipe execution checks; they do
