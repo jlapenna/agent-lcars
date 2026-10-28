@@ -60,7 +60,7 @@ overrides:
   'piscina@<4.9.4': 4.9.4
   'proxy-addr@<2.0.8': 2.0.8
   'brace-expansion@>=2 <2.1.6': 2.1.7
-  'fast-uri@<3.1.7': 3.1.9
+  'fast-uri@<3.1.7': 4.2.3
   'immutable@<5.1.8': 5.1.9
   'source-map-js@<1.2.2': 1.2.2
   'svgo@<4.1.0': 4.1.0
