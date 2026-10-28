@@ -46,7 +46,7 @@ ARG NODE_BUILD_BASE=node:24.22.1-slim
 ARG GO_BUILD_BASE=golang:${GO_VERSION}-bookworm
 
 # One pin feeds the source image and both runtime-user build assertions.
-ARG TERRAFORM_VERSION=1.17.0
+ARG TERRAFORM_VERSION=1.17.1
 
 # Builds jlapenna/agent-lcars's telemetry sidecar/finalize tool AND the
 # `lcars` session-title/status CLI (apps/telemetry-watcher's `bundle` and
@@ -343,7 +343,7 @@ FROM ${GO_BUILD_BASE} AS go-runtime
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv-runtime
 
 # Exact multi-platform Terraform artifact; only its static CLI is copied.
-FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:4d1b496a256f2989bccdb04b9104a4ede97234b10fba90259e173e905ec4fb58 AS terraform-runtime
+FROM hashicorp/terraform:${TERRAFORM_VERSION}@sha256:a5d5a5a892c98f60fcbfa81eac2a40fc19e7b3fa7719bccae10ff6111d22524a AS terraform-runtime
 
 FROM ${RUNNER_BASE}
 # BuildKit must finish every seed proof before constructing a publishable image.
