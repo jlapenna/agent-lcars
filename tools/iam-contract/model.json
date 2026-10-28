@@ -30,12 +30,8 @@
         {
           "id": 150568991,
           "account": "supersprinklesracing",
-          "repositorySelection": "selected",
-          "repositories": [
-            "supersprinklesracing/girosf",
-            "supersprinklesracing/sprinkles",
-            "supersprinklesracing/www"
-          ]
+          "repositorySelection": "all",
+          "_note": "The maintainer chose All repositories (2026-10-28), so only the selection is asserted: a repository list would mirror the organization and make every new repository drift."
         },
         {
           "id": 154278523,

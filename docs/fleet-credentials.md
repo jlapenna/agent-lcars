@@ -45,13 +45,16 @@ installation `154210710` use "All repositories" on jlapenna, which the
 maintainer confirmed on 2026-10-12. A new jlapenna repository is covered by
 both without a model change; the IAM model asserts only that selection.
 
-`agent-lcars` installation `150568991` on supersprinklesracing retains
-"Only select repositories" for `girosf`, `sprinkles` and `www`. Its `jlaorg`
-installation retains "All repositories". Preserve these separate contracts.
-For a selected installation, use the GitHub UI or the
+`agent-lcars` installation `150568991` on supersprinklesracing also uses
+"All repositories", which the maintainer confirmed on 2026-10-28 after the
+installation was widened from the former `girosf`, `sprinkles` and `www`
+selection; a new supersprinklesracing repository is covered without a model
+change. Its `jlaorg` installation `154278523` uses "All repositories" too.
+Changing an installation's selection mode or, for a selected installation,
+its membership uses the GitHub UI or the
 [repository-membership REST endpoints](https://docs.github.com/en/rest/apps/installations?apiVersion=2026-03-10)
-with a supported credential and the required access. Membership editing and
-changing the selection mode require distinct administrative capabilities.
+with a supported credential; the two require distinct administrative
+capabilities.
 
 `labels` uses GitHub-hosted CI and adds no dedicated ARC lane. Its
 `agent-lcars-autoscaler` coverage serves the Homelab Actions exporter.
