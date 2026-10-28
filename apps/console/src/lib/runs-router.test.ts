@@ -3372,6 +3372,72 @@ describe('checkoutToken', () => {
         expiresAt,
       });
     });
+
+    it('mints a dedicated grant for an anchor owner with no watched repositories', async () => {
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner: 'jlapenna', name: 'agent-lcars' },
+        { owner: 'supersprinklesracing', name: 'sprinkles' },
+      ]);
+      const { store, orchestrator, now } = fixture();
+      const runId = await seedQueuedRun(store, orchestrator, {
+        workId: wid('work-cross-repo-new-owner-anchor'),
+        now: NOW,
+        targetRepo: 'newowner/job',
+        params: { mode: 'recipe', crossRepo: 'true' },
+      });
+      const runToken = mintRunToken();
+      await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner-1',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+        tokenHash: hashRunToken(runToken),
+      });
+      const expiresAt = '2026-08-26T10:53:21.000Z';
+      const expiringTokenForRepositories = vi.fn(
+        async (owner: string, _names: string[]) => ({
+          token: `ghs_grant-for-${owner}`,
+          expiresAt,
+        }),
+      );
+
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          tokens: context.tokens,
+          checkoutTokens: {
+            tokenFor: async () => 'unused',
+            expiringTokenFor: async () => ({ token: 'unused', expiresAt }),
+            expiringTokenForRepositories,
+          },
+          codexAuth: context.codexAuth,
+          bearerToken: runToken,
+        },
+        'GET',
+        runPath(runId, '/checkout-token'),
+      );
+      expect(r.status).toBe(200);
+      expect(expiringTokenForRepositories).toHaveBeenCalledTimes(3);
+      expect(expiringTokenForRepositories).toHaveBeenCalledWith('newowner', [
+        'job',
+      ]);
+      const body = r.json as {
+        token: string;
+        repository: string;
+        grants: { owner: string; repositories: string[]; token: string }[];
+      };
+      expect(body.repository).toBe('newowner/job');
+      expect(body.token).toBe('ghs_grant-for-newowner');
+      expect(body.grants).toHaveLength(3);
+      expect(body.grants).toContainEqual({
+        owner: 'newowner',
+        repositories: ['job'],
+        token: 'ghs_grant-for-newowner',
+        expiresAt,
+      });
+    });
   });
 });
 

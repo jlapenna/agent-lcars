@@ -1292,7 +1292,15 @@ export const runsRouter = os.router({
     // lie outside `getWatchedRepos()`. The run must still be able to check
     // out its own source: always cover the anchor in its owner's grant.
     const slash = target.repo.indexOf('/');
-    addRepository(target.repo.slice(0, slash), target.repo.slice(slash + 1));
+    if (slash <= 0 || slash === target.repo.length - 1) {
+      // Admission validates the target as "owner/name"; a stored anchor
+      // that is not must never be minted for a guessed owner.
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: `checkout token: malformed anchor repository ${JSON.stringify(target.repo)}`,
+      });
+    }
+    const anchorOwner = target.repo.slice(0, slash);
+    addRepository(anchorOwner, target.repo.slice(slash + 1));
     const grants = await Promise.all(
       [...namesByOwner.entries()].map(async ([owner, repositories]) => {
         const token = await context.checkoutTokens.expiringTokenForRepositories(
@@ -1307,15 +1315,13 @@ export const runsRouter = os.router({
         };
       }),
     );
-    const anchorOwner = target.repo.slice(0, slash);
     const anchorGrant = grants.find((grant) => grant.owner === anchorOwner);
     if (anchorGrant === undefined) {
-      // Invariant: the anchor's own repository was added to its owner's
-      // grant above, so that owner always has one. A run somehow reaching
-      // this without one has a corrupted anchor, not a recoverable
-      // per-request condition.
+      // Structural guard: the anchor was added to its owner's grant above,
+      // so every mint produces one for `anchorOwner`. This is unreachable
+      // unless the grant list itself is corrupted.
       throw new ORPCError('INTERNAL_SERVER_ERROR', {
-        message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant among watched repos`,
+        message: `checkout token: anchor owner ${JSON.stringify(anchorOwner)} has no grant`,
       });
     }
     // The singular token/repository/expiresAt fields keep meaning exactly
