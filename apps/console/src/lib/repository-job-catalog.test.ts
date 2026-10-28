@@ -99,40 +99,43 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) =>
-      Response.json(
-        url.includes('git/trees')
-          ? {
-              tree: [
-                {
-                  path: '.lcars/jobs/audit/job.yaml',
-                  mode: '100644',
-                  type: 'blob',
-                  sha: 'manifest',
-                  size: Buffer.byteLength(manifest),
-                },
-                {
-                  path: '.lcars/jobs/audit/recipe.yaml',
-                  mode: '100644',
-                  type: 'blob',
-                  sha: 'recipe',
-                  size: Buffer.byteLength(recipe),
-                },
-              ],
-            }
-          : url.includes('git/blobs/')
-            ? {
-                encoding: 'base64',
-                content: Buffer.from(
-                  url.endsWith('/manifest') ? manifest : recipe,
-                ).toString('base64'),
-              }
-            : url.includes('commits/')
+      // GitHub rejects a trailing slash on the repository resource with 404.
+      url.endsWith('/')
+        ? new Response('Not Found', { status: 404 })
+        : Response.json(
+            url.includes('git/trees')
               ? {
-                  sha: 'a'.repeat(40),
-                  commit: { tree: { sha: 'b'.repeat(40) } },
+                  tree: [
+                    {
+                      path: '.lcars/jobs/audit/job.yaml',
+                      mode: '100644',
+                      type: 'blob',
+                      sha: 'manifest',
+                      size: Buffer.byteLength(manifest),
+                    },
+                    {
+                      path: '.lcars/jobs/audit/recipe.yaml',
+                      mode: '100644',
+                      type: 'blob',
+                      sha: 'recipe',
+                      size: Buffer.byteLength(recipe),
+                    },
+                  ],
                 }
-              : { default_branch: 'main' },
-      ),
+              : url.includes('git/blobs/')
+                ? {
+                    encoding: 'base64',
+                    content: Buffer.from(
+                      url.endsWith('/manifest') ? manifest : recipe,
+                    ).toString('base64'),
+                  }
+                : url.includes('commits/')
+                  ? {
+                      sha: 'a'.repeat(40),
+                      commit: { tree: { sha: 'b'.repeat(40) } },
+                    }
+                  : { default_branch: 'main' },
+          ),
     ),
   );
   const first = refreshEnabledJobCatalogs(store, tokens, now + 35_000);
@@ -202,6 +205,8 @@ it.each(['success', 'removal', 'failure'] as const)(
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init: RequestInit) => {
+        if (url.endsWith('/'))
+          return new Response('Not Found', { status: 404 });
         const older =
           new Headers(init.headers).get('Authorization') === 'Bearer older';
         if (url.includes('git/trees')) {
