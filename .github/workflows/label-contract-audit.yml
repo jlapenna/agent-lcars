@@ -44,6 +44,9 @@ jobs:
           - full_name: jlapenna/labels
             owner: jlapenna
             repository: labels
+          - full_name: jlapenna/jclaw
+            owner: jlapenna
+            repository: jclaw
 
     steps:
       - uses: actions/checkout@v7
