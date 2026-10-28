@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Detect image-owned tools against the consuming job's existing setup pins."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -60,6 +61,10 @@ def detect(tool):
     output("cache_dir", command("uv", "cache", "dir"))
     output("uv_version", expected_uv)
     output("python_version", expected_python)
+    # The cache key's lock hash is computed here, not with `hashFiles()`:
+    # the runner evaluates that expression with its internal Node 20, which
+    # the fleet images removed (#2980), so the expression fails the job.
+    output("lock_hash", hashlib.sha256(Path(pins["cache-dependency-glob"]).read_bytes()).hexdigest())
     # setup-uv's python-version input sets UV_PYTHON; preserve that contract.
     with open(os.environ["GITHUB_ENV"], "a") as stream:
         stream.write(f"UV_PYTHON={expected_python}\n")

@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   mkdirSync,
   mkdtempSync,
@@ -93,7 +94,11 @@ describe('baked CI tool selection', () => {
               },
               {
                 uses: 'astral-sh/setup-uv@pin',
-                with: { version: '0.12.19', 'python-version': '3.14' },
+                with: {
+                  version: '0.12.19',
+                  'python-version': '3.14',
+                  'cache-dependency-glob': 'requirements.lock',
+                },
               },
             ],
           },
@@ -106,6 +111,7 @@ describe('baked CI tool selection', () => {
       `[ "$UV_PYTHON_DOWNLOADS" = never ]\n[ "$UV_OFFLINE" = 1 ]\ncase "$1" in\n--version) echo 'uv ${version}' ;;\npython) echo '${f.dir}/bin/managed-python' ;;\ncache) echo '${f.dir}/cache' ;;\nesac`,
     );
     f.binary('managed-python', 'echo Python 3.14.7');
+    writeFileSync(`${f.dir}/requirements.lock`, 'pkg==1.0\n');
     execFileSync(
       'python3',
       [path.join(root, 'tools/detect-baked-ci-tools.py'), tool],
@@ -115,9 +121,29 @@ describe('baked CI tool selection', () => {
       },
     );
     expect(f.output()).toContain(`ready=${ready}\n`);
+    // The lock hash replaces `hashFiles()` in the cache key: the runner
+    // evaluates that expression with its internal Node 20, which the fleet
+    // images removed (#2980).
+    if (tool === 'python' && ready)
+      expect(f.output()).toContain(
+        `lock_hash=${createHash('sha256').update('pkg==1.0\n').digest('hex')}\n`,
+      );
     expect(readFileSync(`${f.dir}/env`, 'utf8')).toBe(
       tool === 'python' && ready ? 'UV_PYTHON=3.14\n' : '',
     );
+  });
+
+  it('never evaluates hashFiles() on a fleet-image lane', () => {
+    // Fleet runner images ship only Node 24 (#2980); the runner's
+    // `hashFiles()` runs on its internal Node 20 and fails the job.
+    const workflow = parse(readFileSync('.github/workflows/ci.yml', 'utf8'));
+    for (const [name, job] of Object.entries<{ 'runs-on'?: unknown }>(
+      workflow.jobs,
+    )) {
+      if (!JSON.stringify(job['runs-on'] ?? '').includes('agent-lcars-'))
+        continue;
+      expect(JSON.stringify(job), `job ${name}`).not.toContain('hashFiles(');
+    }
   });
 
   it('keeps the E2E sandbox browser version aligned with the installed Playwright', () => {
