@@ -14,7 +14,7 @@ working-set size are separate:
 | Compaction output ceiling      |   4096 | Bounds summary generation, including reasoning  |
 
 These are runner settings, not workstation or LiteLLM routing changes. The
-agent execution budget remains two hours. Nothing changes the task's feature scope.
+agent execution budget remains the runner's 80-minute budget. Nothing changes the task's feature scope.
 
 ## Why this changed
 

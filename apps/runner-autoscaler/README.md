@@ -312,7 +312,7 @@ Kubernetes does not promise exactly-once process execution under every node
 failure; Work API authentication, completion fencing and provider credential
 leases remain authoritative. Jobs have a two-hour wall-clock deadline including scheduling and image pulls,
 which bounds infrastructure launch waits independently of worker heartbeat
-renewal or the normal 80-minute agent budget. Finished Jobs retain their
+renewal or the 80-minute agent budget at which the runner stops the provider. Finished Jobs retain their
 terminated pod logs for a day through the Kubernetes TTL controller
 (`ttlSecondsAfterFinished`), which is the only finished-Job retention.
 Normal 15-second recovery ticks retire original Jobs whose exact claim

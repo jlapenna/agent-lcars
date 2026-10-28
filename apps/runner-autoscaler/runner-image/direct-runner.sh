@@ -571,7 +571,14 @@ export WORKSPACE="$workspace"
 export REPOSITORY="$TARGET_REPO"
 export RUNTIME_ENV="$RUNNER_TEMP/runtime-env"
 : > "$RUNTIME_ENV"
+# One run budget. The brief states it to the agent and the provider is
+# stopped at it, so a timed-out worker still finalizes, verifies published
+# artifacts and reports `agent-timeout` itself. The Pod's 7200 s
+# activeDeadlineSeconds (queue_kubernetes.go) is the hard backstop: budget
+# plus up to 40 minutes of image pull, bootstrap, credential wait and
+# finalization. A provider default above the budget could never fire first.
 export BUDGET_MINUTES=80
+PROVIDER_TIMEOUT_SECONDS=$((BUDGET_MINUTES * 60))
 export AGENT="$AGENT_NAME"
 
 bash "$PREPARE_DISPATCH"
@@ -838,7 +845,7 @@ if [ "$PIPELINE" = "claude" ]; then
   CLAUDE_CODE_OAUTH_TOKEN="$(cat "$CLAUDE_TOKEN_FILE")"
   export CLAUDE_CODE_OAUTH_TOKEN
 
-  CLAUDE_TIMEOUT_SECONDS="${CLAUDE_TIMEOUT_SECONDS:-7200}"
+  CLAUDE_TIMEOUT_SECONDS="${CLAUDE_TIMEOUT_SECONDS:-$PROVIDER_TIMEOUT_SECONDS}"
   if ! [[ "$CLAUDE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$CLAUDE_TIMEOUT_SECONDS" -lt 1 ]; then
     echo "FATAL: CLAUDE_TIMEOUT_SECONDS must be a positive integer" >&2
     exit 1
@@ -996,7 +1003,7 @@ CURLCFG
   : > "$CODEX_FAILURE_MESSAGES"
   : > "$CODEX_STDERR"
   mkfifo "$CODEX_STDERR_PIPE"
-  CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-7200}"
+  CODEX_TIMEOUT_SECONDS="${CODEX_TIMEOUT_SECONDS:-$PROVIDER_TIMEOUT_SECONDS}"
   case "$CODEX_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)
       echo "FATAL: CODEX_TIMEOUT_SECONDS must be a positive integer" >&2
@@ -1198,7 +1205,7 @@ else
   # leave the surrounding direct runner alive to finalize telemetry and
   # report no-deliverable rather than letting an unbounded provider retry
   # occupy a queue slot indefinitely.
-  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-7200}"
+  OPENCODE_TIMEOUT_SECONDS="${OPENCODE_TIMEOUT_SECONDS:-$PROVIDER_TIMEOUT_SECONDS}"
   case "$OPENCODE_TIMEOUT_SECONDS" in
     '' | *[!0-9]*)
       echo "FATAL: OPENCODE_TIMEOUT_SECONDS must be a positive integer" >&2

@@ -291,7 +291,11 @@ A stopped observer therefore still expires; placement never records worker
 heartbeat or provider startup.
 
 Every executor Job carries the two-hour runtime limit on the Pod, whose kubelet
-clock starts after assignment, rather than on the Job's scheduling clock.
+clock starts after assignment, rather than on the Job's scheduling clock. The
+runner stops the provider at the brief's 80-minute budget first, so a
+timed-out worker finalizes, verifies published artifacts and reports
+`agent-timeout` itself instead of being killed by the Pod limit and settled
+`lost`.
 Resources, bounded Pending admission, exact retirement authority and receipt
 fences remain unchanged. Live qualification requires compatible Console and
 controller delivery and a real admitted work item; source tests alone do not
