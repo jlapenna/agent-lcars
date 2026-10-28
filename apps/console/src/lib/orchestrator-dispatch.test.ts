@@ -135,6 +135,53 @@ async function requestedWithOrigin(
   return decidedRun(outcome);
 }
 
+describe('drainOutbox settles outcome entries for every stored Work shape', () => {
+  it('settles a repository-owned Goose recipe Work without delivery', async () => {
+    const f = fixture();
+    const outcome = await f.orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4J' },
+      requestId: 'request-goose-1',
+      pipeline: 'goose',
+      work: {
+        origin: { principal: 'svc:production-verifier', channel: 'api' },
+        spec: {
+          title: 'weekly-security-audit · octo/example',
+          description: 'Report-only audit.',
+          pipeline: 'goose',
+          priority: 'background',
+          target: { repo: 'octo/example' },
+          jobOccurrence: 'f'.repeat(64),
+        },
+      },
+    });
+    if (isRefusal(outcome))
+      throw new Error(`unexpected refusal: ${outcome.reason}`);
+    const run = decidedRun(outcome);
+    const decision = await f.orchestrator.report(run.runId, {
+      ok: false,
+      summary: 'failed',
+      message: 'launch refused',
+    });
+    expect(decision.outbox.map((entry) => entry.entryId)).toContain(
+      `outcome/${run.runId}`,
+    );
+    const deliver = vi.fn();
+    const fetchImpl = vi.fn(
+      async () => new Response(null, { status: 204 }),
+    ) as unknown as typeof fetch;
+    const result = await drainOutbox({
+      ...f,
+      tokens,
+      fetchImpl,
+      deliverOutcomeWebhook: deliver,
+    });
+    expect(result.failed).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
+    // The closed Goose item still owns its session expiry dispatch.
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
 describe('drainOutbox native outcome webhook delivery', () => {
   const THREAD = 'T0123/C0456/1788673935.123456';
   const SLACK_TARGET = {

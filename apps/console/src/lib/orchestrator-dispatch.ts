@@ -11,7 +11,10 @@ import {
   type Run,
   type Task,
 } from '@agent-lcars/orchestrator';
-import { isSourceManagedWork, workPayloadSchema } from '@agent-lcars/work';
+import {
+  isSourceManagedWork,
+  storedWorkPayloadSchema,
+} from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 
 import { type AnchorTarget, anchorTarget } from './anchor-target';
@@ -753,7 +756,9 @@ async function deliverNativeOutcome(
     }
   }
 
-  const origin = workPayloadSchema.parse(task.work).origin;
+  // Any stored Work shape (coding, summary, repository-owned recipe) can
+  // reach here; only the origin is read.
+  const origin = storedWorkPayloadSchema.parse(task.work).origin;
   if (origin.thread === undefined) {
     await settleClaim(deps, entry, 'done');
     return;
