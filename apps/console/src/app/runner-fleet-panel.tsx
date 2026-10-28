@@ -178,16 +178,8 @@ export function RunnerFleetPanel({
                 )}
               </td>
               <td>
-                <StateMark
-                  tone={
-                    !executor.ready ? 'fail' : executor.draining ? 'warn' : 'ok'
-                  }
-                >
-                  {!executor.ready
-                    ? 'Not ready'
-                    : executor.draining
-                      ? 'Draining'
-                      : 'Ready'}
+                <StateMark tone={!executor.ready ? 'fail' : 'ok'}>
+                  {!executor.ready ? 'Not ready' : 'Ready'}
                 </StateMark>
               </td>
             </tr>

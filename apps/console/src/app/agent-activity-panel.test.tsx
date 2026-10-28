@@ -1077,14 +1077,13 @@ describe('AgentActivityPanel fleet chip', () => {
       fleet: {
         directExecutor: {
           ready: true,
-          draining: true,
           maxConcurrent: 3,
           expiresAt: new Date(Date.now() + 180_000).toISOString(),
         },
       },
     });
     expect(screen.getByTestId('fleet-chip')).toHaveTextContent(
-      'GitHub runner status unavailable · Direct executor ready, draining (limit 3)',
+      'GitHub runner status unavailable · Direct executor ready (limit 3)',
     );
   });
 

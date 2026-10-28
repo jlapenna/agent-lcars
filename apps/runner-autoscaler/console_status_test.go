@@ -21,7 +21,7 @@ func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T
 	now := time.Date(2026, 8, 28, 18, 0, 0, 0, time.UTC)
 
 	notReady := source.snapshot(context.Background(), now)
-	if notReady.SchemaVersion != 2 || notReady.Kind != "queue-executor" || notReady.Executor != "queue" || notReady.Ready || notReady.Draining || notReady.ActiveRuns != nil || notReady.MaxConcurrent != 0 {
+	if notReady.SchemaVersion != 2 || notReady.Kind != "queue-executor" || notReady.Executor != "queue" || notReady.Ready || notReady.ActiveRuns != nil || notReady.MaxConcurrent != 0 {
 		t.Fatalf("unexpected unavailable queue status: %#v", notReady)
 	}
 	if !notReady.ExpireAt.Equal(now.Add(consoleStatusTTL)) {
@@ -30,7 +30,7 @@ func TestQueueExecutorStatusSnapshotReportsOnlyTruthfulWorkerHealth(t *testing.T
 
 	source.ready.Store(true)
 	ready := source.snapshot(context.Background(), now)
-	if !ready.Ready || ready.Draining || ready.MaxConcurrent != 3 || ready.ActiveRuns == nil || *ready.ActiveRuns != 2 {
+	if !ready.Ready || ready.MaxConcurrent != 3 || ready.ActiveRuns == nil || *ready.ActiveRuns != 2 {
 		t.Fatalf("unexpected ready queue status: %#v", ready)
 	}
 

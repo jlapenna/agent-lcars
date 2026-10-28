@@ -165,8 +165,7 @@ panel receives each write through a server-sent stream backed by a Firestore
 listener, not a poll, and stops presenting a snapshot as live after three
 minutes (three heartbeats, also the document's TTL) without one. It reports only generic worker health: readiness,
 configured `max_concurrent` capacity, and an unfinished-Job count when the
-Job inventory can be read. (The document's `draining` key is always `false`;
-the console's v2 reader still requires it.) It has no pipeline, repository, provider,
+Job inventory can be read. It has no pipeline, repository, provider,
 credential, or individual-run data -- queue lifecycle counts (queued,
 claimed, running, and outcomes) remain the console's authoritative
 orchestrator Run records, not autoscaler telemetry.

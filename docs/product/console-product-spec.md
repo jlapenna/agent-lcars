@@ -244,8 +244,8 @@ the work that has stopped, and the work in flight.
   - Recent outcomes.
   - Active CLI sessions.
   - A fleet chip showing online/running GitHub Actions runners from
-    fresh ARC lane records separately from direct-executor readiness,
-    draining state and concurrency limit. Missing capacity is unavailable,
+    fresh ARC lane records separately from direct-executor readiness
+    and concurrency limit. Missing capacity is unavailable,
     not zero; fresh scaled-to-zero capacity remains visible. The earliest
     ARC producer deadline and direct-executor producer deadline survive
     projection and expire independently on the client, even during unchanged
@@ -439,7 +439,7 @@ the work that has stopped, and the work in flight.
 **Purpose:** answer "is there capacity, and is the executor healthy?"
 
 - **FE-SB-1 [Shipped]** The queue executor shows a `ready` or `not ready`
-  badge, a `draining` badge, and its active and maximum Job counts.
+  badge and its active and maximum Job counts.
 - **FE-SB-2 [Shipped]** Each ARC lane (status documents published by the
   executor) shows pending, running, idle, registered, desired, and maximum
   runners. Direct agent executor health is shown separately. Retired v1

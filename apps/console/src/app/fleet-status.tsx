@@ -76,7 +76,7 @@ export function FleetChip({ fleet }: { fleet?: FleetSummary }) {
       {' · '}
       {fresh.directExecutor === undefined
         ? 'Direct executor status unavailable'
-        : `Direct executor ${fresh.directExecutor.ready ? 'ready' : 'not ready'}${fresh.directExecutor.draining ? ', draining' : ''} (limit ${fresh.directExecutor.maxConcurrent})`}
+        : `Direct executor ${fresh.directExecutor.ready ? 'ready' : 'not ready'} (limit ${fresh.directExecutor.maxConcurrent})`}
     </Text>
   );
 }

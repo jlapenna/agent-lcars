@@ -24,7 +24,6 @@ function status(overrides: Record<string, unknown> = {}) {
     kind: 'queue-executor',
     executor: 'queue',
     ready: true,
-    draining: false,
     activeRuns: 2,
     maxConcurrent: 3,
     updatedAt: new Date().toISOString(),
@@ -544,7 +543,6 @@ describe('authoritative ARC inventory', () => {
       kind: 'queue-executor',
       executor: 'queue',
       ready: true,
-      draining: false,
       maxConcurrent: 3,
       updatedAt: now,
     };

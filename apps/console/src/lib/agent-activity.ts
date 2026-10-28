@@ -100,7 +100,6 @@ export interface FleetSummary {
   githubExpiresAt?: string;
   directExecutor?: {
     ready: boolean;
-    draining: boolean;
     maxConcurrent: number;
     /** Original producer deadline, never the dashboard fetch/heartbeat time. */
     expiresAt: string;
@@ -171,7 +170,6 @@ export function fleetFromAutoscalerStatuses(
       : {
           directExecutor: {
             ready: executor.ready,
-            draining: executor.draining,
             maxConcurrent: executor.maxConcurrent,
             expiresAt: new Date(
               Date.parse(executor.updatedAt) + RUNNER_STATUS_STALENESS_MS,

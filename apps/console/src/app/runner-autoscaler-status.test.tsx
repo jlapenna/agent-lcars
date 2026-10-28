@@ -32,7 +32,6 @@ const executor = {
   kind: 'queue-executor' as const,
   executor: 'queue' as const,
   ready: true,
-  draining: false,
   maxConcurrent: 3,
   updatedAt: lane.updatedAt,
 };
@@ -111,7 +110,6 @@ describe('RunnerAutoscalerStatus', () => {
       kind: 'queue-executor' as const,
       executor: 'queue' as const,
       ready: true,
-      draining: false,
       activeRuns: 0,
       maxConcurrent: 3,
       updatedAt: now,
@@ -173,11 +171,11 @@ describe('RunnerAutoscalerStatus', () => {
     act(() =>
       FakeEventSource.only().push({
         warnings: [],
-        queueExecutor: { ...executor, draining: true },
+        queueExecutor: { ...executor, ready: false },
         providerAdmission,
       }),
     );
-    expect(codex).toHaveTextContent('executor draining');
+    expect(codex).toHaveTextContent('executor not ready');
     expect(codex).toHaveTextContent('0 eligible queued');
     expect(codex).toHaveTextContent('1 queued');
     act(() =>
@@ -358,7 +356,7 @@ describe('RunnerAutoscalerStatus', () => {
         <RunnerAutoscalerStatus
           initial={{
             lanes: [lane],
-            queueExecutor: { ...executor, activeRuns: 5, draining: true },
+            queueExecutor: { ...executor, activeRuns: 5 },
             warnings: [],
           }}
         />
@@ -375,7 +373,7 @@ describe('RunnerAutoscalerStatus', () => {
     ).toHaveAttribute('href', lane.registrationUrl);
     const executorRow = screen.getByTestId('queue-executor-status');
     expect(executorRow).toHaveTextContent('Direct agent executor');
-    expect(executorRow).toHaveTextContent('ready · draining');
+    expect(executorRow).toHaveTextContent('ready');
     expect(executorRow).toHaveTextContent('5 active · 3 max');
   });
 
@@ -577,7 +575,6 @@ describe('RunnerAutoscalerStatus', () => {
       kind: 'queue-executor' as const,
       executor: 'queue' as const,
       ready: true,
-      draining: false,
       maxConcurrent: 3,
       updatedAt: new Date().toISOString(),
     };
