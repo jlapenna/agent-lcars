@@ -166,13 +166,19 @@ describe('drainOutbox settles outcome entries for every stored Work shape', () =
       `outcome/${run.runId}`,
     );
     const deliver = vi.fn();
+    const fetchImpl = vi.fn(
+      async () => new Response(null, { status: 204 }),
+    ) as unknown as typeof fetch;
     const result = await drainOutbox({
       ...f,
       tokens,
+      fetchImpl,
       deliverOutcomeWebhook: deliver,
     });
     expect(result.failed).toEqual([]);
     expect(deliver).not.toHaveBeenCalled();
+    // The closed Goose item still owns its session expiry dispatch.
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });
 

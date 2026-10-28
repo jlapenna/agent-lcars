@@ -756,9 +756,8 @@ async function deliverNativeOutcome(
     }
   }
 
-  // Every stored Work shape (coding, summary, repository-owned recipe) can
-  // settle here; the coding-only schema rejected Goose Work and left its
-  // outcome entry retrying (jlapenna/jclaw weekly-security-audit, 2026-10-28).
+  // Any stored Work shape (coding, summary, repository-owned recipe) can
+  // reach here; only the origin is read.
   const origin = storedWorkPayloadSchema.parse(task.work).origin;
   if (origin.thread === undefined) {
     await settleClaim(deps, entry, 'done');
