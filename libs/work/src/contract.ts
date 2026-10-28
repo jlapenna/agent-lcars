@@ -969,8 +969,6 @@ export const runClaimResponseSchema = z.strictObject({
 });
 
 const runBriefSharedSchema = {
-  /** Serving authority advertises the ready delivery contract to baked workers. */
-  deliveryHandoffVersion: z.literal(1).optional(),
   pipeline: z.string(),
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
