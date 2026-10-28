@@ -197,7 +197,11 @@ export class RepositoryJobs {
       requestId: occurrence.id,
       pipeline: 'goose',
       priority: 'background',
-      params: { mode: 'recipe', jobOccurrence: occurrence.id },
+      params: {
+        mode: 'recipe',
+        jobOccurrence: occurrence.id,
+        ...(profile.crossRepo === true ? { crossRepo: 'true' } : {}),
+      },
       work: {
         origin: {
           principal: occurrence.principal,

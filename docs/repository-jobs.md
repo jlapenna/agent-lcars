@@ -138,6 +138,23 @@ exact string maps; the job cannot widen them at invocation. The operator and
 executor Work grants must explicitly include `goose`. Public coding intake still
 accepts only coding pipelines; Goose is selected by repository recipe admission.
 
+An operator profile may explicitly set `crossRepo: true` to use the existing
+renewable cross-repository checkout credentials. Omitted or false keeps the
+credential scoped to the job's repository. Recipe inputs and invocation
+parameters cannot select this option. It grants normal installation-token
+permissions, including writes, across **all currently watched repositories**;
+it is not a read-only or findings-repository-only grant. The profile's
+`repositories` field still controls which repositories may submit jobs, not the
+credential scope. Use this opt-in only for trusted jobs whose operator accepts
+that existing authority. The job repository owner must have at least one
+watched repository; otherwise the checkout credential mint fails and the run
+fails closed during setup. A report-only recipe remains a task instruction within
+the same trusted shell boundary as other runtimes, not a command sandbox.
+
+Profile changes fence unminted reservations and recipe execution checks; they do
+not revoke already minted run authority or issued credentials. Stop an admitted
+run through the existing Work cancellation and retirement lifecycle.
+
 A receipt-backed QueueExecutor pool uses its normal configured runner image and
 resources. Its whole-job allocation must match the execution profile. The existing
 runner credential Secret supplies `goose-environment.json` (a string-valued map of

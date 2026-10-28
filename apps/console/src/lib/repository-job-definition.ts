@@ -119,6 +119,8 @@ export const jobProfileSchema = z.strictObject({
   name,
   repositories: z.array(repository).min(1),
   principals: z.array(z.string().min(1).max(128)).min(1),
+  // Reuse ordinary watched-repository credentials only by operator opt-in.
+  crossRepo: z.boolean().optional(),
   allocation,
   // Exact approved input sets keep network and write scopes operator-owned.
   inputSets: z.array(jobInputsSchema).min(1).max(100),

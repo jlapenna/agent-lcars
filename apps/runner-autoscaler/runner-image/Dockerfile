@@ -442,8 +442,11 @@ RUN set -eux; \
     # E2E runners ready without downloading a Temurin distribution per job. \
     # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer
     # workflows (sprinkles deploy.py) assume it; with PEP 668 a job cannot
-    # pip-install it at run time without --break-system-packages. \
-    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    # pip-install it at run time without --break-system-packages.
+    # nmap: repository-owned Goose audit recipes (jclaw weekly-security-audit)
+    # run bounded, unprivileged report-only scans with the standard package
+    # instead of host-only tools; it is present in every lane like gh and jq. \
+    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq nmap xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     test "$(node -p 'process.versions.node')" = "$NODE_VERSION"; \
     # Actions execute with their bundled Node, independently of PATH.
     cp /usr/bin/node /home/runner/externals/node24/bin/node; \
