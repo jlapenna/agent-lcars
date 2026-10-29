@@ -10,6 +10,7 @@ import {
   type JobProfile,
   jobProfileSchema,
   parseJobDefinition,
+  repositoryJobSchema,
 } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
 import {
@@ -502,4 +503,10 @@ describe('recipe invocation parameters', () => {
     expect(admitted.skipped).toBe(false);
     expect(admitted.parameters.pullRequest).toBe('43');
   });
+});
+
+it('bounds recipe timeouts below the executor Pod deadline', () => {
+  const timeout = repositoryJobSchema.shape.execution.shape.timeout;
+  expect(timeout.safeParse('45m').success).toBe(true);
+  expect(timeout.safeParse('46m').success).toBe(false);
 });

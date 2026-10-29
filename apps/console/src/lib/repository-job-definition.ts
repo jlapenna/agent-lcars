@@ -62,7 +62,9 @@ export const repositoryJobSchema = z.strictObject({
     timeout: z
       .string()
       .regex(/^[1-9][0-9]*m$/u)
-      .refine((value) => parseInt(value, 10) <= 30),
+      // The executor's Goose Pod deadline (50m) leaves the runner's own
+      // timer room to report before the Pod is killed.
+      .refine((value) => parseInt(value, 10) <= 45),
     maxAttempts: z.literal(1),
     resources: z
       .strictObject({ requests: allocation, limits: allocation })

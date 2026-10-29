@@ -23,7 +23,7 @@ import type {
   JobStore,
 } from './repository-job-store';
 
-/** Executor Pod runtime limits (2h, 30m for recipes) never exceed the run
+/** Executor Pod runtime limits (2h, 50m for recipes) never exceed the run
  * lease; the placement allowance keeps the bound conservative. */
 const RETIREMENT_BACKSTOP_MS = RUN_PLACEMENT_WAIT_MAX_MS + RUN_LEASE_MS;
 
