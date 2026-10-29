@@ -150,16 +150,19 @@ def validate_seed_lockfile(repo: str, lockfile: str) -> None:
 
 
 GITHUB_REPOSITORY = re.compile(
-    r"^(?:git\+)?(?:https|ssh|git)://(?:git@)?github\.com/([^/]+)/([^/#]+?)(?:\.git)?/?$"
+    r"^(?:git\+)?https://(?:git@)?github\.com/([^/]+)/([^/#]+?)(?:\.git)?/?$"
 )
 
 
 def public_github_repository(url: str) -> bool:
     """Whether the anonymous image build can clone or download this source.
 
-    Only a GitHub repository that the API reports as public qualifies. Any
-    other host, a repository the token cannot see, and a private repository
-    all count as unreadable, so a doubtful source is left to the consuming job.
+    Only an https GitHub source whose repository the API reports as public
+    qualifies: the fetch stage has no ssh client and GitHub refuses git://.
+    Any other host or protocol, a repository the token cannot see (404), and a
+    private repository count as unreadable, so a doubtful source is left to the
+    consuming job. Other API failures stop the sync rather than silently
+    changing the seed.
     """
     split = urlsplit(url)
     if split.hostname == "codeload.github.com":
@@ -170,8 +173,10 @@ def public_github_repository(url: str) -> bool:
         return False
     try:
         visibility = gh(match[1], f"repos/{match[1]}/{match[2]}", "--jq", ".private")
-    except subprocess.CalledProcessError:
-        return False
+    except subprocess.CalledProcessError as error:
+        if "404" in (error.stderr or ""):
+            return False
+        raise
     return visibility.strip() == "false"
 
 

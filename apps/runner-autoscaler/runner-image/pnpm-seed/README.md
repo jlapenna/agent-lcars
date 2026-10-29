@@ -21,8 +21,9 @@ final image copies only the resulting store.
 
 GitHub Packages requires authentication and may contain private packages, and a
 git or codeload source can name a private repository. The sync omits GitHub
-Packages records, and git or codeload records unless GitHub reports their
-repository as public (any other host counts as unreadable), with their
+Packages records, and git or codeload records unless they are https GitHub
+sources whose repository GitHub reports as public (ssh, `git://` and other hosts
+count as unreadable; other API failures stop the sync), with their
 dependency edges from this shared cache, retaining all other package content,
 including public dependencies of omitted packages. A consuming job keeps its original lockfile and fetches these cache
 misses with its own registry credentials. No consumer credentials or private

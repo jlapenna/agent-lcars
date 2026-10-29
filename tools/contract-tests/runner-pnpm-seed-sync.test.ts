@@ -19,10 +19,10 @@ const dirs: string[] = [];
 
 // A fake `gh api` serving fixture repositories: default branch `main`, head
 // commit `sha-<repo>`, raw contents from <dir>/repos/<owner>/<repo>/, and
-// `.private` from the visibility map (an unlisted repository is Not Found).
+
 function fixture(
   repositories: Record<string, Record<string, string>>,
-  visibility: Record<string, boolean> = {},
+  visibility: Record<string, boolean | 'rate-limited'> = {},
 ) {
   const dir = mkdtempSync(path.join(tmpdir(), 'runner-seed-sync-'));
   dirs.push(dir);
@@ -55,6 +55,7 @@ case "$1" in
   repos/*/*)
     if [ "\${3:-}" = .private ]; then
       [ -f "${dir}/visibility/\${1#repos/}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+      grep -qx rate-limited "${dir}/visibility/\${1#repos/}" && { echo "gh: API rate limit exceeded (HTTP 403)" >&2; exit 1; }
       cat "${dir}/visibility/\${1#repos/}"; exit
     fi
     echo main; exit ;;
@@ -158,6 +159,7 @@ importers:
       open: {specifier: 'github:oss/open', version: 'git+https://github.com/oss/open.git#bbb'}
       tarred: {specifier: 'github:club/tarred', version: 'https://codeload.github.com/club/tarred/tar.gz/ccc'}
       elsewhere: {specifier: 'git+https://gitlab.com/x/elsewhere.git', version: 'git+https://gitlab.com/x/elsewhere.git#ddd'}
+      overssh: {specifier: 'git+ssh://git@github.com/oss/open.git', version: 'git+ssh://git@github.com/oss/open.git#eee'}
 packages:
   '@club/design@git+https://github.com/club/design.git#aaa':
     resolution: ${git('club/design', 'aaa')}
@@ -171,11 +173,15 @@ packages:
   elsewhere@git+https://gitlab.com/x/elsewhere.git#ddd:
     resolution: {commit: ddd, repo: 'https://gitlab.com/x/elsewhere.git', type: git}
     version: 1.0.0
+  overssh@git+ssh://git@github.com/oss/open.git#eee:
+    resolution: {commit: eee, repo: 'git+ssh://git@github.com/oss/open.git', type: git}
+    version: 1.0.0
 snapshots:
   '@club/design@git+https://github.com/club/design.git#aaa': {}
   open@git+https://github.com/oss/open.git#bbb: {}
   tarred@https://codeload.github.com/club/tarred/tar.gz/ccc: {}
   elsewhere@git+https://gitlab.com/x/elsewhere.git#ddd: {}
+  overssh@git+ssh://git@github.com/oss/open.git#eee: {}
 `;
     const f = fixture(
       {
@@ -195,6 +201,24 @@ snapshots:
       'open@git+https://github.com/oss/open.git#bbb',
     ]);
     expect(Object.keys(result.importers['.'].dependencies)).toEqual(['open']);
+  });
+
+  it('stops instead of guessing when the visibility lookup fails', () => {
+    const f = fixture(
+      {
+        'acme/app': {
+          'package.json': '{"packageManager":"pnpm@11.28.2"}',
+          'pnpm-lock.yaml': `lockfileVersion: '9.0'
+packages:
+  open@git+https://github.com/oss/open.git#bbb:
+    resolution: {commit: bbb, repo: 'https://github.com/oss/open.git', type: git}
+`,
+        },
+      },
+      { 'oss/open': 'rate-limited' },
+    );
+    expect(() => f.run(['acme/app'])).toThrow(/repos\/oss\/open/);
+    expect(existsSync(path.join(f.seed, 'fleet/acme__app'))).toBe(false);
   });
 
   it('copies only what pnpm fetch needs from each repository', () => {
