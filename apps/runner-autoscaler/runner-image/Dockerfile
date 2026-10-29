@@ -42,7 +42,7 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:759a1d94a15b05941aba519697
 ARG GO_VERSION=1.27.3
 # The canonical publisher can freeze these indexes across semantic build jobs.
 # Defaults keep ordinary builds and Renovate version ownership unchanged.
-ARG NODE_BUILD_BASE=node:24.22.1-slim
+ARG NODE_BUILD_BASE=node:24.22.2-slim
 ARG GO_BUILD_BASE=golang:${GO_VERSION}-bookworm
 
 # One pin feeds the source image and both runtime-user build assertions.
