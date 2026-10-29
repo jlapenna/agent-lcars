@@ -12,7 +12,7 @@
 # example -- this ARG is kept in lockstep with that one's digest.
 ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
 
-FROM node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-runtime
+FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
 FROM ${RUNNER_BASE}
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.

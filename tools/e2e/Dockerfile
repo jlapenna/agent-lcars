@@ -8,7 +8,7 @@
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
-FROM node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-runtime
+FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN test "$(node -p 'process.versions.node')" = 24.22.2
