@@ -217,10 +217,6 @@ describe('runsContract', () => {
         'claim',
         'claimStatus',
         'startupPlacement',
-        'capacity',
-        'capacityMetrics',
-        'capacityInventory',
-        'activate',
         'placement',
         'brief',
         'introspect',
@@ -308,17 +304,19 @@ describe('run introspection output', () => {
     issueUrl: 'https://github.com/octo/example/issues/2572',
     verifiedAt: '2026-10-14T03:00:00.000Z',
     validUntil: '2026-10-14T03:05:00.000Z',
-    worker: null,
   };
 
-  it('accepts GitHub and native identities with optional verified worker metadata', () => {
+  it('accepts GitHub and native identities, with or without the null worker', () => {
     expect(runIntrospectionSchema.parse(body)).toEqual(body);
+    expect(runIntrospectionSchema.parse({ ...body, worker: null })).toEqual({
+      ...body,
+      worker: null,
+    });
     const native = {
       ...body,
       runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
       anchor: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
       issueUrl: null,
-      worker: { poolId: 'pool', podUid: 'pod', generation: 1 },
     };
     expect(runIntrospectionSchema.parse(native)).toEqual(native);
   });
@@ -330,16 +328,7 @@ describe('run introspection output', () => {
       { ...body, repository: `owner/${'r'.repeat(140)}` },
       { ...body, validUntil: 'unknown' },
       { ...body, anchor: { workId: 'not-a-work-id' } },
-      { ...body, worker: { poolId: 'pool', podUid: 'pod', generation: 0 } },
-      {
-        ...body,
-        worker: {
-          poolId: 'pool',
-          podUid: 'pod',
-          generation: 1,
-          tokenHash: 'secret',
-        },
-      },
+      { ...body, worker: { podUid: 'pod', generation: 1 } },
     ])
       expect(runIntrospectionSchema.safeParse(invalid).success).toBe(false);
   });
@@ -526,9 +515,6 @@ describe('generateWorkOpenApi', () => {
         '/schedules/{id}/disable',
         '/schedules/{id}/enable',
         '/runs/claim',
-        '/runs/capacity',
-        '/runs/capacity/metrics',
-        '/runs/activate',
         '/runs/{runId}/brief',
         '/runs/{runId}/introspect',
         '/runs/{runId}/claim-status',
@@ -580,19 +566,6 @@ describe('generateWorkOpenApi', () => {
       ),
     );
     expect(workers).toHaveLength(9);
-    for (const { operation } of workers)
-      expect(operation.parameters).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            name: 'x-lcars-worker-identity',
-            in: 'header',
-          }),
-          expect.objectContaining({
-            name: 'x-lcars-worker-generation',
-            in: 'header',
-          }),
-        ]),
-      );
   });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
@@ -660,11 +633,7 @@ describe('generateWorkOpenApi', () => {
       'POST /schedules/{id}/enable': ['200', '400', '403', '404', '409'],
       'POST /schedules/{id}/disable': ['200', '400', '403', '404', '409'],
       'POST /schedules/tick': ['200'],
-      'POST /runs/claim': ['200', '401', '409'],
-      'POST /runs/capacity': ['200', '401', '409'],
-      'GET /runs/capacity': ['200', '401'],
-      'GET /runs/capacity/metrics': ['200', '401'],
-      'POST /runs/activate': ['200', '401', '409'],
+      'POST /runs/claim': ['200', '401'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'GET /runs/{runId}/introspect': ['200', '401', '409'],
       'GET /runs/{runId}/recipe': ['200', '401', '403', '409'],

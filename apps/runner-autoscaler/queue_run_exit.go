@@ -236,36 +236,6 @@ func (r *runExitReporter) postContext(ctx context.Context, runID, runner, finger
 // A refused old Job cannot suppress an exit from a later same-run claim.
 func exitClaimKey(runID, fingerprint string) string { return runID + "\x00" + fingerprint }
 
-// Retirement needs an actual logical settlement attempt inside its recovery
-// deadline. It cannot use the asynchronous observation's delivery cache: an
-// accepted terminal result may still have cleanup debt, and a claimant refusal
-// is not evidence that this receipt may release.
-func (r *runExitReporter) settleTerminated(ctx context.Context, runID, runner, fingerprint string) error {
-	return r.settleTerminatedWithDisruption(ctx, runID, runner, fingerprint, nil)
-}
-
-func (r *runExitReporter) settleTerminatedWithDisruption(ctx context.Context, runID, runner, fingerprint string, disruption *exitDisruption) error {
-	if r == nil || runID == "" || runner == "" || fingerprint == "" {
-		return fmt.Errorf("receipt exit authority unavailable")
-	}
-	// Preserve the observed cause even when retirement wins the race with the
-	// asynchronous inventory observer. The server still fences provider start,
-	// original claim, Job UID, receipt time, and the separate recovery budget.
-	state, err := r.postContext(ctx, runID, runner, fingerprint, disruption)
-	if err != nil {
-		return err
-	}
-	switch state {
-	case "lost":
-		r.endLostRunSessions(runID)
-		return nil
-	case "finished", "canceled":
-		return nil
-	default:
-		return fmt.Errorf("receipt logical settlement unproven")
-	}
-}
-
 // endLostRunSessions marks runID's session docs ended in the background. A
 // worker that died without reporting never ran `runner finalize`, so its
 // sessions would otherwise stay stored `live` forever. It never blocks or

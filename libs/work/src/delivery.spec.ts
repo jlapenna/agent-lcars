@@ -65,7 +65,6 @@ async function handedOff(
     },
     CLAIM,
     undefined,
-    undefined,
     binding,
   );
   expect(isRefusal(settled)).toBe(false);

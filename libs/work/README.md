@@ -172,15 +172,6 @@ generic OIDC POST transport with
 `audience=agent-lcars-work`. The composite does not interpret this API's
 payload or response; the generated OpenAPI contract is authoritative.
 
-## Executor capacity receipts
-
-The application-owned pool/domain, receipt, generation and retirement protocol
-uses the Work API and serializable Memory/Firestore store transactions. It is
-disabled in production unless explicitly enabled through the approved
-deployment path. See [the capacity contract](../../docs/executor-capacity.md)
-for authority, durable replay, physical retirement, migration and qualification
-boundaries.
-
 ## Schedule edits and occurrence admission
 
 Schedule evaluation uses five-field UTC cron expressions. Views include a
@@ -226,12 +217,8 @@ schedule watermark records successful
 item minting; it does not prove worker activation, completion or retirement.
 
 Editing, disabling or deleting a schedule preserves an already admitted
-occurrence. Those mutations cannot release its Run's capacity receipt or
-discard uncertain producer writes. Physical release separately requires the
-exact retirement evidence and completed canonical credential cleanup described
-in [the capacity contract](../../docs/executor-capacity.md). Schedule revision
-checks and tombstones continue to govern future occurrence admission while
-existing receipts retain physical occupancy.
+occurrence; its Run settles through the normal lifecycle. Schedule revision
+checks and tombstones continue to govern future occurrence admission.
 
 Both contracts share the generated Work API: regenerate OpenAPI after schema
 changes and verify schedule revision/tombstone/pending-admission cases together

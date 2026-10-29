@@ -21,12 +21,6 @@ const base = `${required('LCARS_CONSOLE_URL')}/api/work/v1/runs/${encodeURICompo
 async function call(path, body) {
   controller.signal.throwIfAborted();
   const headers = { Authorization: `Bearer ${required('LCARS_RUN_TOKEN')}` };
-  if (process.env.LCARS_CAPACITY_RECEIPT) {
-    headers['x-lcars-worker-generation'] = required('LCARS_WORKER_GENERATION');
-    headers['x-lcars-worker-identity'] = (
-      await readFile(required('LCARS_WORKER_IDENTITY_FILE'), 'utf8')
-    ).trim();
-  }
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${base}/${path}`, {
     method: body === undefined ? 'GET' : 'POST',

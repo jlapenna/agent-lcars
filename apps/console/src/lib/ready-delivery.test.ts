@@ -972,7 +972,6 @@ describe('minted delivery permission and current CI boundaries', () => {
             },
             claim,
             undefined,
-            undefined,
             BINDING,
           ),
         ),

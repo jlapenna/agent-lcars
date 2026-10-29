@@ -148,8 +148,6 @@ BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
 BAKED_VERIFY_OUTCOME="$baked/runtime/verify-outcome.sh"
 # Sourced helpers do not pass through the fake external bash path mapper.
 export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
-export WORKER_ACTIVATION_HELPER="$baked/runtime/worker-activation.sh"
-sed -i 's|^WORKER_IDENTITY_FILE=.*|WORKER_IDENTITY_FILE="${FIXTURE_WORKER_IDENTITY_FILE:-/run/agent-lcars-identity/token}"|' "$WORKER_ACTIVATION_HELPER"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
 export HOOK_TELEMETRY_HELPER="$baked/runtime/hook-telemetry-bootstrap.sh"
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
@@ -240,16 +238,6 @@ fi
 printf '%s\n' "${url##*/}" >> "$API_SEQUENCE_LOG"
 
 case "$url" in
-  */activate)
-    [ -n "${FIXTURE_ACTIVATION_LOG:-}" ] || exit 22
-    count=0; [ ! -s "$FIXTURE_ACTIVATION_LOG" ] || count=$(cat "$FIXTURE_ACTIVATION_LOG")
-    count=$((count + 1)); printf '%s\n' "$count" > "$FIXTURE_ACTIVATION_LOG"
-    grep -Fq 'header = "x-lcars-worker-identity: fixture.pod.signature"' <<<"$config_body" || exit 22
-    if [ "${FAKE_RECEIPT_MODE:-}" = revoked ] && [ "$count" -gt 1 ]; then
-      printf '{"error":"revoked"}\n401'; exit 0
-    fi
-    printf '{"generation":1}\n200'
-    ;;
   */brief)
     if [ "${FAKE_BRIEF_FAIL:-}" = "1" ]; then
       echo "fake curl: simulated brief failure (expired/invalid run token)" >&2
@@ -830,15 +818,6 @@ run_scenario() {
   export PATH="$dir/bin:$PATH"
   export LCARS_RUN_ID="work:01DIRECTRUNNERTESTFIXTURE1/r1"
   export LCARS_RUN_TOKEN="test-token"
-  if [ -n "${FAKE_RECEIPT_MODE:-}" ]; then
-    export LCARS_CAPACITY_RECEIPT='{"poolId":"pool","slot":0,"revision":1,"runId":"work:01DIRECTRUNNERTESTFIXTURE1/r1","nonce":"receipt-nonce-123456"}'
-    export LCARS_CAPACITY_JOB_UID='job-original'
-    export FIXTURE_WORKER_IDENTITY_FILE="$dir/projected-worker-token"
-    printf '%s' 'fixture.pod.signature' > "$FIXTURE_WORKER_IDENTITY_FILE"
-    export FIXTURE_ACTIVATION_LOG="$dir/activations"
-  else
-    unset LCARS_CAPACITY_RECEIPT LCARS_CAPACITY_JOB_UID FIXTURE_WORKER_IDENTITY_FILE FIXTURE_ACTIVATION_LOG
-  fi
   if [ "${FAKE_MISSING_CONSOLE_URL:-}" = "1" ]; then
     unset LCARS_CONSOLE_URL
   else
@@ -2592,33 +2571,10 @@ for provider in claude codex opencode; do
   echo "scenario $provider-control-failure-outcomes: OK"
 done
 
-# Exact-reference verification is part of this required runner contract gate.
-for receipt_provider in claude codex opencode; do
-  unset FAKE_GH_NO_MATCH
-  export FAKE_RECEIPT_MODE=active
-  run_scenario "receipt-active-$receipt_provider" "$receipt_provider"
-  [ "$rc" -eq 0 ] || fail "receipt $receipt_provider did not deliver"
-  [ "$(cat "$FIXTURE_ACTIVATION_LOG")" -ge 2 ] || fail "receipt $receipt_provider did not recheck provider activation"
-  case "$receipt_provider" in
-    opencode) receipt_count_file="$OPENCODE_RUN_COUNT_FILE" ;;
-    *) receipt_count_file="$WORKER_RUN_COUNT_FILE" ;;
-  esac
-  [ -s "$receipt_count_file" ] && [ "$(cat "$receipt_count_file")" -ge 1 ] ||
-    fail "receipt $receipt_provider delivered without invoking its provider"
-  export FAKE_RECEIPT_MODE=revoked
-  export FAKE_GH_NO_MATCH=1
-  run_scenario "receipt-revoked-$receipt_provider" "$receipt_provider"
-  [ "$rc" -ne 0 ] || fail "receipt $receipt_provider ignored revoked generation"
-  jq -e '.outcomeReference == null and (.outcome | IN("no-deliverable", "agent-failed"))' \
-    < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-    fail "receipt $receipt_provider retained completion evidence after refusal ($(cat "$COMPLETE_LOG"))"
-  [ ! -s "$WORKER_RUN_COUNT_FILE" ] && [ ! -s "$OPENCODE_RUN_COUNT_FILE" ] ||
-    fail "receipt $receipt_provider invoked a provider after refusal"
-  echo "scenario receipt-activation-$receipt_provider: OK"
-done
-unset FAKE_RECEIPT_MODE FAKE_GH_NO_MATCH
+unset FAKE_GH_NO_MATCH
 [ ! -e "$tmp/live-sidecar-started" ] ||
   fail "a scenario started the retired live polling sidecar (runner sidecar)"
+# Exact-reference verification is part of this required runner contract gate.
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"

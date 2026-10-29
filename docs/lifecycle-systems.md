@@ -42,7 +42,7 @@ source clock must advance past the latest label request. The transaction reads
 the active attempt, latest attempt and retained physical claims before deciding.
 It cancels only unclaimed queued work and mints one fresh requested-provider
 attempt; Work and predecessor provider facts remain unchanged. Claimed/running
-owners, unresolved credential operations and capacity receipts refuse. A
+owners and unresolved credential operations refuse. A
 settled claim whose credential cleanup has finished retains nothing physical,
 so a later label may route it; a restore receipt alone never fences. Parked and
 terminal tasks may start fresh only with those gates clear. Refused requests are
@@ -296,8 +296,8 @@ runner stops the provider at the brief's 80-minute budget first, so a
 timed-out worker finalizes, verifies published artifacts and reports
 `agent-timeout` itself instead of being killed by the Pod limit and settled
 `lost`.
-Resources, bounded Pending admission, exact retirement authority and receipt
-fences remain unchanged. Live qualification requires compatible Console and
+Resources, bounded Pending admission and exact retirement authority remain
+unchanged. Live qualification requires compatible Console and
 controller delivery and a real admitted work item; source tests alone do not
 prove deployed behavior.
 

@@ -203,27 +203,6 @@ export async function executeInvestigateCommand(
       authorization: `Bearer ${token}`,
       'content-type': 'application/json',
     };
-    const generation = deps.env['LCARS_WORKER_GENERATION'];
-    const identityPath = deps.env['LCARS_WORKER_IDENTITY_FILE'];
-    let identity: string | undefined;
-    if (
-      deps.env['LCARS_CAPACITY_RECEIPT'] ||
-      generation !== undefined ||
-      identityPath !== undefined
-    ) {
-      if (
-        !generation ||
-        !/^[1-9][0-9]*$/u.test(generation) ||
-        !Number.isSafeInteger(Number(generation)) ||
-        !identityPath
-      )
-        throw new Error('invalid-input');
-      identity = (await deps.readFile(identityPath, 16384)).trim();
-      if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(identity))
-        throw new Error('invalid-input');
-      headers['x-lcars-worker-identity'] = identity;
-      headers['x-lcars-worker-generation'] = generation;
-    }
     arm();
     const aborted = new Promise<never>((_, reject) =>
       controller.signal.addEventListener(
@@ -269,13 +248,6 @@ export async function executeInvestigateCommand(
           authenticated.anchor.repo !== authenticated.repository)
       )
         throw new Error('invalid-response');
-      if (
-        (authenticated.worker &&
-          (!identity ||
-            authenticated.worker.generation !== Number(generation))) ||
-        (identity && !authenticated.worker)
-      )
-        throw new Error('worker-fenced');
       const validityMs =
         Date.parse(authenticated.validUntil) -
         Date.parse(authenticated.verifiedAt);
@@ -333,8 +305,7 @@ export async function executeInvestigateCommand(
       if (result.runId !== input.runId || result.requestId !== input.requestId)
         throw new Error('invalid-response');
       const output = JSON.stringify(result);
-      if (output.includes(token) || (identity && output.includes(identity)))
-        throw new Error('invalid-response');
+      if (output.includes(token)) throw new Error('invalid-response');
       if (deps.monotonic() >= deadline) throw new Error('deadline-exceeded');
       controller.signal.throwIfAborted();
       deps.stdout(output);

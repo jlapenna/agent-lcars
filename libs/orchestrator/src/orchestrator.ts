@@ -1,4 +1,3 @@
-import type { CapacityWorkerPermit } from './capacity-model';
 import {
   changeCredentialOperation,
   reserveCredentialOperation,
@@ -180,7 +179,6 @@ export class Orchestrator {
         requestId,
         latestRun,
         retainedClaims,
-        capacityReceiptRunIds,
       }) => {
         // This belongs inside transactRequest, not in a route-level pre-read:
         // two first admissions may otherwise both observe an absent Task, and
@@ -257,7 +255,6 @@ export class Orchestrator {
             activeRun,
             latestRun,
             retainedClaims,
-            capacityReceiptRunIds,
             label: input.labelProviderRequest,
           });
         }
@@ -321,32 +318,16 @@ export class Orchestrator {
       jobUid: string;
       observedAt: string;
       placed: boolean;
-      poolId?: string;
     },
   ): Promise<Decision | Refusal> {
-    return this.transactOnRun(
-      runId,
-      (task, run) =>
-        observeStartupPlacement({
-          now: this.clock.now(),
-          task,
-          run,
-          claimant,
-          ...observation,
-        }),
-      undefined,
-      {
-        placementClaim: {
-          runId,
-          subject: claimant.subject,
-          runner: claimant.runner,
-          tokenHash: claimant.claimFingerprint ?? '',
-          jobUid: observation.jobUid,
-          ...(observation.poolId === undefined
-            ? {}
-            : { poolId: observation.poolId }),
-        },
-      },
+    return this.transactOnRun(runId, (task, run) =>
+      observeStartupPlacement({
+        now: this.clock.now(),
+        task,
+        run,
+        claimant,
+        ...observation,
+      }),
     );
   }
 
@@ -354,21 +335,15 @@ export class Orchestrator {
     runId: string,
     claimFingerprint?: string,
     providerProcessStarted?: boolean,
-    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
-    return this.transactOnRun(
-      runId,
-      (task, run) =>
-        renewLease({
-          now: this.clock.now(),
-          task,
-          run,
-          providerProcessStarted,
-          ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
-        }),
-      undefined,
-      undefined,
-      workerPermit,
+    return this.transactOnRun(runId, (task, run) =>
+      renewLease({
+        now: this.clock.now(),
+        task,
+        run,
+        providerProcessStarted,
+        ...(claimFingerprint === undefined ? {} : { claimFingerprint }),
+      }),
     );
   }
 
@@ -410,7 +385,6 @@ export class Orchestrator {
     claimFingerprint?: string,
     /** Server-owned cleanup identity, captured before the retryable transaction. */
     credentialCleanupId?: string,
-    workerPermit?: CapacityWorkerPermit,
     /** Validated server-only ready handoff, never a raw worker field. */
     delivery?: DeliveryBinding,
     /** Set only after the triage owner validates this exact report/revision. */
@@ -462,7 +436,6 @@ export class Orchestrator {
               this.fallbackAuthority?.pipelines ?? [],
             ) !== undefined,
         },
-        workerPermit,
       );
     }
     return this.transactOnRun(
@@ -490,8 +463,6 @@ export class Orchestrator {
         });
       },
       credentialCleanupId,
-      undefined,
-      workerPermit,
     );
   }
 
@@ -847,11 +818,8 @@ export class Orchestrator {
     credentialCleanupId: string = crypto.randomUUID(),
     queueEligibilityOptions?: Pick<
       Parameters<OrchestratorStore['transactRun']>[0],
-      | 'queueEligibilityPipelines'
-      | 'shouldReadQueueEligibility'
-      | 'placementClaim'
+      'queueEligibilityPipelines' | 'shouldReadQueueEligibility'
     >,
-    workerPermit?: CapacityWorkerPermit,
   ): Promise<Decision | Refusal> {
     // Queue release/reclaim changes Run without advancing Task revision.
     // Decide against both documents inside the existing store transaction,
@@ -859,7 +827,6 @@ export class Orchestrator {
     return this.store.transactRun({
       runId,
       ...queueEligibilityOptions,
-      ...(workerPermit === undefined ? {} : { workerPermit }),
       decide: ({ task, run, queueEligibility }) => {
         if (task === undefined || run === undefined) {
           return { refused: true, reason: 'unknown-run' };

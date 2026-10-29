@@ -66,8 +66,8 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 - `superpowers/specs/` records scoped designs. Reconcile them with the
   resulting code and canonical docs before treating them as current behavior.
 - [QueueExecutor failover design](superpowers/specs/2026-10-10-queue-executor-ha-design.md)
-  selects proposed durable capacity ownership for R8; implementation and Homelab
-  qualification remain separate gates.
+  is retired: its capacity receipts shipped disabled and were deleted
+  2026-10-29; the executor stays a singleton.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state:
   [scale-set Support evidence](scale-set-support-evidence.md) (#1716).

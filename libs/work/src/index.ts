@@ -1,4 +1,3 @@
-export * from './capacity-contract';
 export * from './contract';
 export * from './cron';
 export * from './derive';

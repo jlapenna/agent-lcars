@@ -256,10 +256,6 @@ func TestRunExitReporterSessionFailureDoesNotFailTheReport(t *testing.T) {
 	if got := len(recorder.requests()); got != 1 {
 		t.Fatalf("reports = %d, want 1", got)
 	}
-	if err := reporter.settleTerminated(context.Background(), lostRunID, "executor-1", "fingerprint"); err != nil {
-		t.Fatalf("settleTerminated with a failing session store = %v, want nil", err)
-	}
-	reporter.wg.Wait()
 }
 
 // The dying worker's last flush can land between the query and the

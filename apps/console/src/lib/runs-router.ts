@@ -1,16 +1,11 @@
 import 'server-only';
 
-import { randomBytes } from 'node:crypto';
-
 import {
   formatAttemptId,
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
-  assertCapacityWorkerPermit,
-  CapacityProtocol,
-  type CapacityWorkerPermit,
   type DeliveryBinding,
   deliveryWaiting,
   isLive,
@@ -18,7 +13,6 @@ import {
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
-  retiredKey,
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
@@ -31,14 +25,6 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { anchorTarget } from './anchor-target';
-import { capacityMetrics } from './capacity-metrics';
-import {
-  applyCapacityCommand,
-  capacityAuthority,
-  capacityCall,
-  receiptFence,
-} from './capacity-routes';
-import { verifyCapacityWorkerIdentity } from './capacity-worker-identity';
 import { type CodexAuthStore, CodexAuthStoreError } from './codex-auth-store';
 import {
   persistCodexCredential,
@@ -72,11 +58,6 @@ export interface RunsContext {
    *  session auth: every run-token route below hashes it and compares
    *  against the claimed run's own `queue.tokenHash`. */
   bearerToken?: string;
-  capacityEnabled?: boolean;
-  workerIdentityToken?: string;
-  workerGeneration?: number;
-  workerPermit?: CapacityWorkerPermit;
-  verifyWorkerIdentity?: typeof verifyCapacityWorkerIdentity;
   /** Set only when the bearer verified as a Google ID token (`claim`'s
    *  gate); `undefined` for a raw run-token bearer, which never resolves
    *  to a `WorkPrincipal`. */
@@ -181,63 +162,6 @@ async function requireRunToken(
   ) {
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
-  const protocol = new CapacityProtocol(context.store);
-  const state = await protocol.read(context.now().toISOString());
-  const receipt = state.receipts.find((value) => value.runId === runId);
-  if (
-    receipt !== undefined ||
-    state.policies.some(
-      (policy) => policy.enforced && policy.domains[run.pipeline] !== undefined,
-    )
-  ) {
-    if (
-      receipt === undefined ||
-      context.workerIdentityToken === undefined ||
-      context.workerGeneration === undefined
-    )
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Bound active worker identity required',
-      });
-    let identity: Awaited<ReturnType<typeof verifyCapacityWorkerIdentity>>;
-    try {
-      identity = await (
-        context.verifyWorkerIdentity ?? verifyCapacityWorkerIdentity
-      )(context.workerIdentityToken, receipt.poolId);
-    } catch {
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Invalid bound worker identity',
-      });
-    }
-    const policy = state.policies.find(
-      (value) => value.poolId === receipt.poolId,
-    );
-    if (policy?.namespace !== identity.namespace)
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Worker namespace mismatch',
-      });
-    const permit: CapacityWorkerPermit = {
-      poolId: receipt.poolId,
-      runId,
-      podUid: identity.podUid,
-      generation: context.workerGeneration,
-      tokenHash: hashRunToken(token),
-    };
-    await capacityCall(() =>
-      context.store.transactCapacity({
-        now: context.now().toISOString(),
-        recordKeys: [retiredKey(runId)],
-        decide: (snapshot) => {
-          assertCapacityWorkerPermit(
-            snapshot.state,
-            snapshot.records.get(retiredKey(runId)),
-            permit,
-          );
-          return { value: true };
-        },
-      }),
-    );
-    context.workerPermit = permit;
-  }
   return run;
 }
 
@@ -317,110 +241,6 @@ async function drainAfterCompletion(
 }
 
 export const runsRouter = os.router({
-  capacityInventory: os.capacityInventory.handler(async ({ context }) => {
-    const authority = capacityAuthority(context.principal);
-    if (
-      !authority.capabilities.has('recover') &&
-      !authority.capabilities.has('operator')
-    )
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Capacity inventory authority required',
-      });
-    const state = await new CapacityProtocol(context.store).read(
-      context.now().toISOString(),
-    );
-    return {
-      revision: state.revision,
-      policy: state.policies.find(
-        (policy) => policy.poolId === authority.poolId,
-      ),
-      receipts: state.receipts
-        .filter(
-          (receipt) =>
-            receipt.poolId === authority.poolId &&
-            authority.pipelines.includes(receipt.pipeline),
-        )
-        .map((receipt) => {
-          const { tokenHash: _tokenHash, ...redacted } = receipt;
-          return redacted;
-        }),
-    };
-  }),
-  capacityMetrics: os.capacityMetrics.handler(async ({ context }) => {
-    const authority = capacityAuthority(context.principal);
-    if (
-      !authority.capabilities.has('recover') &&
-      !authority.capabilities.has('operator')
-    )
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Capacity inventory authority required',
-      });
-    const state = await new CapacityProtocol(context.store).read(
-      context.now().toISOString(),
-    );
-    return capacityMetrics(state, context.now().toISOString());
-  }),
-  capacity: os.capacity.handler(async ({ input, context }) => {
-    if (context.capacityEnabled !== true)
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Capacity API is disabled',
-      });
-    const authority = capacityAuthority(context.principal);
-    return capacityCall(
-      () =>
-        applyCapacityCommand(
-          new CapacityProtocol(context.store),
-          authority,
-          input,
-          context.now().toISOString(),
-        ),
-      input.action,
-    );
-  }),
-  activate: os.activate.handler(async ({ input, context }) => {
-    if (context.capacityEnabled !== true)
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Capacity API is disabled',
-      });
-    if (
-      context.bearerToken === undefined ||
-      context.workerIdentityToken === undefined
-    )
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Bound worker identity required',
-      });
-    let identity: Awaited<ReturnType<typeof verifyCapacityWorkerIdentity>>;
-    try {
-      identity = await (
-        context.verifyWorkerIdentity ?? verifyCapacityWorkerIdentity
-      )(context.workerIdentityToken, input.fence.poolId);
-    } catch {
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Invalid bound worker identity',
-      });
-    }
-    const protocol = new CapacityProtocol(context.store);
-    const state = await protocol.read(context.now().toISOString());
-    if (
-      state.policies.find((value) => value.poolId === input.fence.poolId)
-        ?.namespace !== identity.namespace
-    )
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Worker namespace mismatch',
-      });
-    const generation = await capacityCall(
-      () =>
-        protocol.activate({
-          fence: input.fence,
-          podUid: identity.podUid,
-          jobUid: input.jobUid,
-          tokenHash: hashRunToken(context.bearerToken ?? ''),
-          now: context.now().toISOString(),
-        }),
-      'activate',
-    );
-    return { generation };
-  }),
   claim: executor.claim.handler(async ({ input, context }) => {
     // The executor's authenticated grant is the only claim capability
     // source; a caller cannot choose a pipeline set that competes with
@@ -431,99 +251,6 @@ export const runsRouter = os.router({
     // by its credential adapter after a run is claimed; it never changes the
     // shared executor grant or the route used to claim any provider.
     if (context.principal.pipelines.length === 0) return undefined;
-    if (context.principal.capacityPool !== undefined) {
-      if (context.capacityEnabled !== true)
-        throw new ORPCError('CONFLICT', {
-          message: 'Capacity API is disabled',
-        });
-      if (
-        input.capacityVersion === undefined ||
-        input.producerId === undefined ||
-        input.claimRequestId === undefined
-      )
-        throw new ORPCError('CONFLICT', {
-          message: 'Receipt-aware claim identity required',
-        });
-      const token = mintRunToken();
-      const version = input.capacityVersion;
-      const producerId = input.producerId;
-      const claimRequestId = input.claimRequestId;
-      const claimed = await capacityCall(
-        () =>
-          new CapacityProtocol(context.store).claim(
-            capacityAuthority(context.principal),
-            {
-              version,
-              producerId,
-              claimRequestId,
-              runner: input.runner,
-              placementAware: input.placementAware,
-              tokenHash: hashRunToken(token),
-              nonce: randomBytes(16).toString('hex'),
-              now: context.now().toISOString(),
-            },
-          ),
-        'claim',
-      );
-      if (
-        claimed.kind === 'claim' &&
-        !isWorkAnchor(claimed.run.task) &&
-        claimed.run.params?.['mode'] === 'implement'
-      ) {
-        let lifecycle: GithubAnchorLifecycle | undefined;
-        try {
-          lifecycle = await context.loadGithubAnchorLifecycle?.(
-            claimed.run.task,
-          );
-        } catch {
-          lifecycle = undefined;
-        }
-        if (lifecycle === undefined || lifecycle.state === 'closed') {
-          await new CapacityProtocol(context.store).quarantine(
-            capacityAuthority(context.principal),
-            receiptFence(claimed.receipt),
-            context.now().toISOString(),
-          );
-          if (lifecycle?.state === 'closed') {
-            const canceled = await context.orchestrator.cancel(
-              claimed.run.runId,
-              `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
-            );
-            if (!isRefusal(canceled)) await context.drain();
-          }
-          return {
-            kind: 'quarantined-unrecoverable-token' as const,
-            receipt: receiptFence(claimed.receipt),
-            runId: claimed.run.runId,
-            jobName: claimed.receipt.jobName,
-          };
-        }
-      }
-      if (claimed.kind === 'claim')
-        return {
-          kind: claimed.kind,
-          receipt: receiptFence(claimed.receipt),
-          runId: claimed.run.runId,
-          pipeline: claimed.run.pipeline,
-          token,
-          expiresAt: claimed.run.leaseExpiresAt,
-          ...(claimed.run.queue?.startupPlacement === undefined
-            ? {}
-            : { placementAware: true as const }),
-          jobName: claimed.receipt.jobName,
-        };
-      if (claimed.kind === 'recover-owned-secret')
-        return {
-          kind: claimed.kind,
-          receipt: receiptFence(claimed.receipt),
-          runId: claimed.receipt.runId,
-          jobName: claimed.receipt.jobName,
-          jobUid: claimed.receipt.jobUid,
-          secretUid: claimed.receipt.secretUid ?? '',
-        };
-      return claimed;
-    }
-
     // `claimQueuedRun` only ever hands back a live run
     // (`isQueueAdmissionCandidate`): a canceled or lost run keeps its stale
     // `queue.state: 'queued'` record, but selection never sees it. The loop
@@ -541,18 +268,14 @@ export const runsRouter = os.router({
       // `claimQueuedRun` was never designed to compose safely with a race.
       // One call, one transaction, no store signature change.
       const token = mintRunToken();
-      const claimed = await capacityCall(
-        () =>
-          context.store.claimQueuedRun({
-            pipelines: context.principal.pipelines,
-            now: context.now().toISOString(),
-            claimedBy: input.runner,
-            placementAware: input.placementAware,
-            claimedBySubject: claimantSubject(context.principal),
-            tokenHash: hashRunToken(token),
-          }),
-        'claim',
-      );
+      const claimed = await context.store.claimQueuedRun({
+        pipelines: context.principal.pipelines,
+        now: context.now().toISOString(),
+        claimedBy: input.runner,
+        placementAware: input.placementAware,
+        claimedBySubject: claimantSubject(context.principal),
+        tokenHash: hashRunToken(token),
+      });
       if (claimed === undefined) return undefined;
       if (
         !isWorkAnchor(claimed.task) &&
@@ -680,8 +403,6 @@ export const runsRouter = os.router({
         message: String(artifact.artifacts['report.md']).slice(0, 16384),
       },
       run.queue?.tokenHash ?? '',
-      undefined,
-      context.workerPermit,
     );
     if (isRefusal(settled))
       throw new ORPCError('CONFLICT', { message: settled.reason });
@@ -802,86 +523,20 @@ export const runsRouter = os.router({
   }),
 
   introspect: os.introspect.handler(async ({ input, context }) => {
-    // Only this authentication pass may supply returned worker metadata.
-    delete context.workerPermit;
     let run = await requireRunToken(context, input.runId);
     const task = isWorkAnchor(run.task)
       ? (await context.store.readTask(run.task))?.task
       : undefined;
-    if (isWorkAnchor(run.task)) {
-      // Native lookup may await cancellation, reclaim or worker retirement.
-      // Authenticate again after it, then finalize Run and permit together.
-      delete context.workerPermit;
-      await requireRunToken(context, input.runId);
-    }
-    // Worker authentication awaits JWT and capacity IO. Read Run liveness and
-    // its worker permit together after those awaits, without writing either.
-    const authenticatedPermit = (context as RunsContext).workerPermit;
-    const verified = await capacityCall(() =>
-      context.store.transactCapacity({
-        now: context.now().toISOString(),
-        runId: input.runId,
-        recordKeys: [retiredKey(input.runId)],
-        decide: (snapshot) => {
-          const current = snapshot.runs.find(
-            (value) => value.runId === input.runId,
-          );
-          const token = context.bearerToken;
-          if (
-            current?.queue?.tokenHash === undefined ||
-            token === undefined ||
-            !runTokenMatches(token, current.queue.tokenHash)
-          )
-            throw new ORPCError('UNAUTHORIZED', {
-              message: 'Invalid run token',
-            });
-          if (!isLive(current.state))
-            throw new ORPCError('UNAUTHORIZED', {
-              message: 'Run is no longer live',
-            });
-          const verifiedAt = context.now().toISOString();
-          if (
-            Date.parse(
-              runRecoveryDeadline(current) ?? current.leaseExpiresAt,
-            ) <= Date.parse(verifiedAt)
-          )
-            throw new ORPCError('UNAUTHORIZED', {
-              message: 'Run token expired',
-            });
-          if (
-            authenticatedPermit === undefined &&
-            (snapshot.state.receipts.some(
-              (value) => value.runId === input.runId,
-            ) ||
-              snapshot.state.policies.some(
-                (policy) =>
-                  policy.enforced &&
-                  policy.domains[current.pipeline] !== undefined,
-              ))
-          )
-            throw new ORPCError('UNAUTHORIZED', {
-              message: 'Bound active worker identity required',
-            });
-          if (authenticatedPermit !== undefined)
-            assertCapacityWorkerPermit(
-              snapshot.state,
-              snapshot.records.get(retiredKey(input.runId)),
-              authenticatedPermit,
-            );
-          return {
-            value: { run: current, permit: authenticatedPermit, verifiedAt },
-          };
-        },
-      }),
-    );
-    run = verified.run;
+    // Native lookup may await cancellation or reclaim: authenticate again
+    // after it, so the returned Run is the one the token still owns.
+    if (isWorkAnchor(run.task))
+      run = await requireRunToken(context, input.runId);
     const target = anchorTarget(run, task);
-    const verifiedAt = verified.verifiedAt;
+    const verifiedAt = context.now().toISOString();
     const validUntil = runRecoveryDeadline(run) ?? run.leaseExpiresAt;
     if (Date.parse(validUntil) <= context.now().getTime()) {
       throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
     }
-    const permit = verified.permit;
     return {
       version: 1 as const,
       runId: run.runId,
@@ -895,14 +550,8 @@ export const runsRouter = os.router({
           : `https://github.com/${target.repo}/issues/${target.issue}`,
       verifiedAt,
       validUntil,
-      worker:
-        permit === undefined
-          ? null
-          : {
-              poolId: permit.poolId,
-              podUid: permit.podUid,
-              generation: permit.generation,
-            },
+      // Compatibility with pre-removal runner images; see the schema.
+      worker: null,
     };
   }),
 
@@ -911,13 +560,10 @@ export const runsRouter = os.router({
     // Preserve the token that authenticated this callback through the atomic
     // Task+Run decision. A same-run release/reclaim changes this fingerprint.
     const renew = async () => {
-      const renewed = await capacityCall(() =>
-        context.orchestrator.renew(
-          run.runId,
-          run.queue?.tokenHash ?? '',
-          input.providerProcessStarted,
-          context.workerPermit,
-        ),
+      const renewed = await context.orchestrator.renew(
+        run.runId,
+        run.queue?.tokenHash ?? '',
+        input.providerProcessStarted,
       );
       if (isRefusal(renewed))
         throw new ORPCError('UNAUTHORIZED', {
@@ -960,23 +606,18 @@ export const runsRouter = os.router({
       if (run === undefined) throw errors.NOT_FOUND();
       if (!context.principal.pipelines.includes(run.pipeline))
         throw errors.FORBIDDEN();
-      const result = await capacityCall(
-        () =>
-          context.orchestrator.observeStartupPlacement(
-            input.runId,
-            {
-              subject: claimantSubject(context.principal),
-              runner: input.runner,
-              claimFingerprint: input.claimFingerprint,
-            },
-            {
-              jobUid: input.jobUid,
-              observedAt: input.observedAt,
-              placed: input.placed,
-              poolId: context.principal.capacityPool,
-            },
-          ),
-        'placement',
+      const result = await context.orchestrator.observeStartupPlacement(
+        input.runId,
+        {
+          subject: claimantSubject(context.principal),
+          runner: input.runner,
+          claimFingerprint: input.claimFingerprint,
+        },
+        {
+          jobUid: input.jobUid,
+          observedAt: input.observedAt,
+          placed: input.placed,
+        },
       );
       if (isRefusal(result)) {
         if (result.reason === 'not-claimant') throw errors.FORBIDDEN();
@@ -1197,16 +838,13 @@ export const runsRouter = os.router({
         );
       }
     }
-    const settled = await capacityCall(() =>
-      context.orchestrator.report(
-        run.runId,
-        result,
-        run.queue?.tokenHash ?? '',
-        undefined,
-        context.workerPermit,
-        delivery,
-        publishTriage,
-      ),
+    const settled = await context.orchestrator.report(
+      run.runId,
+      result,
+      run.queue?.tokenHash ?? '',
+      undefined,
+      delivery,
+      publishTriage,
     );
     if (
       isRefusal(settled) &&

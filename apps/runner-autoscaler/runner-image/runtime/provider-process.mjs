@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { constants } from 'node:os';
 
 // Called only for the workload, after credential/bootstrap setup. Arguments
@@ -20,26 +19,6 @@ child.on('spawn', () => {
   const token = process.env.LCARS_RUN_TOKEN;
   const consoleUrl = process.env.LCARS_CONSOLE_URL;
   if (!runId || !token || !consoleUrl) return;
-  let workerHeaders = '';
-  if (process.env.LCARS_CAPACITY_RECEIPT) {
-    const generation = process.env.LCARS_WORKER_GENERATION;
-    if (!/^[1-9][0-9]*$/.test(generation ?? '')) return;
-    let identity;
-    try {
-      identity = readFileSync(
-        process.env.LCARS_WORKER_IDENTITY_FILE ??
-          '/run/agent-lcars-identity/token',
-        'utf8',
-      ).trim();
-    } catch {
-      return;
-    }
-    if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(identity))
-      return;
-    workerHeaders =
-      `header = ${JSON.stringify(`x-lcars-worker-identity: ${identity}`)}\n` +
-      `header = ${JSON.stringify(`x-lcars-worker-generation: ${generation}`)}\n`;
-  }
   const url = `${consoleUrl}/api/work/v1/runs/${encodeURIComponent(runId)}/heartbeat`;
   reporter = spawn('curl', ['-sf', '--config', '-'], {
     stdio: ['pipe', 'ignore', 'ignore'],
@@ -56,7 +35,6 @@ child.on('spawn', () => {
   reporter.stdin.end(
     `url = ${JSON.stringify(url)}\nrequest = "POST"\n` +
       `header = ${JSON.stringify(`Authorization: Bearer ${token}`)}\n` +
-      workerHeaders +
       'header = "content-type: application/json"\n' +
       'connect-timeout = 2\nmax-time = 5\n' +
       'data = "{\\"providerProcessStarted\\":true}"\n',

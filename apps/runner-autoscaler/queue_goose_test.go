@@ -12,7 +12,7 @@ func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 	launch := directRunnerLaunch{runID: "work:recipe/r1", pipeline: "goose"}
 	q.config.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
 	q.config.Limits = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
-	// Recipes run on the ordinary executor path; no capacity receipt.
+	// Recipes run on the ordinary executor path.
 	job, err := q.job(launch)
 	if err != nil {
 		t.Fatal(err)

@@ -10,17 +10,13 @@ export type WorkScope =
   | 'work.reader'
   | 'work.executor'
   | 'work.cron'
-  | 'work.reaper'
-  | 'work.capacity.recover'
-  | 'work.capacity.fence'
-  | 'work.capacity.operator';
+  | 'work.reaper';
 
 export interface WorkPrincipal {
   principal: string;
   subject: string;
   scopes: ReadonlySet<WorkScope>;
   pipelines: readonly string[];
-  capacityPool?: string;
   via: 'google' | 'session' | 'oidc';
   /** Present only for a GitHub Actions OIDC identity. GitHub-anchor
    * dispatch keeps the anchor bound to this signed source repository. */
@@ -88,9 +84,6 @@ function principalFor(
     subject,
     scopes: new Set<WorkScope>(grant.scopes),
     pipelines: grant.pipelines,
-    ...(grant.capacityPool === undefined
-      ? {}
-      : { capacityPool: grant.capacityPool }),
     via,
     // Omitted entirely (not written as `channel: undefined`) when the
     // grant declares none, so a principal built from such a grant is

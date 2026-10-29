@@ -24,7 +24,6 @@ const auth = {
   issueUrl: 'https://github.com/o/r/issues/7',
   verifiedAt: '2026-10-14T09:00:00Z',
   validUntil: '2026-10-14T09:05:00Z',
-  worker: null,
 };
 const answer = {
   version: 1,
@@ -110,39 +109,6 @@ describe('lcars investigate', () => {
     expect(f.out.map((line) => JSON.parse(line))).toEqual([answer]);
     expect(f.err).toEqual([]);
   });
-  it('preserves native Work and forwards the exact verified receipt generation', async () => {
-    const f = fixture();
-    f.deps.env = {
-      ...f.deps.env,
-      LCARS_CAPACITY_RECEIPT: '{}',
-      LCARS_WORKER_IDENTITY_FILE: '/owned/projected-token',
-      LCARS_WORKER_GENERATION: '7',
-    };
-    f.state.introspection = () =>
-      json({
-        ...auth,
-        anchor: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
-        issueUrl: null,
-        worker: { poolId: 'pool', podUid: 'pod', generation: 7 },
-      });
-    expect(await executeInvestigateCommand(args, f.deps)).toEqual({ ok: true });
-    expect(f.deps.readFile).toHaveBeenCalledWith(
-      '/owned/projected-token',
-      16384,
-    );
-    expect(
-      f.calls.map((c) =>
-        new Headers(c.init.headers).get('x-lcars-worker-identity'),
-      ),
-    ).toEqual(['e30.e30.signature', 'e30.e30.signature']);
-    expect(
-      f.calls.map((c) =>
-        new Headers(c.init.headers).get('x-lcars-worker-generation'),
-      ),
-    ).toEqual(['7', '7']);
-    expect(JSON.parse(String(f.calls[1].init.body)).issueUrl).toBeNull();
-    expect(String(f.calls[1].init.body)).not.toContain('owned-bearer');
-  });
   it.each([401, 409, 503])(
     'does not invoke the gateway after authentication refusal %s',
     async (status) => {
@@ -157,32 +123,10 @@ describe('lcars investigate', () => {
     },
   );
   it.each([
-    { LCARS_CAPACITY_RECEIPT: '{}' },
-    { LCARS_WORKER_GENERATION: '7' },
-    {
-      LCARS_WORKER_GENERATION: '1.5',
-      LCARS_WORKER_IDENTITY_FILE: '/owned/token',
-    },
-    {
-      LCARS_WORKER_GENERATION: '9007199254740993',
-      LCARS_WORKER_IDENTITY_FILE: '/owned/token',
-    },
-  ])(
-    'refuses partial/invalid receipt credentials without bearer fallback %j',
-    async (env) => {
-      const f = fixture();
-      f.deps.env = { ...f.deps.env, ...env };
-      expect(await executeInvestigateCommand(args, f.deps)).toEqual({
-        ok: false,
-      });
-      expect(f.calls).toEqual([]);
-    },
-  );
-  it.each([
     { ...auth, runId: 'another-run' },
     { ...auth, issueUrl: 'https://other.invalid/issues/7' },
     { ...auth, repository: 'other/repo' },
-    { ...auth, worker: { poolId: 'pool', podUid: 'pod', generation: 7 } },
+    { ...auth, worker: { podUid: 'pod', generation: 7 } },
     { ...auth, validUntil: auth.verifiedAt },
     { ...auth, params: { private: 'secret' } },
   ])(

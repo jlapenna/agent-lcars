@@ -1,4 +1,3 @@
-import type { CapacityState } from './capacity-model';
 import {
   cancelRun,
   decidedRun,
@@ -11,22 +10,16 @@ import {
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
 
-/** A terminal claim is retired by its executor's exit report or the capacity protocol.
- * Preserve the fence only for a live owner or durable capacity/credential
- * debt, not its queue history. A restore receipt
- * (`credentialRestoredClaimFingerprint`) is proof that restore succeeded, not
- * unreleased debt: the lease itself is released by the cleanup operation,
- * which is reserved on every terminal transition and fences here until it
- * finishes. */
-export function retainsPhysicalClaim(
-  run: Run,
-  capacity: CapacityState,
-): boolean {
+/** A terminal claim is retired by its executor's exit report. Preserve the
+ * fence only for a live owner or durable credential debt, not its queue
+ * history. A restore receipt (`credentialRestoredClaimFingerprint`) is proof
+ * that restore succeeded, not unreleased debt: the lease itself is released
+ * by the cleanup operation, which is reserved on every terminal transition
+ * and fences here until it finishes. */
+export function retainsPhysicalClaim(run: Run): boolean {
   return (
     run.queue?.state === 'claimed' &&
-    (isLive(run.state) ||
-      run.credentialOperation !== undefined ||
-      capacity.receipts.some((receipt) => receipt.runId === run.runId))
+    (isLive(run.state) || run.credentialOperation !== undefined)
   );
 }
 
@@ -39,7 +32,6 @@ export function decideLabelProviderRequest(
     label: { requestedAt: string; actor: string; allowProviderChange: boolean };
     latestRun?: Run;
     retainedClaims?: readonly Run[];
-    capacityReceiptRunIds?: readonly string[];
   },
 ): Decision | Refusal {
   if (isWorkAnchor(input.taskId)) return refused('not-native');
@@ -103,13 +95,9 @@ export function decideLabelProviderRequest(
     return reject('physical-ownership-unavailable');
   if (task?.closedAt !== undefined) return reject('task-closed');
   // Missing transactional physical-owner evidence is not absence of ownership.
-  if (
-    task !== undefined &&
-    (input.retainedClaims === undefined ||
-      input.capacityReceiptRunIds === undefined)
-  )
+  if (task !== undefined && input.retainedClaims === undefined)
     return reject('physical-ownership-unavailable');
-  if (input.capacityReceiptRunIds?.length || input.retainedClaims?.length)
+  if (input.retainedClaims?.length)
     return reject(
       isLive(activeRun?.state ?? 'finished')
         ? 'run-already-claimed'

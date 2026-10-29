@@ -41,8 +41,6 @@ SIDECAR_LIFECYCLE="${SIDECAR_LIFECYCLE:-/usr/local/lib/agent-lcars/sidecar-lifec
 # shellcheck source=runtime/worker-completion.sh
 # shellcheck source-path=SCRIPTDIR
 source "${WORKER_COMPLETION_HELPER:-$RUNTIME_HELPERS_DIR/worker-completion.sh}"
-# shellcheck source=runtime/worker-activation.sh
-source "${WORKER_ACTIVATION_HELPER:-$RUNTIME_HELPERS_DIR/worker-activation.sh}"
 # shellcheck source=runtime/worker-policy-bootstrap.sh
 source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-bootstrap.sh}"
 CODEX_HOOK_ARGS=()
@@ -59,12 +57,10 @@ PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provide
 # temporary state isolated without changing the production default (/tmp).
 export RUNNER_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}/agent-lcars-direct}"
 mkdir -p "$RUNNER_TEMP"
-if ! worker_activate; then echo "FATAL: receipt worker activation refused" >&2; exit 1; fi
 
 brief="$(curl -sf --config - <<CURLCFG
 url = "$RUNS_API/brief"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 $CURL_TIMEOUT_CONFIG
 CURLCFG
 )"
@@ -183,7 +179,6 @@ report_early_failure() {
 url = "$RUNS_API/complete"
 request = "POST"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 header = "content-type: application/json"
 $CURL_TIMEOUT_CONFIG
 data-binary = "@$early_payload"
@@ -205,7 +200,6 @@ if ! startup_response="$(curl -sS --config - 2>/dev/null <<CURLCFG
 url = "$RUNS_API/heartbeat"
 request = "POST"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 $CURL_TIMEOUT_CONFIG
 write-out = "\n%{http_code}"
 CURLCFG
@@ -240,7 +234,6 @@ HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-300}"
 url = "$RUNS_API/heartbeat"
 request = "POST"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 $CURL_TIMEOUT_CONFIG
 CURLCFG
   done
@@ -276,7 +269,6 @@ refresh_checkout_token() {
   if ! curl -sf --config - >"$checkout_response" <<CURLCFG
 url = "$RUNS_API/checkout-token"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 $CURL_TIMEOUT_CONFIG
 CURLCFG
   then
@@ -855,7 +847,6 @@ if [ "$PIPELINE" = "claude" ]; then
   run_claude_round() {
     local prompt="$1" remaining
     shift
-    if [ -n "${LCARS_CAPACITY_RECEIPT:-}" ]; then worker_activate "$((CLAUDE_DEADLINE - $(monotonic_seconds)))" || return $?; fi
     remaining=$((CLAUDE_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
@@ -914,7 +905,6 @@ elif [ "$PIPELINE" = "codex" ]; then
     if ! auth_response="$(curl -sS --write-out '\n%{http_code}' --config - <<CURLCFG
 url = "$RUNS_API/codex-auth"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 connect-timeout = 10
 max-time = $auth_request_timeout
 CURLCFG
@@ -1026,7 +1016,6 @@ CURLCFG
   run_codex_round() {
     local prompt="$1" remaining round_exit
     shift
-    if [ -n "${LCARS_CAPACITY_RECEIPT:-}" ]; then worker_activate "$((CODEX_DEADLINE - $(monotonic_seconds)))" || return $?; fi
     remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
@@ -1119,7 +1108,6 @@ CURLCFG
 url = "$RUNS_API/codex-auth"
 request = "PUT"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 header = "content-type: application/json"
 $CURL_TIMEOUT_CONFIG
 data-binary = "@$codex_persist_payload"
@@ -1230,7 +1218,6 @@ else
   run_opencode_round() {
     round_prompt="$1"
     shift
-    if [ -n "${LCARS_CAPACITY_RECEIPT:-}" ]; then worker_activate "$((OPENCODE_DEADLINE - $(monotonic_seconds)))" || return $?; fi
     round_remaining=$((OPENCODE_DEADLINE - $(monotonic_seconds)))
     if [ "$round_remaining" -lt 1 ]; then
       return 124
@@ -1479,7 +1466,6 @@ curl -sf --config - <<CURLCFG
 url = "$RUNS_API/complete"
 request = "POST"
 header = "$AUTH_HEADER"
-$(worker_identity_config)
 header = "content-type: application/json"
 $CURL_TIMEOUT_CONFIG
 data-binary = "@$payload_file"

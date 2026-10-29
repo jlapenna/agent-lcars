@@ -328,7 +328,7 @@ describe('Firestore emulator artifact bootstrap gate (#2592)', () => {
       await classify(
         'download-warning-then-assertions',
         'Failed to make request: socket hang up\n' +
-          ' RUN  vitest 1.0\n Test Files  4 passed (4)\n ❯ capacity-lineage.spec.ts (2 tests)\n',
+          ' RUN  vitest 1.0\n Test Files  4 passed (4)\n ❯ store-contract.spec.ts (2 tests)\n',
       ),
     ).toMatchObject({
       stage: 'contract-execution',

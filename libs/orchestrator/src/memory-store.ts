@@ -1,17 +1,4 @@
 import {
-  assertCapacityPlacementClaim,
-  assertCapacityWorkerPermit,
-  type CapacityPlacementClaim,
-  type CapacityRecord,
-  capacityRecordForStorage,
-  CapacityRefusal,
-  type CapacityState,
-  capacityStateForStorage,
-  type CapacityWorkerPermit,
-  emptyCapacityState,
-  retiredKey,
-} from './capacity-model';
-import {
   claimQueuedRun,
   type Decision,
   isRefusal,
@@ -55,8 +42,6 @@ import {
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import {
-  type CapacityTransactionResult,
-  type CapacityTransactionSnapshot,
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
@@ -73,8 +58,6 @@ import {
 
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
-  #capacity: CapacityState = emptyCapacityState();
-  readonly #capacityRecords = new Map<string, CapacityRecord>();
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #priorityPositions = new Map<string, number>();
@@ -91,66 +74,6 @@ export class MemoryStore implements OrchestratorStore {
     string,
     { projection?: GithubAnchorProjection; refreshGeneration: number }
   >();
-
-  async transactCapacity<T>(input: {
-    now: string;
-    recordKeys: readonly string[];
-    claimPipelines?: readonly string[];
-    runId?: string;
-    readRunIds?: readonly string[];
-    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
-  }): Promise<T> {
-    // No await between snapshot and commit: the same race boundary as claim.
-    const runs = [...this.#runs.values()].filter((run) =>
-      input.claimPipelines !== undefined
-        ? run.queue?.state === 'queued' ||
-          run.queue?.state === 'claimed' ||
-          input.readRunIds?.includes(run.runId) === true ||
-          this.#capacity.receipts.some((receipt) => receipt.runId === run.runId)
-        : run.runId === input.runId ||
-          input.readRunIds?.includes(run.runId) === true,
-    );
-    if (runs.length > 1000)
-      throw new Error('Capacity run inventory exceeds read bound');
-    const keys = new Set([
-      ...input.recordKeys,
-      ...runs.map((run) => retiredKey(run.runId)),
-    ]);
-    const records = new Map<string, CapacityRecord>();
-    for (const key of keys) {
-      const record = this.#capacityRecords.get(key);
-      if (record !== undefined) records.set(key, structuredClone(record));
-    }
-    const result = input.decide({
-      state: structuredClone(this.#capacity),
-      records,
-      runs: structuredClone(runs),
-      priorityPositions: new Map(this.#priorityPositions),
-      coolingPipelines: new Set(
-        [...this.#providerCooldowns.entries()]
-          .filter(([, value]) => providerIsCoolingDown(value, input.now))
-          .map(([key]) => key),
-      ),
-    });
-    const state =
-      result.state === undefined
-        ? undefined
-        : capacityStateForStorage(result.state);
-    const writes = [...(result.records ?? [])].map(
-      ([key, record]) => [key, capacityRecordForStorage(record)] as const,
-    );
-    if (state !== undefined) this.#capacity = state;
-    for (const [key, record] of writes)
-      this.#capacityRecords.set(key, structuredClone(record));
-    if (result.run !== undefined)
-      this.#runs.set(result.run.runId, structuredClone(result.run));
-    if (result.priorityTurn !== undefined)
-      this.#priorityPositions.set(
-        result.priorityTurn.pipeline,
-        result.priorityTurn.position,
-      );
-    return structuredClone(result.value);
-  }
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
@@ -280,19 +203,13 @@ export class MemoryStore implements OrchestratorStore {
                 : structuredClone(
                     this.#runs.get(`${key}/r${task.task.runCount}`),
                   ),
-            capacityReceiptRunIds: this.#capacity.receipts
-              .filter(
-                (receipt) =>
-                  receipt.taskKey === undefined || receipt.taskKey === key,
-              )
-              .map((receipt) => receipt.runId),
             // Incomplete inventory is durable refusal evidence, not a retryable error.
             retainedClaims:
               claimedCandidates !== undefined &&
               claimedCandidates.length <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
                 ? structuredClone(
                     claimedCandidates.filter((run) =>
-                      retainsPhysicalClaim(run, this.#capacity),
+                      retainsPhysicalClaim(run),
                     ),
                   )
                 : undefined,
@@ -323,8 +240,6 @@ export class MemoryStore implements OrchestratorStore {
 
   async transactRun(input: {
     runId: string;
-    placementClaim?: CapacityPlacementClaim;
-    workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     shouldReadQueueEligibility?: (
       state: Pick<RunTransactionState, 'task' | 'run'>,
@@ -333,24 +248,6 @@ export class MemoryStore implements OrchestratorStore {
   }): Promise<Decision | Refusal> {
     // Keep the snapshot and write synchronous, matching `transactRequest`'s
     // reference transaction semantics.
-    if (input.workerPermit !== undefined) {
-      if (input.workerPermit.runId !== input.runId)
-        throw new CapacityRefusal('worker');
-      assertCapacityWorkerPermit(
-        this.#capacity,
-        this.#capacityRecords.get(retiredKey(input.runId)),
-        input.workerPermit,
-      );
-    }
-    if (input.placementClaim !== undefined) {
-      if (input.placementClaim.runId !== input.runId)
-        throw new CapacityRefusal('authority');
-      assertCapacityPlacementClaim(
-        this.#capacity,
-        this.#capacityRecords.get(retiredKey(input.runId)),
-        input.placementClaim,
-      );
-    }
     const run = structuredClone(this.#runs.get(input.runId));
     const task =
       run === undefined
@@ -799,17 +696,6 @@ export class MemoryStore implements OrchestratorStore {
     tokenHash: string;
     placementAware?: boolean;
   }): Promise<Run | undefined> {
-    if (
-      this.#capacity.policies.some(
-        (policy) =>
-          policy.enforced &&
-          input.pipelines.some(
-            (pipeline) => policy.domains[pipeline] !== undefined,
-          ),
-      )
-    ) {
-      throw new CapacityRefusal('policy');
-    }
     const runs = [...this.#runs.values()];
     const eligible = input.pipelines.filter(
       (pipeline) =>
@@ -845,19 +731,7 @@ export class MemoryStore implements OrchestratorStore {
     now: string;
     deferredUntil?: string;
   }): Promise<boolean> {
-    if (
-      this.#capacity.receipts.some((receipt) => receipt.runId === input.runId)
-    )
-      return false;
     const run = this.#runs.get(input.runId);
-    if (
-      run !== undefined &&
-      this.#capacity.policies.some(
-        (policy) =>
-          policy.enforced && policy.domains[run.pipeline] !== undefined,
-      )
-    )
-      return false;
     if (
       run === undefined ||
       !isLive(run.state) ||

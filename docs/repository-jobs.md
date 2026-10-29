@@ -50,12 +50,18 @@ Work. Work uses the internal `goose` pipeline; public coding intake cannot forge
 a job snapshot.
 
 The native Run is authoritative for pending, claimed, running and terminal state.
-QueueExecutor claims with its existing authenticated capability and receipt/lease
+QueueExecutor claims with its existing authenticated capability and lease
 protocol. The worker fetches its pinned job brief using the run token. Completion
 is token-fenced and accepted only while the native Run owns that occurrence.
 Cancellation uses existing Work cancellation and QueueExecutor retirement. A lost
 recipe run is terminal; there is no automatic rerun of potentially effectful work.
-An operator may explicitly invoke a new occurrence after retirement is proven.
+An occurrence keeps the job occupied until its worker has physically exited: the
+claimant executor's exit report (sent after it observes the Job terminate, after
+a recovery-deleted Job disappears, or immediately when no Job could be built)
+retires the Run's claim. If no report can arrive, occupancy is released one
+placement wait plus one run lease after settlement; run-token routes refuse a
+settled Run, so a late-placed worker cannot fetch its recipe. An operator may
+then explicitly invoke a new occurrence.
 
 Result artifacts are bounded, validated server-side and durably staged before
 settlement. A successful native completion binds their digest. Staged artifacts
@@ -76,9 +82,9 @@ Goose is installed, versioned and published in the normal LCARS runner image,
 using `goose-version` and checksum-verified Linux release artifacts for amd64
 and arm64. Native QueueExecutor launches the same single direct-runner container
 and normal resource envelope used by the supported stack. There is no separate
-Goose image, bootstrap container, storage receipt or scheduler.
+Goose image, bootstrap container or scheduler.
 
-The direct runner performs its existing activation retry, startup heartbeat,
+The direct runner performs its existing startup heartbeat,
 periodic heartbeat, repository checkout, renewable GitHub credentials and failure
 settlement before invoking the recipe adapter. Recipes use the same `gh` wrapper,
 Git credential helper and Git identity as coding runtimes. The adapter checks out
@@ -87,8 +93,8 @@ relative skills and tool reads therefore match the admitted source. The image
 HOME and installed tools remain available; coding-agent prompts are not injected.
 The adapter checks the admitted CPU/memory allocation, runs Goose once, forwards
 cancellation, bounds output and reports through the token-fenced recipe endpoint.
-Native Queue capacity admission, storage accounting and retirement remain the
-owners of resource enforcement. A failed capped run remains failed.
+The QueueExecutor's `max_concurrent`, storage accounting and retirement remain
+the owners of resource enforcement. A failed capped run remains failed.
 
 The adapter requests Goose's JSON machine envelope, requires completed status,
 and validates only the final assistant result. Intermediate tool output cannot
@@ -155,8 +161,7 @@ Profile changes fence unminted reservations and recipe execution checks; they do
 not revoke already minted run authority or issued credentials. Stop an admitted
 run through the existing Work cancellation and retirement lifecycle.
 
-A receipt-backed QueueExecutor pool uses its normal configured runner image and
-resources. Its whole-job allocation must match the execution profile. The existing
+The QueueExecutor uses its normal configured runner image and resources. Its whole-job allocation must match the execution profile. The existing
 runner credential Secret supplies `goose-environment.json` (a string-valued map of
 provider environment variables) and `goose-config.yaml` (the operator-owned Goose
 configuration). Version 1 supports one shared Goose tool/model environment across

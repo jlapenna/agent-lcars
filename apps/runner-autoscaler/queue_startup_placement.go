@@ -118,3 +118,13 @@ func (q *kubernetesQueue) observeJobStartupPlacement(ctx context.Context, job *b
 	}
 	return q.reportStartupPlacement(ctx, placementObservation{RunID: runID, Runner: job.Annotations[queueRunnerAnnotation], ClaimFingerprint: job.Annotations[queueClaimAnnotation], JobUID: string(job.UID), ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Placed: placed})
 }
+
+// podOwnedBy reports whether p is controlled by exactly Job j (name and UID).
+func podOwnedBy(p core.Pod, j *batch.Job) bool {
+	for _, o := range p.OwnerReferences {
+		if o.Kind == "Job" && o.APIVersion == "batch/v1" && o.Name == j.Name && o.UID == j.UID && o.Controller != nil && *o.Controller {
+			return true
+		}
+	}
+	return false
+}

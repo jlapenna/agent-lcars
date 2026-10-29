@@ -22,9 +22,6 @@ async function fixture(t) {
     LCARS_RUN_TOKEN: 'private-token',
     LCARS_CONSOLE_URL: 'https://console.example',
   };
-  delete env.LCARS_CAPACITY_RECEIPT;
-  delete env.LCARS_WORKER_GENERATION;
-  delete env.LCARS_WORKER_IDENTITY_FILE;
   return { dir, log, env };
 }
 function run(args, env) {
@@ -41,44 +38,29 @@ function run(args, env) {
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
 }
-for (const receiptMode of [false, true]) {
-  test(`reports successful spawn once and preserves workload status (receipt=${receiptMode})`, async (t) => {
-    const f = await fixture(t);
-    if (receiptMode) {
-      const identityFile = path.join(f.dir, 'identity');
-      await writeFile(identityFile, 'bound.pod.identity');
-      f.env.LCARS_CAPACITY_RECEIPT = '{}';
-      f.env.LCARS_WORKER_GENERATION = '7';
-      f.env.LCARS_WORKER_IDENTITY_FILE = identityFile;
-    }
+test('reports successful spawn once and preserves workload status', async (t) => {
+  const f = await fixture(t);
 
-    const result = await run(
-      [
-        process.execPath,
-        '-e',
-        `console.log("workload"); const fs=require("node:fs");
+  const result = await run(
+    [
+      process.execPath,
+      '-e',
+      `console.log("workload"); const fs=require("node:fs");
          const timer=setInterval(()=>{try{if(fs.readFileSync(process.argv[1],"utf8").includes("providerProcessStarted")){clearInterval(timer);process.exit(23)}}catch{}},10);
          setTimeout(()=>process.exit(24),5000).unref()`,
-        f.log,
-      ],
-      f.env,
-    );
-    assert.equal(result.code, 23);
-    assert.equal(result.stdout, 'workload\n');
-    assert.equal(result.stderr, '');
-    const report = await readFile(f.log, 'utf8');
-    assert.match(report, /octo%2Fexample%2342%2Fr1\/heartbeat/);
-    assert.match(report, /providerProcessStarted/);
-    assert.match(report, /Authorization: Bearer private-token/);
-    assert.equal(report.split('request =').length, 2);
-    if (receiptMode) {
-      assert.match(report, /x-lcars-worker-identity: bound.pod.identity/);
-      assert.match(report, /x-lcars-worker-generation: 7/);
-    } else {
-      assert.doesNotMatch(report, /x-lcars-worker-/);
-    }
-  });
-}
+      f.log,
+    ],
+    f.env,
+  );
+  assert.equal(result.code, 23);
+  assert.equal(result.stdout, 'workload\n');
+  assert.equal(result.stderr, '');
+  const report = await readFile(f.log, 'utf8');
+  assert.match(report, /octo%2Fexample%2342%2Fr1\/heartbeat/);
+  assert.match(report, /providerProcessStarted/);
+  assert.match(report, /Authorization: Bearer private-token/);
+  assert.equal(report.split('request =').length, 2);
+});
 test('failed exec does not publish a start', async (t) => {
   const f = await fixture(t);
   assert.equal((await run([path.join(f.dir, 'missing')], f.env)).code, 127);

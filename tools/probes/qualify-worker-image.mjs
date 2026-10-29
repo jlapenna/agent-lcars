@@ -60,7 +60,6 @@ export function hostMountArgs(sourceDir) {
     'apps/runner-autoscaler/runner-image/direct-runner.sh',
     ...[
       'worker-policy-bootstrap.sh',
-      'worker-activation.sh',
       'verify-outcome.sh',
       'worker-completion.sh',
     ].map((name) => 'apps/runner-autoscaler/runner-image/runtime/' + name),
@@ -244,7 +243,6 @@ export const CONSUMER_FILES = [
 ];
 export const RUNTIME_HELPER_NAMES = [
   'worker-policy-bootstrap.sh',
-  'worker-activation.sh',
   'verify-outcome.sh',
   'worker-completion.sh',
 ];

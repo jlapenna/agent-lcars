@@ -1,6 +1,6 @@
 # QueueExecutor failover with durable capacity ownership
 
-Status: proposed implementation-ready design for [#2199](https://github.com/jlapenna/agent-lcars/issues/2199). This document selects an application architecture; the running controller remains a singleton. Implementation and the separately approved Homelab qualification must land before R8 can be called shipped.
+Status: **retired 2026-10-29.** The receipt protocol shipped disabled, was never enabled, and was deleted; the QueueExecutor remains a singleton. Original status: proposed implementation-ready design for [#2199](https://github.com/jlapenna/agent-lcars/issues/2199). This document selects an application architecture; the running controller remains a singleton. Implementation and the separately approved Homelab qualification must land before R8 can be called shipped.
 
 ## Decision and invariant
 

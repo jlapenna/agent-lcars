@@ -37,10 +37,9 @@ export async function finalizeNativeFailure(directory, context, env, budget) {
         'bash',
         [
           '-c',
-          `set -euo pipefail\nsource "$1"\nsource "$2"\n${runner.slice(runner.indexOf(boundary))}`,
+          `set -euo pipefail\nsource "$1"\n${runner.slice(runner.indexOf(boundary))}`,
           'native-failure-finalization',
           join(runnerRoot, 'runtime/worker-policy-bootstrap.sh'),
-          join(runnerRoot, 'runtime/worker-activation.sh'),
         ],
         {
           env: {
