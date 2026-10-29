@@ -693,6 +693,44 @@ describe('executor-reported exit', () => {
     expect(await store.listRuns(TASK)).toHaveLength(1);
   });
 
+  it('retires a settled claim without moving its settlement time or cooldown', async () => {
+    const { clock, store, orchestrator, run } = await claimed();
+    await orchestrator.report(run.runId, {
+      ok: false,
+      summary: 'provider-limit',
+      message: "You've hit your limit · resets 3pm (UTC)",
+    });
+    const settled = await store.readRun(run.runId);
+    const cooldowns = await store.readProviderCooldowns(['claude']);
+    clock.advanceMinutes(90);
+
+    const retired = await orchestrator.executorExited(run.runId, CLAIMANT);
+    if (isRefusal(retired)) throw new Error(retired.reason);
+    expect(await store.readRun(run.runId)).toEqual({
+      ...settled,
+      queue: { ...settled!.queue, state: 'retired' },
+    });
+    expect(await store.readProviderCooldowns(['claude'])).toEqual(cooldowns);
+  });
+
+  it('retires the claim of a run already lost by expiry', async () => {
+    const { clock, store, orchestrator, run } = await claimed();
+    clock.advanceMinutes(16); // past the first-heartbeat deadline
+    await orchestrator.sweepExpired();
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'lost',
+      queue: { state: 'claimed' },
+    });
+
+    const retired = await orchestrator.executorExited(run.runId, CLAIMANT);
+    if (isRefusal(retired)) throw new Error(retired.reason);
+    expect(retired.outbox).toEqual([]);
+    expect(await store.readRun(run.runId)).toMatchObject({
+      state: 'lost',
+      queue: { state: 'retired' },
+    });
+  });
+
   it('refuses to retire a settled claim another principal reports', async () => {
     const { store, orchestrator, run } = await claimed();
     await orchestrator.report(run.runId, { ok: true });

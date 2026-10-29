@@ -131,6 +131,7 @@ func (q *kubernetesQueue) retireSettledClaim(ctx context.Context, job *batch.Job
 	if err != nil && !apierrors.IsNotFound(err) {
 		return false, err
 	}
+	q.trackRetiring(job, runID, runner, fingerprint)
 	q.logger.Info("Retired settled Kubernetes claim", "runId", runID, "job", job.Name)
 	return true, nil
 }

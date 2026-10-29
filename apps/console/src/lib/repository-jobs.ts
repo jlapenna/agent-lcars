@@ -1,4 +1,9 @@
-import { isLive, isRefusal } from '@agent-lcars/orchestrator';
+import {
+  isLive,
+  isRefusal,
+  RUN_LEASE_MS,
+  RUN_PLACEMENT_WAIT_MAX_MS,
+} from '@agent-lcars/orchestrator';
 import { slotItemId } from '@agent-lcars/work';
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
@@ -17,6 +22,10 @@ import type {
   JobOccurrence,
   JobStore,
 } from './repository-job-store';
+
+/** Executor Pods carry a runtime limit equal to the run lease, counted from
+ * placement, and placement waits at most RUN_PLACEMENT_WAIT_MAX_MS. */
+const RETIREMENT_BACKSTOP_MS = RUN_PLACEMENT_WAIT_MAX_MS + RUN_LEASE_MS;
 
 export interface RepositoryJobsDeps {
   store: JobStore;
@@ -245,8 +254,17 @@ export class RepositoryJobs {
     if (runs.length !== 1 || isLive(runs[0]!.state)) return;
     const run = runs[0]!;
     // Native terminal state alone is not evidence the worker has stopped:
-    // a claimed run waits for its executor's exit report to retire it.
-    if (run.queue?.claimedAt && run.queue.state !== 'retired') return;
+    // a claimed run waits for its executor's exit report to retire it. When
+    // that report can never arrive (an executor restart lost track of a
+    // deleted Job, or a Job was never created), a worker still cannot outlive
+    // the placement wait plus the Pod runtime limit every executor Job has.
+    if (
+      run.queue?.claimedAt &&
+      run.queue.state !== 'retired' &&
+      this.deps.now().getTime() - Date.parse(run.updatedAt) <
+        RETIREMENT_BACKSTOP_MS
+    )
+      return;
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;

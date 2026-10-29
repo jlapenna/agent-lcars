@@ -29,7 +29,7 @@ const runExitReportedRetention = 2 * queueJobRetentionAge
 // queue's Job inventory read -- and adds no clock of its own. Every
 // terminated claim is reported once per process, whatever its exit status: the
 // server decides. A run that already reported its outcome (the normal case)
-// is answered unchanged, so a restart re-reporting the retained Jobs is
+// has its claim retired once, so a restart re-reporting the retained Jobs is
 // harmless. A failed report is retried on the next observation.
 type runExitReporter struct {
 	consoleURL   string

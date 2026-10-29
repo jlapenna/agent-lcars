@@ -1191,11 +1191,9 @@ function retireSettledClaim(input: {
     return refused('run-not-live');
   return {
     task: input.task,
-    run: {
-      ...run,
-      queue: { ...run.queue, state: 'retired' },
-      updatedAt: input.now,
-    },
+    // Only the claim changes: the settled Run keeps its settlement time, which
+    // provider cooldowns and elapsed-time reads are derived from.
+    run: { ...run, queue: { ...run.queue, state: 'retired' } },
     outbox: [],
   };
 }

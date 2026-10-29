@@ -116,6 +116,8 @@ func TestKubernetesRetiresSettledOriginalAndDrainsPendingPods(t *testing.T) {
 				c.CoreV1().Pods(q.config.Namespace).Create(ctx, pod, meta.CreateOptions{})
 			}
 			c.Tracker().Update(batch.SchemeGroupVersion.WithResource("jobs"), job, q.config.Namespace)
+			recorder := &exitReportRecorder{}
+			q.exits = testExitReporter(recorder.server(t).URL)
 			calls := 0
 			q.claimSettled = func(_ context.Context, runID, runner, hash string) (bool, error) {
 				calls++
@@ -148,6 +150,16 @@ func TestKubernetesRetiresSettledOriginalAndDrainsPendingPods(t *testing.T) {
 				t.Fatal("successor admission stayed blocked after drainage")
 			}
 			r.release()
+			// The deleted Job never became terminal, so only its observed
+			// absence reports the worker's exit, once, under its claim.
+			q.exits.wg.Wait()
+			if _, err := q.activeCount(ctx); err != nil {
+				t.Fatal(err)
+			}
+			q.exits.wg.Wait()
+			if len(recorder.runners) != 1 || recorder.runners[0] != "executor" || recorder.fingerprints[0] != fingerprint {
+				t.Fatalf("exit reports runners=%v fingerprints=%v; want one for the retired claim", recorder.runners, recorder.fingerprints)
+			}
 		})
 	}
 }

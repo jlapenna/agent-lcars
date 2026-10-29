@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -186,6 +187,42 @@ type kubernetesQueue struct {
 	// exits receives every terminated queue Job this executor's inventory
 	// reads observe (nil disables reporting). See runExitReporter.
 	exits *runExitReporter
+	// retiring holds settled claims whose Jobs recovery deleted. Foreground
+	// deletion removes a Job only after its Pods, so its absence from a later
+	// inventory read is the worker's exit evidence.
+	retiringMu sync.Mutex
+	retiring   map[types.UID]retiringClaim
+}
+
+type retiringClaim struct{ runID, runner, fingerprint string }
+
+func (q *kubernetesQueue) trackRetiring(job *batch.Job, runID, runner, fingerprint string) {
+	q.retiringMu.Lock()
+	defer q.retiringMu.Unlock()
+	if q.retiring == nil {
+		q.retiring = map[types.UID]retiringClaim{}
+	}
+	q.retiring[job.UID] = retiringClaim{runID: runID, runner: runner, fingerprint: fingerprint}
+}
+
+// reportRetired reports every tracked deletion whose Job no longer exists.
+func (q *kubernetesQueue) reportRetired(jobs []batch.Job) {
+	q.retiringMu.Lock()
+	defer q.retiringMu.Unlock()
+	if len(q.retiring) == 0 {
+		return
+	}
+	present := make(map[types.UID]bool, len(jobs))
+	for _, j := range jobs {
+		present[j.UID] = true
+	}
+	for uid, claim := range q.retiring {
+		if present[uid] {
+			continue
+		}
+		q.exits.observeTerminated(claim.runID, claim.runner, claim.fingerprint)
+		delete(q.retiring, uid)
+	}
 }
 
 func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *slog.Logger) (*kubernetesQueue, error) {
@@ -265,6 +302,7 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	q.reportRetired(jobs.Items)
 	// Pod evidence is only needed once a terminal Job shows up, and then read
 	// at most once per pass.
 	var podsByJob map[string][]core.Pod

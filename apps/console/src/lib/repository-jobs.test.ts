@@ -349,6 +349,39 @@ describe('production repository job admission', () => {
     await f.jobs.reconcile(f.store.jobs.get(f.id)!);
     expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
   });
+  it('releases occupancy once the worker can no longer be running', async () => {
+    const f = fixture();
+    const occurrence = await f.jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+    const at = '2026-10-27T06:00:00.000Z';
+    await f.native.enqueueRun({ runId: run.runId, now: at });
+    await f.native.claimQueuedRun({
+      pipelines: ['goose'],
+      now: at,
+      claimedBy: 'executor',
+      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+      tokenHash: 'a'.repeat(64),
+    });
+    await f.orchestrator.report(run.runId, { ok: false }, 'a'.repeat(64));
+    const settledAt = Date.parse(
+      (await f.native.readRun(run.runId))!.updatedAt,
+    );
+    // No exit report ever arrives (for example, an executor restart lost
+    // track of a deleted Job): placement wait plus the Pod runtime limit
+    // bound how long its worker could still run.
+    f.setTime(new Date(settledAt + 3 * 3_600_000 - 60_000).toISOString());
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
+    f.setTime(new Date(settledAt + 3 * 3_600_000 + 60_000).toISOString());
+    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+  });
   it('recognizes both fall-back occurrences and skips a nonexistent local time', () => {
     const f = fixture();
     expect(jobDueAt(f.definition, new Date('2026-11-01T08:00:00Z'))).toBe(true);
