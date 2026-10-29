@@ -18,7 +18,8 @@ const script = path.join(root, 'tools/sync-runner-pnpm-seed.py');
 const dirs: string[] = [];
 
 // A fake `gh api` serving fixture repositories: default branch `main`, head
-// commit `sha-<repo>`, and raw contents from <dir>/repos/<owner>/<repo>/.
+// commit `sha-<repo>`, raw contents from <dir>/repos/<owner>/<repo>/, and
+// visibility (private when that directory holds a `.private` file).
 function fixture(repositories: Record<string, Record<string, string>>) {
   const dir = mkdtempSync(path.join(tmpdir(), 'runner-seed-sync-'));
   dirs.push(dir);
@@ -43,7 +44,13 @@ case "$1" in
     rest="\${1#repos/}"; repository="\${rest%%/contents/*}"; file="\${rest#*/contents/}"; file="\${file%%\\?ref=*}"
     [ -f "${dir}/repos/$repository/$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     cat "${dir}/repos/$repository/$file"; exit ;;
-  repos/*/*) echo main; exit ;;
+  repos/*/*)
+    if [ "\${3:-}" = .private ]; then
+      [ -d "${dir}/repos/\${1#repos/}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+      [ -f "${dir}/repos/\${1#repos/}/.private" ] && echo true || echo false
+      exit
+    fi
+    echo main; exit ;;
 esac
 exit 2
 `,
@@ -131,6 +138,53 @@ snapshots:
       'child@2.0.0': {},
     });
     expect(existsSync(path.join(f.seed, 'fleet/acme__app/.npmrc'))).toBe(false);
+  });
+
+  it('leaves packages from private GitHub repositories to jobs', () => {
+    const source = `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      '@club/design': {specifier: 'github:club/design#v1', version: 'git+https://github.com/club/design.git#aaa'}
+      '@club/hidden': {specifier: 'github:club/hidden#v1', version: 'git+https://github.com/club/hidden.git#bbb'}
+      '@acme/tools': {specifier: 'github:acme/tools#v1', version: 'https://codeload.github.com/acme/tools/tar.gz/ccc'}
+      '@acme/lib': {specifier: 'github:acme/lib#v1', version: 'git+https://github.com/acme/lib.git#ddd'}
+packages:
+  '@club/design@git+https://github.com/club/design.git#aaa':
+    resolution: {commit: aaa, repo: https://github.com/club/design.git, type: git}
+  '@club/hidden@git+https://github.com/club/hidden.git#bbb':
+    resolution: {commit: bbb, repo: https://git@github.com/club/hidden.git, type: git}
+  '@acme/tools@https://codeload.github.com/acme/tools/tar.gz/ccc':
+    resolution: {gitHosted: true, integrity: sha512-tools, tarball: https://codeload.github.com/acme/tools/tar.gz/ccc}
+  '@acme/lib@git+https://github.com/acme/lib.git#ddd':
+    resolution: {commit: ddd, repo: https://git@github.com/acme/lib.git, type: git}
+snapshots:
+  '@club/design@git+https://github.com/club/design.git#aaa': {}
+  '@club/hidden@git+https://github.com/club/hidden.git#bbb': {}
+  '@acme/tools@https://codeload.github.com/acme/tools/tar.gz/ccc': {}
+  '@acme/lib@git+https://github.com/acme/lib.git#ddd': {}
+`;
+    const f = fixture({
+      'acme/app': {
+        'package.json': '{"packageManager":"pnpm@11.28.2"}',
+        'pnpm-lock.yaml': source,
+      },
+      // club/hidden is absent: a repository the token cannot see is private.
+      'club/design': { '.private': '' },
+      'acme/tools': { 'README.md': '' },
+      'acme/lib': { 'README.md': '' },
+    });
+    f.run(['acme/app']);
+    const result = parse(f.read('fleet/acme__app/pnpm-lock.yaml'));
+    expect(Object.keys(result.packages)).toEqual([
+      '@acme/tools@https://codeload.github.com/acme/tools/tar.gz/ccc',
+      '@acme/lib@git+https://github.com/acme/lib.git#ddd',
+    ]);
+    expect(Object.keys(result.importers['.'].dependencies)).toEqual([
+      '@acme/tools',
+      '@acme/lib',
+    ]);
+    expect(Object.keys(result.snapshots)).toEqual(Object.keys(result.packages));
   });
 
   it('copies only what pnpm fetch needs from each repository', () => {

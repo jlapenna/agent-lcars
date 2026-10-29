@@ -19,12 +19,14 @@ content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
 
-GitHub Packages requires authentication and may contain private packages. The
-sync omits its package records and dependency edges from this shared cache,
+The image fetches anonymously. GitHub Packages, and git or tarball packages
+from a GitHub repository that is not public (the sync checks visibility with
+its own token; one it cannot see counts as private), need credentials. The sync
+omits their package records and dependency edges from this shared cache,
 retaining all other package content, including public dependencies of omitted
 packages. A consuming job keeps its original lockfile and fetches these cache
-misses with its own registry credentials. No consumer credentials or private
-GitHub Packages content are baked into the generic runner. The fetch command
+misses with its own credentials. No consumer credentials or private package
+content are baked into the generic runner. The fetch command
 and pnpm supply-chain validation are unchanged; failures still fail the build.
 
 The image also carries pnpm's registry-metadata mirror from the same fetch.
