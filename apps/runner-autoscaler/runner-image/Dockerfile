@@ -415,7 +415,7 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # self-hosting ci.yml's `verify` job surfaced that the image had no C
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=24.22.2
 
 # Playwright's browser stack is deliberately NOT baked here (reverted per
 # agent-lcars#920): E2E no longer runs on this generic JIT image -- the
@@ -430,7 +430,7 @@ RUN set -eux; \
     install -m 0755 -d /etc/apt/keyrings; \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
       | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg; \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_VERSION%%.*}.x nodistro main" \
       > /etc/apt/sources.list.d/nodesource.list; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \

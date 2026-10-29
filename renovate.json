@@ -17,6 +17,25 @@
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Node runtime copies outside a FROM line: the assertions that the Node binary copied out of the pinned node base image is the expected release, the runner image's NodeSource apt pin, and setup-node-pnpm's default (which must equal the runner image's baked Node for detect-baked.sh to reuse it). They must equal the node base image tag (tools/contract-tests/node-version-pins.test.ts); #3092 moved only the FROM lines and every runner-image publication failed at control-plane-verify-runtime.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/control-plane-image\\/verify-runtime\\.sh$/",
+        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/",
+        "/^tools\\/e2e\\/Dockerfile$/",
+        "/^tools\\/e2e-runner\\/Dockerfile$/",
+        "/^\\.github\\/actions\\/setup-node-pnpm\\/action\\.yml$/"
+      ],
+      "matchStrings": [
+        "process\\.versions\\.node'\\)\" = (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "ARG NODE_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "node-version:\\n(?:\\s+[a-z]+:.*\\n)*?\\s+default: '(?<currentValue>\\d+\\.\\d+\\.\\d+)'"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
     }
   ],
   "packageRules": [
@@ -80,6 +99,27 @@
       "matchFileNames": ["apps/runner-autoscaler/go.mod"],
       "matchDepTypes": ["golang"],
       "rangeStrategy": "bump"
+    },
+    {
+      "description": "Every Node pin moves in one PR: the node base images (dockerfile manager), the copies the Node customManagers entry reads, and package.json engines (node-version datasource). Separate PRs (#3092 images, #3093 deploy-console) let the base image move without its runtime assertions; node-version-pins.test.ts now fails any PR that leaves a copy behind.",
+      "matchPackageNames": ["node"],
+      "matchDatasources": ["docker", "node-version"],
+      "groupName": "Node.js runtime",
+      "groupSlug": "node-runtime"
+    },
+    {
+      "description": "actions/setup-node's node-version is reported as depName node on the github-releases datasource (actions/node-versions), so the rule above cannot match it; join the same group so deploy workflows move with the images.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "groupName": "Node.js runtime",
+      "groupSlug": "node-runtime"
+    },
+    {
+      "description": "The runner image installs Node from NodeSource (ARG NODE_VERSION), which publishes well after nodejs.org: measured from the node-version datasource's day-granular release date, 24.22.1 (2026-10-20) reached NodeSource at 2026-10-21 16:17Z and 24.22.2 (2026-10-27) at 2026-10-28 19:07Z, about 43 hours. Hold the node-version datasource three days so the group never merges a release NodeSource has not published; the docker FROM bump arrives first and node-version-pins.test.ts keeps the group PR red until the copies catch up.",
+      "matchDatasources": ["node-version"],
+      "matchPackageNames": ["node"],
+      "minimumReleaseAge": "3 days",
+      "internalChecksFilter": "strict"
     }
   ]
 }
