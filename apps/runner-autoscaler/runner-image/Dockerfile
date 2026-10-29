@@ -415,7 +415,7 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # self-hosting ci.yml's `verify` job surfaced that the image had no C
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=24.22.2
 
 # Playwright's browser stack is deliberately NOT baked here (reverted per
 # agent-lcars#920): E2E no longer runs on this generic JIT image -- the

@@ -17,6 +17,25 @@
       "depNameTemplate": "go",
       "datasourceTemplate": "golang-version",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Node runtime copies outside a FROM line: the assertions that the Node binary copied out of the pinned node base image is the expected release, the runner image's NodeSource apt pin, and setup-node-pnpm's default (which must equal the runner image's baked Node for detect-baked.sh to reuse it). They must equal the node base image tag (tools/contract-tests/node-version-pins.test.ts); #3092 moved only the FROM lines and every runner-image publication failed at control-plane-verify-runtime.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/control-plane-image\\/verify-runtime\\.sh$/",
+        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/",
+        "/^tools\\/e2e\\/Dockerfile$/",
+        "/^tools\\/e2e-runner\\/Dockerfile$/",
+        "/^\\.github\\/actions\\/setup-node-pnpm\\/action\\.yml$/"
+      ],
+      "matchStrings": [
+        "process\\.versions\\.node'\\)\" = (?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "ARG NODE_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "node-version:\\n(?:\\s+[a-z]+:.*\\n)*?\\s+default: '(?<currentValue>\\d+\\.\\d+\\.\\d+)'"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
     }
   ],
   "packageRules": [
@@ -80,6 +99,13 @@
       "matchFileNames": ["apps/runner-autoscaler/go.mod"],
       "matchDepTypes": ["golang"],
       "rangeStrategy": "bump"
+    },
+    {
+      "description": "Every Node pin moves in one PR: the node base images (dockerfile manager), setup-node versions (github-actions manager) and the copies the customManagers entry above reads. Separate PRs (#3092 images, #3093 deploy-console) let the base image move without its runtime assertions, and node-version-pins.test.ts now fails any PR that leaves one behind.",
+      "matchPackageNames": ["node"],
+      "matchDatasources": ["docker", "node-version"],
+      "groupName": "Node.js runtime",
+      "groupSlug": "node-runtime"
     }
   ]
 }

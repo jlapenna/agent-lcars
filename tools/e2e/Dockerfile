@@ -11,7 +11,7 @@
 FROM node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-runtime
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
-RUN test "$(node -p 'process.versions.node')" = 24.22.1
+RUN test "$(node -p 'process.versions.node')" = 24.22.2
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
 # require a JRE, which the base Playwright image does not include. jq is part

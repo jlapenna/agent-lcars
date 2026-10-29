@@ -92,7 +92,7 @@ RUN groupadd -g 1002 runner \
 # the scaler's container spec needs no change to drive this image.
 COPY --from=agent --chown=runner:runner /home/runner /home/runner
 RUN cp /usr/bin/node /home/runner/externals/node24/bin/node \
-    && test "$(/home/runner/externals/node24/bin/node -p 'process.versions.node')" = 24.22.1 \
+    && test "$(/home/runner/externals/node24/bin/node -p 'process.versions.node')" = 24.22.2 \
     && rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine
 ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 
