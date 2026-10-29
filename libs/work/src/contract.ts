@@ -942,6 +942,10 @@ export const runIntrospectionSchema = z.strictObject({
   verifiedAt: z.iso.datetime(),
   /** Effective existing authentication deadline, never a lease renewal. */
   validUntil: z.iso.datetime(),
+  /** Always null. Kept for one release so runner images and Consoles from
+   * before the capacity-receipt removal still parse each other's responses;
+   * delete once the new runner image is adopted fleet-wide. */
+  worker: z.null().optional(),
 });
 
 export const runClaimResponseSchema = z.strictObject({

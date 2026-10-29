@@ -104,14 +104,12 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 			}))
 			setQueueExecutorStartupState(queueExecutorStateReady)
 			queueStatus.ready.Store(true)
-			go func() {
-				runQueueExecutorPoller(ctx, queueExecutorConfig{
-					consoleURL: consoleURL, runnerName: runnerName,
-					idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
-					reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
-					recover: queue.recover,
-				}, queueClaimPollInterval, logger)
-			}()
+			go runQueueExecutorPoller(ctx, queueExecutorConfig{
+				consoleURL: consoleURL, runnerName: runnerName,
+				idToken: func() (string, error) { return idTokenFromSource(tokenSource) },
+				reserve: func() (*directRunnerReservation, error) { return queue.reserve(ctx) },
+				recover: queue.recover,
+			}, queueClaimPollInterval, logger)
 		}
 	}
 

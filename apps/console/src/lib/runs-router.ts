@@ -550,6 +550,8 @@ export const runsRouter = os.router({
           : `https://github.com/${target.repo}/issues/${target.issue}`,
       verifiedAt,
       validUntil,
+      // Compatibility with pre-removal runner images; see the schema.
+      worker: null,
     };
   }),
 

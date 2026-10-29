@@ -306,8 +306,12 @@ describe('run introspection output', () => {
     validUntil: '2026-10-14T03:05:00.000Z',
   };
 
-  it('accepts GitHub and native identities', () => {
+  it('accepts GitHub and native identities, with or without the null worker', () => {
     expect(runIntrospectionSchema.parse(body)).toEqual(body);
+    expect(runIntrospectionSchema.parse({ ...body, worker: null })).toEqual({
+      ...body,
+      worker: null,
+    });
     const native = {
       ...body,
       runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',

@@ -391,6 +391,7 @@ describe('run introspection', () => {
             : 'https://github.com/jlapenna/agent-lcars/issues/2572',
           verifiedAt: NOW,
           validUntil: runRecoveryDeadline(before) ?? before.leaseExpiresAt,
+          worker: null,
         },
       });
       expect(await f.store.readRun(f.runId)).toEqual(before);
