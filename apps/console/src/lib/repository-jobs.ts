@@ -1,4 +1,4 @@
-import { isLive, isRefusal, retiredKey } from '@agent-lcars/orchestrator';
+import { isLive, isRefusal } from '@agent-lcars/orchestrator';
 import { slotItemId } from '@agent-lcars/work';
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
@@ -244,20 +244,9 @@ export class RepositoryJobs {
     });
     if (runs.length !== 1 || isLive(runs[0]!.state)) return;
     const run = runs[0]!;
-    // Native terminal state alone is not evidence the worker has stopped.
-    if (run.queue?.claimedAt) {
-      const retired = await this.deps.runtime.store.transactCapacity({
-        now: this.deps.now().toISOString(),
-        recordKeys: [retiredKey(run.runId)],
-        decide: (snapshot) => {
-          const record = snapshot.records.get(retiredKey(run.runId));
-          return {
-            value: record?.kind === 'retired' && record.released === true,
-          };
-        },
-      });
-      if (!retired) return;
-    }
+    // Native terminal state alone is not evidence the worker has stopped:
+    // a claimed run waits for its executor's exit report to retire it.
+    if (run.queue?.claimedAt && run.queue.state !== 'retired') return;
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;

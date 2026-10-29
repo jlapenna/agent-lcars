@@ -628,9 +628,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	case "opencode":
 		providerKey = "opencode-llm-api-key"
 	case "goose":
-		if l.receipt == nil || q.config.Capacity == nil {
-			return nil, fmt.Errorf("goose requires receipt-backed capacity")
-		}
 		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
 			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
 			limit, limitErr := resource.ParseQuantity(q.config.Limits[name])
@@ -738,6 +735,11 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 	}
 	desired, err := q.job(l)
 	if err != nil {
+		// No Job was submitted, so no worker can exist: settle the claim now
+		// instead of holding it until the start deadline expires.
+		if l.runToken != "" {
+			q.exits.observeTerminated(l.runID, l.runner, queueClaimFingerprint(l.runToken))
+		}
 		return err
 	}
 	job, err := q.client.BatchV1().Jobs(q.config.Namespace).Create(ctx, desired, meta.CreateOptions{})

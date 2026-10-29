@@ -11,7 +11,7 @@ import {
 } from './decide';
 import { isLive, isWorkAnchor, providerRoutingSchema, type Run } from './model';
 
-/** A terminal claim has no retirement writer outside the capacity protocol.
+/** A terminal claim is retired by its executor's exit report or the capacity protocol.
  * Preserve the fence only for a live owner or durable capacity/credential
  * debt, not its queue history. A restore receipt
  * (`credentialRestoredClaimFingerprint`) is proof that restore succeeded, not

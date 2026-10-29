@@ -647,6 +647,8 @@ describe('executor-reported exit', () => {
     if (isRefusal(outcome)) throw new Error(outcome.reason);
     const lost = decidedRun(outcome);
     expect(lost).toMatchObject({ runId: run.runId, state: 'lost' });
+    // The executor observed the worker exit, so the claim is retired.
+    expect(lost.queue?.state).toBe('retired');
     expect(lost.events.at(-1)).toMatchObject({ to: 'lost', by: 'executor' });
     const retry = outcome.additionalRuns?.[0];
     expect(retry).toMatchObject({
@@ -667,10 +669,17 @@ describe('executor-reported exit', () => {
     expect(swept.lost.map((r) => r.runId)).not.toContain(run.runId);
   });
 
-  it('leaves a run that already reported its outcome untouched', async () => {
+  it('retires the claim of a run that already reported its outcome, once', async () => {
     const { store, orchestrator, run } = await claimed();
     await orchestrator.report(run.runId, { ok: true });
 
+    const retired = await orchestrator.executorExited(run.runId, CLAIMANT);
+    if (isRefusal(retired)) throw new Error(retired.reason);
+    expect(decidedRun(retired)).toMatchObject({
+      state: 'finished',
+      queue: { state: 'retired' },
+    });
+    expect(retired.outbox).toEqual([]);
     expect(
       await orchestrator.executorExited(run.runId, CLAIMANT),
     ).toMatchObject({
@@ -679,8 +688,22 @@ describe('executor-reported exit', () => {
     });
     expect(await store.readRun(run.runId)).toMatchObject({
       state: 'finished',
+      queue: { state: 'retired' },
     });
     expect(await store.listRuns(TASK)).toHaveLength(1);
+  });
+
+  it('refuses to retire a settled claim another principal reports', async () => {
+    const { store, orchestrator, run } = await claimed();
+    await orchestrator.report(run.runId, { ok: true });
+
+    expect(
+      await orchestrator.executorExited(run.runId, {
+        ...CLAIMANT,
+        subject: 'other@example.com',
+      }),
+    ).toMatchObject({ refused: true, reason: 'not-claimant' });
+    expect((await store.readRun(run.runId))?.queue?.state).toBe('claimed');
   });
 
   it('is idempotent: a repeated report neither re-settles nor double-retries', async () => {

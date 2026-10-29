@@ -1,8 +1,4 @@
-import {
-  MemoryStore,
-  Orchestrator,
-  retiredKey,
-} from '@agent-lcars/orchestrator';
+import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { workSpecSchema } from '@agent-lcars/work';
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
@@ -322,7 +318,7 @@ describe('production repository job admission', () => {
       f.jobs.admit(f.id, 'manual-1', 'user:joe', 'manual', f.definition.digest),
     ).rejects.toThrow('refresh');
   });
-  it('holds overlap until retirement is physically released', async () => {
+  it('holds overlap until the executor reports the worker exited', async () => {
     const f = fixture();
     const occurrence = await f.jobs.admit(
       f.id,
@@ -342,31 +338,14 @@ describe('production repository job admission', () => {
       tokenHash: 'a'.repeat(64),
     });
     await f.orchestrator.report(run.runId, { ok: false }, 'a'.repeat(64));
-    const retire = async (released: boolean) =>
-      f.native.transactCapacity({
-        now: at,
-        recordKeys: [retiredKey(run.runId)],
-        decide: (snapshot) => {
-          snapshot.records.set(retiredKey(run.runId), {
-            kind: 'retired',
-            runId: run.runId,
-            poolId: 'pool',
-            nonce: 'nonce-01234567890123456789',
-            jobName: 'job',
-            pendingWrites: [],
-            released,
-          });
-          return {
-            value: true,
-            state: snapshot.state,
-            records: snapshot.records,
-          };
-        },
-      });
-    await retire(false);
+    // A settled run is not evidence that its worker stopped.
     await f.jobs.reconcile(f.store.jobs.get(f.id)!);
     expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
-    await retire(true);
+    await f.orchestrator.executorExited(run.runId, {
+      subject: 'executor@example.iam.gserviceaccount.com',
+      runner: 'executor',
+      claimFingerprint: 'a'.repeat(64),
+    });
     await f.jobs.reconcile(f.store.jobs.get(f.id)!);
     expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
   });
