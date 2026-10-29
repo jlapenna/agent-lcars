@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.lib.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
@@ -16,5 +16,6 @@
     {
       "path": "../orchestrator/tsconfig.lib.json"
     }
-  ]
+  ],
+  "exclude": ["**/*.spec.*", "**/*.test.*"]
 }

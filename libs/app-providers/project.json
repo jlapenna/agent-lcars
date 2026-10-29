@@ -5,23 +5,5 @@
   "projectType": "library",
   "tags": ["platform:browser", "scope:shared"],
   "// targets": "to see all targets run: nx show project app-providers --web",
-  "targets": {
-    "typecheck": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "dependsOn": ["build", "^typecheck"],
-      "syncGenerators": ["@nx/js:typescript-sync"],
-      "outputs": [
-        "{projectRoot}/tsconfig.tsbuildinfo",
-        "{workspaceRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}",
-        "{workspaceRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}.map",
-        "{workspaceRoot}/dist/tsconfig.lib.tsbuildinfo",
-        "{workspaceRoot}/dist/tsconfig.spec.tsbuildinfo"
-      ],
-      "options": {
-        "cwd": "libs/app-providers",
-        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
-      }
-    }
-  }
+  "targets": {}
 }

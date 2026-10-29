@@ -95,23 +95,6 @@
         "production": {}
       }
     },
-    "serve": {
-      "executor": "nx:run-commands",
-      "continuous": true,
-      "defaultConfiguration": "development",
-      "options": {
-        "command": "next dev --port=4200",
-        "cwd": "apps/console"
-      },
-      "configurations": {
-        "development": {
-          "command": "next dev --port=4200"
-        },
-        "production": {
-          "command": "next start --port=4200"
-        }
-      }
-    },
     "serve-production": {
       "executor": "nx:run-commands",
       "dependsOn": ["bundle"],

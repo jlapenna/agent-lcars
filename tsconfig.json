@@ -8,6 +8,33 @@
     },
     {
       "path": "./apps/console"
+    },
+    {
+      "path": "./libs/dispatch-contracts"
+    },
+    {
+      "path": "./apps/telemetry-watcher"
+    },
+    {
+      "path": "./libs/orchestrator"
+    },
+    {
+      "path": "./libs/util-server"
+    },
+    {
+      "path": "./libs/telemetry"
+    },
+    {
+      "path": "./libs/env-vars"
+    },
+    {
+      "path": "./libs/logging"
+    },
+    {
+      "path": "./libs/util"
+    },
+    {
+      "path": "./libs/work"
     }
   ]
 }

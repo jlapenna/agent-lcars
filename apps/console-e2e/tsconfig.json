@@ -29,5 +29,9 @@
     "eslint.config.mjs",
     "eslint.config.cjs"
   ],
-  "references": []
+  "references": [
+    {
+      "path": "../../libs/orchestrator"
+    }
+  ]
 }

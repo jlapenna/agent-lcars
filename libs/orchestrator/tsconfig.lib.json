@@ -1,5 +1,5 @@
 {
-  "extends": "../../tsconfig.lib.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "ignoreDeprecations": "6.0",
     "rootDir": "src",
@@ -23,5 +23,6 @@
     "src/**/*.js",
     "src/**/*.jsx",
     "src/**/*.d.ts"
-  ]
+  ],
+  "exclude": ["**/*.spec.*", "**/*.test.*"]
 }

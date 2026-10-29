@@ -4,35 +4,5 @@
   "sourceRoot": "libs/telemetry/src",
   "projectType": "library",
   "tags": ["platform:shared", "scope:shared"],
-  "targets": {
-    "build": {
-      "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/telemetry",
-        "main": "libs/telemetry/src/index.ts",
-        "tsConfig": "libs/telemetry/tsconfig.lib.json",
-        "assets": ["libs/telemetry/*.md"],
-        "skipTypeCheck": true,
-        "clean": false
-      }
-    },
-    "typecheck": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "dependsOn": ["build", "^typecheck"],
-      "syncGenerators": ["@nx/js:typescript-sync"],
-      "outputs": [
-        "{projectRoot}/tsconfig.tsbuildinfo",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}.map",
-        "{projectRoot}/dist/tsconfig.lib.tsbuildinfo",
-        "{projectRoot}/dist/tsconfig.spec.tsbuildinfo"
-      ],
-      "options": {
-        "cwd": "libs/telemetry",
-        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
-      }
-    }
-  }
+  "targets": {}
 }
