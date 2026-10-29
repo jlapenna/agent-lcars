@@ -220,8 +220,13 @@ func (q *kubernetesQueue) reportRetired(jobs []batch.Job) {
 		if present[uid] {
 			continue
 		}
+		// Keep the claim until its report is delivered: the Job is gone, so
+		// no later inventory read could observe it again.
+		if q.exits.delivered(claim.runID, claim.fingerprint) {
+			delete(q.retiring, uid)
+			continue
+		}
 		q.exits.observeTerminated(claim.runID, claim.runner, claim.fingerprint)
-		delete(q.retiring, uid)
 	}
 }
 

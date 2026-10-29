@@ -23,8 +23,8 @@ import type {
   JobStore,
 } from './repository-job-store';
 
-/** Executor Pods carry a runtime limit equal to the run lease, counted from
- * placement, and placement waits at most RUN_PLACEMENT_WAIT_MAX_MS. */
+/** Executor Pod runtime limits (2h, 30m for recipes) never exceed the run
+ * lease; the placement allowance keeps the bound conservative. */
 const RETIREMENT_BACKSTOP_MS = RUN_PLACEMENT_WAIT_MAX_MS + RUN_LEASE_MS;
 
 export interface RepositoryJobsDeps {
@@ -256,8 +256,10 @@ export class RepositoryJobs {
     // Native terminal state alone is not evidence the worker has stopped:
     // a claimed run waits for its executor's exit report to retire it. When
     // that report can never arrive (an executor restart lost track of a
-    // deleted Job, or a Job was never created), a worker still cannot outlive
-    // the placement wait plus the Pod runtime limit every executor Job has.
+    // deleted Job, or a Job was never created), the backstop still holds: a
+    // worker placed after settlement cannot fetch its recipe (run-token
+    // routes refuse a settled run), and one started before settlement ends
+    // within its Pod runtime limit, which never exceeds the run lease.
     if (
       run.queue?.claimedAt &&
       run.queue.state !== 'retired' &&

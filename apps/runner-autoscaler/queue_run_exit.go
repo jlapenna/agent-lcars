@@ -77,6 +77,18 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string
 	r.observeTerminatedWithDisruption(runID, claimedBy, fingerprint, nil)
 }
 
+// delivered reports whether the exit of this exact claim was accepted. A nil
+// reporter delivers nothing and keeps nothing pending.
+func (r *runExitReporter) delivered(runID, fingerprint string) bool {
+	if r == nil {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, done := r.reported[exitClaimKey(runID, fingerprint)]
+	return done
+}
+
 // exitDisruption is the executor's exact attestation that this attempt's own
 // worker Pod was removed by scheduler preemption before its container started,
 // named by the Kubernetes UIDs of the Job and Pod it observed. It is untrusted
