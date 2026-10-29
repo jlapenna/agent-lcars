@@ -1,4 +1,9 @@
-import { isLive, isRefusal, retiredKey } from '@agent-lcars/orchestrator';
+import {
+  isLive,
+  isRefusal,
+  RUN_LEASE_MS,
+  RUN_PLACEMENT_WAIT_MAX_MS,
+} from '@agent-lcars/orchestrator';
 import { slotItemId } from '@agent-lcars/work';
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
@@ -17,6 +22,10 @@ import type {
   JobOccurrence,
   JobStore,
 } from './repository-job-store';
+
+/** Executor Pod runtime limits (2h, 30m for recipes) never exceed the run
+ * lease; the placement allowance keeps the bound conservative. */
+const RETIREMENT_BACKSTOP_MS = RUN_PLACEMENT_WAIT_MAX_MS + RUN_LEASE_MS;
 
 export interface RepositoryJobsDeps {
   store: JobStore;
@@ -244,20 +253,20 @@ export class RepositoryJobs {
     });
     if (runs.length !== 1 || isLive(runs[0]!.state)) return;
     const run = runs[0]!;
-    // Native terminal state alone is not evidence the worker has stopped.
-    if (run.queue?.claimedAt) {
-      const retired = await this.deps.runtime.store.transactCapacity({
-        now: this.deps.now().toISOString(),
-        recordKeys: [retiredKey(run.runId)],
-        decide: (snapshot) => {
-          const record = snapshot.records.get(retiredKey(run.runId));
-          return {
-            value: record?.kind === 'retired' && record.released === true,
-          };
-        },
-      });
-      if (!retired) return;
-    }
+    // Native terminal state alone is not evidence the worker has stopped:
+    // a claimed run waits for its executor's exit report to retire it. When
+    // that report can never arrive (an executor restart lost track of a
+    // deleted Job, or a Job was never created), the backstop still holds: a
+    // worker placed after settlement cannot fetch its recipe (run-token
+    // routes refuse a settled run), and one started before settlement ends
+    // within its Pod runtime limit, which never exceeds the run lease.
+    if (
+      run.queue?.claimedAt &&
+      run.queue.state !== 'retired' &&
+      this.deps.now().getTime() - Date.parse(run.updatedAt) <
+        RETIREMENT_BACKSTOP_MS
+    )
+      return;
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;

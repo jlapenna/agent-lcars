@@ -1050,6 +1050,11 @@ function settleLost(
       : undefined;
   const settled: Run = {
     ...run,
+    // The executor reports an exit only after observing its worker's Job
+    // terminate (or never created), so that report also retires the claim.
+    ...(by === 'executor' && run.queue !== undefined && retiresOnExit(run)
+      ? { queue: { ...run.queue, state: 'retired' as const } }
+      : {}),
     state: 'lost',
     events: [
       ...run.events,
@@ -1152,7 +1157,45 @@ export function executorExitedAndRetry(input: {
   claimant: ExitClaimant;
   disruption?: SchedulerDisruptionEvidence;
 }): Decision | Refusal {
-  return settleLostAndRetry(input, executorLoss(input));
+  const loss = executorLoss(input);
+  // `run-not-live` is only reached after the claimant checks passed.
+  if (
+    lossRefused(loss) &&
+    loss.reason === 'run-not-live' &&
+    input.run.queue?.state === 'claimed'
+  )
+    return retireSettledClaim(input);
+  return settleLostAndRetry(input, loss);
+}
+
+/** Codex keeps its claim after settlement: server credential cleanup is
+ * authorized by the original claim, so its executor exit never retires it. */
+function retiresOnExit(run: Run): boolean {
+  return run.pipeline !== 'codex';
+}
+
+/** The claimant executor observed the worker of an already settled run exit.
+ * Retiring the claim is the physical-exit evidence consumers such as
+ * repository jobs wait for; native terminal state alone never proves it. */
+function retireSettledClaim(input: {
+  now: string;
+  task: Task;
+  run: Run;
+}): Decision | Refusal {
+  const { run } = input;
+  if (
+    run.queue === undefined ||
+    !retiresOnExit(run) ||
+    run.credentialOperation !== undefined
+  )
+    return refused('run-not-live');
+  return {
+    task: input.task,
+    // Only the claim changes: the settled Run keeps its settlement time, which
+    // provider cooldowns and elapsed-time reads are derived from.
+    run: { ...run, queue: { ...run.queue, state: 'retired' } },
+    outbox: [],
+  };
 }
 
 /** Atomically settle an expired run and, while budget remains, mint its

@@ -1058,8 +1058,11 @@ export const runsRouter = os.router({
       );
       throw errors.FORBIDDEN();
     }
-    if (isRefusal(settled)) {
-      // The usual case: the worker reported its outcome, then exited.
+    // A loss settlement always emits its outcome report; retiring the claim
+    // of an already settled run emits nothing.
+    if (isRefusal(settled) || settled.outbox.length === 0) {
+      // The usual case: the worker reported its outcome, then exited. A
+      // first report for a settled run retires its claim (physical exit).
       const current = await context.store.readRun(run.runId);
       return { runId: run.runId, state: current?.state ?? run.state };
     }

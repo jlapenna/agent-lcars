@@ -29,7 +29,7 @@ const runExitReportedRetention = 2 * queueJobRetentionAge
 // queue's Job inventory read -- and adds no clock of its own. Every
 // terminated claim is reported once per process, whatever its exit status: the
 // server decides. A run that already reported its outcome (the normal case)
-// is answered unchanged, so a restart re-reporting the retained Jobs is
+// has its claim retired once, so a restart re-reporting the retained Jobs is
 // harmless. A failed report is retried on the next observation.
 type runExitReporter struct {
 	consoleURL   string
@@ -75,6 +75,18 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 // the caller (a claim admission or a status read) on the Work API.
 func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
 	r.observeTerminatedWithDisruption(runID, claimedBy, fingerprint, nil)
+}
+
+// delivered reports whether the exit of this exact claim was accepted. A nil
+// reporter delivers nothing and keeps nothing pending.
+func (r *runExitReporter) delivered(runID, fingerprint string) bool {
+	if r == nil {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, done := r.reported[exitClaimKey(runID, fingerprint)]
+	return done
 }
 
 // exitDisruption is the executor's exact attestation that this attempt's own

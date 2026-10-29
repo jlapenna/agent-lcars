@@ -116,7 +116,7 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
                       : 'Queue executor'}{' '}
                     · {run.pipeline}
                   </Text>
-                  {run.queue?.state === 'claimed' && run.queue.claimedBy && (
+                  {run.queue?.state !== 'queued' && run.queue?.claimedBy && (
                     <Text size="xs" c="dimmed">
                       claimed by {run.queue.claimedBy}
                     </Text>
