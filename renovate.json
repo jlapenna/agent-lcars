@@ -115,10 +115,10 @@
       "groupSlug": "node-runtime"
     },
     {
-      "description": "The runner image installs Node from NodeSource (ARG NODE_VERSION), which has lagged nodejs.org by about a day (24.22.1: released 2026-10-20, .deb 2026-10-21). Hold the node-version datasource two days so the group never merges a release NodeSource has not published; the docker FROM bump arrives first and node-version-pins.test.ts keeps the group PR red until the copies catch up.",
+      "description": "The runner image installs Node from NodeSource (ARG NODE_VERSION), which publishes well after nodejs.org: measured from the node-version datasource's day-granular release date, 24.22.1 (2026-10-20) reached NodeSource at 2026-10-21 16:17Z and 24.22.2 (2026-10-27) at 2026-10-28 19:07Z, about 43 hours. Hold the node-version datasource three days so the group never merges a release NodeSource has not published; the docker FROM bump arrives first and node-version-pins.test.ts keeps the group PR red until the copies catch up.",
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
-      "minimumReleaseAge": "2 days",
+      "minimumReleaseAge": "3 days",
       "internalChecksFilter": "strict"
     }
   ]
