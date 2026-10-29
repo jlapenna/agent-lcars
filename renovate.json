@@ -101,11 +101,25 @@
       "rangeStrategy": "bump"
     },
     {
-      "description": "Every Node pin moves in one PR: the node base images (dockerfile manager), setup-node versions (github-actions manager) and the copies the customManagers entry above reads. Separate PRs (#3092 images, #3093 deploy-console) let the base image move without its runtime assertions, and node-version-pins.test.ts now fails any PR that leaves one behind.",
+      "description": "Every Node pin moves in one PR: the node base images (dockerfile manager), the copies the Node customManagers entry reads, and package.json engines (node-version datasource). Separate PRs (#3092 images, #3093 deploy-console) let the base image move without its runtime assertions; node-version-pins.test.ts now fails any PR that leaves a copy behind.",
       "matchPackageNames": ["node"],
       "matchDatasources": ["docker", "node-version"],
       "groupName": "Node.js runtime",
       "groupSlug": "node-runtime"
+    },
+    {
+      "description": "actions/setup-node's node-version is reported as depName node on the github-releases datasource (actions/node-versions), so the rule above cannot match it; join the same group so deploy workflows move with the images.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "groupName": "Node.js runtime",
+      "groupSlug": "node-runtime"
+    },
+    {
+      "description": "The runner image installs Node from NodeSource (ARG NODE_VERSION), which has lagged nodejs.org by about a day (24.22.1: released 2026-10-20, .deb 2026-10-21). Hold the node-version datasource two days so the group never merges a release NodeSource has not published; the docker FROM bump arrives first and node-version-pins.test.ts keeps the group PR red until the copies catch up.",
+      "matchDatasources": ["node-version"],
+      "matchPackageNames": ["node"],
+      "minimumReleaseAge": "2 days",
+      "internalChecksFilter": "strict"
     }
   ]
 }

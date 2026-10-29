@@ -67,29 +67,55 @@ describe('Node runtime pins', () => {
     expect(new Set(found)).toEqual(new Set(base));
   });
 
-  it('lets Renovate move every non-FROM copy in the Node group', () => {
+  it('lets Renovate extract every non-FROM copy at the same release', () => {
     const config = JSON.parse(read('renovate.json')) as {
       customManagers: {
         depNameTemplate?: string;
         managerFilePatterns: string[];
+        matchStrings: string[];
       }[];
     };
-    const patterns = config.customManagers
-      .filter((manager) => manager.depNameTemplate === 'node')
-      .flatMap((manager) => manager.managerFilePatterns)
-      .map((pattern) => new RegExp(pattern.slice(1, -1)));
-    const regexCopies = copies
-      .filter(
-        ([, pattern]) =>
-          !pattern.source.startsWith('^FROM ') &&
-          !pattern.source.includes('NODE_BUILD_BASE'),
-      )
-      .map(([file]) => file);
+    const managers = config.customManagers.filter(
+      (manager) => manager.depNameTemplate === 'node',
+    );
+    const regexCopies = [
+      ...new Set(
+        copies
+          .filter(
+            ([, pattern]) =>
+              !pattern.source.startsWith('^FROM ') &&
+              !pattern.source.includes('NODE_BUILD_BASE'),
+          )
+          .map(([file]) => file),
+      ),
+    ];
     for (const file of regexCopies) {
-      expect(
-        patterns.some((pattern) => pattern.test(file)),
-        file,
-      ).toBe(true);
+      const text = read(file);
+      const extracted = managers
+        .filter((manager) =>
+          manager.managerFilePatterns.some((pattern) =>
+            new RegExp(pattern.slice(1, -1)).test(file),
+          ),
+        )
+        .flatMap((manager) =>
+          manager.matchStrings.flatMap((matchString) =>
+            [...text.matchAll(new RegExp(matchString, 'g'))].map(
+              (match) => match.groups?.['currentValue'],
+            ),
+          ),
+        );
+      expect(extracted.length, file).toBeGreaterThan(0);
+      expect(new Set(extracted), file).toEqual(new Set(base));
     }
+  });
+
+  it('installs NodeSource from the channel of the pinned major', () => {
+    // A hard-coded node_<major>.x channel lets a major bump pass every pin
+    // check and then fail apt-get install at publication.
+    const dockerfile = read('apps/runner-autoscaler/runner-image/Dockerfile');
+    expect(dockerfile).toContain(
+      'https://deb.nodesource.com/node_${NODE_VERSION%%.*}.x nodistro main',
+    );
+    expect(dockerfile).not.toMatch(/deb\.nodesource\.com\/node_\d+\.x/);
   });
 });
