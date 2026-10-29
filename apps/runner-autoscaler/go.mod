@@ -3,7 +3,7 @@ module github.com/jlapenna/agent-lcars/apps/runner-autoscaler
 go 1.27.3
 
 require (
-	cloud.google.com/go/firestore v1.29.1
+	cloud.google.com/go/firestore v1.29.2
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/spf13/cobra v1.10.2
