@@ -46,22 +46,18 @@ type queueToleration struct {
 }
 
 type queueKubernetesConfig struct {
-	Capacity          *queueCapacityConfig `yaml:"capacity,omitempty"`
-	Namespace         string               `yaml:"namespace"`
-	Kubeconfig        string               `yaml:"kubeconfig,omitempty"`
-	CredentialsSecret string               `yaml:"credentials_secret"`
-	ServiceAccount    string               `yaml:"service_account"`
-	MaxConcurrent     int                  `yaml:"max_concurrent"`
-	NodeSelector      map[string]string    `yaml:"node_selector"`
-	Tolerations       []queueToleration    `yaml:"tolerations,omitempty"`
-	Requests          map[string]string    `yaml:"requests"`
-	Limits            map[string]string    `yaml:"limits"`
+	Namespace         string            `yaml:"namespace"`
+	Kubeconfig        string            `yaml:"kubeconfig,omitempty"`
+	CredentialsSecret string            `yaml:"credentials_secret"`
+	ServiceAccount    string            `yaml:"service_account"`
+	MaxConcurrent     int               `yaml:"max_concurrent"`
+	NodeSelector      map[string]string `yaml:"node_selector"`
+	Tolerations       []queueToleration `yaml:"tolerations,omitempty"`
+	Requests          map[string]string `yaml:"requests"`
+	Limits            map[string]string `yaml:"limits"`
 }
 
 func (c *queueKubernetesConfig) validate() error {
-	if err := c.Capacity.validate(); err != nil {
-		return err
-	}
 	if c.Namespace == "" || c.CredentialsSecret == "" || c.ServiceAccount == "" || c.MaxConcurrent < 1 || len(c.NodeSelector) == 0 {
 		return fmt.Errorf("kubernetes requires namespace, credentials_secret, service_account, positive max_concurrent and explicit node_selector")
 	}
@@ -164,21 +160,15 @@ func directRunnerProviderSelection(name string) (string, error) {
 }
 
 type kubernetesQueue struct {
-	config                  queueKubernetesConfig
-	client                  kubernetes.Interface
-	workerPolicyProviders   string
-	image                   string
-	logger                  *slog.Logger
-	mu                      sync.Mutex
-	held                    int
-	recoveryCursor          queueSweepCursor
-	capacity                *queueCapacityClient
-	receiptMu               sync.Mutex
-	receiptCursor           queueSweepCursor
-	receiptClosureCursor    queueSweepCursor
-	verifiedReceiptBarriers map[string]string
-	receiptBarrierMu        sync.Mutex
-	placementCursor         queueSweepCursor
+	config                queueKubernetesConfig
+	client                kubernetes.Interface
+	workerPolicyProviders string
+	image                 string
+	logger                *slog.Logger
+	mu                    sync.Mutex
+	held                  int
+	recoveryCursor        queueSweepCursor
+	placementCursor       queueSweepCursor
 	// verifyRun checks the existing token against the Work API's read-only
 	// brief route, which fences settled runs and expired leases.
 	verifyRun              func(context.Context, string, string) error
@@ -337,12 +327,6 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, j := range jobs.Items {
-		if q.capacity != nil && j.Annotations[queueBarrierAnnotation] != "" {
-			if err := q.verifyRetiredBarrier(ctx, &j); err != nil {
-				return 0, err
-			}
-			continue
-		}
 		if !queueJobTerminal(j) {
 			n++
 			continue
@@ -579,12 +563,6 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 		}
 	}
 	for _, job := range jobs.Items {
-		if q.capacity != nil && job.Annotations[queueBarrierAnnotation] != "" {
-			if err := q.verifyRetiredBarrier(ctx, &job); err != nil {
-				return false, err
-			}
-			continue
-		}
 		if queueJobTerminal(job) {
 			continue
 		}
@@ -607,17 +585,7 @@ func (q *kubernetesQueue) pendingPlacement(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-func (q *kubernetesQueue) reserve(ctx context.Context) (reservation *directRunnerReservation, err error) {
-	defer func() {
-		if q.capacity != nil && err != nil {
-			q.capacity.publishAvailability(false)
-		}
-	}()
-	if q.capacity != nil {
-		if err := q.validateReceiptInventory(ctx); err != nil {
-			return nil, err
-		}
-	}
+func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	n, err := q.activeCount(ctx)
@@ -760,9 +728,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 			},
 		},
 	}
-	if l.receipt != nil {
-		q.configureReceiptJob(job, l)
-	}
 	if l.pipeline == "goose" {
 		deadline = 1800
 		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
@@ -773,9 +738,6 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 func ptr[T any](v T) *T { return &v }
 
 func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) error {
-	if q.capacity != nil {
-		return q.launchReceipt(ctx, l)
-	}
 	desired, err := q.job(l)
 	if err != nil {
 		// No Job was submitted, so no worker can exist: settle the claim now
@@ -899,9 +861,6 @@ func queueJobAttempted(job *batch.Job) bool {
 	return false
 }
 func (q *kubernetesQueue) recover(ctx context.Context) error {
-	if q.capacity != nil {
-		return q.reconcileReceipts(ctx)
-	}
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
 	if err != nil {
 		return err

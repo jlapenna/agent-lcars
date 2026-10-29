@@ -2600,7 +2600,6 @@ describe('native cancel retires incomplete delivery recovery', () => {
       result,
       undefined,
       undefined,
-      undefined,
       binding,
     );
     if (isRefusal(report)) throw Error(report.reason);

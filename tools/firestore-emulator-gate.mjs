@@ -90,8 +90,8 @@ const EMULATOR_START_FAILURE_PATTERNS = [
 const CONTRACT_EXECUTION_PATTERNS = [
   /\bvitest\b/i,
   /Test Files\s+\d/,
-  /\b(store-contract|capacity-contract|capacity-lineage|credential-fallback)\.spec\.ts\b/,
-  /\b(runs-router|capacity-routes|work-provider-fallback)\.test\.ts\b/,
+  /\b(store-contract|credential-fallback)\.spec\.ts\b/,
+  /\b(runs-router|work-provider-fallback)\.test\.ts\b/,
   /"script" exited with code \d+/i,
 ];
 

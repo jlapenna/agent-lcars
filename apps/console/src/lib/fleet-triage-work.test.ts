@@ -150,7 +150,6 @@ async function fixture(initialComment?: string) {
       undefined,
       undefined,
       undefined,
-      undefined,
       true,
     );
     if (isRefusal(result)) throw new Error(result.reason);

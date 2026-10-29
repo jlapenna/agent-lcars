@@ -24,7 +24,6 @@ export function artifactHashes(source) {
     runtimeHashes: Object.fromEntries(
       [
         'worker-policy-bootstrap.sh',
-        'worker-activation.sh',
         'verify-outcome.sh',
         'worker-completion.sh',
       ].map((name) => [

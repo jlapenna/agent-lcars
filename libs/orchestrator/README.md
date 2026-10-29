@@ -73,10 +73,9 @@ provider cooldowns, deferred lifecycle checks, and previously claimed work
 can delay service. A reservation later released by a lifecycle check still
 consumes its turn; the bound measures reservations, not worker launches.
 
-Both legacy and capacity claims share the provider's durable turn. Firestore
-commits the selected Run claim, capacity receipt when applicable, and the
-`<prefix>priority-positions` cursor together. Receipt recovery/replay, capacity
-waits and queue waits do not consume another turn. Missing cursor documents start
+Every claim shares the provider's durable turn. Firestore commits the selected
+Run claim and the `<prefix>priority-positions` cursor together. Queue waits do
+not consume another turn. Missing cursor documents start
 at the first turn; malformed cursors fail closed. Empty or cooling polls
 do not advance it. The cursor survives process restart and does not reset
 when work completes. No index, historical backfill, or operator data write is
@@ -211,12 +210,3 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
   by `(repo, issue)`; there is no tenant concept above that. The consumer
   repos' formerly separate dispatch loops have since migrated onto this
   orchestrator (#1198, #1200).
-
-## Executor capacity receipts
-
-The application-owned pool/domain, receipt, generation and retirement protocol
-uses the Work API and serializable Memory/Firestore store transactions. It is
-disabled in production unless explicitly enabled through the approved
-deployment path. See [the capacity contract](../../docs/executor-capacity.md)
-for authority, durable replay, physical retirement, migration and qualification
-boundaries.

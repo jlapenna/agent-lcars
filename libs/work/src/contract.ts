@@ -8,13 +8,6 @@ import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
-import {
-  activationContract,
-  capacityClaimResponseSchema,
-  capacityContract,
-  capacityInventoryContract,
-  capacityMetricsContract,
-} from './capacity-contract';
 import { parseCron } from './cron';
 import {
   fallbackPipelinesSchema,
@@ -949,13 +942,6 @@ export const runIntrospectionSchema = z.strictObject({
   verifiedAt: z.iso.datetime(),
   /** Effective existing authentication deadline, never a lease renewal. */
   validUntil: z.iso.datetime(),
-  worker: z
-    .strictObject({
-      poolId: z.string().min(1).max(175),
-      podUid: z.string().min(1).max(175),
-      generation: z.number().int().positive(),
-    })
-    .nullable(),
 });
 
 export const runClaimResponseSchema = z.strictObject({
@@ -1042,34 +1028,11 @@ const runToken = { security: [{ runToken: [] }] };
 const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
   ...current,
   ...runToken,
-  parameters: [
-    ...(current.parameters ?? []),
-    {
-      name: 'x-lcars-worker-identity',
-      in: 'header' as const,
-      required: false,
-      description:
-        'Required for receipt-mode runs: Pod-bound Kubernetes projected JWT.',
-      schema: { type: 'string' as const },
-    },
-    {
-      name: 'x-lcars-worker-generation',
-      in: 'header' as const,
-      required: false,
-      description:
-        'Required for receipt-mode runs: exact generation returned by activation.',
-      schema: { type: 'integer' as const, minimum: 1 },
-    },
-  ],
 });
 
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
-  capacity: capacityContract,
-  capacityInventory: capacityInventoryContract,
-  capacityMetrics: capacityMetricsContract,
-  activate: activationContract,
   claim: runBase
     .meta(
       openapi({
@@ -1091,20 +1054,14 @@ export const runsContract = {
     // published document list 401 for this route at all.
     .errors({
       UNAUTHORIZED: { message: 'work.executor scope required' },
-      CONFLICT: { message: 'Receipt-aware capacity policy refused' },
     })
     .input(
       z.strictObject({
         runner: z.string().min(1).max(256),
         placementAware: z.literal(true).optional(),
-        capacityVersion: z.number().int().positive().optional(),
-        producerId: z.string().min(1).max(175).optional(),
-        claimRequestId: z.string().min(1).max(175).optional(),
       }),
     )
-    .output(
-      z.union([runClaimResponseSchema, capacityClaimResponseSchema]).optional(),
-    ),
+    .output(runClaimResponseSchema.optional()),
   recipeBrief: runBase
     .meta(
       openapi({

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -289,38 +288,6 @@ func TestRunExitReporterKeysDeliveryByOriginalClaimFingerprint(t *testing.T) {
 	}
 	if len(recorder.requests()) != 2 || recorder.fingerprints[0] != queueClaimFingerprint("old") || recorder.fingerprints[1] != queueClaimFingerprint("new") {
 		t.Fatalf("fingerprints=%v; want each original claim once", recorder.fingerprints)
-	}
-}
-
-// Recovery cancellation must bound both OAuth acquisition and the HTTP call;
-// receipt retirement cannot outlive its recovery context on either boundary.
-func TestReceiptExitUsesRecoveryContext(t *testing.T) {
-	for _, boundary := range []string{"identity", "http"} {
-		t.Run(boundary, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-			release := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-				cancel()
-				select {
-				case <-req.Context().Done():
-				case <-release:
-				}
-			}))
-			defer func() { close(release); server.Close() }()
-			idToken := func() (string, error) {
-				if boundary == "identity" {
-					cancel()
-					<-release
-				}
-				return "executor-subject", nil
-			}
-			reporter := newRunExitReporter(server.URL, "runner", idToken, discardLogger())
-			err := reporter.settleTerminated(ctx, "work:context/r1", "runner", queueClaimFingerprint("token"))
-			if !errors.Is(err, context.Canceled) {
-				t.Fatalf("recovery cancellation did not reach %s: %v", boundary, err)
-			}
-		})
 	}
 }
 

@@ -1,11 +1,5 @@
 import { z } from 'zod';
 
-import type {
-  CapacityPlacementClaim,
-  CapacityRecord,
-  CapacityState,
-  CapacityWorkerPermit,
-} from './capacity-model';
 import type { Decision, Refusal } from './decide';
 import type {
   LifecycleMetricRead,
@@ -237,17 +231,6 @@ export interface OrchestratorStore {
   readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords>;
-  /** Capacity state, replay records, selection, cooldowns and run writes share
-   * one serializable transaction. Callbacks are synchronous and never perform
-   * external reads or writes. */
-  transactCapacity<T>(input: {
-    now: string;
-    recordKeys: readonly string[];
-    claimPipelines?: readonly string[];
-    runId?: string;
-    readRunIds?: readonly string[];
-    decide(snapshot: CapacityTransactionSnapshot): CapacityTransactionResult<T>;
-  }): Promise<T>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
@@ -289,8 +272,6 @@ export interface OrchestratorStore {
    */
   transactRun(input: {
     runId: string;
-    placementClaim?: CapacityPlacementClaim;
-    workerPermit?: CapacityWorkerPermit;
     queueEligibilityPipelines?: readonly string[];
     /** Evaluated from the consistent local snapshot before global reads. */
     shouldReadQueueEligibility?: (
@@ -522,22 +503,6 @@ export interface OrchestratorStore {
   ): Promise<Readonly<Record<string, unknown>>>;
 }
 
-export interface CapacityTransactionSnapshot {
-  state: CapacityState;
-  records: Map<string, CapacityRecord>;
-  runs: Run[];
-  coolingPipelines: ReadonlySet<string>;
-  priorityPositions: ReadonlyMap<string, number>;
-}
-export interface CapacityTransactionResult<T> {
-  value: T;
-  state?: CapacityState;
-  records?: Map<string, CapacityRecord>;
-  run?: Run;
-  /** Committed atomically with a successful capacity claim, never a replay. */
-  priorityTurn?: { pipeline: string; position: number };
-}
-
 /** Generic durable request-binding metadata. Callers own the binding key and
  * canonical request identity; the orchestrator atomically records the first
  * source request that presents this binding. */
@@ -562,8 +527,6 @@ export interface RequestTransactionState {
   /** Read only for source-ordered label handoffs, inside the claim transaction. */
   readonly latestRun?: Run;
   readonly retainedClaims?: readonly Run[];
-  /** Active Task receipts and unbound lineage read independently of claimed Runs. */
-  readonly capacityReceiptRunIds?: readonly string[];
   readonly task: VersionedTask | undefined;
   readonly activeRun: Run | undefined;
   /** The request identity resolved by the store's optional binding. */

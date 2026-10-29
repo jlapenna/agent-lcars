@@ -88,8 +88,7 @@ use the authorized application API operation.
 
 `lcars investigate --request-id <key> --question-file <path> [--context-file <path>]`
 uses the existing runner bundle, `LCARS_RUN_ID` and `LCARS_RUN_TOKEN`.
-Receipt-mode runs additionally require their existing projected Pod JWT file
-and activated generation. Operator credentials are not used.
+Operator credentials are not used.
 
 The client reads canonical identity from the fixed Console introspection route,
 then sends the agreed v1 payload to

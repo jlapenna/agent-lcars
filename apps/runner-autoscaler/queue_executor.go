@@ -29,8 +29,7 @@ type directRunnerLaunch struct {
 	// accepts the run's exit report only under that same name, so the
 	// Kubernetes queue records it on the Job: a restarted executor (whose
 	// hostname-derived name changed) still reports as the claimant.
-	runner  string
-	receipt *capacityFence
+	runner string
 }
 
 // queueExecutorConfig is the poller's whole dependency surface, kept
@@ -40,7 +39,6 @@ type queueExecutorConfig struct {
 	consoleURL string
 	runnerName string
 	httpClient *http.Client
-	capacity   *queueCapacityClient
 	// recover maintains claimed workers: it retires settled claims, observes
 	// placement and resumes eligible suspended originals. A bounded,
 	// non-overlapping sweep never holds the claim path.
@@ -127,39 +125,6 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 		return queuePollOutcomeCapacityWait, nil
 	}
 	defer reservation.release()
-	if cfg.capacity != nil {
-		cfg.capacity.pollMu.Lock()
-		defer cfg.capacity.pollMu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		x, err := cfg.capacity.claim(ctx, cfg.runnerName)
-		if err != nil {
-			return queuePollOutcomePollError, err
-		}
-		switch x.Kind {
-		case "wait":
-			if x.Reason == "capacity" {
-				return queuePollOutcomeCapacityWait, nil
-			}
-			return queuePollOutcomeIdle204, nil
-		case "quarantined-unrecoverable-token":
-			return queuePollOutcomeCapacityWait, nil
-		case "recover-owned-secret":
-			// The independent receipt sweep resumes the exact original object.
-			// A replay is never counted as a newly claimed or launched attempt.
-			return queuePollOutcomeCapacityWait, nil
-		case "claim":
-			if !x.PlacementAware {
-				return queuePollOutcomePollError, fmt.Errorf("placement-aware claim not acknowledged")
-			}
-			queueExecutorClaimsTotal.WithLabelValues(x.Pipeline).Inc()
-			if err := reservation.launch(directRunnerLaunch{runID: x.RunID, runToken: x.Token, pipeline: x.Pipeline, consoleURL: cfg.consoleURL, runner: cfg.runnerName, receipt: x.Receipt}); err != nil {
-				return queuePollOutcomeLaunchErr, err
-			}
-			return queuePollOutcomeClaimed, nil
-		}
-		return queuePollOutcomePollError, fmt.Errorf("receipt claim invalid")
-	}
 	client := cfg.httpClient
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}

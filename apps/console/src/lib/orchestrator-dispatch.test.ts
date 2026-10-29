@@ -856,7 +856,6 @@ describe('native delivery finalization reuses terminal outcome and session expir
       original,
       undefined,
       undefined,
-      undefined,
       {
         runId: run.runId,
         repo: 'octo/example',
@@ -1340,7 +1339,6 @@ describe('native delivery finalization reuses terminal outcome and session expir
     const report = await f.orchestrator.report(
       later.runId,
       laterResult,
-      undefined,
       undefined,
       undefined,
       {

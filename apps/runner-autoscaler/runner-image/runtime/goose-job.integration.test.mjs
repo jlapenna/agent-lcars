@@ -9,8 +9,8 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 // Explicit qualification in the supported CI lane (2 CPU / 5 GiB / 20 GiB).
-// Mount fixture provider configuration at /run/secrets and aaa.bbb.ccc at
-// /run/agent-lcars-identity/token. The provider host is http://127.0.0.1:17777.
+// Mount fixture provider configuration at /run/secrets. The provider host is
+// http://127.0.0.1:17777.
 // Enable the builtin developer extension and GOOSE_MODE: auto in that config.
 // Uses the installed, real Goose binary; no paid model or network audit.
 const runtime = fileURLToPath(new URL('.', import.meta.url));
@@ -72,7 +72,6 @@ for (const cancel of [false, true]) {
         mode: 0o700,
       });
       let checkoutTokens = 0;
-      let activations = 0;
       let starts = 0;
       let submitted;
       let failed;
@@ -93,13 +92,6 @@ for (const cancel of [false, true]) {
           };
           if (req.url.startsWith('/api/work/')) {
             assert.equal(req.headers.authorization, 'Bearer fixture');
-            assert.equal(req.headers['x-lcars-worker-identity'], 'aaa.bbb.ccc');
-            if (req.url === '/api/work/v1/runs/activate') {
-              activations++;
-              assert.equal(body.fence.runId, runId);
-              return json({ generation: 1 }, activations === 1 ? 409 : 200);
-            }
-            assert.equal(req.headers['x-lcars-worker-generation'], '1');
             if (req.url === `${root}/brief`)
               return json({
                 id: 'work:fixture',
@@ -268,14 +260,6 @@ for (const cancel of [false, true]) {
             LCARS_RUN_ID: runId,
             LCARS_RUN_TOKEN: 'fixture',
             LCARS_CONSOLE_URL: 'http://127.0.0.1:17777',
-            LCARS_CAPACITY_RECEIPT: JSON.stringify({
-              runId,
-              poolId: 'fixture',
-              nonce: 'fixture-nonce-123456',
-              slot: 0,
-              revision: 1,
-            }),
-            LCARS_CAPACITY_JOB_UID: 'fixture-job',
             RUNTIME_HELPERS_DIR: runtime,
             PROVIDER_PROCESS_NODE: process.execPath,
             RUNNER_TEMP: directory,
@@ -305,7 +289,6 @@ for (const cancel of [false, true]) {
         }
         const result = await exited;
         assert.deepEqual(errors, []);
-        assert.equal(activations, 2, output);
         assert.equal(starts, 1, output);
         assert.ok(providerCalls > 0, output);
         if (cancel) {

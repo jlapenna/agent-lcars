@@ -172,17 +172,16 @@ protected delivery and eventual supported runtime proof are separate gates.
 
 These are stored in the `dispatch-controller` Firestore database.
 
-| Entity                                                                          | Key                                                       | Purpose                                                                                                                                                             |
-| ------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Task** (`orchestrator-tasks`)                                                 | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native) | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, `schedulerDisruptions`, opaque `work` payload (≤32 KiB), `closedAt`, `revision` for compare-and-set       |
-| **Run** (`orchestrator-runs`)                                                   | `<taskKey>/r<n>`                                          | `state`, `pipeline`, `requestId`, `requestSource` (`caller`, `auto-retry`, or `provider-fallback`), `params`, `queue`, `leaseExpiresAt`, `result`, `events[]` (≤64) |
-| **Outbox** (`orchestrator-outbox`)                                              | entry ID                                                  | Side effects: `dispatch-run` and `report-outcome`                                                                                                                   |
-| **Schedule**                                                                    | ULID                                                      | `cron` (UTC), `spec`, `enabled`, `lastSlotAt`, `lastItemId`, `disabledReason`                                                                                       |
-| **Provider cooldown**                                                           | pipeline                                                  | Written atomically with a `provider-limit` or `provider-capacity` failure; claims skip that pipeline until it expires                                               |
-| **Request binding**                                                             | binding key                                               | Converges historical Quick Task markers to a canonical request                                                                                                      |
-| **GitHub anchor** (`orchestrator-github-anchors`)                               | anchor                                                    | Projection of accepted GitHub anchor state                                                                                                                          |
-| **Priority position** (`orchestrator-priority-positions`)                       | pipeline                                                  | The durable weighted-priority cursor (FL-CL-5)                                                                                                                      |
-| **Capacity receipt** (`orchestrator-capacity`, `orchestrator-capacity-records`) | pool                                                      | Server-owned executor capacity receipts; disabled by default ([executor capacity](../executor-capacity.md))                                                         |
+| Entity                                                    | Key                                                       | Purpose                                                                                                                                                             |
+| --------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Task** (`orchestrator-tasks`)                           | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native) | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, `schedulerDisruptions`, opaque `work` payload (≤32 KiB), `closedAt`, `revision` for compare-and-set       |
+| **Run** (`orchestrator-runs`)                             | `<taskKey>/r<n>`                                          | `state`, `pipeline`, `requestId`, `requestSource` (`caller`, `auto-retry`, or `provider-fallback`), `params`, `queue`, `leaseExpiresAt`, `result`, `events[]` (≤64) |
+| **Outbox** (`orchestrator-outbox`)                        | entry ID                                                  | Side effects: `dispatch-run` and `report-outcome`                                                                                                                   |
+| **Schedule**                                              | ULID                                                      | `cron` (UTC), `spec`, `enabled`, `lastSlotAt`, `lastItemId`, `disabledReason`                                                                                       |
+| **Provider cooldown**                                     | pipeline                                                  | Written atomically with a `provider-limit` or `provider-capacity` failure; claims skip that pipeline until it expires                                               |
+| **Request binding**                                       | binding key                                               | Converges historical Quick Task markers to a canonical request                                                                                                      |
+| **GitHub anchor** (`orchestrator-github-anchors`)         | anchor                                                    | Projection of accepted GitHub anchor state                                                                                                                          |
+| **Priority position** (`orchestrator-priority-positions`) | pipeline                                                  | The durable weighted-priority cursor (FL-CL-5)                                                                                                                      |
 
 A **WorkSpec** for native items is `{title ≤256, description ≤16 KiB, pipeline,
 target:{repo}, priority, fallbackPipelines?}`; `priority` defaults to `normal`. A **WorkOrigin** is `{principal, channel:
@@ -341,10 +340,7 @@ executor is working an issue; a human assignee owns it regardless.
 
 - **FL-EX-1 [Shipped]** The QueueExecutor (`apps/runner-autoscaler`, Go) is a
   singleton. Before each claim it reserves capacity by counting unfinished
-  Jobs and checking node readiness, taints, and free resources. An opt-in
-  receipt mode (`kubernetes.capacity`) instead uses server-owned capacity
-  receipts and requires an attested worker activation before each provider
-  launch; it is disabled by default (see R8).
+  Jobs and checking node readiness, taints, and free resources (see R8).
 - **FL-EX-2 [Shipped]** Each run gets one deterministic Kubernetes Job:
   - The Job is created suspended. A per-run token Secret is created, then the
     Job is resumed.
@@ -647,8 +643,8 @@ consumed by every dispatched run in every member repository.
 - **FL-FM-4 [Shipped] Authority separation.** These authorities are
   deliberately distinct:
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
-    `work.reader` (the issue-owner query only), `costs.reader` (aggregate Costs budget readout only), `work.executor`, `work.cron`,
-    and the `work.capacity.*` scopes). `work.reaper` is not a grantable
+    `work.reader` (the issue-owner query only), `costs.reader` (aggregate Costs budget readout only), `work.executor` and
+    `work.cron`). `work.reaper` is not a grantable
     scope. It is fixed to the `session:expiry` identity.
   - The worker's App token.
   - The telemetry writer.
@@ -688,13 +684,11 @@ R7's explicit opt-in source contract is documented in
 [#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
 real provider-limit qualification separately from local mechanism tests.
 
-The [R8 failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
-selects server-owned capacity receipts and separates source implementation from
-Homelab fencing/rollout qualification. The application receipt protocol has
-shipped disabled by default
-([#2311](https://github.com/jlapenna/agent-lcars/issues/2311)). Receipt-aware
-Kubernetes adoption ([#2312](https://github.com/jlapenna/agent-lcars/issues/2312))
-and Homelab fencing remain open, and the executor is still a singleton.
+R8 is retired: the [failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+selected server-owned capacity receipts, which shipped disabled
+([#2311](https://github.com/jlapenna/agent-lcars/issues/2311)) and were never
+enabled. They were deleted on 2026-10-29; the executor is a singleton that
+restarts after a crash, and #2312 and Homelab #2245 were closed as not planned.
 
 R9 is retired: [#1298](https://github.com/jlapenna/agent-lcars/issues/1298)
 is closed, and the hosted provider workflows whose YAML copies it concerned

@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 
 import { logger } from '@agent-lcars/logging';
 import {
-  type CapacityWorkerPermit,
   changeCredentialOperation,
   type CredentialMutation,
   type CredentialOperation,
@@ -21,7 +20,6 @@ import {
 } from '@agent-lcars/orchestrator';
 import { ORPCError } from '@orpc/server';
 
-import { capacityCall } from './capacity-routes';
 import {
   type CodexAuthLease,
   type CodexAuthStore,
@@ -30,7 +28,6 @@ import {
 } from './codex-auth-store';
 
 interface BrokerContext {
-  workerPermit?: CapacityWorkerPermit;
   store: OrchestratorStore;
   orchestrator: Orchestrator;
   codexAuth: CodexAuthStore;
@@ -167,27 +164,20 @@ class ReservedCodexOperation {
   }
 
   async begin(kind: CredentialOperation['kind']): Promise<Run> {
-    const outcome = await capacityCall(() =>
-      this.context.store.transactRun({
-        runId: this.run.runId,
-        // A retired worker may resolve existing journal debt, but cannot start
-        // new credential IO after its request's token-gate snapshot.
-        ...(kind === 'cleanup' || this.context.workerPermit === undefined
-          ? {}
-          : { workerPermit: this.context.workerPermit }),
-        decide: ({ task, run }) =>
-          task === undefined || run === undefined
-            ? { refused: true, reason: 'unknown-run' }
-            : reserveCredentialOperation({
-                now: this.context.now().toISOString(),
-                task: task.task,
-                run,
-                id: this.id,
-                kind,
-                claimFingerprint: this.claimFingerprint,
-              }),
-      }),
-    );
+    const outcome = await this.context.store.transactRun({
+      runId: this.run.runId,
+      decide: ({ task, run }) =>
+        task === undefined || run === undefined
+          ? { refused: true, reason: 'unknown-run' }
+          : reserveCredentialOperation({
+              now: this.context.now().toISOString(),
+              task: task.task,
+              run,
+              id: this.id,
+              kind,
+              claimFingerprint: this.claimFingerprint,
+            }),
+    });
     return this.accept(outcome);
   }
 
