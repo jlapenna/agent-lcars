@@ -12,23 +12,6 @@
         "command": "tsc --build tsconfig.lib.json",
         "cwd": "libs/dispatch-contracts"
       }
-    },
-    "typecheck": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "dependsOn": ["^typecheck"],
-      "syncGenerators": ["@nx/js:typescript-sync"],
-      "outputs": [
-        "{projectRoot}/tsconfig.tsbuildinfo",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}.map",
-        "{projectRoot}/dist/tsconfig.lib.tsbuildinfo",
-        "{projectRoot}/dist/tsconfig.spec.tsbuildinfo"
-      ],
-      "options": {
-        "cwd": "libs/dispatch-contracts",
-        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
-      }
     }
   }
 }

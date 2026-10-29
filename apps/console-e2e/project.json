@@ -86,7 +86,7 @@
       }
     },
     "e2e-run": {
-      "outputs": ["{workspaceRoot}/dist/.playwright/apps/console-e2e"],
+      "outputs": ["{projectRoot}/test-output"],
       "options": {
         "cwd": ".",
         "command": "playwright test --config apps/console-e2e/playwright.config.ts"
@@ -96,21 +96,6 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "./tools/e2e-docker.sh @agent-lcars/console-e2e"
-      }
-    },
-    "typecheck": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "dependsOn": ["^typecheck"],
-      "syncGenerators": ["@nx/js:typescript-sync"],
-      "outputs": [
-        "{projectRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}",
-        "{projectRoot}/dist/out-tsc/**/*.{d.ts,d.cts,d.mts}.map",
-        "{projectRoot}/dist/out-tsc/tsconfig.tsbuildinfo"
-      ],
-      "options": {
-        "cwd": "apps/console-e2e",
-        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
       }
     }
   }

@@ -4,34 +4,5 @@
   "sourceRoot": "libs/util-server/src",
   "projectType": "library",
   "tags": ["platform:server", "npm:private", "scope:shared"],
-  "targets": {
-    "build": {
-      "executor": "@nx/js:swc",
-      "outputs": ["{options.outputPath}"],
-      "options": {
-        "outputPath": "dist/libs/util-server",
-        "main": "libs/util-server/src/index.ts",
-        "tsConfig": "libs/util-server/tsconfig.lib.json",
-        "assets": ["libs/util-server/*.md"],
-        "skipTypeCheck": true
-      }
-    },
-    "typecheck": {
-      "executor": "nx:run-commands",
-      "cache": true,
-      "dependsOn": ["^typecheck"],
-      "syncGenerators": ["@nx/js:typescript-sync"],
-      "outputs": [
-        "{projectRoot}/tsconfig.tsbuildinfo",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}",
-        "{projectRoot}/dist/**/*.{d.ts,d.cts,d.mts}.map",
-        "{projectRoot}/dist/tsconfig.lib.tsbuildinfo",
-        "{projectRoot}/dist/tsconfig.spec.tsbuildinfo"
-      ],
-      "options": {
-        "cwd": "libs/util-server",
-        "command": "tsc --build tsconfig.json --emitDeclarationOnly"
-      }
-    }
-  }
+  "targets": {}
 }

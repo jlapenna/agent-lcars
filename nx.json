@@ -103,25 +103,6 @@
     },
     "e2e-run": {
       "cache": false
-    },
-    "@nx/js:swc": {
-      "cache": true,
-      "dependsOn": ["^build"],
-      "inputs": ["production", "^production"]
-    },
-    "typecheck": {
-      "inputs": [
-        "default",
-        "^default",
-        "{workspaceRoot}/tsconfig.*.base.json",
-        {
-          "externalDependencies": ["typescript"]
-        },
-        {
-          "dependentTasksOutputFiles": "**/*.{d.ts,d.cts,d.mts,tsbuildinfo}",
-          "transitive": true
-        }
-      ]
     }
   },
   "generators": {
