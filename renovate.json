@@ -40,6 +40,12 @@
   ],
   "packageRules": [
     {
+      "description": "@types/node must track the Node major the repo runs on (engines `<25`, CI/runner image/deploy pinned to 24.x), not the newest Node: a newer major types APIs the runtime lacks, so typecheck would pass code that fails in production. Move it together with the Node pins in a deliberate runtime upgrade (#3101 closed #3053 for this reason).",
+      "enabled": false,
+      "matchPackageNames": ["@types/node"],
+      "matchUpdateTypes": ["major"]
+    },
+    {
       "description": "pnpm majors change install/lockfile semantics for the whole workspace at once (packageManager pins the exact version, currently 11.x); hold them for a deliberate toolchain upgrade rather than a bot PR",
       "enabled": false,
       "matchPackageNames": ["pnpm"],
