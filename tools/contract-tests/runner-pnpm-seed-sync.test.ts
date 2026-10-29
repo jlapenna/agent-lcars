@@ -18,8 +18,12 @@ const script = path.join(root, 'tools/sync-runner-pnpm-seed.py');
 const dirs: string[] = [];
 
 // A fake `gh api` serving fixture repositories: default branch `main`, head
-// commit `sha-<repo>`, and raw contents from <dir>/repos/<owner>/<repo>/.
-function fixture(repositories: Record<string, Record<string, string>>) {
+// commit `sha-<repo>`, raw contents from <dir>/repos/<owner>/<repo>/, and
+// `.private` from the visibility map (an unlisted repository is Not Found).
+function fixture(
+  repositories: Record<string, Record<string, string>>,
+  visibility: Record<string, boolean> = {},
+) {
   const dir = mkdtempSync(path.join(tmpdir(), 'runner-seed-sync-'));
   dirs.push(dir);
   for (const [repository, files] of Object.entries(repositories)) {
@@ -28,6 +32,11 @@ function fixture(repositories: Record<string, Record<string, string>>) {
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, content);
     }
+  }
+  for (const [repository, isPrivate] of Object.entries(visibility)) {
+    const target = path.join(dir, 'visibility', repository);
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `${isPrivate}\n`);
   }
   mkdirSync(path.join(dir, 'bin'));
   writeFileSync(
@@ -43,7 +52,12 @@ case "$1" in
     rest="\${1#repos/}"; repository="\${rest%%/contents/*}"; file="\${rest#*/contents/}"; file="\${file%%\\?ref=*}"
     [ -f "${dir}/repos/$repository/$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     cat "${dir}/repos/$repository/$file"; exit ;;
-  repos/*/*) echo main; exit ;;
+  repos/*/*)
+    if [ "\${3:-}" = .private ]; then
+      [ -f "${dir}/visibility/\${1#repos/}" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
+      cat "${dir}/visibility/\${1#repos/}"; exit
+    fi
+    echo main; exit ;;
 esac
 exit 2
 `,
@@ -131,6 +145,56 @@ snapshots:
       'child@2.0.0': {},
     });
     expect(existsSync(path.join(f.seed, 'fleet/acme__app/.npmrc'))).toBe(false);
+  });
+
+  it('leaves git sources the anonymous build cannot read to jobs', () => {
+    const git = (repository: string, commit: string) =>
+      `{commit: ${commit}, repo: 'https://github.com/${repository}.git', type: git}`;
+    const source = `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      '@club/design': {specifier: 'github:club/design#v1.1.0', version: 'git+https://github.com/club/design.git#aaa'}
+      open: {specifier: 'github:oss/open', version: 'git+https://github.com/oss/open.git#bbb'}
+      tarred: {specifier: 'github:club/tarred', version: 'https://codeload.github.com/club/tarred/tar.gz/ccc'}
+      elsewhere: {specifier: 'git+https://gitlab.com/x/elsewhere.git', version: 'git+https://gitlab.com/x/elsewhere.git#ddd'}
+packages:
+  '@club/design@git+https://github.com/club/design.git#aaa':
+    resolution: ${git('club/design', 'aaa')}
+    version: 1.1.0
+  open@git+https://github.com/oss/open.git#bbb:
+    resolution: ${git('oss/open', 'bbb')}
+    version: 1.0.0
+  tarred@https://codeload.github.com/club/tarred/tar.gz/ccc:
+    resolution: {tarball: 'https://codeload.github.com/club/tarred/tar.gz/ccc'}
+    version: 1.0.0
+  elsewhere@git+https://gitlab.com/x/elsewhere.git#ddd:
+    resolution: {commit: ddd, repo: 'https://gitlab.com/x/elsewhere.git', type: git}
+    version: 1.0.0
+snapshots:
+  '@club/design@git+https://github.com/club/design.git#aaa': {}
+  open@git+https://github.com/oss/open.git#bbb: {}
+  tarred@https://codeload.github.com/club/tarred/tar.gz/ccc: {}
+  elsewhere@git+https://gitlab.com/x/elsewhere.git#ddd: {}
+`;
+    const f = fixture(
+      {
+        'acme/app': {
+          'package.json': '{"packageManager":"pnpm@11.28.2"}',
+          'pnpm-lock.yaml': source,
+        },
+      },
+      { 'club/tarred': true, 'oss/open': false },
+    );
+    f.run(['acme/app']);
+    const result = parse(f.read('fleet/acme__app/pnpm-lock.yaml'));
+    expect(Object.keys(result.packages)).toEqual([
+      'open@git+https://github.com/oss/open.git#bbb',
+    ]);
+    expect(Object.keys(result.snapshots)).toEqual([
+      'open@git+https://github.com/oss/open.git#bbb',
+    ]);
+    expect(Object.keys(result.importers['.'].dependencies)).toEqual(['open']);
   });
 
   it('copies only what pnpm fetch needs from each repository', () => {

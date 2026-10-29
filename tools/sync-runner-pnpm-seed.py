@@ -8,7 +8,7 @@ content instead of downloading it (agent-lcars#2076). This script copies, as
 data, exactly what `pnpm fetch --frozen-lockfile` needs from each repository
 listed in pnpm-seed/fleet.json at its default branch head:
 
-  pnpm-lock.yaml       without patches or authenticated GitHub Packages
+  pnpm-lock.yaml       without patches or anonymously unreadable packages
   package.json         only name/private/packageManager (corepack version)
   pnpm-workspace.yaml  only supportedArchitectures
 
@@ -21,9 +21,10 @@ through `gh api` with the raw media type (lockfiles exceed the 1 MB JSON
 contents limit). GH_TOKEN_<OWNER> (owner upper-cased, `-` as `_`) is used for
 that owner's repositories when set, otherwise GH_TOKEN.
 
-GitHub Packages entries and their dependency edges are omitted from the shared
-anonymous cache. Their public dependencies remain seeded; consuming jobs fetch
-the omitted content with their own credentials and original lockfiles.
+GitHub Packages entries, and git or codeload sources whose GitHub repository is
+not public, are omitted with their dependency edges from the shared anonymous
+cache. Their public dependencies remain seeded; consuming jobs fetch the
+omitted content with their own credentials and original lockfiles.
 
 Usage: sync-runner-pnpm-seed.py [--seed-dir DIR]
 Prints one `<repository> <commit>` line per synced repository.
@@ -148,12 +149,51 @@ def validate_seed_lockfile(repo: str, lockfile: str) -> None:
         raise ValueError(f"{repo} seed lockfile still references patches")
 
 
-def without_github_packages(lockfile: str) -> str:
-    """Leave authenticated GitHub Packages to the consuming job's own store.
+GITHUB_REPOSITORY = re.compile(
+    r"^(?:git\+)?(?:https|ssh|git)://(?:git@)?github\.com/([^/]+)/([^/#]+?)(?:\.git)?/?$"
+)
 
-    The shared image fetches anonymously. Preserve every other package, even
-    public dependencies used only by an omitted package; this is a content
-    cache, not a runnable copy of the consumer's dependency graph.
+
+def public_github_repository(url: str) -> bool:
+    """Whether the anonymous image build can clone or download this source.
+
+    Only a GitHub repository that the API reports as public qualifies. Any
+    other host, a repository the token cannot see, and a private repository
+    all count as unreadable, so a doubtful source is left to the consuming job.
+    """
+    split = urlsplit(url)
+    if split.hostname == "codeload.github.com":
+        parts = split.path.strip("/").split("/")
+        url = f"https://github.com/{parts[0]}/{parts[1]}" if len(parts) >= 2 else ""
+    match = GITHUB_REPOSITORY.match(url)
+    if not match:
+        return False
+    try:
+        visibility = gh(match[1], f"repos/{match[1]}/{match[2]}", "--jq", ".private")
+    except subprocess.CalledProcessError:
+        return False
+    return visibility.strip() == "false"
+
+
+def anonymously_unreadable(resolution: dict) -> bool:
+    tarball = resolution.get("tarball", "")
+    if urlsplit(tarball).hostname == "npm.pkg.github.com":
+        return True
+    if resolution.get("type") == "git":
+        return not public_github_repository(resolution.get("repo", ""))
+    if urlsplit(tarball).hostname == "codeload.github.com":
+        return not public_github_repository(tarball)
+    return False
+
+
+def without_unreadable_packages(lockfile: str) -> str:
+    """Leave packages the anonymous image cannot fetch to the consuming job.
+
+    That is GitHub Packages, which always need authentication, and git or
+    codeload sources whose repository is not public on GitHub. Preserve every
+    other package, even public dependencies used only by an omitted package;
+    this is a content cache, not a runnable copy of the consumer's dependency
+    graph.
     """
     documents = list(yaml.safe_load_all(lockfile))
     changed = False
@@ -164,8 +204,7 @@ def without_github_packages(lockfile: str) -> str:
         excluded = {
             key
             for key, package in packages.items()
-            if urlsplit(package.get("resolution", {}).get("tarball", "")).hostname
-            == "npm.pkg.github.com"
+            if anonymously_unreadable(package.get("resolution", {}))
         }
         if not excluded:
             continue
@@ -210,7 +249,7 @@ def sync_repository(repo: str, destination: Path) -> str:
         raw_file(repo, owner, "pnpm-workspace.yaml", commit) or "{}"
     ) or {}
     seed_workspace = {key: workspace[key] for key in WORKSPACE_KEYS if key in workspace}
-    seed_lockfile = without_github_packages(without_patched_dependencies(lockfile))
+    seed_lockfile = without_unreadable_packages(without_patched_dependencies(lockfile))
     validate_seed_lockfile(repo, seed_lockfile)
 
     if destination.exists():

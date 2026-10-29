@@ -19,10 +19,12 @@ content either way; pnpm applies patches when it links); the
 Dockerfile's `pnpm-store-seed` stage fetches with `--ignore-scripts`, and the
 final image copies only the resulting store.
 
-GitHub Packages requires authentication and may contain private packages. The
-sync omits its package records and dependency edges from this shared cache,
-retaining all other package content, including public dependencies of omitted
-packages. A consuming job keeps its original lockfile and fetches these cache
+GitHub Packages requires authentication and may contain private packages, and a
+git or codeload source can name a private repository. The sync omits GitHub
+Packages records, and git or codeload records unless GitHub reports their
+repository as public (any other host counts as unreadable), with their
+dependency edges from this shared cache, retaining all other package content,
+including public dependencies of omitted packages. A consuming job keeps its original lockfile and fetches these cache
 misses with its own registry credentials. No consumer credentials or private
 GitHub Packages content are baked into the generic runner. The fetch command
 and pnpm supply-chain validation are unchanged; failures still fail the build.
@@ -60,8 +62,8 @@ mandatory dependency of the production Dockerfile: a rejected seed or failed
 proof blocks the image build and publication. `pnpm-store-seed.test.sh` runs
 that complete `pnpm-store-proof` target on an admitted Docker/BuildKit worker;
 the native input check alone is not full-proof evidence. The production fetch
-stage carries git because a consumer may lock a git-hosted package (`type: git`),
-which pnpm clones.
+stage carries git because a consumer may lock a public git-hosted package
+(`type: git`), which pnpm clones anonymously.
 Every listed repository must use pnpm 11 (the `v11` content-store layout);
 the seed test fails otherwise.
 
