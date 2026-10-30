@@ -4922,6 +4922,47 @@ td.costs-repo-spend__num {
   color: var(--lcars-ink-dim);
 }
 
+/* Desktop: the Inbox is a fixed workspace, so the viewport is its only
+   outer bound. The shell takes exactly the viewport height and each
+   wrapper hands its slack down to the workspace, whose list and detail panes
+   are the only scrollers. A workspace sized as `100vh - <guess at chrome>`
+   instead overflows by whatever the header, readouts, toolbar and warnings
+   really take, which adds a third, document-level scroller around the two
+   panes. Phones keep the document as their single scroll surface. */
+@media (min-width: 48em) {
+  .console-page-shell:has(.inbox-frame) {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .console-page-shell:has(.inbox-frame) > .console-page-content {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .console-page-content > .inbox-frame,
+  .inbox-frame > .inbox-region {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+  }
+
+  .inbox-frame .console-workspace__warnings,
+  .inbox-region > .inbox-toolbar {
+    flex: 0 0 auto;
+  }
+
+  .inbox-region > .queue-workspace {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+}
+
 @media (min-width: 48em) {
   .queue-workspace:not([data-detail]) {
     grid-template-columns: minmax(0, 1fr);
