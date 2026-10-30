@@ -226,7 +226,7 @@ test('setup-repo-checks baked tools validate exact versions without installation
       await fs.symlink(`/usr/bin/${name}`, path.join(bin, name));
     }
     const versions = {
-      gitleaks: '8.18.2',
+      gitleaks: '8.30.1',
       actionlint: 'v1.7.12',
       shellcheck: 'version: 0.10.0',
       pyflakes: '3.2.0 Python 3.12.0 on Linux',
@@ -290,14 +290,14 @@ test('setup-repo-checks default install verifies and extracts the selected relea
   try {
     await fs.writeFile(
       path.join(assets, 'gitleaks'),
-      '#!/bin/sh\necho 8.18.2\n',
+      '#!/bin/sh\necho 8.30.1\n',
       { mode: 0o755 },
     );
     for (const [_machine, arch] of [
       ['x86_64', 'x64'],
       ['aarch64', 'arm64'],
     ]) {
-      const asset = `gitleaks_8.18.2_linux_${arch}.tar.gz`;
+      const asset = `gitleaks_8.30.1_linux_${arch}.tar.gz`;
       assert.equal(
         spawnSync('tar', [
           '-czf',
@@ -316,7 +316,7 @@ test('setup-repo-checks default install verifies and extracts the selected relea
     );
     assert.equal(checksums.status, 0);
     await fs.writeFile(
-      path.join(assets, 'gitleaks_8.18.2_checksums.txt'),
+      path.join(assets, 'gitleaks_8.30.1_checksums.txt'),
       checksums.stdout,
     );
     await write(
@@ -326,7 +326,7 @@ test('setup-repo-checks default install verifies and extracts the selected relea
     await write(
       'curl',
       `for argument do case "$argument" in https://*) url="$argument";; esac; done
-case "$url" in https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/*) ;; *) exit 96;; esac
+case "$url" in https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/*) ;; *) exit 96;; esac
 while [ "$1" != -o ]; do shift; done
 cp "$ASSETS/$(basename "$url")" "$2"`,
     );
@@ -355,13 +355,13 @@ cp "$ASSETS/$(basename "$url")" "$2"`,
           spawnSync(path.join(installedBin, 'gitleaks'), ['version'], {
             encoding: 'utf8',
           }).stdout.trim(),
-          '8.18.2',
+          '8.30.1',
         );
       }
     }
     // A tampered release must be rejected by the real sha256sum before extraction.
     await fs.appendFile(
-      path.join(assets, 'gitleaks_8.18.2_linux_x64.tar.gz'),
+      path.join(assets, 'gitleaks_8.30.1_linux_x64.tar.gz'),
       'tampered',
     );
     const result = spawnSync(

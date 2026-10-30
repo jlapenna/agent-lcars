@@ -37,7 +37,7 @@ write_exe "$bin/pnpm" 'v="$(sed -nE "s/.*\"pnpm@([0-9.]+)[^\"]*\".*/\1/p" packag
 printf '{"packageManager": "pnpm@11.28.5"}\n' > "$tmp/corepack/package.json"
 printf '%s\n' pnpm@11.28.2 pnpm@11.28.5 > "$tmp/corepack/fleet-pnpm-pins"
 printf '%s\n' 11.28.2 11.28.5 > "$tmp/corepack/cached"
-write_exe "$bin/gitleaks" 'echo 8.18.2'
+write_exe "$bin/gitleaks" 'echo 8.30.1'
 write_exe "$bin/actionlint" 'echo v1.7.12'
 write_exe "$bin/shellcheck" 'echo "version: 0.10.0"'
 write_exe "$bin/pyflakes" 'echo "3.2.0 Python 3.12 on Linux"'

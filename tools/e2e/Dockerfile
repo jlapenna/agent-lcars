@@ -18,6 +18,7 @@ RUN test "$(node -p 'process.versions.node')" = 26.13.0
 # of the fleet-wide runner contract, including lightweight report parsing in
 # E2E workflows.
 RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends default-jre-headless jq \
   && jq --version \
   && rm -rf /var/lib/apt/lists/*

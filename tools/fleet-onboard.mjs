@@ -234,7 +234,7 @@ jobs:
       - uses: gitleaks/gitleaks-action@${GITLEAKS_PIN}
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_VERSION: '8.18.2'
+          GITLEAKS_VERSION: '8.30.1'
 `;
 }
 
