@@ -4,9 +4,12 @@ WORKDIR /app
 
 COPY requirements.lock .
 # The pinned base is already the newest python:3.15-alpine digest; pull fixed
-# Alpine packages published after it was built.
+# Alpine packages published after it was built. Nothing installs packages at
+# runtime, so drop the packaging tools (and their vendored msgpack/urllib3/
+# setuptools findings) once the requirements are in.
 RUN apk upgrade --no-cache \
     && pip install --no-cache-dir -r requirements.lock \
+    && pip uninstall -y pip setuptools wheel \
     && mkdir -p /var/lib/github-actions-exporter \
     && chown 65534:65534 /var/lib/github-actions-exporter
 
