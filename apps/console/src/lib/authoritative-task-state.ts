@@ -71,7 +71,10 @@ export async function readAuthoritativeTaskState({
   const versioned = await store.readTask(taskId);
   if (!versioned) return undefined;
   const runs = await store.listRuns(taskId);
-  const spec = workPayloadSchema.parse(versioned.task.work).spec;
+  const payload = workPayloadSchema.safeParse(versioned.task.work);
+  if (!payload.success)
+    throw new Error('Authoritative task state requires coding Work');
+  const spec = payload.data.spec;
   return {
     schema: AUTHORITATIVE_TASK_STATE_SCHEMA,
     task: taskId,

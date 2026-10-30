@@ -97,4 +97,30 @@ describe('readAuthoritativeTaskState', () => {
       }),
     ).rejects.toThrow();
   });
+
+  it('rejects recipe Work with a coding-only precondition, not a schema error', async () => {
+    await seedTask({
+      task: { repo: 'jlapenna/agent-lcars', issue: 43 },
+      runCount: 0,
+      updatedAt: T0,
+      work: {
+        origin: { principal: 'svc:jobs', channel: 'cron' },
+        spec: {
+          title: 'T',
+          description: 'D',
+          pipeline: 'goose',
+          priority: 'background',
+          target: { repo: 'jlapenna/agent-lcars' },
+          jobOccurrence: 'a'.repeat(64),
+        },
+      },
+    });
+
+    await expect(
+      readAuthoritativeTaskState({
+        repository: 'jlapenna/agent-lcars',
+        issue: 43,
+      }),
+    ).rejects.toThrow('requires coding Work');
+  });
 });

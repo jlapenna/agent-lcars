@@ -187,7 +187,14 @@ export async function requestReply(
   const runs = await context.runtime.store.listRuns(request.task);
   const state = deriveItemState(task.task, runs);
 
-  const { spec } = workPayloadSchema.parse(task.task.work);
+  const payload = workPayloadSchema.safeParse(task.task.work);
+  if (!payload.success)
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      message: 'Only coding work accepts replies',
+    };
+  const { spec } = payload.data;
   const authorizedReceipt = (run: Run): ReplyOutcome => {
     const denied = forbiddenReason(principal, {
       ...spec,
