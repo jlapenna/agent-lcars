@@ -3,7 +3,10 @@ FROM python:3.15-alpine@sha256:20a82dbc2783112ddb91d1534603f802d222a3e63e593cd00
 WORKDIR /app
 
 COPY requirements.lock .
-RUN pip install --no-cache-dir -r requirements.lock \
+# The pinned base is already the newest python:3.15-alpine digest; pull fixed
+# Alpine packages published after it was built.
+RUN apk upgrade --no-cache \
+    && pip install --no-cache-dir -r requirements.lock \
     && mkdir -p /var/lib/github-actions-exporter \
     && chown 65534:65534 /var/lib/github-actions-exporter
 
