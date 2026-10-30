@@ -225,9 +225,9 @@ the downloaded action's sibling
 owner.
 
 The runner image source bakes these scanners, with Pyflakes in the root-owned
-`/opt/runner-python-tools` venv and executables on ordinary PATH. Source delivery
-is staged: publishing/adopting that image and selecting baked mode in fleet
-callers are separate work. Existing callers continue using install mode.
+`/opt/runner-python-tools` venv and executables on ordinary PATH. Callers opt
+into baked mode per job; supersprinklesracing/www's secret scan uses it, and
+other callers use install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. It forwards optional
