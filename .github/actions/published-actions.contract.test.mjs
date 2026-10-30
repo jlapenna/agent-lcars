@@ -405,6 +405,39 @@ cp "$ASSETS/$(basename "$url")" "$2"`,
     assert.notEqual(result.status, 0);
     assert.match(result.stdout, /FAILED/);
     await assert.rejects(fs.access(path.join(scratch, 'rejected-path')));
+    // An empty actionlint-version downloads the fleet pin, not a literal.
+    const pin = (
+      await fs.readFile(
+        path.join(
+          actionsDirectory,
+          '../../apps/runner-autoscaler/runner-image/actionlint-version',
+        ),
+        'utf8',
+      )
+    ).trim();
+    await write(
+      'curl',
+      'for a do case "$a" in https://*) echo "$a" >> "$ASSETS/urls";; esac; done; exit 96',
+    );
+    spawnSync(
+      '/bin/bash',
+      [path.join(actionsDirectory, 'setup-repo-checks/install.sh')],
+      {
+        env: {
+          PATH: `${bin}:/usr/bin:/bin`,
+          CHECK_TOOL: 'actionlint',
+          ACTIONLINT_VERSION: '',
+          RUNNER_TEMP: scratch,
+          MACHINE: 'x86_64',
+          ASSETS: assets,
+        },
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(
+      (await fs.readFile(path.join(assets, 'urls'), 'utf8')).split('\n')[0],
+      `https://github.com/rhysd/actionlint/releases/download/v${pin}/actionlint_${pin}_linux_amd64.tar.gz`,
+    );
   } finally {
     await fs.rm(scratch, { recursive: true, force: true });
   }
