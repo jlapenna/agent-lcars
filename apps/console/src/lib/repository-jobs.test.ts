@@ -276,6 +276,48 @@ describe('production repository job admission', () => {
     expect(f.store.jobs.get(f.id)!.baseline).toBeUndefined();
     expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
   });
+  it('refuses placeholder results instead of staging a baseline', () => {
+    const f = fixture();
+    expect(() =>
+      validateJobResult(f.definition, {
+        report: 'placeholder',
+        complete: true,
+        data: {},
+      }),
+    ).toThrow('Placeholder text');
+    const audit = {
+      ...f.definition,
+      job: {
+        ...f.definition.job,
+        inputs: { subnet: '192.0.2.0/24' },
+        result: {
+          contract: 'security-audit-v1' as const,
+          requiredArtifacts: ['report.md', 'findings.json', 'coverage.json'],
+        },
+      },
+    };
+    const result = (evidence: string) => ({
+      report: 'Scanned the subnet.',
+      findings: { version: 1, items: [] },
+      coverage: {
+        version: 1,
+        scope: '192.0.2.0/24',
+        checks: [
+          'discovery',
+          'ports',
+          'services',
+          'baseline',
+          'existing-issues',
+        ].map((name) => ({ name, status: 'complete', evidence: [evidence] })),
+      },
+    });
+    expect(
+      validateJobResult(audit, result('256 addresses probed')).successful,
+    ).toBe(true);
+    expect(() => validateJobResult(audit, result(' placeholder '))).toThrow(
+      'Placeholder text',
+    );
+  });
   it('advances baseline only from matching successful native completion', async () => {
     const f = fixture();
     const occurrence = await f.jobs.admit(
