@@ -203,7 +203,8 @@ COPY fetch-pnpm-seed.mjs /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs
 # the same verification on every install; without this cache in the image each
 # job re-downloaded and re-wrote that metadata (#2082). Keep only the metadata:
 # lockfile-verified.jsonl records verifications of these seed lockfiles, not a
-# job's own, so it is dropped.
+# job's own, so it is dropped. store/v11/tmp is pnpm's scratch for git
+# dependencies (hard-linked clones), not store content, so it is dropped too.
 RUN set -eu; \
     for repository in */; do \
       grep -q '^packages:' "$repository/pnpm-lock.yaml" || { \
@@ -212,7 +213,8 @@ RUN set -eu; \
       (cd "$repository" && \
         node /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs "$TARGETARCH"); \
     done; \
-    rm -f /pnpm-cache/lockfile-verified.jsonl
+    rm -f /pnpm-cache/lockfile-verified.jsonl; \
+    rm -rf /pnpm-store/v11/tmp
 # The fetches above made Corepack download every fleet-pinned pnpm into
 # /root/.cache/node/corepack. Record which ones, so the final image can ship
 # that cache to the runner user and prove each pin resolves offline: a job's
