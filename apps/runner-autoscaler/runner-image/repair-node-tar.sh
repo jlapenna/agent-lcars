@@ -2,11 +2,20 @@
 # Replace the npm-bundled node-tar copies inherited from the Actions runner
 # image and NodeSource. The retained runner Node 24 npm installation is
 # independent of system npm and must receive the same repair.
+#
+# The NodeSource system npm is also upgraded to a release whose bundled
+# dependencies (undici, brace-expansion, ip-address, pacote, minimatch) carry
+# the fixes for the runner-image CVE findings (#3116). The runner's externals
+# npm is upstream-owned and only gets the tar repair.
 set -euo pipefail
 
 readonly fixed_version="7.5.22"
+readonly npm_version="11.21.1"
 readonly work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
+
+npm install --global "npm@${npm_version}"
+test "$(node -p "require('/usr/lib/node_modules/npm/package.json').version")" = "$npm_version"
 
 npm install --prefix "$work_dir" --no-save --ignore-scripts \
   --install-strategy=nested "tar@${fixed_version}"
