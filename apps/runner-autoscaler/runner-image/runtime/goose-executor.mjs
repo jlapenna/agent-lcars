@@ -157,11 +157,12 @@ export async function subprocess(
       if (failure) reject(failure);
       else if (signal.aborted) reject(new Error('Goose cancelled'));
       else if (code !== 0) {
-        // Keep resource/enforcement causes without leaking provider output,
-        // tool responses or credentials into shared container logs.
+        // Keep resource, enforcement and provider-transport causes without
+        // leaking provider output, tool responses or credentials into shared
+        // container logs. Goose exits 1 once its provider retries are spent.
         const causes =
           stderr.match(
-            /No space left on device|Cannot allocate memory|Operation not permitted|Permission denied|Read-only file system|No such file or directory|out of memory/giu,
+            /No space left on device|Cannot allocate memory|Operation not permitted|Permission denied|Read-only file system|No such file or directory|out of memory|Network error|Could not connect|Request timed out|Rate limit exceeded|Server error/giu,
           ) ?? [];
         reject(
           new Error(
