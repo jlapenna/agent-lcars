@@ -52,6 +52,24 @@ test('subprocess preserves resource causes without exposing stderr secrets', asy
       !error.message.includes('private-token'),
   );
 });
+test('subprocess names an unreachable provider without its message', async () => {
+  await assert.rejects(
+    subprocess(
+      process.execPath,
+      [
+        '-e',
+        'console.error("Error: Network error: Could not connect to private-host:443");process.exit(1)',
+      ],
+      {
+        cwd: '/tmp',
+        signal: new AbortController().signal,
+        environment: {},
+      },
+    ),
+    (error) =>
+      error.message === 'Goose exited 1: Network error; Could not connect',
+  );
+});
 test('output overflow fails and cancellation terminates the child', async () => {
   await assert.rejects(
     subprocess(
