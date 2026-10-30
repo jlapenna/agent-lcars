@@ -51,12 +51,11 @@
     },
     {
       "customType": "regex",
-      "description": "Console production runtime base. Distroless publishes one floating image per Node major, so Renovate moves only the digest; the major in the image name must equal the node base image's (tools/contract-tests/node-version-pins.test.ts). #3104 moved every other pin to Node 26 and the console kept running 24.22.1 here.",
+      "description": "Console production runtime base. Distroless publishes one floating image per Node major, so Renovate moves only the nonroot tag's digest; the major in the image name must equal the node base image's (tools/contract-tests/node-version-pins.test.ts). #3104 moved every other pin to Node 26 and the console kept running 24.22.1 here.",
       "managerFilePatterns": ["/^tools\\/build-console-container\\.mjs$/"],
       "matchStrings": [
-        "'(?<depName>gcr\\.io/distroless/nodejs\\d+-debian\\d+)@(?<currentDigest>sha256:[a-f0-9]{64})'"
+        "'(?<depName>gcr\\.io/distroless/nodejs\\d+-debian\\d+):(?<currentValue>nonroot)@(?<currentDigest>sha256:[a-f0-9]{64})'"
       ],
-      "currentValueTemplate": "latest",
       "datasourceTemplate": "docker"
     }
   ],

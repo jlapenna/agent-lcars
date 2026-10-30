@@ -116,7 +116,7 @@ describe('Node runtime pins', () => {
     const builder = read('tools/build-console-container.mjs');
     const majors = [
       ...builder.matchAll(
-        /gcr\.io\/distroless\/nodejs(\d+)-debian\d+@sha256:/g,
+        /gcr\.io\/distroless\/nodejs(\d+)-debian\d+:nonroot@sha256:/g,
       ),
     ].map((match) => match[1]);
     expect(majors).toHaveLength(1);

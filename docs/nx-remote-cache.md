@@ -49,7 +49,8 @@ declared output instead of inheriting stale files. It is not, by itself, a
 persistence mechanism.
 
 The production deployment workflow builds a native amd64 standalone Console and
-packages it with a pinned Node 24 base using Crane, without a Docker daemon or
+packages it with the pinned distroless `nonroot` base of the node base image's
+major using Crane, without a Docker daemon or
 Cloud Build. Its independent `ubuntu-slim` construction and import jobs each
 retain that lane's 1 CPU / 5 GiB / 14 GiB / 15-minute ceiling. The private-LAN L2
 is not a production prerequisite; dependencies and the complete bundle are
