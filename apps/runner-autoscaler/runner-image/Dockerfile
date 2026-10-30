@@ -213,8 +213,8 @@ RUN set -eu; \
       (cd "$repository" && \
         node /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs "$TARGETARCH"); \
     done; \
-    rm -f /pnpm-cache/lockfile-verified.jsonl; \
-    rm -rf /pnpm-store/v11/tmp
+    rm -rf /pnpm-store/v11/tmp; \
+    rm -f /pnpm-cache/lockfile-verified.jsonl
 # The fetches above made Corepack download every fleet-pinned pnpm into
 # /root/.cache/node/corepack. Record which ones, so the final image can ship
 # that cache to the runner user and prove each pin resolves offline: a job's
