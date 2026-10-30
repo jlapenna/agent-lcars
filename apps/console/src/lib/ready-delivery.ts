@@ -248,7 +248,9 @@ export async function readyDeliveryBinding(
   const generation = parseRunGeneration(run.runId);
   if (generation === undefined) throw new Error('Delivery generation invalid');
   const attempt = formatAttemptId({ generation, intentId: run.runId });
-  const payload = workPayloadSchema.parse(task.work);
+  const parsedPayload = workPayloadSchema.safeParse(task.work);
+  if (!parsedPayload.success) throw new Error('Delivery requires coding Work');
+  const payload = parsedPayload.data;
   if (payload.spec.target.repo !== repo)
     throw new Error('Delivery target changed');
   if (

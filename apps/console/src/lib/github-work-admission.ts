@@ -9,7 +9,11 @@ import {
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
-import { type WorkPayload, workPayloadSchema } from '@agent-lcars/work';
+import {
+  storedWorkPayloadSchema,
+  type WorkPayload,
+  workPayloadSchema,
+} from '@agent-lcars/work';
 
 import { isAdminGithubLogin } from './deployment';
 import {
@@ -182,7 +186,7 @@ export async function admitGithubWork(
       : { requestBinding: input.requestBinding }),
     labelProviderRequest,
     pipelineForStoredTask: (task) =>
-      workPayloadSchema.parse(task.work).spec.pipeline,
+      storedWorkPayloadSchema.parse(task.work).spec.pipeline,
     useEffectivePipeline:
       input.followEffectivePipeline === true ||
       input.expectedEffectivePipeline !== undefined,
@@ -220,7 +224,10 @@ export async function admitGithubWork(
         labelProviderRequest === undefined
       )
         return false;
-      const spec = workPayloadSchema.parse(stored).spec;
+      // Recipe and summary Work is never a coding admission's stored form.
+      const coding = workPayloadSchema.safeParse(stored);
+      if (!coding.success) return false;
+      const spec = coding.data.spec;
       // Authorization changes only execution intent, never the admitted payload.
       return sameSpec(
         spec,
@@ -304,7 +311,14 @@ export async function redispatchGithubWork(
 
   const task = await runtime.store.readTask(anchor);
   if (task === undefined) return { kind: 'not-found' };
-  const work = workPayloadSchema.parse(task.task.work);
+  const parsedWork = workPayloadSchema.safeParse(task.task.work);
+  if (!parsedWork.success) {
+    return {
+      kind: 'invalid',
+      message: 'Stored Work is not a GitHub coding task',
+    };
+  }
+  const work = parsedWork.data;
   if (work.spec.target.repo !== anchor.repo) {
     return {
       kind: 'invalid',
@@ -316,7 +330,7 @@ export async function redispatchGithubWork(
     requestId: input.requestId,
     useEffectivePipeline: true,
     pipelineForStoredTask: (task) =>
-      workPayloadSchema.parse(task.work).spec.pipeline,
+      storedWorkPayloadSchema.parse(task.work).spec.pipeline,
     isPipelineAuthorized: (pipeline) =>
       forbiddenReason(input.authorization.grantsPrincipal, {
         ...work.spec,

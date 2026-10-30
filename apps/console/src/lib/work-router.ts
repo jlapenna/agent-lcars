@@ -338,7 +338,9 @@ export const workRouter = os.router({
       throw errors.CONFLICT({
         message: 'Source-managed work is read-only.',
       });
-    const stored = workPayloadSchema.parse(task.task.work);
+    const stored = workPayloadSchema.safeParse(task.task.work);
+    if (!stored.success)
+      throw errors.CONFLICT({ message: 'Only coding work can be edited.' });
     // Only the prose is editable: pipeline and target are granted
     // capabilities, so changing them would need the re-authorization
     // `create` performs.
@@ -347,7 +349,7 @@ export const workRouter = os.router({
       {
         ...task.task.work,
         spec: {
-          ...stored.spec,
+          ...stored.data.spec,
           title: input.title,
           description: input.description,
         },
@@ -386,7 +388,12 @@ export const workRouter = os.router({
       // needs everything `create` needed -- and neither the principal nor
       // the control-plane repository list need be what they were when the
       // item was created.
-      const { spec } = workPayloadSchema.parse(task.task.work);
+      const payload = workPayloadSchema.safeParse(task.task.work);
+      if (!payload.success)
+        throw errors.CONFLICT({
+          message: 'Only coding work can be redispatched.',
+        });
+      const { spec } = payload.data;
       const forbidden = forbiddenReason(context.principal, spec);
       if (forbidden !== undefined) {
         throw errors.FORBIDDEN({ message: forbidden });

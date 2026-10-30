@@ -7,10 +7,10 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
+  storedWorkPayloadSchema,
+  storedWorkSpecSchema,
   type WorkOrigin,
-  workPayloadSchema,
   type WorkSpec,
-  workSpecSchema,
 } from '@agent-lcars/work';
 import {
   type ItemSessionView,
@@ -112,10 +112,10 @@ export const forbiddenReason = workForbiddenReason;
 /** Both sides go through the same schema first, so the comparison is over
  *  normalized values rather than whatever shape the caller happened to
  *  send. */
-export function sameSpec(a: WorkSpec, b: WorkSpec): boolean {
+export function sameSpec(a: unknown, b: unknown): boolean {
   return (
-    JSON.stringify(workSpecSchema.parse(a)) ===
-    JSON.stringify(workSpecSchema.parse(b))
+    JSON.stringify(storedWorkSpecSchema.parse(a)) ===
+    JSON.stringify(storedWorkSpecSchema.parse(b))
   );
 }
 
@@ -146,7 +146,7 @@ export async function mintItem(
 
   const existing = await context.runtime.store.readTask({ workId: input.id });
   if (existing !== undefined) {
-    const stored = workPayloadSchema.parse(existing.task.work);
+    const stored = storedWorkPayloadSchema.parse(existing.task.work);
     if (!sameSpec(stored.spec, input.spec)) {
       return {
         kind: 'conflict',
@@ -175,7 +175,7 @@ export async function mintItem(
     // creates can both observe an absent Task above; the loser must not mint
     // a Run against the winner's immutable Work specification.
     isStoredWorkCompatible: (stored) =>
-      sameSpec(workPayloadSchema.parse(stored).spec, input.spec),
+      sameSpec(storedWorkPayloadSchema.parse(stored).spec, input.spec),
   });
   if (isRefusal(outcome)) {
     if (outcome.reason === 'work-spec-mismatch') {

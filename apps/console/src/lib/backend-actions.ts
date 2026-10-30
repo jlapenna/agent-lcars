@@ -6,7 +6,7 @@ import {
   quickTaskDigest as sharedQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
-import { workPayloadSchema } from '@agent-lcars/work';
+import { storedWorkPayloadSchema, workPayloadSchema } from '@agent-lcars/work';
 
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
@@ -302,7 +302,10 @@ async function dispatchPostedReply(
       // control plane. Preserve the comment in that transient state; the
       // webhook remains responsible for first Work admission.
       if (existingTask !== undefined) {
-        const work = workPayloadSchema.parse(existingTask.task.work);
+        const parsedWork = workPayloadSchema.safeParse(existingTask.task.work);
+        // Recipe and summary Work has no agent-label handoff to admit.
+        if (!parsedWork.success) return { dispatched: false };
+        const work = parsedWork.data;
         // Only an accepted label handoff changes future admission. An older
         // or fallback run's provider is historical execution, not routing intent.
         const effective =
@@ -680,7 +683,11 @@ export async function retriggerIssue(
       409,
     );
   }
-  const existingWork = workPayloadSchema.parse(existingTask.task.work);
+  const parsedWork = workPayloadSchema.safeParse(existingTask.task.work);
+  if (!parsedWork.success) {
+    throw new ActionError('Only coding Work can be retried here', 409);
+  }
+  const existingWork = parsedWork.data;
 
   await clearNeedsHumanLabel(repo, issueNumber);
 
@@ -737,7 +744,7 @@ export async function assignPipeline(
     // only a request signal, so a manually removed agent label must not make
     // the console recreate Reassign by relabeling an already-admitted task.
     // Validate the durable payload before relying on its immutable contract.
-    workPayloadSchema.parse(existingTask.task.work);
+    storedWorkPayloadSchema.parse(existingTask.task.work);
     throw new ActionError(
       'Issue already has immutable Work; retry its admitted pipeline instead',
       409,
