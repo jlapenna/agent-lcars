@@ -203,8 +203,8 @@ before authorization or storage; callers must not pre-truncate it.
 ## Native repository checks
 
 `setup-repo-checks` is Published. Set `tool: gitleaks` for Gitleaks 8.30.1,
-or `tool: actionlint` for actionlint (optional `actionlint-version`, default
-1.7.12), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
+or `tool: actionlint` for actionlint (optional `actionlint-version`; empty
+selects the fleet pin in `runner-image/actionlint-version`), ShellCheck 0.10.0 and Pyflakes 3.2.0. It adds the executables to PATH
 on Linux x64/arm64. `tool-source: install` remains the default: it uses a
 temporary directory and verified release archives, preserving GitHub-hosted
 and fork support and custom actionlint releases. The actionlint toolchain
@@ -217,12 +217,13 @@ requested actionlint version and shared scanner pins exactly. Missing, broken
 or mismatched tools fail before creating a temporary package target or calling
 an installer; there is no fallback. Baked mode checks against the pins the
 image was built with, `/usr/local/share/agent-lcars-tooling/repo-checks.env`
-(missing fails), not the action's own copy: callers take this action at `@main`
+and, for an empty `actionlint-version`, the sibling `actionlint-version`
+(missing fails), not the action's own copies: callers take this action at `@main`
 immediately, but a new image only after Homelab republishes it, so a pin bump
 would otherwise fail every baked caller until then (#3120). Install mode uses
-the downloaded action's sibling
-`apps/runner-autoscaler/runner-image/repo-checks.env`, the shared scanner pin
-owner.
+the downloaded action's siblings
+`apps/runner-autoscaler/runner-image/repo-checks.env` and `actionlint-version`,
+the shared scanner pin owners.
 
 The runner image source bakes these scanners, with Pyflakes in the root-owned
 `/opt/runner-python-tools` venv and executables on ordinary PATH. Callers opt
