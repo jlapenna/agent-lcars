@@ -42,7 +42,7 @@ func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 		t.Fatal("wrong provider credentials projected")
 	}
 	// The recipe deadline is on the Pod only: queue wait never consumes it.
-	if job.Spec.ActiveDeadlineSeconds != nil || job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 1800 {
+	if job.Spec.ActiveDeadlineSeconds != nil || job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 3000 {
 		t.Fatal("recipe deadline not bounded on the Pod alone")
 	}
 	q.config.Limits["cpu"] = "3"

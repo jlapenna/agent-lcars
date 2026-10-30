@@ -729,7 +729,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 		},
 	}
 	if l.pipeline == "goose" {
-		deadline = 1800
+		// Recipes time out after at most 45 minutes; the extra five let the
+		// runner report and clean up before the kubelet kills the Pod.
+		deadline = 3000
 		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
 	}
 
