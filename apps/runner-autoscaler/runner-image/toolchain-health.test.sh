@@ -279,7 +279,7 @@ scanner() {
   printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$2" > "$tmp/scanners/$1"
   chmod +x "$tmp/scanners/$1"
 }
-scanner gitleaks 8.18.2
+scanner gitleaks 8.30.1
 scanner actionlint "v$actionlint_version"
 scanner shellcheck 'version: 0.10.0'
 scanner pyflakes '3.2.0 Python 3.12 on Linux'

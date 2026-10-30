@@ -442,6 +442,8 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
+    # Pull fixed OS packages from the base's security pocket before installing.
+    apt-get upgrade -y --no-install-recommends; \
     # The Firestore emulator requires Java 21+. Baking the JRE makes trusted
     # E2E runners ready without downloading a Temurin distribution per job. \
     # python3-yaml: GitHub-hosted ubuntu-latest ships PyYAML, and consumer

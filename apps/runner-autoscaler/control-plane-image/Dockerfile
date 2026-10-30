@@ -49,6 +49,8 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
+    # Pull fixed OS packages (openssl, libssl3t64, libbrotli1) into the base.
+    apt-get upgrade -y --no-install-recommends; \
     # Node 25+ release binaries link against libatomic, which the runner base
     # does not carry.
     apt-get install -y --no-install-recommends gh jq libatomic1; \
