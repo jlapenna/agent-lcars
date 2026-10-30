@@ -10,8 +10,6 @@
 # editing this file automatically invalidates stale images everywhere.
 FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
-COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
-RUN test "$(node -p 'process.versions.node')" = 26.13.0
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
 # require a JRE, which the base Playwright image does not include. jq is part
@@ -22,6 +20,11 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends default-jre-headless jq \
   && jq --version \
   && rm -rf /var/lib/apt/lists/*
+
+# After the upgrade: the base image's apt nodejs package would otherwise
+# reinstall its own /usr/bin/node over the pinned runtime.
+COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
+RUN test "$(node -p 'process.versions.node')" = 26.13.0
 
 # This image has no repo checkout at build time (tools/e2e-docker.sh bind-
 # mounts one at run time instead), so there's no packageManager field to pre-
