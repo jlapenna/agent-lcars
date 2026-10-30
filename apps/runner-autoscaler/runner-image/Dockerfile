@@ -43,6 +43,9 @@ ARG GO_VERSION=1.27.3
 # The canonical publisher can freeze these indexes across semantic build jobs.
 # Defaults keep ordinary builds and Renovate version ownership unchanged.
 ARG NODE_BUILD_BASE=node:26.13.0-slim
+# Node 25+ no longer bundles Corepack (neither the node image nor NodeSource's
+# nodejs package), and every pnpm here resolves through it from packageManager.
+ARG COREPACK_VERSION=0.36.0
 ARG GO_BUILD_BASE=golang:${GO_VERSION}-bookworm
 
 # One pin feeds the source image and both runtime-user build assertions.
@@ -79,7 +82,11 @@ ARG TERRAFORM_VERSION=1.17.1
 #
 # If this stage ever starts emitting a native binary, this pin becomes
 # wrong -- it would bake an amd64 artifact into the arm64 image.
-FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS telemetry-watcher-build
+FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS node-build
+ARG COREPACK_VERSION
+RUN npm install --global "corepack@${COREPACK_VERSION}" && corepack enable
+
+FROM node-build AS telemetry-watcher-build
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
 ARG NODE_OPTIONS=--max-old-space-size=1024
@@ -88,7 +95,6 @@ ARG npm_config_child_concurrency=1
 WORKDIR /repo
 RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN corepack enable
 # CACHE_BUST (build-arg, set to the publishing commit's SHA by the CI
 # workflow) forces this RUN's cache key to change on every real publish.
 # Without it, `docker/build-push-action`'s cache-from/to: type=registry
@@ -166,16 +172,15 @@ RUN bash /usr/local/lib/agent-lcars/populate-action-archive-cache.sh /repo /out/
 # native and project `current` CPU settings onto TARGETARCH through pnpm's CLI.
 # Seed proofs are image-build gates, consumed by the final image below.
 # Keep real CLI CPU selection ahead of the production fetch and fixture proof.
-FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-cpu-regression
+FROM node-build AS pnpm-cpu-regression
 ARG NODE_OPTIONS=--max-old-space-size=512
 WORKDIR /proof
 COPY fetch-pnpm-seed.mjs fetch-pnpm-seed.test.mjs ./
 COPY pnpm-seed/fleet/jlapenna__agent-lcars/package.json ./pnpm-seed/fleet/jlapenna__agent-lcars/package.json
-RUN corepack enable && \
-    corepack install --global "$(node -p 'require("./pnpm-seed/fleet/jlapenna__agent-lcars/package.json").packageManager')"
+RUN corepack install --global "$(node -p 'require("./pnpm-seed/fleet/jlapenna__agent-lcars/package.json").packageManager')"
 RUN --network=none node --test fetch-pnpm-seed.test.mjs && printf 'passed\n' > /proof/cpu-selection.ok
 
-FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-store-seed
+FROM node-build AS pnpm-store-seed
 COPY --from=pnpm-cpu-regression /proof/cpu-selection.ok /proof/cpu-selection.ok
 ARG TARGETARCH
 # Build-time only: one bounded worker must cover the daemon and this vertex.
@@ -191,7 +196,6 @@ ARG npm_config_child_concurrency=1
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /seed
-RUN corepack enable
 COPY pnpm-seed/fleet/ ./
 COPY fetch-pnpm-seed.mjs /usr/local/lib/agent-lcars/fetch-pnpm-seed.mjs
 # Each fetch also runs pnpm 11's supply-chain verification, which caches the
@@ -237,18 +241,17 @@ RUN set -eu; \
 # A small fixture preserves the lower-image-layer TypeScript hit and normal
 # is-number writable miss. Depend on the real production fetch as well; none
 # of these phases may run in parallel or bypass a rejected fleet lockfile.
-FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-regression-seed
+FROM node-build AS pnpm-regression-seed
 ARG NODE_OPTIONS=--max-old-space-size=512
 WORKDIR /seed
 COPY --from=pnpm-store-seed /fleet-pnpm-pins /proof/production-pnpm-pins
-RUN corepack enable
 COPY pnpm-seed-regression/seed/package.json package.json
 COPY pnpm-seed-regression/seed/pnpm-lock.yaml pnpm-lock.yaml
 RUN pnpm fetch --frozen-lockfile --ignore-scripts --store-dir /pnpm-store
 
-FROM --platform=$BUILDPLATFORM ${NODE_BUILD_BASE} AS pnpm-regression-base
+FROM node-build AS pnpm-regression-base
 ARG NODE_OPTIONS=--max-old-space-size=512
-RUN useradd --create-home --uid 1001 runner && corepack enable
+RUN useradd --create-home --uid 1001 runner
 COPY --from=pnpm-regression-seed --chown=runner:runner /pnpm-store/ /home/runner/.local/share/pnpm/store/
 COPY --chown=runner:runner pnpm-seed-regression/hit /opt/pnpm-hit
 COPY --chown=runner:runner pnpm-seed-regression/miss /opt/pnpm-miss
@@ -415,7 +418,8 @@ WORKDIR /usr/local/share/agent-lcars-corepack
 # self-hosting ci.yml's `verify` job surfaced that the image had no C
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
-ARG NODE_VERSION=24.22.2
+ARG NODE_VERSION=26.13.0
+ARG COREPACK_VERSION
 
 # Playwright's browser stack is deliberately NOT baked here (reverted per
 # agent-lcars#920): E2E no longer runs on this generic JIT image -- the
@@ -455,10 +459,10 @@ RUN set -eux; \
     # replace that binary with the patched one instead of deleting it.
     cp /usr/bin/node /home/runner/externals/node20/bin/node; \
     rm -rf /home/runner/externals/node20_alpine; \
-    # NodeSource's nodejs package bundles the `corepack` binary but never
-    # activates its pnpm/yarn shims -- that needs an explicit `enable`, same
-    # as the throwaway telemetry-watcher-build stage above already does for
-    # itself. This stage never did it for the image jobs actually run in, so
+    # NodeSource's nodejs package no longer ships Corepack (Node 25+), so
+    # install the pinned release, then activate its pnpm/yarn shims -- that
+    # needs an explicit `enable`, same as the node-build stage above does.
+    # This stage once skipped the `enable` for the image jobs actually run in, so
     # every consuming workflow's bare `pnpm ...` silently depended on each
     # job re-deriving that gap around (sprinkles#4003/#4006 hit it live:
     # "pnpm: command not found" the moment a step tried to call pnpm before
@@ -466,6 +470,7 @@ RUN set -eux; \
     # it here for the same reason as docker/buildx below: failing the build
     # is recoverable, shipping a runner image that silently can't run pnpm
     # is not.
+    npm install --global "corepack@${COREPACK_VERSION}"; \
     corepack enable; \
     pnpm --version; \
     # docker + buildx come from the upstream base, not from apt. They are

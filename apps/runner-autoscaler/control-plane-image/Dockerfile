@@ -49,9 +49,11 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends gh jq; \
-    # The Actions runner already carries the Node 24 runtime used to execute
-    # JavaScript actions. Expose that supported copy instead of installing a
+    # Node 25+ release binaries link against libatomic, which the runner base
+    # does not carry.
+    apt-get install -y --no-install-recommends gh jq libatomic1; \
+    # The Actions runner's node24 externals execute JavaScript actions with
+    # the node-runtime binary copied in above. Expose that copy instead of installing a
     # second 239 MB NodeSource package whose runtime dependency keeps Python
     # in an otherwise Python-free control image.
     ln -s /home/runner/externals/node24/bin/node /usr/local/bin/node; \
