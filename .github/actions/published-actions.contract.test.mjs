@@ -32,7 +32,7 @@ const PUBLISHED = {
     inputs: {
       tool: { required: true },
       'tool-source': { required: false, default: 'install' },
-      'actionlint-version': { required: false, default: '1.7.12' },
+      'actionlint-version': { required: false, default: '' },
     },
     outputs: [],
   },
@@ -229,7 +229,7 @@ test('setup-repo-checks baked tools validate exact versions without installation
     // the image carries, not this action's newer ones.
     const versions = {
       gitleaks: '8.18.2',
-      actionlint: 'v1.7.12',
+      actionlint: 'v1.7.11',
       shellcheck: 'version: 0.10.0',
       pyflakes: '3.2.0 Python 3.12.0 on Linux',
     };
@@ -238,6 +238,7 @@ test('setup-repo-checks baked tools validate exact versions without installation
       pins,
       'GITLEAKS_VERSION=8.18.2\nSHELLCHECK_VERSION=0.10.0\nPYFLAKES_VERSION=3.2.0\n',
     );
+    await fs.writeFile(path.join(scratch, 'actionlint-version'), '1.7.11\n');
     const invoke = (tool, extra = {}) =>
       spawnSync(
         '/bin/bash',
@@ -281,6 +282,10 @@ test('setup-repo-checks baked tools validate exact versions without installation
       invoke('actionlint', { ACTIONLINT_VERSION: '1.7.8' }).status,
       0,
     );
+    await fs.rm(path.join(scratch, 'actionlint-version'));
+    result = invoke('actionlint');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /baked actionlint pin is missing/);
     result = invoke('gitleaks', {
       AGENT_LCARS_REPO_CHECKS_PINS: path.join(scratch, 'absent.env'),
     });

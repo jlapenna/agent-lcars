@@ -9,9 +9,9 @@ inputs:
     required: false
     default: 'install'
   actionlint-version:
-    description: Exact actionlint release version (without v).
+    description: Exact actionlint release version (without v). Empty selects the fleet pin (the runner image's in baked mode).
     required: false
-    default: '1.7.12'
+    default: ''
 runs:
   using: composite
   steps:

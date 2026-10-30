@@ -24,7 +24,9 @@ case "${CHECK_TOOL:?}" in
   gitleaks|actionlint) ;;
   *) echo 'tool must be gitleaks or actionlint.' >&2; exit 1 ;;
 esac
-[[ "${ACTIONLINT_VERSION:-1.7.12}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+# An empty actionlint-version selects the pinned default: the image's own
+# copy in baked mode, this action's sibling copy in install mode.
+[[ -z "${ACTIONLINT_VERSION:-}" || "$ACTIONLINT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 # Baked mode is validation only: never create a package target or fall back.
 require_version() {
   local binary="$1" expected="$2" output
@@ -56,7 +58,10 @@ if [[ "${TOOL_SOURCE-install}" == baked ]]; then
   if [[ "$CHECK_TOOL" == gitleaks ]]; then
     require_version gitleaks "$GITLEAKS_VERSION" version
   else
-    require_version actionlint "${ACTIONLINT_VERSION:-1.7.12}" -version
+    actionlint_pin="${pins%/*}/actionlint-version"
+    [[ -n "${ACTIONLINT_VERSION:-}" || -r "$actionlint_pin" ]] ||
+      { echo "baked actionlint pin is missing ($actionlint_pin)." >&2; exit 1; }
+    require_version actionlint "${ACTIONLINT_VERSION:-$(<"$actionlint_pin")}" -version
     require_version shellcheck "$SHELLCHECK_VERSION" --version
     require_version pyflakes "$PYFLAKES_VERSION" --version
   fi
@@ -84,7 +89,7 @@ if [[ "$CHECK_TOOL" == gitleaks ]]; then
     "gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" gitleaks
   bin/gitleaks version
 else
-  version="${ACTIONLINT_VERSION:-1.7.12}"
+  version="${ACTIONLINT_VERSION:-$(<"$here/../../../apps/runner-autoscaler/runner-image/actionlint-version")}"
   release_binary rhysd/actionlint "$version" \
     "actionlint_${version}_linux_${arch}.tar.gz" "actionlint_${version}_checksums.txt" actionlint
   asset="shellcheck-v${SHELLCHECK_VERSION}.linux.${shellcheck_arch}.tar.xz"

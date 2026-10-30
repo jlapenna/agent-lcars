@@ -43,12 +43,12 @@ on:
         default: 'install'
       actionlint-version:
         description: >-
-          Exact native actionlint release version to run. The default tracks the
-          version baked into the fleet runner image
-          (apps/runner-autoscaler/runner-image/actionlint-version).
+          Exact native actionlint release version to run. Empty (the default)
+          selects the fleet pin: the runner image's baked version in baked mode,
+          apps/runner-autoscaler/runner-image/actionlint-version in install mode.
         required: false
         type: string
-        default: '1.7.12'
+        default: ''
       runs-on:
         description: >-
           Runner labels as a JSON array string, passed straight to
