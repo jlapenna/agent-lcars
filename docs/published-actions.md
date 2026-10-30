@@ -215,9 +215,14 @@ are installed in the fleet runner image.
 or actionlint plus ShellCheck and Pyflakes. Every version must match the
 requested actionlint version and shared scanner pins exactly. Missing, broken
 or mismatched tools fail before creating a temporary package target or calling
-an installer; there is no fallback. The composite action consumes its sibling
-`apps/runner-autoscaler/runner-image/repo-checks.env` from the downloaded action
-repository as the shared scanner pin owner.
+an installer; there is no fallback. Baked mode checks against the pins the
+image was built with, `/usr/local/share/agent-lcars-tooling/repo-checks.env`
+(missing fails), not the action's own copy: callers take this action at `@main`
+immediately, but a new image only after Homelab republishes it, so a pin bump
+would otherwise fail every baked caller until then (#3120). Install mode uses
+the downloaded action's sibling
+`apps/runner-autoscaler/runner-image/repo-checks.env`, the shared scanner pin
+owner.
 
 The runner image source bakes these scanners, with Pyflakes in the root-owned
 `/opt/runner-python-tools` venv and executables on ordinary PATH. Source delivery

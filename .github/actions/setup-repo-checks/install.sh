@@ -46,6 +46,13 @@ require_version() {
   }
 }
 if [[ "${TOOL_SOURCE-install}" == baked ]]; then
+  # Baked tools must match the pins the image was built with. This action is
+  # consumed at @main, so its own pins move before Homelab republishes the
+  # image; checking against them failed every caller after each pin bump.
+  pins="${AGENT_LCARS_REPO_CHECKS_PINS:-/usr/local/share/agent-lcars-tooling/repo-checks.env}"
+  [[ -r "$pins" ]] || { echo "baked scanner pins are missing ($pins)." >&2; exit 1; }
+  # shellcheck source=../../../apps/runner-autoscaler/runner-image/repo-checks.env
+  source "$pins"
   if [[ "$CHECK_TOOL" == gitleaks ]]; then
     require_version gitleaks "$GITLEAKS_VERSION" version
   else
