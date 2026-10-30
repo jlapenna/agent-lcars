@@ -7,9 +7,9 @@ import {
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
-  type WorkOrigin,
   storedWorkPayloadSchema,
   storedWorkSpecSchema,
+  type WorkOrigin,
   type WorkSpec,
 } from '@agent-lcars/work';
 import {
