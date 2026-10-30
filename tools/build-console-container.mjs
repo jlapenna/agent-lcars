@@ -63,7 +63,7 @@ try {
   await run('crane', [
     'mutate',
     '--platform=linux/amd64',
-    'gcr.io/distroless/nodejs24-debian13@sha256:4d0e659ef1f628c75d9940766cb444fa9605cc190b13676b9e62e1fa567c5cf4',
+    'gcr.io/distroless/nodejs26-debian13:nonroot@sha256:a51c5d631b90e1b298e17a88a307b77f0b959b47de942d033acce0c96be3fb83',
     `--append=${archive.archivePath}`,
     `--cmd=/${command[1]}`,
     '--workdir=/',
