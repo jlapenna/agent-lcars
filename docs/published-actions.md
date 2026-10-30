@@ -215,14 +215,19 @@ are installed in the fleet runner image.
 or actionlint plus ShellCheck and Pyflakes. Every version must match the
 requested actionlint version and shared scanner pins exactly. Missing, broken
 or mismatched tools fail before creating a temporary package target or calling
-an installer; there is no fallback. The composite action consumes its sibling
-`apps/runner-autoscaler/runner-image/repo-checks.env` from the downloaded action
-repository as the shared scanner pin owner.
+an installer; there is no fallback. Baked mode checks against the pins the
+image was built with, `/usr/local/share/agent-lcars-tooling/repo-checks.env`
+(missing fails), not the action's own copy: callers take this action at `@main`
+immediately, but a new image only after Homelab republishes it, so a pin bump
+would otherwise fail every baked caller until then (#3120). Install mode uses
+the downloaded action's sibling
+`apps/runner-autoscaler/runner-image/repo-checks.env`, the shared scanner pin
+owner.
 
 The runner image source bakes these scanners, with Pyflakes in the root-owned
-`/opt/runner-python-tools` venv and executables on ordinary PATH. Source delivery
-is staged: publishing/adopting that image and selecting baked mode in fleet
-callers are separate work. Existing callers continue using install mode.
+`/opt/runner-python-tools` venv and executables on ordinary PATH. Callers opt
+into baked mode per job; supersprinklesracing/www's secret scan uses it, and
+other callers use install mode.
 
 `repo-validation.yml` uses this action, so registered consumer repositories can
 set its `runs-on` input to their socketless fleet pool. It forwards optional

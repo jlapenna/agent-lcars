@@ -225,19 +225,32 @@ test('setup-repo-checks baked tools validate exact versions without installation
     for (const name of ['uname', 'head', 'awk', 'sed', 'dirname']) {
       await fs.symlink(`/usr/bin/${name}`, path.join(bin, name));
     }
+    // An image built before a pin bump on main: baked mode checks the pins
+    // the image carries, not this action's newer ones.
     const versions = {
-      gitleaks: '8.30.1',
+      gitleaks: '8.18.2',
       actionlint: 'v1.7.12',
       shellcheck: 'version: 0.10.0',
       pyflakes: '3.2.0 Python 3.12.0 on Linux',
     };
+    const pins = path.join(scratch, 'repo-checks.env');
+    await fs.writeFile(
+      pins,
+      'GITLEAKS_VERSION=8.18.2\nSHELLCHECK_VERSION=0.10.0\nPYFLAKES_VERSION=3.2.0\n',
+    );
     const invoke = (tool, extra = {}) =>
       spawnSync(
         '/bin/bash',
         [path.join(actionsDirectory, 'setup-repo-checks/install.sh')],
         {
           encoding: 'utf8',
-          env: { PATH: bin, CHECK_TOOL: tool, TOOL_SOURCE: 'baked', ...extra },
+          env: {
+            PATH: bin,
+            CHECK_TOOL: tool,
+            TOOL_SOURCE: 'baked',
+            AGENT_LCARS_REPO_CHECKS_PINS: pins,
+            ...extra,
+          },
         },
       );
     for (const [name, version] of Object.entries(versions))
@@ -268,6 +281,11 @@ test('setup-repo-checks baked tools validate exact versions without installation
       invoke('actionlint', { ACTIONLINT_VERSION: '1.7.8' }).status,
       0,
     );
+    result = invoke('gitleaks', {
+      AGENT_LCARS_REPO_CHECKS_PINS: path.join(scratch, 'absent.env'),
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /baked scanner pins are missing/);
     result = invoke('gitleaks', { TOOL_SOURCE: 'automatic' });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /tool-source must be baked or install/);
