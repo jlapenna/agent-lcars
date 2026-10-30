@@ -109,6 +109,43 @@ describe('Node runtime pins', () => {
     }
   });
 
+  it('runs the console on a distroless image of the pinned major', () => {
+    // Distroless names its image by Node major and floats the patch, so
+    // Renovate moves only its digest. #3104 moved every other pin to Node 26
+    // while production kept running 24.22.1 on nodejs24-debian13.
+    const builder = read('tools/build-console-container.mjs');
+    const majors = [
+      ...builder.matchAll(
+        /gcr\.io\/distroless\/nodejs(\d+)-debian\d+@sha256:/g,
+      ),
+    ].map((match) => match[1]);
+    expect(majors).toHaveLength(1);
+    expect(majors).toEqual(base.map((version) => version.split('.')[0]));
+    const config = JSON.parse(read('renovate.json')) as {
+      customManagers: {
+        managerFilePatterns: string[];
+        matchStrings: string[];
+      }[];
+    };
+    const digests = config.customManagers
+      .filter((manager) =>
+        manager.managerFilePatterns.some((pattern) =>
+          new RegExp(pattern.slice(1, -1)).test(
+            'tools/build-console-container.mjs',
+          ),
+        ),
+      )
+      .flatMap((manager) =>
+        manager.matchStrings.flatMap((matchString) =>
+          [...builder.matchAll(new RegExp(matchString, 'g'))].map(
+            (match) => match.groups?.['currentDigest'],
+          ),
+        ),
+      );
+    expect(digests).toHaveLength(1);
+    expect(digests[0]).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
+
   it('installs NodeSource from the channel of the pinned major', () => {
     // A hard-coded node_<major>.x channel lets a major bump pass every pin
     // check and then fail apt-get install at publication.
