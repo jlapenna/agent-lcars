@@ -3,9 +3,22 @@ import { z } from 'zod';
 import { type JobDefinition, jobDigest } from './repository-job-definition';
 import type { JobArtifact } from './repository-job-store';
 
-const evidence = z.array(z.string().min(1).max(4096)).min(1).max(32);
+// A model can return a schema-shaped stub instead of what it found. A stub
+// must fail the run, not become the next run's baseline.
+const stub = /^(?:placeholder|todo|tbd|\.\.\.|…|<[^>]*>)$/iu;
+const substantive = (value: string) => !stub.test(value.trim());
+const report = z
+  .string()
+  .trim()
+  .min(1)
+  .max(65536)
+  .refine(substantive, 'Placeholder text');
+const evidence = z
+  .array(z.string().min(1).max(4096).refine(substantive, 'Placeholder text'))
+  .min(1)
+  .max(32);
 const securityResult = z.strictObject({
-  report: z.string().trim().min(1).max(65536),
+  report,
   findings: z.strictObject({
     version: z.literal(1),
     items: z
@@ -13,7 +26,11 @@ const securityResult = z.strictObject({
         z.strictObject({
           key: z.string().min(1).max(256),
           severity: z.enum(['info', 'low', 'medium', 'high', 'critical']),
-          summary: z.string().min(1).max(4096),
+          summary: z
+            .string()
+            .min(1)
+            .max(4096)
+            .refine(substantive, 'Placeholder text'),
           evidence,
           disposition: z.enum(['new', 'existing', 'resolved']),
         }),
@@ -70,7 +87,7 @@ export function validateJobResult(
   } else {
     const result = z
       .strictObject({
-        report: z.string().trim().min(1).max(65536),
+        report,
         complete: z.boolean(),
         data: z.record(z.string(), z.unknown()),
       })
