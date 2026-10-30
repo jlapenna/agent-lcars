@@ -12,7 +12,7 @@
 # example -- this ARG is kept in lockstep with that one's digest.
 ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232
 
-FROM node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS node-runtime
+FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
 FROM ${RUNNER_BASE}
 # Build-time only: one bounded worker must cover the daemon and this vertex.
 # ARG reaches RUN children without constraining jobs in the shipped image.
@@ -49,9 +49,11 @@ RUN set -eux; \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list; \
     apt-get update; \
-    apt-get install -y --no-install-recommends gh jq; \
-    # The Actions runner already carries the Node 24 runtime used to execute
-    # JavaScript actions. Expose that supported copy instead of installing a
+    # Node 25+ release binaries link against libatomic, which the runner base
+    # does not carry.
+    apt-get install -y --no-install-recommends gh jq libatomic1; \
+    # The Actions runner's node24 externals execute JavaScript actions with
+    # the node-runtime binary copied in above. Expose that copy instead of installing a
     # second 239 MB NodeSource package whose runtime dependency keeps Python
     # in an otherwise Python-free control image.
     ln -s /home/runner/externals/node24/bin/node /usr/local/bin/node; \

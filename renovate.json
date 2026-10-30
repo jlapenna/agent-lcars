@@ -20,6 +20,18 @@
     },
     {
       "customType": "regex",
+      "description": "Runner image Corepack: Node 25+ stopped bundling it, so the image installs this npm release before resolving pnpm from packageManager.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG COREPACK_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "corepack",
+      "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
       "description": "Node runtime copies outside a FROM line: the assertions that the Node binary copied out of the pinned node base image is the expected release, the runner image's NodeSource apt pin, and setup-node-pnpm's default (which must equal the runner image's baked Node for detect-baked.sh to reuse it). They must equal the node base image tag (tools/contract-tests/node-version-pins.test.ts); #3092 moved only the FROM lines and every runner-image publication failed at control-plane-verify-runtime.",
       "managerFilePatterns": [
         "/^apps\\/runner-autoscaler\\/control-plane-image\\/verify-runtime\\.sh$/",
@@ -40,7 +52,7 @@
   ],
   "packageRules": [
     {
-      "description": "@types/node must track the Node major the repo runs on (engines `<25`, CI/runner image/deploy pinned to 24.x), not the newest Node: a newer major types APIs the runtime lacks, so typecheck would pass code that fails in production. Move it together with the Node pins in a deliberate runtime upgrade (#3101 closed #3053 for this reason).",
+      "description": "@types/node must track the Node major the repo runs on (engines `<27`, CI/runner image/deploy pinned to 26.x), not the newest Node: a newer major types APIs the runtime lacks, so typecheck would pass code that fails in production. Move it together with the Node pins in a deliberate runtime upgrade (#3101 closed #3053 for this reason).",
       "enabled": false,
       "matchPackageNames": ["@types/node"],
       "matchUpdateTypes": ["major"]
