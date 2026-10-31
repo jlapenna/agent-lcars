@@ -63,7 +63,7 @@ with this exact scoped command (read-only workers must not run it):
   --secret-name AGENT_LCARS_ADMIN_STORAGE_STATE --auth-secret-name AUTH_SECRET
 ```
 
-After rotation, run `check-session` (SKILL.md step 2), qualify the local phase
+After rotation, run `check-session` (SKILL.md step 2), follow the local browser workflow
 (step 3), then prove the admin session and the intended page with the
 supported browser verifier:
 

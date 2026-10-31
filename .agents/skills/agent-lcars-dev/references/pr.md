@@ -262,8 +262,8 @@
    lag that workflow: neither an installed primary `node_modules` CLI nor its
    matching lockfile alone proves it is current. Never select the soon-to-be-removed
    checkout's own `node_modules` CLI. If no current managed installation is ready,
-   use its owning installation workflow as a separately resource-qualified phase
-   before cleanup; do not bootstrap during removal.
+   use its owning installation workflow before cleanup; do not bootstrap during
+   removal. Local CLI installation does not require k3s CI resource admission.
 
    Record the verified executable's absolute path and invoke that exact path in
    every audit and apply call; do not resolve `PATH` again during removal. Use

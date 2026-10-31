@@ -88,11 +88,11 @@ do not wait for an unrelated event to happen naturally unless the requirement
 itself demands natural or elapsed evidence. Preserve normal scheduling,
 placement, resource, and branch-protection controls.
 
-For colocated Pod/process turnover, use the canonical
-[requalification rule](../agent-lcars-dev/references/verify.md#requalify-colocated-worker-turnover).
-Fresh passing qualification preserves authorization for an unchanged planned
-phase; distinguish that turnover from replacement of the issue's own
-author/native worker and retain the rule's mandatory holds.
+Apply resource sizing and placement requirements when dispatching CI through
+k3s; see [verification scope](../agent-lcars-dev/references/verify.md#local-verification-and-k3s-ci-scope).
+Colocated Pod turnover does not impose a capacity-audit gate on local work.
+A replacement of the issue's own author or worker still requires checking
+live ownership before continuing.
 
 State precisely what a test proves. A synthetic or scaled experiment can
 support a mechanism or safety claim, but it does not replace an acceptance

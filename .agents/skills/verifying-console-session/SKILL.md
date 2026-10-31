@@ -81,15 +81,12 @@ Run every command from the repository root.
    `4`, or when no saved state exists yet, read
    [references/capture-mint-rotate.md](references/capture-mint-rotate.md).
 
-3. **Qualify the local browser phase.** Before browser capture, reuse or
-   browser-cache installation, read and apply
-   [Bounded local verification](../agent-lcars-dev/references/verify.md#bounded-local-verification)
-   at the launch decision. Keep capacity, supervisor, accounting and storage
-   requirements in that authoritative owner; this skill supplies the
-   saved-session sequence. Keep failed guard receipts distinct from later functional evidence.
-   Checking this route establishes the handoff, not future agent behavior or
-   resource enforcement. Read-only credential readiness (step 2) remains a
-   separate check.
+3. **Use the local browser workflow.** Browser verification and browser-cache
+   installation do not require k3s CI resource profiles, host-capacity audits,
+   supervisors or storage quotas. Follow
+   [Local verification and k3s CI scope](../agent-lcars-dev/references/verify.md#local-verification-and-k3s-ci-scope).
+   A check-session pass establishes authentication readiness; the steps below
+   establish browser-runtime readiness and page behavior.
 
 4. **Install the matching headless shell** for this checkout's Playwright
    package (re-run after a Playwright upgrade):
