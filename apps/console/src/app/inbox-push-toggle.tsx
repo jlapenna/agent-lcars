@@ -156,6 +156,7 @@ export function InboxPushToggle({
       <Button
         variant="subtle"
         size="compact-sm"
+        className="inbox-notifications__toggle"
         disabled={busy}
         onClick={() => void toggle()}
       >

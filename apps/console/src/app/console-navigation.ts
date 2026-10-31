@@ -8,7 +8,10 @@ export type NavKey =
   | 'work'
   | 'jobs'
   | 'sessions'
-  | 'costs';
+  | 'costs'
+  // Settings is reached from the console menu, not the rail, so it has no
+  // entry in CONSOLE_DESTINATIONS and takes the default accent.
+  | 'settings';
 export type NavAccent =
   'amber' | 'blue' | 'periwinkle' | 'teal' | 'gold' | 'violet';
 

@@ -347,19 +347,18 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   flex-direction: column;
 }
 
-/* The identity as a console-menu line (console-frame-readouts.tsx
-   MenuIdentity), shown on every width: narrow headers drop the block. */
-.console-menu-identity {
+/* The identity on the Settings page (console-frame-readouts.tsx
+   AccountIdentity), shown on every width: narrow headers drop the block. */
+.console-account-identity {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px 8px;
   font-size: 0.8125rem;
 }
 
-/* A long login or grant list wraps rather than widening the menu past a
+/* A long login or grant list wraps rather than widening the page past a
    narrow phone's edge. */
-.console-menu-identity > span:last-child {
+.console-account-identity > span:last-child {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2278,18 +2277,36 @@ td.costs-repo-spend__num {
   margin-left: auto;
 }
 
-/* Inbox notifications: the Preferences entry in the console menu
-   (inbox-notifications.tsx). The status line wraps under the toggle. */
-.queue-utility-menu__control.inbox-notifications {
+/* Inbox notifications on the Settings page (inbox-notifications.tsx). Each
+   status line wraps under its toggle. */
+.inbox-notifications {
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  max-width: 18rem;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .inbox-notifications__toggle {
   min-height: 44px;
   justify-content: flex-start;
+}
+
+/* The Inbox toolbar's delivery line for an opted-in browser
+   (InboxNotificationsWatch); it wraps instead of widening a phone toolbar. */
+.inbox-notification-status {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Settings page (settings/page.tsx): stacked panels, full-height targets. */
+.settings-panel + .settings-panel {
+  margin-top: 20px;
+}
+
+.settings-control {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
 }
 
 .lcars-command-row {

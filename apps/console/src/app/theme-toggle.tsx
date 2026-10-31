@@ -6,8 +6,8 @@ import {
   useMantineColorScheme,
 } from '@mantine/core';
 
-// A text control (not an icon) so it reads as a menu entry under the console
-// menu's Preferences, away from the header's primary actions.
+// A text control (not an icon) on the Settings page, away from the header's
+// primary actions.
 export function ThemeToggle() {
   const { setColorScheme } = useMantineColorScheme();
   const computedColorScheme = useComputedColorScheme('light', {
@@ -22,7 +22,11 @@ export function ThemeToggle() {
   };
 
   return (
-    <UnstyledButton onClick={toggleColorScheme} fz="xs" c="dimmed">
+    <UnstyledButton
+      onClick={toggleColorScheme}
+      fz="sm"
+      className="settings-control"
+    >
       {computedColorScheme === 'dark'
         ? 'Switch to light mode'
         : 'Switch to dark mode'}

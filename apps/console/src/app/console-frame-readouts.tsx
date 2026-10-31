@@ -148,14 +148,17 @@ export function ReadoutStrip() {
   );
 }
 
-/** The signed-in identity as a line of the console menu: where narrow
+/** The signed-in identity and its grants, on the Settings page: where narrow
  * headers, which drop the identity block, still say who is signed in. */
-export function MenuIdentity() {
+export function AccountIdentity() {
   const identity = useShellIdentity();
   if (!identity) return null;
   const { user } = identity;
   return (
-    <div className="console-menu-identity" data-testid="console-identity-menu">
+    <div
+      className="console-account-identity"
+      data-testid="console-identity-account"
+    >
       <span className="console-identity__avatar" aria-hidden="true">
         {user.initials}
       </span>

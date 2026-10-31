@@ -7,15 +7,17 @@ it does not send Slack, email or SMS.
 
 ## Activate and unsubscribe
 
-Open the console menu (⋮) and, under **Preferences**, select **Enable
-notifications** (accessible name "Enable Inbox notifications"), then grant the
-browser's permission prompt. The preference can be changed from any console
-page, but delivery runs only while an Inbox tab is open. No permission prompt
+Open **Settings** from the console menu (⋮), or go to `/settings`, and under
+**Inbox notifications** select **Enable notifications** (accessible name
+"Enable Inbox notifications"), then grant the browser's permission prompt.
+Delivery runs only while an Inbox tab is open; an opted-in Inbox shows the
+live delivery state in its toolbar ("Inbox notification status"), and the
+Settings page says delivery waits for an Inbox. No permission prompt
 or worker registration runs merely by visiting a page. The choice belongs to that signed-in user in that browser.
 All watched repositories participate regardless of the current Inbox filter.
 The initial decision set is a quiet baseline, not a backlog notification.
 
-Select **Disable notifications** in the same place to unsubscribe and close that user's
+Select **Disable notifications** on Settings to unsubscribe and close that user's
 current notifications. Browser site settings separately control the browser's
 permission; revoking it pauses delivery. Async activation and unsubscribe are
 fenced by account and lifecycle, so an earlier account cannot complete opt-in
@@ -84,10 +86,10 @@ phone/OS delivery or production behavior.
 
 ## Background Web Push
 
-Under Preferences, select **Enable background notifications** and grant browser
+On Settings, select **Enable background notifications** and grant browser
 permission. This disables open-tab delivery in that browser to avoid duplicate
 previews. The new subscription starts with a quiet baseline, lasts 30 days, and
-can be disabled in Preferences; re-enable after expiry to renew consent. A valid
+can be disabled on Settings; re-enable after expiry to renew consent. A valid
 signed-in admin cookie is still required when the worker wakes. Unsupported
 browsers, denied permissions, stale/unavailable sources or expired sign-in stay
 quiet; neither provider acceptance nor `showNotification` proves OS display.
