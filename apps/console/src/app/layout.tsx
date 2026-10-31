@@ -17,7 +17,7 @@ import { consoleDescription } from '../lib/deployment';
 import { loadShellIdentity } from '../lib/shell-readouts';
 import { ConsoleNavigationProvider } from './console-navigation-context';
 import { ShellIdentityProvider } from './console-shell-state';
-import { bodyFont, displayFont, monoFont } from './fonts';
+import { fontVariables } from './fonts';
 import { InboxNotificationsProvider } from './inbox-notifications';
 import { Providers } from './providers';
 
@@ -41,11 +41,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      {...mantineHtmlProps}
-      className={`${displayFont.variable} ${bodyFont.variable} ${monoFont.variable}`}
-    >
+    <html lang="en" {...mantineHtmlProps} style={fontVariables}>
       <head>
         {/* Stays outside Suspense and takes the same 'dark' fallback the
             cookie read below defaults to: this script runs before paint, so
