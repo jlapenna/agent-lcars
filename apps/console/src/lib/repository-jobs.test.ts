@@ -450,7 +450,7 @@ describe('production repository job admission', () => {
       '2027-01-04T14:00:00Z',
       '2027-03-15T14:00:00Z',
     ]) {
-      expect(jobDueAt(f.definition, new Date(date)), date).toBe(true);
+      expect(jobDueAt(f.definition, new Date(date))).toBe(true);
     }
     for (const date of [
       '2026-10-12T14:00:00Z',
@@ -459,7 +459,7 @@ describe('production repository job admission', () => {
       '2026-11-09T14:01:00Z',
       '2027-01-01T14:00:00Z',
     ]) {
-      expect(jobDueAt(f.definition, new Date(date)), date).toBe(false);
+      expect(jobDueAt(f.definition, new Date(date))).toBe(false);
     }
   });
   it('admits an interval once within the tick window and skips the intervening week', async () => {
