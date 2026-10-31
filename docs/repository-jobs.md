@@ -87,6 +87,17 @@ and arm64. Native QueueExecutor launches the same single direct-runner container
 and normal resource envelope used by the supported stack. There is no separate
 Goose image, bootstrap container or scheduler.
 
+The ordinary image also supplies Playwright at `/opt/playwright/node_modules/playwright`
+and its matching Chromium headless shell, with OS dependencies installed at image
+build time. Recipes can import that package before repository setup; installed
+repository Playwright packages use the same standard `~/.cache/ms-playwright` cache.
+If a repository resolves a different version, install its matching shell with
+`pnpm exec playwright install chromium --only-shell` inside the same allocation.
+Do not install OS packages or use a different browser executable to hide a
+version mismatch. Browser caches, processes and traces count toward the job's
+existing resource limits. Authentication and representative data remain separate
+coverage requirements; an available browser alone does not qualify an audit.
+
 The direct runner performs its existing startup heartbeat,
 periodic heartbeat, repository checkout, renewable GitHub credentials and failure
 settlement before invoking the recipe adapter. Recipes use the same `gh` wrapper,

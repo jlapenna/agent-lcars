@@ -127,6 +127,9 @@ RUN echo "cache-bust: ${CACHE_BUST}" && \
 ENV HUSKY=0 CI=true
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
+# Browser tooling follows the resolved repository dependency, not a second pin.
+# The small runtime package lets recipes measure pages before installing a repo.
+RUN node -e 'require("node:fs").writeFileSync("/playwright-package.json", JSON.stringify({private: true, dependencies: {playwright: require("@playwright/test/package.json").version}}))'
 # Build the telemetry sidecar and the three CLI entry points from one checkout.
 # session-title-cli is the full operator CLI, including session, Work and
 # integration commands. hook-cli imports the shared hook handler directly so
@@ -544,6 +547,16 @@ RUN test "$(terraform version -json | jq -r .terraform_version)" = "$TERRAFORM_V
     rm -rf /tmp/ci-providers
 
 COPY repo-checks.env /usr/local/share/agent-lcars-tooling/repo-checks.env
+# Repository performance jobs use the ordinary runner. Supply Chromium and its
+# OS libraries here: an unprivileged job cannot repair missing apt packages.
+# Keep only the headless shell and let other repository Playwright versions
+# install their matching browser into the same writable, budgeted cache.
+COPY --from=telemetry-watcher-build /playwright-package.json /opt/playwright/package.json
+RUN npm install --prefix /opt/playwright --ignore-scripts --no-audit --no-fund \
+    && /opt/playwright/node_modules/.bin/playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+COPY browser-smoke.mjs /usr/local/lib/agent-lcars/browser-smoke.mjs
+
 COPY requirements-precommit.txt /usr/local/share/agent-lcars-tooling/requirements-precommit.txt
 RUN source /usr/local/share/agent-lcars-tooling/repo-checks.env && \
     uv venv --python /usr/bin/python3 /opt/runner-python-tools && \
@@ -779,6 +792,14 @@ COPY --from=telemetry-watcher-build \
     /usr/local/lib/agent-lcars/
 
 USER runner
+
+# Use HOME's standard cache: Goose preserves HOME but deliberately sanitizes
+# arbitrary image environment variables. Runtime recipes need no override.
+RUN /opt/playwright/node_modules/.bin/playwright install chromium --only-shell
+# A real offline render/interaction gates publication on both architectures.
+# This catches missing libraries, cache permissions and browser/package drift.
+RUN --network=none timeout 120s env -i HOME="$HOME" PATH="$PATH" TMPDIR=/tmp \
+    node /usr/local/lib/agent-lcars/browser-smoke.mjs
 
 # Even --version creates /tmp/opencode. Execute the CLI only as the job user
 # so image construction does not leave a root-owned, unwritable scratch path.
