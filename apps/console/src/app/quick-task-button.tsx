@@ -2,7 +2,7 @@
 
 import { Button } from '@mantine/core';
 import dynamic from 'next/dynamic';
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 
 import type { QuickTaskSourceIdentity } from '../lib/quick-task-evidence';
 import type { WatchedRepo } from '../lib/watched-repo';
@@ -39,7 +39,7 @@ export function QuickTaskButton({
     null,
   );
   const [ready, setReady] = useState(false);
-  useEffect(() => setHydrated(true), []);
+  useLayoutEffect(() => setHydrated(true), []);
   return (
     <>
       <Button
