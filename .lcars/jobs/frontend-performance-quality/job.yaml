@@ -1,10 +1,10 @@
 version: 1
-description: Fortnightly frontend performance and quality analysis, root cause investigation, and verified fixes.
+description: Weekly frontend performance and quality analysis, root cause investigation, and verified fixes.
 triggers:
   manual: true
   schedule:
-    intervalDays: 14
-    startsAt: '2026-11-03T14:00:00Z'
+    cron: '0 14 * * 2'
+    timezone: UTC
 execution:
   recipe: ./recipe.yaml
   profile: lcars-frontend-quality

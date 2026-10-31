@@ -139,10 +139,8 @@ env:
   # reuses the renewable cross-repository checkout credential so the recipe's
   # read-only `gh issue list` on the findings repository works; a recipe input
   # cannot select it.
-  # Frontend maintenance profiles are repository-scoped (no crossRepo grant).
-  # Catalog enablement is separate from these fixed scope/resource grants.
   - variable: AGENT_LCARS_JOB_PROFILES
-    value: '[{"name":"homelab-security-audit","repositories":["jlapenna/jclaw"],"principals":["user:jlapenna","svc:production-verifier"],"crossRepo":true,"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"subnet":"192.168.68.0/24","findingsRepository":"jlapenna/homelab","mode":"report"}]},{"name":"sprinkles-frontend-quality","repositories":["supersprinklesracing/sprinkles"],"principals":["user:jlapenna","svc:production-verifier"],"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"scope":"members,onecake,primes","mode":"analyze-and-fix"}]},{"name":"lcars-frontend-quality","repositories":["jlapenna/agent-lcars"],"principals":["user:jlapenna","svc:production-verifier"],"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"scope":"console","mode":"analyze-and-fix"}]}]'
+    value: '[{"name":"homelab-security-audit","repositories":["jlapenna/jclaw"],"principals":["user:jlapenna","svc:production-verifier"],"crossRepo":true,"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"subnet":"192.168.68.0/24","findingsRepository":"jlapenna/homelab","mode":"report"}]}]'
     availability:
       - RUNTIME
 

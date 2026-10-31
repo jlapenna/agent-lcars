@@ -22,14 +22,8 @@ Deleted definitions stop new admission. Source refresh failure is an error, not
 permission to keep scheduling cached content. Existing admitted runs retain their
 immutable source, input, profile and baseline snapshot.
 
-Version 1 supports manual invocation, five-field cron with an explicit IANA
-timezone, or a fixed UTC interval (`intervalDays`, an integer from 1 to 366,
-and `startsAt`, a UTC timestamp on a minute boundary). These schedule forms
-are mutually exclusive. Intervals remain anchored to `startsAt`, including
-across month/year boundaries and daylight-saving changes; a missed or failed
-run never shifts the cadence. For example, `intervalDays: 14` starting at
-`2026-11-02T14:00:00Z` runs November 2, 16, 30 and December 14 at 14:00 UTC.
-Jobs allow one attempt, one active occurrence and overlap=skip. UTC occurrence
+Version 1 supports manual invocation and five-field cron with an explicit IANA
+timezone, one attempt, one active occurrence and overlap=skip. UTC occurrence
 identity distinguishes repeated DST minutes; nonexistent local minutes do not
 run. The existing five-minute maintenance tick admits at most the latest due
 minute in its five-minute window; older occurrences are never backfilled.
@@ -131,29 +125,6 @@ termination is established. Source implementation does not assert deployed
 qualification.
 
 ## Local acceptance
-
-### Fortnightly frontend maintenance
-
-Sprinkles and LCARS each own a `frontend-performance-quality` recipe. Sprinkles
-covers Members, OneCake and Primes; LCARS covers its Console. They run every
-14 days, anchored at November 2 and November 3, 2026 respectively, at 14:00 UTC.
-Each 45-minute run measures representative journeys, ranks performance and
-quality findings, traces root causes, makes bounded fixes through normal PR
-delivery, and records comparable before/after evidence in `report.md` and
-`result.json`. Missing coverage or pending delivery is incomplete, not success.
-
-The `sprinkles-frontend-quality` and `lcars-frontend-quality` profiles grant
-only their respective repository and fixed frontend scope, at the existing
-2 CPU / 6 GiB / 24 GiB allocation. The shared Goose image does not bundle a
-browser. Before enabling either reviewed digest, qualify the recipe's existing
-browser/telemetry access and authentication in that allocation, together with
-repository checks and result artifacts. Publishing these definitions or their
-profiles does not enable them. Qualification must not install a new unbounded
-browser service or widen a job profile. Use the Jobs refresh/enable operations
-above after the interval-capable Console has deployed; Sprinkles' event-job
-`LCARS_RECIPE_JOBS_ARMED` variable does not control this recurring job.
-
-### Lifecycle contracts
 
 Protect transactional replay and overlap, interrupted-mint recovery, current
 grant checks, immutable snapshots, exact-success baseline advancement, invalid

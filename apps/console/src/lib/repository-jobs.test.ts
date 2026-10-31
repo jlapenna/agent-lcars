@@ -429,77 +429,10 @@ describe('production repository job admission', () => {
     const f = fixture();
     expect(jobDueAt(f.definition, new Date('2026-11-01T08:00:00Z'))).toBe(true);
     expect(jobDueAt(f.definition, new Date('2026-11-01T09:00:00Z'))).toBe(true);
-    f.definition.job.triggers.schedule = {
-      cron: '0 2 * * *',
-      timezone: 'America/Los_Angeles',
-    };
+    f.definition.job.triggers.schedule!.cron = '0 2 * * *';
     expect(jobDueAt(f.definition, new Date('2026-03-08T10:00:00Z'))).toBe(
       false,
     );
-  });
-  it('keeps fortnightly intervals across month, year and DST boundaries', () => {
-    const f = fixture();
-    f.definition.job.triggers.schedule = {
-      intervalDays: 14,
-      startsAt: '2026-10-26T14:00:00Z',
-    };
-    for (const date of [
-      '2026-10-26T14:00:00Z',
-      '2026-11-09T14:00:00Z',
-      '2026-12-21T14:00:00Z',
-      '2027-01-04T14:00:00Z',
-      '2027-03-15T14:00:00Z',
-    ]) {
-      expect(jobDueAt(f.definition, new Date(date))).toBe(true);
-    }
-    for (const date of [
-      '2026-10-12T14:00:00Z',
-      '2026-11-02T14:00:00Z',
-      '2026-11-09T13:59:00Z',
-      '2026-11-09T14:01:00Z',
-      '2027-01-01T14:00:00Z',
-    ]) {
-      expect(jobDueAt(f.definition, new Date(date))).toBe(false);
-    }
-  });
-  it('admits an interval once within the tick window and skips the intervening week', async () => {
-    const f = fixture();
-    const schedule = { intervalDays: 14, startsAt: '2026-11-02T14:00:00Z' };
-    f.definition.job.triggers.schedule = schedule;
-    const catalog = f.store.jobs.get(f.id)!;
-    catalog.definition = f.definition;
-    catalog.refreshedAt = '2026-11-02T14:03:00Z';
-    f.setTime('2026-11-02T14:03:00Z');
-    expect(await f.jobs.tick()).toEqual([]);
-    expect(await f.jobs.tick()).toEqual([]);
-    expect(f.store.occurrences.size).toBe(1);
-    const occurrence = [...f.store.occurrences.values()][0]!;
-    expect(occurrence.trigger).toBe('schedule');
-    expect(occurrence.definition.job.triggers.schedule).toEqual(schedule);
-    f.setTime('2026-11-09T14:00:00Z');
-    f.store.jobs.get(f.id)!.refreshedAt = '2026-11-09T14:00:00Z';
-    expect(await f.jobs.tick()).toEqual([]);
-    expect(f.store.occurrences.size).toBe(1);
-  });
-  it.each([
-    { intervalDays: 0, startsAt: '2026-11-02T14:00:00Z' },
-    { intervalDays: 1.5, startsAt: '2026-11-02T14:00:00Z' },
-    { intervalDays: 14, startsAt: 'not-a-date' },
-    { intervalDays: 14, startsAt: '2026-11-02T14:00:01Z' },
-    {
-      intervalDays: 14,
-      startsAt: '2026-11-02T14:00:00Z',
-      cron: '0 14 * * 1',
-      timezone: 'UTC',
-    },
-  ])('rejects an invalid interval schedule: %j', (schedule) => {
-    const f = fixture();
-    expect(
-      repositoryJobSchema.safeParse({
-        ...f.definition.job,
-        triggers: { manual: true, schedule },
-      }).success,
-    ).toBe(false);
   });
   it('settles a lost recipe without creating an automatic successor', async () => {
     const f = fixture();
