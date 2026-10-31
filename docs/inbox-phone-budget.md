@@ -176,6 +176,14 @@ and browser version. They are contention diagnostics, not host-capacity proof
 or a guarantee of an uncontended run. The instrumentation itself adds observation overhead;
 compare before/after with the same probe revision.
 
+The extra profiled cold navigations, excluded from the budget, record input
+boundaries: `primaryCommitMs` (the hydration commit attaches the primary
+button), `primaryEnabledMs` (the button first renders enabled, after its
+post-hydration effect), `handlerEntryMs` and the dialog insertion. A gap
+between `primaryEnabledMs` and `handlerEntryMs` is Playwright actionability
+polling, not application work; it is part of the unchanged milestone and
+applies equally to every compared revision.
+
 The selected console E2E suite also executes `inbox-phone-lab.spec.ts` with 30
 interleaved samples per case and no retries, retaining `inbox-phone-lab.json`
 in its normal diagnostics artifact (14-day CI retention). This gives the

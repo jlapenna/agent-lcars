@@ -573,6 +573,22 @@ const installInputBoundaryDiagnostics = () => {
     if (allowed.has(name) && diagnostic.inputBoundaries[name] === undefined)
       diagnostic.inputBoundaries[name] = performance.now();
   };
+  // The primary renders disabled until its hydrated handler is attached;
+  // this separates that instant from Playwright's actionability polling.
+  const enabledObserver = new MutationObserver(() => {
+    const primary = document.querySelector(
+      '.queue-workspace__detail .queue-primary-action',
+    );
+    if (!primary || primary.disabled) return;
+    diagnostic.inputBoundaries.primaryEnabledMs = performance.now();
+    enabledObserver.disconnect();
+  });
+  enabledObserver.observe(document, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['disabled'],
+  });
   const observer = new MutationObserver(() => {
     const dialog = [...document.querySelectorAll('[role="dialog"]')].find(
       (node) =>
@@ -661,6 +677,7 @@ async function captureColdProfile(
         const marks = {};
         for (const name of [
           'primaryCommitMs',
+          'primaryEnabledMs',
           'handlerEntryMs',
           'openConfirmReturnMs',
           'dialogInsertionObservedMs',
