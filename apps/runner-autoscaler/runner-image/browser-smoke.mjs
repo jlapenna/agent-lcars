@@ -7,7 +7,9 @@ const { chromium } = createRequire('/opt/playwright/package.json')(
 );
 
 assert.notEqual(process.getuid(), 0, 'Browser proof must run as the job user');
-const browser = await chromium.launch();
+const browser = await chromium.launch(
+  process.env.LCARS_BROWSER_SMOKE_EMULATED ? { args: ['--no-zygote'] } : {},
+);
 try {
   const page = await browser.newPage();
   await page.setContent(
