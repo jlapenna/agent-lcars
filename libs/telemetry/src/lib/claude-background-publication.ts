@@ -82,7 +82,11 @@ export class ClaudeBackgroundPublications {
       exit !== '0' ||
       !Number.isFinite(completedAt) ||
       completedAt < task.startedAt ||
-      !/^\/tmp\/claude-[0-9]+\/[A-Za-z0-9_./-]+$/u.test(outputFile) ||
+      // Claude Code nests its task output under the session's TMPDIR, which
+      // need not be /tmp (laforge relocates it under ~/p).
+      !/^(?:\/[A-Za-z0-9_.-]+)*\/claude-[0-9]+\/[A-Za-z0-9_./-]+$/u.test(
+        outputFile,
+      ) ||
       outputFile
         .split('/')
         .some((segment) => segment === '.' || segment === '..') ||
