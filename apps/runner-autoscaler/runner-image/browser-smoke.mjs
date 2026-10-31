@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { chromium } from '/opt/playwright/node_modules/playwright/index.mjs';
+import { createRequire } from 'node:module';
+
+// Resolve the image-owned package, independently of a mounted repository.
+const { chromium } = createRequire('/opt/playwright/package.json')(
+  'playwright',
+);
 
 assert.notEqual(process.getuid(), 0, 'Browser proof must run as the job user');
 const browser = await chromium.launch();
