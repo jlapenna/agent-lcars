@@ -1,12 +1,11 @@
+import { STORED_PIPELINES } from '@agent-lcars/work';
 import { VisuallyHidden } from '@mantine/core';
 import type { ReactNode } from 'react';
 
-import type { AgentActivity, AgentPipeline } from '../../lib/agent-activity';
+import type { AgentActivity } from '../../lib/agent-activity';
 import type { ActivityMetrics } from '../../lib/logical-work';
 import { FleetChip, QueueHealthAlert } from '../agent-activity-panel';
 import { FleetRunnerOccupancy } from '../fleet-status';
-
-const PIPELINES: AgentPipeline[] = ['claude', 'codex', 'opencode'];
 
 /**
  * #306's capacity-vs-work distinction: the raw queued and running attempts,
@@ -57,7 +56,7 @@ export function FleetSnapshotBar({
   metrics?: ActivityMetrics;
 }) {
   const { liveRuns, fleet, queue } = activity;
-  const livePipelines = PIPELINES.map((pipeline) => ({
+  const livePipelines = STORED_PIPELINES.map((pipeline) => ({
     pipeline,
     count: liveRuns.filter((run) => run.pipeline === pipeline).length,
   })).filter(({ count }) => count > 0);

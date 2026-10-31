@@ -4,6 +4,7 @@ import type {
   SessionAgent,
   SessionSource,
 } from '@agent-lcars/telemetry';
+import type { StoredPipeline } from '@agent-lcars/work';
 import {
   Alert,
   Anchor,
@@ -16,11 +17,7 @@ import {
   Title,
 } from '@mantine/core';
 
-import type {
-  AgentActivity,
-  AgentPipeline,
-  AgentRun,
-} from '../lib/agent-activity';
+import type { AgentActivity, AgentRun } from '../lib/agent-activity';
 import {
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
@@ -183,17 +180,25 @@ function operationsRunTitle(run: AgentRun): string {
   return run.displayTitle;
 }
 
-const PIPELINE_LABELS: Record<AgentPipeline, string> = {
+const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  goose: 'goose',
+  'inbox-summary': 'inbox summary',
+  'handoff-summary': 'handoff summary',
 };
 
-const PIPELINE_COLORS: Record<AgentPipeline, string> = {
+const PIPELINE_COLORS: Record<StoredPipeline, string> = {
   claude: 'blue',
   codex: 'teal',
   // The default violet outline shade fails AA on the dark ground.
   opencode: 'var(--lcars-periwinkle)',
+  // Internal recipe and summary work is background context, not a coding
+  // provider, so it stays neutral.
+  goose: 'gray',
+  'inbox-summary': 'gray',
+  'handoff-summary': 'gray',
 };
 
 /**
@@ -203,7 +208,7 @@ const PIPELINE_COLORS: Record<AgentPipeline, string> = {
  * /agents page, which needs the same badge outside a run/session row (e.g.
  * the fleet snapshot bar's per-pipeline live counts).
  */
-export function PipelineBadge({ pipeline }: { pipeline: AgentPipeline }) {
+export function PipelineBadge({ pipeline }: { pipeline: StoredPipeline }) {
   return (
     <Badge
       variant="outline"

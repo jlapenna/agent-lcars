@@ -1,5 +1,6 @@
+import type { StoredPipeline } from '@agent-lcars/work';
+
 import {
-  type AgentPipeline,
   type AgentRun,
   duplicateLivePipelineGroups,
   type FleetSummary,
@@ -39,7 +40,7 @@ export interface LogicalWork {
   task: LogicalTaskRef;
   title: string;
   url: string;
-  selectedPipeline?: AgentPipeline;
+  selectedPipeline?: StoredPipeline;
   state: LogicalWorkState;
   /** Every authoritative Run for this task, oldest first. */
   runs: AgentRun[];

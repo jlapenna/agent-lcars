@@ -15,6 +15,7 @@ import {
   CliSessionRow,
   FinishedRunRow,
   LiveRunRow,
+  PipelineBadge,
   type RunItemRef,
   SourceBadge,
 } from './agent-activity-panel';
@@ -1010,6 +1011,19 @@ describe('AgentActivityPanel pipeline metadata', () => {
     });
 
     expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
+  });
+
+  it('names internal recipe and summary pipelines on the badge', () => {
+    render(
+      <MantineProvider>
+        <PipelineBadge pipeline="goose" />
+        <PipelineBadge pipeline="inbox-summary" />
+        <PipelineBadge pipeline="handoff-summary" />
+      </MantineProvider>,
+    );
+    expect(screen.getByText('goose')).toBeTruthy();
+    expect(screen.getByText('inbox summary')).toBeTruthy();
+    expect(screen.getByText('handoff summary')).toBeTruthy();
   });
 
   it('keeps recent opencode results equally quiet', () => {

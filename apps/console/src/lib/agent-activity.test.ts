@@ -60,6 +60,43 @@ function nativeTask(): Task {
   };
 }
 
+/** Production-shaped internal summary Work: a source key, no target. */
+function summaryTask(workId: string): Task {
+  return {
+    task: { workId },
+    runCount: 1,
+    updatedAt: T0,
+    work: {
+      spec: {
+        title: 'Inbox summary: laforge: root filesystem at 12% free',
+        description: 'd',
+        pipeline: 'inbox-summary',
+        priority: 'background',
+        sourceKey: 'jlapenna/homelab#3152',
+      },
+    },
+  };
+}
+
+/** Production-shaped repository job Work: a target and a job occurrence. */
+function recipeTask(workId: string): Task {
+  return {
+    task: { workId },
+    runCount: 1,
+    updatedAt: T0,
+    work: {
+      spec: {
+        title: 'Weekly frontend maintenance',
+        description: 'd',
+        pipeline: 'goose',
+        priority: 'background',
+        target: { repo: 'octo/jobs' },
+        jobOccurrence: 'a'.repeat(64),
+      },
+    },
+  };
+}
+
 function run(overrides: Partial<Run> = {}): Run {
   return {
     runId: 'octo/example#42/r1',
@@ -112,6 +149,89 @@ describe('agentRunFromOrchestrator', () => {
       url: '/work/01J5Z3K9QX8F0N2B4V6C8D1E3G',
       displayTitle: 'Native task',
     });
+  });
+});
+
+describe('agentRunFromOrchestrator stored Work specs', () => {
+  beforeEach(() => {
+    vi.stubEnv('AGENT_LCARS_CONTROL_PLANE_REPOSITORY', 'octo/console');
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const nativeRun = (workId: string, pipeline: string) =>
+    run({
+      runId: `work:${workId}/r1`,
+      task: { workId },
+      state: 'finished',
+      pipeline,
+      result: { ok: true },
+    });
+
+  it("projects internal summary work under the console's own repository", () => {
+    const workId = '01M69C234QKJ4A51JSNJCXM894';
+    expect(
+      agentRunFromOrchestrator(
+        nativeRun(workId, 'inbox-summary'),
+        summaryTask(workId),
+        NOW,
+      ),
+    ).toMatchObject({
+      repo: { owner: 'octo', name: 'console' },
+      url: `/work/${workId}`,
+      displayTitle: 'Inbox summary: laforge: root filesystem at 12% free',
+    });
+  });
+
+  it('projects repository job work under its declared target', () => {
+    const workId = '01M69C232SEVCS1T5P53PYDCJ3';
+    expect(
+      agentRunFromOrchestrator(
+        nativeRun(workId, 'goose'),
+        recipeTask(workId),
+        NOW,
+      ),
+    ).toMatchObject({
+      repo: { owner: 'octo', name: 'jobs' },
+      displayTitle: 'Weekly frontend maintenance',
+    });
+  });
+
+  it('still rejects a native spec that matches no stored Work shape', () => {
+    const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+    const corrupt = nativeTask();
+    delete (corrupt.work as { spec: Record<string, unknown> }).spec['target'];
+    expect(
+      agentRunFromOrchestrator(nativeRun(workId, 'opencode'), corrupt, NOW),
+    ).toBeUndefined();
+  });
+
+  it('reports no invalid-metadata warning for summary and job runs', async () => {
+    const summaryId = '01M69C234QKJ4A51JSNJCXM894';
+    const recipeId = '01M69C232SEVCS1T5P53PYDCJ3';
+    // Inside the real-clock history window, so history covers them too.
+    const updatedAt = new Date().toISOString();
+    store.listRecentRuns.mockResolvedValue([
+      { ...nativeRun(summaryId, 'inbox-summary'), updatedAt },
+      { ...nativeRun(recipeId, 'goose'), updatedAt },
+    ]);
+    store.readTask.mockImplementation(async (task: { workId: string }) => ({
+      task:
+        task.workId === summaryId
+          ? summaryTask(summaryId)
+          : recipeTask(recipeId),
+      revision: 1,
+    }));
+
+    const activity = await getAgentActivity();
+
+    expect(activity.warnings).toEqual([]);
+    expect(activity.recentRuns.map((entry) => entry.workId)).toEqual([
+      summaryId,
+      recipeId,
+    ]);
+    expect(activity.runHistory).toHaveLength(2);
   });
 });
 

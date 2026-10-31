@@ -141,7 +141,13 @@ export function InboxPushToggle({
           }));
         if (!mounted.current || !(await disableOpenTab()))
           throw new Error('Mode switch unavailable');
-        await enableInboxPush(subscription.toJSON(), principalId);
+        if (
+          (await enableInboxPush(subscription.toJSON(), principalId)) ===
+          'paused'
+        ) {
+          setStatus('Background notifications paused by an Inbox data warning');
+          return;
+        }
         setEnabled(true);
         setStatus('Background notifications on for 30 days');
       });

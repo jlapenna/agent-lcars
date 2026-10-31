@@ -86,6 +86,21 @@ describe('FleetSnapshotBar', () => {
     );
   });
 
+  it('counts internal recipe and summary runs instead of reporting none active', () => {
+    renderBar({
+      ...EMPTY_ACTIVITY,
+      liveRuns: [
+        makeAgentRun({ id: 1, pipeline: 'inbox-summary' }),
+        makeAgentRun({ id: 2, pipeline: 'goose' }),
+      ],
+    });
+
+    expect(screen.getByLabelText('Fleet snapshot')).toHaveTextContent(
+      'Live runs2goose 1 · inbox-summary 1',
+    );
+    expect(screen.queryByText('No runs active')).toBeNull();
+  });
+
   it('renders the active CLI session count', () => {
     renderBar(EMPTY_ACTIVITY, 3);
     expect(screen.getByLabelText('Fleet snapshot')).toHaveTextContent(

@@ -4,12 +4,13 @@ import {
   type Task,
   taskKey,
 } from '@agent-lcars/orchestrator';
-import { workSpecSchema } from '@agent-lcars/work';
+import { readStoredWorkSpec, type StoredPipeline } from '@agent-lcars/work';
 
 import {
   type AutoscalerStatusResult,
   getAutoscalerStatuses,
 } from './autoscaler-status';
+import { controlPlaneRepository } from './deployment';
 import { repoItemKey, type WatchedRepo } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import {
@@ -28,7 +29,6 @@ import {
 export type { AgentPipeline } from './github-client';
 import { logger } from '@agent-lcars/logging';
 
-import type { AgentPipeline } from './github-client';
 // Direct provider invocations share a two-hour runtime allowance.
 // The renewable run lease is separate from this wall-clock budget.
 export const RUN_TIMEOUT_MINUTES = 120;
@@ -59,8 +59,9 @@ export interface AgentRun {
    * item's declared target). It is presentation metadata, never runner
    * capacity or execution-state truth. */
   repo: WatchedRepo;
-  /** The pipeline selected at admission and persisted on the run. */
-  pipeline: AgentPipeline;
+  /** The pipeline selected at admission and persisted on the run: a coding
+   * pipeline, or internal recipe/summary work. */
+  pipeline: StoredPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
   url: string;
@@ -316,8 +317,8 @@ export function duplicateLiveGroups<T, K extends string = string>(
  */
 export function duplicateLivePipelineGroups<T extends AgentRun>(
   runs: T[],
-): Map<AgentPipeline, T[]> {
-  return duplicateLiveGroups<T, AgentPipeline>(runs, {
+): Map<StoredPipeline, T[]> {
+  return duplicateLiveGroups<T, StoredPipeline>(runs, {
     isLive: (run) => run.status === 'queued' || run.status === 'running',
     pipeline: (run) => run.pipeline,
   });
@@ -326,6 +327,16 @@ export function duplicateLivePipelineGroups<T extends AgentRun>(
 function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
   const [owner, name, ...rest] = targetRepo.split('/');
   return owner && name && rest.length === 0 ? { owner, name } : undefined;
+}
+
+function taskSpec(task: Task | undefined): unknown {
+  return (task?.work as Record<string, unknown> | undefined)?.['spec'];
+}
+
+/** Internal summary work names no target: it reads a source on the
+ * console's behalf, so it belongs to the console's own repository. */
+function nativeRepository(spec: { repo?: string }): WatchedRepo | undefined {
+  return repositoryFromTarget(spec.repo ?? controlPlaneRepository());
 }
 
 function publicExecutionQueue(run: OrchestratorRun): AgentRun['queue'] {
@@ -382,14 +393,12 @@ export function agentRunFromOrchestrator(
   if (!isWorkAnchor(run.task)) {
     const repo = repositoryFromTarget(run.task.repo);
     if (!repo) return undefined;
-    const spec = workSpecSchema.safeParse(
-      (task.work as Record<string, unknown> | undefined)?.['spec'],
-    );
-    const title = spec.success ? spec.data.title : `${run.pipeline} agent`;
+    const title =
+      readStoredWorkSpec(taskSpec(task))?.title ?? `${run.pipeline} agent`;
     return {
       id: run.runId,
       repo,
-      pipeline: run.pipeline as AgentPipeline,
+      pipeline: run.pipeline as StoredPipeline,
       status,
       conclusion: conclusionFor(run),
       url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
@@ -402,21 +411,18 @@ export function agentRunFromOrchestrator(
     };
   }
 
-  const spec = workSpecSchema.safeParse(
-    (task.work as Record<string, unknown> | undefined)?.['spec'],
-  );
-  if (!spec.success) return undefined;
-  const repo = repositoryFromTarget(spec.data.target.repo);
-  if (!repo) return undefined;
+  const spec = readStoredWorkSpec(taskSpec(task));
+  const repo = spec && nativeRepository(spec);
+  if (!spec || !repo) return undefined;
   return {
     id: run.runId,
     repo,
-    pipeline: run.pipeline as AgentPipeline,
+    pipeline: spec.pipeline,
     status,
     conclusion: conclusionFor(run),
     url: `/work/${run.task.workId}`,
     workId: run.task.workId,
-    displayTitle: spec.data.title,
+    displayTitle: spec.title,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     elapsedSeconds,
@@ -437,15 +443,10 @@ function historyTimelines(
     seen.add(run.runId);
     let repo: WatchedRepo | undefined;
     if (isWorkAnchor(run.task)) {
-      const spec = workSpecSchema.safeParse(
-        (
-          taskByKey.get(taskKey(run.task))?.work as
-            Record<string, unknown> | undefined
-        )?.['spec'],
+      const spec = readStoredWorkSpec(
+        taskSpec(taskByKey.get(taskKey(run.task))),
       );
-      repo = spec.success
-        ? repositoryFromTarget(spec.data.target.repo)
-        : undefined;
+      repo = spec && nativeRepository(spec);
     } else {
       repo = repositoryFromTarget(run.task.repo);
     }
