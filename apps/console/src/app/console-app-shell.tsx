@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import {
@@ -19,12 +20,14 @@ function ConsoleRail() {
   return (
     <>
       <div className="lcars-rail-head">
-        <span className="lcars-rail-brand">
-          Agent
-          <br />
-          LCARS
-        </span>
-        <RailEnvironment />
+        <Link href="/" className="lcars-rail-home" data-testid="rail-home">
+          <span className="lcars-rail-brand">
+            Agent
+            <br />
+            LCARS
+          </span>
+          <RailEnvironment />
+        </Link>
       </div>
       <RailReadouts />
     </>
