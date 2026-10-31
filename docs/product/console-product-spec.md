@@ -512,7 +512,8 @@ the work that has stopped, and the work in flight.
   allocatable (already net of reserves), and counts the requests that do not.
   An executor that predates the rows, or a fleet past 128 runners, keeps the
   per-lane totals.
-- **FE-SB-11 [Implemented]** Fleet online reads `online/total` wherever it
+- **FE-SB-11 [Implemented]** CI runners online (the rail labels it so, since
+  agent Jobs and hosts are not counted) reads `online/total` wherever it
   appears, as the mockup's `11/12`: the rail, the Bridge's Runners online
   readout and the Runner fleet panel on the Bridge and Shuttlebay. Both halves
   count ARC runner pods from the same host inventory snapshot (online is any

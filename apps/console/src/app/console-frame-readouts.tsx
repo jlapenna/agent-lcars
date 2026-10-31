@@ -43,7 +43,7 @@ function useRailFigures() {
     {
       key: 'fleet',
       modifier: 'short',
-      label: 'Fleet online',
+      label: 'CI runners online',
       value: value(
         fleet?.online === undefined
           ? undefined
@@ -114,7 +114,7 @@ export function RailReadouts() {
 
 /** Short labels so the strip fits a phone line; the rail's own read in full. */
 const STRIP_LABELS: Record<string, string> = {
-  fleet: 'fleet',
+  fleet: 'CI runners',
   queue: 'queue',
   tokens: 'tokens 24h',
   merged: 'merged 24h',
