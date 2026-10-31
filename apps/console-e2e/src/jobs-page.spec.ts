@@ -169,6 +169,64 @@ test('browse all registrations and review the exact definition before enabling a
   expect(calls.at(-1)?.body.parameters).not.toHaveProperty('target');
 });
 
+for (const width of [390, 1280]) {
+  test(`review opens the installed definition even after a source error at ${width}px`, async ({
+    page,
+  }) => {
+    const jobs = catalog();
+    jobs[0].error = 'Source refresh failed';
+    await page.route('**/api/work/v1/jobs', (route) =>
+      route.fulfill({ json: jobs }),
+    );
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto('/jobs');
+    await page
+      .getByRole('button', {
+        name: /Frontend performance quality.*jlapenna\/agent-lcars/,
+      })
+      .click();
+    const review = page.getByRole('button', {
+      name: 'Review to enable',
+      exact: true,
+    });
+    await expect(review).toBeEnabled();
+    await review.press('Enter');
+    const heading = page.getByRole('heading', {
+      name: 'Review definition and recipe',
+      exact: true,
+    });
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport({ ratio: 1 });
+    await expect(
+      page.getByText(
+        'Refresh the repository source before enabling this job.',
+        { exact: true },
+      ),
+    ).toBeVisible();
+    const confirmation = page.getByRole('checkbox', {
+      name: 'I reviewed this definition and recipe',
+    });
+    const enable = page.getByRole('button', {
+      name: 'Enable reviewed definition',
+    });
+    await expect(confirmation).toBeDisabled();
+    await expect(enable).toBeDisabled();
+
+    // A healthy refresh restores enablement, but still requires explicit review.
+    jobs[0].error = undefined;
+    await page
+      .getByRole('button', { name: 'Refresh list', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Overview', exact: true }).click();
+    await review.press('Enter');
+    await expect(heading).toBeFocused();
+    await expect(heading).toBeInViewport({ ratio: 1 });
+    await expect(enable).toBeDisabled();
+    await confirmation.check();
+    await expect(enable).toBeEnabled();
+  });
+}
+
 test('registry and selected detail fit phone, tablet and desktop in both themes', async ({
   page,
 }) => {

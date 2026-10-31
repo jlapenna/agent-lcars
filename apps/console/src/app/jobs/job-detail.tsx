@@ -40,10 +40,14 @@ export function JobDetail({
   const [reading, setReading] = useState(false);
   const [reload, setReload] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
   const definition = job.definition;
   useEffect(() => {
     if (focus) heading.current?.focus();
   }, [focus]);
+  useEffect(() => {
+    if (tab === 'definition' && !run) reviewHeading.current?.focus();
+  }, [tab, run]);
   useEffect(() => {
     let active = true;
     if (tab !== 'latest' || !job.latest) return;
@@ -253,16 +257,24 @@ export function JobDetail({
             ) : null}
           </dl>
           {!job.enabled && definition ? (
-            <Button
-              disabled={Boolean(job.error)}
-              onClick={() => setTab('definition')}
-            >
+            <Button onClick={() => setTab('definition')}>
               Review to enable
             </Button>
           ) : null}
         </div>
       ) : tab === 'definition' ? (
         <div className={styles.section}>
+          <h3 ref={reviewHeading} tabIndex={-1}>
+            Review definition and recipe
+          </h3>
+          {job.error ? (
+            <p>Refresh the repository source before enabling this job.</p>
+          ) : !job.enabled ? (
+            <p className={styles.muted}>
+              Read the definition and recipe below, then confirm your review to
+              enable this job.
+            </p>
+          ) : null}
           {definition ? (
             <>
               <dl className={styles.facts}>
