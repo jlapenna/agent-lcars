@@ -68,7 +68,32 @@ describe('QueueUtilityMenu', () => {
     expect(screen.getByText('#4980')).toBeTruthy();
     expect(screen.getByText('Edit issue')).toBeTruthy();
     expect(screen.getByText('Close issue')).toBeTruthy();
-    expect(screen.getByText(/Switch to (dark|light) mode/)).toBeTruthy();
+    expect(screen.getByText('Settings').closest('a')).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+  });
+
+  // Preferences live on /settings: the menu stays a short list of places.
+  it('links to Settings instead of carrying the preference controls', async () => {
+    render(
+      <MantineProvider>
+        <QueueUtilityMenu
+          repositoryUrl="https://github.com/supersprinklesracing/sprinkles"
+          signOutControl={<button>Sign out</button>}
+        />
+      </MantineProvider>,
+    );
+
+    await openMenu();
+
+    expect(screen.getByText('Settings').closest('a')).toHaveAttribute(
+      'href',
+      '/settings',
+    );
+    expect(screen.queryByText(/Switch to (dark|light) mode/)).toBeNull();
+    expect(screen.queryByText('Preferences')).toBeNull();
+    expect(screen.getByText('Sign out')).toBeTruthy();
   });
 
   it('omits the item section entirely when no item is passed', async () => {
@@ -86,7 +111,7 @@ describe('QueueUtilityMenu', () => {
     await openMenu();
 
     expect(screen.queryByText('Edit issue')).toBeNull();
-    expect(screen.getByText(/Switch to (dark|light) mode/)).toBeTruthy();
+    expect(screen.getByText('Settings')).toBeTruthy();
   });
 
   it('omits the item section when the item offers no actions', async () => {
@@ -105,6 +130,6 @@ describe('QueueUtilityMenu', () => {
     await openMenu();
 
     expect(screen.queryByText('#4980')).toBeNull();
-    expect(screen.getByText(/Switch to (dark|light) mode/)).toBeTruthy();
+    expect(screen.getByText('Settings')).toBeTruthy();
   });
 });

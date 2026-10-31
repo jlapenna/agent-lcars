@@ -49,6 +49,8 @@ const registration = {
 const register = vi.fn();
 const getRegistration = vi.fn();
 const storageKey = notificationStorageKey('viewer');
+const openTabStatus = () =>
+  screen.getByRole('status', { name: 'Open-tab notification status' });
 function tree(snapshot: InboxNotificationSnapshot) {
   return (
     <MantineProvider>
@@ -191,18 +193,32 @@ describe('opt-in Inbox notification delivery', () => {
     expect(
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(openTabStatus()).toHaveTextContent(
       'Notifications on — delivered while an Inbox tab is open',
     );
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(showNotification).not.toHaveBeenCalled();
   });
 
+  it('shows the live delivery state on an opted-in Inbox only', async () => {
+    const inboxStatus = () =>
+      screen.queryByRole('status', { name: 'Inbox notification status' });
+    const view = render(withWatch(true));
+    await tick();
+    expect(inboxStatus()).toBeNull();
+    await click('Enable Inbox notifications');
+    await tick();
+    expect(inboxStatus()).toHaveTextContent(openTabStatus().textContent ?? '');
+    view.rerender(withWatch(false));
+    await tick();
+    expect(inboxStatus()).toBeNull();
+  });
+
   it('fails closed on corrupt storage away from the Inbox', async () => {
     localStorage.setItem(storageKey, 'broken');
     render(withWatch(false));
     await tick();
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(openTabStatus()).toHaveTextContent(
       'Notification delivery or preferences unavailable',
     );
   });
@@ -249,7 +265,7 @@ describe('opt-in Inbox notification delivery', () => {
       </MantineProvider>
     );
     const view = render(menuOnly(false));
-    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(openTabStatus()).toHaveTextContent('Notifications off');
     await click('Enable Inbox notifications');
     view.rerender(menuOnly(true));
     await act(async () => {
@@ -260,7 +276,7 @@ describe('opt-in Inbox notification delivery', () => {
     expect(
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(openTabStatus()).toHaveTextContent(
       'Watching for new human decisions',
     );
   });
@@ -277,9 +293,7 @@ describe('opt-in Inbox notification delivery', () => {
         });
       const view = render(tree(sample()));
       await click('Enable Inbox notifications');
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'notifications paused',
-      );
+      expect(openTabStatus()).toHaveTextContent('notifications paused');
       expect(
         screen.getByRole('button', { name: 'Disable Inbox notifications' }),
       ).toBeEnabled();
@@ -294,7 +308,7 @@ describe('opt-in Inbox notification delivery', () => {
       expect(showNotification).not.toHaveBeenCalled();
       mocks.read.mockImplementation(async () => sample([first, second]));
       await tick();
-      expect(screen.getByRole('status')).toHaveTextContent(
+      expect(openTabStatus()).toHaveTextContent(
         'Watching for new human decisions',
       );
       expect(showNotification).not.toHaveBeenCalled();
@@ -379,7 +393,7 @@ describe('opt-in Inbox notification delivery', () => {
     localStorage.setItem(storageKey, 'broken');
     render(tree(sample()));
     await tick();
-    expect(screen.getByRole('status')).toHaveTextContent('unavailable');
+    expect(openTabStatus()).toHaveTextContent('unavailable');
     expect(showNotification).not.toHaveBeenCalled();
     cleanup();
     localStorage.clear();
@@ -407,7 +421,7 @@ describe('opt-in Inbox notification delivery', () => {
       JSON.parse(localStorage.getItem(storageKey) ?? '{}').pending,
     ).toEqual([]);
     await click('Disable Inbox notifications');
-    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(openTabStatus()).toHaveTextContent('Notifications off');
   });
   it('discovers new decisions without an RSC rerender or manual refresh', async () => {
     render(tree(sample()));
@@ -447,9 +461,7 @@ describe('opt-in Inbox notification delivery', () => {
     await tick();
     expect(mocks.read).not.toHaveBeenCalled();
     expect(requestPermission).toHaveBeenCalledOnce();
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'check browser permission',
-    );
+    expect(openTabStatus()).toHaveTextContent('check browser permission');
     await click('Disable Inbox notifications');
     vi.stubGlobal('Notification', { permission: 'granted', requestPermission });
     await tick();
@@ -620,7 +632,7 @@ describe('opt-in Inbox notification delivery', () => {
     expect(
       screen.getByRole('button', { name: 'Enable Inbox notifications' }),
     ).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(openTabStatus()).toHaveTextContent('Notifications off');
     expect(
       localStorage.getItem(notificationStorageKey('other-viewer')),
     ).toBeNull();
@@ -670,7 +682,7 @@ describe('opt-in Inbox notification delivery', () => {
       expect(
         screen.getByRole('button', { name: 'Enable Inbox notifications' }),
       ).toBeEnabled();
-      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(openTabStatus()).toHaveTextContent('Notifications off');
       expect(localStorage.getItem(storageKey)).toBeNull();
       expect(
         localStorage.getItem(notificationStorageKey('other-viewer')),
@@ -711,7 +723,7 @@ describe('opt-in Inbox notification delivery', () => {
     await act(async () => {
       release?.(undefined);
     });
-    expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+    expect(openTabStatus()).toHaveTextContent('Notifications off');
     expect(
       screen.getByRole('button', { name: 'Enable Inbox notifications' }),
     ).toBeEnabled();
@@ -740,7 +752,7 @@ describe('opt-in Inbox notification delivery', () => {
     await act(async () => {
       view.rerender(tree(sample([first], 'other-viewer')));
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(openTabStatus()).toHaveTextContent(
       'Watching for new human decisions',
     );
     expect(
@@ -749,7 +761,7 @@ describe('opt-in Inbox notification delivery', () => {
     await act(async () => {
       release?.(sample());
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
+    expect(openTabStatus()).toHaveTextContent(
       'Watching for new human decisions',
     );
     expect(showNotification).not.toHaveBeenCalled();
@@ -782,7 +794,7 @@ describe('opt-in Inbox notification delivery', () => {
       expect(registration.getNotifications).toHaveBeenCalledTimes(
         stage === 'worker lookup' ? 0 : 1,
       );
-      expect(screen.getByRole('status')).toHaveTextContent('Notifications off');
+      expect(openTabStatus()).toHaveTextContent('Notifications off');
       expect(
         screen.getByRole('button', { name: 'Enable Inbox notifications' }),
       ).toBeEnabled();
@@ -844,9 +856,7 @@ describe('opt-in Inbox notification delivery', () => {
     expect(
       parseNotificationState(localStorage.getItem(storageKey)).lastSentAt,
     ).toBe(0);
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'notifications paused',
-    );
+    expect(openTabStatus()).toHaveTextContent('notifications paused');
   });
   it('preserves pending history when a snapshot expires while acquiring the observation lock', async () => {
     const sampledAt = now - 59_000;
@@ -879,9 +889,7 @@ describe('opt-in Inbox notification delivery', () => {
     );
     expect(getRegistration).not.toHaveBeenCalled();
     expect(showNotification).not.toHaveBeenCalled();
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'notifications paused',
-    );
+    expect(openTabStatus()).toHaveTextContent('notifications paused');
 
     // A valid observation establishes the quiet baseline; later arrivals
     // still deliver using the preserved rate accounting.
@@ -916,9 +924,7 @@ describe('opt-in Inbox notification delivery', () => {
       active: null,
       pending: [],
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'notifications paused',
-    );
+    expect(openTabStatus()).toHaveTextContent('notifications paused');
     expect(
       screen.getByRole('button', { name: 'Disable Inbox notifications' }),
     ).toBeEnabled();
@@ -944,8 +950,6 @@ describe('opt-in Inbox notification delivery', () => {
       active: null,
       pending: [],
     });
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'notifications paused',
-    );
+    expect(openTabStatus()).toHaveTextContent('notifications paused');
   });
 });

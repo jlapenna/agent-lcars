@@ -9,24 +9,25 @@ import {
 useE2eAdminBeforeEach();
 usePopulatedFixtures();
 
-/** The opt-in lives under Preferences in the console menu; delivery runs
- * while the Inbox page is open. */
-async function openPreferences(page: Page) {
-  // Open the menu once the Inbox's delivery watch is live (hydrated, not just
-  // streamed); the menu-before-Inbox race is pinned by the unit tests.
-  // A streamed handoff can briefly hold two copies of the marker.
+/** The opt-in lives on Settings; delivery runs while an Inbox page is open,
+ * and an opted-in Inbox shows the live delivery state in its toolbar. */
+async function openSettings(page: Page) {
+  await page.goto('/settings');
+  const control = page.getByTestId('inbox-notifications');
+  await expect(control).toBeVisible();
+  return control;
+}
+
+async function openInbox(page: Page) {
+  await page.goto('/inbox');
+  // Wait for the hydrated delivery watch, not just streamed HTML. A streamed
+  // handoff can briefly hold two copies of the marker.
   await expect(
     page
       .locator('[data-testid="inbox-notifications-watch"][data-active]')
       .first(),
   ).toBeAttached();
-  await page
-    .locator('button[aria-label="More console options"]:visible')
-    .first()
-    .click();
-  const control = page.getByTestId('inbox-notifications');
-  await expect(control).toBeVisible();
-  return control;
+  return page.getByRole('status', { name: 'Inbox notification status' });
 }
 
 async function installNotificationStub(page: Page) {
@@ -121,35 +122,36 @@ for (const width of [390, 768, 1280]) {
   }) => {
     await page.setViewportSize({ width, height: 844 });
     await installNotificationStub(page);
-    await page.goto('/inbox');
-    let control = await openPreferences(page);
+    let control = await openSettings(page);
     const counters = () => notificationCounters(page);
     expect(await counters()).toEqual({
       permission: 0,
       registered: 0,
       delivered: 0,
     });
-    // A temporary read outage must not undo the user's browser opt-in.
-    await page.route('**/api/inbox-notifications', (route) =>
-      route.fulfill({ status: 503, body: '{}' }),
-    );
+    // Settings never delivers: it says delivery waits for an Inbox.
     await control
       .getByRole('button', { name: 'Enable Inbox notifications' })
       .click();
     await expect(
       control.getByRole('status', { name: 'Open-tab notification status' }),
-    ).toHaveText('Authorization or data unavailable — notifications paused');
+    ).toHaveText('Notifications on — delivered while an Inbox tab is open');
     expect(await counters()).toEqual({
       permission: 1,
       registered: 1,
       delivered: 0,
     });
+    // A temporary read outage must not undo the user's browser opt-in.
+    await page.route('**/api/inbox-notifications', (route) =>
+      route.fulfill({ status: 503, body: '{}' }),
+    );
+    let status = await openInbox(page);
+    await expect(status).toHaveText(
+      'Notification delivery or preferences unavailable',
+    );
     await page.unroute('**/api/inbox-notifications');
-    await page.reload();
-    control = await openPreferences(page);
-    await expect(
-      control.getByRole('status', { name: 'Open-tab notification status' }),
-    ).toHaveText('Watching for new human decisions');
+    status = await openInbox(page);
+    await expect(status).toHaveText('Watching for new human decisions');
     // Consent survives a new document without asking permission again or
     // registering the worker again, and recovery never replays the backlog.
     expect(await counters()).toEqual({
@@ -157,6 +159,12 @@ for (const width of [390, 768, 1280]) {
       registered: 0,
       delivered: 0,
     });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    control = await openSettings(page);
     const button = control.getByRole('button', {
       name: 'Disable Inbox notifications',
     });
@@ -174,6 +182,8 @@ for (const width of [390, 768, 1280]) {
     await expect(
       control.getByRole('button', { name: 'Enable Inbox notifications' }),
     ).toBeVisible();
+    status = await openInbox(page);
+    await expect(status).toHaveCount(0);
     // APIRequestContext does not traverse the browser's page.route admin
     // adapter. Keep the anonymous gate visible, then authenticate the asset
     // read explicitly instead of accepting a followed login redirect.
@@ -213,18 +223,21 @@ test('discovers new and reopened decisions while Inbox RSC refreshes are blocked
   // or changing the application interval, clock or one-minute delivery limit.
   test.setTimeout(150_000);
   await installNotificationStub(page);
-  await page.goto('/inbox');
-  const control = await openPreferences(page);
-  await holdRscRefreshes(page);
+  const control = await openSettings(page);
   await control
     .getByRole('button', { name: 'Enable Inbox notifications' })
     .click();
   await expect(
-    control.getByRole('status', { name: 'Open-tab notification status' }),
-  ).toHaveText('Watching for new human decisions');
+    control.getByRole('button', { name: 'Disable Inbox notifications' }),
+  ).toBeVisible();
+  const status = await openInbox(page);
+  await holdRscRefreshes(page);
+  await expect(status).toHaveText('Watching for new human decisions');
+  // Consent from Settings carries into the Inbox document without another
+  // permission prompt or worker registration.
   expect(await notificationCounters(page)).toEqual({
-    permission: 1,
-    registered: 1,
+    permission: 0,
+    registered: 0,
     delivered: 0,
   });
 
@@ -276,9 +289,7 @@ test('discovers new and reopened decisions while Inbox RSC refreshes are blocked
     (await request.post('/api/e2e/seed', { data: { action: 'reset' } })).ok(),
   ).toBe(true);
   await absent;
-  await expect(
-    control.getByRole('status', { name: 'Open-tab notification status' }),
-  ).toHaveText('Watching for new human decisions');
+  await expect(status).toHaveText('Watching for new human decisions');
   expect((await notificationCounters(page)).delivered).toBe(1);
 
   const reopened = nextSnapshot(true);

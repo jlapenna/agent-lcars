@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -443,8 +444,8 @@ const InboxNotificationsContext = createContext<{
 
 /**
  * Owns Inbox notification delivery for the signed-in maintainer. It sits at
- * the root so the preference can be changed from the console menu on any
- * page, while delivery itself stays scoped to an open Inbox tab: the Inbox
+ * the root so the preference set on the Settings page carries into the
+ * Inbox, while delivery itself stays scoped to an open Inbox tab: the Inbox
  * mounts `InboxNotificationsWatch`, and only then does the observer run.
  */
 export function InboxNotificationsProvider({
@@ -471,9 +472,12 @@ export function InboxNotificationsProvider({
   );
 }
 
-/** Marks this page as an open Inbox, which is when notifications deliver. */
+/** Marks this page as an open Inbox, which is when notifications deliver,
+ * and shows the opted-in browser what delivery is doing here: the controls
+ * live on the Settings page, which never delivers. */
 export function InboxNotificationsWatch() {
-  const watch = useContext(InboxNotificationsContext)?.watch;
+  const context = useContext(InboxNotificationsContext);
+  const watch = context?.watch;
   const [active, setActive] = useState(false);
   useEffect(() => {
     if (!watch) return;
@@ -487,33 +491,46 @@ export function InboxNotificationsWatch() {
   // A hidden marker, so a browser test can wait for the hydrated watch
   // rather than for streamed HTML that is visible before it is live.
   return (
-    <span
-      hidden
-      data-testid="inbox-notifications-watch"
-      data-active={active ? '' : undefined}
-    />
+    <>
+      <span
+        hidden
+        data-testid="inbox-notifications-watch"
+        data-active={active ? '' : undefined}
+      />
+      {active && context?.controller.enabled ? (
+        <Text
+          size="xs"
+          c="dimmed"
+          role="status"
+          aria-label="Inbox notification status"
+          className="inbox-notification-status"
+        >
+          {context.controller.status}
+        </Text>
+      ) : null}
+    </>
   );
 }
 
 const SCOPE =
   'This browser, all repositories. Keep an Inbox tab open. Previews contain no decision details. Use background notifications for closed-tab delivery.';
 
-/** The opt-in control, shown under Preferences in the console menu. */
+/** The opt-in controls, shown on the Settings page. */
 export function InboxNotificationsToggle() {
   const context = useContext(InboxNotificationsContext);
+  // Enabled only once hydrated, so a click on streamed HTML is not lost.
+  const [hydrated, setHydrated] = useState(false);
+  useLayoutEffect(() => setHydrated(true), []);
   const controller = context?.controller;
   if (!context || !controller) return null;
   const { enabled, busy, status, enable, disable } = controller;
   return (
-    <div
-      className="queue-utility-menu__control inbox-notifications"
-      data-testid="inbox-notifications"
-    >
+    <div className="inbox-notifications" data-testid="inbox-notifications">
       <Button
         variant="subtle"
         size="compact-sm"
         className="inbox-notifications__toggle"
-        disabled={busy}
+        disabled={busy || !hydrated}
         aria-label={
           enabled ? 'Disable Inbox notifications' : 'Enable Inbox notifications'
         }

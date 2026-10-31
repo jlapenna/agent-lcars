@@ -123,11 +123,16 @@ test.describe('/sessions workspace @smoke', () => {
   }) => {
     await page.goto(`/sessions/${E2E_ISSUE_AGENT_SESSION_ID}`);
 
-    // The theme action lives under Preferences in the console menu, the same
-    // place on every route.
+    // The theme action lives on Settings, reached from the console menu on
+    // every route.
     await page.getByRole('button', { name: 'More console options' }).click();
     await page
       .getByRole('menu')
+      .getByRole('menuitem', { name: 'Settings' })
+      .click();
+    await expect(page).toHaveURL(/\/settings$/);
+    const settings = page.getByRole('region', { name: 'Settings' });
+    await settings
       .getByRole('button', { name: 'Switch to light mode' })
       .click();
     await expect(page.locator('html')).toHaveAttribute(
@@ -136,11 +141,8 @@ test.describe('/sessions workspace @smoke', () => {
     );
 
     await page.reload();
-    await page.getByRole('button', { name: 'More console options' }).click();
     await expect(
-      page
-        .getByRole('menu')
-        .getByRole('button', { name: 'Switch to dark mode' }),
+      settings.getByRole('button', { name: 'Switch to dark mode' }),
     ).toBeVisible();
   });
 
@@ -199,6 +201,9 @@ test.describe('/sessions workspace @smoke', () => {
       'href',
       '/costs?days=30&source=issue-agent&issue=9005',
     );
+    await expect(
+      menu.getByRole('menuitem', { name: 'Settings' }),
+    ).toHaveAttribute('href', '/settings');
     await expect(menu.getByRole('button', { name: 'Sign out' })).toBeVisible();
     const menuItems = menu.getByRole('menuitem');
     const undersizedMenuItems = await menuItems.evaluateAll((elements) =>

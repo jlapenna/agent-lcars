@@ -6,12 +6,9 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 import type { ActionItem } from '../lib/action-items';
-import { MenuIdentity } from './console-frame-readouts';
 import { consoleDestinations, type NavKey } from './console-navigation';
 import { useConsoleNavigationKeys } from './console-navigation-context';
-import { InboxNotificationsToggle } from './inbox-notifications';
 import { useItemOverflowMenu } from './item-overflow-menu';
-import { ThemeToggle } from './theme-toggle';
 
 export function QueueUtilityMenu({
   signOutControl,
@@ -70,14 +67,9 @@ export function QueueUtilityMenu({
             <Menu.Divider />
           </>
         )}
-        <Menu.Label>Preferences</Menu.Label>
-        <div className="queue-utility-menu__control">
-          <ThemeToggle />
-        </div>
-        <InboxNotificationsToggle />
-        <Menu.Divider />
-        <Menu.Label>Console</Menu.Label>
-        <MenuIdentity />
+        <Menu.Item component={Link} href="/settings">
+          Settings
+        </Menu.Item>
         <div className="queue-utility-menu__control">{signOutControl}</div>
         <Anchor
           href={repositoryUrl}

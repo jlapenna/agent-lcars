@@ -75,6 +75,12 @@ const AUTHENTICATED_VIEWS = [
   },
   { name: 'Costs', path: '/costs', current: 'costs', overflowMenu: true },
   {
+    name: 'Settings',
+    path: '/settings',
+    current: 'settings',
+    overflowMenu: true,
+  },
+  {
     name: 'task detail',
     path: `/task/supersprinklesracing/sprinkles/${E2E_ITEM_NUMBERS.humanNeeded}`,
     current: 'deck',

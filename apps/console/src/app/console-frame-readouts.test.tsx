@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ShellReadouts } from '../lib/shell-readouts';
 import {
+  AccountIdentity,
   ConsoleIdentity,
   ConsoleLiveStatus,
-  MenuIdentity,
   RailEnvironment,
   RailReadouts,
   ReadoutStrip,
@@ -223,14 +223,14 @@ describe('console frame readouts', () => {
     );
   });
 
-  it('names the signed-in identity in the console menu', async () => {
+  it('names the signed-in identity on the Settings page', async () => {
     respond(admin);
-    render(<MenuIdentity />);
+    render(<AccountIdentity />);
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    const identity = screen.getByTestId('console-identity-menu');
+    const identity = screen.getByTestId('console-identity-account');
     expect(identity).toHaveTextContent('JL');
     expect(identity).toHaveTextContent('jlapenna admin · work.operator');
   });
@@ -278,12 +278,12 @@ describe('the frame at first paint', () => {
       <ShellIdentityProvider identity={admin}>
         <RailEnvironment />
         <ConsoleIdentity />
-        <MenuIdentity />
+        <AccountIdentity />
       </ShellIdentityProvider>,
     );
     expect(html).toContain('lcars.example.test');
     expect(html).toContain('data-testid="console-identity"');
-    expect(html).toContain('data-testid="console-identity-menu"');
+    expect(html).toContain('data-testid="console-identity-account"');
     expect(html).toContain('admin · work.operator');
   });
 
