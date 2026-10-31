@@ -30,30 +30,42 @@ export const repositoryJobSchema = z.strictObject({
   triggers: z.strictObject({
     manual: z.boolean(),
     schedule: z
-      .strictObject({
-        cron: z
-          .string()
-          .max(64)
-          .refine((value) => {
-            try {
-              parseCron(value);
-              return true;
-            } catch {
-              return false;
-            }
-          }),
-        timezone: z
-          .string()
-          .max(128)
-          .refine((value) => {
-            try {
-              new Intl.DateTimeFormat('en-US', { timeZone: value });
-              return true;
-            } catch {
-              return false;
-            }
-          }),
-      })
+      .union([
+        z.strictObject({
+          cron: z
+            .string()
+            .max(64)
+            .refine((value) => {
+              try {
+                parseCron(value);
+                return true;
+              } catch {
+                return false;
+              }
+            }),
+          timezone: z
+            .string()
+            .max(128)
+            .refine((value) => {
+              try {
+                new Intl.DateTimeFormat('en-US', { timeZone: value });
+                return true;
+              } catch {
+                return false;
+              }
+            }),
+        }),
+        z.strictObject({
+          intervalDays: z.number().int().min(1).max(366),
+          startsAt: z
+            .string()
+            .datetime()
+            .refine(
+              (value) => Date.parse(value) % 60000 === 0,
+              'Interval schedules must start on a UTC minute boundary',
+            ),
+        }),
+      ])
       .optional(),
   }),
   execution: z.strictObject({
@@ -231,6 +243,11 @@ export function authorizeJob(
 export function jobDueAt(definition: JobDefinition, at: Date): boolean {
   const schedule = definition.job.triggers.schedule;
   if (!schedule) return false;
+  if ('intervalDays' in schedule) {
+    const minute = Math.floor(at.getTime() / 60000) * 60000;
+    const elapsed = minute - Date.parse(schedule.startsAt);
+    return elapsed >= 0 && elapsed % (schedule.intervalDays * 86400000) === 0;
+  }
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-US', {
       timeZone: schedule.timezone,

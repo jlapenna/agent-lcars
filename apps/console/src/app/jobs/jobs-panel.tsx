@@ -86,7 +86,9 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
           <p>
             {job.enabled ? 'Enabled' : 'Disabled'} ·{' '}
             {job.definition?.job.triggers.schedule
-              ? `${job.definition.job.triggers.schedule.cron} (${job.definition.job.triggers.schedule.timezone})`
+              ? 'intervalDays' in job.definition.job.triggers.schedule
+                ? `Every ${job.definition.job.triggers.schedule.intervalDays} days from ${job.definition.job.triggers.schedule.startsAt} (UTC)`
+                : `${job.definition.job.triggers.schedule.cron} (${job.definition.job.triggers.schedule.timezone})`
               : 'Manual only'}
           </p>
           {job.definition ? (
