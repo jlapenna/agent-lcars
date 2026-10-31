@@ -1,202 +1,341 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { Button, TextInput } from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
 
 import type { CatalogJob, JobOccurrence } from '@/lib/repository-job-store';
 
-async function api(path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(
-    `/api/work/v1/jobs${path}`,
-    body === undefined
-      ? { cache: 'no-store' }
-      : {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-  );
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? 'Job operation failed');
-  return result;
-}
+import { ConsoleWorkspace } from '../console-workspace';
+import { StateMark } from '../ops-primitives';
+import { JobDetail } from './job-detail';
+import { jobsApi, jobSchedule, jobTitle } from './job-presentation';
+import styles from './jobs.module.css';
+
 export function JobsPanel({ repositories }: { repositories: string[] }) {
-  const [jobs, setJobs] = useState<CatalogJob[]>([]);
+  const [jobs, setJobs] = useState<CatalogJob[]>();
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('all');
+  const [selected, setSelected] = useState<string>();
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [sources, setSources] = useState(false);
   const [repository, setRepository] = useState(repositories[0] ?? '');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const lock = useRef(false);
+  const readVersion = useRef(0);
+  const listTitle = useRef<HTMLHeadingElement>(null);
   const [parameters, setParameters] = useState<
     Record<string, Record<string, string>>
   >({});
-  const [occurrence, setOccurrence] = useState<JobOccurrence>();
-  const load = async () => setJobs((await api('')) as CatalogJob[]);
+  const [occurrences, setOccurrences] = useState<Record<string, JobOccurrence>>(
+    {},
+  );
+
   useEffect(() => {
     let active = true;
-    void api('')
+    const version = ++readVersion.current;
+    void jobsApi<CatalogJob[]>('')
       .then((value) => {
-        if (active) setJobs(value as CatalogJob[]);
+        if (active && version === readVersion.current) setJobs(value);
       })
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (active && version === readVersion.current) setError(reason.message);
       });
     return () => {
       active = false;
     };
   }, []);
-  async function act(operation: () => Promise<unknown>) {
+
+  async function act(operation?: () => Promise<unknown>, success = '') {
+    if (lock.current) return;
+    lock.current = true;
+    readVersion.current += 1;
     setBusy(true);
     setError('');
+    setNotice('');
     try {
-      await operation();
-      await load();
+      await operation?.();
+      setNotice(success);
+      setJobs(await jobsApi<CatalogJob[]>(''));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Operation failed');
     } finally {
       setBusy(false);
+      lock.current = false;
     }
   }
+  const catalog = jobs ?? [];
+  const matches = catalog.filter(
+    (job) =>
+      `${job.name} ${jobTitle(job.name)} ${job.repository}`
+        .toLowerCase()
+        .includes(query.toLowerCase()) &&
+      (filter === 'all' ||
+        (filter === 'enabled' && job.enabled) ||
+        (filter === 'disabled' && !job.enabled) ||
+        (filter === 'issues' && Boolean(job.error))),
+  );
+  const job = matches.find((entry) => entry.id === selected) ?? matches[0];
+  const issues = catalog.filter((entry) => entry.error).length;
+  function back() {
+    setDetailOpen(false);
+    requestAnimationFrame(() => listTitle.current?.focus());
+  }
   return (
-    <section aria-busy={busy}>
-      <p>
-        All registered jobs are listed below, including disabled jobs. Install
-        definitions from a repository, then enable the reviewed definition.
-      </p>
-      <label>
-        Repository{' '}
-        <select
-          value={repository}
-          onChange={(event) => setRepository(event.target.value)}
-        >
-          {repositories.map((repo) => (
-            <option key={repo}>{repo}</option>
-          ))}
-        </select>
-      </label>
-      <button
-        disabled={busy || !repository}
-        onClick={() => void act(() => api('/refresh', { repository }))}
-      >
-        Install / refresh jobs
-      </button>
-      {error ? <p role="alert">{error}</p> : null}
-      {jobs.length === 0 ? (
-        <p>
-          No jobs registered. Select a repository to install its definitions.
-        </p>
-      ) : null}
-      {jobs.map((job) => (
-        <article key={job.id} className="console-workspace__section">
-          <h2>
-            {job.repository} / {job.name}
-          </h2>
-          <p>{job.error ?? job.definition?.job.description}</p>
-          <p>
-            {job.enabled ? 'Enabled' : 'Disabled'} ·{' '}
-            {job.definition?.job.triggers.schedule
-              ? `${job.definition.job.triggers.schedule.cron} (${job.definition.job.triggers.schedule.timezone})`
-              : 'Manual only'}
-          </p>
-          {job.definition ? (
-            <details>
-              <summary>Review definition</summary>
-              <p>Commit {job.definition.revision}</p>
-              <pre>{JSON.stringify(job.definition.job, null, 2)}</pre>
-              <pre>{job.definition.recipeText}</pre>
-            </details>
-          ) : null}
-          <button
-            disabled={
-              busy || (!job.enabled && (!job.definition || Boolean(job.error)))
-            }
-            onClick={() =>
-              void act(() =>
-                api(`/${job.id}/enable`, {
-                  digest: job.definition?.digest ?? '',
-                  enabled: !job.enabled,
-                }),
-              )
-            }
-          >
-            {job.enabled ? 'Disable' : 'Enable reviewed definition'}
-          </button>
-          {job.definition?.parameters.map((parameter) => (
-            <label key={parameter.key}>
-              {parameter.description}
-              <input
-                aria-label={parameter.key}
-                maxLength={2048}
-                required={
-                  parameter.requirement === 'required' &&
-                  parameter.default === undefined
-                }
-                value={
-                  parameters[job.id]?.[parameter.key] ?? parameter.default ?? ''
-                }
-                onChange={(event) =>
-                  setParameters((current) => ({
-                    ...current,
-                    [job.id]: {
-                      ...current[job.id],
-                      [parameter.key]: event.target.value,
-                    },
-                  }))
-                }
-              />
+    <ConsoleWorkspace
+      ariaLabel="Repository jobs"
+      className="jobs-workspace"
+      warnings={false}
+      toolbar={
+        <div className={styles.toolbar}>
+          <div className="console-toolbar__filters">
+            <TextInput
+              type="search"
+              aria-label="Search jobs"
+              placeholder="Find a job or repository"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.currentTarget.value);
+                setDetailOpen(false);
+              }}
+              className={styles.search}
+            />
+            <label className="console-toolbar__field console-toolbar__toggle">
+              <input className="console-toolbar__fold" type="checkbox" />
+              Filters
             </label>
-          ))}
-          <button
-            disabled={
-              busy || !job.enabled || !job.definition?.job.triggers.manual
-            }
-            onClick={() =>
-              void act(async () => {
-                setOccurrence(
-                  (await api(`/${job.id}/invoke`, {
-                    digest: job.definition?.digest,
-                    requestId: crypto.randomUUID(),
-                    parameters: parameters[job.id] ?? {},
-                  })) as JobOccurrence,
-                );
-              })
-            }
-          >
-            Run now
-          </button>
-          {job.latest ? (
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act(async () => {
-                  setOccurrence(
-                    (await api(`/occurrences/${job.latest}`)) as JobOccurrence,
-                  );
-                })
-              }
+            <select
+              className={`console-toolbar__field console-toolbar__select ${styles.filter}`}
+              aria-label="Job state"
+              value={filter}
+              onChange={(event) => {
+                setFilter(event.target.value);
+                setDetailOpen(false);
+              }}
             >
-              Latest occurrence
-            </button>
-          ) : null}
-        </article>
-      ))}
-      {occurrence ? (
-        <section>
-          <h2>Occurrence</h2>
-          <p>
-            {occurrence.skipped ? (
-              'Skipped: another occurrence is active'
-            ) : (
-              <Link href={`/work/${occurrence.workId}`}>
-                Open Work for status and cancellation
-              </Link>
-            )}
+              <option value="all">All jobs</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+              <option value="issues">Source issues</option>
+            </select>
+          </div>
+          <Button variant="light" disabled={busy} onClick={() => void act()}>
+            Refresh list
+          </Button>
+          <Button
+            onClick={() => setSources(!sources)}
+            aria-expanded={sources}
+            aria-controls="job-sources"
+          >
+            {sources ? 'Close sources' : 'Repository sources'}
+          </Button>
+        </div>
+      }
+    >
+      <div
+        className={styles.body}
+        aria-busy={busy || (jobs === undefined && !error)}
+      >
+        {error ? (
+          <div className={styles.notice} role="alert">
+            <strong>Jobs could not be updated</strong>
+            <p>{error}</p>
+            <Button variant="light" disabled={busy} onClick={() => void act()}>
+              Retry list
+            </Button>
+          </div>
+        ) : null}
+        {notice ? (
+          <p className={styles.notice} role="status">
+            {notice}
           </p>
-          {occurrence.artifact ? (
-            <pre>{JSON.stringify(occurrence.artifact.artifacts, null, 2)}</pre>
-          ) : (
-            <p>No validated artifacts yet.</p>
-          )}
-        </section>
-      ) : null}
-    </section>
+        ) : null}
+        {sources ? (
+          <section
+            className={styles.sources}
+            id="job-sources"
+            aria-label="Repository sources"
+          >
+            <h2>Repository sources</h2>
+            <p className={styles.muted}>
+              Install or refresh job definitions from a repository. Changed
+              definitions must be reviewed before enabling.
+            </p>
+            <form
+              className={styles.sourceForm}
+              onSubmit={(event) => {
+                event.preventDefault();
+                void act(
+                  () => jobsApi('/refresh', { repository }),
+                  `Definitions refreshed from ${repository}.`,
+                );
+              }}
+            >
+              <label>
+                Repository
+                <select
+                  value={repository}
+                  onChange={(event) => setRepository(event.target.value)}
+                  disabled={busy}
+                >
+                  {repositories.map((repo) => (
+                    <option key={repo}>{repo}</option>
+                  ))}
+                </select>
+              </label>
+              <Button type="submit" loading={busy} disabled={!repository}>
+                Install / refresh jobs
+              </Button>
+            </form>
+            {!repositories.length ? (
+              <p>No repositories are available for installation.</p>
+            ) : null}
+          </section>
+        ) : null}
+        {jobs === undefined ? (
+          !error ? (
+            <div className={styles.empty} role="status">
+              <h2>Loading registered jobs</h2>
+              <p>Reading the registry, including disabled jobs.</p>
+            </div>
+          ) : null
+        ) : (
+          <>
+            <div className={styles.summary}>
+              <strong>{catalog.length} registered</strong>
+              <span>
+                {catalog.filter((entry) => entry.enabled).length} enabled
+              </span>
+              <span>
+                {catalog.filter((entry) => !entry.enabled).length} disabled
+              </span>
+              {issues ? (
+                <StateMark tone="warn">
+                  {issues} source {issues === 1 ? 'issue' : 'issues'}
+                </StateMark>
+              ) : null}
+            </div>
+            {!catalog.length ? (
+              <div className={styles.empty}>
+                <h2>No jobs registered</h2>
+                <p>
+                  Install repository definitions, then review and enable each
+                  job.
+                </p>
+                <Button onClick={() => setSources(true)}>
+                  Install repository jobs
+                </Button>
+              </div>
+            ) : (
+              <div
+                className={styles.grid}
+                data-detail={detailOpen && Boolean(job)}
+              >
+                <section
+                  className={styles.registry}
+                  aria-labelledby="job-list-title"
+                >
+                  <div className={styles.listHeading}>
+                    <h2 id="job-list-title" ref={listTitle} tabIndex={-1}>
+                      Registered jobs
+                    </h2>
+                    <span className={styles.muted}>
+                      {matches.length} of {catalog.length}
+                    </span>
+                  </div>
+                  <ul className={styles.list}>
+                    {matches.map((entry) => (
+                      <li key={entry.id}>
+                        <button
+                          className={styles.row}
+                          aria-current={
+                            job?.id === entry.id ? 'true' : undefined
+                          }
+                          onClick={() => {
+                            setSelected(entry.id);
+                            setDetailOpen(true);
+                          }}
+                        >
+                          <span className={styles.identity}>
+                            <strong>{jobTitle(entry.name)}</strong>
+                            <span className={styles.repo}>
+                              {entry.repository}
+                            </span>
+                          </span>
+                          <StateMark tone={entry.enabled ? 'ok' : 'idle'}>
+                            {entry.enabled ? 'Enabled' : 'Disabled'}
+                          </StateMark>
+                          <span className={styles.rowMeta}>
+                            {entry.error ? (
+                              <StateMark tone="warn">Source issue</StateMark>
+                            ) : (
+                              <span>{jobSchedule(entry)}</span>
+                            )}
+                            <span>
+                              {entry.active
+                                ? 'Run active'
+                                : entry.latest
+                                  ? 'Latest run available'
+                                  : 'No runs recorded'}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {!matches.length ? (
+                    <div className={styles.empty}>
+                      <h3>No matching jobs</h3>
+                      <p>Try a different name, repository or state.</p>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          setQuery('');
+                          setFilter('all');
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
+                  ) : null}
+                </section>
+                {job ? (
+                  <JobDetail
+                    key={`${job.id}:${job.definition?.digest}`}
+                    job={job}
+                    busy={busy}
+                    focus={detailOpen}
+                    back={back}
+                    parameters={
+                      parameters[`${job.id}:${job.definition?.digest}`] ?? {}
+                    }
+                    setParameters={(value) =>
+                      setParameters((current) => ({
+                        ...current,
+                        [`${job.id}:${job.definition?.digest}`]: value,
+                      }))
+                    }
+                    occurrence={occurrences[job.id]}
+                    onOccurrence={(value) =>
+                      setOccurrences((current) => ({
+                        ...current,
+                        [job.id]: value,
+                      }))
+                    }
+                    act={act}
+                    openSource={() => {
+                      setRepository(job.repository);
+                      setSources(true);
+                      back();
+                    }}
+                  />
+                ) : null}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </ConsoleWorkspace>
   );
 }

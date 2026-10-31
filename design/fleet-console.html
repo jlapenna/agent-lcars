@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent LCARS — Bridge</title>
+<title>Agent LCARS — Jobs</title>
+<meta name="description" content="Agent LCARS console design prototype. Browse registered jobs, review repository definitions and simulate manual Work admission.">
 <style>
 @font-face { font-family: "Antonio"; src: url(assets/fonts/Antonio-500-700.woff2) format("woff2"); font-weight: 500 700; font-display: swap; }
 @font-face { font-family: "IBM Plex Sans"; src: url(assets/fonts/IBMPlexSans-400-600.woff2) format("woff2"); font-weight: 400 600; font-display: swap; }
@@ -403,9 +404,109 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
   .inbox li { grid-template-columns: minmax(0, 1fr) auto; }
   .inbox .btn { height: 44px; }
 }
+/* Jobs extends the existing frame. Light neutrals are derived from this snapshot's
+   ink ramp; production must bind these roles to its authoritative light tokens. */
+:root[data-mantine-color-scheme="light"] { color-scheme: light; --surface: oklch(1 0 0); --surface-raised: oklch(.97 .004 265); --ink: oklch(.18 .014 265); --ink-dim: oklch(.43 .025 265); --hairline: oklch(.81 .015 265); --ink-on-muted: var(--ink-on-accent); --warn-ink: oklch(.43 .08 85); --fail-ink: oklch(.44 .13 28); --ok: oklch(.43 .08 165); }
+:root[data-mantine-color-scheme="light"] [data-accent] { --accent-ink: color-mix(in oklch, var(--accent) 44%, var(--ink)); --accent-muted-hover: color-mix(in srgb, var(--accent) 40%, var(--surface)); }
+:root { --jobs-focus: var(--amber); }
+:root[data-mantine-color-scheme="light"] { --jobs-focus: color-mix(in oklch, var(--amber) 50%, var(--ink)); }
+.skip-jobs { position: absolute; left: 16px; top: -100px; z-index: 11; background: var(--surface); color: var(--ink); padding: 12px; }
+.skip-jobs:focus { top: 12px; }
+body[data-destination="jobs"] .page { min-height: 100dvh; }
+body[data-destination="jobs"] .content { padding: 20px; gap: 16px; }
+body[data-destination="jobs"] .fold-toggle { display: none; }
+body[data-destination="jobs"] .toolbar { gap: 12px; }
+body[data-destination="jobs"] .toolbar .field, .jobs .field { min-height: 44px; height: auto; font-size: 16px; min-width: 0; max-width: 100%; border-color: var(--ink-dim); border-radius: 0; }
+body[data-destination="jobs"] .toolbar .search { flex: 1 1 220px; }
+body[data-destination="jobs"] .btn, .jobs .btn { min-height: 44px; height: auto; padding: 12px; white-space: normal; line-height: 1.3; }
+body[data-destination="jobs"] #warnband { display: none; }
+body[data-destination="jobs"] .title-row { gap: 12px; }
+body[data-destination="jobs"] .sync-compact { white-space: normal; }
+.jobs { min-width: 0; }
+.jobs p { max-width: 65ch; text-wrap: pretty; }
+.jobs :is(h2,h3,p) { margin: 0; }
+.jobs h2 { font: 600 28px/1.2 var(--f-display); letter-spacing: -.01em; text-wrap: balance; }
+.jobs h3 { font: 600 18px/1.25 var(--f-display); letter-spacing: .01em; }
+.jobs :is(button,input,select,textarea) { font-family: var(--f-body); }
+.jobs button { cursor: pointer; }
+.jobs button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.jobs .btn { font-family: var(--f-display); }
+.jobs a { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.jobs :is(button,a,input,select,textarea,summary):focus-visible { outline: 2px solid var(--jobs-focus); outline-offset: 3px; }
+body[data-destination="jobs"] :focus-visible, body[data-destination="jobs"] .search:focus-within { outline-color: var(--jobs-focus); }
+.jobs .job-caption { font-size: 12px; letter-spacing: .01em; color: var(--ink-dim); }
+.jobs .job-repo { display: block; font: 400 12px/1.6 var(--f-mono); color: var(--ink-dim); overflow-wrap: anywhere; }
+.job-summary { display: flex; align-items: baseline; gap: 8px 20px; flex-wrap: wrap; padding-bottom: 14px; border-bottom: 1px solid var(--hairline); }
+.job-summary strong { font-weight: 600; }
+.job-summary .job-caption { margin-left: auto; }
+.job-grid { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); gap: 28px; margin-top: 18px; align-items: start; }
+.job-registry { min-width: 0; }
+.job-list-head { display: flex; justify-content: space-between; gap: 12px; padding: 0 12px 12px; }
+.job-list-head h2 { font-size: 18px; }
+.job-list { list-style: none; margin: 0; padding: 0; }
+.job-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 16px 12px; background: var(--surface); color: var(--ink); border: 0; border-bottom: 1px solid var(--hairline); border-left: 3px solid transparent; text-align: left; transition: border-color .18s; }
+.job-row:hover { border-left-color: var(--ink-dim); }
+.job-row[aria-current="true"] { border-left-color: var(--accent); }
+.job-row[aria-current="true"] .job-name { text-decoration: underline; text-underline-offset: 4px; }
+.job-row:active { transform: translateY(1px); }
+.job-name { display: block; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.job-state { font-size: 12px; line-height: 1.6; white-space: nowrap; }
+.job-state::before { content: '○ '; }
+.job-state.enabled::before { content: '● '; }
+.job-row-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-dim); }
+.job-issue { color: var(--fail-ink); font-size: 13px; }
+.job-detail { min-width: 0; border-left: var(--spine) solid var(--accent); padding-left: 20px; }
+.job-detail-head { display: grid; gap: 12px; }
+.job-detail-head + .job-section { margin-top: 20px; }
+.job-detail-head .job-repo { font-size: 13px; }
+.job-detail-head h2 { overflow-wrap: anywhere; }
+.job-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.job-actions .job-caption { flex: 1; }
+.job-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--hairline); margin: 20px 0; gap: 0 16px; }
+.job-tabs button { min-height: 44px; padding: 10px 0; background: var(--surface); color: var(--ink-dim); border: 0; border-bottom: 2px solid transparent; font-size: 13px; }
+.job-tabs button[aria-pressed="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.job-tabs button:hover { color: var(--ink); border-bottom-color: var(--ink-dim); }
+.job-section { display: grid; gap: 16px; }
+.job-facts { display: grid; gap: 0; margin: 0; }
+.job-facts > div { display: grid; grid-template-columns: minmax(0, .7fr) minmax(0, 1fr); gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--hairline); }
+.job-facts dt { color: var(--ink-dim); font-size: 13px; }
+.job-facts dd { margin: 0; overflow-wrap: anywhere; }
+.job-notice { border: 1px solid var(--hairline); padding: 14px; display: grid; gap: 8px; }
+.job-notice.error { border-color: var(--fail-ink); }
+.job-notice.error h3 { color: var(--fail-ink); }
+.job-notice p { font-size: 13px; }
+.job-review { display: flex; gap: 10px; align-items: flex-start; min-height: 44px; padding: 10px 0; }
+.job-review input { width: 20px; height: 20px; flex-shrink: 0; margin: 0; accent-color: var(--accent-ink); }
+.job-section pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 12px/1.7 var(--f-mono); margin: 0; padding: 12px 0; }
+.job-section summary { min-height: 44px; padding: 12px 0; cursor: pointer; }
+.job-form { display: grid; gap: 16px; }
+.job-form label:not(.job-review) { display: grid; gap: 6px; font-weight: 500; }
+.job-form .field { width: 100%; padding: 12px; }
+.job-form textarea { resize: vertical; min-height: 88px; }
+.job-form [aria-invalid="true"] { border-color: var(--fail-ink); }
+.job-empty { display: grid; gap: 14px; padding: 24px 12px; }
+.job-empty .btn { justify-self: start; }
+.job-skeleton { display: grid; gap: 12px; padding: 20px 12px; border-bottom: 1px solid var(--hairline); }
+.job-skeleton i { display: block; height: 12px; background: var(--hairline); width: 85%; }
+.job-skeleton i:last-child { width: 52%; }
+.job-back { display: none; }
+.job-source { border-left: var(--spine) solid var(--accent); padding-left: 20px; display: grid; gap: 20px; }
+.job-source-top { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.job-source-list { display: grid; gap: 0; }
+.job-source-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--hairline); }
+.job-source-row > div { flex: 1 1 200px; min-width: 0; }
+.job-demo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; border-top: 1px solid var(--hairline); margin-top: 24px; padding-top: 16px; color: var(--ink-dim); }
+.job-demo label { font-size: 12px; }
+.job-demo .field { font-size: 16px; }
+.job-feedback { position: sticky; bottom: 0; z-index: 2; background: var(--surface-raised); color: var(--ink); border-top: 1px solid var(--hairline); padding: 12px 16px; font-size: 13px; }
+.job-feedback:empty { display: none; }
+@media (min-width: 48em) and (max-width: 70em) { .job-grid { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 16px; } .job-detail { padding-left: 14px; } .job-row { grid-template-columns: minmax(0, 1fr); } .job-state { grid-row: 2; } }
+@media (max-width: 47.99em) { body[data-destination="jobs"] .content { padding: 16px 12px; } .job-grid { display: block; margin-top: 16px; } .job-grid:not(.show-detail) .job-detail { display: none; } .job-grid.show-detail .job-registry { display: none; } .job-detail { padding-left: 12px; } .job-back { display: flex; margin-bottom: 16px; position: sticky; top: 0; z-index: 2; background: var(--surface); color: var(--ink); border: 1px solid var(--ink-dim); } .job-summary .job-caption { margin-left: 0; } .job-detail-head h2 { font-size: 26px; } .job-row { padding: 14px 8px; gap: 8px; } .job-row .job-repo { font-size: 11px; } .job-source { padding-left: 12px; } .job-facts > div { gap: 12px; } .job-demo { align-items: stretch; } .job-demo label { width: 100%; } .job-demo select { width: 100%; } body[data-destination="jobs"] .toolbar > button { width: 100%; margin: 0; } }
+@media (prefers-reduced-motion: reduce) { .jobs *, body[data-destination="jobs"] .btn { transition: none; } }
 </style>
 </head>
 <body data-accent="amber">
+<a class="skip-jobs" href="#main-content">Skip to content</a>
 <div class="page" data-od-id="console-page">
   <!-- elbow: rail head + knee + arm -->
   <aside class="rail-head" aria-label="Agent LCARS" data-od-id="elbow">
@@ -448,11 +549,12 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
     </div>
   </header>
 
-  <main class="body">
+  <main class="body" id="main-content" tabindex="-1">
     <section class="frame" data-od-id="workspace-frame">
       <div class="warnband" id="warnband" role="status" data-od-id="warning-band"></div>
       <form class="toolbar" id="toolbar" data-od-id="toolbar-band" onsubmit="return false"></form>
       <div class="content" id="content"></div>
+      <div class="job-feedback" id="job-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
     </section>
   </main>
 </div>
@@ -469,6 +571,7 @@ const DEST = [
   { key: 'work', label: 'Work', accent: 'violet', w: 112, count: 5, title: 'Work', sub: 'Admitted queue, capacity holds and <a href="#work">schedules</a>' },
   { key: 'sessions', label: 'Sessions', accent: 'teal', w: 140, title: 'Session Archive', sub: 'Durable session records · last 14 days · 31 sessions' },
   { key: 'costs', label: 'Costs', accent: 'gold', w: 112, title: 'Costs', sub: 'Cost ledger · last 14 days · 31 sessions' },
+  { key: 'jobs', label: 'Jobs', accent: 'violet', title: 'Jobs', sub: 'Registered repository jobs · review, enable and run' },
 ];
 const REPOS = ['jlapenna/agent-lcars', 'jlapenna/homelab', 'supersprinklesracing/sprinkles', 'jlapenna/messages-control'];
 
@@ -811,14 +914,68 @@ const VIEWS = {
   costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}${ledgerPanels()}` },
 };
 
+/* Jobs fixtures are design examples, not observations of production. Definitions,
+   parameters and recipe excerpts below illustrate review; no revision or digest is invented. */
+const JOBS = [
+  { id: 'sprinkles-quality', repo: 'supersprinklesracing/sprinkles', name: 'frontend-performance-quality', title: 'Frontend performance & quality', enabled: true, schedule: 'Mondays at 14:00 UTC', cron: '0 14 * * 1', description: 'Review frontend performance and interface quality for the selected repository revision.', recipe: 'Review the frontend at the requested revision. Record performance and interface findings with evidence. Do not claim checks that were not performed.' },
+  { id: 'lcars-quality', repo: 'jlapenna/agent-lcars', name: 'frontend-performance-quality', title: 'Frontend performance & quality', enabled: true, schedule: 'Tuesdays at 14:00 UTC', cron: '0 14 * * 2', description: 'Review the console’s frontend performance and interface quality for the selected revision.', recipe: 'Review console performance and interface quality. Preserve LCARS tokens and existing workflows. Report findings and verification limits.' },
+  { id: 'sprinkles-heal', repo: 'supersprinklesracing/sprinkles', name: 'heal-pr', title: 'Heal pull request', enabled: false, schedule: 'Manual only', description: 'Review a pull request’s failed checks and prepare a focused repair. Review the recipe before enabling execution.', recipe: 'Inspect the supplied pull request and failing checks. Diagnose the failure, make a scoped repair, and report what was verified.' },
+  { id: 'sprinkles-verify', repo: 'supersprinklesracing/sprinkles', name: 'verify-deployment', title: 'Verify deployment', enabled: false, schedule: 'Manual only', description: 'Verify a specified deployment against its expected revision and report the evidence.', recipe: 'Inspect the specified deployment and expected revision. Record observed behavior and verification limits. Do not infer successful deployment from a completed build.' },
+  { id: 'jclaw-security', repo: 'jlapenna/jclaw', name: 'weekly-security-audit', title: 'Weekly security audit', enabled: false, schedule: 'Schedule unavailable', invalid: true, description: 'The registered job remains visible, but its source definition could not be refreshed.' },
+];
+const jobUI = { selected: JOBS[0].id, query: '', filter: 'all', tab: 'overview', detail: false, sources: false, actionError: '', demo: 'populated', reviewed: {}, drafts: {}, runs: {}, confirm: false, runForm: false, pending: false, sourceRepo: 'jlapenna/agent-lcars', sourcePreview: false, sourceRetries: 0, retryAt: 0, work: false };
+let jobTimer, jobLongTimer, jobTimeout;
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const job = () => JOBS.find(j => j.id === jobUI.selected);
+const jobButton = (action, label, primary = false, disabled = false) => `<button type="button" class="btn ${primary ? 'btn-primary' : 'btn-secondary'}" data-job-action="${action}" data-od-id="jobs-${action}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+const jobMessage = text => { if(document.body.dataset.destination === 'jobs') $('#job-feedback').textContent = `${text} · Simulated`; };
+const jobRepo = j => jobUI.demo === 'edge' && j.id === JOBS[0].id ? j.repo.replace('/sprinkles', '/sprinkles-frontend-platform-accessibility-and-performance-quality-reference') : j.repo;
+const jobMatches = () => JOBS.filter(j => (!jobUI.query || `${jobRepo(j)} ${j.name} ${j.title}`.toLowerCase().includes(jobUI.query.toLowerCase())) && (jobUI.filter === 'all' || (jobUI.filter === 'enabled' && j.enabled) || (jobUI.filter === 'disabled' && !j.enabled) || (jobUI.filter === 'issues' && j.invalid)));
+function jobRows() { return jobMatches().map(j => `<li data-od-id="job-${j.id}"><button type="button" class="job-row" data-job-select="${j.id}" aria-current="${j.id === jobUI.selected}" aria-controls="job-detail" aria-label="${esc(j.repo + ', ' + j.name + ', ' + (j.enabled ? 'enabled' : 'disabled'))}"><span><span class="job-name">${esc(j.name)}</span><span class="job-repo">${esc(jobRepo(j))}</span></span><span class="job-state ${j.enabled ? 'enabled' : ''}">${j.enabled ? 'Enabled' : 'Disabled'}</span><span class="job-row-meta"><span>${j.schedule}</span><span>${jobUI.runs[j.id] ? 'Queued · simulated' : 'Latest: not supplied'}</span></span>${j.invalid ? '<span class="job-issue">Source refresh failed</span>' : ''}</button></li>`).join(''); }
+function jobOverview(j) { return `<div class="job-section"><p>${j.description}</p><dl class="job-facts"><div><dt>Schedule</dt><dd>${j.schedule}</dd></div><div><dt>Manual execution</dt><dd>${j.invalid ? 'Blocked by source error' : j.enabled ? 'Available' : 'Enable after review'}</dd></div><div><dt>Activity</dt><dd>${jobUI.runs[j.id] ? 'Queued · simulated' : 'Not supplied'}</dd></div><div><dt>Latest result</dt><dd>Not supplied</dd></div></dl><p class="job-caption">No execution history is included in these examples. “Not supplied” does not mean the job has never run.</p>${jobButton('definition', j.enabled ? 'Review definition & recipe' : 'Review to enable')}</div>`; }
+function jobDefinition(j) { return `<div class="job-section" data-od-id="jobs-definition"><h3>Installed definition</h3><p class="job-caption">Illustrative content for this prototype. Repository file, revision and digest were not supplied.</p><dl class="job-facts"><div><dt>Job key</dt><dd class="mono">${j.name}</dd></div><div><dt>Repository</dt><dd>${esc(jobRepo(j))}</dd></div><div><dt>Triggers</dt><dd>${j.schedule}${j.cron ? ' · manual run available' : ''}</dd></div>${j.cron ? `<div><dt>Schedule expression</dt><dd><code>${j.cron}</code><br>Timezone: UTC</dd></div>` : ''}</dl><h3>Recipe review</h3><p>${j.recipe}</p><details data-od-id="jobs-recipe-excerpt"><summary>Illustrative recipe excerpt</summary><pre># Example only — not repository source\n${esc(j.recipe)}</pre></details><p class="job-caption">The implemented console must show the complete installed recipe and bind review to its revision and digest.</p><label class="job-review"><input type="checkbox" id="job-reviewed" data-od-id="jobs-reviewed" ${jobUI.reviewed[j.id] ? 'checked' : ''}><span>I reviewed this example definition and recipe.</span></label>${!j.enabled ? jobButton('toggle', 'Enable reviewed job', true, !jobUI.reviewed[j.id]) : '<p class="job-caption">This example is already enabled. Review does not change its state.</p>'}</div>`; }
+function jobLatest(j) { const run = jobUI.runs[j.id]; return `<div class="job-section" data-od-id="jobs-latest"><h3>${jobUI.work ? 'Work detail · simulated' : 'Latest run'}</h3>${run ? `<div class="job-notice"><strong>Queued · simulated</strong><p>This interaction created a local example only. No Work was admitted and no execution has started.</p></div><dl class="job-facts"><div><dt>Trigger</dt><dd>Manual · this prototype session</dd></div><div><dt>Parameters</dt><dd>${Object.entries(run).map(([k,v]) => `${esc(k)}: ${esc(v || 'Not set')}`).join('<br>')}</dd></div><div><dt>Result</dt><dd>Not available</dd></div></dl>${jobUI.work ? jobButton('latest', 'Back to latest run') : jobButton('work', 'Open simulated Work')}<h3>Artifacts</h3><p class="job-caption">No validated artifacts yet. When returned, artifact names and links belong here, tied to this occurrence.</p>` : `<p>No run history supplied.</p><p class="job-caption">Latest status, Work and artifacts appear together when an occurrence is available. No completed audits or results are implied.</p><dl class="job-facts"><div><dt>Work</dt><dd>Not supplied</dd></div><div><dt>Artifacts</dt><dd>Not supplied</dd></div></dl>`}</div>`; }
+function jobParameters(j) { if (j.id === 'sprinkles-heal') return [{ key:'pull_request', label:'Pull request number', hint:'Required · positive whole number', required:true, pattern:'[1-9][0-9]*', value:'' }]; if (j.id === 'sprinkles-verify') return [{ key:'deployment_url', label:'Deployment URL', hint:'Required · HTTPS address', required:true, pattern:'https://.+', value:'' },{ key:'expected_revision', label:'Expected revision', hint:'Required · commit or release reference', required:true, value:'' }]; return [{ key:'target_ref', label:'Target revision', hint:'Required · branch, tag or commit', required:true, value:'main' }]; }
+function jobRunForm(j) { const draft = jobUI.drafts[j.id] || {}; return `<form class="job-form" id="job-run-form" novalidate data-od-id="jobs-run-form"><h3>Run once</h3><p class="job-caption">Example parameters for interaction review; the real form must come from the installed recipe schema. Scheduled runs stay unchanged.</p>${jobParameters(j).map(p => `<label for="job-param-${p.key}">${p.label}<input class="field" id="job-param-${p.key}" name="${p.key}" data-job-param="${p.key}" data-od-id="jobs-param-${p.key}" value="${esc(draft[p.key] ?? p.value)}" maxlength="2048" ${p.required ? 'required' : ''} ${p.pattern ? `pattern="${p.pattern}"` : ''} aria-describedby="job-hint-${p.key} job-error-${p.key}"><span class="job-caption" id="job-hint-${p.key}">${p.hint}</span><span class="job-issue" id="job-error-${p.key}" role="alert"></span></label>`).join('')}<label for="job-note">Run note <span class="job-caption">Optional · local context for this example</span><textarea class="field" id="job-note" name="note" data-job-param="note" maxlength="2048" data-od-id="jobs-run-note">${esc(draft.note || '')}</textarea></label><p class="job-caption">Repository: ${esc(j.repo)}<br>Execution: one manual occurrence · simulated</p><div id="job-form-error" role="alert"></div><div class="job-actions"><button class="btn btn-primary" type="submit" data-od-id="jobs-queue-run">Queue simulated run</button>${jobButton('cancel-run','Cancel')}</div></form>`; }
+function jobDetail() { const j = job(); if (!j) return ''; return `<aside class="job-detail" id="job-detail" data-od-id="jobs-selected-detail" aria-labelledby="job-detail-title">${jobButton('back','← All jobs')}<div class="job-detail-head"><span class="job-repo">${esc(jobRepo(j))}</span><h2 id="job-detail-title" tabindex="-1" data-od-id="jobs-detail-title">${j.title}</h2><div class="job-actions"><span class="job-state ${j.enabled ? 'enabled' : ''}">${j.enabled ? 'Enabled' : 'Disabled'}</span><span class="job-caption">${j.invalid ? 'Needs attention' : 'Repository-owned job'}</span>${j.enabled && !jobUI.confirm && !jobUI.runForm ? jobButton('toggle','Disable') : ''}${!jobUI.runForm && !jobUI.confirm && jobUI.tab !== 'definition' ? jobButton('run','Run now',true,!j.enabled || j.invalid) : ''}</div>${!j.enabled ? `<p class="job-caption">${j.invalid ? 'Refresh and review the source before enabling or running.' : 'Run now is unavailable until you review and enable this job.'}</p>` : ''}</div>${j.invalid ? `<div class="job-section"><div class="job-notice error" role="alert" data-od-id="jobs-source-error"><h3>Source refresh failed</h3><p>The registered entry is retained. Its current definition, recipe and schedule are unavailable; the underlying error was not supplied.</p>${jobButton('repair','Review repository source')}</div>${jobLatest(j)}</div>` : jobUI.confirm ? `<div class="job-section"><div class="job-notice" data-od-id="jobs-state-confirm"><h3>${j.enabled ? 'Disable this job?' : 'Enable reviewed definition?'}</h3><p>${j.enabled ? 'Future scheduled and manual admissions will be blocked. Existing Work is not canceled.' : `${j.cron ? `Scheduled execution becomes eligible ${j.schedule.toLowerCase()}.` : 'This job stays manual only.'} Manual runs become available. Enabling does not start a run now.`}</p><p class="job-caption">${esc(j.repo)} / ${j.name}<br>Prototype only · no live state will change.</p><div class="job-actions">${jobButton('confirm-state',j.enabled ? 'Confirm disable' : 'Confirm enable',true)}${jobButton('cancel-state','Keep current state')}</div></div></div>` : `<nav class="job-tabs" aria-label="Selected job sections">${[['overview','Overview'],['definition','Definition & recipe'],['latest','Latest run']].map(([key,label]) => `<button type="button" data-job-tab="${key}" data-od-id="jobs-tab-${key}" aria-pressed="${jobUI.tab === key}" aria-controls="job-tab-content">${label}</button>`).join('')}</nav><section id="job-tab-content" aria-label="${jobUI.tab === 'definition' ? 'Definition and recipe' : jobUI.tab === 'latest' ? 'Latest run' : 'Overview'}">${jobUI.runForm ? jobRunForm(j) : jobUI.tab === 'definition' ? jobDefinition(j) : jobUI.tab === 'latest' ? jobLatest(j) : jobOverview(j)}</section>`}</aside>`; }
+function jobSources() { const repos = [...new Set(JOBS.map(j => j.repo))]; const matching = JOBS.filter(j => j.repo === jobUI.sourceRepo); return `<section class="job-source" data-od-id="jobs-repository-sources"><div class="job-source-top"><div><h2 tabindex="-1" id="job-source-title">Repository sources</h2><p class="job-caption">Install definitions here. Browse registered jobs in the registry.</p></div>${jobButton('close-sources','← Job registry')}</div><div class="job-source-list">${repos.map(repo => `<article class="job-source-row" data-od-id="source-${repo.split('/')[1]}"><div><span class="job-repo">${repo}</span><span class="job-caption">${JOBS.filter(j => j.repo === repo).length} registered · ${repo === 'jlapenna/jclaw' ? '<span class="job-issue">Source refresh failed</span>' : 'Example definitions available'}</span></div><button type="button" class="btn btn-secondary" data-job-source="${repo}" aria-label="Review source refresh for ${repo}" data-od-id="refresh-${repo.split('/')[1]}">Review refresh</button></article>`).join('')}</div><form class="job-form" id="job-source-form" novalidate><label for="job-source-repo">Repository<input class="field" id="job-source-repo" value="${esc(jobUI.sourceRepo)}" maxlength="240" placeholder="owner/repository" data-od-id="jobs-source-repository" aria-describedby="job-source-hint job-source-validation"><span class="job-caption" id="job-source-hint">Use owner/repository. Preview changes before installing; refreshing does not enable jobs.</span><span id="job-source-validation" class="job-issue" role="alert"></span></label><div class="job-actions"><button type="submit" class="btn ${jobUI.sourcePreview ? 'btn-secondary' : 'btn-primary'}" data-od-id="jobs-preview-source">Preview definitions</button></div></form>${jobUI.sourcePreview ? `<section class="job-section" data-od-id="jobs-source-preview"><h3>Source preview · simulated</h3>${!matching.length ? '<p>No prototype definitions for this repository. The five supplied examples are the complete fixture set.</p>' : matching.some(j => j.invalid) ? `<div class="job-notice error" role="alert"><h3>Source refresh failed</h3><p>The example cannot provide a valid definition. Keep the registered job visible and disabled.</p><p class="job-caption">${jobUI.retryAt ? `Last attempted: ${Math.floor((Date.now()-jobUI.retryAt)/1000)}s ago · ` : ''}Example error ID: DEMO-SOURCE</p>${jobUI.sourceRetries < 3 ? jobButton('retry-source','Retry source preview') : '<p>Ask the repository owner to check the source. Error ID: <code>DEMO-SOURCE</code></p>'}</div>` : `<p>${matching.length} existing ${matching.length === 1 ? 'definition' : 'definitions'} · no new entries in this fixture.</p><ul>${matching.map(j => `<li>${j.name} · ${j.enabled ? 'enabled' : 'disabled'}</li>`).join('')}</ul><p class="job-caption">Source and recipe text are examples; no revision comparison is available. Enabled states remain unchanged.</p>${jobButton('apply-source','Install / refresh definitions',true)}`}</section>` : ''}</section>`; }
+function jobsPanel() { let body; const matches = jobMatches(); if (jobUI.sources) body = jobSources(); else if (['loading','error','offline','empty'].includes(jobUI.demo)) { const mode=jobUI.demo; body=`<section class="job-detail job-empty" data-od-id="jobs-state-${mode}" aria-busy="${mode === 'loading'}"><h2 tabindex="-1" id="jobs-state-title">${{loading:'Loading registered jobs',error:'Registry could not be loaded',offline:'You’re offline',empty:'No jobs registered'}[mode]}</h2><p>${{loading:'Reading the registry, including disabled and invalid entries.',error:'The registry request failed. No entries have been removed; search and parameters are preserved.',offline:'The registry is unavailable. Reconnect before changing state or starting Work.',empty:'Install repository definitions to make them visible here. Review each job before enabling it.'}[mode]}</p>${mode === 'loading' ? '<div class="job-skeleton" aria-hidden="true"><i></i><i></i></div><div class="job-skeleton" aria-hidden="true"><i></i><i></i></div><p id="job-loading-delay" class="job-caption" role="status"></p>' : ''}${jobButton(mode === 'empty' ? 'sources' : mode === 'loading' ? 'cancel-load' : 'reload',mode === 'empty' ? 'Install repository jobs' : mode === 'loading' ? 'Cancel' : 'Retry registry',mode !== 'loading')}</section>`; } else body=`<div class="job-summary" data-od-id="jobs-registry-summary"><strong>${JOBS.length} registered</strong><span>${JOBS.filter(j=>j.enabled).length} enabled · ${JOBS.filter(j=>!j.enabled).length} disabled</span><span class="job-issue">1 source issue</span><span class="job-caption">Prototype examples · no live data</span></div><div class="job-grid ${jobUI.detail ? 'show-detail' : ''}"><section class="job-registry" aria-labelledby="job-list-title" data-od-id="jobs-registry"><div class="job-list-head"><h2 id="job-list-title">Registered jobs</h2><span class="job-caption">${matches.length} of ${JOBS.length}</span></div>${matches.length ? `<ul class="job-list">${jobRows()}</ul>` : `<div class="job-empty"><h3>No matching jobs</h3><p>${jobUI.query ? `No job matches “${esc(jobUI.query)}” with this filter.` : 'No jobs match this state filter.'}</p>${jobButton('clear-filters','Clear search & filters')}</div>`}</section>${matches.length ? jobDetail() : ''}</div>`; return `<div class="jobs" data-od-id="jobs-workspace">${jobUI.actionError ? `<div class="job-notice error" role="alert"><h3>Change not saved · simulated</h3><p>${esc(jobUI.actionError)}</p><p class="job-caption">Choose Populated in Prototype state to retry successfully.</p></div>` : ''}${body}<footer class="job-demo" data-od-id="jobs-demo-controls"><label for="job-demo-state">Prototype state</label><select class="field" id="job-demo-state" data-od-id="jobs-demo-state">${[['populated','Populated'],['loading','Loading'],['empty','Empty registry'],['error','Registry error'],['offline','Offline'],['edge','Long repository name'],['action-error','Action failure']].map(([v,l]) => `<option value="${v}" ${jobUI.demo === v ? 'selected' : ''}>${l}</option>`).join('')}</select><span class="job-caption">All actions simulated · resets on reload</span></footer></div>`; }
+VIEWS.jobs = { create:false, folded:[], tools:[`<label class="field search"><span class="sr-only">Search registered jobs</span><input id="job-search" type="search" placeholder="Find a job or repository" aria-label="Search registered jobs" data-od-id="jobs-search"></label>`,`<select class="field" id="job-filter" aria-label="Job state" data-od-id="jobs-filter"><option value="all">All jobs</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="issues">Source issues</option></select>`], primary:jobButton('sources','Repository sources'), body:jobsPanel };
+function drawJobs(focus) {
+  if(document.body.dataset.destination !== 'jobs') return;
+  $('#content').innerHTML=jobsPanel(); $('.jobs').setAttribute('aria-busy',String(jobUI.pending));
+  if($('#job-search')) { $('#job-search').value=jobUI.query; $('#job-filter').value=jobUI.filter; $('#toolbar').hidden=jobUI.sources; }
+  document.querySelectorAll('#toolbar :is(button,input,select), #refresh').forEach(el=>el.disabled=jobUI.pending);
+  const back=$('[data-job-action="back"]'); if(back) back.classList.add('job-back');
+  if(jobUI.pending) document.querySelectorAll('.jobs :is(button,input,select,textarea)').forEach(el=>el.disabled=true);
+  const counts=[JOBS.length,JOBS.filter(j=>j.enabled).length,JOBS.filter(j=>!j.enabled).length];
+  document.querySelectorAll('.rail-body .rail-block b').forEach((el,i)=>{if(i<3) el.textContent=counts[i];});
+  if(focus) $(focus)?.focus({preventScroll:true});
+}
+function jobBusy(done, message, delay=550) { if(jobUI.pending) return; jobUI.pending=true; jobUI.actionError=''; drawJobs(); jobMessage(message); clearTimeout(jobTimer); jobTimer=setTimeout(()=>{ jobUI.pending=false; done(); },delay); }
+function jobValidate(field) { const error=$(`#job-error-${field.name}`); const valid=field.checkValidity() && !!field.value.trim(); field.setAttribute('aria-invalid',String(!valid)); if(error) error.textContent=valid ? '' : field.name === 'pull_request' ? 'Enter a positive pull request number.' : field.name === 'deployment_url' ? 'Enter an HTTPS deployment URL.' : 'Enter a revision to continue.'; return valid; }
+function jobStartLoading() { clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.demo='loading'; jobUI.sources=false; jobUI.detail=false; drawJobs(); jobMessage('Loading registry'); jobLongTimer=setTimeout(()=>{ const el=$('#job-loading-delay'); if(el) el.textContent='Taking longer than expected. You can cancel and return to the example registry.'; },15000); jobTimeout=setTimeout(()=>{ if(jobUI.demo==='loading') { jobUI.demo='error'; drawJobs('#jobs-state-title'); jobMessage('Registry request timed out. Retry is available'); } },30000); }
+document.addEventListener('input',e=>{ if(e.target.id==='job-search') { jobUI.query=e.target.value; jobUI.detail=false; const matches=jobMatches(); if(matches.length&&!matches.some(j=>j.id===jobUI.selected)) { jobUI.selected=matches[0].id; jobUI.runForm=false; jobUI.confirm=false; } drawJobs(); } if(e.target.id==='job-source-repo') { jobUI.sourceRepo=e.target.value; e.target.removeAttribute('aria-invalid'); $('#job-source-validation').textContent=''; if(jobUI.sourcePreview) { jobUI.sourcePreview=false; drawJobs('#job-source-repo'); } } if(e.target.dataset.jobParam) { (jobUI.drafts[job().id] ||= {})[e.target.dataset.jobParam]=e.target.value; if(e.target.getAttribute('aria-invalid')==='true') jobValidate(e.target); } });
+document.addEventListener('focusout',e=>{ if(e.target.matches('[data-job-param][required]')) jobValidate(e.target); });
+document.addEventListener('change',e=>{ if(e.target.id==='job-filter') { jobUI.filter=e.target.value; jobUI.detail=false; const m=jobMatches(); if(m.length&&!m.some(j=>j.id===jobUI.selected)) { jobUI.selected=m[0].id; jobUI.runForm=false; jobUI.confirm=false; } drawJobs(); } if(e.target.id==='job-reviewed') { jobUI.reviewed[job().id]=e.target.checked; drawJobs('#job-reviewed'); jobMessage(e.target.checked ? 'Example review recorded' : 'Example review cleared'); } if(e.target.id==='job-demo-state') { clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.demo=e.target.value; jobUI.actionError=''; if(['empty','error','offline','edge'].includes(jobUI.demo)) { jobUI.sources=false; jobUI.detail=false; } if(jobUI.demo==='loading') jobStartLoading(); else { drawJobs('#job-demo-state'); jobMessage('Prototype state changed'); } } });
+document.addEventListener('submit',e=>{ if(jobUI.pending && e.target.matches('#job-source-form,#job-run-form')) { e.preventDefault(); return; } if(e.target.id==='job-source-form') { e.preventDefault(); const field=$('#job-source-repo'); if(!/^[\w.-]+\/[\w.-]+$/.test(field.value.trim())) { field.setAttribute('aria-invalid','true'); $('#job-source-validation').textContent='Enter a repository as owner/repository.'; field.focus(); return; } jobUI.sourceRepo=field.value.trim(); jobBusy(()=>{ jobUI.sourcePreview=true; drawJobs('#job-source-title'); jobMessage('Source preview ready'); },'Reading repository definitions'); } if(e.target.id==='job-run-form') { e.preventDefault(); const fields=[...e.target.querySelectorAll('[required]')]; const valid=fields.map(jobValidate); if(valid.includes(false)) { fields[valid.indexOf(false)].focus(); return; } const j=job(), values=Object.fromEntries(new FormData(e.target)); jobUI.drafts[j.id]=values; jobBusy(()=>{ if(jobUI.demo==='action-error') { drawJobs('#job-run-form input'); const formError=$('#job-form-error'); if(formError) formError.innerHTML='<p class="job-issue">Admission failed in this example. Your parameters are preserved; choose Populated below to retry.</p>'; jobMessage('Run was not admitted'); } else { jobUI.runs[j.id]=values; jobUI.runForm=false; jobUI.tab='latest'; jobUI.work=false; drawJobs('#job-detail-title'); jobMessage('Manual run queued locally. No backend request was sent'); } },'Submitting manual run'); } });
+document.addEventListener('click',e=>{ const selection=e.target.closest('[data-job-select]'), tab=e.target.closest('[data-job-tab]'), source=e.target.closest('[data-job-source]'), action=e.target.closest('[data-job-action]'); if(selection) { jobUI.listScroll=window.scrollY; jobUI.actionError=''; jobUI.selected=selection.dataset.jobSelect; jobUI.detail=true; jobUI.confirm=false; jobUI.runForm=false; jobUI.work=false; jobUI.tab='overview'; drawJobs('#job-detail-title'); if(window.innerWidth<768) window.scrollTo(0,$('#content').getBoundingClientRect().top+window.scrollY); return; } if(tab) { jobUI.tab=tab.dataset.jobTab; jobUI.runForm=false; jobUI.work=false; drawJobs(`[data-job-tab="${jobUI.tab}"]`); return; } if(source) { jobUI.sourceRepo=source.dataset.jobSource; jobUI.sourcePreview=true; jobUI.sourceRetries=0; drawJobs('#job-source-repo'); jobMessage('Repository source selected'); return; } if(!action || action.disabled) return; const a=action.dataset.jobAction, j=job(); if(a==='sources'||a==='repair') { clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.actionError=''; if(jobUI.demo==='loading') jobUI.demo='populated'; jobUI.sources=true; jobUI.sourcePreview=a==='repair'; if(a==='repair') jobUI.sourceRepo=j.repo; drawJobs('#job-source-title'); } else if(a==='close-sources') { jobUI.sources=false; if(['empty','error','offline','loading'].includes(jobUI.demo)) jobUI.demo='populated'; drawJobs('[data-job-action="sources"]'); } else if(a==='back') { jobUI.detail=false; jobUI.runForm=false; jobUI.confirm=false; drawJobs(`[data-job-select="${j.id}"]`); if(window.innerWidth<768) window.scrollTo(0,jobUI.listScroll || 0); } else if(a==='definition') { jobUI.tab='definition'; drawJobs('[data-job-tab="definition"]'); } else if(a==='toggle') { if(j.invalid) return; if(!j.enabled&&!jobUI.reviewed[j.id]) { jobUI.tab='definition'; drawJobs('[data-job-tab="definition"]'); jobMessage('Review the definition and recipe before enabling'); } else { jobUI.confirm=true; jobUI.runForm=false; drawJobs('[data-job-action="confirm-state"]'); } } else if(a==='cancel-state') { jobUI.confirm=false; drawJobs('#job-detail-title'); } else if(a==='confirm-state') { jobBusy(()=>{ if(jobUI.demo==='action-error') { jobUI.actionError='The state-change request failed. The job remains unchanged.'; drawJobs('[data-job-action="confirm-state"]'); jobMessage('State change failed. Job state is unchanged; choose Populated to retry'); return; } j.enabled=!j.enabled; jobUI.confirm=false; jobUI.tab='overview'; drawJobs('#job-detail-title'); jobMessage(`${j.name} ${j.enabled ? 'enabled' : 'disabled'}`); },'Saving enabled state'); } else if(a==='run') { if(!j.enabled||j.invalid) return; jobUI.runForm=true; drawJobs('#job-run-form input'); } else if(a==='cancel-run') { jobUI.runForm=false; drawJobs('[data-job-action="run"]'); } else if(a==='work'||a==='latest') { jobUI.work=a==='work'; jobUI.tab='latest'; drawJobs('#job-detail-title'); jobMessage(a==='work' ? 'Opened local Work example' : 'Returned to latest run'); } else if(a==='clear-filters') { jobUI.query=''; jobUI.filter='all'; drawJobs('#job-search'); jobMessage('Search and filters cleared'); } else if(a==='cancel-load') { clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.demo='populated'; drawJobs('#job-search'); jobMessage('Loading canceled'); } else if(a==='reload') { jobStartLoading(); jobBusy(()=>{ clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.demo='populated'; drawJobs('#job-search'); jobMessage('Example registry restored'); },'Retrying registry'); } else if(a==='retry-source') { jobUI.sourceRetries++; jobUI.retryAt=Date.now(); jobBusy(()=>{ drawJobs('#job-source-title'); jobMessage('Source refresh failed; registered job retained'); },'Retrying source preview',jobUI.sourceRetries===1?550:jobUI.sourceRetries===2?2000:4000); } else if(a==='apply-source') { jobBusy(()=>{ if(jobUI.demo==='action-error') { jobUI.actionError='Source refresh failed. Installed definitions and enabled states are unchanged.'; drawJobs('#job-source-title'); jobMessage('Source refresh failed. Definitions and enabled states are unchanged'); return; } jobUI.sources=false; jobUI.sourcePreview=false; jobUI.demo='populated'; drawJobs('#job-search'); jobMessage('Example definitions refreshed; enabled states unchanged'); },'Refreshing repository definitions'); } });
+
 function renderMenu(d) {
   $('#menu').innerHTML = `<div class="nav-group"><span class="eyebrow">Navigate</span>${DEST.map((x) => `<a role="menuitem" href="#${x.key}" data-key="${x.key}" ${x.key === d.key ? 'aria-current="page"' : ''}>${x.label}</a>`).join('')}<hr></div>
-    <span class="eyebrow">Preferences</span><button class="item" role="menuitem" type="button">Switch to light mode</button><button class="item" role="menuitem" type="button">Enable decision notifications</button>
+    <span class="eyebrow">Preferences</span><button class="item" role="menuitem" type="button" id="scheme-toggle" data-od-id="scheme-toggle">Switch to ${document.documentElement.dataset.mantineColorScheme === 'light' ? 'dark' : 'light'} mode</button><button class="item" role="menuitem" type="button">Enable decision notifications</button>
     <hr><span class="eyebrow">Console</span><div class="ident"><span class="av" style="width:28px;height:28px;background:var(--hairline);display:grid;place-items:center;font:600 12px var(--f-display)">JL</span><span>jlapenna <span class="dim">admin · work.operator</span></span></div>`;
 }
 
+const originalRail = $('.rail-body').innerHTML, originalStrip = $('.strip').innerHTML;
 function render(key) {
   const d = DEST.find((x) => x.key === key) || DEST[0], v = VIEWS[d.key];
+  document.body.dataset.destination = d.key;
+  $('#refresh').disabled = false;
+  $('#toolbar').hidden = false;
+  $('#job-feedback').textContent = '';
+  $('.rail-body').innerHTML = originalRail;
+  $('.strip').innerHTML = originalStrip;
   document.body.dataset.accent = d.accent;
   document.title = `Agent LCARS — ${d.title}`;
   $('#page-title').textContent = d.title;
@@ -841,12 +998,22 @@ function render(key) {
     ${v.after ? `<span class="fold-group">${v.after.join('')}</span>` : ''}
     ${v.primary || ''}`;
   $('#content').innerHTML = v.body();
+  if(d.key === 'jobs') {
+    $('#sync').textContent = 'Design prototype · sample data';
+    $('#sync-compact').textContent = 'Prototype · sample data';
+    $('.strip').textContent = 'Repository jobs · all actions simulated';
+    $('.rail-body').innerHTML = `<div class="rail-block"><b>${JOBS.length}</b><span>Registered</span></div><div class="rail-block"><b>${JOBS.filter(j=>j.enabled).length}</b><span>Enabled</span></div><div class="rail-block"><b>${JOBS.filter(j=>!j.enabled).length}</b><span>Disabled</span></div><div class="rail-block fill"><b>01</b><span>Source issue</span></div><div class="rail-block end"><span>Prototype</span></div>`;
+    drawJobs();
+  }
   try { localStorage.setItem('lcars.dest', d.key); } catch (e) {}
 }
 
 function closeMenu() { $('#menu').removeAttribute('data-open'); $('#menu-btn').setAttribute('aria-expanded', 'false'); }
 
 document.addEventListener('click', (e) => {
+  if(e.target.closest('.skip-jobs')) { e.preventDefault(); $('#main-content').focus(); return; }
+  if(e.target.closest('#scheme-toggle')) { const light = document.documentElement.dataset.mantineColorScheme !== 'light'; document.documentElement.dataset.mantineColorScheme = light ? 'light' : 'dark'; try { localStorage.setItem('lcars.scheme', light ? 'light' : 'dark'); } catch {} renderMenu(DEST.find(d=>d.key===document.body.dataset.destination)); $('#scheme-toggle').focus(); return; }
+  if(e.target.closest('#refresh') && document.body.dataset.destination === 'jobs') { jobStartLoading(); jobBusy(()=>{ clearTimeout(jobLongTimer); clearTimeout(jobTimeout); jobUI.demo='populated'; drawJobs('#job-search'); jobMessage('Example registry refreshed; repository definitions unchanged'); },'Refreshing registry'); return; }
   if (e.target.closest('#menu-btn')) {
     const open = !$('#menu').hasAttribute('data-open');
     $('#menu').toggleAttribute('data-open', open); $('#menu-btn').setAttribute('aria-expanded', String(open)); return;
@@ -862,8 +1029,8 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
 window.addEventListener('hashchange', () => { render(location.hash.slice(1)); window.scrollTo(0, 0); });
 
-let start = 'deck';
-try { start = localStorage.getItem('lcars.dest') || 'deck'; } catch (e) {}
+let start = 'jobs';
+try { document.documentElement.dataset.mantineColorScheme = localStorage.getItem('lcars.scheme') || 'dark'; } catch (e) {}
 render(location.hash.slice(1) || start);
 </script>
 </body>
