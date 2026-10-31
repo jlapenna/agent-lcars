@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "how would I verify the inbox page on prod with the saved admin session? which commands, in order. read-only: answer from the repo, don't run anything against prod or secret manager",
-      "expected_output": "Ordered check-session, local phase preflight, headless-shell install, then verify-session with --path for the inbox and --storage secret when using the shared state, plus exit-code handling.",
+      "expected_output": "Ordered check-session, local browser-runtime readiness, headless-shell install, then verify-session with --path for the inbox and --storage secret when using the shared state, plus exit-code handling.",
       "files": [],
       "assertions": [
         "Gives the verify-session command ./tools/nx run @agent-lcars/console:verify-session",
