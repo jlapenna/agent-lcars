@@ -798,7 +798,12 @@ USER runner
 RUN /opt/playwright/node_modules/.bin/playwright install chromium --only-shell
 # A real offline render/interaction gates publication on both architectures.
 # This catches missing libraries, cache permissions and browser/package drift.
+# A cross-platform build runs the target under qemu-user, which cannot start the
+# GPU process Chromium forks from its zygote; only that case launches without it.
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 RUN --network=none timeout 120s env -i HOME="$HOME" PATH="$PATH" TMPDIR=/tmp \
+    LCARS_BROWSER_SMOKE_EMULATED="$([ "$BUILDPLATFORM" = "$TARGETPLATFORM" ] || echo 1)" \
     node /usr/local/lib/agent-lcars/browser-smoke.mjs
 
 # Even --version creates /tmp/opencode. Execute the CLI only as the job user
