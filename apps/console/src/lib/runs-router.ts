@@ -671,17 +671,13 @@ export const runsRouter = os.router({
     if (!context.principal.pipelines.includes(run.pipeline)) {
       throw errors.FORBIDDEN({ message: EXIT_PIPELINE_NOT_GRANTED });
     }
-    const settled = await context.orchestrator.executorExited(
-      run.runId,
-      {
-        subject: claimantSubject(context.principal),
-        runner: input.runner,
-        ...(input.claimFingerprint === undefined
-          ? {}
-          : { claimFingerprint: input.claimFingerprint }),
-      },
-      input.disruption,
-    );
+    const settled = await context.orchestrator.executorExited(run.runId, {
+      subject: claimantSubject(context.principal),
+      runner: input.runner,
+      ...(input.claimFingerprint === undefined
+        ? {}
+        : { claimFingerprint: input.claimFingerprint }),
+    });
     if (
       isRefusal(settled) &&
       settled.reason === 'credential-operation-pending'

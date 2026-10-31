@@ -64,19 +64,6 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 	}
 }
 
-// observeTerminated records that the worker for runID is no longer running
-// and reports it asynchronously, unless it was already reported or a report
-// for that exact claim is in flight. fingerprint is the immutable token hash
-// recorded on the original Job at creation; the route identifies the claim by
-// it, so an observation without one names no claim and is not reported.
-// claimedBy is the runner name the run was claimed under (from its Job); the
-// Work API accepts the report only from the claiming principal under that
-// name. Empty falls back to this process's own runner name. It never blocks
-// the caller (a claim admission or a status read) on the Work API.
-func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
-	r.observeTerminatedWithDisruption(runID, claimedBy, fingerprint, nil)
-}
-
 // delivered reports whether the exit of this exact claim was accepted. A nil
 // reporter delivers nothing and keeps nothing pending.
 func (r *runExitReporter) delivered(runID, fingerprint string) bool {
@@ -89,27 +76,16 @@ func (r *runExitReporter) delivered(runID, fingerprint string) bool {
 	return done
 }
 
-// exitDisruption is the executor's exact attestation that this attempt's own
-// worker Pod was removed by scheduler preemption before its container started,
-// named by the Kubernetes UIDs of the Job and Pod it observed. It is untrusted
-// by default: the Work API honors it only when the run's own recorded state
-// agrees, and an absent or disagreeing attestation leaves the ordinary
-// terminal loss. Only this exact kind exists -- eviction, node loss, an OOM, or
-// a bare "the pod is gone" never produce one.
-type exitDisruption struct {
-	JobUID     string `json:"jobUid"`
-	PodUID     string `json:"podUid"`
-	ObservedAt string `json:"observedAt"`
-	Kind       string `json:"kind"`
-}
-
-// schedulerPreemptionKind is the one disruption the Work API can recover from.
-const schedulerPreemptionKind = "scheduler-preemption"
-
-// observeTerminatedWithDisruption reports a terminated claim, optionally
-// attesting that the scheduler preempted it before its worker container
-// started. A nil attestation is the ordinary report.
-func (r *runExitReporter) observeTerminatedWithDisruption(runID, claimedBy, fingerprint string, disruption *exitDisruption) {
+// observeTerminated records that the worker for runID is no longer running
+// and reports it asynchronously, unless it was already reported or a report
+// for that exact claim is in flight. fingerprint is the immutable token hash
+// recorded on the original Job at creation; the route identifies the claim by
+// it, so an observation without one names no claim and is not reported.
+// claimedBy is the runner name the run was claimed under (from its Job); the
+// Work API accepts the report only from the claiming principal under that
+// name. Empty falls back to this process's own runner name. It never blocks
+// the caller (a claim admission or a status read) on the Work API.
+func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
 	if r == nil || runID == "" || fingerprint == "" {
 		return
 	}
@@ -136,7 +112,7 @@ func (r *runExitReporter) observeTerminatedWithDisruption(runID, claimedBy, fing
 		if runner == "" {
 			runner = r.runnerName
 		}
-		state, err := r.postContext(context.Background(), runID, runner, fingerprint, disruption)
+		state, err := r.postContext(context.Background(), runID, runner, fingerprint)
 		r.mu.Lock()
 		delete(r.inflight, key)
 		if err == nil {
@@ -166,18 +142,16 @@ const stateNotClaimant = "not-claimant"
 // postContext reports one exit as runner. The route's own 404 (the run no
 // longer exists) and its claimant-mismatch 403 are final for this original
 // claim, so both count as delivered; a pipeline-grant 403 is retried. A
-// different same-run claim has a separate delivery key. A nil disruption is
-// the ordinary report.
-func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string, disruption *exitDisruption) (string, error) {
+// different same-run claim has a separate delivery key.
+func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string) (string, error) {
 	token, err := r.acquireToken(ctx)
 	if err != nil {
 		return "", fmt.Errorf("minting exit report id token: %w", err)
 	}
 	payload := struct {
-		Runner           string          `json:"runner"`
-		ClaimFingerprint string          `json:"claimFingerprint"`
-		Disruption       *exitDisruption `json:"disruption,omitempty"`
-	}{Runner: runner, ClaimFingerprint: fingerprint, Disruption: disruption}
+		Runner           string `json:"runner"`
+		ClaimFingerprint string `json:"claimFingerprint"`
+	}{Runner: runner, ClaimFingerprint: fingerprint}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
