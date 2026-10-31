@@ -58,6 +58,7 @@ function fixture(
     requirement: 'required' | 'optional';
     default?: string;
   }[] = [],
+  profileName = 'audit',
 ) {
   let at = new Date('2026-10-27T06:00:00.000Z');
   const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
@@ -78,7 +79,7 @@ function fixture(
       },
       execution: {
         recipe: './recipe.yaml',
-        profile: 'audit',
+        profile: profileName,
         timeout: '10m',
         maxAttempts: 1,
         resources: { requests: { ...allocation }, limits: { ...allocation } },
@@ -157,6 +158,60 @@ function fixture(
   };
 }
 describe('production repository job admission', () => {
+  it('enables and admits a repository job without per-job configuration', async () => {
+    const f = fixture([], 'repository');
+    f.jobs.deps.profiles = vi.fn(() => []);
+    f.store.jobs.get(f.id)!.enabled = false;
+    await expect(
+      f.jobs.enable(f.id, 'stale-digest', 'user:joe', true),
+    ).rejects.toThrow('review the current definition');
+    await f.jobs.enable(f.id, f.definition.digest, 'user:joe', true);
+    const occurrence = await f.jobs.admit(
+      f.id,
+      'installed',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    expect(f.jobs.deps.profiles).not.toHaveBeenCalled();
+    expect(occurrence.profile.inputSets).toEqual([f.definition.job.inputs]);
+    expect(occurrence.profile.repositories).toEqual(['octo/repo']);
+    const runs = await f.native.listRuns({ workId: occurrence.workId });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.params?.['crossRepo']).toBeUndefined();
+    f.granted.mockReturnValue(false);
+    await expect(
+      f.jobs.enable(f.id, f.definition.digest, 'user:joe', true),
+    ).rejects.toThrow('Goose operator grant required');
+    await expect(
+      f.jobs.admit(f.id, 'revoked', 'user:joe', 'manual', f.definition.digest),
+    ).rejects.toThrow('Goose operator grant required');
+  });
+  it('keeps the repository lane allocation fixed and ignores configured authority overrides', () => {
+    const f = fixture([], 'repository');
+    f.profile.name = 'repository';
+    f.profile.crossRepo = true;
+    expect(
+      f.jobs.authorize(f.definition, 'user:joe').crossRepo,
+    ).toBeUndefined();
+    f.definition.job.execution.resources.requests.memory = '3Gi';
+    f.definition.job.execution.resources.limits.memory = '3Gi';
+    expect(() => f.jobs.authorize(f.definition, 'user:joe')).toThrow(
+      'Allocation must match profile exactly',
+    );
+  });
+  it('admits weekly repository schedules with the enabling principal grant', async () => {
+    const f = fixture([], 'repository');
+    f.jobs.deps.profiles = () => [];
+    f.definition.job.triggers.schedule = { cron: '0 6 * * 2', timezone: 'UTC' };
+    await f.jobs.tick();
+    const occurrence = [...f.store.occurrences.values()][0]!;
+    expect(occurrence.trigger).toBe('schedule');
+    expect(occurrence.principal).toBe('user:joe');
+    expect(await f.native.listRuns({ workId: occurrence.workId })).toHaveLength(
+      1,
+    );
+  });
   it.each([undefined, false, true])(
     'uses cross-repository credentials only when the operator profile enables them (%s)',
     async (crossRepo) => {

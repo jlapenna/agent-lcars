@@ -31,8 +31,11 @@ Explicit enablement establishes an activation floor. Publishing a
 manifest does not enable it. Updating its execution definition disables it until
 the operator re-enables the new digest.
 
-Profiles are operator-owned configuration, never recipe-selected credentials or
-tools. Each profile grants repositories, input scopes and an exact allocation.
+The built-in `repository` profile uses the existing Goose Work operator grant
+for the owning repository and the supported 2 CPU / 6 GiB / 24 GiB allocation.
+The operator reviews the definition's fixed inputs when enabling its digest.
+New jobs using this profile need no LCARS configuration change or deployment.
+Specialized profiles remain operator-owned configuration for additional authority.
 The server checks the current grant on enablement, invocation and scheduled
 admission. A recipe cannot install extensions, change model settings, nest jobs,
 retry, or choose a shell command. The configured worker image supplies Goose and
@@ -137,7 +140,21 @@ source verification does not establish deployed tool access.
 
 ## Configuration and operation
 
-`AGENT_LCARS_JOB_PROFILES` is a JSON array of operator-owned profiles. Each entry
+To install a repository job, publish `.lcars/jobs/<name>/job.yaml` and
+`recipe.yaml` on its default branch. Set `execution.profile: repository` and
+requests equal to limits at 2 CPU / 6 GiB / 24 GiB. In `/jobs`, select the
+repository and **Install / refresh jobs**, then review and enable its definition.
+The screen lists all registered jobs the operator may access, including disabled
+and invalid definitions; the repository selector chooses which catalog to refresh,
+not which jobs to display. Adding a job or changing its weekly cron is entirely
+repository-owned. Definition changes require review and re-enablement.
+
+The built-in `repository` profile is reserved, always uses repository-scoped
+credentials, and cannot be overridden by `AGENT_LCARS_JOB_PROFILES`. Its fixed
+inputs come from the reviewed manifest. It does not grant access to other
+repositories or bypass the shared Work operator/Goose grant.
+
+`AGENT_LCARS_JOB_PROFILES` is a JSON array of specialized operator-owned profiles. Each entry
 names `name`, allowed `repositories`, allowed LCARS `principals`, exact
 `allocation` (`cpu`, `memory`, `storage`) and approved `inputSets`. Input sets are
 exact string maps; the job cannot widen them at invocation. The operator and

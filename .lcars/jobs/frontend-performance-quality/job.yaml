@@ -1,0 +1,34 @@
+version: 1
+description: Weekly frontend performance and quality analysis, root cause investigation, and verified fixes.
+triggers:
+  manual: true
+  schedule:
+    cron: '0 14 * * 2'
+    timezone: UTC
+execution:
+  recipe: ./recipe.yaml
+  profile: repository
+  timeout: 45m
+  maxAttempts: 1
+  resources:
+    requests:
+      cpu: 2
+      memory: 6Gi
+      storage: 24Gi
+    limits:
+      cpu: 2
+      memory: 6Gi
+      storage: 24Gi
+inputs:
+  scope: console
+  mode: analyze-and-fix
+concurrency:
+  maxRuns: 1
+  overlap: skip
+state:
+  previousSuccessfulResult: true
+result:
+  contract: json-v1
+  requiredArtifacts:
+    - report.md
+    - result.json

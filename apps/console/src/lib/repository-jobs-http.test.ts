@@ -149,3 +149,25 @@ it('matches signed repository case-insensitively', async () => {
   expect(response.status).toBe(200);
   expect(mocks.refresh).toHaveBeenCalledOnce();
 });
+
+it('lists all registered jobs, including disabled and invalid definitions', async () => {
+  const registered = [
+    catalog,
+    { ...catalog, id: 'c'.repeat(64), name: 'disabled', enabled: false },
+    {
+      ...catalog,
+      id: 'd'.repeat(64),
+      name: 'invalid',
+      enabled: false,
+      definition: undefined,
+      error: 'Invalid YAML',
+    },
+  ];
+  vi.spyOn(store, 'list').mockResolvedValueOnce(registered);
+  const response = await repositoryJobsHttp(
+    new Request('https://console.example/api/work/v1/jobs'),
+    { ...source, sourceRepository: undefined },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(JSON.parse(JSON.stringify(registered)));
+});
