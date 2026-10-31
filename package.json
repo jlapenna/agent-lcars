@@ -22,10 +22,10 @@
     "work:openapi": "tsx tools/work-openapi.mts"
   },
   "private": true,
-  "packageManager": "pnpm@11.28.9",
+  "packageManager": "pnpm@11.28.10",
   "engines": {
     "node": ">=26.13.0 <27",
-    "pnpm": "11.28.9"
+    "pnpm": "11.28.10"
   },
   "dependencies": {
     "@google-cloud/firestore": "9.4.0",
