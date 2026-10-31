@@ -121,6 +121,25 @@ describe('background notification consent', () => {
     expect(mocks.enable).not.toHaveBeenCalled();
     expect(screen.getByText(/unavailable — try again/)).toBeTruthy();
   });
+  it('names an Inbox data warning instead of asking for a retry', async () => {
+    disableOpenTab.mockResolvedValue(true);
+    mocks.status.mockResolvedValue({ enabled: false, publicKey: 'public' });
+    mocks.enable.mockResolvedValue('paused');
+    render(tree('first'));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Enable background notifications' }),
+      );
+    });
+    expect(mocks.enable).toHaveBeenCalled();
+    expect(
+      screen.getByRole('status', { name: 'Background notification status' })
+        .textContent,
+    ).toBe('Background notifications paused by an Inbox data warning');
+    expect(
+      screen.getByRole('button', { name: 'Enable background notifications' }),
+    ).toBeTruthy();
+  });
   it('serializes a delayed enable before another tab revokes consent', async () => {
     const order: string[] = [];
     let release!: () => void;

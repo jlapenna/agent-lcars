@@ -31,7 +31,13 @@ export async function inboxPushStatus(endpoint?: string) {
       : false,
   };
 }
-export async function enableInboxPush(input: unknown, expectedUserId: string) {
+/** `paused` means the Inbox snapshot is incomplete or stale, so no quiet
+ * baseline can be recorded. It is returned, not thrown, because production
+ * redacts thrown Server Action messages and the viewer needs the reason. */
+export async function enableInboxPush(
+  input: unknown,
+  expectedUserId: string,
+): Promise<'enabled' | 'paused'> {
   const user = await viewer();
   if (!pushConfiguration())
     throw new Error('Background notifications unavailable');
@@ -41,13 +47,16 @@ export async function enableInboxPush(input: unknown, expectedUserId: string) {
   const revision = await store.begin(user.id, user.login, subscription);
   try {
     const snapshot = await pushSnapshot(user.id, user.login);
-    if (!notificationSnapshotFresh(snapshot, Date.now()))
-      throw new Error('Inbox unavailable; try again');
-    await store.activate(user.id, subscription.endpoint, revision, snapshot);
+    if (notificationSnapshotFresh(snapshot, Date.now())) {
+      await store.activate(user.id, subscription.endpoint, revision, snapshot);
+      return 'enabled';
+    }
   } catch (error) {
     await store.remove(user.id, subscription.endpoint, revision);
     throw error;
   }
+  await store.remove(user.id, subscription.endpoint, revision);
+  return 'paused';
 }
 export async function disableInboxPush(
   endpoint: string,
