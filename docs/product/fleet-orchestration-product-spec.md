@@ -250,7 +250,11 @@ Console outcome, history, deliverable and Conversation links all use
 `safeHttpUrl`. Historical results, missing references, native park/no-op
 files and failed verification have no invented link. Agent final-message
 URLs are never promoted to verified references. `message` is the agent's
-final turn, shown in the console Conversation.
+final turn, shown in the console Conversation. When an `agent-failed` or
+`agent-timeout` round ends without one, the runner reports the redacted last
+12 KiB of the provider's own output instead, because the worker Pod and its log
+are deleted at settlement. The GitHub outcome comment never shows a failure's
+`message`.
 
 ### 5.5 Claims and ownership
 

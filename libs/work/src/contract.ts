@@ -67,7 +67,8 @@ const runResultSchema = z.strictObject({
   /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
   relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /** The agent's final message for this round, e.g. its question when it
-   *  parked. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
+   *  parked, or the runner's redacted output tail for a provider that failed
+   *  before one. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
   message: z.string().max(16_384).optional(),
   /** Optional LLM reading aid derived by Console from this parked message. */
   humanNeededActions: humanNeededActionsSchema.optional(),
