@@ -1,35 +1,8 @@
 'use client';
 
-import type { PopoverProps } from '@mantine/core';
-import {
-  type ComponentType,
-  type HTMLAttributes,
-  type ReactElement,
-  type ReactNode,
-  type Ref,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { type ComponentType, useEffect, useRef, useState } from 'react';
 
-type TriggerProps = HTMLAttributes<HTMLButtonElement> & {
-  ref?: Ref<HTMLButtonElement>;
-  autoFocus?: boolean;
-};
-
-export interface DeferredSurfaceProps {
-  kind: 'menu' | 'popover';
-  target: (props: TriggerProps) => ReactElement;
-  children: ReactNode;
-  opened: boolean;
-  onChange: (opened: boolean) => void;
-  position?: PopoverProps['position'];
-  width?: PopoverProps['width'];
-  shadow?: PopoverProps['shadow'];
-  withArrow?: boolean;
-  dropdownClassName?: string;
-  focusOnMount?: boolean;
-}
+import type { DeferredSurfaceProps } from './deferred-surface-props';
 
 /** Closed secondary controls need their button, not Floating UI or a focus
  * trap. Load the existing Mantine surface on activation and keep it mounted

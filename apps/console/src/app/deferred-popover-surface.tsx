@@ -3,7 +3,7 @@
 import { Menu, Popover } from '@mantine/core';
 import { useEffect, useState } from 'react';
 
-import type { DeferredSurfaceProps } from './deferred-popover';
+import type { DeferredSurfaceProps } from './deferred-surface-props';
 
 export function DeferredPopoverSurface({
   kind,
