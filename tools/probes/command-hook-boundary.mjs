@@ -403,7 +403,11 @@ ${policyMarker && !bootstrap ? `const policy = require(${JSON.stringify(resolve(
           : fileAction
             ? { file_path: fileTarget, content: fileContent }
             : provider === 'codex'
-              ? { cmd: command, yield_time_ms: 1000 }
+              ? // Unified exec returns as soon as the command exits. A short
+                // yield hands this scripted model a still-running result, and
+                // it moves on: a push slower than 1 s on a loaded runner never
+                // landed and failed qualification run 41245985360.
+                { cmd: command, yield_time_ms: 30000 }
               : { command, description: 'Harmless probe sentinel' });
       const send = (event, data) =>
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
