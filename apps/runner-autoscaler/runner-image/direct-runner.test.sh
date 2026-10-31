@@ -1479,6 +1479,8 @@ jq -e '.authFailure == "refresh-token-reused"' "$CODEX_AUTH_PERSIST_LOG" >/dev/n
   fail "codex burned auth: broker payload did not carry the exact failure enum ($(cat "$CODEX_AUTH_PERSIST_LOG"))"
 grep -q '"outcome":"agent-failed"' "$COMPLETE_LOG" ||
   fail "codex burned auth: completion did not report agent-failed ($(cat "$COMPLETE_LOG"))"
+tail -n1 "$COMPLETE_LOG" | jq -e '.message | contains("refresh token was already used")' >/dev/null ||
+  fail "codex burned auth: failure diagnosis lost Codex's structured failure ($(tail -n1 "$COMPLETE_LOG"))"
 
 echo "scenario codex-burned: OK"
 

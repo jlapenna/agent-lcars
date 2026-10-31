@@ -1118,9 +1118,11 @@ CURLCFG
     PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
     tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
   fi
-  # Codex streams JSON events on stdout; its stderr is the free-form part.
-  # Redact it now, while auth.json still names Codex's own tokens.
-  tail -c 16384 "$CODEX_STDERR" 2>/dev/null | redact_runner_secrets >> "$PROVIDER_OUTPUT_FILE" || true
+  # Codex streams JSON events on stdout: keep the structured failures already
+  # extracted from them, then its free-form stderr. Redact both now, while
+  # auth.json still names Codex's own tokens.
+  { tail -c 8192 "$CODEX_FAILURE_MESSAGES"; tail -c 8192 "$CODEX_STDERR"; } 2>/dev/null |
+    redact_runner_secrets >> "$PROVIDER_OUTPUT_FILE" || true
 
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
