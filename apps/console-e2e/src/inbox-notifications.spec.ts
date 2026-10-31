@@ -147,7 +147,7 @@ for (const width of [390, 768, 1280]) {
     );
     let status = await openInbox(page);
     await expect(status).toHaveText(
-      'Authorization or data unavailable — notifications paused',
+      'Notification delivery or preferences unavailable',
     );
     await page.unroute('**/api/inbox-notifications');
     status = await openInbox(page);
