@@ -64,6 +64,17 @@ describe('native Claude background publication', () => {
     expect(summary.tokens.outputTokens).toBe(20);
   });
 
+  it('recovers the publication when TMPDIR relocates the task output', () => {
+    const rows = fixture();
+    const relocate = (text: string) =>
+      text.replace('/tmp/claude-1000/', '/home/dev/.offroot/tmp/claude-1000/');
+    rows[2].message.content = relocate(rows[2].message.content);
+    rows[3].message.content[0].input.command = relocate(
+      rows[3].message.content[0].input.command,
+    );
+    expect(reduce(rows).deliverables.publicationCandidates).toEqual(published);
+  });
+
   it('preserves the existing literal qualification distinction', () => {
     const rows = fixture();
     rows[0].message.content[0].input.command = 'gh pr create --draft';
@@ -148,6 +159,20 @@ describe('native Claude background publication', () => {
           '/tasks/',
           '/../tasks/',
         );
+      },
+    ],
+    [
+      'output outside a Claude task root',
+      (r: Fixture) => {
+        r[2].message.content = r[2].message.content.replace(
+          '/tmp/claude-1000/',
+          '/tmp/other-1000/',
+        );
+        r[3].message.content[0].input.command =
+          r[3].message.content[0].input.command.replace(
+            '/tmp/claude-1000/',
+            '/tmp/other-1000/',
+          );
       },
     ],
     [
