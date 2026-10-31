@@ -1794,7 +1794,7 @@ echo "scenario opencode-last-message: OK"
 # diagnosis left once the Pod is deleted (#2956): report it, redacted.
 export FAKE_OPENCODE_EXIT_CODE=5 FAKE_GH_NO_MATCH=1
 export FAKE_OPENCODE_STDOUT=$'> build \xc2\xb7 default\n'
-export FAKE_OPENCODE_STDERR=$'Error: stream closed (run token test-token, ghs_abcdefghijklmnopqrstuvwx)\n'
+export FAKE_OPENCODE_STDERR="Error: stream closed (run token test-token, checkout $FAKE_TOKEN, ghs_abcdefghijklmnopqrstuvwx)"
 run_scenario opencode-exit-nonzero opencode
 unset FAKE_OPENCODE_EXIT_CODE FAKE_GH_NO_MATCH FAKE_OPENCODE_STDOUT FAKE_OPENCODE_STDERR
 
@@ -1808,7 +1808,7 @@ exit_message="$(tail -n1 "$COMPLETE_LOG" | jq -r '.message // ""')"
   fail "opencode exit-nonzero: failure carried no provider diagnosis ($exit_message)"
 [[ "$exit_message" == *'build · default'* && "$exit_message" == *'Error: stream closed'* ]] ||
   fail "opencode exit-nonzero: diagnosis lost the provider's stdout or stderr ($exit_message)"
-if [[ "$exit_message" == *test-token* || "$exit_message" == *ghs_abcdef* ]]; then
+if [[ "$exit_message" == *test-token* || "$exit_message" == *"$FAKE_TOKEN"* || "$exit_message" == *ghs_abcdef* ]]; then
   fail "opencode exit-nonzero: diagnosis exposed a credential ($exit_message)"
 fi
 

@@ -143,6 +143,30 @@ EARLY_FAILURE_MESSAGE=''
 # and its log are deleted at settlement, so a round that exits non-zero before
 # its final message otherwise leaves nothing to diagnose (#2956).
 PROVIDER_OUTPUT_FILE="$RUNNER_TEMP/provider-output.log"
+# The exact value of every bearer this runner holds, read when redacting so a
+# rotated checkout or owner token is still covered, then the token shapes a
+# provider could echo from its own configuration.
+redact_runner_secrets() {
+  local text secret file
+  local -a secrets=("${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}"
+    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}")
+  for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
+    "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}"; do
+    if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
+  done
+  if [ -n "${CODEX_AUTH_FILE:-}" ] && [ -r "$CODEX_AUTH_FILE" ]; then
+    mapfile -t -O "${#secrets[@]}" secrets < <(jq -r '.. | strings | select(length >= 16)' "$CODEX_AUTH_FILE" 2>/dev/null || true)
+  fi
+  text="$(cat)"
+  for secret in "${secrets[@]}"; do
+    if [ "${#secret}" -ge 8 ]; then text="${text//"$secret"/[redacted]}"; fi
+  done
+  printf '%s' "$text" | sed -E \
+    -e 's/(gh[opsur]_|github_pat_)[A-Za-z0-9_]{16,}/[redacted]/g' \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/[redacted]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/[redacted]/g' \
+    -e 's/([Bb]earer|[Tt]oken|[Kk]ey)([:= "]+)[A-Za-z0-9._~+\/=-]{16,}/\1\2[redacted]/g'
+}
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
     kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
@@ -1095,7 +1119,8 @@ CURLCFG
     tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
   fi
   # Codex streams JSON events on stdout; its stderr is the free-form part.
-  tail -c 16384 "$CODEX_STDERR" >> "$PROVIDER_OUTPUT_FILE" 2>/dev/null || true
+  # Redact it now, while auth.json still names Codex's own tokens.
+  tail -c 16384 "$CODEX_STDERR" 2>/dev/null | redact_runner_secrets >> "$PROVIDER_OUTPUT_FILE" || true
 
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
@@ -1355,22 +1380,6 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
 # Finalization has synchronously archived every Codex session it found. Only
 # now can the tmpfs-backed session/auth directory be erased.
 cleanup_codex_material
-
-# Literal values of the bearers this runner holds, then the token shapes a
-# provider could echo from its own configuration.
-redact_runner_secrets() {
-  local text secret
-  text="$(cat)"
-  for secret in "${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}" \
-    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}"; do
-    if [ "${#secret}" -ge 8 ]; then text="${text//"$secret"/[redacted]}"; fi
-  done
-  printf '%s' "$text" | sed -E \
-    -e 's/(gh[opsur]_|github_pat_)[A-Za-z0-9_]{16,}/[redacted]/g' \
-    -e 's/sk-[A-Za-z0-9_-]{16,}/[redacted]/g' \
-    -e 's/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/[redacted]/g' \
-    -e 's/([Bb]earer|[Tt]oken|[Kk]ey)([:= "]+)[A-Za-z0-9._~+\/=-]{16,}/\1\2[redacted]/g'
-}
 
 OUTCOME=no-deliverable
 if [ "$AGENT_EXIT" -eq 124 ]; then
