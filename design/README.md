@@ -18,6 +18,13 @@ prototype updates it there too. A maintainer's decision about the console
 outranks an older drawing — record it here rather than let the two disagree.
 Decisions the prototype already carries:
 
+- Jobs lists all registered jobs, including disabled and invalid sources, with
+  search and state filters. One selected detail holds the overview, definition
+  review and latest run; phones return to the list with All jobs. Repository
+  installation is a separate explicit action and never implicitly enables jobs.
+  Review is bound to the installed definition digest. Production uses the
+  allowed-repository selector and existing refresh API; prototype source previews
+  and simulated confirmations illustrate state changes, not additional APIs.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source
   revisions represent admitted work, not every raw webhook delivery.
