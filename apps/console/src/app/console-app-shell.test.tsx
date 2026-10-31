@@ -46,4 +46,19 @@ describe('ConsoleAppShell', () => {
       ),
     ).toHaveTextContent('Session detail');
   });
+
+  it('links the rail brand to the console root', () => {
+    render(
+      <MantineProvider>
+        <ConsoleAppShell current="sessions" title="Sessions" subtitle="All">
+          <p>Route content</p>
+        </ConsoleAppShell>
+      </MantineProvider>,
+    );
+
+    expect(screen.getByTestId('rail-home')).toHaveAttribute('href', '/');
+    expect(screen.getByTestId('rail-home')).toContainElement(
+      screen.getByTestId('rail-environment'),
+    );
+  });
 });

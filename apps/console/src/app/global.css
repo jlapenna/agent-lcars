@@ -2993,6 +2993,13 @@ td.costs-repo-spend__num {
       linear-gradient(#000 0 0) 0 0 / 100% var(--lcars-rail-arm) no-repeat;
   }
 
+  .lcars-rail-home {
+    display: flex;
+    flex-direction: column;
+    color: inherit;
+    text-decoration: none;
+  }
+
   .lcars-rail-brand {
     font-family: var(--font-display), sans-serif;
     font-size: 1.375rem;
