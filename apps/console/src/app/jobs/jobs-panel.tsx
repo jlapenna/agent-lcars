@@ -23,6 +23,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const readVersion = useRef(0);
   const listTitle = useRef<HTMLHeadingElement>(null);
   const [parameters, setParameters] = useState<
     Record<string, Record<string, string>>
@@ -33,12 +34,13 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
 
   useEffect(() => {
     let active = true;
+    const version = ++readVersion.current;
     void jobsApi<CatalogJob[]>('')
       .then((value) => {
-        if (active) setJobs(value);
+        if (active && version === readVersion.current) setJobs(value);
       })
       .catch((reason: Error) => {
-        if (active) setError(reason.message);
+        if (active && version === readVersion.current) setError(reason.message);
       });
     return () => {
       active = false;
@@ -48,6 +50,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
   async function act(operation?: () => Promise<unknown>, success = '') {
     if (lock.current) return;
     lock.current = true;
+    readVersion.current += 1;
     setBusy(true);
     setError('');
     setNotice('');
@@ -304,11 +307,13 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
                     busy={busy}
                     focus={detailOpen}
                     back={back}
-                    parameters={parameters[job.id] ?? {}}
+                    parameters={
+                      parameters[`${job.id}:${job.definition?.digest}`] ?? {}
+                    }
                     setParameters={(value) =>
                       setParameters((current) => ({
                         ...current,
-                        [job.id]: value,
+                        [`${job.id}:${job.definition?.digest}`]: value,
                       }))
                     }
                     occurrence={occurrences[job.id]}

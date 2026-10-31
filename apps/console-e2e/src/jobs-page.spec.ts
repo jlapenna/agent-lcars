@@ -146,6 +146,27 @@ test('browse all registrations and review the exact definition before enabling a
     digest: 'c'.repeat(64),
     parameters: { target: 'console' },
   });
+  // A newly installed recipe must not inherit parameters absent from its schema.
+  jobs[0].enabled = false;
+  jobs[0].definition!.digest = 'd'.repeat(64);
+  jobs[0].definition!.parameters[0].key = 'frontend';
+  await page.getByRole('button', { name: 'Refresh list', exact: true }).click();
+  await page.getByRole('button', { name: 'Review to enable' }).click();
+  await page
+    .getByRole('checkbox', { name: 'I reviewed this definition and recipe' })
+    .check();
+  await enable.click();
+  await expect(page.getByText('Reviewed definition enabled.')).toBeVisible();
+  await page.getByRole('button', { name: 'Run now', exact: true }).click();
+  await page.getByRole('textbox', { name: 'frontend' }).fill('console');
+  await page.getByRole('button', { name: 'Start run', exact: true }).click();
+  await expect(
+    page.getByRole('link', { name: 'Open Work for status and cancellation' }),
+  ).toBeVisible();
+  expect(calls.at(-1)?.body).toMatchObject({
+    parameters: { frontend: 'console' },
+  });
+  expect(calls.at(-1)?.body.parameters).not.toHaveProperty('target');
 });
 
 test('registry and selected detail fit phone, tablet and desktop in both themes', async ({
