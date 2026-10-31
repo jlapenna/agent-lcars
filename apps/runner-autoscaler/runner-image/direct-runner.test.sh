@@ -673,6 +673,9 @@ fi
 if [ -n "${FAKE_OPENCODE_STDOUT:-}" ]; then
   printf '%s' "$FAKE_OPENCODE_STDOUT"
 fi
+if [ -n "${FAKE_OPENCODE_STDERR:-}" ]; then
+  printf '%s' "$FAKE_OPENCODE_STDERR" >&2
+fi
 exit "${FAKE_OPENCODE_EXIT_CODE:-0}"
 FAKE
   chmod +x "$bindir/opencode"
@@ -1787,15 +1790,27 @@ echo "scenario opencode-last-message: OK"
 # non-zero exit here must still classify the run as no-deliverable -- if a
 # stray pipe stage were reintroduced downstream of a naive `$?` switch, its
 # own (successful) exit status would silently mask this failure instead.
+# The round dies before its final message, so its own output is the only
+# diagnosis left once the Pod is deleted (#2956): report it, redacted.
 export FAKE_OPENCODE_EXIT_CODE=5 FAKE_GH_NO_MATCH=1
+export FAKE_OPENCODE_STDOUT=$'> build \xc2\xb7 default\n'
+export FAKE_OPENCODE_STDERR=$'Error: stream closed (run token test-token, ghs_abcdefghijklmnopqrstuvwx)\n'
 run_scenario opencode-exit-nonzero opencode
-unset FAKE_OPENCODE_EXIT_CODE FAKE_GH_NO_MATCH
+unset FAKE_OPENCODE_EXIT_CODE FAKE_GH_NO_MATCH FAKE_OPENCODE_STDOUT FAKE_OPENCODE_STDERR
 
 [ "$rc" -eq 1 ] || fail "opencode exit-nonzero: expected exit 1, got $rc"
 grep -q '"outcome":"agent-failed"' "$COMPLETE_LOG" ||
   fail "opencode exit-nonzero: complete call did not report agent-failed ($(cat "$COMPLETE_LOG"))"
 [ "$(cat "$OPENCODE_RUN_COUNT_FILE")" -eq 1 ] ||
   fail "opencode exit-nonzero: provider retried a non-zero deterministic failure"
+exit_message="$(tail -n1 "$COMPLETE_LOG" | jq -r '.message // ""')"
+[[ "$exit_message" == 'OpenCode exited 5 before its final message.'* ]] ||
+  fail "opencode exit-nonzero: failure carried no provider diagnosis ($exit_message)"
+[[ "$exit_message" == *'build · default'* && "$exit_message" == *'Error: stream closed'* ]] ||
+  fail "opencode exit-nonzero: diagnosis lost the provider's stdout or stderr ($exit_message)"
+if [[ "$exit_message" == *test-token* || "$exit_message" == *ghs_abcdef* ]]; then
+  fail "opencode exit-nonzero: diagnosis exposed a credential ($exit_message)"
+fi
 
 echo "scenario opencode-exit-nonzero: OK"
 

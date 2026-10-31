@@ -139,6 +139,10 @@ CODEX_AUTH_WAIT_PID=''
 CHECKOUT_REFRESH_PID=''
 OPENCODE_PROXY_PID=''
 EARLY_FAILURE_MESSAGE=''
+# Every provider round's own output, still streamed to the live log. The Pod
+# and its log are deleted at settlement, so a round that exits non-zero before
+# its final message otherwise leaves nothing to diagnose (#2956).
+PROVIDER_OUTPUT_FILE="$RUNNER_TEMP/provider-output.log"
 cleanup_codex_material() {
   if [ -n "$CODEX_STDERR_TEE_PID" ]; then
     kill "$CODEX_STDERR_TEE_PID" 2>/dev/null || true
@@ -853,7 +857,7 @@ if [ "$PIPELINE" = "claude" ]; then
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
       --allowedTools "Bash,Edit,Write,MultiEdit" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
-      "$@" --print "$prompt" | tee "$LAST_MESSAGE_FILE"
+      "$@" --print "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"
   }
   set +e
@@ -1090,6 +1094,8 @@ CURLCFG
     PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
     tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
   fi
+  # Codex streams JSON events on stdout; its stderr is the free-form part.
+  tail -c 16384 "$CODEX_STDERR" >> "$PROVIDER_OUTPUT_FILE" 2>/dev/null || true
 
   if [ ! -s "$CODEX_AUTH_FILE" ]; then
     echo "FATAL: Codex auth.json is missing or empty after the run; refusing to persist" >&2
@@ -1226,7 +1232,8 @@ else
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
-        --auto "$round_prompt"
+        --auto "$round_prompt" \
+        > >(tee -a "$PROVIDER_OUTPUT_FILE") 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2)
   }
 
   set +e
@@ -1349,6 +1356,22 @@ WRITER_CREDENTIALS_FILE="/run/secrets/telemetry-writer.json" \
 # now can the tmpfs-backed session/auth directory be erased.
 cleanup_codex_material
 
+# Literal values of the bearers this runner holds, then the token shapes a
+# provider could echo from its own configuration.
+redact_runner_secrets() {
+  local text secret
+  text="$(cat)"
+  for secret in "${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}" \
+    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}"; do
+    if [ "${#secret}" -ge 8 ]; then text="${text//"$secret"/[redacted]}"; fi
+  done
+  printf '%s' "$text" | sed -E \
+    -e 's/(gh[opsur]_|github_pat_)[A-Za-z0-9_]{16,}/[redacted]/g' \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/[redacted]/g' \
+    -e 's/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/[redacted]/g' \
+    -e 's/([Bb]earer|[Tt]oken|[Kk]ey)([:= "]+)[A-Za-z0-9._~+\/=-]{16,}/\1\2[redacted]/g'
+}
+
 OUTCOME=no-deliverable
 if [ "$AGENT_EXIT" -eq 124 ]; then
   OUTCOME=agent-timeout
@@ -1447,6 +1470,16 @@ if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = r
     fi
     AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
   fi
+fi
+# A provider that exits non-zero before its final message gets the redacted
+# tail of its own output as the message instead. It is kept in the private
+# run record; the GitHub outcome comment never renders a failure's message.
+if [[ "$OUTCOME" = agent-failed || "$OUTCOME" = agent-timeout ]] && [ -z "$AGENT_MESSAGE" ]; then
+  provider_output="$(tail -c 12288 "$PROVIDER_OUTPUT_FILE" 2>/dev/null | redact_runner_secrets || true)"
+  AGENT_MESSAGE="$AGENT_NAME exited $AGENT_EXIT before its final message. Last output (redacted, at most 12 KiB):
+
+${provider_output:-(none)}"
+  AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
 fi
 if worker_control_failed; then
   case "$OUTCOME" in

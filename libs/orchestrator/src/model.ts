@@ -263,9 +263,10 @@ export const runResultSchema = z.strictObject({
   relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
   /**
    * The agent's own final message for this round -- its question when it
-   * parked, its summary when it opened a PR. Durable so every surface can
-   * render the round without reading a transcript. Opaque to the
-   * orchestrator, exactly like `summary` and `ref`.
+   * parked, its summary when it opened a PR. A provider that failed before
+   * writing one gets the runner's redacted tail of its output instead.
+   * Durable so every surface can render the round without reading a
+   * transcript. Opaque to the orchestrator, exactly like `summary` and `ref`.
    */
   message: z.string().max(16_384).optional(),
   /** Optional LLM reading aid derived by Console from this parked message. */
