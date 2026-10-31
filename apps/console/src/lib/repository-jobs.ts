@@ -43,9 +43,22 @@ export class RepositoryJobs {
       throw new Error('Goose operator grant required');
     return authorizeJob(
       definition,
-      this.deps
-        .profiles()
-        .find((profile) => profile.name === definition.job.execution.profile),
+      // The reviewed repository definition supplies fixed inputs, while the
+      // existing Work grant supplies authority. This built-in lane never grants
+      // cross-repository credentials and cannot be overridden by configuration.
+      definition.job.execution.profile === 'repository'
+        ? {
+            name: 'repository',
+            repositories: [definition.repository],
+            principals: [principal],
+            allocation: { cpu: 2, memory: '6Gi', storage: '24Gi' },
+            inputSets: [definition.job.inputs],
+          }
+        : this.deps
+            .profiles()
+            .find(
+              (profile) => profile.name === definition.job.execution.profile,
+            ),
       principal,
     );
   }

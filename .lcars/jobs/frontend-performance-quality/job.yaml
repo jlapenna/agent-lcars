@@ -7,7 +7,7 @@ triggers:
     timezone: UTC
 execution:
   recipe: ./recipe.yaml
-  profile: lcars-frontend-quality
+  profile: repository
   timeout: 45m
   maxAttempts: 1
   resources:

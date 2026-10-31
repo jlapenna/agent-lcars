@@ -57,7 +57,10 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
   }
   return (
     <section aria-busy={busy}>
-      <p>Recipes stay disabled until you enable the reviewed definition.</p>
+      <p>
+        All registered jobs are listed below, including disabled jobs. Install
+        definitions from a repository, then enable the reviewed definition.
+      </p>
       <label>
         Repository{' '}
         <select
@@ -73,10 +76,14 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
         disabled={busy || !repository}
         onClick={() => void act(() => api('/refresh', { repository }))}
       >
-        Refresh definitions
+        Install / refresh jobs
       </button>
       {error ? <p role="alert">{error}</p> : null}
-      {jobs.length === 0 ? <p>No job definitions discovered.</p> : null}
+      {jobs.length === 0 ? (
+        <p>
+          No jobs registered. Select a repository to install its definitions.
+        </p>
+      ) : null}
       {jobs.map((job) => (
         <article key={job.id} className="console-workspace__section">
           <h2>
