@@ -1,4 +1,5 @@
 import localFont from 'next/font/local';
+// Measurement-only baseline for #2201; this PR is closed unmerged.
 
 // These are vendored copies of the Latin subsets previously fetched by
 // next/font/google. Keeping them in-repo makes production builds independent
