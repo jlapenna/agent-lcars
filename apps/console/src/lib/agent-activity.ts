@@ -4,7 +4,7 @@ import {
   type Task,
   taskKey,
 } from '@agent-lcars/orchestrator';
-import { readStoredWorkSpec } from '@agent-lcars/work';
+import { readStoredWorkSpec, type StoredPipeline } from '@agent-lcars/work';
 
 import {
   type AutoscalerStatusResult,
@@ -29,7 +29,6 @@ import {
 export type { AgentPipeline } from './github-client';
 import { logger } from '@agent-lcars/logging';
 
-import type { AgentPipeline } from './github-client';
 // Direct provider invocations share a two-hour runtime allowance.
 // The renewable run lease is separate from this wall-clock budget.
 export const RUN_TIMEOUT_MINUTES = 120;
@@ -60,8 +59,9 @@ export interface AgentRun {
    * item's declared target). It is presentation metadata, never runner
    * capacity or execution-state truth. */
   repo: WatchedRepo;
-  /** The pipeline selected at admission and persisted on the run. */
-  pipeline: AgentPipeline;
+  /** The pipeline selected at admission and persisted on the run: a coding
+   * pipeline, or internal recipe/summary work. */
+  pipeline: StoredPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
   url: string;
@@ -317,8 +317,8 @@ export function duplicateLiveGroups<T, K extends string = string>(
  */
 export function duplicateLivePipelineGroups<T extends AgentRun>(
   runs: T[],
-): Map<AgentPipeline, T[]> {
-  return duplicateLiveGroups<T, AgentPipeline>(runs, {
+): Map<StoredPipeline, T[]> {
+  return duplicateLiveGroups<T, StoredPipeline>(runs, {
     isLive: (run) => run.status === 'queued' || run.status === 'running',
     pipeline: (run) => run.pipeline,
   });
@@ -398,7 +398,7 @@ export function agentRunFromOrchestrator(
     return {
       id: run.runId,
       repo,
-      pipeline: run.pipeline as AgentPipeline,
+      pipeline: run.pipeline as StoredPipeline,
       status,
       conclusion: conclusionFor(run),
       url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
@@ -417,7 +417,7 @@ export function agentRunFromOrchestrator(
   return {
     id: run.runId,
     repo,
-    pipeline: run.pipeline as AgentPipeline,
+    pipeline: spec.pipeline,
     status,
     conclusion: conclusionFor(run),
     url: `/work/${run.task.workId}`,

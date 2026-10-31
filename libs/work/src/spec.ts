@@ -91,11 +91,24 @@ export const workPayloadSchema = z.strictObject({
 });
 export type WorkPayload = z.infer<typeof workPayloadSchema>;
 
+export const SUMMARY_PIPELINES = Object.freeze([
+  'inbox-summary',
+  'handoff-summary',
+] as const);
+/** Every pipeline a stored Work spec can name: the public coding pipelines,
+ * then internal recipe and summary work. */
+export const STORED_PIPELINES = Object.freeze([
+  ...PIPELINES,
+  'goose',
+  ...SUMMARY_PIPELINES,
+] as const);
+export type StoredPipeline = (typeof STORED_PIPELINES)[number];
+
 /** Internal reading work. Public coding admission continues to use workSpecSchema. */
 export const summaryWorkSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
   description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
-  pipeline: z.enum(['inbox-summary', 'handoff-summary']),
+  pipeline: z.enum(SUMMARY_PIPELINES),
   priority: z.literal('background'),
   sourceKey: z.string().min(1).max(256),
 });
@@ -123,9 +136,7 @@ export const storedWorkPayloadSchema = z.strictObject({
  * Undefined when the value matches no stored shape. */
 export function readStoredWorkSpec(
   spec: unknown,
-):
-  | { title: string; pipeline: StoredWorkSpec['pipeline']; repo?: string }
-  | undefined {
+): { title: string; pipeline: StoredPipeline; repo?: string } | undefined {
   const parsed = storedWorkSpecSchema.safeParse(spec);
   if (!parsed.success) return undefined;
   const { title, pipeline } = parsed.data;

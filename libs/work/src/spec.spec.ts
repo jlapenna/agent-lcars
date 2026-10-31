@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   PIPELINES,
   readStoredWorkSpec,
+  STORED_PIPELINES,
   WORK_DESCRIPTION_MAX,
   workOriginSchema,
   workPayloadSchema,
@@ -162,6 +163,17 @@ describe('readStoredWorkSpec', () => {
         sourceKey: 'octo/example#1',
       }),
     ).toEqual({ title: 'T', pipeline: 'inbox-summary' });
+  });
+
+  it('names every stored pipeline', () => {
+    expect(STORED_PIPELINES).toEqual([
+      'claude',
+      'codex',
+      'opencode',
+      'goose',
+      'inbox-summary',
+      'handoff-summary',
+    ]);
   });
 
   it('rejects a value matching no stored shape', () => {
