@@ -21,7 +21,6 @@ import {
   reportResult,
   requestRevisionRun,
   requestRun,
-  type SchedulerDisruptionEvidence,
   updateTaskWork,
 } from './decide';
 import { advanceDelivery, type DeliveryObservation } from './delivery';
@@ -759,14 +758,10 @@ export class Orchestrator {
    * instead of holding its task until the two-hour lease runs out. A run
    * that already settled (the usual case: the worker reported, then exited)
    * is refused and left untouched, so reporting every exit is safe.
-   *
-   * `disruption` is the executor's exact scheduler-preemption attestation, when
-   * it has one; see `executorExitedAndRetry` for what it can and cannot change.
    */
   async executorExited(
     runId: string,
     claimant: ExitClaimant,
-    disruption?: SchedulerDisruptionEvidence,
   ): Promise<Decision | Refusal> {
     return this.transactOnRun(runId, (task, run) =>
       executorExitedAndRetry({
@@ -774,7 +769,6 @@ export class Orchestrator {
         task,
         run,
         claimant,
-        ...(disruption === undefined ? {} : { disruption }),
       }),
     );
   }

@@ -290,34 +290,3 @@ func TestRunExitReporterKeysDeliveryByOriginalClaimFingerprint(t *testing.T) {
 		t.Fatalf("fingerprints=%v; want each original claim once", recorder.fingerprints)
 	}
 }
-
-func TestRunExitReporterAttestsSchedulerPreemptionInTheReportBody(t *testing.T) {
-	var bodies []map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var body map[string]any
-		_ = json.NewDecoder(req.Body).Decode(&body)
-		bodies = append(bodies, body)
-		_, _ = w.Write([]byte(`{"runId":"x","state":"lost"}`))
-	}))
-	t.Cleanup(server.Close)
-	reporter := testExitReporter(server.URL)
-
-	reporter.observeTerminatedWithDisruption("run-attested", "", testClaimFingerprint, &exitDisruption{
-		JobUID: "job-uid", PodUID: "pod-uid", ObservedAt: "2026-08-15T12:00:00Z", Kind: schedulerPreemptionKind,
-	})
-	reporter.wg.Wait()
-	reporter.observeTerminated("run-unattested", "", testClaimFingerprint)
-	reporter.wg.Wait()
-
-	if len(bodies) != 2 {
-		t.Fatalf("reports = %d, want the attested and the ordinary one", len(bodies))
-	}
-	attested, _ := bodies[0]["disruption"].(map[string]any)
-	if attested == nil || attested["kind"] != schedulerPreemptionKind || attested["jobUid"] != "job-uid" ||
-		attested["podUid"] != "pod-uid" || attested["observedAt"] != "2026-08-15T12:00:00Z" {
-		t.Fatalf("attested body = %v, want the full disruption receipt", bodies[0])
-	}
-	if _, present := bodies[1]["disruption"]; present {
-		t.Fatalf("ordinary report carried a disruption: %v", bodies[1])
-	}
-}

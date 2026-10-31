@@ -174,7 +174,7 @@ These are stored in the `dispatch-controller` Firestore database.
 
 | Entity                                                    | Key                                                       | Purpose                                                                                                                                                             |
 | --------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Task** (`orchestrator-tasks`)                           | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native) | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, `schedulerDisruptions`, opaque `work` payload (≤32 KiB), `closedAt`, `revision` for compare-and-set       |
+| **Task** (`orchestrator-tasks`)                           | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native) | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, opaque `work` payload (≤32 KiB), `closedAt`, `revision` for compare-and-set                               |
 | **Run** (`orchestrator-runs`)                             | `<taskKey>/r<n>`                                          | `state`, `pipeline`, `requestId`, `requestSource` (`caller`, `auto-retry`, or `provider-fallback`), `params`, `queue`, `leaseExpiresAt`, `result`, `events[]` (≤64) |
 | **Outbox** (`orchestrator-outbox`)                        | entry ID                                                  | Side effects: `dispatch-run` and `report-outcome`                                                                                                                   |
 | **Schedule**                                              | ULID                                                      | `cron` (UTC), `spec`, `enabled`, `lastSlotAt`, `lastItemId`, `disabledReason`                                                                                       |
@@ -413,9 +413,9 @@ executor is working an issue; a human assignee owns it regardless.
   `retry:<lostRunId>` up to `MAX_AUTO_RETRIES` = 2. After that the task is
   left for a human, and the outcome comment says to re-add the label. A
   finished `ok:false` run is never auto-retried. A worker Pod preempted by the
-  scheduler before its provider started is recovered on a separate budget
-  (`MAX_SCHEDULER_DISRUPTION_RECOVERIES` = 2) that does not spend
-  `consecutiveLost`.
+  scheduler is an ordinary loss on this same budget: the kubelet starts the
+  container during preemption shutdown, so no attempt is provably unexecuted
+  (#2520).
 - **FL-RT-3 [Shipped]** A `provider-limit` failure writes a cooldown that lasts
   until Claude's reported reset time (if it is within 7 days), or re-probes
   after 15 minutes. A `provider-capacity` failure always re-probes after 15

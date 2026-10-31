@@ -1277,20 +1277,6 @@ export const runsContract = {
           .string()
           .regex(/^[a-f0-9]{64}$/)
           .optional(),
-        /** The executor's attestation that this attempt's own Pod was removed
-         *  by scheduler preemption before its provider process started, named
-         *  by exact Job and Pod UIDs. Untrusted by default: the orchestrator
-         *  charges such a loss to the separate scheduler-recovery budget only
-         *  when the run's own recorded state agrees, and treats missing or
-         *  disagreeing evidence as the ordinary terminal loss. */
-        disruption: z
-          .strictObject({
-            kind: z.literal('scheduler-preemption'),
-            jobUid: z.string().min(1).max(256),
-            podUid: z.string().min(1).max(256),
-            observedAt: z.iso.datetime(),
-          })
-          .optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
