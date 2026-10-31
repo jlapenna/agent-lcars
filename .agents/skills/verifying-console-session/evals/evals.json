@@ -10,7 +10,7 @@
         "Gives the verify-session command ./tools/nx run @agent-lcars/console:verify-session",
         "verify-session invocation uses --path /inbox",
         "Orders check-session readiness before verify-session",
-        "Requires the local browser phase preflight (Bounded local verification) before browser launch",
+        "Checks browser-runtime readiness without requiring k3s CI capacity admission, a supervisor or storage quota for local verification",
         "Includes pnpm exec playwright install chromium --only-shell and does not add --with-deps or sudo",
         "Uses --role admin and mentions --storage secret for the shared state"
       ]

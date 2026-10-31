@@ -48,15 +48,12 @@ not a substitute for CI's required `Verify` or `E2E` checks. Describe the
 hook as the affected lint/typecheck slice plus this Console build exception;
 calling it "no local build" is wrong for a Console-affected push.
 
-Plan the publication envelope for the hook path that actually runs. A
-Console-affected publication includes a real `next build`, so qualify its
-CPU, memory and time bounds for that build and give it the supported worker
-control `LCARS_CONSOLE_BUILD_CPUS`
+Allow for the real `next build` in a Console-affected push. Use the supported
+worker control `LCARS_CONSOLE_BUILD_CPUS`
 ([apps/console/build-workers.cjs](../../../../apps/console/build-workers.cjs))
-or a qualified cgroup CPU quota, so the page-data worker pool follows the
-phase's own bound instead of the host's visible CPU count. Planning a
-Console-affected publication as "no local build" omits work the normal hook
-will start anyway.
+when selecting build concurrency. A local push does not require a resource
+profile or cgroup quota. Planning it as "no local build" still omits work the
+normal hook will start.
 
 Run the full local gate only when you have a specific reason not to trust
 CI's answer for it — e.g. iterating on a change to the Nx config or task

@@ -81,13 +81,12 @@ These override any default behavior:
   webhook HTTP 401 probe) whenever `apps/console` is affected. That build is
   intentional and Console-scoped; it neither makes the whole-tree `build`
   target a local step nor duplicates CI's `Verify` gate, and Nx caches it
-  like any other task. Plan the publication envelope for the hook path that
-  actually runs: when Console is affected, budget the real build and give it
-  the supported worker control `LCARS_CONSOLE_BUILD_CPUS`
+  like any other task. Allow for that real build when publishing; use the
+  supported worker control `LCARS_CONSOLE_BUILD_CPUS`
   ([apps/console/build-workers.cjs](../../../apps/console/build-workers.cjs))
-  so `next build` sizes its page-data pool from the phase's CPU bound instead
-  of the host's visible CPUs. Never plan a Console-affected publication as
-  "no local build". See
+  when selecting concurrency. Local publication does not require k3s CI
+  resource admission, a supervisor or a storage quota. Never plan a
+  Console-affected publication as "no local build". See
   [references/verify.md](references/verify.md#ci-delegation) for the full
   reasoning. **Local E2E is optional, never a delivery prerequisite.** CI's
   required E2E check selects affected console and harness changes. Run the
