@@ -74,7 +74,7 @@ describe('console frame readouts', () => {
     respond(admin);
     await renderFrame();
     expect(screen.getByTestId('rail-readout-fleet')).toHaveTextContent(
-      '11/12Fleet online',
+      '11/12CI runners online',
     );
     expect(screen.getByTestId('rail-readout-queue')).toHaveTextContent('09');
     expect(screen.getByTestId('rail-readout-tokens')).toHaveTextContent(
@@ -173,7 +173,7 @@ describe('console frame readouts', () => {
       await Promise.resolve();
     });
     expect(screen.getByTestId('strip-readout-fleet')).toHaveTextContent(
-      '11/12 fleet',
+      '11/12 CI runners',
     );
     expect(screen.getByTestId('strip-readout-queue')).toHaveTextContent(
       '09 queue',
