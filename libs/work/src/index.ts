@@ -5,3 +5,4 @@ export * from './investigation-contract';
 export * from './openapi';
 export * from './spec';
 export * from './ulid';
+export * from './work-repository';

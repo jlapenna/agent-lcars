@@ -127,10 +127,3 @@ export function isSourceManagedWork(payload: unknown): boolean {
       parsed.data.origin.principal === 'svc:fleet-triage')
   );
 }
-
-export function workRepository(spec: {
-  pipeline: string;
-  target?: { repo: string };
-}): string {
-  return spec.target?.repo ?? '';
-}

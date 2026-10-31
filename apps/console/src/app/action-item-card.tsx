@@ -17,7 +17,13 @@ import {
 import { modals } from '@mantine/modals';
 import { notifications } from '@mantine/notifications';
 import type { ReactNode } from 'react';
-import { useEffect, useEffectEvent, useState, useTransition } from 'react';
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useState,
+  useTransition,
+} from 'react';
 
 import type { ActionItem, MergeableState } from '../lib/action-items';
 import {
@@ -270,11 +276,12 @@ export function ActionItemCard({
   >(supportedAgentPipelines(item.repo)[0]);
   const [isPending, startTransition] = useTransition();
   // SSR renders the primary buttons before React has attached their handlers,
-  // so a click in that window is silently lost. Passive effects run after
-  // hydration has registered listeners; keep the confirmation primaries
-  // natively disabled until then (same pattern as QuickTaskButton).
+  // so a click in that window is silently lost. Keep the confirmation
+  // primaries natively disabled until the hydration commit (same pattern as
+  // QuickTaskButton). A layout effect re-enables them before that commit
+  // paints; a passive effect waited ~340 ms longer in the phone lab (#2201).
   const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
+  useLayoutEffect(() => setReady(true), []);
   const notifyDraft = useEffectEvent((hasDraft: boolean) =>
     onReplyDraftChange?.(hasDraft),
   );
