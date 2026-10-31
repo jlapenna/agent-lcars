@@ -118,6 +118,22 @@ export const storedWorkPayloadSchema = z.strictObject({
   spec: storedWorkSpecSchema,
 });
 
+/** What a reader needs from any stored spec shape. `repo` is absent for
+ * internal summary work, which reads a source rather than targeting one.
+ * Undefined when the value matches no stored shape. */
+export function readStoredWorkSpec(
+  spec: unknown,
+):
+  | { title: string; pipeline: StoredWorkSpec['pipeline']; repo?: string }
+  | undefined {
+  const parsed = storedWorkSpecSchema.safeParse(spec);
+  if (!parsed.success) return undefined;
+  const { title, pipeline } = parsed.data;
+  return 'target' in parsed.data
+    ? { title, pipeline, repo: parsed.data.target.repo }
+    : { title, pipeline };
+}
+
 /** Event-owned operations advance through their source, never manual replies. */
 export function isSourceManagedWork(payload: unknown): boolean {
   const parsed = storedWorkPayloadSchema.safeParse(payload);

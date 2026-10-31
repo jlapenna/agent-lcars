@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   PIPELINES,
+  readStoredWorkSpec,
   WORK_DESCRIPTION_MAX,
   workOriginSchema,
   workPayloadSchema,
@@ -130,5 +131,41 @@ describe('workPayloadSchema', () => {
       spec,
     };
     expect(workPayloadSchema.parse(payload)).toEqual(payload);
+  });
+});
+
+describe('readStoredWorkSpec', () => {
+  const base = { title: 'T', description: 'd' };
+
+  it('reads each stored shape into title, pipeline and target repository', () => {
+    expect(
+      readStoredWorkSpec({
+        ...base,
+        pipeline: 'claude',
+        target: { repo: 'octo/example' },
+      }),
+    ).toEqual({ title: 'T', pipeline: 'claude', repo: 'octo/example' });
+    expect(
+      readStoredWorkSpec({
+        ...base,
+        pipeline: 'goose',
+        priority: 'background',
+        target: { repo: 'octo/jobs' },
+        jobOccurrence: 'a'.repeat(64),
+      }),
+    ).toEqual({ title: 'T', pipeline: 'goose', repo: 'octo/jobs' });
+    expect(
+      readStoredWorkSpec({
+        ...base,
+        pipeline: 'inbox-summary',
+        priority: 'background',
+        sourceKey: 'octo/example#1',
+      }),
+    ).toEqual({ title: 'T', pipeline: 'inbox-summary' });
+  });
+
+  it('rejects a value matching no stored shape', () => {
+    expect(readStoredWorkSpec({ ...base, pipeline: 'claude' })).toBeUndefined();
+    expect(readStoredWorkSpec(undefined)).toBeUndefined();
   });
 });

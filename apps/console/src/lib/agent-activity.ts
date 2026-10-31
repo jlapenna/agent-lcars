@@ -4,7 +4,7 @@ import {
   type Task,
   taskKey,
 } from '@agent-lcars/orchestrator';
-import { storedWorkSpecSchema } from '@agent-lcars/work';
+import { readStoredWorkSpec } from '@agent-lcars/work';
 
 import {
   type AutoscalerStatusResult,
@@ -329,22 +329,14 @@ function repositoryFromTarget(targetRepo: string): WatchedRepo | undefined {
   return owner && name && rest.length === 0 ? { owner, name } : undefined;
 }
 
-/** A native Work item's stored title and repository. Coding and job work
- * name their target; internal summary work reads a source on the console's
- * behalf, so it belongs to the console's own repository. */
-function nativeWork(
-  task: Task | undefined,
-): { title: string; repo: WatchedRepo | undefined } | undefined {
-  const spec = storedWorkSpecSchema.safeParse(
-    (task?.work as Record<string, unknown> | undefined)?.['spec'],
-  );
-  if (!spec.success) return undefined;
-  return {
-    title: spec.data.title,
-    repo: repositoryFromTarget(
-      'target' in spec.data ? spec.data.target.repo : controlPlaneRepository(),
-    ),
-  };
+function taskSpec(task: Task | undefined): unknown {
+  return (task?.work as Record<string, unknown> | undefined)?.['spec'];
+}
+
+/** Internal summary work names no target: it reads a source on the
+ * console's behalf, so it belongs to the console's own repository. */
+function nativeRepository(spec: { repo?: string }): WatchedRepo | undefined {
+  return repositoryFromTarget(spec.repo ?? controlPlaneRepository());
 }
 
 function publicExecutionQueue(run: OrchestratorRun): AgentRun['queue'] {
@@ -401,10 +393,8 @@ export function agentRunFromOrchestrator(
   if (!isWorkAnchor(run.task)) {
     const repo = repositoryFromTarget(run.task.repo);
     if (!repo) return undefined;
-    const spec = storedWorkSpecSchema.safeParse(
-      (task.work as Record<string, unknown> | undefined)?.['spec'],
-    );
-    const title = spec.success ? spec.data.title : `${run.pipeline} agent`;
+    const title =
+      readStoredWorkSpec(taskSpec(task))?.title ?? `${run.pipeline} agent`;
     return {
       id: run.runId,
       repo,
@@ -421,9 +411,9 @@ export function agentRunFromOrchestrator(
     };
   }
 
-  const work = nativeWork(task);
-  const repo = work?.repo;
-  if (!work || !repo) return undefined;
+  const spec = readStoredWorkSpec(taskSpec(task));
+  const repo = spec && nativeRepository(spec);
+  if (!spec || !repo) return undefined;
   return {
     id: run.runId,
     repo,
@@ -432,7 +422,7 @@ export function agentRunFromOrchestrator(
     conclusion: conclusionFor(run),
     url: `/work/${run.task.workId}`,
     workId: run.task.workId,
-    displayTitle: work.title,
+    displayTitle: spec.title,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
     elapsedSeconds,
@@ -453,7 +443,10 @@ function historyTimelines(
     seen.add(run.runId);
     let repo: WatchedRepo | undefined;
     if (isWorkAnchor(run.task)) {
-      repo = nativeWork(taskByKey.get(taskKey(run.task)))?.repo;
+      const spec = readStoredWorkSpec(
+        taskSpec(taskByKey.get(taskKey(run.task))),
+      );
+      repo = spec && nativeRepository(spec);
     } else {
       repo = repositoryFromTarget(run.task.repo);
     }
