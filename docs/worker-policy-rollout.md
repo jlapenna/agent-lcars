@@ -291,9 +291,13 @@ or `source-reconcile.yml` alone does not set the selector.
 
 Start with one approved provider and at most three useful dispatches, one at a
 time, in a 30-minute window. The owner must reserve the window with no other
-work for that provider on the candidate executor. The selector is provider-wide,
-not an attempt allowlist or sampling mechanism. A broader live queue requires
-an isolated owner-managed executor scope before activation. Leave other
+work for that provider on the executor. The selector is provider-wide,
+not an attempt allowlist or sampling mechanism. The fleet runs one QueueExecutor
+and does not add a separate candidate executor, so a standing selector applies
+to every dispatch of that provider and to whichever image the moving
+`jit-node24` tag names. Activation therefore needs each published runner image
+qualified for the selected providers; an earlier digest's receipt does not
+qualify the tag. Leave other
 providers disabled; successful providers need not await a failed provider. At the end of the window,
 restore the previous selector before admitting more attempts. Do not accept the
 window until every in-flight attempt settles under its original budget; a
