@@ -368,6 +368,8 @@ expect_order_failure user-before-claude \
   'USER runner' 'RUN npm install -g @anthropic-ai/claude-code && claude --version' before
 expect_order_failure plugins-before-user "runner image must enable the public repo-tools plugins as runner" \
   'USER runner' '    claude plugin install repo-tools@repo-tools' after
+expect_order_failure claude-plugin-before-user "runner image must enable the public repo-tools plugins as runner" \
+  'RUN claude plugin marketplace add /opt/repo-tools && \' 'USER runner' before
 skills_msg="runner image must install layer-1 skills and then run verify-image-invariants.sh as runner after the pnpm warm-up"
 expect_order_failure skills-before-user "$skills_msg" \
   'RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \' 'USER runner' before
