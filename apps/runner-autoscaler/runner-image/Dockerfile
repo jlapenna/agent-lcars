@@ -406,15 +406,6 @@ COPY install-goose-release.sh /usr/local/lib/agent-lcars/install-goose-release.s
 RUN GOOSE_VERSION="$(cat /usr/local/share/agent-lcars-tooling/goose-version)" \
     TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-goose-release.sh
 
-# Keep Corepack's selected pnpm version tied to this repo's one
-# packageManager declaration instead of introducing a Dockerfile pin that can
-# drift. The build stage already checked out the exact publishing revision,
-# so use its manifest for both the root smoke below and the runner-user cache
-# warm-up near the end of the image.
-COPY --from=telemetry-watcher-build /repo/package.json \
-    /usr/local/share/agent-lcars-corepack/package.json
-WORKDIR /usr/local/share/agent-lcars-corepack
-
 # Forward-looking hook (homelab#97): lets a future registration-specific
 # build add extra tooling without forking this Dockerfile. Empty by
 # default; canonical homelab publication sets a real value today --
@@ -473,13 +464,13 @@ RUN set -eux; \
     # every consuming workflow's bare `pnpm ...` silently depended on each
     # job re-deriving that gap around (sprinkles#4003/#4006 hit it live:
     # "pnpm: command not found" the moment a step tried to call pnpm before
-    # the agent's own worktree setup happened to paper over it). Smoke-check
-    # it here for the same reason as docker/buildx below: failing the build
-    # is recoverable, shipping a runner image that silently can't run pnpm
-    # is not.
+    # the agent's own worktree setup happened to paper over it). The
+    # `RUN pnpm --version` after the manifest copy below smoke-checks it for
+    # the same reason as docker/buildx here: failing the build is
+    # recoverable, shipping a runner image that silently can't run pnpm is
+    # not.
     npm install --global "corepack@${COREPACK_VERSION}"; \
     corepack enable; \
-    pnpm --version; \
     # docker + buildx come from the upstream base, not from apt. They are
     # smoke-checked here because the PUBLISH job runs on this very image and
     # drives `docker buildx inspect --bootstrap`: if a future RUNNER_BASE
@@ -498,6 +489,19 @@ RUN set -eux; \
     java --version; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*
+
+# Keep Corepack's selected pnpm version tied to this repo's one
+# packageManager declaration instead of introducing a Dockerfile pin that can
+# drift. The build stage already checked out the exact publishing revision,
+# so use its manifest for both the root smoke below and the runner-user cache
+# warm-up near the end of the image. The manifest changes with every
+# dependency bump, so it is copied after the apt layer above: copied before
+# it, each bump re-ran that layer, about 25 minutes under the emulated arm64
+# publish (Homelab docs/buildkit-builder.md).
+COPY --from=telemetry-watcher-build /repo/package.json \
+    /usr/local/share/agent-lcars-corepack/package.json
+WORKDIR /usr/local/share/agent-lcars-corepack
+RUN pnpm --version
 
 # Add entrypoint wrapper
 # Repository worktree initializers require Python hook tooling. Keep the
