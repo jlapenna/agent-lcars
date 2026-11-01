@@ -170,6 +170,61 @@ test('browse all registrations and review the exact definition before enabling a
 });
 
 for (const width of [390, 1280]) {
+  test(`source recovery brings the repository form into focus at ${width}px`, async ({
+    page,
+  }) => {
+    const jobs = catalog();
+    jobs[1].error = 'Source refresh failed';
+    await page.route('**/api/work/v1/jobs', (route) =>
+      route.fulfill({ json: jobs }),
+    );
+    await page.setViewportSize({ width, height: 700 });
+    await page.goto('/jobs');
+    const sourceHeading = page.getByRole('heading', {
+      name: 'Repository sources',
+      exact: true,
+    });
+    const repository = page.getByRole('combobox', {
+      name: 'Repository',
+      exact: true,
+    });
+    await page
+      .getByRole('button', { name: 'Repository sources', exact: true })
+      .press('Enter');
+    await expect(sourceHeading).toBeFocused();
+    await expect(sourceHeading).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press('Tab');
+    await expect(repository).toBeFocused();
+
+    // Recovery must refocus the form even when it is already open above the job.
+    await page
+      .getByRole('button', {
+        name: /Frontend performance quality.*supersprinklesracing\/sprinkles/,
+      })
+      .click();
+    await page
+      .getByRole('button', { name: 'Review repository source' })
+      .press('Enter');
+    await expect(sourceHeading).toBeFocused();
+    await expect(sourceHeading).toBeInViewport({ ratio: 1 });
+    await expect(repository).toHaveValue('supersprinklesracing/sprinkles');
+    await page.keyboard.press('Tab');
+    await expect(repository).toBeFocused();
+
+    await page
+      .getByRole('button', { name: 'Close sources', exact: true })
+      .click();
+    jobs.length = 0;
+    await page
+      .getByRole('button', { name: 'Refresh list', exact: true })
+      .click();
+    await page
+      .getByRole('button', { name: 'Install repository jobs', exact: true })
+      .press('Enter');
+    await expect(sourceHeading).toBeFocused();
+    await expect(sourceHeading).toBeInViewport({ ratio: 1 });
+  });
+
   test(`review opens the installed definition even after a source error at ${width}px`, async ({
     page,
   }) => {

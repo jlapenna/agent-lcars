@@ -25,6 +25,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
   const lock = useRef(false);
   const readVersion = useRef(0);
   const listTitle = useRef<HTMLHeadingElement>(null);
+  const sourcesTitle = useRef<HTMLHeadingElement>(null);
   const [parameters, setParameters] = useState<
     Record<string, Record<string, string>>
   >({});
@@ -82,6 +83,12 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
     setDetailOpen(false);
     requestAnimationFrame(() => listTitle.current?.focus());
   }
+  function openSources(sourceRepository?: string) {
+    if (sourceRepository) setRepository(sourceRepository);
+    setSources(true);
+    setDetailOpen(false);
+    requestAnimationFrame(() => sourcesTitle.current?.focus());
+  }
   return (
     <ConsoleWorkspace
       ariaLabel="Repository jobs"
@@ -124,7 +131,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
             Refresh list
           </Button>
           <Button
-            onClick={() => setSources(!sources)}
+            onClick={() => (sources ? setSources(false) : openSources())}
             aria-expanded={sources}
             aria-controls="job-sources"
           >
@@ -157,7 +164,9 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
             id="job-sources"
             aria-label="Repository sources"
           >
-            <h2>Repository sources</h2>
+            <h2 ref={sourcesTitle} tabIndex={-1}>
+              Repository sources
+            </h2>
             <p className={styles.muted}>
               Install or refresh job definitions from a repository. Changed
               definitions must be reviewed before enabling.
@@ -223,7 +232,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
                   Install repository definitions, then review and enable each
                   job.
                 </p>
-                <Button onClick={() => setSources(true)}>
+                <Button onClick={() => openSources()}>
                   Install repository jobs
                 </Button>
               </div>
@@ -324,11 +333,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
                       }))
                     }
                     act={act}
-                    openSource={() => {
-                      setRepository(job.repository);
-                      setSources(true);
-                      back();
-                    }}
+                    openSource={() => openSources(job.repository)}
                   />
                 ) : null}
               </div>
