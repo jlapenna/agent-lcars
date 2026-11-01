@@ -3,13 +3,10 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     (async () => {
       try {
+        // Freshness is judged by the receiver on the server clock: comparing
+        // server timestamps with this device's clock drops pushes under skew.
         const payload = event.data?.json();
-        if (
-          !payload ||
-          payload.expiresAt <= Date.now() ||
-          payload.expiresAt > Date.now() + 60000
-        )
-          return;
+        if (!payload || typeof payload.attemptAt !== 'number') return;
         const subscription =
           await self.registration.pushManager.getSubscription();
         if (!subscription) return;
@@ -26,13 +23,7 @@ self.addEventListener('push', (event) => {
         });
         if (!response.ok) return;
         const snapshot = await response.json();
-        if (
-          !snapshot.available ||
-          snapshot.principalId !== payload.principalId ||
-          Date.now() - snapshot.observedAt >= 60000 ||
-          snapshot.observedAt > Date.now() ||
-          payload.expiresAt <= Date.now()
-        )
+        if (!snapshot.available || snapshot.principalId !== payload.principalId)
           return;
         const current = snapshot.decisions;
         if (!current.length) return;
