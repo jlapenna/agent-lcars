@@ -111,8 +111,10 @@ most 20 user records and stops starting further browser sends after 20 seconds;
 each provider request has a five-second socket timeout. Source reads retain
 their existing datastore deadlines. This is best-effort delivery, not an SLA.
 
-Push has a 60-second TTL and carries only the user identifier and an attempt
-timestamp. Candidate identifiers/generations stay in the bounded server ledger
+Push has a 60-second TTL and high urgency, and carries only the user
+identifier and an attempt timestamp. High urgency matters on phones: push
+services defer normal-urgency messages while a device idles, so a 60-second
+message would expire before delivery. Candidate identifiers/generations stay in the bounded server ledger
 until the authenticated receiver retrieves them. Before display, the worker POSTs to the same-origin,
 private `/api/inbox-push` endpoint with its current browser endpoint. That route
 rechecks cookie identity, current consent, grants, snoozes and fresh decisions;

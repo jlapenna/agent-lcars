@@ -9,7 +9,11 @@ vi.mock('./orchestrator-runtime', () => ({
 }));
 
 import type { InboxNotificationSnapshot } from './inbox-notifications';
-import { InboxPushStore, pushSubscriptionSchema } from './inbox-push';
+import {
+  INBOX_PUSH_SEND_OPTIONS,
+  InboxPushStore,
+  pushSubscriptionSchema,
+} from './inbox-push';
 
 const subscription = {
   endpoint: 'https://fcm.googleapis.com/fcm/send/test',
@@ -66,6 +70,9 @@ async function subscribe(store: InboxPushStore, now: number) {
   await store.activate('user', subscription.endpoint, revision, snapshot(now));
 }
 describe('durable Inbox push delivery', () => {
+  it('sends a short-lived notice with high urgency so idle devices wake for it', () => {
+    expect(INBOX_PUSH_SEND_OPTIONS).toMatchObject({ TTL: 60, urgency: 'high' });
+  });
   it('a server activation still running after its tab closes cannot undo revoke', async () => {
     const { store } = fixture();
     const revision = await store.begin('user', 'login', subscription);

@@ -277,6 +277,17 @@ export async function pushSnapshot(userId: string, login: string) {
   });
 }
 
+/** Push service options. A decision notice is user-visible and time-sensitive,
+ * so it is sent with high urgency (RFC 8030 section 5.3). Mobile push services
+ * defer normal-urgency messages while a device idles, and the 60-second TTL
+ * would expire before delivery. */
+export const INBOX_PUSH_SEND_OPTIONS = {
+  TTL: 60,
+  urgency: 'high',
+  timeout: 5_000,
+  topic: 'lcars-inbox',
+} as const;
+
 /** Called by the existing authenticated schedule tick. No detached work:
  * failures are observable, attempts are never automatically retried ambiguously. */
 export async function deliverInboxPush() {
@@ -318,12 +329,7 @@ export async function deliverInboxPush() {
         await webPush.sendNotification(
           browser.subscription,
           JSON.stringify(payload),
-          {
-            vapidDetails: config,
-            TTL: 60,
-            timeout: 5_000,
-            topic: 'lcars-inbox',
-          },
+          { ...INBOX_PUSH_SEND_OPTIONS, vapidDetails: config },
         );
       } catch (error) {
         const status = (error as { statusCode?: number }).statusCode;
