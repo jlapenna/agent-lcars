@@ -98,15 +98,14 @@ describe('closed-tab push receiver', () => {
     });
     async function push(
       principalId = 'viewer',
-      expiresAt = Date.now() + 60000,
+      attemptAt: unknown = Date.now(),
     ) {
       let done: Promise<unknown> = Promise.resolve();
       handlers.push({
         data: {
           json: () => ({
             principalId,
-            expiresAt,
-            attemptAt: Date.now(),
+            attemptAt,
             decisions: [
               { id: 'owner/repo#1', generation: 'current' },
               { id: 'resolved', generation: 'old' },
@@ -127,9 +126,72 @@ describe('closed-tab push receiver', () => {
     });
     showNotification.mockClear();
     await push('previous-user');
-    await push('viewer', Date.now() - 1);
+    await push('viewer', 'not-a-timestamp');
     fetch.mockResolvedValue({ ok: false } as never);
     await push();
     expect(showNotification).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['behind', 5 * 60_000],
+    ['ahead of', -5 * 60_000],
+  ])(
+    'displays a server-fresh push when the device clock runs %s the server',
+    async (_direction, skew) => {
+      // The server clock is `skew` ms ahead of this device's clock.
+      const handlers: Record<string, (event: unknown) => unknown> = {};
+      const showNotification = vi.fn().mockResolvedValue(undefined);
+      const fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          available: true,
+          principalId: 'viewer',
+          observedAt: Date.now() + skew,
+          decisions: [{ id: 'owner/repo#1', generation: 'current' }],
+        }),
+      });
+      runInNewContext(source, {
+        self: {
+          addEventListener: (
+            name: string,
+            handler: (event: unknown) => unknown,
+          ) => {
+            handlers[name] = handler;
+          },
+          registration: {
+            pushManager: {
+              getSubscription: async () => ({
+                endpoint: 'https://fcm.googleapis.com/test',
+              }),
+            },
+            showNotification,
+          },
+        },
+        fetch,
+        URLSearchParams,
+        AbortSignal,
+        Date,
+      });
+      const attemptAt = Date.now() + skew;
+      let done: Promise<unknown> = Promise.resolve();
+      handlers.push({
+        data: {
+          json: () => ({
+            principalId: 'viewer',
+            attemptAt,
+            expiresAt: attemptAt + 60000,
+          }),
+        },
+        waitUntil: (promise: Promise<unknown>) => {
+          done = promise;
+        },
+      });
+      await done;
+      expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+        endpoint: 'https://fcm.googleapis.com/test',
+        attemptAt,
+      });
+      expect(showNotification).toHaveBeenCalledOnce();
+    },
+  );
 });

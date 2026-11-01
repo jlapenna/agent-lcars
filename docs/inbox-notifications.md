@@ -117,8 +117,10 @@ until the authenticated receiver retrieves them. Before display, the worker POST
 private `/api/inbox-push` endpoint with its current browser endpoint. That route
 rechecks cookie identity, current consent, grants, snoozes and fresh decisions;
 a transaction consumes the receive attempt once, so duplicate provider delivery
-cannot request another display. Account changes, expired messages and missing
-subscriptions suppress previews. Clicks retain the authenticated Inbox link.
+cannot request another display. The route judges attempt and snapshot freshness
+on the server clock; the worker never compares server timestamps with the
+device clock, so ordinary clock skew cannot silently drop a push. Account
+changes, expired messages and missing subscriptions suppress previews. Clicks retain the authenticated Inbox link.
 
 ### Rollout and qualification
 
