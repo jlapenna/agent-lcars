@@ -121,32 +121,12 @@ These override any default behavior:
   (`apps/runner-autoscaler/runner-image/Dockerfile`), not a source-level
   dependency.
 
-- **Issue ownership — the assignee field**: the assignee records whose
-  court the ball is in, so agents and humans don't collide. `agent-lcars-bot` is
-  this fleet's claim identity across every repo it works, not specific to
-  `agent-lcars` (see the [lcars](../lcars/SKILL.md) skill).
-  - A **human assignee** owns the issue — do not start work on it unless
-    that human explicitly hands it off (adding an `agent:*` label or a
-    recognized reply trigger IS that handoff).
-  - **`agent-lcars-bot` assigned** means the agent fleet has claimed it. Before
-    touching such an issue, check for a live QueueExecutor run or recent
-    agent-session evidence; if neither exists the claim may be stale. Reconcile
-    recent PRs and comments before taking over; assignment alone is not
-    evidence that another session is still working.
-  - **Interactive maintainer sessions** act on the user's request. Reading,
-    triaging, or implementing explicitly requested work does not require a
-    fleet assignment or takeover comment. A direct request from the owning
-    maintainer is a handoff; do not ask them to repeat it through labels or
-    assignees. Check live ownership before implementation to avoid collisions,
-    but do not claim issues merely because you read them. This is an explicit
-    exception to the personal github-issue-workflow claim/comment defaults.
-  - **Headless LCARS dispatches** follow **agent-protocol**. The console owns
-    the anchor claim and takeover; workers do not post a second takeover.
-    The issue-workflow hook only runs when `LCARS_RUN_ID` or
-    `AGENT_DISPATCH_CONTEXT` is nonempty. Generic `CI`, a non-TTY, and provider
-    session IDs do not establish a fleet dispatch.
-  - **Blocked on the maintainer?** In an interactive session, ask in the
-    conversation. Headless workers use the agent-protocol parking contract.
+- **LCARS ownership and execution mode:** use
+  [lcars-usage](../lcars-usage/SKILL.md) before implementing or taking over an
+  issue in an enrolled repository. It owns the authoritative owner query,
+  interactive handoff and explicit-dispatch boundary; the canonical worker
+  protocol owns dispatched claims and cadence. A stale assignee or comment is
+  not evidence of a live owner or a free issue.
   - **Filing an issue yourself** requires session attribution. An
     interactive session runs `gh` under the maintainer's login, so an issue
     it invents is authored by `jlapenna` with no label, no marker, and no
@@ -211,6 +191,8 @@ Read the reference before starting the corresponding task:
 
 Load these when the task enters their domain:
 
+- **[lcars-usage](../lcars-usage/SKILL.md)** — Work ownership and operator
+  workflows, including the interactive/dispatched boundary.
 - **[agent-protocol](../agent-protocol/SKILL.md)** — complete headless CI
   behavior. **[lcars](../lcars/SKILL.md)** — situational dispatch/orchestrator,
   telemetry, and auto-merge implementation reference.
