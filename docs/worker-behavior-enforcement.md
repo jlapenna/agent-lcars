@@ -17,12 +17,12 @@ actions, correction and retained work with a localhost model and local
 transports. Those are isolated runtime observations, not real policy-enabled
 dispatches.
 
-| Evidence level   | Established                                                                                             | Remaining                                                                                                                                  |
-| ---------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification | Ready-head CI and independent review for changed live contracts                                                                            |
-| Isolated image   | Claude 78+3, Codex 79+3 and OpenCode 81+3, evaluator and failure consumer at the candidate linked below | Changed artifacts need fresh provider evidence; offline success does not graduate a provider                                               |
-| Real dispatch    | Normal Codex review of #2029 and useful policy-off Claude report for #2845                              | Useful policy-enabled implementation/review dispatches with the candidate image, preserved work and exact-marker deliverables per provider |
-| Activation       | Default is off; no deployment or selector mutation is performed here                                    | Specific maintainer approval and Homelab-owned activation, observation and rollback                                                        |
+| Evidence level   | Established                                                                                               | Remaining                                                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Source/contracts | Shared controls, provider launch integration, explicit disabled Job selector and failure classification   | Ready-head CI and independent review for changed live contracts                                                            |
+| Isolated image   | Claude 78+3, Codex 79+3 and OpenCode 81+3, evaluator and failure consumer at the candidate linked below   | Changed artifacts need fresh provider evidence; offline success does not graduate a provider                               |
+| Real dispatch    | Useful policy-enabled AMD64 deliveries for Claude, Codex and OpenCode, and one Codex ARM64 review (#2956) | ARM64 Claude and OpenCode: no schedulable ARM64 placement while the Spark nodes carry the inference taint                  |
+| Activation       | Default is off; production selection is off                                                               | One executor, no separate candidate scope: qualification of each published runner image, then specific maintainer approval |
 
 The [current ordinary-CI qualification receipt](https://github.com/jlapenna/agent-lcars/issues/2181#issuecomment-6277415491)
 binds all three provider suites to source `987d0f43abcb127e4f1536d8c91883bc30e99983`
@@ -346,7 +346,7 @@ evidence refuses qualification. Contract tests run in the existing required
    setup-negative image suites and retained immutable artifact identities. Run
    that provider's native failure-chain consumer; do not graduate it from offline
    observations alone.
-3. Obtain approval for the exact candidate executor scope, then prove useful
+3. Obtain approval for a bounded window on the fleet's single executor, then prove useful
    normal policy-enabled dispatch, finalization and remaining interactive/member
    acceptance. Retain existing skills for uncovered paths and judgment.
 4. Graduate only a provider whose mandatory artifact-matched and live gates have
