@@ -42,19 +42,52 @@ if grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
   echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1
 fi
-# #2033: the image build, not every boot, proves the toolchain. The gate must
-# run as the job user after the last per-user warm-up, and boot must not
-# quietly grow the retired per-container probes back.
-runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
-pnpm_warm_line="$(grep -n '^RUN pnpm --version$' "$dockerfile" | tail -n1 | cut -d: -f1 || true)"
-skills_line="$(grep -n '^RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh ' "$dockerfile" | cut -d: -f1 || true)"
-invariants_line="$(grep -n '^RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh$' "$dockerfile" | cut -d: -f1 || true)"
-if [[ -z "$runner_user_line" || -z "$pnpm_warm_line" || -z "$skills_line" || -z "$invariants_line" ||
-  "$skills_line" -le "$runner_user_line" || "$invariants_line" -le "$skills_line" ||
-  "$invariants_line" -le "$pnpm_warm_line" ]]; then
-  echo "runner image must install layer-1 skills and then run verify-image-invariants.sh as runner after the pnpm warm-up" >&2
-  exit 1
-fi
+# Ordering guards for the shipped (final) stage. Earlier build stages have
+# their own `USER runner` (#3004), so every line number is taken from the
+# final stage only, and a missing or ambiguous line fails the guard instead
+# of erroring inside `[[ ]]`, which an `if` would read as a pass.
+check_final_stage_order() {
+  local df=$1 final_from
+  final_from="$(grep -n '^FROM ' "$df" | tail -n1 | cut -d: -f1)"
+  # First (or, with "last", final) exact match after the last FROM.
+  final_line() {
+    grep -nFx -- "$1" "$df" | cut -d: -f1 |
+      awk -v from="$final_from" -v pick="${2:-first}" \
+        '$1 > from { line = $1; if (pick == "first") { print line; exit } }
+         END { if (pick == "last" && line) print line }'
+  }
+  local user codex claude plugin claude_plugin pnpm_warm skills invariants
+  user="$(final_line 'USER runner')"
+  codex="$(final_line 'RUN npm install -g @openai/codex && codex --version')"
+  claude="$(final_line 'RUN npm install -g @anthropic-ai/claude-code && claude --version')"
+  plugin="$(final_line 'RUN codex plugin marketplace add /opt/repo-tools && \')"
+  claude_plugin="$(final_line 'RUN claude plugin marketplace add /opt/repo-tools && \')"
+  pnpm_warm="$(final_line 'RUN pnpm --version' last)"
+  skills="$(grep -n '^RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh ' "$df" | cut -d: -f1 |
+    awk -v from="$final_from" '$1 > from { print; exit }')"
+  invariants="$(final_line 'RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh')"
+  before() { [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]] && (($1 < $2)); }
+  if ! before "$codex" "$user"; then
+    echo "runner image must install and smoke-check Codex before switching users" >&2
+    return 1
+  fi
+  if ! before "$claude" "$user"; then
+    echo "runner image must install and smoke-check Claude Code before switching users" >&2
+    return 1
+  fi
+  if ! before "$user" "$plugin" || ! before "$user" "$claude_plugin"; then
+    echo "runner image must enable the public repo-tools plugins as runner" >&2
+    return 1
+  fi
+  # #2033: the image build, not every boot, proves the toolchain. The gate
+  # must run as the job user after the last per-user warm-up.
+  if ! before "$user" "$skills" || ! before "$skills" "$invariants" || ! before "$pnpm_warm" "$invariants"; then
+    echo "runner image must install layer-1 skills and then run verify-image-invariants.sh as runner after the pnpm warm-up" >&2
+    return 1
+  fi
+}
+check_final_stage_order "$dockerfile" || exit 1
+# Boot must not quietly grow the retired per-container probes back (#2033).
 if grep -Eq 'trusted_opencode|pnpm_runs|java_21_runs|required_node_runtimes_run' "$entrypoint"; then
   echo "runner entrypoint must not re-run build-proven toolchain probes on every boot (#2033)" >&2
   exit 1
@@ -90,23 +123,6 @@ if ! grep -Fqx 'COPY repair-node-tar.sh /usr/local/lib/agent-lcars/repair-node-t
   exit 1
 fi
 
-runner_user_line="$(grep -n '^USER runner$' "$dockerfile" | cut -d: -f1)"
-codex_install_line="$(grep -n '^RUN npm install -g @openai/codex && codex --version$' "$dockerfile" | cut -d: -f1)"
-claude_install_line="$(grep -n '^RUN npm install -g @anthropic-ai/claude-code && claude --version$' "$dockerfile" | cut -d: -f1)"
-plugin_line="$(grep -n '^RUN codex plugin marketplace add /opt/repo-tools && \\' "$dockerfile" | cut -d: -f1)"
-claude_plugin_line="$(grep -n '^RUN claude plugin marketplace add /opt/repo-tools && \\' "$dockerfile" | cut -d: -f1)"
-if [[ -z "$runner_user_line" || -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" || -z "$plugin_line" || "$plugin_line" -le "$runner_user_line" || -z "$claude_plugin_line" || "$claude_plugin_line" -le "$runner_user_line" ]]; then
-  echo "runner image must enable the public repo-tools plugins as runner" >&2
-  exit 1
-fi
-if [[ -z "$claude_install_line" || "$claude_install_line" -ge "$runner_user_line" ]]; then
-  echo "runner image must install and smoke-check Claude Code before switching users" >&2
-  exit 1
-fi
-if [[ -z "$codex_install_line" || "$codex_install_line" -ge "$runner_user_line" ]]; then
-  echo "runner image must install and smoke-check Codex before switching users" >&2
-  exit 1
-fi
 if ! grep -Fqx '    codex plugin add repo-tools@repo-tools' "$dockerfile"; then
   echo "runner image must enable the repo-tools plugin after adding its marketplace" >&2
   exit 1
@@ -316,5 +332,51 @@ if scanners_run "$tmp/empty-actionlint-pin"; then
 fi
 scanner actionlint "v$actionlint_version"
 scanners_run || { echo 'restored actionlint pin rejected' >&2; exit 1; }
+
+# Each ordering guard must trip on its own violation. move_line moves the
+# last exact occurrence of a line to just before or after the first exact
+# anchor in the final stage; an absent anchor only deletes the line.
+move_line() {
+  MOVE_SRC=$2 MOVE_ANCHOR=$3 MOVE_WHERE=$4 awk '
+    NR == FNR { if ($0 == ENVIRON["MOVE_SRC"]) src = NR; if (/^FROM /) from = NR; next }
+    FNR == src { next }
+    FNR > from && !done && $0 == ENVIRON["MOVE_ANCHOR"] {
+      if (ENVIRON["MOVE_WHERE"] == "before") print ENVIRON["MOVE_SRC"]
+      print
+      if (ENVIRON["MOVE_WHERE"] == "after") print ENVIRON["MOVE_SRC"]
+      done = 1
+      next
+    }
+    { print }' "$dockerfile" "$dockerfile" >"$1"
+}
+expect_order_failure() {
+  local name=$1 message=$2 err
+  shift 2
+  move_line "$tmp/$name.Dockerfile" "$@"
+  if err="$(check_final_stage_order "$tmp/$name.Dockerfile" 2>&1)"; then
+    echo "ordering guard accepted $name" >&2
+    exit 1
+  fi
+  [[ "$err" == "$message" ]] || { echo "ordering guard for $name reported: $err" >&2; exit 1; }
+}
+codex_msg="runner image must install and smoke-check Codex before switching users"
+expect_order_failure no-final-user "$codex_msg" 'USER runner' '<absent>' after
+expect_order_failure user-before-codex "$codex_msg" \
+  'USER runner' 'RUN npm install -g @openai/codex && codex --version' before
+expect_order_failure user-before-claude \
+  "runner image must install and smoke-check Claude Code before switching users" \
+  'USER runner' 'RUN npm install -g @anthropic-ai/claude-code && claude --version' before
+expect_order_failure plugins-before-user "runner image must enable the public repo-tools plugins as runner" \
+  'USER runner' '    claude plugin install repo-tools@repo-tools' after
+expect_order_failure claude-plugin-before-user "runner image must enable the public repo-tools plugins as runner" \
+  'RUN claude plugin marketplace add /opt/repo-tools && \' 'USER runner' before
+skills_msg="runner image must install layer-1 skills and then run verify-image-invariants.sh as runner after the pnpm warm-up"
+expect_order_failure skills-before-user "$skills_msg" \
+  'RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \' 'USER runner' before
+expect_order_failure invariants-before-skills "$skills_msg" \
+  'RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh' \
+  'RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \' before
+expect_order_failure invariants-before-pnpm-warm "$skills_msg" \
+  'RUN pnpm --version' 'RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh' after
 
 echo "toolchain-health.test.sh: all cases passed"
