@@ -821,15 +821,14 @@ deployment.
 ## 10. Gaps and roadmap
 
 Priorities follow the expert-maintainer design center. This table lists only
-remaining work. Completed roadmap entries R1, R3–R10 are retired;
+remaining work. Completed roadmap entries R1, R3–R11 are retired;
 their behavior is owned by the corresponding destination requirements above.
 R2 now identifies the live qualification gap rather than repeating shipped E2E
 coverage. Existing IDs are not reused.
 
-| #   | Remaining work                                                                   | Acceptance boundary                                                                                                                                                                                             | Priority |
-| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey                                                                               | P0       |
-| R11 | Deliver notifications when no Inbox tab is open                                  | Web Push and its signing key are deployed behind opt-in; real browser opt-in, closed-tab OS delivery and authenticated click-through remain to be qualified. [Notification contract](../inbox-notifications.md) | P3       |
+| #   | Remaining work                                                                   | Acceptance boundary                                                                                                               | Priority |
+| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey | P0       |
 
 ## 11. Success metrics
 
