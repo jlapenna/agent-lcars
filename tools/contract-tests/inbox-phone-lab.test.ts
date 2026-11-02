@@ -491,9 +491,16 @@ describe('transport cohort qualification', () => {
       p50Ms: 2008,
       p95Ms: 2015,
       maxMs: 2015,
+      targetMet: true,
+    });
+    // Identical samples miss only the stricter warm ceiling.
+    expect(summary.h2.warm).toEqual({
+      n: 30,
+      p50Ms: 2008,
+      p95Ms: 2015,
+      maxMs: 2015,
       targetMet: false,
     });
-    expect(summary.h2.warm.n).toBe(30);
   });
   it.each([
     'protocol',

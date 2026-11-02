@@ -1,7 +1,24 @@
 # Inbox phone interaction budget
 
-FE-NF-7 targets p95 below 2,000 ms, separately for browser-cold and browser-warm
-cases. A controlled lab result is not production qualification.
+FE-NF-7 sets a p95 ceiling for each case: below 2,000 ms browser-warm and below
+3,500 ms browser-cold. A controlled lab result is not production qualification.
+
+## Accepted baseline
+
+The maintainer accepted these lab results as the baseline on 2026-11-02
+(#3163); cold no longer has to reach 2,000 ms.
+
+| Case |      p50 |      p95 |  Ceiling |
+| ---- | -------: | -------: | -------: |
+| Cold | 3,264 ms | 3,476 ms | 3,500 ms |
+| Warm |   855 ms | 1,076 ms | 2,000 ms |
+
+Measured on main `16a8f9901`, CI run 41364030555. Under this profile, a cold
+visit spends about 2.5 s transferring its first 427 KB before `load`; reaching
+2,000 ms would mean making the primary action work before hydration or removing
+Mantine and the web fonts from the Inbox's initial load. The cold ceiling
+guards against regression. Before attributing a miss to the change under
+review, compare a same-runner before/after pair taken with the same probe.
 
 ## User-ready milestone
 
@@ -157,6 +174,8 @@ observation, click request, captured primary click and confirmation observation
 load event, click dispatch and visible confirmation before selecting an owner.
 Observation checkpoints include Playwright scheduling and are upper bounds.
 The click event proves dispatch; it does not identify the exact hydration instant.
+Schema 4 reports `targetMs` as a `{ cold, warm }` object, and each case's
+`targetMet` uses its own ceiling.
 
 Long-task entries cover tasks of at least 50 ms from navigation to confirmation,
 with a 200-entry cap. CDP task/script/compile/layout/style/DevTools collection starts after the untimed
