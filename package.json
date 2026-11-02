@@ -102,6 +102,7 @@
     "firestore-jest-mock": "^0.26.0",
     "husky": "^9.1.7",
     "jest-fetch-mock": "^4.0.0",
+    "jsdom": "^26.1.0",
     "jsonc-eslint-parser": "^3.1.0",
     "lint-staged": "^17.0.0",
     "madge": "^8.0.0",
