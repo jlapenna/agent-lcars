@@ -103,7 +103,7 @@ export class InboxPushStore {
     return this.collection().doc(pushEndpointId(`github:${userId}`));
   }
   /** Reads every other principal's copy of an endpoint, and the subscriber
-   * count, before any write in the transaction. A partial read would let a
+   * count once those copies are dropped, before any write in the transaction. A partial read would let a
    * copy survive unseen, so it fails like delivery's own capacity check. */
   private async elsewhere(tx: Transaction, userId: string, id: string) {
     const own = this.document(userId).id;
@@ -116,7 +116,12 @@ export class InboxPushStore {
         ? [{ ref: doc.ref, data }]
         : [];
     });
-    return { holders, subscribers: result.size };
+    // Holders left with no browser are deleted, so a transfer from an
+    // earlier sign-in's only browser does not count against capacity.
+    const emptied = holders.filter(
+      ({ data }) => Object.keys(data.browsers).length === 1,
+    ).length;
+    return { holders, subscribers: result.size - emptied };
   }
   private dropElsewhere(
     tx: Transaction,

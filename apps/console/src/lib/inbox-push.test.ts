@@ -262,6 +262,19 @@ describe('durable Inbox push delivery', () => {
     // An existing principal can still renew within capacity.
     await store.begin('user-0', 'login', subscription);
     expect(await store.status('user-0', subscription.endpoint)).toBe(true);
+    // A new principal taking over an earlier sign-in's only browser leaves
+    // the count unchanged, so the transfer succeeds at capacity.
+    await store.begin('user-0-again', 'login', {
+      ...subscription,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/1',
+    });
+    expect(docs.size).toBe(20);
+    expect(
+      await store.status(
+        'user-0-again',
+        'https://fcm.googleapis.com/fcm/send/1',
+      ),
+    ).toBe(true);
     // A collection already past capacity (written before this guard) fails
     // loudly instead of letting an unseen copy survive.
     docs.set('extra', { userId: 'extra', login: 'login', browsers: {} });
