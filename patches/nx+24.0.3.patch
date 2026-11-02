@@ -97,7 +97,7 @@ diff --git a/node_modules/nx/dist/src/tasks-runner/cache.js b/node_modules/nx/di
 diff --git a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
 --- a/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
 +++ b/node_modules/nx/dist/src/tasks-runner/task-orchestrator.js
-@@ -2116,9 +2116,16 @@ class TaskOrchestrator {
+@@ -2148,9 +2148,16 @@ class TaskOrchestrator {
              const reason = stoppingReason === 'fulfilled' ? 'fulfilled' : 'interrupted';
              await this.completeContinuousTask(task, groupId, ownsRunningTasksService, reason);
          }
