@@ -99,9 +99,10 @@ existing dispatch database (`console-inbox-push`), with provider endpoints,
 public encryption keys, expiry and identifier-only delivery state. Users are
 keyed by their stable GitHub account id, not a per-sign-in id, so signing in
 again keeps subscriptions, snoozes and the browser ledger. A browser endpoint
-belongs to one user: enabling it, or a worker check-in from it, removes any
-copy another user holds, because that browser's cookie can only ever check in
-as the current one. Endpoints
+belongs to one user: enabling it, or a worker check-in from a user who holds
+it live, removes any copy another user holds, because that browser's cookie
+can only ever check in as one user. Knowing an endpoint never unsubscribes
+someone else. Endpoints
 are delivery capabilities and never enter URLs or logs. Supported providers
 are Chrome/FCM, Mozilla and Apple; arbitrary endpoints are rejected.
 
