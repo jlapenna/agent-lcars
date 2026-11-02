@@ -1,5 +1,7 @@
 // Vitest sibling of test-setup.ts (#2933/#2959/#2997/#3002/#3004).
+import type { MantineProviderProps } from '@mantine/core';
 import { cleanup } from '@testing-library/react';
+import { createElement } from 'react';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 import {
@@ -42,6 +44,20 @@ function applyIdentityDefaults() {
 applyIdentityDefaults();
 
 beforeEach(applyIdentityDefaults);
+
+// Mantine's testing guide renders under `<MantineProvider env="test">`,
+// which disables transitions and portals. Without it a closing Modal stays
+// mounted through its 200 ms exit transition, and on a loaded CI runner a
+// `waitFor(() => expect(queryByRole('dialog')).toBeNull())` outlives its
+// deadline (PR #3170: quick-task-button and item-overflow-menu). Default
+// every provider a test mounts, directly or through a component, to the test
+// environment; a test can still pass `env` explicitly.
+vi.mock('@mantine/core', async (importOriginal) => {
+  const mantine = await importOriginal<typeof import('@mantine/core')>();
+  const MantineProvider = (props: MantineProviderProps) =>
+    createElement(mantine.MantineProvider, { env: 'test', ...props });
+  return { ...mantine, MantineProvider };
+});
 
 // A timer left armed when this file's jsdom is torn down fires into a dead
 // environment and fails the whole run (#1871). Install the tracking at
