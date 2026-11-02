@@ -24,7 +24,8 @@ const PROFILE = {
   downloadBytesPerSecond: (1.6 * 1_000_000) / 8,
   uploadBytesPerSecond: 750_000 / 8,
 };
-const TARGET_MS = 2_000;
+// FE-NF-7 p95 ceilings per cache case; see docs/inbox-phone-budget.md.
+const TARGET_MS = { cold: 3_500, warm: 2_000 };
 const SAMPLE_TIMEOUT_MS = 30_000;
 const RUN_TIMEOUT_MS = 15 * 60_000;
 const ITEM_PATH = '/inbox?item=supersprinklesracing%2Fsprinkles%239003';
@@ -326,7 +327,7 @@ export function transportSummary(blocks) {
               p50Ms: percentile(values, 0.5),
               p95Ms,
               maxMs: Math.max(...values),
-              targetMet: p95Ms < TARGET_MS,
+              targetMet: p95Ms < TARGET_MS[cache],
             },
           ];
         }),
@@ -1077,7 +1078,7 @@ async function captureColdProfile(
 
 export async function measure(options) {
   const report = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     measuredAt: new Date().toISOString(),
     environment: {
       host: os.hostname(),
@@ -1369,7 +1370,7 @@ export async function measure(options) {
             p50Ms: percentile(values, 0.5),
             p95Ms,
             maxMs: Math.max(...values),
-            targetMet: p95Ms < TARGET_MS,
+            targetMet: p95Ms < TARGET_MS[cache],
           },
         ];
       }),
