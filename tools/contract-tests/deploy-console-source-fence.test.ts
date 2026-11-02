@@ -61,6 +61,7 @@ function sourceDecision(
   concurrent: { newer: number; race?: boolean } | undefined = undefined,
   history = 0,
   clock: { local: string; server: string } | undefined = undefined,
+  edit: (program: string) => string = (program) => program,
 ) {
   if (guard === undefined) return { status: 0, output: 'true', calls: '' };
   const dir = mkdtempSync(path.join(os.tmpdir(), 'deploy-source-fence-'));
@@ -141,6 +142,7 @@ function sourceDecision(
     JSON.stringify({ rows, newer, total, race: concurrent?.race }),
   );
   writeFileSync(output, '');
+  writeFileSync(path.join(dir, 'slept'), '');
   writeFileSync(path.join(dir, 'routes'), JSON.stringify(routes));
   writeFileSync(
     path.join(dir, 'gh'),
@@ -154,7 +156,10 @@ if os.environ['FIXTURE_FAIL']=='true': sys.exit(1)
 route=args[1].removeprefix('repos/jlapenna/agent-lcars/')
 with open(os.environ['FIXTURE_ROUTES']) as f: routes=json.load(f)
 if '--include' in sys.argv:
-    epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(time.time()-float(os.environ['FIXTURE_SERVER_REAL_START']))
+    # The server clock advances only by the guard's (virtual) sleeps, so a
+    # decision never depends on how fast a loaded runner executes it.
+    with open(os.environ['FIXTURE_SLEPT']) as f: slept=sum(float(line) for line in f if line.strip())
+    epoch=float(os.environ['FIXTURE_SERVER_EPOCH'])+int(slept)
     print('HTTP/2.0 200 OK\\nDate: '+formatdate(epoch, usegmt=True)+'\\nAge: 0\\n')
 if route.startswith('compare/'):
     base, head = route.removeprefix('compare/').split('...')
@@ -202,11 +207,28 @@ else: print(json.dumps(routes[route]))
 `,
     { mode: 0o755 },
   );
-  let program = guard.run!;
+  const entry = "python3 - <<'PY_SOURCE'\n";
+  if (!guard.run!.includes(entry))
+    throw new Error('Missing guard clock boundary');
+  // The guard's own sleeps are virtual: they advance the fixture's GitHub
+  // clock without spending wall time, so the second-closure wait stays
+  // exercised however slowly a loaded runner executes the guard. Only the
+  // guard's calls are rewritten; patching time.sleep globally would also
+  // count subprocess's internal wait polling as server time.
+  if (!guard.run!.includes('time.sleep('))
+    throw new Error('Missing guard sleep boundary');
+  let program = edit(guard.run!)
+    .replaceAll('time.sleep(', '_fixture_sleep(')
+    .replace(
+      entry,
+      entry +
+        `import os as _fixture_os
+def _fixture_sleep(seconds):
+    with open(_fixture_os.environ['FIXTURE_SLEPT'], 'a') as slept:
+        slept.write(f'{seconds}\\n')
+`,
+    );
   if (clock) {
-    const entry = "python3 - <<'PY_SOURCE'\n";
-    if (!program.includes(entry))
-      throw new Error('Missing guard clock boundary');
     program = program.replace(
       entry,
       entry +
@@ -245,12 +267,18 @@ _fixture_datetime.datetime = _FixtureDateTime
             ? Date.parse(clock.server) / 1000
             : Math.floor(Date.now() / 1000),
         ),
-        FIXTURE_SERVER_REAL_START: String(Date.now() / 1000),
+        FIXTURE_SLEPT: path.join(dir, 'slept'),
         FIXTURE_BASE: BASE,
         FIXTURE_OLD: OLD,
         FIXTURE_NEW: NEW,
       },
     });
+    // A killed guard writes no output; name the timeout instead of letting
+    // it read as a refused source.
+    if (result.error || result.signal)
+      throw new Error(
+        `Guard subprocess did not finish: ${result.error?.message ?? result.signal}`,
+      );
     return {
       status: result.status,
       output: readFileSync(output, 'utf8').match(/^deploy_current=(.*)$/m)?.[1],
@@ -481,6 +509,31 @@ describe('serialized automatic deployment source fence', () => {
         { local, server },
       ),
     ).toMatchObject({ status: 0, output: 'false' });
+  });
+
+  it('refuses when the guard reads its second clock without waiting for the pinned second to close', () => {
+    // Fixture time passes only through the guard's sleeps, so removing the
+    // closure wait must leave the discovery second open.
+    const wait = 'time.sleep(1)\nclosed_second, _ = server_clock()';
+    const call = sourceDecision(
+      NEW,
+      NEW,
+      'workflow_run',
+      false,
+      '',
+      [{ source: NEW }],
+      false,
+      undefined,
+      0,
+      undefined,
+      (program) => {
+        if (!program.includes(wait))
+          throw new Error('Missing guard closure wait');
+        return program.replace(wait, 'closed_second, _ = server_clock()');
+      },
+    );
+    expect(call.status).not.toBe(0);
+    expect(call.output).toBeUndefined();
   });
 
   it('reads history at a creation ceiling so concurrent new runs cannot change the scan', () => {
