@@ -1,13 +1,17 @@
+import { required } from '@agent-lcars/util-server';
+
 import { auth } from '../../../auth';
 import { isAdminGithubLogin } from '../../../lib/deployment';
 import { notificationSnapshotFresh } from '../../../lib/inbox-notifications';
 import { getInboxPushStore, pushSnapshot } from '../../../lib/inbox-push';
 
 /** A woken worker rechecks subscription, cookie identity, grants and snoozes
- * before requesting a generic OS preview. Endpoints never enter URLs/logs. */
+ * before requesting a generic OS preview. Endpoints never enter URLs/logs.
+ * The public origin is AUTH_URL: behind App Hosting, request.url carries the
+ * internal Cloud Run host, which no browser Origin header ever matches. */
 export async function POST(request: Request) {
   const headers = { 'Cache-Control': 'private, no-store' };
-  if (request.headers.get('origin') !== new URL(request.url).origin)
+  if (request.headers.get('origin') !== new URL(required('AUTH_URL')).origin)
     return new Response(null, { status: 403, headers });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
