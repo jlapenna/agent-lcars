@@ -35,9 +35,13 @@ export async function POST(request: Request) {
           typeof attemptAt !== 'number' ||
           !Number.isFinite(attemptAt) ||
           typeof endpoint !== 'string' ||
-          endpoint.length > 2048 ||
-          !(await getInboxPushStore().status(session.user.id, endpoint))
+          endpoint.length > 2048
         )
+          throw new Error('Disabled');
+        // This browser's cookie names the current principal; a copy of its
+        // endpoint held for an earlier sign-in can never check in.
+        await getInboxPushStore().release(session.user.id, endpoint);
+        if (!(await getInboxPushStore().status(session.user.id, endpoint)))
           throw new Error('Disabled');
         const snapshot = await pushSnapshot(
           session.user.id,

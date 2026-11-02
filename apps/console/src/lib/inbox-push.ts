@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
-import { Firestore } from '@google-cloud/firestore';
+import { Firestore, type Transaction } from '@google-cloud/firestore';
 import webPush from 'web-push';
 import { z } from 'zod';
 
@@ -86,7 +86,10 @@ export function pushEndpointId(endpoint: string) {
 }
 
 /** One bounded preference document per authenticated user. Transactions fence
- * concurrent ticks and consume attempts before any network delivery. */
+ * concurrent ticks and consume attempts before any network delivery. A browser
+ * endpoint belongs to one principal: a browser profile holds one console
+ * cookie, so any other principal's copy could never check in and would only
+ * spend a send and a failed receive on every decision. */
 export class InboxPushStore {
   constructor(private readonly firestore: Firestore) {}
   private collection() {
@@ -94,6 +97,36 @@ export class InboxPushStore {
   }
   private document(userId: string) {
     return this.collection().doc(pushEndpointId(`github:${userId}`));
+  }
+  /** Reads every other principal's copy of an endpoint. Call before any write
+   * in the transaction; `dropElsewhere` then removes them. */
+  private async elsewhere(tx: Transaction, userId: string, id: string) {
+    const own = this.document(userId).id;
+    const result = await tx.get(this.collection().limit(MAX_USERS + 1));
+    return result.docs.flatMap((doc) => {
+      const data = doc.data() as Subscriber;
+      return doc.ref.id !== own && data.browsers?.[id]
+        ? [{ ref: doc.ref, data }]
+        : [];
+    });
+  }
+  private dropElsewhere(
+    tx: Transaction,
+    id: string,
+    holders: Awaited<ReturnType<InboxPushStore['elsewhere']>>,
+  ) {
+    for (const { ref, data } of holders) {
+      const { [id]: _removed, ...browsers } = data.browsers;
+      tx.set(ref, boundedSubscriber({ ...data, browsers }));
+    }
+  }
+  /** The signed-in principal's browser checked in with this endpoint, so no
+   * other principal can ever receive on it. */
+  async release(userId: string, endpoint: string) {
+    const id = pushEndpointId(endpoint);
+    await this.firestore.runTransaction(async (tx) =>
+      this.dropElsewhere(tx, id, await this.elsewhere(tx, userId, id)),
+    );
   }
   async status(userId: string, endpoint: string): Promise<boolean> {
     const data = (await this.document(userId).get()).data() as
@@ -106,13 +139,14 @@ export class InboxPushStore {
     const ref = this.document(userId);
     return this.firestore.runTransaction(async (tx) => {
       const data = (await tx.get(ref)).data() as Subscriber | undefined;
+      const id = pushEndpointId(subscription.endpoint);
+      const holders = await this.elsewhere(tx, userId, id);
       const now = Date.now();
       const browsers = Object.fromEntries(
         Object.entries(data?.browsers ?? {}).filter(
           ([, browser]) => browser.expiresAt > now,
         ),
       );
-      const id = pushEndpointId(subscription.endpoint);
       if (!browsers[id] && Object.keys(browsers).length >= MAX_BROWSERS)
         throw new Error('Five browsers already enabled. Disable one first.');
       const previous = browsers[id];
@@ -125,6 +159,7 @@ export class InboxPushStore {
           lastSentAt: previous?.state.lastSentAt ?? 0,
         },
       };
+      this.dropElsewhere(tx, id, holders);
       tx.set(ref, boundedSubscriber({ userId, login, browsers }));
       return browsers[id].revision;
     });

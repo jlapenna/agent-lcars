@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   status: vi.fn(),
+  release: vi.fn(),
   receive: vi.fn(),
   pushSnapshot: vi.fn(),
 }));
@@ -13,7 +14,11 @@ vi.mock('../../../lib/inbox-notifications', () => ({
   notificationSnapshotFresh: () => true,
 }));
 vi.mock('../../../lib/inbox-push', () => ({
-  getInboxPushStore: () => ({ status: mocks.status, receive: mocks.receive }),
+  getInboxPushStore: () => ({
+    status: mocks.status,
+    release: mocks.release,
+    receive: mocks.receive,
+  }),
   pushSnapshot: mocks.pushSnapshot,
 }));
 import { POST } from './route';
@@ -70,5 +75,21 @@ describe('worker check-in origin gate', () => {
     expect(response.status).toBe(403);
     expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(mocks.auth).not.toHaveBeenCalled();
+  });
+});
+
+describe('worker check-in principal', () => {
+  it('releases copies of the endpoint held for earlier sign-ins before checking consent', async () => {
+    mocks.status.mockResolvedValue(false);
+    const response = await checkIn('https://lcars.jlapenna.net');
+    expect(response.status).toBe(503);
+    expect(mocks.release).toHaveBeenCalledWith(
+      'viewer',
+      'https://push.example/e',
+    );
+    expect(mocks.release.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.status.mock.invocationCallOrder[0],
+    );
+    expect(mocks.receive).not.toHaveBeenCalled();
   });
 });

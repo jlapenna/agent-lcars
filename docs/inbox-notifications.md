@@ -96,7 +96,12 @@ quiet; neither provider acceptance nor `showNotification` proves OS display.
 
 The application stores at most five browser subscriptions per user in the
 existing dispatch database (`console-inbox-push`), with provider endpoints,
-public encryption keys, expiry and identifier-only delivery state. Endpoints
+public encryption keys, expiry and identifier-only delivery state. Users are
+keyed by their stable GitHub account id, not a per-sign-in id, so signing in
+again keeps subscriptions, snoozes and the browser ledger. A browser endpoint
+belongs to one user: enabling it, or a worker check-in from it, removes any
+copy another user holds, because that browser's cookie can only ever check in
+as the current one. Endpoints
 are delivery capabilities and never enter URLs or logs. Supported providers
 are Chrome/FCM, Mozilla and Apple; arbitrary endpoints are rejected.
 

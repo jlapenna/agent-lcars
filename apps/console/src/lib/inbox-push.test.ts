@@ -31,19 +31,30 @@ function snapshot(time: number, ids = ['old']): InboxNotificationSnapshot {
 function fixture() {
   const docs = new Map<string, unknown>();
   let tail = Promise.resolve();
+  const query = {
+    query: true,
+    get: async () => ({
+      docs: Array.from(docs, ([id, data]) => ({
+        ref: { id },
+        data: () => structuredClone(data),
+      })),
+    }),
+  };
   const firestore = {
     collection: () => ({
       doc: (id: string) => ({
         id,
         get: async () => ({ data: () => structuredClone(docs.get(id)) }),
       }),
+      limit: () => query,
     }),
     runTransaction: (fn: (tx: unknown) => Promise<unknown>) => {
       const result = tail.then(() =>
         fn({
-          get: async (ref: { id: string }) => ({
-            data: () => structuredClone(docs.get(ref.id)),
-          }),
+          get: async (ref: { id: string; query?: true }) =>
+            ref.query
+              ? query.get()
+              : { data: () => structuredClone(docs.get(ref.id)) },
           set: (ref: { id: string }, data: unknown) => {
             docs.set(ref.id, structuredClone(data));
           },
@@ -192,5 +203,28 @@ describe('durable Inbox push delivery', () => {
     ).toBeUndefined();
     await store.remove('user', subscription.endpoint, rev);
     expect(await store.status('user', subscription.endpoint)).toBe(true);
+  });
+  it('gives a browser endpoint to the principal that last enabled or checked in with it', async () => {
+    const { store } = fixture();
+    const other = {
+      ...subscription,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/other',
+    };
+    // Each sign-in used to mint a new principal; the same phone then held a
+    // copy under both, and the earlier copy could never check in.
+    await store.begin('earlier', 'login', subscription);
+    await store.begin('earlier', 'login', other);
+    await store.begin('current', 'login', subscription);
+    expect(await store.status('earlier', subscription.endpoint)).toBe(false);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
+    expect(await store.status('current', subscription.endpoint)).toBe(true);
+
+    await store.begin('earlier', 'login', subscription);
+    await store.release('current', subscription.endpoint);
+    expect(await store.status('earlier', subscription.endpoint)).toBe(false);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
+    expect(await store.status('current', subscription.endpoint)).toBe(false);
+    await store.release('earlier', other.endpoint);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
   });
 });

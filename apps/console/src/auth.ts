@@ -89,6 +89,12 @@ const nextAuth = NextAuth({
       return canSignInToConsole(profile?.login);
     },
     jwt({ token, profile, account }) {
+      // Without a database adapter Auth.js gives every sign-in a random user
+      // id, so per-user state (Inbox push subscriptions, decision snoozes,
+      // the browser notification ledger) would split across sign-ins. The
+      // GitHub account id is the stable principal those stores key on.
+      if (account?.provider === 'github' && account.providerAccountId)
+        token.sub = account.providerAccountId;
       if (typeof profile?.login === 'string') {
         token.githubLogin = profile.login;
         token.isAdmin = isAdminGithubLogin(profile.login);
