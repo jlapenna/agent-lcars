@@ -31,21 +31,36 @@ function snapshot(time: number, ids = ['old']): InboxNotificationSnapshot {
 function fixture() {
   const docs = new Map<string, unknown>();
   let tail = Promise.resolve();
+  const query = {
+    query: true,
+    get: async () => ({
+      size: docs.size,
+      docs: Array.from(docs, ([id, data]) => ({
+        ref: { id },
+        data: () => structuredClone(data),
+      })),
+    }),
+  };
   const firestore = {
     collection: () => ({
       doc: (id: string) => ({
         id,
         get: async () => ({ data: () => structuredClone(docs.get(id)) }),
       }),
+      limit: () => query,
     }),
     runTransaction: (fn: (tx: unknown) => Promise<unknown>) => {
       const result = tail.then(() =>
         fn({
-          get: async (ref: { id: string }) => ({
-            data: () => structuredClone(docs.get(ref.id)),
-          }),
+          get: async (ref: { id: string; query?: true }) =>
+            ref.query
+              ? query.get()
+              : { data: () => structuredClone(docs.get(ref.id)) },
           set: (ref: { id: string }, data: unknown) => {
             docs.set(ref.id, structuredClone(data));
+          },
+          delete: (ref: { id: string }) => {
+            docs.delete(ref.id);
           },
         }),
       );
@@ -63,7 +78,11 @@ function fixture() {
         browsers: Record<string, { revision: string }>;
       }
     ).browsers;
-  return { store, revision: () => Object.values(revision())[0].revision };
+  return {
+    store,
+    docs,
+    revision: () => Object.values(revision())[0].revision,
+  };
 }
 async function subscribe(store: InboxPushStore, now: number) {
   const revision = await store.begin('user', 'login', subscription);
@@ -192,5 +211,75 @@ describe('durable Inbox push delivery', () => {
     ).toBeUndefined();
     await store.remove('user', subscription.endpoint, rev);
     expect(await store.status('user', subscription.endpoint)).toBe(true);
+  });
+  it('gives a browser endpoint to the principal that last enabled or checked in with it', async () => {
+    const { store, docs } = fixture();
+    const other = {
+      ...subscription,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/other',
+    };
+    // Each sign-in used to mint a new principal; the same phone then held a
+    // copy under both, and the earlier copy could never check in.
+    await store.begin('earlier', 'login', subscription);
+    await store.begin('earlier', 'login', other);
+    const legacy = new Map(docs);
+    await store.begin('current', 'login', subscription);
+    expect(await store.status('earlier', subscription.endpoint)).toBe(false);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
+    expect(await store.status('current', subscription.endpoint)).toBe(true);
+
+    // Duplicates written before this rule are released at check-in.
+    for (const [id, data] of legacy) docs.set(id, data);
+    expect(await store.status('earlier', subscription.endpoint)).toBe(true);
+    await store.release('current', subscription.endpoint);
+    expect(await store.status('earlier', subscription.endpoint)).toBe(false);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
+    expect(await store.status('current', subscription.endpoint)).toBe(true);
+
+    // A check-in releases only an endpoint the caller holds live; knowing
+    // another principal's endpoint is not enough to unsubscribe it.
+    await store.release('earlier', other.endpoint);
+    await store.release('current', other.endpoint);
+    expect(await store.status('earlier', other.endpoint)).toBe(true);
+    await store.begin('current', 'login', other);
+    await store.begin('earlier', 'login', subscription);
+    expect(await store.status('current', subscription.endpoint)).toBe(false);
+    // A principal left with no browsers keeps no document.
+    expect(docs.size).toBe(2);
+    await store.remove('earlier', subscription.endpoint);
+    expect(docs.size).toBe(1);
+  });
+  it('keeps the subscriber collection within the capacity delivery can read', async () => {
+    const { store, docs } = fixture();
+    for (let user = 0; user < 20; user++)
+      await store.begin(`user-${user}`, 'login', {
+        ...subscription,
+        endpoint: `https://fcm.googleapis.com/fcm/send/${user}`,
+      });
+    await expect(store.begin('another', 'login', subscription)).rejects.toThrow(
+      'capacity exceeded',
+    );
+    // An existing principal can still renew within capacity.
+    await store.begin('user-0', 'login', subscription);
+    expect(await store.status('user-0', subscription.endpoint)).toBe(true);
+    // A new principal taking over an earlier sign-in's only browser leaves
+    // the count unchanged, so the transfer succeeds at capacity.
+    await store.begin('user-0-again', 'login', {
+      ...subscription,
+      endpoint: 'https://fcm.googleapis.com/fcm/send/1',
+    });
+    expect(docs.size).toBe(20);
+    expect(
+      await store.status(
+        'user-0-again',
+        'https://fcm.googleapis.com/fcm/send/1',
+      ),
+    ).toBe(true);
+    // A collection already past capacity (written before this guard) fails
+    // loudly instead of letting an unseen copy survive.
+    docs.set('extra', { userId: 'extra', login: 'login', browsers: {} });
+    await expect(
+      store.release('user-0', subscription.endpoint),
+    ).rejects.toThrow('capacity exceeded');
   });
 });

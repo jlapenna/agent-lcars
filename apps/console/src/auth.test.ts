@@ -80,11 +80,16 @@ describe('console OAuth admission and authority', () => {
   it('keeps an operator non-admin and OAuth credentials out of the public session', async () => {
     const jwt = mocks.config!.callbacks!.jwt!;
     const token = await jwt({
-      token: { sub: '123' },
+      token: { sub: 'random-per-sign-in' },
       profile: { login: 'operator' },
-      account: { provider: 'github', access_token: 'private-oauth-token' },
+      account: {
+        provider: 'github',
+        providerAccountId: '123',
+        access_token: 'private-oauth-token',
+      },
     } as Parameters<typeof jwt>[0]);
     expect(token).toMatchObject({
+      sub: '123',
       isAdmin: false,
       githubAccessToken: 'private-oauth-token',
     });

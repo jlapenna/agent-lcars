@@ -4,7 +4,11 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
-import { Firestore } from '@google-cloud/firestore';
+import {
+  type DocumentReference,
+  Firestore,
+  type Transaction,
+} from '@google-cloud/firestore';
 import webPush from 'web-push';
 import { z } from 'zod';
 
@@ -86,7 +90,10 @@ export function pushEndpointId(endpoint: string) {
 }
 
 /** One bounded preference document per authenticated user. Transactions fence
- * concurrent ticks and consume attempts before any network delivery. */
+ * concurrent ticks and consume attempts before any network delivery. A browser
+ * endpoint belongs to one principal: a browser profile holds one console
+ * cookie, so any other principal's copy could never check in and would only
+ * spend a send and a failed receive on every decision. */
 export class InboxPushStore {
   constructor(private readonly firestore: Firestore) {}
   private collection() {
@@ -94,6 +101,56 @@ export class InboxPushStore {
   }
   private document(userId: string) {
     return this.collection().doc(pushEndpointId(`github:${userId}`));
+  }
+  /** Reads every other principal's copy of an endpoint, and the subscriber
+   * count once those copies are dropped, before any write in the transaction. A partial read would let a
+   * copy survive unseen, so it fails like delivery's own capacity check. */
+  private async elsewhere(tx: Transaction, userId: string, id: string) {
+    const own = this.document(userId).id;
+    const result = await tx.get(this.collection().limit(MAX_USERS + 1));
+    if (result.size > MAX_USERS)
+      throw new Error('Push subscriber capacity exceeded');
+    const holders = result.docs.flatMap((doc) => {
+      const data = doc.data() as Subscriber;
+      return doc.ref.id !== own && data.browsers?.[id]
+        ? [{ ref: doc.ref, data }]
+        : [];
+    });
+    // Holders left with no browser are deleted, so a transfer from an
+    // earlier sign-in's only browser does not count against capacity.
+    const emptied = holders.filter(
+      ({ data }) => Object.keys(data.browsers).length === 1,
+    ).length;
+    return { holders, subscribers: result.size - emptied };
+  }
+  private dropElsewhere(
+    tx: Transaction,
+    id: string,
+    { holders }: Awaited<ReturnType<InboxPushStore['elsewhere']>>,
+  ) {
+    for (const { ref, data } of holders) {
+      const { [id]: _removed, ...browsers } = data.browsers;
+      this.write(tx, ref, { ...data, browsers });
+    }
+  }
+  /** A principal with no browsers left holds no document, so earlier
+   * sign-ins cannot accumulate toward the subscriber capacity. */
+  private write(tx: Transaction, ref: DocumentReference, data: Subscriber) {
+    if (Object.keys(data.browsers).length === 0) tx.delete(ref);
+    else tx.set(ref, boundedSubscriber(data));
+  }
+  /** The signed-in principal's browser checked in with an endpoint it holds
+   * a live subscription for, so no other principal can ever receive on it.
+   * A caller that does not hold the endpoint releases nothing. */
+  async release(userId: string, endpoint: string) {
+    const id = pushEndpointId(endpoint);
+    await this.firestore.runTransaction(async (tx) => {
+      const own = (await tx.get(this.document(userId))).data() as
+        Subscriber | undefined;
+      const others = await this.elsewhere(tx, userId, id);
+      if ((own?.browsers[id]?.expiresAt ?? 0) > Date.now())
+        this.dropElsewhere(tx, id, others);
+    });
   }
   async status(userId: string, endpoint: string): Promise<boolean> {
     const data = (await this.document(userId).get()).data() as
@@ -106,13 +163,18 @@ export class InboxPushStore {
     const ref = this.document(userId);
     return this.firestore.runTransaction(async (tx) => {
       const data = (await tx.get(ref)).data() as Subscriber | undefined;
+      const id = pushEndpointId(subscription.endpoint);
+      const others = await this.elsewhere(tx, userId, id);
+      // Delivery stops for everyone past MAX_USERS, so a new principal
+      // cannot take the last place.
+      if (!data && others.subscribers >= MAX_USERS)
+        throw new Error('Push subscriber capacity exceeded');
       const now = Date.now();
       const browsers = Object.fromEntries(
         Object.entries(data?.browsers ?? {}).filter(
           ([, browser]) => browser.expiresAt > now,
         ),
       );
-      const id = pushEndpointId(subscription.endpoint);
       if (!browsers[id] && Object.keys(browsers).length >= MAX_BROWSERS)
         throw new Error('Five browsers already enabled. Disable one first.');
       const previous = browsers[id];
@@ -125,6 +187,7 @@ export class InboxPushStore {
           lastSentAt: previous?.state.lastSentAt ?? 0,
         },
       };
+      this.dropElsewhere(tx, id, others);
       tx.set(ref, boundedSubscriber({ userId, login, browsers }));
       return browsers[id].revision;
     });
@@ -167,7 +230,7 @@ export class InboxPushStore {
       if (!data || (revision && data.browsers[id]?.revision !== revision))
         return;
       const { [id]: _removed, ...browsers } = data.browsers;
-      tx.set(ref, boundedSubscriber({ ...data, browsers }));
+      this.write(tx, ref, { ...data, browsers });
     });
   }
   async receive(
