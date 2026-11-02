@@ -199,7 +199,9 @@ always exits 0. Every decision is one line in
    (versioned, `# LCARS_INTEGRATION_VERSION=N`) and appends one constant
    entry per lifecycle event to `~/.claude/settings.json` and
    `~/.codex/hooks.json`, leaving every other key and hook untouched.
-   Codex hashes the entry, not the script, so it is trusted once per host
+   Reinstalling keeps exactly one entry per event: it refreshes the first
+   and removes extra copies, which `status` reports as duplicates and not
+   installed. Codex hashes the entry, not the script, so it is trusted once per host
    (`/hooks` in the Codex TUI) and never again. `uninstall` removes exactly
    what `install` added.
 
