@@ -178,7 +178,7 @@ describe('lcars integration', () => {
   });
 
   it.each(['claude', 'codex'] as const)(
-    'refreshes stale managed hooks in every %s group and preserves foreign ordering',
+    'refreshes the first managed %s hook, drops later copies and preserves foreign ordering',
     (runtime) => {
       const home = tempHome();
       const env = {};
@@ -238,7 +238,7 @@ describe('lcars integration', () => {
         before,
         { matcher: 'first-*', hooks: [current, firstForeign] },
         between,
-        { matcher: 'later-*', hooks: [laterBefore, current, laterAfter] },
+        { matcher: 'later-*', hooks: [laterBefore, laterAfter] },
         after,
       ]);
       expect(fs.statSync(settingsPath).mode & 0o777).toBe(0o640);
@@ -253,6 +253,108 @@ describe('lcars integration', () => {
           stdout,
         }),
       ).toBe(0);
+    },
+  );
+
+  // #3168: a writer that kept appending its own copy left 3-5 managed groups
+  // per event, each current, so every hook ran 3-5 times while status still
+  // reported every entry present.
+  it.each(['claude', 'codex'] as const)(
+    'collapses duplicate managed %s groups to one and reports them until then',
+    (runtime) => {
+      const home = tempHome();
+      const env = {};
+      expect(installIntegration(runtime, home, env).installed).toBe(true);
+      const settingsPath = path.join(
+        home,
+        runtime === 'claude' ? '.claude/settings.json' : '.codex/hooks.json',
+      );
+      const settings = readJson(settingsPath);
+      type Group = { matcher?: string; hooks: Array<Record<string, unknown>> };
+      const hooks = settings['hooks'] as Record<string, Group[]>;
+      const clean = structuredClone(hooks);
+      const ourStop = hooks['Stop'][0];
+      const ourStart = hooks['SessionStart'][0];
+      const shared = { type: 'command', command: 'shared-foreign' };
+      const foreignGroup = {
+        hooks: [{ type: 'command', command: 'foreign-stop' }],
+      };
+      hooks['Stop'] = [
+        ourStop,
+        structuredClone(ourStop),
+        foreignGroup,
+        { matcher: '*', hooks: [shared, structuredClone(ourStop.hooks[0])] },
+        structuredClone(ourStop),
+      ];
+      hooks['SessionStart'] = [
+        ourStart,
+        structuredClone(ourStart),
+        structuredClone(ourStart),
+      ];
+      // The legacy event-less Codex command, appended in its own group by a
+      // writer from before per-event commands, is also a managed copy.
+      if (runtime === 'codex') {
+        hooks['Stop'].push({
+          hooks: [
+            {
+              type: 'command',
+              command:
+                '[ -x "$HOME/.codex/lcars-hook.sh" ] && sh "$HOME/.codex/lcars-hook.sh" codex || true',
+              timeout: 5,
+            },
+          ],
+        });
+      }
+      fs.writeFileSync(settingsPath, JSON.stringify(settings));
+      const stopDuplicates = runtime === 'codex' ? 4 : 3;
+      const entriesExpected = runtime === 'codex' ? 7 : 5;
+      expect(integrationStatus(runtime, home, env)).toMatchObject({
+        stubCurrent: true,
+        entriesPresent: entriesExpected,
+        duplicateEntries: stopDuplicates + 2,
+        installed: false,
+      });
+      const stdout = vi.fn();
+      expect(
+        executeIntegrationCommand(['status', runtime], {
+          homeDirectory: home,
+          env,
+          stdout,
+        }),
+      ).toBe(1);
+      expect(stdout).toHaveBeenCalledWith(
+        `${runtime}: not installed (stub v${INTEGRATION_VERSION}, ${entriesExpected}/${entriesExpected} hook entries, ${stopDuplicates + 2} duplicates)`,
+      );
+
+      expect(installIntegration(runtime, home, env)).toMatchObject({
+        installed: true,
+        duplicateEntries: 0,
+      });
+      const refreshed = readJson(settingsPath)['hooks'] as Record<
+        string,
+        Group[]
+      >;
+      expect(refreshed['Stop']).toEqual([
+        ourStop,
+        foreignGroup,
+        { matcher: '*', hooks: [shared] },
+      ]);
+      expect(refreshed['SessionStart']).toEqual([ourStart]);
+      expect({ ...refreshed, Stop: clean['Stop'] }).toEqual(clean);
+      const once = fs.readFileSync(settingsPath, 'utf8');
+      expect(installIntegration(runtime, home, env).installed).toBe(true);
+      expect(fs.readFileSync(settingsPath, 'utf8')).toBe(once);
+      stdout.mockClear();
+      expect(
+        executeIntegrationCommand(['status', runtime], {
+          homeDirectory: home,
+          env,
+          stdout,
+        }),
+      ).toBe(0);
+      expect(stdout).toHaveBeenCalledWith(
+        `${runtime}: installed (stub v${INTEGRATION_VERSION}, ${entriesExpected}/${entriesExpected} hook entries)`,
+      );
     },
   );
 

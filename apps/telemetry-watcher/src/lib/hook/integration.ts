@@ -214,6 +214,9 @@ export interface IntegrationStatus {
   /** How many of the expected hook events carry our entry. */
   readonly entriesPresent: number;
   readonly entriesExpected: number;
+  /** Managed entries beyond one per event; any makes the integration not
+   *  current, since each copy runs the hook again. */
+  readonly duplicateEntries: number;
   readonly installed: boolean;
 }
 
@@ -340,32 +343,43 @@ function stripOurHooks(hooks: JsonRecord): number {
   return removed;
 }
 
-/** Replaces our entry inside every group that already carries one (keeping
- *  any foreign hooks sharing that group and the group's position, so a
- *  file another tool also manages is not reordered on every install) or
- *  appends a fresh group. */
+/** Leaves exactly one managed entry for the event. The first group carrying
+ *  one keeps it, refreshed in place (with any foreign hooks sharing that
+ *  group and the group's position, so a file another tool also manages is
+ *  not reordered on every install). Later groups lose our entries, and a
+ *  group left with no foreign hook is dropped, as `stripOurHooks` does: a
+ *  second copy would run the hook twice (#3168). Without any, a fresh group
+ *  is appended. */
 function placeOurGroup(
   hooks: JsonRecord,
   event: string,
   group: JsonRecord,
 ): void {
-  const groups = Array.isArray(hooks[event])
-    ? [...(hooks[event] as unknown[])]
-    : [];
   const ourHook = (group['hooks'] as unknown[])[0];
+  const groups: unknown[] = [];
   let found = false;
-  for (let index = 0; index < groups.length; index++) {
-    if (!groupIsOurs(groups[index])) continue;
+  for (const existing of Array.isArray(hooks[event])
+    ? (hooks[event] as unknown[])
+    : []) {
+    if (!groupIsOurs(existing)) {
+      groups.push(existing);
+      continue;
+    }
+    const record = existing as JsonRecord;
+    const entries = record['hooks'] as unknown[];
+    if (found) {
+      const foreign = entries.filter((hook) => !hookIsOurs(hook));
+      if (foreign.length > 0) groups.push({ ...record, hooks: foreign });
+      continue;
+    }
     found = true;
-    const existing = groups[index] as JsonRecord;
-    const entries = existing['hooks'] as unknown[];
     const first = entries.findIndex(hookIsOurs);
-    groups[index] = {
-      ...existing,
+    groups.push({
+      ...record,
       hooks: entries
         .map((hook, i) => (i === first ? ourHook : hook))
         .filter((hook, i) => i === first || !hookIsOurs(hook)),
-    };
+    });
   }
   if (!found) groups.push(group);
   hooks[event] = groups;
@@ -393,6 +407,7 @@ function settingsIntegrationStatus(
   const stubCurrent = script === stubScript(runtime);
   let entriesPresent = 0;
   let entriesCurrent = 0;
+  let duplicateEntries = 0;
   try {
     const settings = readSettings(resolved.settingsPath);
     const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
@@ -406,7 +421,9 @@ function settingsIntegrationStatus(
       );
       if (managedHooks.length === 0) continue;
       entriesPresent++;
+      duplicateEntries += managedHooks.length - 1;
       if (
+        managedHooks.length === 1 &&
         managedHooks.every(
           (hook) =>
             isRecord(hook) &&
@@ -423,6 +440,7 @@ function settingsIntegrationStatus(
   } catch {
     entriesPresent = 0;
     entriesCurrent = 0;
+    duplicateEntries = 0;
   }
   return {
     runtime,
@@ -431,6 +449,7 @@ function settingsIntegrationStatus(
     stubCurrent,
     entriesPresent,
     entriesExpected: target.entries.length,
+    duplicateEntries,
     installed: stubCurrent && entriesCurrent === target.entries.length,
   };
 }
@@ -530,6 +549,7 @@ function opencodeStatus(
     stubCurrent: current,
     entriesPresent: current ? 1 : 0,
     entriesExpected: 1,
+    duplicateEntries: 0,
     installed: current,
   };
 }
@@ -587,7 +607,11 @@ function formatStatus(status: IntegrationStatus): string {
   const stub = status.stubInstalled
     ? `stub v${status.stubVersion ?? '?'}${status.stubCurrent ? '' : ' (outdated)'}`
     : 'stub missing';
-  return `${status.runtime}: ${status.installed ? 'installed' : 'not installed'} (${stub}, ${status.entriesPresent}/${status.entriesExpected} hook entries)`;
+  const duplicates =
+    status.duplicateEntries > 0
+      ? `, ${status.duplicateEntries} duplicate${status.duplicateEntries === 1 ? '' : 's'}`
+      : '';
+  return `${status.runtime}: ${status.installed ? 'installed' : 'not installed'} (${stub}, ${status.entriesPresent}/${status.entriesExpected} hook entries${duplicates})`;
 }
 
 /** Returns the process exit code. Unlike `lcars hook`, this is an operator
