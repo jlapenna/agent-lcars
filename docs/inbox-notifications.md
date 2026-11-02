@@ -1,7 +1,7 @@
 # Inbox notifications
 
 The R11 implementation supports explicit opt-in open-tab notifications and
-background Web Push. Background production qualification remains pending. It reuses the existing durable Inbox decisions,
+background Web Push, qualified in production on 2026-11-02 (#3001). It reuses the existing durable Inbox decisions,
 including native parks the current Work principal may answer. Web Push uses the existing authenticated schedule tick and browser push service;
 it does not send Slack, email or SMS.
 
@@ -139,8 +139,23 @@ Verify on a real opted-in browser: close every Inbox tab, create a real eligible
 human decision, observe a generic OS notice, and follow its selection link.
 Also verify snooze, resolution-before-delivery, revoked consent/permission,
 account change, expired sign-in, duplicate ticks and provider failure. Tests
-use fake transports and do not establish physical OS delivery. Until this
-qualification and key provisioning complete, R11 remains partial.
+use fake transports and do not establish physical OS delivery.
+
+Production qualification, 2026-11-02 (#3001): on Joe's phone, opted in through
+Settings with no Inbox tab open (no `/api/inbox-notifications` polling in the
+preceding 20 minutes), labeling #3001 `status:needs-human` produced a generic OS
+notice from the 05:42:25Z schedule tick. The worker's check-in returned 200 at
+05:42:59Z, and tapping the notice loaded
+`/inbox?item=jlapenna%2Fagent-lcars%233001` with 200 at 05:44:45Z. The same
+run sent a second push to a stale subscription left from an earlier sign-in; its check-in was refused (503), so it displayed nothing.
+Qualification exposed two production defects, now fixed: the worker compared
+server timestamps with the device clock (#3156), and the check-in route compared
+`Origin` with the internal Cloud Run host rather than the public origin, so it
+refused every real browser (#3165). Pushes also use high urgency so a sleeping
+phone wakes for them (#3161). Fake-transport regression tests cover snooze,
+resolution before delivery, revoked consent, overlapping ticks, stale sources
+and the worker's live cookie and subscription recheck. Removing a subscription
+after a provider 404 or 410 is implemented but has no regression test yet.
 
 Browser API references: [service-worker display](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/showNotification),
 [explicit permission](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API),
