@@ -22,5 +22,3 @@ export function isOnGoogleCloud(): boolean {
 export function forceStructuredLogging(): boolean {
   return isTrue('FORCE_STRUCTURED_LOGGING');
 }
-
-export const getLogLevel = () => optional('LOG_LEVEL');

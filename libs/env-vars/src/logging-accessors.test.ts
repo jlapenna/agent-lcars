@@ -1,10 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
-import {
-  forceStructuredLogging,
-  getLogLevel,
-  isOnGoogleCloud,
-} from './logging-accessors';
+import { forceStructuredLogging, isOnGoogleCloud } from './logging-accessors';
 
 describe('logging-accessors', () => {
   const ORIGINAL_ENV = process.env;
@@ -47,13 +43,6 @@ describe('logging-accessors', () => {
       expect(forceStructuredLogging()).toBe(true);
       process.env.FORCE_STRUCTURED_LOGGING = 'false';
       expect(forceStructuredLogging()).toBe(false);
-    });
-  });
-
-  describe('getLogLevel', () => {
-    it('reads LOG_LEVEL', () => {
-      process.env.LOG_LEVEL = 'debug';
-      expect(getLogLevel()).toBe('debug');
     });
   });
 });
