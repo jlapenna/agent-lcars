@@ -166,16 +166,6 @@ function runRunnerResume(argv: string[]): void {
 function main(): void {
   const [, , mode, subcommand, ...rest] = process.argv;
 
-  if (mode === 'runner' && subcommand === 'sidecar') {
-    // Retired: provider hooks (`lcars hook`) report live telemetry
-    // (docs/hooks-telemetry-design.md, phase 3). Exit 0 rather than the
-    // usage error below, so a stale caller can never fail a job.
-    logger.warn(
-      'agent-lcars-telemetry-watcher: runner sidecar is retired; provider hooks report live telemetry. Exiting.',
-    );
-    return;
-  }
-
   if (mode === 'runner' && subcommand === 'finalize') {
     // Last-resort net for anything async that escapes runRunnerFinalize's
     // own try/catch, so an unhandled rejection can never propagate to a

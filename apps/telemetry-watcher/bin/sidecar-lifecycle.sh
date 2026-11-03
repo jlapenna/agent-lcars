@@ -22,13 +22,6 @@ set -u
 MODE="${1:?usage: $0 finalize}"
 case "$MODE" in
   finalize) CLI_SUBCOMMAND=finalize ;;
-  start)
-    # Retired. A runner image whose direct-runner.sh predates phase 3 can
-    # still pair with this script (the image bakes it from a fresh `main`
-    # checkout), so keep `start` a fail-soft no-op rather than an error.
-    echo "Telemetry sidecar start is retired (provider hooks report live telemetry); nothing to start."
-    exit 0
-    ;;
   *)
     echo "Unknown mode '$MODE' (expected finalize)" >&2
     exit 1

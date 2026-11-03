@@ -15,9 +15,8 @@ This app ships:
 
 The polling host watcher daemon (issue #2540) and the runner's live polling
 sidecar are retired (hooks telemetry phase 3) and their code is deleted:
-`node sidecar.cjs` with no `runner <finalize|resume>` subcommand is a usage
-error, and `runner sidecar` is a logged no-op kept only so a stale caller
-cannot fail a job.
+any `node sidecar.cjs` invocation other than `runner <finalize|resume>`,
+including the retired `runner sidecar`, is a usage error.
 
 ## QueueExecutor issue-agent telemetry paths
 

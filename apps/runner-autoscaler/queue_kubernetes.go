@@ -101,9 +101,6 @@ func validateKubernetesQueueEnvironment(c *queueKubernetesConfig) error {
 	if err != nil || console.Host == "" || (console.Scheme != "https" && console.Scheme != "http") {
 		return fmt.Errorf("LCARS_CONSOLE_URL must be an absolute HTTP(S) URL")
 	}
-	if strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")) == "" {
-		return fmt.Errorf("GOOGLE_APPLICATION_CREDENTIALS is required for the queue executor")
-	}
 	_, err = directRunnerImage()
 	if err != nil {
 		return err

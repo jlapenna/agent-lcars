@@ -5,9 +5,9 @@ import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 import { type ItemView, toItemView } from '@agent-lcars/work/derive';
 
-import { repoItemKey, repoKey } from './github-client';
+import { repoKey } from './github-client';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
-import type { TaskRef } from './watched-repo';
+import { type TaskRef, taskRefKey } from './watched-repo';
 
 export const AUTHORITATIVE_TASK_STATE_SCHEMA =
   'agent-lcars.authoritative-task-state/v2' as const;
@@ -126,8 +126,4 @@ export async function readAuthoritativeTaskStates(
   );
 
   return { states, unavailableTaskKeys, warnings };
-}
-
-function taskRefKey(task: TaskRef): string {
-  return repoItemKey(task.repository, task.issueNumber);
 }

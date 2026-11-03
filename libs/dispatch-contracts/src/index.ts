@@ -15,7 +15,6 @@ export {
   formatClaimMarker,
   parseRunGeneration,
 } from './marker';
-export type { DispatchOutcomeKind } from './outcomes';
 export type { AgentPipeline, PipelineContract } from './pipelines';
 export {
   AGENT_BOT_LOGINS,
