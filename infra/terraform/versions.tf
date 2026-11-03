@@ -42,8 +42,8 @@ provider "google-beta" {
 # (no `token` argument here, so none can ever be committed) -- an operator with
 # admin on this repository exports it themselves, e.g.
 # `export GITHUB_TOKEN=$(gh auth token)`, before `plan` or `apply`. Ruleset
-# reads/writes require admin, which is why this can't be a narrower classic PAT
-# the way apps/dispatch-broker's tokens are scoped.
+# reads/writes require admin, which is why this can't be a narrower,
+# repository-scoped token.
 provider "github" {
   owner = var.github_owner
 }

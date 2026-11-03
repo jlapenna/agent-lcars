@@ -1,8 +1,7 @@
 // esbuild `alias` target (see apps/telemetry-watcher/project.json's `bundle`
 // target) replacing every bundled `require('abort-controller')` with Node's
-// own native, global AbortController/AbortSignal - see
-// gaxios-fetch-shim.ts's doc comment for why the bundled npm polyfill's
-// classes fail an `instanceof AbortSignal` check once anything (gaxios's
+// own native, global AbortController/AbortSignal, because the bundled npm
+// polyfill's classes fail an `instanceof AbortSignal` check once anything (gaxios's
 // fallback fetch, gcs-resumable-upload) passes one of its signals into
 // Node's native `fetch` (issue #24). Mirrors the real `abort-controller`
 // package's own dual export shape (`require('abort-controller')` as the

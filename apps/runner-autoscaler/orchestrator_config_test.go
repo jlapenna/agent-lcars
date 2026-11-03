@@ -104,8 +104,6 @@ func TestOrchestratorConfigRejectsUnknownField(t *testing.T) {
 	}
 }
 
-// Every key the removed Docker backend and scale-set manager read is rejected
-
 // TestLoadOrchestratorConfigAcceptsLiveHomelabOrchestratorYAMLShape pins the
 // exact key set homelab's rendered .orchestrator.runtime.yml carries today
 // (version, server, kubernetes, arc_lanes), so removing a backend can never

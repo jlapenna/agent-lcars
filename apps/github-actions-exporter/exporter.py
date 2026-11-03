@@ -1146,10 +1146,9 @@ class Database:
             # GitHub's own `.../actions/runs/{id}/concurrency_groups` listing
             # is documented to intermittently -- and for some trigger types
             # unconditionally -- report zero group membership for a run even
-            # when a job genuinely holds a concurrency group; see
-            # apps/dispatch-broker/src/github-api.ts:398-449 for sampled
-            # failure rates from 17% to 100% depending on trigger, never
-            # fully explained by ordinary listing lag. `concurrency_groups is
+            # when a job genuinely holds a concurrency group; the since-deleted
+            # dispatch broker sampled failure rates from 17% to 100% depending
+            # on trigger, never fully explained by ordinary listing lag. `concurrency_groups is
             # None` means the caller never attempted the listing at all (a
             # non-active run, whose jobs never surface in the "current"
             # gauge anyway); an attempted-but-empty listing is

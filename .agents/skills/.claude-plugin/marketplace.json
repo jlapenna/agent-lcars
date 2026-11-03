@@ -20,6 +20,7 @@
         "./issue-triage",
         "./lcars",
         "./lcars-session-updates",
+        "./lcars-usage",
         "./verifying-console-session"
       ]
     }

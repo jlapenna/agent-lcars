@@ -19,6 +19,7 @@ Use this index to retrieve the smallest current contract for a task.
 | Nx remote cache                                            | [`nx-remote-cache.md`](nx-remote-cache.md)                           |
 | Provider-process start event contract                      | [`provider-process-measurement.md`](provider-process-measurement.md) |
 | Native Work production smoke (maintainer-approved runbook) | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)       |
+| Repository-owned jobs                                      | [`repository-jobs.md`](repository-jobs.md)                           |
 
 ## Identity, credentials, and security
 
@@ -65,9 +66,10 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
 - `superpowers/specs/` records scoped designs. Reconcile them with the
   resulting code and canonical docs before treating them as current behavior.
-- [QueueExecutor failover design](superpowers/specs/2026-10-10-queue-executor-ha-design.md)
-  is retired: its capacity receipts shipped disabled and were deleted
-  2026-10-29; the executor stays a singleton.
+- The QueueExecutor failover design
+  ([#2199](https://github.com/jlapenna/agent-lcars/issues/2199)) is retired:
+  its capacity receipts shipped disabled and were deleted 2026-10-29; the
+  executor stays a singleton.
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state:
   [scale-set Support evidence](scale-set-support-evidence.md) (#1716).
