@@ -8,9 +8,8 @@
 // manifest, called out in review. Removing a deprecated surface outright
 // is fine once nothing references it - see docs/published-actions.md.
 //
-// Line-based parsing, no YAML dependency - the same convention
-// dispatch-broker/workflow-contract.test.mjs uses; action.yml files here
-// are prettier-formatted two-space YAML, which this parser assumes.
+// Line-based parsing, no YAML dependency: action.yml files here are
+// prettier-formatted two-space YAML, which this parser assumes.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';

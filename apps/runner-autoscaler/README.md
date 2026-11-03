@@ -294,7 +294,7 @@ do not tolerate deployment readiness, inference-busy, or maintenance taints.
 `max_concurrent` is a cluster-wide bound for the **singleton** queue controller,
 not a distributed reservation protocol; do not overlap controller generations.
 There is no failover executor: the capacity-receipt design for one
-([R8](../../docs/superpowers/specs/2026-10-10-queue-executor-ha-design.md)) was
+([R8](https://github.com/jlapenna/agent-lcars/issues/2199)) was
 removed unused on 2026-10-29.
 
 Each run has one deterministic Job name. The controller creates it suspended,

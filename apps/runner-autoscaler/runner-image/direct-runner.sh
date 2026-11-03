@@ -175,10 +175,10 @@ cleanup_codex_material() {
   fi
   if [ -n "$CODEX_RUNTIME_DIR" ]; then
     # CODEX_RUNTIME_DIR is created by mktemp below, beneath the dedicated
-    # Docker tmpfs. Removing that exact generated directory erases auth,
-    # persistence payloads, captured diagnostics, and any Codex state on
-    # every shell exit; Docker discards the backing tmpfs again when the
-    # container stops, even though the stopped container itself is retained.
+    # memory-backed emptyDir (LCARS_CODEX_VOLATILE_DIR). Removing that exact
+    # generated directory erases auth, persistence payloads, captured
+    # diagnostics, and any Codex state on every shell exit; Kubernetes
+    # discards the backing volume again when the Pod is deleted.
     rm -rf -- "$CODEX_RUNTIME_DIR"
     CODEX_RUNTIME_DIR=''
   fi
@@ -855,8 +855,8 @@ if [ "$PIPELINE" = "claude" ]; then
   worker_policy_bootstrap "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
   activate_hook_telemetry
   # The Claude CLI reads its long-lived subscription credential straight
-  # from its own process environment. The autoscaler bind-mounts the value
-  # as a file only for Claude runs, keeping it out of docker inspect.
+  # from its own process environment. The executor mounts the value as a
+  # file from the run's Secret volume, keeping it out of the Pod spec.
   CLAUDE_TOKEN_FILE="${CLAUDE_TOKEN_FILE:-/run/secrets/claude-code-oauth-token}"
   if [ ! -r "$CLAUDE_TOKEN_FILE" ]; then
     echo "FATAL: $CLAUDE_TOKEN_FILE is required (CLAUDE_CODE_OAUTH_TOKEN source) but is missing or unreadable" >&2
@@ -1155,8 +1155,8 @@ else
   # boundary as Claude. The baked global OpenCode config reads it with
   # `{file:/run/secrets/opencode-llm-api-key}`, so it never enters the
   # provider process environment (and therefore cannot be inherited by the
-  # agent's tool shells). It is never placed in Docker's inspectable
-  # environment at container creation either.
+  # agent's tool shells). It is never placed in the Pod spec's environment
+  # either.
   # Native work items sub-project 10 (resumable conversations, plan 4): a
   # requested resume must restore OpenCode's own session, exactly as the
   # Claude and Codex branches above do for their own CLI. `opencode import`

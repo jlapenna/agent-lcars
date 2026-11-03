@@ -23,9 +23,7 @@ const runnerStatusCollection = "runner-status"
 // per scale set (schemaVersion 1); homelab#1623 Phase 3 retired the
 // scale-set runtime that published those, so this is the only document this
 // process writes now. The console (apps/console/src/lib/autoscaler-status.ts)
-// reads the whole collection and tolerates either shape -- or neither, if a
-// document has gone stale -- so no console change was needed for the
-// per-scale-set documents to simply stop being written.
+// reads the whole collection and ignores any document it does not recognize.
 const queueExecutorStatusDocument = "queue-executor"
 
 const (

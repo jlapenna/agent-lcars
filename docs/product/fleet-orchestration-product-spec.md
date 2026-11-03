@@ -688,7 +688,7 @@ R7's explicit opt-in source contract is documented in
 [#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
 real provider-limit qualification separately from local mechanism tests.
 
-R8 is retired: the [failover design](../superpowers/specs/2026-10-10-queue-executor-ha-design.md)
+R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
 ([#2311](https://github.com/jlapenna/agent-lcars/issues/2311)) and were never
 enabled. They were deleted on 2026-10-29; the executor is a singleton that

@@ -1067,8 +1067,8 @@ class GitHubActionsExporterTests(unittest.TestCase):
         )
 
     def test_attempted_but_empty_concurrency_listing_is_unknown_not_none(self):
-        # GitHub's own concurrency-groups listing is documented (see
-        # apps/dispatch-broker/src/github-api.ts:398-449) to report zero
+        # GitHub's own concurrency-groups listing is known (sampled by the
+        # since-deleted dispatch broker) to report zero
         # group membership for a run even when a job genuinely holds a
         # concurrency group. An empty-but-attempted listing (an empty list,
         # as opposed to the "never attempted" None default) must not be

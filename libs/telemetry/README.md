@@ -101,16 +101,7 @@ regressions exercise a sanitized version of #2461's delayed transport shape.
 Normal installed-producer adoption and stored real publication evidence are
 separate runtime acceptance gates; source tests do not satisfy them.
 
-## CLI
-
-```bash
-./tools/nx run @repo/cli:run -- agent-telemetry reduce <transcript-file>
-```
-
-Prints the reduced summary as JSON — useful for verifying the reducer against
-real transcripts without needing the telemetry store or any infra.
-
 ## Running unit tests
 
 Run `./tools/nx run @agent-lcars/telemetry:test` to execute the unit tests via
-[Jest](https://jestjs.io).
+[Vitest](https://vitest.dev).
