@@ -68,7 +68,12 @@ test('browse all registrations and review the exact definition before enabling a
   let failRun = true;
   await page.route('**/api/work/v1/jobs**', async (route) => {
     const request = route.request();
-    if (request.method() === 'GET') return route.fulfill({ json: jobs });
+    if (request.method() === 'GET')
+      return route.fulfill({
+        json: request.url().endsWith('/profiles')
+          ? [jobs[0].definition!.job.execution.profile, 'dev-personal']
+          : jobs,
+      });
     const pathname = new URL(request.url()).pathname;
     const body = request.postDataJSON();
     calls.push({ path: pathname, body });
@@ -86,6 +91,13 @@ test('browse all registrations and review the exact definition before enabling a
     return route.fulfill({
       json: {
         id: '4'.repeat(64),
+        profile: {
+          name: body.profile ?? jobs[0].definition!.job.execution.profile,
+          credentials:
+            body.profile === 'dev-personal'
+              ? { github: 'jlapenna' }
+              : undefined,
+        },
         jobId: jobs[0].id,
         workId: '01JOBSREQUEST',
         createdAt: '2026-10-31T15:00:00Z',
@@ -159,12 +171,17 @@ test('browse all registrations and review the exact definition before enabling a
   await expect(page.getByText('Reviewed definition enabled.')).toBeVisible();
   await page.getByRole('button', { name: 'Run now', exact: true }).click();
   await page.getByRole('textbox', { name: 'frontend' }).fill('console');
+  await page
+    .getByRole('combobox', { name: 'Execution profile', exact: true })
+    .click();
+  await page.getByRole('option', { name: 'dev-personal', exact: true }).click();
   await page.getByRole('button', { name: 'Start run', exact: true }).click();
   await expect(
     page.getByRole('link', { name: 'Open Work for status and cancellation' }),
   ).toBeVisible();
   expect(calls.at(-1)?.body).toMatchObject({
     parameters: { frontend: 'console' },
+    profile: 'dev-personal',
   });
   expect(calls.at(-1)?.body.parameters).not.toHaveProperty('target');
 });

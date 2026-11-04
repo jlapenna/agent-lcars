@@ -117,16 +117,32 @@ export const jobDefinitionSchema = z.strictObject({
   parameters: z.array(recipeParameterSchema).max(32).default([]),
 });
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
-export const jobProfileSchema = z.strictObject({
-  name,
-  repositories: z.array(repository).min(1),
-  principals: z.array(z.string().min(1).max(128)).min(1),
-  // Reuse ordinary watched-repository credentials only by operator opt-in.
-  crossRepo: z.boolean().optional(),
-  allocation,
-  // Exact approved input sets keep network and write scopes operator-owned.
-  inputSets: z.array(jobInputsSchema).min(1).max(100),
+export const jobProfileNameSchema = name;
+export const jobGitIdentitySchema = z.strictObject({
+  name: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[^\r\n\0]+$/u),
+  email: z.email().max(254),
 });
+export const jobProfileSchema = z
+  .strictObject({
+    name,
+    repositories: z.array(repository).min(1),
+    principals: z.array(z.string().min(1).max(128)).min(1),
+    // Reuse ordinary watched-repository credentials only by operator opt-in.
+    crossRepo: z.boolean().optional(),
+    credentials: z.strictObject({ github: name }).optional(),
+    gitIdentity: jobGitIdentitySchema.optional(),
+    allocation,
+    // Exact approved input sets keep network and write scopes operator-owned.
+    inputSets: z.array(jobInputsSchema).min(1).max(100),
+  })
+  .refine(
+    (profile) => !(profile.credentials && profile.crossRepo),
+    'Personal GitHub credentials cannot be combined with crossRepo',
+  );
 export type JobProfile = z.infer<typeof jobProfileSchema>;
 
 export function jobDigest(value: unknown): string {
@@ -205,10 +221,11 @@ export function authorizeJob(
   definition: JobDefinition,
   profile: JobProfile | undefined,
   principal: string,
+  profileName = definition.job.execution.profile,
 ): JobProfile {
   if (
     !profile ||
-    profile.name !== definition.job.execution.profile ||
+    profile.name !== profileName ||
     !profile.repositories.includes(definition.repository) ||
     !profile.principals.includes(principal)
   )

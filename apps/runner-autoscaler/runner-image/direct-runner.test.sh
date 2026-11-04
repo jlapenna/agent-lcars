@@ -285,7 +285,9 @@ JSON
     # array by exporting FAKE_CHECKOUT_GRANTS_JSON as a literal JSON array;
     # every other scenario leaves it unset, so `grants` is simply absent
     # from the response, exactly like a run without the label.
-    if [ -n "${FAKE_CHECKOUT_GRANTS_JSON:-}" ]; then
+    if [ -n "${FAKE_CHECKOUT_IDENTITY_JSON:-}" ]; then
+      echo "{\"token\":\"$checkout_token\",\"expiresAt\":null,\"refreshAt\":\"$expires_at\",\"identity\":$FAKE_CHECKOUT_IDENTITY_JSON}"
+    elif [ -n "${FAKE_CHECKOUT_GRANTS_JSON:-}" ]; then
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\",\"grants\":$FAKE_CHECKOUT_GRANTS_JSON}"
     else
       echo "{\"token\":\"$checkout_token\",\"expiresAt\":\"$expires_at\"}"
@@ -1206,6 +1208,23 @@ wrong_repo_credential="$(printf 'protocol=https\nhost=github.com\npath=octo/othe
   "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get)"
 [ -z "$wrong_repo_credential" ] || fail 'git credential helper disclosed a token to another repository'
 echo "scenario renewable-checkout-token: OK"
+
+# An explicit user identity serves git/gh across the user's forks and upstreams.
+export FAKE_CHECKOUT_IDENTITY_JSON='{"login":"jlapenna","git":{"name":"Joe LaPenna","email":"joe@example.invalid"}}'
+run_scenario personal-checkout-identity
+unset FAKE_CHECKOUT_IDENTITY_JSON
+[ "$rc" -eq 0 ] || fail "personal identity: runner failed"
+grep -Fq -- 'config --local user.name Joe LaPenna' "$workspace/.git/config" || fail 'personal Git author not selected'
+grep -Fq -- 'config --local user.email joe@example.invalid' "$workspace/.git/config" || fail 'personal Git email not selected'
+personal_credential="$(printf 'protocol=https\nhost=github.com\npath=upstream/project.git\n\n' | "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get | sed -n 's/^password=//p')"
+[ "$personal_credential" = "$FAKE_TOKEN" ] || fail 'personal credential unavailable for upstream'
+hostile_credential="$(printf 'protocol=https\nhost=attacker.example\npath=upstream/project.git\n\n' | "$RUNNER_TEMP/github-credentials/bin/git-credential-lcars" get)"
+[ -z "$hostile_credential" ] || fail 'personal credential disclosed to another host'
+"$RUNNER_TEMP/github-credentials/bin/gh" api user
+[ "$(cat "$GH_INVOCATION_TOKEN_LOG")" = "$FAKE_TOKEN" ] || fail 'gh did not use personal identity'
+grep -Fq -- 'config --global user.name Joe LaPenna' "$workspace/.git/config" || fail 'personal author unavailable for additional checkouts'
+if grep -q "$FAKE_TOKEN" "$workspace/.git/config"; then fail 'personal token leaked into Git config'; fi
+echo 'scenario personal-checkout-identity: OK'
 
 # --- Scenario 1a2: agent-option:cross-repo per-owner grants (#1993) --------
 # The checkout-token response MAY additionally carry a `grants` array, one

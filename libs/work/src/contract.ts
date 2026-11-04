@@ -1320,7 +1320,8 @@ export const runsContract = {
     )
     .errors({
       UNAUTHORIZED: { message: 'Invalid or expired run token' },
-      CONFLICT: { message: 'Worker generation refused' },
+      CONFLICT: { message: 'Worker generation or credential refused' },
+      FORBIDDEN: { message: 'Recipe occurrence or execution profile refused' },
     })
     .input(z.strictObject({ runId: runIdSchema }))
     .output(
@@ -1330,8 +1331,19 @@ export const runsContract = {
         // present, `token`/`expiresAt` are simply that grant's own owner's
         // token (see `runs-router.ts`'s `checkoutToken` handler).
         token: z.string(),
-        expiresAt: z.string(),
+        expiresAt: z.string().nullable(),
         repository: z.string(),
+        /** Explicit personal credential selection for a Goose occurrence. */
+        refreshAt: z.string().optional(),
+        identity: z
+          .strictObject({
+            login: z.string().regex(/^[a-zA-Z0-9-]{1,39}$/u),
+            git: z.strictObject({ name: z.string(), email: z.string() }),
+          })
+          .optional(),
+        gitIdentity: z
+          .strictObject({ name: z.string(), email: z.string() })
+          .optional(),
         /** Present iff the run's `agent-option:cross-repo` was requested
          *  (`params.crossRepo === 'true'`, #1993): one entry per distinct
          *  GitHub owner among the fleet's watched repositories, including

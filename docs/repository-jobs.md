@@ -192,8 +192,9 @@ run through the existing Work cancellation and retirement lifecycle.
 The QueueExecutor uses its normal configured runner image and resources. Its whole-job allocation must match the execution profile. The existing
 runner credential Secret supplies `goose-environment.json` (a string-valued map of
 provider environment variables) and `goose-config.yaml` (the operator-owned Goose
-configuration). Version 1 supports one shared Goose tool/model environment across
-the fleet; profiles narrow repository/principal/input admission, not tool authority.
+configuration). Goose uses one shared tool/model environment across the fleet. Profiles may
+select a GitHub credential as described below; they do not change Goose tools
+or model-provider credentials.
 Do not add model credentials to repository recipes. The image publication lifecycle
 is the existing supported stack lifecycle; source merging does not bypass its publication or activation holds.
 
@@ -289,3 +290,69 @@ refreshes; occurrence IDs make replay idempotent. Refresh timestamps and disable
 failures persist progress across ticker instances. The batch admission threshold
 allows for the 20-second source fetch budget; token and storage calls retain
 their own timeouts.
+
+## Selecting credentials for a job or one manual run
+
+A specialized profile may select a named GitHub credential and commit identity:
+
+```yaml
+name: dev-personal
+repositories: [jlapenna/dev]
+principals: [user:jlapenna]
+allocation: { cpu: 2, memory: 6Gi, storage: 24Gi }
+inputSets: [{}] # Replace with the job's exact fixed inputs.
+credentials:
+  github: jlapenna
+gitIdentity:
+  name: Joe LaPenna
+  email: joe@example.invalid # Replace with the intended verified commit email.
+```
+
+Configure it in `AGENT_LCARS_JOB_PROFILES`. A manifest can use
+`execution.profile: dev-personal`, or an operator can select it under **Run now →
+Execution profile** for one invocation. The profile must authorize that repository,
+principal, allocation and fixed inputs. The manual override does not change the
+manifest or its schedule. Both invocation endpoints accept an optional `profile`
+name; reusing a request ID with a different selection conflicts. Scheduled runs
+always use the manifest profile. The built-in `repository` profile stays on the
+GitHub App and cannot be overridden by configuration.
+
+`AGENT_LCARS_JOB_GITHUB_CREDENTIALS` maps names to operator-owned Secret Manager
+references and expected GitHub logins, without containing tokens itself:
+
+```json
+{
+  "jlapenna": {
+    "login": "jlapenna",
+    "secretVersion": "projects/PROJECT/secrets/lcars-github-jlapenna/versions/latest"
+  }
+}
+```
+
+The selected secret version contains a JSON object with `token` and `expiresAt`.
+Use the issuer's actual ISO timestamp, or explicit `null` for a non-expiring
+credential. Provision values through the secrets workflow; never put values in
+profiles, manifests, recipe parameters or Git. Homelab owns credential provisioning
+and distribution. Grant the Console runtime identity `roles/secretmanager.secretAccessor`
+on each selected secret through the owning reviewed IAM declaration; the worker
+receives neither Secret Manager access nor its storage reference. No new secret
+or permission is needed for jobs that keep their existing App credentials.
+
+The checkout credential endpoint verifies the live run, matching occurrence and
+current profile grant before reading the selected secret. It verifies the token's
+GitHub login, refuses expired/missing/wrong-identity credentials, and never falls
+back to the bot. The worker revalidates through that same endpoint every five
+minutes, or sooner when the token expires. `expiresAt` remains the actual token
+expiry (possibly null); `refreshAt` controls this refresh cadence. Already issued
+credentials retain their issuer-granted authority until expiry or revocation;
+cancel the Work and retire its worker when stopping an admitted operation.
+
+Personal profiles give Git and `gh` the same user credential, including access to
+forks and upstream repositories according to that token's actual GitHub permissions.
+They cannot combine `credentials.github` with `crossRepo`. `gitIdentity` controls
+commit authorship independently; when omitted for a personal credential, the
+runner uses its expected login and GitHub noreply address. Personal profiles also
+install the Git helper and author identity for additional checkouts within that
+job's private HOME. Source delivery still requires Console deployment, runner
+image publication/adoption, and the operator's credential configuration before
+this is usable in production.

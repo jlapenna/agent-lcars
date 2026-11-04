@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Checkbox, TextInput } from '@mantine/core';
+import { Button, Checkbox, Select, TextInput } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 
 import type { CatalogJob, JobOccurrence } from '@/lib/repository-job-store';
@@ -35,6 +35,9 @@ export function JobDetail({
   const [tab, setTab] = useState('overview');
   const [reviewed, setReviewed] = useState(false);
   const [run, setRun] = useState(false);
+  const [profiles, setProfiles] = useState<string[]>();
+  const [profile, setProfile] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState('');
   const [latest, setLatest] = useState<JobOccurrence>();
   const [readError, setReadError] = useState('');
   const [reading, setReading] = useState(false);
@@ -67,6 +70,23 @@ export function JobDetail({
       active = false;
     };
   }, [tab, job.latest, reload]);
+  useEffect(() => {
+    if (!run) return;
+    let active = true;
+    setProfiles(undefined);
+    setProfile(null);
+    setProfileError('');
+    void jobsApi<string[]>(`/${job.id}/profiles`)
+      .then((value) => {
+        if (active) setProfiles(value);
+      })
+      .catch((error: Error) => {
+        if (active) setProfileError(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [run, job.id]);
   const result =
     latest && (!occurrence || latest.createdAt >= occurrence.createdAt)
       ? latest
@@ -157,6 +177,7 @@ export function JobDetail({
                   digest: definition.digest,
                   requestId: crypto.randomUUID(),
                   parameters,
+                  ...(profile ? { profile } : {}),
                 },
               );
               onOccurrence(admitted);
@@ -170,6 +191,16 @@ export function JobDetail({
             Start this installed recipe with the parameters below. The schedule
             stays unchanged.
           </p>
+          <Select
+            label="Execution profile"
+            description="Choose the credentials and identity for this run. The schedule keeps its configured profile."
+            data={profiles ?? []}
+            value={profile ?? definition.job.execution.profile}
+            onChange={setProfile}
+            disabled={busy || !profiles}
+            error={profileError || undefined}
+            allowDeselect={false}
+          />
           {definition.parameters.map((parameter) => (
             <TextInput
               key={parameter.key}
@@ -197,7 +228,11 @@ export function JobDetail({
             <Button
               type="submit"
               loading={busy}
-              disabled={!job.enabled || Boolean(job.error)}
+              disabled={
+                !job.enabled ||
+                Boolean(job.error) ||
+                !profiles?.includes(profile ?? definition.job.execution.profile)
+              }
             >
               Start run
             </Button>
