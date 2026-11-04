@@ -1,0 +1,29 @@
+{
+  "skill_name": "agent-protocol",
+  "evals": [
+    {
+      "name": "headless-dispatch-contract",
+      "prompt": "I'm about to be dispatched as a headless CI agent against an issue in one of the fleet repos. Before I touch anything, walk me through the behavioral contract I'm expected to follow: how I identify myself, how I claim or take over the issue, what progress and parking look like, and what the hard limits are. Just describe the rules, don't run anything.",
+      "expected_output": "Describes the fleet-wide dispatch contract (identity, takeover, dispatch modes, reactions, progress, parking, deliverable evidence, budget, hard limits) and points to the canonical reference document rather than inventing rules.",
+      "assertions": [
+        "Points to the canonical reference/agent-protocol.md document as the full protocol rather than paraphrasing it entirely from memory",
+        "Mentions that the situational sections (CI reruns / action_required, bot-identity assignment) live in a separate index file and should only be read when that situation arises",
+        "Lists several contract areas such as identity, takeover, parking, deliverable evidence, budget discipline, and hard limits"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "name": "edit-dispatch-prompt-consumer-repo",
+      "prompt": "I want to tweak the prompt we hand to bot runs in the sprinkles repo so they stop posting a status comment every five minutes. Where is the behavior that governs how those bot runs behave actually defined, and what should I check before changing the prompt text in the consuming repo?",
+      "expected_output": "Explains that the behavior is defined by the single canonical cross-repo protocol in agent-lcars, that consumer repos resolve it rather than hardcoding it, and that cadence rules should be changed there rather than patched per repo.",
+      "assertions": [
+        "Identifies agent-lcars' agents/shared/skills/agent-protocol/reference/agent-protocol.md as the single canonical source of the protocol",
+        "States that consumer repositories do not download or hardcode the protocol path and that the runner image resolves it from its adjacent skill tree",
+        "Advises keeping the protocol, runner image and contract test in lockstep rather than editing a per-repo copy"
+      ],
+      "id": 2,
+      "files": []
+    }
+  ]
+}

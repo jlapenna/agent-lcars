@@ -1,0 +1,29 @@
+{
+  "skill_name": "debug-agent-run",
+  "evals": [
+    {
+      "name": "run-silent-is-it-hung",
+      "prompt": "A bot run that was dispatched against issue 1900 in agent-lcars has been going for 40 minutes with no PR and gh run view --log just gives me BlobNotFound. I want to know whether it's actually working or wedged, and whether it has committed anything. What would you check, in what order? Don't run anything.",
+      "expected_output": "Says not to wait on GitHub; use the fleet's own observability: run-evidence.sh from the operator bastion for the Job/worktree state (commits ahead and dirty files), then the LiteLLM completion rate in Loki to tell thinking from throttled or hung.",
+      "assertions": [
+        "States that BlobNotFound from gh run view --log is expected for a still-running job and that GitHub should not be waited on",
+        "Names the run-evidence.sh helper (e.g. .agents/skills/debug-agent-run/scripts/run-evidence.sh 1900) for live Kubernetes Job and worktree evidence, with the commits-ahead/dirty-file interpretation",
+        "Names the LiteLLM completion-rate query in Loki ({container=\"litellm\"} chat/completions over 5m) as the way to distinguish working from throttled or hung"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "name": "run-finished-badly-compactions",
+      "prompt": "An OpenCode-backed agent run on the k3s fleet finished after burning most of its budget and produced almost nothing. I dispatched a second run at the same time to get evidence faster. What should I measure from the finished run and what did I do wrong?",
+      "expected_output": "Points out that concurrent inference-backed runs halve each other's throughput on the single GPU, and that the post-mortem measurement is compactions per step from the gh run log, plus checking Loki for capacity/429 errors.",
+      "assertions": [
+        "States that concurrent OpenCode dispatches should be serialised because the single GPU gives roughly half throughput each",
+        "Names compactions per step (grep 'agent: \"compaction\"' vs 'step: ' counts in the gh run log) as the key post-mortem diagnostic and relates a high rate to a wrong declared context limit",
+        "Advises checking the LiteLLM/Loki error rate over hours (capacity, 503, 429) before attributing background noise to the run"
+      ],
+      "id": 2,
+      "files": []
+    }
+  ]
+}

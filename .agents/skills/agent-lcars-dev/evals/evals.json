@@ -1,0 +1,29 @@
+{
+  "skill_name": "agent-lcars-dev",
+  "evals": [
+    {
+      "name": "start-feature-work-in-repo",
+      "prompt": "I'm starting a small fix in the agent-lcars monorepo (Nx/pnpm). Before I edit anything, tell me the exact git steps and guardrails I have to follow for checkouts, commits and pushing in this repo. Don't run anything, just list the steps.",
+      "expected_output": "Lists the mandatory feature-worktree flow from origin/main with tools/setup-worktree.sh, the never-mutate-primary rule, no --no-verify, push-early with CI running the heavy gate, and the cleanup obligation.",
+      "assertions": [
+        "Requires creating a dedicated worktree (git fetch origin; git worktree add ../agent-lcars-<task> -b <branch> origin/main; ./tools/setup-worktree.sh) before any edit or git-mutating command",
+        "States that the primary checkout stays on a clean main with only read-only inspection and that --no-verify must never be used",
+        "Says to push once the fast pre-push layer passes because CI's Verify job runs the full test/typecheck/build gate, and that the task worktree must be cleaned up before reporting completion"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "name": "console-change-local-build",
+      "prompt": "My change touches apps/console in the agent-lcars repo and the pre-push hook is taking ages running some build. Is that expected, do I need to run the full E2E suite locally too, and what do I need to do before I can say the change is done?",
+      "expected_output": "Explains the Console-affected push intentionally runs the console build smoke locally (tunable via LCARS_CONSOLE_BUILD_CPUS), local E2E is optional, and the definition-of-done lives in the verify reference.",
+      "assertions": [
+        "Explains that tools/console-build-smoke.sh runs the real production console bundle build on apps/console-affected pushes and that this is intentional",
+        "States that local E2E (tools/e2e-local.sh) is optional and never a delivery prerequisite because CI runs the required E2E check",
+        "Points to references/verify.md as the definition of done before declaring the change complete, and mentions LCARS_CONSOLE_BUILD_CPUS as the supported concurrency control"
+      ],
+      "id": 2,
+      "files": []
+    }
+  ]
+}
