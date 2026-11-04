@@ -264,10 +264,6 @@ fi
 if [ -n "${E2E_GREP:-}" ]; then
   SAFE_ENV+=("E2E_GREP=$E2E_GREP")
 fi
-# Playwright validates this numeric shard selector before collecting tests.
-if [ -n "${E2E_SHARD:-}" ]; then
-  SAFE_ENV+=("E2E_SHARD=$E2E_SHARD")
-fi
 if [ -n "${E2E_NETWORK_MODE:-}" ]; then
   SAFE_ENV+=("E2E_NETWORK_MODE=$E2E_NETWORK_MODE")
 fi

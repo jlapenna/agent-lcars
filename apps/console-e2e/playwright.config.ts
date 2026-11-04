@@ -14,24 +14,8 @@ const envChromium = process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'];
 const executablePath =
   envChromium && fs.existsSync(envChromium) ? envChromium : undefined;
 
-function configuredShard() {
-  const value = process.env['E2E_SHARD'];
-  if (!value) return undefined;
-  const [current, total] = value.split('/').map(Number);
-  if (
-    !/^[1-9][0-9]*\/[1-9][0-9]*$/.test(value) ||
-    !Number.isSafeInteger(current) ||
-    !Number.isSafeInteger(total) ||
-    current > total
-  ) {
-    throw new Error('E2E_SHARD must be N/M with 1 <= N <= M');
-  }
-  return { current, total };
-}
-
 export default defineConfig({
   ...nxE2EPreset(__filename, { testDir: './src' }),
-  shard: configuredShard(),
   // Nx retries a failed test twice in CI. A five-minute per-test ceiling
   // therefore lets one missed event/action consume 15 minutes of this
   // serial job before the remaining specs can run (#519). The slowest real
