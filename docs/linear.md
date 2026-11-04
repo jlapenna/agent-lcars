@@ -74,8 +74,10 @@ and their issues in place.
    configuration/deployment path (see [deployment boundary](deployment-boundary.md)).
    An absent or blank `AGENT_LCARS_LINEAR` disables intake with HTTP 503;
    enabled but invalid configuration fails startup. This repository's deployment
-   routes the Supersprinkles Tech team's `LCARS: Codex (agent-lcars)` label to
-   `jlapenna/agent-lcars` through Codex. Terraform declares the two secret
+   routes the Supersprinkles Tech team's `LCARS: Codex (agent-lcars)`,
+   `LCARS: Claude (agent-lcars)` and `LCARS: OpenCode (agent-lcars)` labels
+   to `jlapenna/agent-lcars`. `Repository: agent-lcars` selects metadata/triage
+   without dispatching coding work; unrelated Tech issues remain unrouted. Terraform declares the two secret
    containers and their secret-scoped App Hosting grants; their values are
    supplied separately in Secret Manager.
 6. Apply exactly one configured dispatch label to an active issue. A signed

@@ -3,7 +3,6 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 
 import type {
-  TrackerIssue,
   TriageAnchor,
   TriagePublication,
 } from '@agent-lcars/dispatch-contracts';
@@ -28,26 +27,8 @@ export const triageMarker = (anchor: TriageAnchor) =>
 export const triageDigest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
-export interface TriageSource {
-  anchor: TriageAnchor;
-  issue?: TrackerIssue;
-  pipeline?: 'claude' | 'codex' | 'opencode' | 'goose';
-  bug?: boolean;
-  routed?: boolean;
-  labelIds?: string[];
-  dispatchLabel?: string;
-  observedAt: string;
-  title: string;
-  body: string;
-  state: string;
-  labels: string[];
-  assignees: string[];
-  comments: { id: number | string; body: string; updatedAt: string }[];
-  openFixPr: boolean;
-  owned: boolean;
-  parked: boolean;
-  enabled: boolean;
-}
+export type { TriageSource } from './triage-source-types';
+import type { TriageSource } from './triage-source-types';
 
 export function triageEligible(source: TriageSource): boolean {
   return (

@@ -29,6 +29,7 @@ import { listLinearIssues, readLinearIssue } from './linear-client';
 import {
   linearConfig,
   linearIssueRepository,
+  linearIssueRouting,
   linearTeam,
 } from './linear-config';
 import { dispatchLinearIssue, refreshLinearIssue } from './linear-intake';
@@ -406,6 +407,10 @@ export async function dispatchIssueSource(
     return receipt(result.runId, `/task/${repo}/${ref.issue}`);
   }
   const config = linearConfig();
+  if (config && linearIssueRouting(config, source.issue).ambiguous)
+    throw new ORPCError('CONFLICT', {
+      message: 'Conflicting issue repository routes',
+    });
   const route = config?.routes.find(
     (candidate) =>
       candidate.teamId === source.issue.teamId &&

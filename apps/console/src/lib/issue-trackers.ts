@@ -25,6 +25,7 @@ import {
 import {
   linearConfig,
   linearIssueRepository,
+  linearIssueRouting,
   linearTeam,
 } from './linear-config';
 
@@ -199,6 +200,8 @@ export function issueTracker(deps: IssueTrackerDeps = {}): IssueTracker {
         const issue = await read(ref);
         if (!issue) return undefined;
         const config = linearConfig();
+        if (config && linearIssueRouting(config, issue).ambiguous)
+          throw new Error('Conflicting Linear repository routes');
         if (
           issue &&
           (!config ||

@@ -6,7 +6,6 @@ import { z } from 'zod';
 
 import { readTrackerIssueOwner } from './anchor-owner';
 import { getCliSessions } from './cli-sessions';
-import type { TriageSource } from './fleet-triage-source';
 import { getGithubClient } from './github-client';
 import {
   linearQuery,
@@ -18,6 +17,7 @@ import {
   linearIssueRepository,
   linearTeam,
 } from './linear-config';
+import type { TriageSource } from './triage-source-types';
 import { getWatchedRepos } from './watched-repos-config';
 import { sessionsForRuns } from './work-sessions';
 

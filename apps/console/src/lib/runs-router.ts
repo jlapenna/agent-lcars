@@ -43,7 +43,11 @@ import type {
 import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
 import { resolveJobGithubCredential } from './job-github-credentials';
-import { linearConfig, linearIssueRepository } from './linear-config';
+import {
+  linearConfig,
+  linearIssueRepository,
+  linearIssueRouting,
+} from './linear-config';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
   readyDeliveryBinding,
@@ -276,6 +280,7 @@ export const runsRouter = os.router({
       const spec = storedWorkPayloadSchema.parse(task.task.work).spec;
       if (
         !config ||
+        linearIssueRouting(config, issue).ambiguous ||
         config.organizationId !== reference.organizationId ||
         !('target' in spec) ||
         !config.routes.some(

@@ -15,6 +15,7 @@ import { linearQuery, readLinearIssue } from './linear-client';
 import {
   linearConfig,
   linearIssueRepository,
+  linearIssueRouting,
   linearTeam,
 } from './linear-config';
 
@@ -71,6 +72,7 @@ export async function publishLinearState(
     )
   )
     return;
+  if (linearIssueRouting(config, issue).ambiguous) return;
   const repository = linearIssueRepository(config, issue);
   if (repository && repository !== spec.target.repo) return;
   const team = linearTeam(config, issue.teamId ?? '');

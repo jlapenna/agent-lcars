@@ -356,6 +356,69 @@ describe('Linear admission boundary', () => {
     await expect(f.admit()).rejects.toThrow('rate limited');
     expect(await f.store.listNativeTasks(10)).toHaveLength(0);
   });
+  it.each([false, true])(
+    'refuses conflicting repository and dispatch labels before admission or continuation (bound=%s)',
+    async (bound) => {
+      const f = fixture();
+      let workId: string | undefined;
+      if (bound) {
+        const first = await f.admit();
+        workId = first.body['itemId'] as string;
+        const run = (await f.store.listRuns({ workId }))[0]!;
+        await f.orchestrator.confirmDispatch(run.runId);
+        await f.orchestrator.report(run.runId, { ok: true, summary: 'done' });
+      }
+      vi.stubEnv(
+        'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+        'owner/repo,owner/other',
+      );
+      vi.stubEnv(
+        'AGENT_LCARS_WATCHED_REPOS',
+        JSON.stringify([
+          { owner: 'owner', name: 'repo', alias: 'repo' },
+          { owner: 'owner', name: 'other', alias: 'other' },
+        ]),
+      );
+      const conflicting: LinearConfig = {
+        ...config,
+        teams: [
+          {
+            teamId: team,
+            repositories: [{ repo: 'owner/repo', labelId: commentId }],
+          },
+        ],
+        routes: [
+          ...config.routes,
+          { ...config.routes[0]!, repo: 'owner/other', labelId: actor },
+        ],
+      };
+      f.source.current = snapshot({
+        updatedAt: new Date(now + 1000).toISOString(),
+        labels: [
+          { id: commentId, name: 'Repository A' },
+          { id: actor, name: 'Dispatch B' },
+        ],
+      });
+      const result = await f.admit(
+        event({
+          actor: { id: actor, type: 'user' },
+          createdAt: new Date(now + 1000).toISOString(),
+          updatedFrom: { labelIds: [] },
+          data: { id: issueId, updatedAt: f.source.current.updatedAt },
+        }),
+        conflicting,
+      );
+      expect(result.body['outcome']).toBe('refused');
+      expect(await f.store.listNativeTasks(10)).toHaveLength(bound ? 1 : 0);
+      const tasks = await f.store.listNativeTasks(10);
+      const counts = await Promise.all(
+        tasks.map(
+          async (task) => (await f.store.listRuns(task.task.task)).length,
+        ),
+      );
+      expect(counts).toEqual(bound ? [1] : []);
+    },
+  );
   it('does not turn a temporarily missing source into a synthetic newer closure', async () => {
     const f = fixture();
     const first = await f.admit();

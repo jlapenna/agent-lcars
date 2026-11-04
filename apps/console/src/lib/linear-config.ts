@@ -81,12 +81,12 @@ export function linearTeam(config: LinearConfig, teamId: string) {
 
 /** Repository labels route metadata/triage independently of provider dispatch
  * labels. Multiple repositories can share a Linear team without guessing. */
-export function linearIssueRepository(
+export function linearIssueRouting(
   config: LinearConfig,
   issue: TrackerIssue,
-): string | undefined {
+): { repo?: string; ambiguous: boolean } {
   const team = linearTeam(config, issue.teamId ?? '');
-  if (!team) return undefined;
+  if (!team) return { ambiguous: false };
   const labels = new Set(issue.labels.map((label) => label.id));
   const matches = [
     ...new Set([
@@ -100,11 +100,22 @@ export function linearIssueRepository(
         .map((binding) => binding.repo),
     ]),
   ];
-  return matches.length === 1
-    ? matches[0]
-    : matches.length === 0
-      ? team.repo
-      : undefined;
+  return {
+    repo:
+      matches.length === 1
+        ? matches[0]
+        : matches.length === 0
+          ? team.repo
+          : undefined,
+    ambiguous: matches.length > 1,
+  };
+}
+
+export function linearIssueRepository(
+  config: LinearConfig,
+  issue: TrackerIssue,
+): string | undefined {
+  return linearIssueRouting(config, issue).repo;
 }
 
 /** Optional integration; a partially configured integration fails at boot. */

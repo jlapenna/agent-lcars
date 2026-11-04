@@ -229,4 +229,27 @@ it('lists Linear triage owner decisions with source links and no coding-reply co
     kind: 'report',
     work: { issue },
   });
+  await orchestrator.refreshIssue(taskId, {
+    ...issue,
+    state: 'closed',
+    updatedAt: '2026-11-04T10:02:00.000Z',
+  });
+  expect(
+    await getNativeInboxCards(
+      store,
+      operator,
+      undefined,
+      Date.parse('2026-11-04T10:03:00Z'),
+    ),
+  ).toEqual([]);
+  expect(
+    (
+      await getNativeInboxCards(
+        store,
+        operator,
+        cards[0]!.work.id,
+        Date.parse('2026-11-04T10:03:00Z'),
+      )
+    )[0],
+  ).toMatchObject({ queued: false, canReply: false });
 });

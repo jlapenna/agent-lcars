@@ -39,6 +39,10 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
+      const closedSource =
+        work.issue?.reference.tracker === 'linear' &&
+        work.issue.state === 'closed';
+      if (closedSource && work.id !== selectedItemKey) continue;
       const sourceManaged = isSourceManagedWork({
         origin: work.origin,
         spec: work.spec,
@@ -82,9 +86,10 @@ export async function getNativeInboxCards(
         humanNeededActions,
         work: { ...work, anchor: work.anchor },
         kind: report ? 'report' : 'decision',
-        queued: work.state === 'parked' || freshReport,
+        queued: !closedSource && (work.state === 'parked' || freshReport),
         // A follow-up on a report starts a new round, as a reply to a park does.
         canReply:
+          !closedSource &&
           !sourceManaged &&
           (work.state === 'parked' || report !== undefined) &&
           principal?.scopes.has('work.operator') === true &&

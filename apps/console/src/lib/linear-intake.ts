@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { readLinearComment, readLinearIssue } from './linear-client';
 import {
   type LinearConfig,
-  linearIssueRepository,
+  linearIssueRouting,
   linearTeam,
 } from './linear-config';
 import { matchReplyTrigger } from './reply-trigger';
@@ -86,7 +86,8 @@ export async function refreshLinearIssue(
     return undefined;
   const team = linearTeam(config, issue.teamId);
   if (!team) return undefined;
-  let repo = linearIssueRepository(config, issue);
+  const routing = linearIssueRouting(config, issue);
+  let repo = routing.repo;
   await runtime.store.writeTrackerIssue({
     issue,
     ...(repo === undefined ? {} : { repo }),
@@ -130,7 +131,7 @@ export async function refreshLinearIssue(
       const stored = storedWorkPayloadSchema.parse(existing.task.work).spec;
       const target = 'target' in stored ? stored.target.repo : undefined;
       if (!target) throw new Error('Linear source is bound to non-coding Work');
-      if (repo !== undefined && repo !== target)
+      if (routing.ambiguous || (repo !== undefined && repo !== target))
         return { repo: target, workId, routingConflict: true };
       repo = target;
     }
@@ -138,6 +139,7 @@ export async function refreshLinearIssue(
   return {
     ...(repo === undefined ? {} : { repo }),
     ...(workId ? { workId } : {}),
+    ...(routing.ambiguous ? { routingConflict: true } : {}),
   };
 }
 
@@ -154,6 +156,9 @@ export async function dispatchLinearIssue(
     issue.teamId !== route.teamId
   )
     return ignored('issue outside route');
+  const routing = linearIssueRouting(config, issue);
+  if (routing.ambiguous || (routing.repo && routing.repo !== route.repo))
+    return ignored('conflicting issue repository routes');
   if (issue.state !== 'open' && !command?.reply)
     return ignored('inactive issue');
   const grant = grantForPrincipal(route.principal);
@@ -435,7 +440,13 @@ export async function admitLinearWebhook(
       route,
       labelRef ? { ref: labelRef } : undefined,
     );
-    if (binding.workId && labelRef && event.actor) {
+    if (
+      binding.workId &&
+      labelRef &&
+      event.actor &&
+      admitted.body['itemId'] === binding.workId &&
+      route.repo === binding.repo
+    ) {
       const grant = grantForPrincipal(route.principal);
       if (!grant)
         return { status: 403, body: { error: 'Linear grant required' } };
@@ -472,6 +483,7 @@ export async function admitLinearWebhook(
     return admitted;
   };
   const result = await decide();
-  if (binding.repo) await deps.reconcileTriage?.(issue, binding.repo);
+  if (binding.repo && !binding.routingConflict)
+    await deps.reconcileTriage?.(issue, binding.repo);
   return result;
 }
