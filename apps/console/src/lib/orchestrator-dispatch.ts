@@ -24,6 +24,7 @@ import { recordTriagePublication } from './fleet-triage-work';
 import { loadGithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { admitHandoffSummary } from './handoff-summary-work';
+import { deliverLinearOutcome } from './linear-outcome';
 import {
   deliverOutcomeWebhook as deliverOutcomeWebhookDefault,
   outcomeWebhookFor,
@@ -764,7 +765,7 @@ async function deliverNativeOutcome(
     return;
   }
   const webhookTarget = outcomeWebhookFor(origin.channel);
-  if (webhookTarget === undefined) {
+  if (origin.channel !== 'linear' && webhookTarget === undefined) {
     await settleClaim(deps, entry, 'done');
     return;
   }
@@ -824,7 +825,11 @@ async function deliverNativeOutcome(
 
   const deliver = deps.deliverOutcomeWebhook ?? deliverOutcomeWebhookDefault;
   try {
-    await deliver(webhookTarget, payload);
+    if (origin.channel === 'linear') {
+      await deliverLinearOutcome(payload, deps.fetchImpl);
+    } else if (webhookTarget !== undefined) {
+      await deliver(webhookTarget, payload);
+    }
   } catch (error) {
     await settleRetryableFailure(deps, entry, result, error);
     return;

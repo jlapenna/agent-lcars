@@ -133,7 +133,7 @@ export type MintOutcome =
  * is who the pipeline/repo grant is checked against.
  */
 export async function mintItem(
-  context: WorkContext,
+  context: Pick<WorkContext, 'runtime'>,
   input: {
     id: string;
     spec: WorkSpec;

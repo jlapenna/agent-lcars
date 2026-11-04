@@ -17,6 +17,7 @@ const EXPECTED_PUBLIC_ROUTES = [
   '/login',
   '/api/logs/error',
   '/api/control-plane/webhook',
+  '/api/control-plane/linear/webhook',
   '/api/control-plane/webhook/process',
 ];
 

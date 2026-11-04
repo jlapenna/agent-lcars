@@ -16,6 +16,7 @@ import {
   isSourceManagedWork,
   recipeWorkSpecSchema,
   WORK_DESCRIPTION_MAX,
+  type WorkOrigin,
   workPayloadSchema,
   type WorkSpec,
 } from '@agent-lcars/work';
@@ -47,7 +48,7 @@ export interface ReplyRequest {
    *  see `tagged-reply-resume.ts`. */
   task: TaskId;
   text: string;
-  channel: 'api' | 'console' | 'github' | 'slack';
+  channel: WorkOrigin['channel'];
   principal: string;
   /** Channel address of the human turn: a comment URL, a Slack ts. Used
    *  only to derive an idempotent request id (`reply:<ref>`, on

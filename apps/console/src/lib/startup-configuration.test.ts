@@ -21,6 +21,9 @@ const VARS = [
   'AGENT_LCARS_WATCHED_REPOS',
   'AGENT_LCARS_WORK_GRANTS',
   'AGENT_LCARS_OUTCOME_WEBHOOKS',
+  'AGENT_LCARS_LINEAR',
+  'AGENT_LCARS_LINEAR_API_KEY',
+  'AGENT_LCARS_LINEAR_WEBHOOK_SECRET',
   'AGENT_LCARS_APP_CLIENT_ID',
   'AGENT_LCARS_APP_PRIVATE_KEY',
   'AGENT_LCARS_WEBHOOK_SECRET',
@@ -41,6 +44,9 @@ const privateKey = generateKeyPairSync('rsa', {
 const saved: Record<string, string | undefined> = {};
 
 function completeEnv() {
+  delete process.env['AGENT_LCARS_LINEAR'];
+  process.env['AGENT_LCARS_LINEAR_API_KEY'] = 'test-linear-key';
+  process.env['AGENT_LCARS_LINEAR_WEBHOOK_SECRET'] = 'test-linear-webhook';
   process.env['AGENT_LCARS_APP_CLIENT_ID'] = 'test-app';
   process.env['AGENT_LCARS_APP_PRIVATE_KEY'] = privateKey;
   process.env['AGENT_LCARS_WEBHOOK_SECRET'] = 'test-webhook';
@@ -116,6 +122,8 @@ describe('validateStartupConfiguration', () => {
     const secretNames = [
       'AGENT_LCARS_APP_PRIVATE_KEY',
       'AGENT_LCARS_WEBHOOK_SECRET',
+      'AGENT_LCARS_LINEAR_API_KEY',
+      'AGENT_LCARS_LINEAR_WEBHOOK_SECRET',
     ];
     for (const name of VARS) {
       const entry = config.env.find((e) => e.variable === name);
