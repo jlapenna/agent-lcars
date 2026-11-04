@@ -19,6 +19,10 @@ field or evals entry to fix.
   only requires a sandbox backend when a case grants a shell tool; the eval
   cases grant `Skill, Read, Glob, Grep` only, so they run unsandboxed by
   design. A brief must never pass `--allow-tools` or grant Bash in a case.
+- The worker's Bash environment is scrubbed, so the brief re-exports
+  `CLAUDE_CODE_OAUTH_TOKEN` from the runner's token file for the child
+  sessions the eval runner starts; the first qualification run parked on
+  `Not logged in` without it.
 - Native Work carries one repository's checkout credential, so there is one
   schedule per admitted repository. The agent-lcars schedule also clones the
   public repositories that have no LCARS admission (dev, repo-tools,
