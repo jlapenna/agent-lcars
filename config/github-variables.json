@@ -113,7 +113,8 @@
         "jlapenna/messages-control",
         "jlapenna/labels",
         "jlapenna/jclaw",
-        "jlapenna/home-assistant-config"
+        "jlapenna/home-assistant-config",
+        "jlapenna/sparkstack-registry"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {
