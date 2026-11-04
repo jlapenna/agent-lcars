@@ -129,7 +129,7 @@ async function fixture(kind: string) {
   };
 }
 
-describe('owned standalone smoke boot and response', () => {
+describe.concurrent('owned standalone smoke boot and response', () => {
   it('boots the isolated child and probes the invalid webhook signature', async () => {
     const f = await fixture('normal');
     try {
