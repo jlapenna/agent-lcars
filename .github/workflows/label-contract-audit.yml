@@ -50,6 +50,9 @@ jobs:
           - full_name: jlapenna/home-assistant-config
             owner: jlapenna
             repository: home-assistant-config
+          - full_name: jlapenna/sparkstack-registry
+            owner: jlapenna
+            repository: sparkstack-registry
 
     steps:
       - uses: actions/checkout@v7
