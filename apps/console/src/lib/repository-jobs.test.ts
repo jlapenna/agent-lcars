@@ -226,6 +226,15 @@ describe('production repository job admission', () => {
       if (crossRepo !== undefined) f.profile.crossRepo = crossRepo;
       // Parsing old persisted profiles must preserve their digest.
       expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
+      // A profile may select a Homelab-provisioned Goose environment overlay
+      // by name only; the brief carries the whole profile to the runner.
+      expect(
+        jobProfileSchema.parse({ ...f.profile, environment: 'skill-evals' })
+          .environment,
+      ).toBe('skill-evals');
+      expect(() =>
+        jobProfileSchema.parse({ ...f.profile, environment: 'Skill Evals' }),
+      ).toThrow();
       const occurrence = await f.jobs.admit(
         f.id,
         'manual-credential-scope',
