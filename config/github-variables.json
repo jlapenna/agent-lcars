@@ -114,7 +114,8 @@
         "jlapenna/labels",
         "jlapenna/jclaw",
         "jlapenna/home-assistant-config",
-        "jlapenna/sparkstack-registry"
+        "jlapenna/sparkstack-registry",
+        "jlapenna/homegit"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {
