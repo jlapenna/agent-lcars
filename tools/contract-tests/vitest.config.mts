@@ -56,5 +56,8 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     reporters: ['default'],
+    // CI has 2 CPU. A host-visible count can otherwise start many
+    // competing workers inside the same quota; local defaults stay native.
+    ...(process.env.CI === 'true' && { maxWorkers: 2 }),
   },
 });
