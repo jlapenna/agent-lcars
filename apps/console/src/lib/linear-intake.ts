@@ -31,7 +31,7 @@ const issueSchema = z.object({
   archivedAt: z.string().nullish(),
   completedAt: z.string().nullish(),
   canceledAt: z.string().nullish(),
-  trashed: z.boolean().optional(),
+  trashed: z.boolean().nullish(),
 });
 
 export function verifyLinearSignature(

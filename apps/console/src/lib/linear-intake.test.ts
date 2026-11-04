@@ -156,6 +156,20 @@ describe('Linear admission boundary', () => {
         ?.task.work,
     ).toMatchObject({ spec: { title: 'ENG-42: Fix search' } });
   });
+  it('admits a restored issue carrying Linear’s nullable trashed field', async () => {
+    const rt = runtime();
+    const result = await admitLinearWebhook(
+      event({}, { trashed: null }),
+      config,
+      rt,
+      now,
+    );
+    expect(result.status).toBe(200);
+    expect(result.body['outcome']).toBe('minted');
+    expect(
+      await rt.store.listRuns({ workId: result.body['itemId'] as string }),
+    ).toHaveLength(1);
+  });
   it('admits only one run for concurrent identical webhook deliveries', async () => {
     const rt = runtime();
     const results = await Promise.all(
