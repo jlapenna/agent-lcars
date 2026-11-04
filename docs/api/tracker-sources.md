@@ -177,3 +177,84 @@ return 403, invalid input/cursors 400, unavailable sources 404, and source/Work
 conflicts 409. A failed bearer never falls back to a browser session. Preserve
 error details without logging credentials; do not broaden grants to retry a
 request outside your authority.
+
+## Read your own run's source (workers)
+
+A claimed run can read the issue that started it and a bounded page of its
+comments through the run-only
+`GET /api/work/v1/runs/{runId}/issue-source` (`getRunIssueSource` in the
+[OpenAPI contract](work-v1.openapi.json)). Inside an LCARS run the same read is
+one command, which sends the run's claim token internally and prints the JSON
+response. It needs no Linear or GitHub credential, and outside a runner it
+refuses with `work source requires an LCARS run`:
+
+```bash
+lcars work source                                        # live source + first comments page
+lcars work source --cursor '<nextCursor-from-issue-source>'   # next comments page
+```
+
+The HTTP form is the same route the CLI uses; supply the claim token that your
+`POST /runs/claim` returned:
+
+```bash
+curl --fail-with-body --get \
+  'https://<console-host>/api/work/v1/runs/<run-id>/issue-source' \
+  -H 'Authorization: Bearer <run-claim-token>'
+
+# Only when the preceding response supplied nextCursor:
+curl --fail-with-body --get \
+  'https://<console-host>/api/work/v1/runs/<run-id>/issue-source' \
+  -H 'Authorization: Bearer <run-claim-token>' \
+  --data-urlencode 'cursor=<nextCursor-from-issue-source>'
+```
+
+This is a run capability, not an operator credential. The `runToken` scheme here
+is the opaque claim token minted by `POST /runs/claim`, valid only for routes
+under this one `runId`. It carries no `work.reader`/`work.operator` scope and
+cannot call the bearer-JWT `/issues/*` operations above; conversely a Work API
+JWT is refused here with 401. The worker path stays read-only: it reads the
+source, and refreshing metadata, listing sources, ownership, and dispatch remain
+operator scope under the separate `bearerAuth` scheme. Server-side it is the
+`issueSource` handler over `requireRunToken` in
+[`runs-router.ts`](../../apps/console/src/lib/runs-router.ts); the CLI is the
+`source` command in
+[`work-command.ts`](../../apps/telemetry-watcher/src/lib/work-command.ts).
+
+The response reports both the live source and the immutable snapshot this
+attempt was admitted with:
+
+- `issue` — the source read live from its tracker at request time. Current
+  evidence, not a new grant or a changed task.
+- `admittedIssue` — the snapshot captured when this run was admitted, present
+  when the run carries one. Later source edits never rewrite it, so it remains
+  the record of what this attempt was asked to do; compare it with `issue` to see
+  what changed since admission.
+- `comments` — one bounded page, each `body` capped at 65,536 characters, with
+  `id`, `url`, `updatedAt`, and optional `author`. Newer comments are context,
+  not a new task.
+- `nextCursor` — present only while more pages exist. It is opaque and
+  provider-specific (a GitHub page number, up to 100 comments a page, or a
+  Linear after-cursor); keep the same run and tracker and pass it back as
+  `cursor`/`--cursor`. An empty `comments` page can still carry `nextCursor`, so
+  set a page budget and follow the cursor within it.
+
+Authorization is the run's liveness, and it ends when the run is no longer the
+live claim. `requireRunToken` checks the claim before the tracker read and again
+after the bounded comments page, so:
+
+- A completed, canceled, or otherwise settled run is not live; its token is
+  refused (401) even though the claim token still exists. A leaked token is not
+  read access to finished work.
+- A released and reclaimed run mints a new token and stores a new hash, so the
+  previous worker's token no longer matches (401). If the claim is released,
+  reclaimed, or the run is canceled while the provider comment read is in flight,
+  the post-read recheck invalidates that response (401) and the just-read comment
+  body is not returned.
+- An expired run lease or recovery deadline is refused (401).
+
+A moved or missing source is refused before any comment page is read: a Linear
+issue whose routing no longer maps to this run's admitted repository returns
+403, and a run with no issue source returns 404. The body never contains the run
+claim token or any tracker service credential. Keep the token out of logs and
+shell history exactly as you would a bearer JWT; a failed claim token does not
+fall back to an operator JWT or a browser session.
