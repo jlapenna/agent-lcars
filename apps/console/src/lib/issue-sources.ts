@@ -24,6 +24,7 @@ import {
   issueFromGithubProjection,
   issueReferenceForTask,
   issueTracker,
+  readSourceWorkBinding,
 } from './issue-trackers';
 import { listLinearIssues, readLinearIssue } from './linear-client';
 import {
@@ -74,23 +75,18 @@ export async function lookupIssueSource(
     repo = linearIssueRepository(config, issue);
   }
   if (!issue) throw new ORPCError('NOT_FOUND');
-  const workId =
+  const binding =
     issue.reference.tracker === 'linear'
-      ? await context.runtime.store.readSourceWorkId(
-          issueSourceKey(issue.reference),
-        )
+      ? await readSourceWorkBinding(context.runtime.store, issue.reference)
       : undefined;
-  if (workId) {
-    const task = await context.runtime.store.readTask({ workId });
-    const bound = task && issueReferenceForTask(task.task);
-    if (
-      task &&
-      (!bound || issueSourceKey(bound) !== issueSourceKey(issue.reference))
-    )
+  const workId = binding?.workId;
+  if (binding) {
+    const bound = issueReferenceForTask(binding.task);
+    if (!bound || issueSourceKey(bound) !== issueSourceKey(issue.reference))
       throw new ORPCError('CONFLICT', {
         message: 'Issue source binding does not match stored Work',
       });
-    const stored = task && storedWorkPayloadSchema.safeParse(task.task.work);
+    const stored = storedWorkPayloadSchema.safeParse(binding.task.work);
     if (stored?.success && 'target' in stored.data.spec)
       repo = stored.data.spec.target.repo;
   }
@@ -186,24 +182,24 @@ export async function listIssueSources(
   // immutable Work target before exposing its binding, not the new projection.
   const bound = await Promise.all(
     sources.map(async (source) => {
-      const workId =
+      const binding =
         source.issue.reference.tracker === 'linear'
-          ? await context.runtime.store.readSourceWorkId(
-              issueSourceKey(source.issue.reference),
+          ? await readSourceWorkBinding(
+              context.runtime.store,
+              source.issue.reference,
             )
           : undefined;
-      if (!workId) return source;
-      const task = await context.runtime.store.readTask({ workId });
-      const reference = task && issueReferenceForTask(task.task);
+      if (!binding) return source;
+      const { workId } = binding;
+      const reference = issueReferenceForTask(binding.task);
       if (
-        task &&
-        (!reference ||
-          issueSourceKey(reference) !== issueSourceKey(source.issue.reference))
+        !reference ||
+        issueSourceKey(reference) !== issueSourceKey(source.issue.reference)
       )
         throw new ORPCError('CONFLICT', {
           message: 'Issue source binding does not match stored Work',
         });
-      const spec = task && storedWorkPayloadSchema.parse(task.task.work).spec;
+      const spec = storedWorkPayloadSchema.parse(binding.task.work).spec;
       return {
         ...source,
         ...(spec && 'target' in spec ? { repo: spec.target.repo } : {}),

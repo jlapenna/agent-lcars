@@ -7,6 +7,7 @@ import { getWatchedRepos } from '@/lib/github-client';
 import { linearConfig } from '@/lib/linear-config';
 import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 
+import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { ConsoleToolbar, ToolbarSelect } from '../../console-toolbar';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
@@ -168,6 +169,23 @@ const IssuesView = withConsolePageShell(IssuesContent, () => ({
   title: 'Issue sources',
   subtitle: 'GitHub and Linear',
   className: 'work-page-shell',
+  utilities: (
+    <>
+      <div className="console-utilities--desktop">
+        <ConsoleCommandUtilities
+          watchedRepos={getWatchedRepos()}
+          includeQuickTask={false}
+        />
+      </div>
+      <div className="console-utilities--mobile">
+        <ConsoleCommandUtilities
+          watchedRepos={getWatchedRepos()}
+          includeNavigation
+          includeQuickTask={false}
+        />
+      </div>
+    </>
+  ),
 }));
 export default async function IssuesPage({
   searchParams,

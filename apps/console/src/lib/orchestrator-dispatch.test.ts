@@ -213,7 +213,24 @@ describe('drainOutbox native outcome webhook delivery', () => {
       const posted: string[] = [];
       const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
         if (unavailable) return new Response('', { status: 503 });
-        const { variables } = JSON.parse(init?.body as string);
+        const { query, variables } = JSON.parse(init?.body as string);
+        if (query.includes('query LcarsIssue('))
+          return Response.json({
+            data: {
+              organization: { id: org },
+              issue: {
+                id: issueId,
+                identifier: 'ENG-42',
+                title: 'Search',
+                url: 'https://linear.app/example/issue/ENG-42',
+                updatedAt: NOW,
+                team: { id: org },
+                state: { id: issueId, name: 'Todo', type: 'unstarted' },
+                assignee: null,
+                labels: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          });
         if (variables.input) {
           posted.push(variables.input.body);
           return Response.json({

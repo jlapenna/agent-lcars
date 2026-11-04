@@ -421,7 +421,9 @@ export interface OrchestratorStore {
    * task past the newest `limit`, however that page's items were later
    * filtered).
    */
-  /** Stable source identity mapped once to a time-ordered native Work ID. */
+  /** Stable source identity mapped once to a time-ordered native Work ID.
+   * This reservation can exist before its Task is committed. Read-only callers
+   * must verify the Task exists before reporting an existing Work binding. */
   readSourceWorkId(sourceKey: string): Promise<string | undefined>;
 
   resolveSourceWorkId(

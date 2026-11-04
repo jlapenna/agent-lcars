@@ -296,6 +296,33 @@ describe('Linear admission boundary', () => {
         .work,
     ).toMatchObject({ spec: { target: { repo: 'owner/repo' } } });
   });
+  it('recovers a source reservation left before Work admission on an initial comment command', async () => {
+    const f = fixture(snapshot({ labels: [] }));
+    const reservedId = '01M6JW6NG5ZB7YX4Y4GAY2HP4E';
+    await f.store.resolveSourceWorkId(
+      issueSourceKey(f.source.current.reference),
+      reservedId,
+    );
+    const raw = event({
+      type: 'Comment',
+      action: 'create',
+      actor: { id: actor, type: 'user' },
+      data: { id: commentId, issueId, body: '/codex please fix the search' },
+    });
+    const result = await f.admit(raw);
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ itemId: reservedId });
+    expect(await f.store.readTask({ workId: reservedId })).toBeDefined();
+    const runs = await f.store.listRuns({ workId: reservedId });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.params).toMatchObject({
+      mode: 'reply',
+      reply: '/codex please fix the search',
+    });
+    await f.admit(raw);
+    expect(await f.store.listNativeTasks(10)).toHaveLength(1);
+    expect(await f.store.listRuns({ workId: reservedId })).toHaveLength(1);
+  });
   it('deduplicates an initial comment command even after its run settles', async () => {
     const f = fixture(snapshot({ labels: [] }));
     const raw = event({

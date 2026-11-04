@@ -131,6 +131,33 @@ describe('first-class issue source operations', () => {
     expect(await f.store.readTrackerIssue(issue.reference)).toBeUndefined();
     expect(await f.store.listNativeTasks(10)).toHaveLength(0);
   });
+  it('keeps an uncommitted source reservation recoverable without exposing nonexistent Work', async () => {
+    const f = fixture();
+    const key = issueSourceKey(issue.reference);
+    const reservedId = '01M6JW6NG5ZB7YX4Y4GAY2HP4E';
+    await f.store.resolveSourceWorkId(key, reservedId);
+    await f.store.writeTrackerIssue({
+      issue,
+      repo: 'owner/repo',
+      observedAt: now,
+    });
+    const source = await lookupIssueSource(f.context, {
+      tracker: 'linear',
+      issue: 'ENG-42',
+    });
+    const page = await listIssueSources(f.context, {
+      tracker: 'linear',
+      limit: 10,
+    });
+    const owner = await readTrackerIssueOwner(f.context, issue, 'owner/repo');
+    expect(source).not.toHaveProperty('workId');
+    expect(page.issues).toHaveLength(1);
+    expect(page.issues[0]).not.toHaveProperty('workId');
+    expect(owner).toMatchObject({ verdict: 'none', complete: true });
+    expect(owner).not.toHaveProperty('workId');
+    expect(await f.store.readSourceWorkId(key)).toBe(reservedId);
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
+  });
   it('refreshes one bounded page as metadata without dispatch and preserves explicit cursor', async () => {
     const f = fixture();
     mock.list.mockResolvedValue({ issues: [issue], nextCursor: 'page-two' });

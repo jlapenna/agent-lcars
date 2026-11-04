@@ -9,6 +9,9 @@ import {
 import { NextRequest } from 'next/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as githubAppTokens from '@/lib/github-app-tokens';
+import * as issueTrackers from '@/lib/issue-trackers';
+
 const {
   auth,
   authenticateWorkRequest,
@@ -172,7 +175,7 @@ describe('a work.reader-only principal (#2502)', () => {
     via: 'google' as const,
   };
   /** The owner query is the one operation `work.reader` exists for. */
-  const readerOperations = new Set(['getGithubAnchorOwner']);
+  const readerOperations = new Set(['getGithubAnchorOwner', 'getIssueOwner']);
   /** Well-formed bodies for the operations that validate input before they
    *  authorize, so the refusal below is authorization, not a 400. */
   const validBodies: Record<string, unknown> = {
@@ -238,6 +241,57 @@ describe('a work.reader-only principal (#2502)', () => {
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ verdict: 'none' });
+  });
+
+  it('answers the typed tracker owner query for a work.reader principal', async () => {
+    authenticateWorkRequest.mockResolvedValue(readerPrincipal);
+    const tokens = vi
+      .spyOn(githubAppTokens, 'createDispatchTokenProvider')
+      .mockReturnValue({
+        tokenFor: async () => 'test-token',
+        expiringTokenFor: vi.fn(),
+        expiringTokenForRepositories: vi.fn(),
+      });
+    const tracker = vi.spyOn(issueTrackers, 'issueTracker').mockReturnValue({
+      read: vi.fn(async () => ({
+        reference: {
+          tracker: 'github' as const,
+          repo: 'jlapenna/agent-lcars',
+          issue: 2502,
+        },
+        identifier: 'jlapenna/agent-lcars#2502',
+        title: 'Ownership',
+        description: '',
+        url: 'https://github.com/jlapenna/agent-lcars/issues/2502',
+        state: 'open' as const,
+        updatedAt: '2026-11-04T10:00:00.000Z',
+        labels: [],
+        assignees: [],
+      })),
+      lifecycle: vi.fn(),
+      comment: vi.fn(),
+      status: vi.fn(),
+      comments: vi.fn(),
+    });
+    try {
+      const response = await GET(
+        new Request(
+          'https://lcars.test/api/work/v1/issues/owner?tracker=github&repo=jlapenna/agent-lcars&issue=2502',
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        verdict: 'none',
+        anchor: {
+          tracker: 'github',
+          repo: 'jlapenna/agent-lcars',
+          issue: 2502,
+        },
+      });
+    } finally {
+      tracker.mockRestore();
+      tokens.mockRestore();
+    }
   });
 
   it.each(operations.filter((op) => !readerOperations.has(op.operationId)))(

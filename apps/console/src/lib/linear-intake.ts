@@ -15,6 +15,7 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
+import { readSourceWorkBinding } from './issue-trackers';
 import { readLinearComment, readLinearIssue } from './linear-client';
 import {
   type LinearConfig,
@@ -93,48 +94,45 @@ export async function refreshLinearIssue(
     ...(repo === undefined ? {} : { repo }),
     observedAt: now,
   });
-  const workId = await runtime.store.readSourceWorkId(
-    issueSourceKey(issue.reference),
-  );
-  if (workId) {
-    const existing = await runtime.store.readTask({ workId });
-    if (existing) {
-      const origin = storedWorkPayloadSchema.parse(existing.task.work).origin;
-      if (
-        origin.channel !== 'linear' ||
-        origin.thread !==
-          JSON.stringify({
-            organizationId: config.organizationId,
-            issueId: issue.reference.issueId,
-          })
-      )
-        throw new Error(
-          'Linear source mapping does not match stored Work origin',
-        );
-      const refreshed = await runtime.orchestrator.refreshIssue(
-        { workId },
-        issue,
+  const binding = await readSourceWorkBinding(runtime.store, issue.reference);
+  const workId = binding?.workId;
+  if (binding) {
+    const { task, workId } = binding;
+    const origin = storedWorkPayloadSchema.parse(task.work).origin;
+    if (
+      origin.channel !== 'linear' ||
+      origin.thread !==
+        JSON.stringify({
+          organizationId: config.organizationId,
+          issueId: issue.reference.issueId,
+        })
+    )
+      throw new Error(
+        'Linear source mapping does not match stored Work origin',
       );
-      if (isRefusal(refreshed))
-        throw new Error(`Linear source refresh refused: ${refreshed.reason}`);
-      const current = refreshed.task.issue;
-      if (current?.state === 'closed') {
-        const active = await runtime.store.readActiveRun({ workId });
-        if (active?.params?.['mode'] === 'implement')
-          await runtime.orchestrator.cancelUnclaimedBefore({
-            runId: active.runId,
-            notAfter: current.updatedAt,
-            issue: current,
-            note: `Linear issue confirmed closed at ${current.updatedAt}`,
-          });
-      }
-      const stored = storedWorkPayloadSchema.parse(existing.task.work).spec;
-      const target = 'target' in stored ? stored.target.repo : undefined;
-      if (!target) throw new Error('Linear source is bound to non-coding Work');
-      if (routing.ambiguous || (repo !== undefined && repo !== target))
-        return { repo: target, workId, routingConflict: true };
-      repo = target;
+    const refreshed = await runtime.orchestrator.refreshIssue(
+      { workId },
+      issue,
+    );
+    if (isRefusal(refreshed))
+      throw new Error(`Linear source refresh refused: ${refreshed.reason}`);
+    const current = refreshed.task.issue;
+    if (current?.state === 'closed') {
+      const active = await runtime.store.readActiveRun({ workId });
+      if (active?.params?.['mode'] === 'implement')
+        await runtime.orchestrator.cancelUnclaimedBefore({
+          runId: active.runId,
+          notAfter: current.updatedAt,
+          issue: current,
+          note: `Linear issue confirmed closed at ${current.updatedAt}`,
+        });
     }
+    const stored = storedWorkPayloadSchema.parse(task.work).spec;
+    const target = 'target' in stored ? stored.target.repo : undefined;
+    if (!target) throw new Error('Linear source is bound to non-coding Work');
+    if (routing.ambiguous || (repo !== undefined && repo !== target))
+      return { repo: target, workId, routingConflict: true };
+    repo = target;
   }
   return {
     ...(repo === undefined ? {} : { repo }),

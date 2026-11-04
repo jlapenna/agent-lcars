@@ -16,7 +16,7 @@ import type { z } from 'zod';
 
 import { sessionReferencesItemNumber } from './claimed-idle';
 import type { CliSession } from './cli-sessions';
-import { issueReferenceForTask } from './issue-trackers';
+import { issueReferenceForTask, readSourceWorkBinding } from './issue-trackers';
 import type { WorkContext } from './work-mint';
 
 /** The handler's side of the contract: `z.input`, because oRPC validates the
@@ -140,16 +140,11 @@ export async function readTrackerIssueOwner(
       identifier: issue.identifier,
       repository,
     };
-  const workId = await context.runtime.store.readSourceWorkId(
-    issueSourceKey(reference),
-  );
-  if (workId) {
-    const existing = await context.runtime.store.readTask({ workId });
-    const bound = existing && issueReferenceForTask(existing.task);
-    if (
-      existing &&
-      (!bound || issueSourceKey(bound) !== issueSourceKey(reference))
-    )
+  const binding = await readSourceWorkBinding(context.runtime.store, reference);
+  const workId = binding?.workId;
+  if (binding) {
+    const bound = issueReferenceForTask(binding.task);
+    if (!bound || issueSourceKey(bound) !== issueSourceKey(reference))
       throw new Error('Issue source binding does not match stored Work');
   }
   const identifier = issue.identifier.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');

@@ -4,12 +4,14 @@ import {
   type IssueComment,
   type IssueReference,
   issueReferenceSchema,
+  issueSourceKey,
   type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   type GithubAnchorProjection,
   isWorkAnchor,
+  type OrchestratorStore,
   type Task,
 } from '@agent-lcars/orchestrator';
 import { z } from 'zod';
@@ -299,4 +301,16 @@ export function issueReferenceForTask(task: Task): IssueReference | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** Source ID reservation precedes Work admission. A read must not expose that
+ * reservation as existing Work, or prevent a later command from recovering it. */
+export async function readSourceWorkBinding(
+  store: OrchestratorStore,
+  reference: IssueReference,
+): Promise<{ workId: string; task: Task } | undefined> {
+  const workId = await store.readSourceWorkId(issueSourceKey(reference));
+  if (!workId) return undefined;
+  const existing = await store.readTask({ workId });
+  return existing ? { workId, task: existing.task } : undefined;
 }
