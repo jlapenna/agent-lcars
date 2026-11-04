@@ -112,7 +112,8 @@
         "jlapenna/sync-padd",
         "jlapenna/messages-control",
         "jlapenna/labels",
-        "jlapenna/jclaw"
+        "jlapenna/jclaw",
+        "jlapenna/home-assistant-config"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {

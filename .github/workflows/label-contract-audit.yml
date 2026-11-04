@@ -47,6 +47,9 @@ jobs:
           - full_name: jlapenna/jclaw
             owner: jlapenna
             repository: jclaw
+          - full_name: jlapenna/home-assistant-config
+            owner: jlapenna
+            repository: home-assistant-config
 
     steps:
       - uses: actions/checkout@v7
