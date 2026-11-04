@@ -38,8 +38,8 @@ this page in [`weekly-skill-evals.brief.md`](weekly-skill-evals.brief.md);
 replace `__ROOTS__` with the repository's roots below. Crons are UTC and
 staggered so at most one eval worker holds a runner slot at a time.
 
-| Repository                                                      | Roots                                                                                      | Cron (UTC)    |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------- |
+| Repository                                                      | Roots                                                                                      | Cron (UTC)    | Schedule id                  |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------- | ---------------------------- |
 | jlapenna/agent-lcars (+ public dev, repo-tools, herdr-overview) | `--root .agents/skills --root agents/shared/skills --evals-root agents/shared/skill-evals` | `0 15 * * 0`  | `01M6JX86TSBGXFP0K41FYSJMWW` |
 | jlapenna/homelab                                                | `--root .agents/skills`                                                                    | `20 15 * * 0` | `01M6JX9JJ66NGF8BC7M0JNDS2R` |
 | supersprinklesracing/sprinkles                                  | `--root .agents/skills`                                                                    | `40 15 * * 0` | `01M6JXB18FCW2A29Q06TR0BJSB` |
