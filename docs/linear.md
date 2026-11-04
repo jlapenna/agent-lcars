@@ -160,6 +160,9 @@ it never creates Work. Select a configured repository and agent to run an issue,
 or open its existing Work history. Current title, status, labels and assignee
 remain linked to the original issue. Edit source text in Linear.
 
+External HTTP clients can use the [tracker-source API guide](api/tracker-sources.md)
+for authentication, source reads, pagination, refresh and explicit dispatch.
+
 The CLI exposes the same source and ownership operations:
 
 ```bash
