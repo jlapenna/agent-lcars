@@ -124,7 +124,7 @@ jobs:
             create | schedule-create) needs_id=false ;;
             *) needs_id=true ;;
           esac
-          case "$DELIVERABLE" in
+          case "${DELIVERABLE:-}" in
             '' | report) ;;
             *) echo "::error::deliverable must be empty or report"; exit 1 ;;
           esac
@@ -150,7 +150,7 @@ jobs:
               if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
                 echo "::error::create needs title and description"; exit 1
               fi
-              body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "$DELIVERABLE" \
+              body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "${DELIVERABLE:-}" \
                 '{spec: ({title: $t, description: $d, pipeline: $p, target: {repo: $r}} + (if $dl == "report" then {deliverable: "report"} else {} end))}')"
               status="$(call PUT "$api/$ITEM_ID" "$body")"
               echo "PUT /api/work/v1/items/$ITEM_ID -> $status"; show
@@ -231,7 +231,7 @@ jobs:
               if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ] || [ -z "$CRON" ]; then
                 echo "::error::schedule-create needs title, description, and cron"; exit 1
               fi
-              body="$(jq -cn --arg c "$CRON" --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "$DELIVERABLE" \
+              body="$(jq -cn --arg c "$CRON" --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "${DELIVERABLE:-}" \
                 '{cron: $c, spec: ({title: $t, description: $d, pipeline: $p, target: {repo: $r}} + (if $dl == "report" then {deliverable: "report"} else {} end))}')"
               status="$(call PUT "$schedules_api/$ITEM_ID" "$body")"
               echo "PUT /api/work/v1/schedules/$ITEM_ID -> $status"; show
