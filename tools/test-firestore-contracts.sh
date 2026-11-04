@@ -8,7 +8,7 @@ export REQUIRE_FIRESTORE_EMULATOR=1
 pnpm exec vitest run --config libs/orchestrator/vitest.config.mts \
   store-contract.spec.ts \
   credential-fallback.spec.ts provider-fallback.spec.ts \
-  --pool=threads --maxWorkers=1 --no-passWithNoTests
+  --maxWorkers=1 --no-passWithNoTests
 pnpm exec vitest run --config apps/console/vitest.config.mts \
   runs-router.test.ts work-provider-fallback.test.ts \
-  --pool=threads --maxWorkers=1 --no-passWithNoTests
+  --maxWorkers=1 --no-passWithNoTests
