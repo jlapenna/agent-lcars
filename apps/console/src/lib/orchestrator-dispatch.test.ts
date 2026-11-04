@@ -193,6 +193,68 @@ describe('drainOutbox native outcome webhook delivery', () => {
     delete process.env['AGENT_LCARS_OUTCOME_WEBHOOKS'];
   });
 
+  it('retries a Linear API failure through the durable outcome outbox', async () => {
+    const org = '11111111-1111-4111-8111-111111111111';
+    const issueId = '44444444-4444-4444-8444-444444444444';
+    vi.stubEnv('AGENT_LCARS_LINEAR_API_KEY', 'test-linear-key');
+    try {
+      const { store, orchestrator } = fixture();
+      const run = await requestedWithOrigin(orchestrator, {
+        principal: 'svc:linear',
+        channel: 'linear',
+        thread: JSON.stringify({ organizationId: org, issueId }),
+      });
+      await orchestrator.report(run.runId, {
+        ok: true,
+        summary: 'park',
+        message: 'Which database?',
+      });
+      let unavailable = true;
+      const posted: string[] = [];
+      const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+        if (unavailable) return new Response('', { status: 503 });
+        const { variables } = JSON.parse(init?.body as string);
+        if (variables.input) {
+          posted.push(variables.input.body);
+          return Response.json({
+            data: {
+              commentCreate: {
+                success: true,
+                comment: { id: variables.input.id, issue: { id: issueId } },
+              },
+            },
+          });
+        }
+        return Response.json({
+          data: { organization: { id: org }, comments: { nodes: [] } },
+        });
+      });
+      const first = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+        now: () => NOW,
+      });
+      expect(first.reported).toEqual([]);
+      expect(first.failed).toHaveLength(1);
+      unavailable = false;
+      const retry = await drainOutbox({
+        store,
+        orchestrator,
+        tokens,
+        fetchImpl,
+        now: () => new Date(Date.parse(NOW) + 61_000).toISOString(),
+      });
+      expect(retry.failed).toEqual([]);
+      expect(retry.reported).toEqual([run.runId]);
+      expect(posted).toHaveLength(1);
+      expect(posted[0]).toContain('Which database?');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('delivers the outcome webhook for a slack-origin item with a thread', async () => {
     process.env['AGENT_LCARS_OUTCOME_WEBHOOKS'] = JSON.stringify({
       slack: SLACK_TARGET,

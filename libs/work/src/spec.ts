@@ -66,6 +66,7 @@ export const WORK_CHANNELS = Object.freeze([
   'cron',
   'console',
   'github',
+  'linear',
   'slack',
 ] as const);
 

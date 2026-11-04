@@ -23,7 +23,7 @@ import {
 } from './github-routing-labels';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { repositoryForbiddenReason } from './work-authorization';
-import { normalizeGithubWorkPayload } from './work-from-github';
+import { normalizeWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
 import { authorizeProviderFallback } from './work-provider-fallback';
 
@@ -109,7 +109,7 @@ export async function admitGithubWork(
 
   let work: WorkPayload;
   try {
-    work = normalizeGithubWorkPayload(input.work);
+    work = normalizeWorkPayload(input.work);
   } catch {
     return { kind: 'invalid', message: 'GitHub Work payload is invalid' };
   }

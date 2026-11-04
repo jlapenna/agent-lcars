@@ -19,6 +19,7 @@ Use this index to retrieve the smallest current contract for a task.
 | Nx remote cache                                            | [`nx-remote-cache.md`](nx-remote-cache.md)                           |
 | Provider-process start event contract                      | [`provider-process-measurement.md`](provider-process-measurement.md) |
 | Native Work production smoke (maintainer-approved runbook) | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)       |
+| Linear issue intake and result comments                    | [`linear.md`](linear.md)                                             |
 | Repository-owned jobs                                      | [`repository-jobs.md`](repository-jobs.md)                           |
 
 ## Identity, credentials, and security
