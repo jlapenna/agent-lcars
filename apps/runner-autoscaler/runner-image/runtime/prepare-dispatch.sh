@@ -141,7 +141,7 @@ jq -n \
   --arg context "$CONTEXT" \
   --arg comment_since "$COMMENT_SINCE" \
   --argjson anchor "$anchor_json" \
-  --argjson source_issue "$(jq -c '.issue // null' <<<"$WORK")" \
+  --argjson source_issue "$(jq -c '(.issue // null) | if . == null then . else del(.description, .labels, .assignees) end' <<<"$WORK")" \
   --argjson comments "$comments_json" \
   --arg started_at "$started_at" \
   --arg deadline "$deadline" \

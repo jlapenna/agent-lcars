@@ -16,7 +16,11 @@ import {
   readLinearLabels,
   updateLinearIssue,
 } from './linear-client';
-import { linearConfig, linearTeam } from './linear-config';
+import {
+  linearConfig,
+  linearTeam,
+  linearTriageDispatchRoute,
+} from './linear-config';
 
 export async function hasCodingHistory(
   store: OrchestratorStore,
@@ -128,7 +132,12 @@ export async function triageTracker(anchor: TriageAnchor) {
   );
   const team = issue && config && linearTeam(config, issue.teamId ?? '');
   const triage = team && 'triage' in team ? team.triage : undefined;
+  const readyRoute =
+    config &&
+    issue &&
+    linearTriageDispatchRoute(config, issue.teamId ?? '', anchor.repo);
   if (
+    !readyRoute ||
     !config ||
     config.organizationId !== reference.organizationId ||
     !issue ||
@@ -178,7 +187,7 @@ export async function triageTracker(anchor: TriageAnchor) {
         throw new Error('Linear triage comment belongs to another issue');
       return comment.body;
     },
-    dispatchLabel: triage.readyLabelId,
+    dispatchLabel: readyRoute.labelId,
     dispatchObserved: async (since: string) => {
       let after: string | null = null;
       for (let page = 0; page < 5; page++) {
@@ -210,7 +219,7 @@ export async function triageTracker(anchor: TriageAnchor) {
             (event) =>
               Date.parse(event.createdAt) >=
                 Math.floor(Date.parse(since) / 1000) * 1000 &&
-              event.addedLabelIds?.includes(triage.readyLabelId),
+              event.addedLabelIds?.includes(readyRoute.labelId),
           )
         )
           return true;

@@ -456,6 +456,45 @@ describe('Linear deployment configuration', () => {
       expect(() => linearConfig()).toThrow(name);
     },
   );
+  it('rejects triage repository bindings without a unique ready-provider route', () => {
+    vi.stubEnv(
+      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+      'owner/repo,owner/other',
+    );
+    vi.stubEnv(
+      'AGENT_LCARS_WATCHED_REPOS',
+      JSON.stringify([
+        { owner: 'owner', name: 'repo', alias: 'repo' },
+        { owner: 'owner', name: 'other', alias: 'other' },
+      ]),
+    );
+    const multi = {
+      ...config,
+      teams: [
+        {
+          teamId: team,
+          repositories: [{ repo: 'owner/other', labelId: commentId }],
+          triage: {
+            bugLabelIds: [org],
+            readyLabelId: label,
+            pipeline: 'codex',
+            principal: 'svc:linear',
+          },
+        },
+      ],
+      routes: [
+        ...config.routes,
+        {
+          ...config.routes[0]!,
+          repo: 'owner/other',
+          labelId: actor,
+          pipeline: 'claude',
+        },
+      ],
+    };
+    vi.stubEnv('AGENT_LCARS_LINEAR', JSON.stringify(multi));
+    expect(() => linearConfig()).toThrow('ready-provider dispatch route');
+  });
   it('rejects duplicate routes, forbidden pipelines and repositories, and unbound grants', () => {
     for (const routes of [
       [...config.routes, ...config.routes],

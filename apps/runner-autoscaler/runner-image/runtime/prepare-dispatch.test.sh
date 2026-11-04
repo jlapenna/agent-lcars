@@ -99,4 +99,11 @@ run_prepare_dispatch linear-source
 jq -e '.anchor.type == "work" and .anchor.target_repo == "octo/example" and .source_issue.reference.tracker == "linear" and .source_issue.identifier == "SPR-84" and .source_issue.reference.issueId == "44444444-4444-4444-8444-444444444444" and .anchor.body == "Current admitted issue body"' "$context_path" >/dev/null ||
   fail "Linear source lost its typed identity or changed the checkout anchor"
 
+# Even callers passing an entire source snapshot cannot duplicate its prose
+# outside the bounded anchor body. Full evidence stays in `lcars work source`.
+export WORK="$(jq -c '.issue.description = ("e" * 65536) | .issue.labels = [{id:"label",name:"label"}] | .issue.assignees = [{id:"actor",name:"actor"}]' <<<"$WORK")"
+run_prepare_dispatch linear-source-large
+jq -e '(.source_issue | has("description") or has("labels") or has("assignees")) | not' "$context_path" >/dev/null ||
+  fail "Source metadata duplicated unbounded source prose into the worker brief"
+
 echo "prepare-dispatch.test.sh: all scenarios passed"

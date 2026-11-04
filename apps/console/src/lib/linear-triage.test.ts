@@ -197,9 +197,13 @@ function fixture() {
     },
   };
 }
-async function completed(f: ReturnType<typeof fixture>, disposition = 'ready') {
-  await admitFleetTriage(f, anchor);
-  const workId = await f.store.readSourceWorkId(triageSourceKey(anchor));
+async function completed(
+  f: ReturnType<typeof fixture>,
+  disposition = 'ready',
+  target = anchor,
+) {
+  await admitFleetTriage(f, target);
+  const workId = await f.store.readSourceWorkId(triageSourceKey(target));
   const run = (await f.store.listRuns({ workId: workId! }))[0]!;
   await f.orchestrator.confirmDispatch(run.runId);
   const result = await f.orchestrator.report(
@@ -269,6 +273,46 @@ describe('Linear event-driven triage', () => {
     );
     await publishFleetTriage(f.store, entry);
     expect(f.comments).toHaveLength(1);
+  });
+  it('publishes the ready label for the actual repository in a shared team', async () => {
+    const f = fixture();
+    const repositoryLabel = '77777777-7777-4777-8777-777777777777';
+    const readyOther = '88888888-8888-4888-8888-888888888888';
+    const config = JSON.parse(process.env['AGENT_LCARS_LINEAR']!);
+    delete config.teams[0].repo;
+    config.teams[0].repositories = [
+      { repo: 'owner/other', labelId: repositoryLabel },
+    ];
+    config.routes.push({
+      ...config.routes[0],
+      labelId: readyOther,
+      repo: 'owner/other',
+    });
+    vi.stubEnv('AGENT_LCARS_LINEAR', JSON.stringify(config));
+    vi.stubEnv(
+      'AGENT_LCARS_CONTROL_PLANE_REPOSITORIES',
+      'owner/repo,owner/other',
+    );
+    vi.stubEnv(
+      'AGENT_LCARS_WATCHED_REPOS',
+      JSON.stringify([
+        { owner: 'owner', name: 'repo', alias: 'repo' },
+        { owner: 'owner', name: 'other', alias: 'other' },
+      ]),
+    );
+    f.labels.push({ id: repositoryLabel, name: 'Repository: other' });
+    const target = { ...anchor, repo: 'owner/other' };
+    const source = await loadLinearTriageSource(f.store, target);
+    expect(source.dispatchLabel).toBe(readyOther);
+    expect(triageEligible(source)).toBe(true);
+    const { entry } = await completed(f, 'ready', target);
+    await publishFleetTriage(f.store, entry);
+    expect(f.effects).toEqual([
+      `label:${metadata}`,
+      'comment',
+      `label:${readyOther}`,
+    ]);
+    expect(f.labels.some((label) => label.id === ready)).toBe(false);
   });
   it('publishes needs-owner evidence without coding dispatch', async () => {
     const f = fixture();

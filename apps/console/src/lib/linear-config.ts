@@ -118,6 +118,32 @@ export function linearIssueRepository(
   return linearIssueRouting(config, issue).repo;
 }
 
+/** The ready label selects the coding provider. Each repository uses its
+ * unique route for that provider; the team's other repositories never inherit
+ * a label that would dispatch into the wrong checkout. */
+export function linearTriageDispatchRoute(
+  config: LinearConfig,
+  teamId: string,
+  repo: string,
+): LinearConfig['routes'][number] | undefined {
+  const team = linearTeam(config, teamId);
+  const triage = team && 'triage' in team ? team.triage : undefined;
+  const ready =
+    triage &&
+    config.routes.find(
+      (route) =>
+        route.teamId === teamId && route.labelId === triage.readyLabelId,
+    );
+  if (!ready) return undefined;
+  const routes = config.routes.filter(
+    (route) =>
+      route.teamId === teamId &&
+      route.repo === repo &&
+      route.pipeline === ready.pipeline,
+  );
+  return routes.length === 1 ? routes[0] : undefined;
+}
+
 /** Optional integration; a partially configured integration fails at boot. */
 export function linearConfig(): LinearConfig | undefined {
   const raw = process.env['AGENT_LCARS_LINEAR'];
@@ -164,15 +190,27 @@ export function linearConfig(): LinearConfig | undefined {
         route.teamId === team.teamId &&
         route.labelId === team.triage?.readyLabelId,
     );
-    if (!route || (team.repo !== undefined && route.repo !== team.repo))
+    if (!route)
       throw new Error(
         'Linear triage ready label requires a matching dispatch route',
       );
-    const forbidden = workForbiddenReason(grant, {
-      pipeline: team.triage.pipeline,
-      target: { repo: route.repo },
-    });
-    if (forbidden) throw new Error(`Linear triage: ${forbidden}`);
+    const repositories = [
+      ...new Set([
+        ...(team.repo ? [team.repo] : []),
+        ...(team.repositories ?? []).map((binding) => binding.repo),
+      ]),
+    ];
+    for (const repo of repositories.length ? repositories : [route.repo]) {
+      if (!linearTriageDispatchRoute(parsed.data, team.teamId, repo))
+        throw new Error(
+          'Linear triage requires a unique ready-provider dispatch route for each repository binding',
+        );
+      const forbidden = workForbiddenReason(grant, {
+        pipeline: team.triage.pipeline,
+        target: { repo },
+      });
+      if (forbidden) throw new Error(`Linear triage: ${forbidden}`);
+    }
   }
   for (const name of [
     'AGENT_LCARS_LINEAR_WEBHOOK_SECRET',

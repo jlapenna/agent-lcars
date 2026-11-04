@@ -259,7 +259,9 @@ while old Linear outcomes are pending. No
 
 Optional `teams[].triage` contains `bugLabelIds`, `readyLabelId`, `pipeline` and
 `principal`. It uses the repository's existing watched-repository opt-in and
-shared triage publisher. `readyLabelId` must select a configured coding route;
+shared triage publisher. `readyLabelId` selects the ready coding provider; each repository binding must
+have exactly one dispatch route for that same provider. Readiness adds the label
+for the issue’s repository, never another repository’s label;
 the analysis pipeline/principal must have the corresponding Work grant.
 Repository labels or a dedicated-team default identify an undispatched bug's
 target. Unrouted issues never become guessed repository work.

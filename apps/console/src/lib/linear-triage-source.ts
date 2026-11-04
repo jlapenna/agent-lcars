@@ -16,6 +16,7 @@ import {
   linearConfig,
   linearIssueRepository,
   linearTeam,
+  linearTriageDispatchRoute,
 } from './linear-config';
 import type { TriageSource } from './triage-source-types';
 import { getWatchedRepos } from './watched-repos-config';
@@ -90,6 +91,11 @@ export async function loadLinearTriageSource(
       issue.labels.some((label) => label.id === route.labelId),
   );
   const repository = linearIssueRepository(config, issue);
+  const readyRoute = linearTriageDispatchRoute(
+    config,
+    issue.teamId ?? '',
+    anchor.repo,
+  );
   const [comments, ownership, openFixPr] = await Promise.all([
     readLinearComments(anchor.source.issueId),
     readTrackerIssueOwner(
@@ -116,7 +122,7 @@ export async function loadLinearTriageSource(
     state: issue.state,
     labels: issue.labels.map((label) => label.name),
     labelIds: issue.labels.map((label) => label.id),
-    dispatchLabel: triage?.readyLabelId,
+    dispatchLabel: readyRoute?.labelId,
     bug:
       triage?.bugLabelIds.some((id) =>
         issue.labels.some((label) => label.id === id),
@@ -133,6 +139,7 @@ export async function loadLinearTriageSource(
     parked: ownership.task?.state === 'parked',
     enabled:
       triage !== undefined &&
+      readyRoute !== undefined &&
       repository === anchor.repo &&
       getWatchedRepos().some(
         (repo) =>
