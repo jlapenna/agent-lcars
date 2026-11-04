@@ -143,6 +143,17 @@ holding the read-only token will pull from L2 and never populate it.
 
 ## CI and E2E
 
+CI reads its endpoint from the repository variable `NX_CACHE_URL`. Changing a
+checkout's default URL does not update that variable. When the cache endpoint
+moves, update the repository variable as part of the cutover:
+
+```bash
+gh variable set NX_CACHE_URL --body 'https://nx-cache.lan.jlapenna.net'
+```
+
+A retired endpoint makes Nx recompute tasks locally while logging failed cache
+requests; a green CI result alone does not prove that the cache is working.
+
 CI gives the write capability to same-repository PRs as well as protected
 branch, merge-queue, and manual runs. Contributors opening those PRs already
 have repository write access, and PRs are the predominant cache workload; a
