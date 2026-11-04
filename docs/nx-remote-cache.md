@@ -13,10 +13,10 @@ recompiling the same unchanged libraries. Cache keys are content hashes over
 declared inputs, so sharing across branches is safe: different content hashes
 differently and cannot collide.
 
-**L2 — shared, over HTTP, on a fleet-provided host.** A self-hosted
+**L2 — shared, over HTTPS, on a fleet-provided host.** A self-hosted
 implementation of Nx 23.1's built-in remote-cache protocol
 (`GET`/`PUT /v1/cache/{hash}`, bearer auth). This repo's own fleet (homelab)
-deploys it on `picard` at `http://nx-cache.lan.jlapenna.net:3123` — a role
+deploys it on `laforge` behind that host's TLS front door at `https://nx-cache.lan.jlapenna.net` — a role
 alias that survives the server being renamed or moved, documented in the
 `homelab` repo under `nx-cache-server/`. Any fleet running this tooling points
 `NX_REMOTE_CACHE_URL` / `vars.NX_CACHE_URL` at its own equivalent endpoint;
