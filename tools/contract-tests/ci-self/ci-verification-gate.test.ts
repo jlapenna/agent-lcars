@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
@@ -25,6 +33,71 @@ const verify = workflow.jobs.verify;
 // Required CI check: pnpm check:contracts consumes this actual-workflow
 // regression for #2341. A draft green summary must not replace full proof.
 describe('required verification proof across draft readiness', () => {
+  it.each([
+    [0, 0, true],
+    [1, 0, false],
+    [0, 1, false],
+    [1, 1, false],
+  ])(
+    'joins isolated direct-runner=%i and Firestore=%i as pass=%s',
+    (direct, firestore, pass) => {
+      const run = workflow.jobs['verify-full-console'].steps?.find((step) =>
+        step.run?.includes('direct_runner_pid=$!'),
+      )?.run;
+      expect(run).toBeDefined();
+      const root = mkdtempSync(path.join(tmpdir(), 'lcars-ci-join-'));
+      try {
+        const fixture = (name: string, other: string, status: number) =>
+          `#!/usr/bin/env bash
+set -euo pipefail
+touch "${root}/${name}.started"
+for _ in {1..100}; do
+  if [[ -f "${root}/${other}.started" ]]; then break; fi
+  sleep 0.01
+done
+[[ -f "${root}/${other}.started" ]] || exit 91
+touch "${root}/${name}.finished"
+exit ${status}
+`;
+        mkdirSync(path.join(root, 'apps/runner-autoscaler/runner-image'), {
+          recursive: true,
+        });
+        mkdirSync(path.join(root, 'tools'));
+        writeFileSync(
+          path.join(
+            root,
+            'apps/runner-autoscaler/runner-image/direct-runner.test.sh',
+          ),
+          fixture('direct', 'firestore', direct),
+        );
+        writeFileSync(
+          path.join(root, 'tools/nx'),
+          fixture('firestore', 'direct', firestore),
+          { mode: 0o755 },
+        );
+        let passed = true;
+        try {
+          execFileSync('bash', ['-e', '-c', run!], {
+            cwd: root,
+            timeout: 5000,
+            stdio: 'pipe',
+          });
+        } catch {
+          passed = false;
+        }
+        expect(passed).toBe(pass);
+        expect(readFileSync(path.join(root, 'direct.finished'), 'utf8')).toBe(
+          '',
+        );
+        expect(
+          readFileSync(path.join(root, 'firestore.finished'), 'utf8'),
+        ).toBe('');
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('runs the full and Terraform checks on draft as well as ready revisions', () => {
     for (const shard of shards) {
       expect(workflow.jobs[shard].if).toBeUndefined();
