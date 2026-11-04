@@ -40,15 +40,16 @@ staggered so at most one eval worker holds a runner slot at a time.
 
 | Repository                                                      | Roots                                                                                      | Cron (UTC)    |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------- |
-| jlapenna/agent-lcars (+ public dev, repo-tools, herdr-overview) | `--root .agents/skills --root agents/shared/skills --evals-root agents/shared/skill-evals` | `0 15 * * 0`  |
-| jlapenna/homelab                                                | `--root .agents/skills`                                                                    | `20 15 * * 0` |
-| supersprinklesracing/sprinkles                                  | `--root .agents/skills`                                                                    | `40 15 * * 0` |
-| supersprinklesracing/www                                        | `--root .`                                                                                 | `0 16 * * 0`  |
-| jlapenna/labels                                                 | `--root .`                                                                                 | `10 16 * * 0` |
-| jlapenna/jclaw                                                  | `--root .`                                                                                 | `20 16 * * 0` |
+| jlapenna/agent-lcars (+ public dev, repo-tools, herdr-overview) | `--root .agents/skills --root agents/shared/skills --evals-root agents/shared/skill-evals` | `0 15 * * 0`  | `01M6JX86TSBGXFP0K41FYSJMWW` |
+| jlapenna/homelab                                                | `--root .agents/skills`                                                                    | `20 15 * * 0` | `01M6JX9JJ66NGF8BC7M0JNDS2R` |
+| supersprinklesracing/sprinkles                                  | `--root .agents/skills`                                                                    | `40 15 * * 0` | `01M6JXB18FCW2A29Q06TR0BJSB` |
+| supersprinklesracing/www                                        | `--root .`                                                                                 | `0 16 * * 0`  | `01M6JXCD84AVR86698BKKETTV3` |
+| jlapenna/labels                                                 | `--root .`                                                                                 | `10 16 * * 0` | `01M6JXDXB6Z8P25WJ3VTY3PVHS` |
+| jlapenna/jclaw                                                  | `--root .`                                                                                 | `20 16 * * 0` | `01M6JXFB6J67WGVY5N757SXA6H` |
 
-Schedule ids are recorded in the Work console; the schedule's title is
-`Weekly skill evals: <owner/name>`.
+The schedules were created on 2026-11-04 with the ids above; each title is
+`Weekly skill evals: <owner/name>`. Qualification Work
+`01M6JREKNTDT3GYYE15FQVY3FA` ran the agent-lcars brief end to end first.
 
 Not covered: homegit, home-assistant-config and sparkstack-registry are private
 and not admitted to the control plane, so no native Work can check them out.
