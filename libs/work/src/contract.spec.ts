@@ -650,7 +650,7 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/{runId}/placement': ['200', '401', '403', '404'],
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401', '409'],
-      'GET /runs/{runId}/checkout-token': ['200', '401', '409'],
+      'GET /runs/{runId}/checkout-token': ['200', '401', '403', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],
     });

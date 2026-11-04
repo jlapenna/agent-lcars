@@ -304,7 +304,7 @@ CURLCFG
     return 1
   fi
   token="$(jq -er '.token | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
-  expires_text="$(jq -er '.expiresAt | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
+  expires_text="$(jq -er '.refreshAt // .expiresAt | select(length > 0)' "$checkout_response")" || { rm -f -- "$checkout_response"; return 1; }
   expires_at="$(date -d "$expires_text" +%s)" || { rm -f -- "$checkout_response"; return 1; }
   token_tmp="$CHECKOUT_TOKEN_FILE.$$"
   expiry_tmp="$CHECKOUT_EXPIRY_FILE.$$"
@@ -343,6 +343,11 @@ CURLCFG
     mv -f -- "$owner_expiry_tmp" "$owner_dir/expires-at"
     mv -f -- "$owner_repos_tmp" "$owner_dir/repositories"
   done < <(jq -r '.grants // [] | .[] | [.owner, .token, .expiresAt, (.repositories // [] | join(","))] | @tsv' "$checkout_response")
+  # Only metadata reaches these files; token values remain in the private files above.
+  jq -r 'if .identity then "user" else "app" end' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/scope.$$"
+  mv -f -- "$CHECKOUT_CREDENTIAL_DIR/scope.$$" "$CHECKOUT_CREDENTIAL_DIR/scope"
+  jq -c '.identity.git // .gitIdentity // null' "$checkout_response" > "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$"
+  mv -f -- "$CHECKOUT_CREDENTIAL_DIR/git-identity.json.$$" "$CHECKOUT_CREDENTIAL_DIR/git-identity.json"
   rm -f -- "$checkout_response"
 }
 
@@ -470,7 +475,7 @@ if [ "\${1:-}" = get ]; then
     esac
   done
   if [ "\$protocol" = https ] && [ "\$host" = github.com ] &&
-    { [ "\$path" = '$TARGET_REPO' ] || [ "\$path" = '$TARGET_REPO.git' ]; }; then
+    { [ "\$(cat '$CHECKOUT_CREDENTIAL_DIR/scope')" = user ] || [ "\$path" = '$TARGET_REPO' ] || [ "\$path" = '$TARGET_REPO.git' ]; }; then
     printf 'username=x-access-token\\npassword=%s\\n' "\$(cat '$CHECKOUT_TOKEN_FILE')"
     exit 0
   fi
@@ -546,8 +551,23 @@ unset CHECKOUT_TOKEN CHECKOUT_AUTH_HEADER GITHUB_TOKEN GH_TOKEN ACTIONS_RERUN_TO
 # Every QueueExecutor agent commit needs this Git identity; without it an
 # agent commit fails outright.
 GIT_LOGIN="${LCARS_GIT_LOGIN:-agent-lcars[bot]}"
-git config --local user.name "$GIT_LOGIN"
-git config --local user.email "$GIT_LOGIN@users.noreply.github.com"
+GIT_NAME="$GIT_LOGIN"
+GIT_EMAIL="$GIT_LOGIN@users.noreply.github.com"
+if jq -e '. != null' "$CHECKOUT_CREDENTIAL_DIR/git-identity.json" >/dev/null; then
+  GIT_NAME="$(jq -er '.name' "$CHECKOUT_CREDENTIAL_DIR/git-identity.json")"
+  GIT_EMAIL="$(jq -er '.email' "$CHECKOUT_CREDENTIAL_DIR/git-identity.json")"
+fi
+git config --local user.name "$GIT_NAME"
+git config --local user.email "$GIT_EMAIL"
+if [ "$(cat "$CHECKOUT_CREDENTIAL_DIR/scope")" = user ]; then
+  # Personal jobs can operate on forks/upstreams beyond the anchor checkout.
+  # The token's own GitHub scope is authoritative for that access.
+  git config --global credential.helper ''
+  git config --global --add credential.helper "$CREDENTIAL_BIN/git-credential-lcars"
+  git config --global credential.https://github.com.useHttpPath true
+  git config --global user.name "$GIT_NAME"
+  git config --global user.email "$GIT_EMAIL"
+fi
 
 # Recipes share checkout, renewable GitHub command wrappers, Git identity and
 # the image's installed tools/skills. Coding dispatch prompts and provider auth

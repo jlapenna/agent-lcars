@@ -39,13 +39,16 @@ import type {
   DispatchTokenProvider,
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
+import { resolveJobGithubCredential } from './job-github-credentials';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
-import { jobDigest } from './repository-job-definition';
+import type { JobProfile } from './repository-job-definition';
 import { validateJobResult } from './repository-job-result';
+import type { JobOccurrence } from './repository-job-store';
+import type { RepositoryJobs } from './repository-jobs';
 import { repositoryJobs } from './repository-jobs-runtime';
 import { toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
@@ -67,6 +70,7 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
   codexAuth: CodexAuthStore;
+  jobGithubCredential?: typeof resolveJobGithubCredential;
   /** Same outbox drain every other mutating route reaches through
    *  `WorkContext.runtime.drain` (`work-router.ts`, `work-mint.ts`,
    *  `work-reply.ts`) -- `RunsContext` has no `runtime` object of its own
@@ -163,6 +167,19 @@ async function requireRunToken(
     throw new ORPCError('UNAUTHORIZED', { message: 'Run token expired' });
   }
   return run;
+}
+
+function authorizedRecipeProfile(
+  jobs: RepositoryJobs,
+  occurrence: JobOccurrence,
+): JobProfile {
+  try {
+    return jobs.authorizeOccurrence(occurrence);
+  } catch {
+    throw new ORPCError('FORBIDDEN', {
+      message: 'Reserved execution profile changed or grant revoked',
+    });
+  }
 }
 
 async function requireCodexRun(
@@ -355,13 +372,7 @@ export const runsRouter = os.router({
       occurrence.workId !== run.task.workId
     )
       throw new ORPCError('FORBIDDEN', { message: 'Not a recipe occurrence' });
-    if (
-      jobDigest(jobs.authorize(occurrence.definition, occurrence.principal)) !==
-      jobDigest(occurrence.profile)
-    )
-      throw new ORPCError('FORBIDDEN', {
-        message: 'Reserved execution profile changed',
-      });
+    authorizedRecipeProfile(jobs, occurrence);
     const previous =
       occurrence.baselineOccurrence === undefined
         ? undefined
@@ -902,12 +913,58 @@ export const runsRouter = os.router({
         : undefined;
     const target = anchorTarget(run, task);
 
+    let profile: JobProfile | undefined;
+    if (run.pipeline === 'goose') {
+      const jobs = repositoryJobs({
+        store: context.store,
+        orchestrator: context.orchestrator,
+        drain: context.drain,
+      });
+      const id = run.params?.['jobOccurrence'];
+      const occurrence =
+        id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
+      if (
+        !occurrence ||
+        !('workId' in run.task) ||
+        occurrence.workId !== run.task.workId ||
+        occurrence.definition.repository !== target.repo
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Not a recipe occurrence',
+        });
+      profile = authorizedRecipeProfile(jobs, occurrence);
+      if (profile.credentials) {
+        const credential = await (
+          context.jobGithubCredential ?? resolveJobGithubCredential
+        )(profile.credentials.github, context.now()).catch(() => {
+          throw new ORPCError('CONFLICT', {
+            message:
+              'Selected GitHub credential is unavailable, expired, or has the wrong identity',
+          });
+        });
+        return {
+          token: credential.token,
+          expiresAt: credential.expiresAt,
+          refreshAt: credential.refreshAt,
+          repository: target.repo,
+          identity: {
+            login: credential.login,
+            git: profile.gitIdentity ?? {
+              name: credential.login,
+              email: `${credential.login}@users.noreply.github.com`,
+            },
+          },
+        };
+      }
+    }
+
     if (run.params?.['crossRepo'] !== 'true') {
       const token = await context.checkoutTokens.expiringTokenFor(target.repo);
       return {
         token: token.token,
         repository: target.repo,
         expiresAt: token.expiresAt,
+        ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
       };
     }
 
@@ -970,6 +1027,7 @@ export const runsRouter = os.router({
       repository: target.repo,
       expiresAt: anchorGrant.expiresAt,
       grants,
+      ...(profile?.gitIdentity ? { gitIdentity: profile.gitIdentity } : {}),
     };
   }),
 

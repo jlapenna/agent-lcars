@@ -607,3 +607,86 @@ it('bounds recipe timeouts below the executor Pod deadline', () => {
   expect(timeout.safeParse('45m').success).toBe(true);
   expect(timeout.safeParse('46m').success).toBe(false);
 });
+
+it('pins an explicitly authorized manual profile without changing the manifest or schedule', async () => {
+  const f = fixture([], 'repository');
+  f.profile.credentials = { github: 'personal' };
+  f.profile.gitIdentity = { name: 'Joe LaPenna', email: 'joe@example.invalid' };
+  expect(f.jobs.availableProfiles(f.definition, 'user:joe')).toEqual([
+    'repository',
+    'audit',
+  ]);
+  expect(f.jobs.availableProfiles(f.definition, 'other-user')).toEqual([
+    'repository',
+  ]);
+  const occurrence = await f.jobs.invoke(
+    'octo/repo',
+    'audit',
+    'personal-once',
+    'user:joe',
+    {},
+    'audit',
+  );
+  expect(occurrence.profile.credentials?.github).toBe('personal');
+  expect(occurrence.definition.job.execution.profile).toBe('repository');
+  expect(f.jobs.authorizeOccurrence(occurrence)).toEqual(f.profile);
+  expect(
+    await f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'personal-once',
+      'user:joe',
+      {},
+      'audit',
+    ),
+  ).toEqual(occurrence);
+  await expect(
+    f.jobs.invoke('octo/repo', 'audit', 'personal-once', 'user:joe'),
+  ).rejects.toThrow('Request ID reused');
+  await expect(
+    f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'not-granted',
+      'user:joe',
+      {},
+      'missing',
+    ),
+  ).rejects.toThrow('not granted');
+  await expect(
+    f.jobs.admit(
+      f.id,
+      'schedule',
+      'user:joe',
+      'schedule',
+      f.definition.digest,
+      {},
+      false,
+      'audit',
+    ),
+  ).rejects.toThrow('Scheduled runs use the manifest profile');
+  const pinned = (await f.store.readOccurrence(occurrence.id))!;
+  f.profile.credentials = { github: 'different' };
+  expect(() => f.jobs.authorizeOccurrence(pinned)).toThrow(
+    'Reserved execution profile changed',
+  );
+});
+
+it('rejects a manual profile for another principal or repository', async () => {
+  const f = fixture([], 'repository');
+  f.profile.credentials = { github: 'personal' };
+  await expect(
+    f.jobs.invoke(
+      'octo/repo',
+      'audit',
+      'wrong-user',
+      'other-user',
+      {},
+      'audit',
+    ),
+  ).rejects.toThrow('not granted');
+  f.profile.repositories = ['other/repo'];
+  await expect(
+    f.jobs.invoke('octo/repo', 'audit', 'wrong-repo', 'user:joe', {}, 'audit'),
+  ).rejects.toThrow('not granted');
+});

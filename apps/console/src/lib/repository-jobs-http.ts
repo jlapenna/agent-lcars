@@ -4,7 +4,10 @@ import { createDispatchTokenProvider } from './github-app-tokens';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { readJobBody } from './repository-job-body';
 import { refreshJobCatalog } from './repository-job-catalog';
-import { jobInputsSchema } from './repository-job-definition';
+import {
+  jobInputsSchema,
+  jobProfileNameSchema,
+} from './repository-job-definition';
 import { RepositoryJobBusyError, RepositoryJobs } from './repository-jobs';
 import { repositoryJobs } from './repository-jobs-runtime';
 import type { WorkPrincipal } from './work-auth';
@@ -42,8 +45,23 @@ export async function repositoryJobsHttp(
       );
       if (!occurrence)
         return Response.json({ error: 'Not found' }, { status: 404 });
-      jobs.authorize(occurrence.definition, principal.principal);
+      jobs.authorize(
+        occurrence.definition,
+        principal.principal,
+        occurrence.profile.name,
+      );
       return Response.json(occurrence);
+    }
+    const profilesPath = /^\/([a-f0-9]{64})\/profiles$/u.exec(path);
+    if (request.method === 'GET' && profilesPath) {
+      const job = (await jobs.deps.store.list()).find(
+        (entry) => entry.id === profilesPath[1],
+      );
+      if (!job?.definition)
+        return Response.json({ error: 'Not found' }, { status: 404 });
+      return Response.json(
+        jobs.availableProfiles(job.definition, principal.principal),
+      );
     }
     if (request.method !== 'POST')
       return Response.json({ error: 'Not found' }, { status: 404 });
@@ -70,6 +88,7 @@ export async function repositoryJobsHttp(
           name: z.string(),
           requestId: z.string(),
           parameters: jobInputsSchema.default({}),
+          profile: jobProfileNameSchema.optional(),
         })
         .parse(body);
       const occurrence = await jobs.invoke(
@@ -78,6 +97,7 @@ export async function repositoryJobsHttp(
         input.requestId,
         principal.principal,
         input.parameters,
+        input.profile,
       );
       const runs = occurrence.skipped
         ? []
@@ -107,6 +127,7 @@ export async function repositoryJobsHttp(
         digest: z.string(),
         requestId: z.string(),
         parameters: jobInputsSchema.default({}),
+        profile: jobProfileNameSchema.optional(),
       })
       .parse(body);
     return Response.json(
@@ -117,6 +138,8 @@ export async function repositoryJobsHttp(
         'manual',
         input.digest,
         input.parameters,
+        false,
+        input.profile,
       ),
     );
   } catch (error) {

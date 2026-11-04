@@ -10297,10 +10297,50 @@
                       "type": "string"
                     },
                     "expiresAt": {
-                      "type": "string"
+                      "type": ["string", "null"]
                     },
                     "repository": {
                       "type": "string"
+                    },
+                    "refreshAt": {
+                      "type": "string"
+                    },
+                    "identity": {
+                      "type": "object",
+                      "properties": {
+                        "login": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z0-9-]{1,39}$"
+                        },
+                        "git": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "email": {
+                              "type": "string"
+                            }
+                          },
+                          "required": ["name", "email"],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["login", "git"],
+                      "additionalProperties": false
+                    },
+                    "gitIdentity": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["name", "email"],
+                      "additionalProperties": false
                     },
                     "grants": {
                       "type": "array",
@@ -10356,8 +10396,25 @@
               }
             }
           },
+          "403": {
+            "description": "Recipe occurrence or execution profile refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
           "409": {
-            "description": "Worker generation refused",
+            "description": "Worker generation or credential refused",
             "content": {
               "application/json": {
                 "schema": {

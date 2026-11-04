@@ -46,7 +46,7 @@ export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
-  '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] | work job get <occurrence-id>\n' +
+  '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] [--profile <name>] | work job get <occurrence-id>\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
@@ -251,8 +251,14 @@ export async function executeWorkCommand(
             name: { type: 'string' },
             'request-id': { type: 'string' },
             parameters: { type: 'string' },
+            profile: { type: 'string' },
           },
         });
+        if (
+          values.profile !== undefined &&
+          !/^[a-z][a-z0-9-]{0,63}$/u.test(values.profile)
+        )
+          return usageFailure(deps);
         let path: string;
         let body: string | undefined;
         if (
@@ -267,6 +273,9 @@ export async function executeWorkCommand(
             name: values.name,
             requestId: values['request-id'],
             parameters: JSON.parse(values.parameters ?? '{}'),
+            ...(values.profile === undefined
+              ? {}
+              : { profile: values.profile }),
           });
           if (Buffer.byteLength(body) > 16384)
             throw new Error('Job request exceeds 16 KiB');

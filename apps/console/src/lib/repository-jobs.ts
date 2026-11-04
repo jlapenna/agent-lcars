@@ -38,7 +38,11 @@ export class RepositoryJobBusyError extends Error {}
 
 export class RepositoryJobs {
   constructor(readonly deps: RepositoryJobsDeps) {}
-  authorize(definition: JobDefinition, principal: string): JobProfile {
+  authorize(
+    definition: JobDefinition,
+    principal: string,
+    profileName = definition.job.execution.profile,
+  ): JobProfile {
     if (!this.deps.granted(principal, definition.repository))
       throw new Error('Goose operator grant required');
     return authorizeJob(
@@ -46,7 +50,7 @@ export class RepositoryJobs {
       // The reviewed repository definition supplies fixed inputs, while the
       // existing Work grant supplies authority. This built-in lane never grants
       // cross-repository credentials and cannot be overridden by configuration.
-      definition.job.execution.profile === 'repository'
+      profileName === 'repository'
         ? {
             name: 'repository',
             repositories: [definition.repository],
@@ -54,13 +58,32 @@ export class RepositoryJobs {
             allocation: { cpu: 2, memory: '6Gi', storage: '24Gi' },
             inputSets: [definition.job.inputs],
           }
-        : this.deps
-            .profiles()
-            .find(
-              (profile) => profile.name === definition.job.execution.profile,
-            ),
+        : this.deps.profiles().find((profile) => profile.name === profileName),
       principal,
+      profileName,
     );
+  }
+  availableProfiles(definition: JobDefinition, principal: string): string[] {
+    return [
+      ...new Set(['repository', ...this.deps.profiles().map((p) => p.name)]),
+    ].filter((name) => {
+      try {
+        this.authorize(definition, principal, name);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+  authorizeOccurrence(occurrence: JobOccurrence): JobProfile {
+    const profile = this.authorize(
+      occurrence.definition,
+      occurrence.principal,
+      occurrence.profile.name,
+    );
+    if (jobDigest(profile) !== jobDigest(occurrence.profile))
+      throw new Error('Reserved execution profile changed');
+    return profile;
   }
   async enable(
     id: string,
@@ -91,7 +114,17 @@ export class RepositoryJobs {
     digest: string,
     values: Record<string, string> = {},
     deferOverlap = false,
+    profileName?: string,
   ): Promise<JobOccurrence> {
+    if (trigger === 'schedule' && profileName !== undefined)
+      throw new Error('Scheduled runs use the manifest profile');
+    const requestDigestFor = (parameters: Record<string, string>) =>
+      jobDigest([
+        digest,
+        trigger,
+        parameters,
+        ...(profileName === undefined ? [] : [profileName]),
+      ]);
     if (!/^[\w:.-]{1,128}$/u.test(requestId))
       throw new Error('Invalid request ID');
     const at = this.deps.now();
@@ -104,20 +137,18 @@ export class RepositoryJobs {
       occurrenceId,
       (job, existing) => {
         if (existing) {
-          this.authorize(existing.definition, principal);
+          this.authorize(existing.definition, principal, existing.profile.name);
           const parameters = resolveJobParameters(existing.definition, values);
-          if (
-            existing.requestDigest !== jobDigest([digest, trigger, parameters])
-          )
+          if (existing.requestDigest !== requestDigestFor(parameters))
             throw new Error(
-              'Request ID reused with different definition or parameters',
+              'Request ID reused with different definition, parameters or profile',
             );
           return { occurrence: existing };
         }
         if (!job?.definition) throw new Error('Job not found');
-        const profile = this.authorize(job.definition, principal);
+        const profile = this.authorize(job.definition, principal, profileName);
         const parameters = resolveJobParameters(job.definition, values);
-        const requestDigest = jobDigest([digest, trigger, parameters]);
+        const requestDigest = requestDigestFor(parameters);
         if (
           !job.enabled ||
           job.error ||
@@ -144,6 +175,9 @@ export class RepositoryJobs {
           job.definition.job.inputs,
           job.definition.job.result,
           parameters,
+          ...(profile.credentials || profile.gitIdentity
+            ? [profile.credentials ?? null, profile.gitIdentity ?? null]
+            : []),
         ]);
         const occurrence: JobOccurrence = {
           id: occurrenceId,
@@ -184,6 +218,7 @@ export class RepositoryJobs {
     requestId: string,
     principal: string,
     values: Record<string, string> = {},
+    profileName?: string,
   ): Promise<JobOccurrence> {
     const id = jobKey(repository, name);
     const existing = await this.deps.store.readOccurrence(
@@ -202,6 +237,7 @@ export class RepositoryJobs {
       definition.digest,
       values,
       true,
+      profileName,
     );
   }
   async mint(occurrence: JobOccurrence): Promise<void> {
@@ -211,9 +247,7 @@ export class RepositoryJobs {
     if (existing) return;
     // Authorization may be revoked after reservation. Keep it durable and
     // visible; do not launch until the current grant permits it again.
-    const profile = this.authorize(occurrence.definition, occurrence.principal);
-    if (jobDigest(profile) !== jobDigest(occurrence.profile))
-      throw new Error('Reserved execution profile changed');
+    const profile = this.authorizeOccurrence(occurrence);
     const result = await this.deps.runtime.orchestrator.request({
       taskId: { workId: occurrence.workId },
       requestId: occurrence.id,
