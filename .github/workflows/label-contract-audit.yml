@@ -53,6 +53,9 @@ jobs:
           - full_name: jlapenna/sparkstack-registry
             owner: jlapenna
             repository: sparkstack-registry
+          - full_name: jlapenna/homegit
+            owner: jlapenna
+            repository: homegit
 
     steps:
       - uses: actions/checkout@v7
