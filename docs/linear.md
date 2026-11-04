@@ -65,6 +65,74 @@ as comments on the same Linear issue, with the Work link and any result URL.
    create/update event admits it. Follow the returned `itemId` at `/work/<id>`.
    Select a useful real issue for live verification; avoid a no-op dispatch.
 
+## Rotate integration credentials
+
+These are operator steps for an authorized rotation; examples use placeholders
+only. Keep secret values out of Git, Terraform, command arguments and logs.
+Rotate the API key and webhook signing secret separately so failures can be
+attributed to one change.
+
+### API key
+
+1. Create a replacement Linear personal API key in the same workspace. Preserve
+   the existing **Tech-only** team access and exactly **Read** and **Create
+   comments** permissions; do not broaden access for rotation. Leave the old
+   key valid during the rollout.
+2. Add an enabled version to the existing GCP Secret Manager secret
+   `AGENT_LCARS_LINEAR_API_KEY` in `<gcp-project>`, using the secure operator
+   secret-entry path (for example, the Secret Manager console). Record only
+   the new version number, `<replacement-version>`, in the rotation evidence.
+   Terraform owns the container and grants, never the key value.
+3. Deploy through the normal [console deployment workflow](../.github/workflows/deploy-console.yml)
+   and [deployment boundary](deployment-boundary.md). The runtime reference in
+   `apps/console/apphosting.yaml` is unversioned; App Hosting resolves it for
+   the new rollout. Adding a Secret Manager version does not update an already
+   running revision. Verify that the serving rollout uses the replacement
+   version before testing or revoking anything.
+4. Verify the replacement against the intended workspace and a Tech issue:
+   confirm issue/comment reads, then use a useful real Linear-backed Work
+   outcome to confirm the deployed adapter creates its result comment on the
+   correct issue with the Work link and result URL when present. Check the
+   outcome outbox for delivery errors. A successful rollout or webhook HTTP
+   200 alone does not prove the API key can create comments.
+5. Only after that verification and retirement of revisions using the old key,
+   revoke the old key in Linear and disable its old Secret Manager version.
+   If verification fails, retain the old key, restore its value as a new enabled
+   Secret Manager version through the secure entry path, redeploy through the
+   same workflow, and verify recovery. Keep a working key available while any
+   previously admitted Linear outcomes are pending, even if intake is disabled.
+
+### Webhook signing secret
+
+The deployed webhook verifier accepts one `AGENT_LCARS_LINEAR_WEBHOOK_SECRET`,
+with no overlap of old and new signatures. Coordinate the Linear webhook's
+signing-secret replacement and the console rollout in a planned intake pause;
+changing only one side causes HTTP 401 and does not admit work.
+
+1. Pause webhook delivery in Linear for the configured endpoint and record any
+   affected useful issues for reconciliation. Keep the API key and existing
+   Work/outcome processing enabled. If Linear requires recreating the webhook,
+   preserve its Issues subscription, workspace/team scope and endpoint URL
+   `https://<console-host>/api/control-plane/linear/webhook`; leave the old
+   webhook disabled during the switch.
+2. Obtain the replacement signing secret from Linear and securely add an enabled
+   version to `AGENT_LCARS_LINEAR_WEBHOOK_SECRET` in `<gcp-project>`. Deploy
+   through the same normal console workflow. Confirm the serving runtime uses
+   that version and that no old-secret revision can receive webhook traffic
+   before enabling delivery signed with the replacement secret.
+3. Resume delivery and verify a fresh, Linear-signed event for useful work:
+   expect HTTP 200 and the intended native Work item (or the existing item for
+   an already admitted issue), then verify its result comment. Review webhook
+   delivery failures and reconcile events missed during the pause. Use fresh
+   issue updates for missed intake: an old payload can fail the one-minute
+   timestamp check even when its signature is valid. Reconciliation must not
+   redispatch issues that already have Work solely to test rotation.
+4. Retire the old webhook, if replaced, and disable the old Secret Manager
+   version only after verification. On failure, keep delivery paused and
+   restore a matching Linear webhook/runtime secret pair through the same
+   version-and-rollout procedure before resuming; reverting only the runtime
+   cannot repair a changed Linear signing secret.
+
 ## Intake and retry behavior
 
 The route verifies HMAC-SHA256 against the raw request bytes and rejects a
