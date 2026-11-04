@@ -1,0 +1,11 @@
+name: Research job memory
+description: Temporary whole-job cgroup measurement for the approved memory experiments.
+inputs:
+  memory-limit-bytes:
+    description: Expected deployed runner memory limit.
+    required: true
+runs:
+  using: node24
+  main: start.cjs
+  post: finish.cjs
+  post-if: always()
