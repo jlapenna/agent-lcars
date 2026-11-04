@@ -42,6 +42,14 @@ on:
         required: false
         default: claude
         type: string
+      deliverable:
+        description: >-
+          create / schedule-create — set to report when the outcome is
+          findings rather than a pull request (the worker must then record
+          the report deliverable); empty keeps the default PR contract
+        required: false
+        default: ''
+        type: string
       id:
         description: Item/schedule id (26-char Crockford ULID); generated when empty for create/schedule-create
         required: false
@@ -94,6 +102,7 @@ jobs:
           DESCRIPTION: ${{ inputs.description }}
           REPO: ${{ inputs.repo }}
           PIPELINE: ${{ inputs.pipeline }}
+          DELIVERABLE: ${{ inputs.deliverable }}
           CRON: ${{ inputs.cron }}
           RESUME_SESSION_ID: ${{ inputs.resume_session_id }}
         run: |
@@ -114,6 +123,10 @@ jobs:
           case "$ACTION" in
             create | schedule-create) needs_id=false ;;
             *) needs_id=true ;;
+          esac
+          case "$DELIVERABLE" in
+            '' | report) ;;
+            *) echo "::error::deliverable must be empty or report"; exit 1 ;;
           esac
           if [ "$needs_id" = true ] && [ -z "$ITEM_ID" ]; then
             echo "::error::$ACTION needs an id"; exit 1
@@ -137,8 +150,8 @@ jobs:
               if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ]; then
                 echo "::error::create needs title and description"; exit 1
               fi
-              body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
-                '{spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
+              body="$(jq -cn --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "$DELIVERABLE" \
+                '{spec: ({title: $t, description: $d, pipeline: $p, target: {repo: $r}} + (if $dl == "report" then {deliverable: "report"} else {} end))}')"
               status="$(call PUT "$api/$ITEM_ID" "$body")"
               echo "PUT /api/work/v1/items/$ITEM_ID -> $status"; show
               [ "$status" = "201" ] || { echo "::error::work API returned $status"; exit 1; }
@@ -218,8 +231,8 @@ jobs:
               if [ -z "$TITLE" ] || [ -z "$DESCRIPTION" ] || [ -z "$CRON" ]; then
                 echo "::error::schedule-create needs title, description, and cron"; exit 1
               fi
-              body="$(jq -cn --arg c "$CRON" --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" \
-                '{cron: $c, spec: {title: $t, description: $d, pipeline: $p, target: {repo: $r}}}')"
+              body="$(jq -cn --arg c "$CRON" --arg t "$TITLE" --arg d "$DESCRIPTION" --arg r "$REPO" --arg p "$PIPELINE" --arg dl "$DELIVERABLE" \
+                '{cron: $c, spec: ({title: $t, description: $d, pipeline: $p, target: {repo: $r}} + (if $dl == "report" then {deliverable: "report"} else {} end))}')"
               status="$(call PUT "$schedules_api/$ITEM_ID" "$body")"
               echo "PUT /api/work/v1/schedules/$ITEM_ID -> $status"; show
               [ "$status" = "201" ] || { echo "::error::work API returned $status"; exit 1; }
