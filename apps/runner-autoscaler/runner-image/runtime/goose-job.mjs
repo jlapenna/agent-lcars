@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { loadGooseEnvironment } from './goose-environment.mjs';
 import {
   cgroupAllocation,
   gooseExecutor,
@@ -45,21 +46,12 @@ let timeout;
 try {
   const brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
-  const environment = JSON.parse(
-    await readFile('/run/secrets/goose-environment.json', 'utf8'),
-  );
-  if (
-    !environment ||
-    Array.isArray(environment) ||
-    typeof environment !== 'object' ||
-    Object.entries(environment).some(
-      ([key, value]) =>
-        typeof value !== 'string' ||
-        key.startsWith('LCARS_') ||
-        key === 'GOOGLE_APPLICATION_CREDENTIALS',
-    )
-  )
-    throw new Error('Invalid Goose provider environment');
+  // The execution profile may select a Homelab-provisioned overlay on the
+  // shared provider environment (for example model credentials one job
+  // class needs); the brief carries the admitted profile.
+  const environment = await loadGooseEnvironment({
+    overlay: brief.profile?.environment,
+  });
   // GitHub authority is supplied by the shared renewable command wrappers.
   for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RERUN_TOKEN'])
     delete environment[key];
