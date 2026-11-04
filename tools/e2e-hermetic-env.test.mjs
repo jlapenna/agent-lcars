@@ -203,6 +203,7 @@ test('an incomplete remote cache capability cannot cross the E2E boundary', () =
 test('the safe Playwright selection control crosses the E2E boundary', () => {
   const controls = {
     E2E_GREP: '@smoke|@mobile-layout',
+    E2E_SHARD: '2/2',
   };
   const probe = `
     const expected = ${JSON.stringify(controls)};

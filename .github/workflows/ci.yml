@@ -697,6 +697,12 @@ jobs:
     name: Console E2E browser suite
     needs: e2e-scope
     if: ${{ needs.e2e-scope.outputs.run == 'true' }}
+    # Isolated runner pods keep the existing one-worker database fixtures.
+    # The required E2E aggregate needs both shards, including any failure.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     # The runner IS the pinned sandbox now (agent-lcars#920, mirroring
     # supersprinklesracing/sprinkles' own e2e pool): tools/e2e-runner/
     # Dockerfile derives FROM the published tools/e2e/Dockerfile sandbox
@@ -817,8 +823,13 @@ jobs:
       # this job completes. Keep it on the real suite step so performance
       # telemetry cannot claim a full execution when the browser suite was
       # skipped or never started.
-      - name: Run console e2e suite [full-suite]
+      # The execution marker remains on the real assigned suite invocation.
+      # Job histograms now contain two shard observations per workflow;
+      # whole-workflow latency must be measured across both completions.
+      - name: Run console e2e suite [full-suite] (shard ${{ matrix.shard }}/${{ strategy.job-total }})
         if: needs.e2e-scope.outputs.run == 'true'
+        env:
+          E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
         run: ./tools/e2e-local.sh
 
       # Preserve Playwright's HTML report, traces, screenshots, and error
@@ -832,7 +843,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: console-e2e-diagnostics-${{ github.run_attempt }}
+          name: console-e2e-diagnostics-${{ github.run_attempt }}-${{ matrix.shard }}
           path: apps/console-e2e/test-output/
           if-no-files-found: ignore
           retention-days: 14
