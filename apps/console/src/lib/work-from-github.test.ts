@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   githubOrigin,
-  normalizeGithubWorkPayload,
+  normalizeWorkPayload,
   truncatedDescription,
   workPayloadFromGithub,
 } from './work-from-github';
@@ -68,7 +68,7 @@ describe('truncatedDescription', () => {
     // bytes `\\n`. This body clears the character and raw-UTF-8 checks yet
     // overflows the durable payload once origin/spec JSON is included.
     const body = '\n'.repeat(WORK_DESCRIPTION_MAX);
-    const payload = normalizeGithubWorkPayload({
+    const payload = normalizeWorkPayload({
       origin: { principal: 'workflow:member-automation', channel: 'api' },
       spec: {
         title: 'Dispatch exact GitHub body',

@@ -477,12 +477,32 @@ resource "google_secret_manager_secret" "runtime" {
     "AGENT_LCARS_WEBHOOK_SECRET",
     "AGENT_LCARS_HANDOFF_SUMMARY_API_KEY",
     "AGENT_LCARS_PUSH_VAPID",
+    "AGENT_LCARS_LINEAR_API_KEY",
+    "AGENT_LCARS_LINEAR_WEBHOOK_SECRET",
   ])
   secret_id = each.value
   replication {
     auto {}
   }
   depends_on = [google_project_service.services]
+}
+
+# Linear credentials are runtime values supplied through Secret Manager, never
+# through Terraform. Match App Hosting's existing secret metadata/version grants.
+resource "google_secret_manager_secret_iam_member" "linear_viewer" {
+  for_each  = toset(["AGENT_LCARS_LINEAR_API_KEY", "AGENT_LCARS_LINEAR_WEBHOOK_SECRET"])
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime[each.value].secret_id
+  role      = "roles/secretmanager.viewer"
+  member    = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
+resource "google_secret_manager_secret_iam_member" "linear_version_manager" {
+  for_each  = toset(["AGENT_LCARS_LINEAR_API_KEY", "AGENT_LCARS_LINEAR_WEBHOOK_SECRET"])
+  project   = var.project_id
+  secret_id = google_secret_manager_secret.runtime[each.value].secret_id
+  role      = "roles/secretmanager.secretVersionManager"
+  member    = "serviceAccount:service-${data.google_project.this.number}@gcp-sa-firebaseapphosting.iam.gserviceaccount.com"
 }
 
 # App Hosting resolves secret-version metadata during rollout preparation and

@@ -34,7 +34,7 @@ const EMPTY_DESCRIPTION = '(no description)';
  * misses `taskSchema`'s byte bound gets written unvalidated by
  * `FirestoreStore.apply` and then permanently refused by `readTask` --
  * the drain retries that task forever and the task page 500s. This is the
- * body-only first pass; `normalizeGithubWorkPayload` below must then check
+ * body-only first pass; `normalizeWorkPayload` below must then check
  * the actual serialized payload, including JSON escape expansion.
  *
  * `DESCRIPTION_BYTE_HEADROOM` reserves room in the byte budget for the
@@ -121,14 +121,14 @@ export function truncatedDescription(body: string | null | undefined): string {
 }
 
 /**
- * Normalizes one complete GitHub-derived Work payload for durable storage.
+ * Normalizes one complete adapter-derived Work payload for durable storage.
  * JSON escapes count here: a newline is one byte in GitHub's body but two
  * bytes in its serialized Work description, and control characters can
  * similarly expand to a six-byte `\\u00XX` escape. The only reliable budget
  * is therefore the full `JSON.stringify(payload)` value the store persists,
  * not the raw description's UTF-8 length.
  */
-export function normalizeGithubWorkPayload(input: {
+export function normalizeWorkPayload(input: {
   origin: WorkOrigin;
   spec: Omit<WorkSpec, 'description'> & {
     description: string | null | undefined;
@@ -178,7 +178,7 @@ export function normalizeGithubWorkPayload(input: {
     },
   };
   if (serializedWorkPayloadBytes(normalized) > WORK_PAYLOAD_MAX_BYTES) {
-    throw new Error('GitHub Work payload metadata exceeds its storage budget');
+    throw new Error('Work payload metadata exceeds its storage budget');
   }
   return workPayloadSchema.parse(normalized);
 }
@@ -218,7 +218,7 @@ export interface GithubWorkSource {
  * on every later request -- see the design spec's "write once" note).
  */
 export function workPayloadFromGithub(source: GithubWorkSource): WorkPayload {
-  return normalizeGithubWorkPayload({
+  return normalizeWorkPayload({
     origin: githubOrigin(source.actor),
     spec: {
       title: clampedTitle(source.title),
