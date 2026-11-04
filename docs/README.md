@@ -36,9 +36,6 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## Development and fleet adoption
 
-Weekly skill scoring of every admitted repository runs through native schedules
-described in [weekly skill evals](weekly-skill-evals.md).
-
 Repeatable local procedures live in [`playbooks/`](playbooks/README.md), starting
 with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
