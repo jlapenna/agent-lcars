@@ -447,9 +447,6 @@ jobs:
           cache-dependency-path: apps/runner-autoscaler/go.mod
           cache: false
 
-      - name: Test direct-runner.sh
-        run: bash apps/runner-autoscaler/runner-image/direct-runner.test.sh
-
       - uses: ./.github/actions/setup-node-pnpm
 
       - name: Test, typecheck, and build (console partition)
@@ -491,8 +488,21 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Store contract against the Firestore emulator
-        run: ./tools/nx run @agent-lcars/orchestrator:test-firestore
+      # These isolated fixtures spend most of their time waiting for owned
+      # child processes and emulator transactions. Both stay inside this
+      # job's existing CPU, memory and storage envelope.
+      - name: Test direct-runner.sh and Firestore store contracts
+        run: |
+          bash apps/runner-autoscaler/runner-image/direct-runner.test.sh &
+          direct_runner_pid=$!
+          direct_runner_status=0
+          firestore_status=0
+          ./tools/nx run @agent-lcars/orchestrator:test-firestore || firestore_status=$?
+          wait "$direct_runner_pid" || direct_runner_status=$?
+          if (( direct_runner_status != 0 || firestore_status != 0 )); then
+            echo "::error::Console contracts failed (direct-runner=$direct_runner_status, Firestore=$firestore_status)."
+            exit 1
+          fi
 
       - name: OpenAPI document is current
         run: ./tools/nx run @agent-lcars/work:openapi-check
