@@ -1,0 +1,29 @@
+{
+  "skill_name": "lcars-session-updates",
+  "evals": [
+    {
+      "name": "console-title-visibility",
+      "prompt": "I'm working interactively in the agent-lcars checkout and I'd like the LCARS console to show what this session is doing so I can tell it apart from the other ones. What commands would you run to set the session title and status? Don't run them, just tell me.",
+      "expected_output": "Gives the lcars session title and lcars session status commands and notes they are optional console-visibility updates for an interactive session, not a dispatch obligation.",
+      "assertions": [
+        "Names `lcars session title \"<current task>\"` and `lcars session status \"<current state>\"` as the commands",
+        "States that interactive sessions report progress in the conversation and do not need to load the headless dispatch protocol or its status cadence",
+        "Mentions tmux-window-title (or the tmux window title) for terminal visibility"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "name": "long-running-not-autonomous",
+      "prompt": "This session has been running for a couple of hours in a fleet repo and I stepped away for a bit. Does that mean you should switch to posting periodic status updates and PARK markers like the headless workers do? What should you do instead if I want to see where things are from the console?",
+      "expected_output": "Answers no: a long-running or temporarily unattended interactive session is not an autonomous worker; progress stays in the conversation, with optional lcars session title/status commands for console visibility.",
+      "assertions": [
+        "States that being long-running or having the user temporarily away does not turn an interactive session into an autonomous worker",
+        "Refuses to impose the headless protocol's status cadence, PARK outcomes or deliverable markers on the interactive session",
+        "Offers `lcars session title` / `lcars session status` as the optional console-visibility commands"
+      ],
+      "id": 2,
+      "files": []
+    }
+  ]
+}

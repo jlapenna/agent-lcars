@@ -1,0 +1,29 @@
+{
+  "skill_name": "lcars",
+  "evals": [
+    {
+      "name": "change-reconciliation-machinery",
+      "prompt": "I need to change how the orchestrator reconciles dispatched runs when a session resumes after a provider handoff. Before I start, where do I read up on how dispatch, reconciliation and auto-merge actually work under the hood today in the fleet control-plane repo?",
+      "expected_output": "Points to the control-plane summary (lcars-protocol.md) and the deeper lcars-protocol-reference.md for dispatch/reconciliation/session-resume internals, and notes that worker behavior lives separately in agent-protocol.",
+      "assertions": [
+        "Names lcars-protocol.md as the control-plane summary and lcars-protocol-reference.md as the implementation reference for dispatch, reconciliation and session-resume",
+        "States that fleet worker behavior lives in agent-protocol and general dev guardrails in agent-lcars-dev, not in this reference",
+        "Notes the reference is situational and not a mandatory dispatch document"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "name": "how-does-auto-merge-work",
+      "prompt": "Can you explain how the fleet control plane decides to auto-merge a bot PR and how provider telemetry feeds into that? I'm trying to understand the current machinery, not do a dispatch.",
+      "expected_output": "Explains this is a control-plane question answered by the LCARS protocol summary and reference documents, and distinguishes it from the worker protocol a dispatched agent follows.",
+      "assertions": [
+        "Directs to the LCARS control-plane documents (lcars-protocol.md / lcars-protocol-reference.md) as the source for auto-merge and telemetry machinery",
+        "Distinguishes the control-plane implementation reference from the agent-protocol a dispatched worker follows",
+        "Does not treat the request as a dispatched task or impose dispatch obligations"
+      ],
+      "id": 2,
+      "files": []
+    }
+  ]
+}

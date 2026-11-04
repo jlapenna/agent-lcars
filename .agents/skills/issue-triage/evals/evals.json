@@ -1,0 +1,29 @@
+{
+  "skill_name": "issue-triage",
+  "evals": [
+    {
+      "name": "audit-open-issues-remaining-gates",
+      "prompt": "Go through the open issues in the agent-lcars repo and tell me what is actually still left on each one. Several have merged PRs but I don't trust that they're done. For now just describe how you'd build the audit and classify what remains; don't change any issues.",
+      "expected_output": "Describes reconciling each issue against live ownership, PRs, deployments and runtime evidence, building an evidence ledger per requirement, and classifying each remaining gate (implementation, verification, access, external support, elapsed observation, persistent dashboard).",
+      "assertions": [
+        "States that a merged PR or green CI does not make an issue complete and that implemented code must be distinguished from verified outcomes",
+        "Lists the remaining-gate classes such as implementation, verification, access, external support, elapsed observation and persistent dashboard",
+        "Keeps delivery states separate (local, pushed, merged, deployed, runtime, authenticated rendered, longitudinal) and cites exact revisions/runs as evidence"
+      ],
+      "id": 1,
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "workstream-what-remains",
+      "prompt": "Three issues in the agent-lcars fleet-triage workstream have merged PRs and the console was deployed yesterday, but nobody has written down what is actually left. Before I close any of them, how would you work out what remains on each and what evidence counts? Describe the procedure; don't change the issues.",
+      "expected_output": "Separates implemented code from verified outcomes, names the delivery states and remaining-gate classes, and asks for exact revisions, deploy runs and runtime evidence before anything is closed.",
+      "files": [],
+      "assertions": [
+        "States that a merged PR or a completed deploy does not by itself complete an issue and that implemented code must be distinguished from verified outcomes",
+        "Names remaining-gate classes such as implementation, verification, access, external support, elapsed observation or persistent dashboard",
+        "Requires exact evidence such as the deployed revision, deploy run or runtime observation before closing an issue"
+      ]
+    }
+  ]
+}
