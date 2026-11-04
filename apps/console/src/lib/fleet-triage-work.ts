@@ -4,10 +4,10 @@ import {
   FLEET_TRIAGE_OPERATION,
   fleetTriageInputSchema,
   fleetTriageReportSchema,
+  type TriageAnchor,
   type TriagePublication,
 } from '@agent-lcars/dispatch-contracts';
 import {
-  type GithubAnchor,
   isRefusal,
   type Orchestrator,
   type OrchestratorStore,
@@ -16,6 +16,7 @@ import {
 import { ulid, workPayloadSchema } from '@agent-lcars/work';
 
 import {
+  hasTriageDispatchLabel,
   loadTriageSource,
   triageDigest,
   triageEligible,
@@ -25,10 +26,10 @@ import {
 } from './fleet-triage-source';
 import { getWatchedRepos } from './watched-repos-config';
 
-const TRIAGE_DESCRIPTION = `Investigate the single issue identified by the JSON context in this brief. This is read-only triage: do not change GitHub, files, labels, assignments, or PRs.
+const TRIAGE_DESCRIPTION = `Investigate the single issue identified by the JSON context in this brief. This is read-only triage: do not change the tracker, files, labels, assignments, or PRs.
 Read the target repository's current AGENTS.md and triage guidance, the issue and comments, linked PRs and current source. Follow duplicates and deployment evidence where relevant. Verify claims against current source and record its exact revision. Do not treat an ordinary investigation failure as a human decision.
 Return only one JSON object (no fences) with exactly these required fields: sourceRevision copied exactly from context (1–128 characters), disposition (ready, needs-evidence, needs-owner, duplicate, or not-a-bug), summary (1–2000 characters), evidence (1–8 strings, each 1–1000 characters, with concrete source/URL references), acceptanceCriteria (0–8 strings, each 1–500 characters), and labels (0–12 existing type:*, component:*, or app:* metadata labels, each 1–100 characters, excluding bug/type:bug and all control labels). Include acceptanceCriteria: [] or labels: [] when there are none; never omit either field. All strings must be nonblank. Check every field and character limit before returning the JSON.
-Use ready only for a confirmed defect with enough reproduction evidence to write a failing regression test, concrete acceptance criteria, bounded scope and no unresolved owner-only decision. The server will recheck ownership and publish approved effects; ready authorizes normal agent:opencode intake, never a redispatch. No closure or assignment change is proposed. Use needs-owner only for a specific decision or action that the owner genuinely controls. The final JSON report must fit 16384 characters.`;
+Use ready only for a confirmed defect with enough reproduction evidence to write a failing regression test, concrete acceptance criteria, bounded scope and no unresolved owner-only decision. The server will recheck ownership and publish approved effects; ready authorizes the configured tracker dispatch route, never a redispatch. No closure or assignment change is proposed. Use needs-owner only for a specific decision or action that the owner genuinely controls. The final JSON report must fit 16384 characters.`;
 
 export interface TriageRuntime {
   store: OrchestratorStore;
@@ -37,7 +38,7 @@ export interface TriageRuntime {
 
 export async function reconcileFleetTriage(
   runtime: TriageRuntime,
-  anchor: GithubAnchor,
+  anchor: TriageAnchor,
   deleted = false,
 ): Promise<void> {
   const observedAt = new Date().toISOString();
@@ -55,7 +56,7 @@ export async function reconcileFleetTriage(
   if (history.latest === undefined) return;
   const result = await runtime.orchestrator.invalidateSource(
     history.latest.runId,
-    { github: observedAt },
+    { ['source' in anchor ? 'linear' : 'github']: observedAt },
   );
   if (isRefusal(result))
     throw new Error(`Triage invalidation refused: ${result.reason}`);
@@ -63,7 +64,7 @@ export async function reconcileFleetTriage(
 
 export async function readTriageHistory(
   store: OrchestratorStore,
-  anchor: GithubAnchor,
+  anchor: TriageAnchor,
 ) {
   const workId = await store.readSourceWorkId(triageSourceKey(anchor));
   if (workId === undefined)
@@ -81,14 +82,19 @@ export async function readTriageHistory(
 
 export async function admitFleetTriage(
   runtime: TriageRuntime,
-  anchor: GithubAnchor,
+  anchor: TriageAnchor,
   loadSource: (
     store: OrchestratorStore,
-    anchor: GithubAnchor,
+    anchor: TriageAnchor,
   ) => Promise<TriageSource> = loadTriageSource,
 ): Promise<void> {
   const source = await loadSource(runtime.store, anchor);
   const history = await readTriageHistory(runtime.store, anchor);
+  if (history.workId && source.issue)
+    await runtime.orchestrator.refreshIssue(
+      { workId: history.workId },
+      source.issue,
+    );
   const pending = history.latest?.triagePublication;
   if (!triageEligible(source)) {
     // The dispatch label is the final intended effect. Its read-back settles
@@ -96,13 +102,13 @@ export async function admitFleetTriage(
     if (
       pending?.state === 'pending' &&
       pending.dispatchRequested &&
-      source.labels.includes('agent:opencode')
+      hasTriageDispatchLabel(source)
     )
       return;
     if (history.latest !== undefined) {
       const invalidated = await runtime.orchestrator.invalidateSource(
         history.latest.runId,
-        { github: source.observedAt },
+        { ['source' in anchor ? 'linear' : 'github']: source.observedAt },
       );
       if (isRefusal(invalidated))
         throw new Error(`Triage invalidation refused: ${invalidated.reason}`);
@@ -118,17 +124,22 @@ export async function admitFleetTriage(
     ...anchor,
     fingerprint: triageFingerprint(source, history.owned),
   });
-  const observedAt = { github: source.observedAt };
+  const observedAt = {
+    ['source' in anchor ? 'linear' : 'github']: source.observedAt,
+  };
   const key = triageDigest({ input, observedAt });
   const workId =
     history.workId ??
     (await runtime.store.resolveSourceWorkId(triageSourceKey(anchor), ulid()));
   const work = workPayloadSchema.parse({
-    origin: { principal: 'svc:fleet-triage', channel: 'github' },
+    origin: {
+      principal: 'svc:fleet-triage',
+      channel: 'source' in anchor ? 'linear' : 'github',
+    },
     spec: {
-      title: `Triage ${anchor.repo}#${anchor.issue}`,
+      title: `Triage ${source.issue?.identifier ?? ('issue' in anchor ? `${anchor.repo}#${anchor.issue}` : anchor.source.issueId)}`,
       description: TRIAGE_DESCRIPTION,
-      pipeline: 'opencode',
+      pipeline: source.pipeline ?? 'opencode',
       priority: 'background',
       deliverable: 'report',
       target: { repo: anchor.repo },
@@ -137,17 +148,18 @@ export async function admitFleetTriage(
   const admitted = await runtime.orchestrator.request({
     taskId: { workId },
     requestId: key,
-    pipeline: 'opencode',
+    pipeline: source.pipeline ?? 'opencode',
     priority: 'background',
     params: { mode: 'implement' },
     work,
+    ...(source.issue ? { issue: source.issue } : {}),
     sourceRevision: { key, input, observedAt },
     isStoredWorkCompatible: (stored) => {
       const parsed = workPayloadSchema.safeParse(stored);
       return (
         parsed.success &&
         parsed.data.origin.principal === work.origin.principal &&
-        parsed.data.spec.pipeline === 'opencode' &&
+        parsed.data.spec.pipeline === (source.pipeline ?? 'opencode') &&
         parsed.data.spec.deliverable === 'report' &&
         parsed.data.spec.target.repo === anchor.repo
       );
@@ -163,7 +175,9 @@ export function triageBriefContext(run: Run): string | undefined {
     ? JSON.stringify({
         operation: FLEET_TRIAGE_OPERATION,
         repo: input.data.repo,
-        issue: input.data.issue,
+        ...('source' in input.data
+          ? { source: input.data.source }
+          : { issue: input.data.issue }),
         sourceRevision: run.sourceRevision?.key,
       })
     : undefined;

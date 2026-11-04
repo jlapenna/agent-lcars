@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import { required } from '@agent-lcars/util-server';
 import { CloudTasksClient } from '@google-cloud/tasks';
 
@@ -21,6 +23,7 @@ export interface GitHubWebhookEnvelope {
 }
 
 export interface WebhookTask {
+  oidcToken?: { serviceAccountEmail: string; audience: string };
   taskId: string;
   url: string;
   headers: Record<string, string>;
@@ -50,6 +53,9 @@ class GoogleCloudTasksWebhookQueue implements WebhookTaskQueue {
           httpMethod: 'POST',
           headers: task.headers,
           body: task.body,
+          ...(task.oidcToken === undefined
+            ? {}
+            : { oidcToken: task.oidcToken }),
         },
         ...(task.scheduleTime && { scheduleTime: task.scheduleTime }),
         // Firestore authority deliberately waits for a contested lease before
@@ -70,6 +76,53 @@ function isAlreadyExists(error: unknown): boolean {
     'code' in error &&
     error.code === 6
   );
+}
+
+/** The public endpoint checks Linear's signature/freshness before durable
+ * enqueue. Google authenticates delayed delivery; queued retries do not
+ * reinterpret an old timestamp as a fresh public webhook. */
+export async function enqueueLinearWebhook(
+  rawBody: Buffer,
+  signature: string,
+  queue: WebhookTaskQueue = defaultWebhookTaskQueue,
+  repair?: { generation: number; notBefore: Date },
+): Promise<{ outcome: 'enqueued' | 'duplicate' }> {
+  const target = `${required('AUTH_URL').replace(/\/$/u, '')}/api/control-plane/linear/process`;
+  try {
+    await queue.enqueue({
+      taskId: `linear-${createHash('sha256').update(rawBody).digest('hex')}${repair ? `-repair-${repair.generation}` : ''}`,
+      url: target,
+      headers: {
+        'content-type': 'application/json',
+        'linear-signature': signature,
+        ...(repair
+          ? {
+              'x-agent-lcars-projection-repair-generation': String(
+                repair.generation,
+              ),
+            }
+          : {}),
+      },
+      body: rawBody,
+      oidcToken: {
+        serviceAccountEmail: required(
+          'AGENT_LCARS_WEBHOOK_TASK_SERVICE_ACCOUNT',
+        ),
+        audience: target,
+      },
+      ...(repair
+        ? {
+            scheduleTime: {
+              seconds: Math.floor(repair.notBefore.getTime() / 1000),
+            },
+          }
+        : {}),
+    });
+    return { outcome: 'enqueued' };
+  } catch (error) {
+    if (isAlreadyExists(error)) return { outcome: 'duplicate' };
+    throw error;
+  }
 }
 
 export async function enqueueGitHubWebhook(

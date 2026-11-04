@@ -220,7 +220,7 @@ export async function requestReply(
           )
           .digest('hex')}`;
   const replay =
-    request.requestId === undefined
+    request.requestId === undefined && request.ref === undefined
       ? undefined
       : runs.find(
           (run) =>
@@ -233,7 +233,10 @@ export async function requestReply(
   }
   // Historical receipt recovery is read-only. Cancellation only forbids
   // new admission; it must not erase a previously admitted caller receipt.
-  if (state === 'canceled')
+  if (
+    state === 'canceled' &&
+    (task.task.closedAt !== undefined || task.task.issue === undefined)
+  )
     return { ok: false, code: 'CONFLICT', message: 'task-closed' };
   const latest = latestRun(runs);
   // Widened to `string` by `Run.pipeline`/`ReplyRequest.pipeline` (both
@@ -312,7 +315,7 @@ export async function requestReply(
   });
   if (isRefusal(outcome)) {
     if (
-      request.requestId !== undefined &&
+      (request.requestId !== undefined || request.ref !== undefined) &&
       outcome.reason === 'duplicate-request' &&
       outcome.existingRun !== undefined
     ) {

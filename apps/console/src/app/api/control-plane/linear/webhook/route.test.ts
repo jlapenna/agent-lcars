@@ -2,30 +2,26 @@
 import { createHmac } from 'node:crypto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const { getConfig, admit, getRuntime, afterResponse, drain } = vi.hoisted(
-  () => ({
-    getConfig: vi.fn(),
-    admit: vi.fn(),
-    getRuntime: vi.fn(),
-    afterResponse: vi.fn(),
-    drain: vi.fn(),
-  }),
-);
+const { getConfig, enqueue } = vi.hoisted(() => ({
+  getConfig: vi.fn(),
+  enqueue: vi.fn(),
+}));
 vi.mock('@/lib/linear-config', () => ({ linearConfig: getConfig }));
-vi.mock('@/lib/orchestrator-runtime', () => ({
-  createOrchestratorRuntime: getRuntime,
+vi.mock('@/lib/hosted-webhook-queue', () => ({
+  enqueueLinearWebhook: enqueue,
 }));
-vi.mock('@/lib/linear-intake', async (original) => ({
-  ...(await original<typeof import('@/lib/linear-intake')>()),
-  admitLinearWebhook: admit,
-}));
-vi.mock('next/server', () => ({ after: afterResponse }));
-
 import { POST } from './route';
-
-function request(signature?: string) {
-  const body = '{"test":true}';
+const org = '11111111-1111-4111-8111-111111111111';
+const id = '44444444-4444-4444-8444-444444444444';
+function request(signature?: string, overrides: Record<string, unknown> = {}) {
+  const body = JSON.stringify({
+    type: 'Issue',
+    action: 'update',
+    organizationId: org,
+    webhookTimestamp: Date.now(),
+    data: { id },
+    ...overrides,
+  });
   return new Request(
     'https://console.example/api/control-plane/linear/webhook',
     {
@@ -42,38 +38,57 @@ function request(signature?: string) {
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv('AGENT_LCARS_LINEAR_WEBHOOK_SECRET', 'test-secret');
-  getConfig.mockReturnValue({ organizationId: 'org', routes: [] });
-  getRuntime.mockReturnValue({ drain });
-  admit.mockResolvedValue({
-    status: 200,
-    body: { outcome: 'minted', itemId: 'item-1' },
-  });
+  getConfig.mockReturnValue({ organizationId: org, routes: [] });
+  enqueue.mockResolvedValue({ outcome: 'enqueued' });
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('Linear webhook HTTP boundary', () => {
-  it('requires a valid HMAC before creating a runtime or admitting work', async () => {
+  it('requires valid HMAC before any queue write', async () => {
     const response = await POST(request('invalid'));
     expect(response.status).toBe(401);
     expect(response.headers.get('cache-control')).toBe('no-store');
-    expect(getRuntime).not.toHaveBeenCalled();
-    expect(admit).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
-  it('acknowledges durable admission before running the dispatch drain', async () => {
-    const response = await POST(request());
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({ itemId: 'item-1' });
-    expect(drain).not.toHaveBeenCalled();
-    await afterResponse.mock.calls[0][0]();
-    expect(drain).toHaveBeenCalledOnce();
+  it('acknowledges only after Cloud Tasks durably owns the signed original bytes', async () => {
+    let resolve!: (value: unknown) => void;
+    enqueue.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    let acknowledged = false;
+    const req = request();
+    const raw = await req.clone().text();
+    const response = POST(req).then((value) => {
+      acknowledged = true;
+      return value;
+    });
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledOnce());
+    expect(acknowledged).toBe(false);
+    expect(enqueue).toHaveBeenCalledWith(
+      Buffer.from(raw),
+      req.headers.get('linear-signature'),
+    );
+    resolve({ outcome: 'enqueued' });
+    expect((await response).status).toBe(200);
   });
-  it('returns retryable failure for a durable-store error', async () => {
-    admit.mockRejectedValue(new Error('store unavailable'));
+  it('returns retryable failure if queue ownership fails', async () => {
+    enqueue.mockRejectedValue(new Error('queue unavailable'));
     expect((await POST(request())).status).toBe(500);
-    expect(afterResponse).not.toHaveBeenCalled();
   });
-  it('returns 503 while the optional integration is disabled', async () => {
+  it('rejects stale events and wrong organizations before the durable queue', async () => {
+    expect(
+      (await POST(request(undefined, { webhookTimestamp: Date.now() - 60001 })))
+        .status,
+    ).toBe(401);
+    expect(
+      (await POST(request(undefined, { organizationId: id }))).status,
+    ).toBe(200);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+  it('returns 503 while the integration is disabled', async () => {
     getConfig.mockReturnValue(undefined);
     expect((await POST(request())).status).toBe(503);
-    expect(admit).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });

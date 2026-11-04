@@ -17,6 +17,7 @@ import {
   type AnchorOwner,
   fallbackPipelinesSchema,
   githubDispatchAnchorSchema,
+  issueLookupSchema,
   type ItemsContract,
   itemsContract,
   itemStateSchema,
@@ -33,6 +34,8 @@ import { OpenAPILink } from '@orpc/openapi/fetch';
 import { ulid } from 'ulid';
 
 export interface WorkCommandDeps {
+  runId?: string;
+  runToken?: string;
   fetchImpl: typeof fetch;
   token: () => Promise<string>;
   origin: string;
@@ -49,6 +52,10 @@ export const WORK_CLI_USAGE =
   '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] [--profile <name>] | work job get <occurrence-id>\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
+  '       work owner linear:<identifier> [--json] | work issue <owner/repo#n|linear:identifier>\n' +
+  '       work issues [refresh] --tracker <github|linear> [--repo <owner/name>] [--team <uuid>] [--cursor <cursor>]\n' +
+  '       work dispatch <owner/repo#n|linear:identifier> --pipeline <claude|codex|opencode> --request-id <key> [--repo <owner/name>]\n' +
+  '       work source [--cursor <cursor>] (inside an LCARS run: read its issue and comments without tracker credentials)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
   '       status exits 1 for failed work (with or without --watch); other states exit 0.\n' +
   '       owner exits 0 with any verdict (fleet-run, interactive-session, none); 1 when session telemetry was unavailable.';
@@ -59,8 +66,13 @@ export function defaultWorkCommandDeps(
   env: NodeJS.ProcessEnv,
 ): WorkCommandDeps {
   return {
+    runId: env['LCARS_RUN_ID'],
+    runToken: env['LCARS_RUN_TOKEN'],
     fetchImpl: globalThis.fetch,
-    origin: env['LCARS_URL'] ?? 'https://lcars.jlapenna.net',
+    origin:
+      env['LCARS_CONSOLE_URL'] ??
+      env['LCARS_URL'] ??
+      'https://lcars.jlapenna.net',
     now: () => new Date(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     stdout: (line) => process.stdout.write(`${line}\n`),
@@ -177,8 +189,12 @@ function parseAnchorRef(
 /** Human rendering of an anchor-owner answer: the verdict first, then the
  *  evidence it rests on, one fact per line. */
 function ownerLines(owner: AnchorOwner): string[] {
+  const reference =
+    'tracker' in owner.anchor && owner.anchor.tracker === 'linear'
+      ? (owner.identifier ?? `linear:${owner.anchor.issueId}`)
+      : `${'repo' in owner.anchor ? owner.anchor.repo : ''}#${'issue' in owner.anchor ? owner.anchor.issue : ''}`;
   const lines = [
-    `${owner.anchor.repo}#${owner.anchor.issue}  ${owner.verdict}${owner.complete ? '' : '  (incomplete)'}`,
+    `${reference}  ${owner.verdict}${owner.complete ? '' : '  (incomplete)'}`,
   ];
   const { task } = owner;
   if (task === undefined) {
@@ -242,6 +258,32 @@ export async function executeWorkCommand(
   const c = client(deps);
   try {
     switch (sub) {
+      case 'source': {
+        const parsed = parseArgs({
+          args: rest,
+          strict: true,
+          options: { cursor: { type: 'string' } },
+        });
+        if (!deps.runId || !deps.runToken)
+          throw new Error(
+            'work source requires an LCARS run; use work issue for operator reads',
+          );
+        const query = parsed.values.cursor
+          ? `?${new URLSearchParams({ cursor: parsed.values.cursor })}`
+          : '';
+        const response = await deps.fetchImpl(
+          `${deps.origin}/api/work/v1/runs/${encodeURIComponent(deps.runId)}/issue-source${query}`,
+          {
+            headers: { authorization: `Bearer ${deps.runToken}` },
+            redirect: 'error',
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+        if (!response.ok)
+          throw new Error(`Run issue source HTTP ${response.status}`);
+        deps.stdout(JSON.stringify(await response.json()));
+        return { ok: true };
+      }
       case 'job': {
         const { values, positionals } = parseArgs({
           args: rest,
@@ -336,15 +378,115 @@ export async function executeWorkCommand(
           positionals.length === 1 && rest.length - positionals.length <= 1
             ? parseAnchorRef(positionals[0] ?? '')
             : undefined;
-        if (anchor === undefined) return usageFailure(deps);
-        const owner = await c.anchorOwner(anchor, {
-          signal: AbortSignal.timeout(15_000),
-        });
+        const lookup =
+          positionals[0]?.startsWith('linear:') &&
+          positionals.length === 1 &&
+          rest.length - positionals.length <= 1
+            ? issueLookupSchema.parse({
+                tracker: 'linear',
+                issue: positionals[0].slice(7),
+              })
+            : undefined;
+        if (anchor === undefined && lookup === undefined)
+          return usageFailure(deps);
+        const owner = lookup
+          ? await c.issueOwner(lookup, { signal: AbortSignal.timeout(15_000) })
+          : await c.anchorOwner(anchor as NonNullable<typeof anchor>, {
+              signal: AbortSignal.timeout(15_000),
+            });
         if (json) deps.stdout(JSON.stringify(owner));
         else for (const ownerLine of ownerLines(owner)) deps.stdout(ownerLine);
         for (const warning of owner.warnings)
           deps.stderr(`warning: ${warning}`);
         return { ok: owner.complete };
+      }
+      case 'issue':
+      case 'dispatch': {
+        const parsed = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          strict: true,
+          options: {
+            repo: { type: 'string' },
+            pipeline: { type: 'string' },
+            'request-id': { type: 'string' },
+          },
+        });
+        if (parsed.positionals.length !== 1) return usageFailure(deps);
+        const ref = parsed.positionals[0] as string;
+        const github = parseAnchorRef(ref);
+        const lookup = issueLookupSchema.parse(
+          ref.startsWith('linear:')
+            ? { tracker: 'linear', issue: ref.slice(7) }
+            : {
+                tracker: 'github',
+                issue: String(github?.issue ?? ''),
+                repo: github?.repo,
+              },
+        );
+        const source = await c.issueGet(lookup, {
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (sub === 'issue') {
+          deps.stdout(JSON.stringify(source));
+          return { ok: true };
+        }
+        if (!parsed.values.pipeline || !parsed.values['request-id'])
+          return usageFailure(deps);
+        const result = await c.issueDispatch(
+          {
+            issue: source.issue.reference,
+            repo: parsed.values.repo ?? source.repo,
+            pipeline: workSpecSchema.shape.pipeline.parse(
+              parsed.values.pipeline,
+            ),
+            requestId: parsed.values['request-id'],
+          },
+          { signal: AbortSignal.timeout(30_000) },
+        );
+        deps.stdout(JSON.stringify(result));
+        return { ok: true };
+      }
+      case 'issues': {
+        const parsed = parseArgs({
+          args: rest,
+          allowPositionals: true,
+          strict: true,
+          options: {
+            tracker: { type: 'string' },
+            repo: { type: 'string' },
+            team: { type: 'string' },
+            cursor: { type: 'string' },
+          },
+        });
+        const tracker = parsed.values.tracker;
+        if (
+          !['github', 'linear'].includes(tracker ?? '') ||
+          parsed.positionals.length > 1 ||
+          (parsed.positionals[0] && parsed.positionals[0] !== 'refresh')
+        )
+          return usageFailure(deps);
+        const result =
+          parsed.positionals[0] === 'refresh'
+            ? await c.issueRefresh(
+                {
+                  tracker: tracker as 'github' | 'linear',
+                  teamId: parsed.values.team,
+                  cursor: parsed.values.cursor,
+                },
+                { signal: AbortSignal.timeout(60_000) },
+              )
+            : await c.issueList(
+                {
+                  tracker: tracker as 'github' | 'linear',
+                  repo: parsed.values.repo,
+                  cursor: parsed.values.cursor,
+                  limit: 50,
+                },
+                { signal: AbortSignal.timeout(15_000) },
+              );
+        deps.stdout(JSON.stringify(result));
+        return { ok: true };
       }
       case 'reply': {
         const parsed = parseArgs({

@@ -1,7 +1,11 @@
 import {
   humanNeededActionsSchema,
+  issueCommentSchema,
+  issueReferenceSchema,
   providerRoutingSchema,
   runPlacementSchema,
+  trackerIssueProjectionSchema,
+  trackerIssueSchema,
   triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
@@ -90,6 +94,7 @@ const deliveryBindingSchema = z.object({
 });
 
 export const itemRunViewSchema = z.strictObject({
+  issue: trackerIssueSchema.optional(),
   triagePublication: triagePublicationSchema.optional(),
   delivery: deliveryBindingSchema.optional(),
   runId: z.string(),
@@ -164,6 +169,7 @@ export const itemViewSchema = z.strictObject({
   state: itemStateSchema,
   spec: storedWorkSpecSchema,
   origin: workOriginSchema,
+  issue: trackerIssueSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
   closedAt: z.string().optional(),
@@ -251,7 +257,10 @@ export const anchorOwnerCliSessionSchema = z.strictObject({
 });
 
 export const anchorOwnerSchema = z.strictObject({
-  anchor: githubDispatchAnchorSchema,
+  anchor: z.union([githubDispatchAnchorSchema, issueReferenceSchema]),
+  identifier: z.string().optional(),
+  repository: z.string().optional(),
+  workId: workIdSchema.optional(),
   observedAt: z.iso.datetime(),
   verdict: anchorOwnerVerdictSchema,
   /** False when CLI session telemetry could not be read in full. */
@@ -278,7 +287,148 @@ export const anchorOwnerSchema = z.strictObject({
 });
 export type AnchorOwner = z.output<typeof anchorOwnerSchema>;
 
+export const issueLookupSchema = z
+  .strictObject({
+    tracker: z.enum(['github', 'linear']),
+    issue: z.string().min(1).max(256),
+    repo: workTargetSchema.shape.repo.optional(),
+  })
+  .refine(
+    (input) =>
+      input.tracker !== 'github' ||
+      (input.repo !== undefined && /^[1-9][0-9]*$/u.test(input.issue)),
+    {
+      message:
+        'GitHub issue lookup requires a repository and positive issue number',
+    },
+  );
+export const issueSourceViewSchema = trackerIssueProjectionSchema.extend({
+  workId: workIdSchema.optional(),
+});
+
 export const itemsContract = {
+  issueOwner: base
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/issues/owner',
+        operationId: 'getIssueOwner',
+        summary: 'Read authoritative ownership for a GitHub or Linear issue',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Tracker or repository access denied' },
+      NOT_FOUND: { message: 'Issue source unavailable' },
+      CONFLICT: { message: 'Issue source conflicts with existing Work' },
+      BAD_REQUEST: { message: 'Invalid issue source request' },
+    })
+    .input(issueLookupSchema)
+    .output(anchorOwnerSchema),
+  issueGet: base
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/issues/source',
+        operationId: 'getIssueSource',
+        summary: 'Read an issue and its existing Work binding',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Tracker or repository access denied' },
+      NOT_FOUND: { message: 'Issue source unavailable' },
+      CONFLICT: { message: 'Issue source conflicts with existing Work' },
+      BAD_REQUEST: { message: 'Invalid issue source request' },
+    })
+    .input(issueLookupSchema)
+    .output(issueSourceViewSchema),
+  issueList: base
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/issues',
+        operationId: 'listIssueSources',
+        summary: 'Browse current issue projections without dispatching work',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Tracker or repository access denied' },
+      NOT_FOUND: { message: 'Issue source unavailable' },
+      CONFLICT: { message: 'Issue source conflicts with existing Work' },
+      BAD_REQUEST: { message: 'Invalid issue source request' },
+    })
+    .input(
+      z.strictObject({
+        tracker: z.enum(['github', 'linear']),
+        repo: workTargetSchema.shape.repo.optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+        cursor: z.string().max(2048).optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        issues: z.array(issueSourceViewSchema),
+        nextCursor: z.string().optional(),
+      }),
+    ),
+  issueRefresh: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/issues/refresh',
+        operationId: 'refreshIssueSources',
+        summary: 'Refresh one bounded page of configured tracker issues',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Tracker or repository access denied' },
+      NOT_FOUND: { message: 'Issue source unavailable' },
+      CONFLICT: { message: 'Issue source conflicts with existing Work' },
+      BAD_REQUEST: { message: 'Invalid issue source request' },
+    })
+    .input(
+      z.strictObject({
+        tracker: z.enum(['github', 'linear']),
+        teamId: z.uuid().optional(),
+        cursor: z.string().max(2048).optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        refreshed: z.number().int().nonnegative(),
+        nextCursor: z.string().optional(),
+      }),
+    ),
+  issueDispatch: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/issues/dispatch',
+        operationId: 'dispatchIssue',
+        summary:
+          'Dispatch or continue an issue through its canonical Work pipeline',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Tracker or repository access denied' },
+      NOT_FOUND: { message: 'Issue source unavailable' },
+      CONFLICT: { message: 'Issue source conflicts with existing Work' },
+      BAD_REQUEST: { message: 'Invalid issue source request' },
+    })
+    .input(
+      z.strictObject({
+        issue: issueReferenceSchema,
+        repo: workTargetSchema.shape.repo.optional(),
+        pipeline: z.enum(PIPELINES),
+        requestId: z.string().min(1).max(128),
+      }),
+    )
+    .output(
+      z.strictObject({
+        runId: z.string(),
+        workId: workIdSchema.optional(),
+        location: z.string(),
+      }),
+    ),
   anchorOwner: base
     .meta(
       openapi({
@@ -960,6 +1110,7 @@ export const runClaimResponseSchema = z.strictObject({
 });
 
 const runBriefSharedSchema = {
+  issue: trackerIssueSchema.optional(),
   pipeline: z.string(),
   /** The worker behavior requested at admission, never inferred from labels. */
   mode: z.string(),
@@ -1038,6 +1189,37 @@ const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
+  issueSource: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/issue-source',
+        operationId: 'getRunIssueSource',
+        summary: 'Read this run’s issue source and a bounded page of comments',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      NOT_FOUND: { message: 'Run has no issue source' },
+      FORBIDDEN: {
+        message: 'Source moved outside the admitted repository scope',
+      },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        cursor: z.string().max(2048).optional(),
+      }),
+    )
+    .output(
+      z.strictObject({
+        issue: trackerIssueSchema,
+        admittedIssue: trackerIssueSchema.optional(),
+        comments: z.array(issueCommentSchema),
+        nextCursor: z.string().optional(),
+      }),
+    ),
   claim: runBase
     .meta(
       openapi({

@@ -60,6 +60,7 @@ function successor(input: {
   const next = requestRun({
     now: input.now,
     task: input.settled.task,
+    issue: previous.issue,
     taskId: previous.task,
     activeRun: undefined,
     requestId: `fallback:${previous.runId}`,

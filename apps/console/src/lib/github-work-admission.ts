@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { AGENT_LABELS, REVIEW_LABELS } from '@agent-lcars/dispatch-contracts';
 import {
   decidedRun,
@@ -32,6 +33,7 @@ import { authorizeProviderFallback } from './work-provider-fallback';
  * user-facing response, but none may make an independent request/drain
  * decision. */
 export interface GithubWorkAdmissionInput {
+  issue?: TrackerIssue;
   anchor: TaskId;
   requestId: string;
   /** Optional opaque source-to-canonical binding resolved atomically with
@@ -214,6 +216,7 @@ export async function admitGithubWork(
           ),
     params: input.params,
     work,
+    ...(input.issue === undefined ? {} : { issue: input.issue }),
     // This comparison must execute in the store transaction. A standalone
     // read can race another first admission: its Work wins the Task write,
     // but this request would otherwise mint a Run for a different pipeline.

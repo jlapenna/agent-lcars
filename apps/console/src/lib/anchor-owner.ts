@@ -1,12 +1,22 @@
 import 'server-only';
 
-import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import {
+  issueSourceKey,
+  type TrackerIssue,
+} from '@agent-lcars/dispatch-contracts';
+import {
+  type OrchestratorStore,
+  type Task,
+  type TaskId,
+  taskKey,
+} from '@agent-lcars/orchestrator';
 import type { anchorOwnerSchema } from '@agent-lcars/work';
 import { toItemView } from '@agent-lcars/work/derive';
 import type { z } from 'zod';
 
 import { sessionReferencesItemNumber } from './claimed-idle';
 import type { CliSession } from './cli-sessions';
+import { issueReferenceForTask } from './issue-trackers';
 import type { WorkContext } from './work-mint';
 
 /** The handler's side of the contract: `z.input`, because oRPC validates the
@@ -43,35 +53,32 @@ function toOwnerSession(
  * over an interactive session because the run holds the task's mutex; both
  * are still reported as evidence.
  */
-export async function readAnchorOwner(
-  context: Pick<WorkContext, 'sessionsFor' | 'now'> & {
-    runtime: { store: OrchestratorStore };
-    cliSessions: WorkContext['cliSessions'];
-  },
-  anchor: { repo: string; issue: number },
-): Promise<AnchorOwner> {
-  const [owner = '', name = ''] = anchor.repo.split('/');
-  const taskId = { repo: anchor.repo, issue: anchor.issue };
+type OwnerContext = Pick<WorkContext, 'sessionsFor' | 'now' | 'cliSessions'> & {
+  runtime: { store: OrchestratorStore };
+};
+
+async function readTaskOwner(
+  context: OwnerContext,
+  taskId: TaskId | undefined,
+  repository: string,
+  matches: (session: CliSession, task?: Task) => boolean,
+): Promise<Omit<AnchorOwner, 'anchor'>> {
+  const [owner = '', name = ''] = repository.split('/');
   const [versioned, cli] = await Promise.all([
-    context.runtime.store.readTask(taskId),
+    taskId ? context.runtime.store.readTask(taskId) : undefined,
     context.cliSessions({ owner, name }),
   ]);
-
   let task: AnchorOwner['task'];
-  if (versioned !== undefined) {
+  if (versioned && taskId) {
     const runs = await context.runtime.store.listRuns(taskId);
     const item = toItemView({
-      workId: `${anchor.repo}#${anchor.issue}`,
+      workId: taskKey(taskId),
       task: versioned.task,
       runs,
     });
     const { activeRunId } = versioned.task;
-    // `item.runs` is oldest first; the live run is the mutex holder when
-    // there is one, otherwise the newest run is the most recent evidence.
     const run =
-      (activeRunId === undefined
-        ? undefined
-        : item.runs.find((candidate) => candidate.runId === activeRunId)) ??
+      item.runs.find((candidate) => candidate.runId === activeRunId) ??
       item.runs.at(-1);
     task = {
       state: item.state,
@@ -79,38 +86,100 @@ export async function readAnchorOwner(
       runCount: versioned.task.runCount,
       ...(activeRunId === undefined ? {} : { activeRunId }),
       updatedAt: versioned.task.updatedAt,
-      ...(run === undefined ? {} : { run }),
-      runSessions:
-        run === undefined ? [] : await context.sessionsFor([run.runId]),
+      ...(run ? { run } : {}),
+      runSessions: run ? await context.sessionsFor([run.runId]) : [],
     };
   }
-
-  const item = { repo: { owner, name }, number: anchor.issue };
   const matching = cli.sessions.filter((session) =>
-    sessionReferencesItemNumber(session, item),
+    matches(session, versioned?.task),
   );
-  // The fleet owns the anchor exactly when the item is `running`: a live run
-  // holds the mutex, or a settled run's PR is still waiting to merge
-  // (`deriveItemState`). A parked or failed item with that same waiting
-  // binding is back in a human's court, so the binding alone is not a
-  // verdict.
-  const verdict: AnchorOwner['verdict'] =
-    task?.state === 'running'
-      ? 'fleet-run'
-      : matching.some(isActive)
-        ? 'interactive-session'
-        : 'none';
-
   return {
-    anchor: taskId,
     observedAt: context.now().toISOString(),
-    verdict,
+    verdict:
+      task?.state === 'running'
+        ? 'fleet-run'
+        : matching.some(isActive)
+          ? 'interactive-session'
+          : 'none',
     complete: cli.warnings.length === 0,
     warnings: cli.warnings,
-    ...(task === undefined ? {} : { task }),
+    ...(task ? { task } : {}),
     cliSessions: [
       ...matching.filter(isActive),
       ...matching.filter((session) => !isActive(session)),
     ].map(toOwnerSession),
+  };
+}
+
+export async function readAnchorOwner(
+  context: OwnerContext,
+  anchor: { repo: string; issue: number },
+): Promise<AnchorOwner> {
+  const [owner = '', name = ''] = anchor.repo.split('/');
+  return {
+    anchor,
+    ...(await readTaskOwner(context, anchor, anchor.repo, (session) =>
+      sessionReferencesItemNumber(session, {
+        repo: { owner, name },
+        number: anchor.issue,
+      }),
+    )),
+  };
+}
+
+export async function readTrackerIssueOwner(
+  context: OwnerContext,
+  issue: TrackerIssue,
+  repository: string,
+): Promise<AnchorOwner> {
+  const reference = issue.reference;
+  if (reference.tracker === 'github')
+    return {
+      ...(await readAnchorOwner(context, reference)),
+      anchor: reference,
+      identifier: issue.identifier,
+      repository,
+    };
+  const workId = await context.runtime.store.readSourceWorkId(
+    issueSourceKey(reference),
+  );
+  if (workId) {
+    const existing = await context.runtime.store.readTask({ workId });
+    const bound = existing && issueReferenceForTask(existing.task);
+    if (
+      existing &&
+      (!bound || issueSourceKey(bound) !== issueSourceKey(reference))
+    )
+      throw new Error('Issue source binding does not match stored Work');
+  }
+  const identifier = issue.identifier.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const branchReference = new RegExp(
+    `(?:^|[^a-z0-9])${identifier}(?:[^a-z0-9]|$)`,
+    'iu',
+  );
+  const ownership = await readTaskOwner(
+    context,
+    workId ? { workId } : undefined,
+    repository,
+    (session, task) => {
+      if (
+        !session.repo ||
+        `${session.repo.owner}/${session.repo.name}`.toLowerCase() !==
+          repository.toLowerCase()
+      )
+        return false;
+      return (
+        (session.pr !== undefined &&
+          task?.delivery?.number === session.pr.number) ||
+        (session.branch !== undefined && branchReference.test(session.branch))
+      );
+    },
+  );
+  return {
+    anchor: reference,
+    identifier: issue.identifier,
+    repository,
+    ...(workId ? { workId } : {}),
+    ...ownership,
   };
 }

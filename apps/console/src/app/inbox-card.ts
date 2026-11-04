@@ -1,6 +1,6 @@
 import type { RunResult } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
-import type { WorkSummary } from '@agent-lcars/work/derive';
+import { type WorkSummary, workTitle } from '@agent-lcars/work/derive';
 import type { ReactNode } from 'react';
 
 import { repoItemKey } from '../lib/watched-repo';
@@ -134,7 +134,7 @@ export function inboxCardMetadata(card: InboxCard) {
         card.kind === 'report' ? 'report-ready' : 'needs-human',
       ] as const,
       rank: card.kind === 'report' ? actionTypeMeta('report-ready').rank : 0,
-      search: `${card.work.id} ${card.work.spec.title} ${workRepository(card.work.spec)} ${nativeCardText(card)}`,
+      search: `${card.work.id} ${workTitle(card.work)} ${workRepository(card.work.spec)} ${nativeCardText(card)}`,
     };
   }
   return {

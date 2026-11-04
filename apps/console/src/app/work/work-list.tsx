@@ -1,7 +1,7 @@
 import { QUEUE_PIPELINE_MAX_LIVE_CLAIMS } from '@agent-lcars/orchestrator';
 import { workRepository } from '@agent-lcars/work';
 import type { ItemState, ItemView } from '@agent-lcars/work/derive';
-import { latestRun } from '@agent-lcars/work/derive';
+import { latestRun, workTitle } from '@agent-lcars/work/derive';
 import {
   Anchor,
   Badge,
@@ -20,6 +20,7 @@ import {
 } from '@mantine/core';
 
 import { ExecutionStatus } from '../execution-status';
+import { IssueSourceLink } from '../issue-source';
 import { RelativeTime } from '../relative-time';
 import { eventOperation } from './event-work';
 
@@ -109,11 +110,12 @@ function ItemCell({ item }: { item: ItemView }) {
       <span className="work-item-ref">
         {workRepository(item.spec)} · {item.origin.principal}
       </span>
+      {item.issue ? <IssueSourceLink issue={item.issue} /> : null}
       {run?.sourceRevision && (
         <Text size="xs">Event-driven · {eventOperation(run)}</Text>
       )}
       <Anchor href={`/work/${item.id}`} className="work-item-title">
-        {item.spec.title}
+        {workTitle(item)}
       </Anchor>
     </>
   );

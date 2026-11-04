@@ -10,6 +10,7 @@ export {
   type HumanNeededActions,
   humanNeededActionsSchema,
 } from './human-needed-actions';
+export * from './issue-tracker';
 export {
   formatAttemptId,
   formatClaimMarker,

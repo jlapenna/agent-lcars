@@ -1,3 +1,7 @@
+import type {
+  IssueReference,
+  TriageAnchor,
+} from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   isWorkAnchor,
@@ -12,9 +16,11 @@ import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   githubAnchorProjectionAnchorsFromDelivery,
   githubAnchorProjectionDeletionFromDelivery,
+  githubAnchorProjectionFromDelivery,
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
 import { admitGithubWork } from '@/lib/github-work-admission';
+import { issueFromGithubProjection } from '@/lib/issue-trackers';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { wakeDeliveryMonitor } from '@/lib/orchestrator-dispatch';
 import {
@@ -40,7 +46,7 @@ export interface OrchestratorRouteDeps {
   store: OrchestratorStore;
   executeModelWork?: (deadline: number) => Promise<void>;
   reconcileIssueTriage?: (
-    anchor: Extract<TaskId, { repo: string }>,
+    anchor: TriageAnchor,
     deleted?: boolean,
   ) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
@@ -60,8 +66,9 @@ export interface OrchestratorRouteDeps {
    * reopen. A close webhook that is dropped entirely needs no sweep: the
    * claim route repeats this read before a closed anchor's queued
    * implementation run could reach a worker (`runs-router.ts`). */
-  loadGithubAnchorLifecycle?: (
-    anchor: Extract<TaskId, { repo: string }>,
+  loadIssueLifecycle?: (
+    anchor: IssueReference,
+    repository?: string,
   ) => Promise<GithubAnchorLifecycle | undefined>;
   /** Test seam for the exact server-side refresh; production uses the shared
    * reconciler rather than interpreting partial webhook payloads. */
@@ -283,12 +290,15 @@ async function handleIgnoredDelivery(
   if (
     closure !== undefined &&
     !isWorkAnchor(closure.taskId) &&
-    deps.loadGithubAnchorLifecycle !== undefined
+    deps.loadIssueLifecycle !== undefined
   ) {
     // Refresh first, then verify current GitHub state. A delayed close
     // delivery may arrive after the same generation reopened; the old
     // payload timestamp alone cannot distinguish that case.
-    const lifecycle = await deps.loadGithubAnchorLifecycle(closure.taskId);
+    const lifecycle = await deps.loadIssueLifecycle({
+      tracker: 'github',
+      ...closure.taskId,
+    });
     if (lifecycle?.state === 'closed') {
       const activeRun = await deps.store.readActiveRun(closure.taskId);
       // Closed anchors still support explicit review and tagged-reply
@@ -371,7 +381,15 @@ async function decideDelivery(
     params: interpreted.params,
   });
 
+  const projection = githubAnchorProjectionFromDelivery({
+    ...input,
+    event: input.event === 'issue_comment' ? 'issues' : input.event,
+    observedAt: new Date().toISOString(),
+  });
   const outcome = await admitGithubWork(deps, {
+    ...(projection === undefined
+      ? {}
+      : { issue: issueFromGithubProjection(projection) }),
     anchor: interpreted.taskId,
     requestId: interpreted.requestId,
     params,

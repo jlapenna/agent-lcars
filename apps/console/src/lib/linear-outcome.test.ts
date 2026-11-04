@@ -23,12 +23,31 @@ function api() {
   const archived = new Set<string>();
   const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
     const request = JSON.parse(init?.body as string) as {
+      query: string;
       variables: {
         id?: string;
         includeArchived?: boolean;
         input?: { id: string; body: string; issueId: string };
       };
     };
+    if (request.query.includes('query LcarsIssue('))
+      return Response.json({
+        data: {
+          organization: { id: org },
+          issue: {
+            id: issueId,
+            identifier: 'ENG-42',
+            title: 'Search',
+            description: 'Fix search',
+            url: 'https://linear.app/example/issue/ENG-42',
+            updatedAt: '2026-11-04T10:00:00Z',
+            team: { id: org },
+            state: { id: org, name: 'Backlog', type: 'backlog' },
+            assignee: null,
+            labels: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
+      });
     const input = request.variables.input;
     if (input) {
       comments.set(input.id, input.body);
@@ -65,7 +84,7 @@ describe('Linear outcome delivery', () => {
     expect(comments.size).toBe(1);
     expect([...comments.values()][0]).toContain('Needs input');
     expect([...comments.values()][0]).toContain(payload.consoleUrl);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(fetchImpl.mock.calls[0][0]).toBe('https://api.linear.app/graphql');
     expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
       Authorization: 'test-api-key',
@@ -89,7 +108,7 @@ describe('Linear outcome delivery', () => {
     await deliverLinearOutcome(payload, fetchImpl);
     for (const id of comments.keys()) archived.add(id);
     await deliverLinearOutcome(payload, fetchImpl);
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(comments.size).toBe(1);
   });
   it('posts protected delivery separately from execution settlement', async () => {
@@ -147,6 +166,25 @@ describe('Linear outcome delivery', () => {
     fetchImpl.mockResolvedValueOnce(
       Response.json({
         data: { organization: { id: org }, comments: { nodes: [] } },
+      }),
+    );
+    fetchImpl.mockImplementationOnce(async () =>
+      Response.json({
+        data: {
+          organization: { id: org },
+          issue: {
+            id: issueId,
+            identifier: 'ENG-42',
+            title: 'Search',
+            description: '',
+            url: 'https://linear.app/example/issue/ENG-42',
+            updatedAt: '2026-11-04T10:00:00Z',
+            team: { id: org },
+            state: { id: org, name: 'Backlog', type: 'backlog' },
+            assignee: null,
+            labels: { nodes: [], pageInfo: { hasNextPage: false } },
+          },
+        },
       }),
     );
     fetchImpl.mockResolvedValueOnce(

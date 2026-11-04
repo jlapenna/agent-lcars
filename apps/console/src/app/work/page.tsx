@@ -277,6 +277,9 @@ function WorkViewContent({
               Apply
             </button>
             {/* The header subtitle carries this link only on wide screens. */}
+            <Anchor href="/work/issues" size="sm">
+              Issue sources →
+            </Anchor>
             <Anchor
               href="/work/schedules"
               size="sm"

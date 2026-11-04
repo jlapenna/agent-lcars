@@ -1,18 +1,12 @@
 import 'server-only';
 
-import type { ScheduleStore } from '@agent-lcars/orchestrator';
 import { PIPELINES } from '@agent-lcars/work';
 
 import { issueCommentEventSchema, type Pipeline } from './orchestrator-ingest';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import type { WorkPrincipal, WorkScope } from './work-auth';
-import type { WorkContext } from './work-mint';
 import { requestReply } from './work-reply';
-import {
-  sessionDocsForRuns,
-  sessionForResume,
-  sessionsForRuns,
-} from './work-sessions';
+import { createReplyContext } from './work-reply-context';
 
 type RouteResult = { status: number; body: Record<string, unknown> };
 
@@ -36,45 +30,6 @@ const TAGGED_REPLY_PRINCIPAL: WorkPrincipal = {
   pipelines: [...PIPELINES],
   via: 'oidc',
 };
-
-/** Replies never read schedules. Fail locally if that contract changes. */
-const unreachableScheduleStore: ScheduleStore = {
-  readSchedule: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-  mutateSchedule: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-  listTickSchedules: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-  writeSchedule: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-  listSchedules: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-  listEnabledSchedules: () => {
-    throw new Error('tagged-reply: scheduleStore is not available here');
-  },
-};
-
-/** Builds the authenticated context required by `requestReply`. */
-function taggedReplyContext(runtime: OrchestratorRouteDeps): WorkContext {
-  return {
-    principal: TAGGED_REPLY_PRINCIPAL,
-    runtime,
-    sessionsFor: sessionsForRuns,
-    getSessionDoc: sessionForResume,
-    sessionDocsForRuns,
-    cliSessions: async () => {
-      throw new Error('tagged-reply: cliSessions is not available here');
-    },
-    scheduleStore: unreachableScheduleStore,
-    grants: () => [],
-    now: () => new Date(),
-  };
-}
 
 /**
  * The resume attempt behind a *tagged* GitHub reply
@@ -116,19 +71,22 @@ export async function attemptTaggedReplyResume(
   if (!parsed.success) return undefined;
   const { repository, issue, comment, sender } = parsed.data;
 
-  const outcome = await requestReply(taggedReplyContext(deps), {
-    task: { repo: repository.full_name, issue: issue.number },
-    text: comment.body,
-    // Preserve the validated trigger's provider choice. requestReply starts
-    // fresh on a provider switch and keeps the original Work spec intact.
-    pipeline: input.pipeline,
-    channel: 'github',
-    principal: `github:${sender.login}`,
-    // The comment's own URL: an idempotent request id, so a redelivery of
-    // this webhook maps back to the run it already minted rather than
-    // minting a second one.
-    ...(comment.html_url === undefined ? {} : { ref: comment.html_url }),
-  });
+  const outcome = await requestReply(
+    createReplyContext(deps, TAGGED_REPLY_PRINCIPAL),
+    {
+      task: { repo: repository.full_name, issue: issue.number },
+      text: comment.body,
+      // Preserve the validated trigger's provider choice. requestReply starts
+      // fresh on a provider switch and keeps the original Work spec intact.
+      pipeline: input.pipeline,
+      channel: 'github',
+      principal: `github:${sender.login}`,
+      // The comment's own URL: an idempotent request id, so a redelivery of
+      // this webhook maps back to the run it already minted rather than
+      // minting a second one.
+      ...(comment.html_url === undefined ? {} : { ref: comment.html_url }),
+    },
+  );
 
   if (!outcome.ok) return undefined;
   return {

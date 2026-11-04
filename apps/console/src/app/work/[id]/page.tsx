@@ -1,5 +1,5 @@
 import { isSourceManagedWork } from '@agent-lcars/work';
-import { type ItemView, latestRun } from '@agent-lcars/work/derive';
+import { type ItemView, latestRun, workTitle } from '@agent-lcars/work/derive';
 import { Stack, Text } from '@mantine/core';
 import { notFound, redirect } from 'next/navigation';
 import { Suspense } from 'react';
@@ -11,6 +11,7 @@ import { resolvePrincipal, workGrants } from '@/lib/work-grants';
 import { ConsoleCommandUtilities } from '../../console-command-utilities';
 import { DetailWorkspace } from '../../detail-workspace';
 import { formatRelativeTime } from '../../format';
+import { IssueSourcePanel } from '../../issue-source';
 import { NavPageLoading } from '../../page-loading';
 import { TaskDetailHistory } from '../../task/task-detail-history';
 import { withConsolePageShell } from '../../with-console-page-shell';
@@ -70,8 +71,10 @@ export function WorkDetailViewContent({
   return (
     <DetailWorkspace ariaLabel="Work item">
       <Stack gap={28}>
-        {isSourceManagedWork({ origin: item.origin, spec: item.spec }) ||
-        item.spec.pipeline === 'goose' ? (
+        {item.issue ? (
+          <IssueSourcePanel issue={item.issue} />
+        ) : isSourceManagedWork({ origin: item.origin, spec: item.spec }) ||
+          item.spec.pipeline === 'goose' ? (
           <Text>{item.spec.description}</Text>
         ) : (
           <EditWork
@@ -160,7 +163,7 @@ async function WorkDetailPageContent({ params }: PageProps) {
       }
     : { status: 'ok', item: item as ItemView };
 
-  const title = detail.status === 'ok' ? detail.item.spec.title : 'Work item';
+  const title = detail.status === 'ok' ? workTitle(detail.item) : 'Work item';
   const subtitle =
     detail.status === 'ok'
       ? `Work item · ${id} · updated ${formatRelativeTime(detail.item.updatedAt)}`

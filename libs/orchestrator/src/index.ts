@@ -21,3 +21,10 @@ export * from './provider-fallback';
 export * from './queue-admission-status';
 export * from './schedule-store';
 export * from './store';
+export {
+  type IssueReference,
+  issueReferenceSchema,
+  issueSourceKey,
+  type TrackerIssue,
+  trackerIssueSchema,
+} from '@agent-lcars/dispatch-contracts';

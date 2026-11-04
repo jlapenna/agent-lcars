@@ -1,4 +1,10 @@
 import {
+  type IssueReference,
+  issueSourceKey,
+  type TrackerIssueProjection,
+  trackerIssueProjectionSchema,
+} from '@agent-lcars/dispatch-contracts';
+import {
   type CollectionReference,
   type DocumentReference,
   FieldPath,
@@ -109,6 +115,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #sourceWorkIds: CollectionReference;
   readonly #requestBindings: CollectionReference;
   readonly #githubAnchors: CollectionReference;
+  readonly #trackerIssues: CollectionReference;
   readonly #providerCooldowns: CollectionReference;
   readonly #priorityPositions: CollectionReference;
 
@@ -130,6 +137,7 @@ export class FirestoreStore implements OrchestratorStore {
       `${prefix}request-bindings`,
     );
     this.#githubAnchors = this.#firestore.collection(`${prefix}github-anchors`);
+    this.#trackerIssues = this.#firestore.collection(`${prefix}issue-sources`);
     this.#providerCooldowns = this.#firestore.collection(
       `${prefix}provider-cooldowns`,
     );
@@ -728,6 +736,56 @@ export class FirestoreStore implements OrchestratorStore {
     return snapshot.exists
       ? z.object({ workId: z.string() }).parse(snapshot.data()).workId
       : undefined;
+  }
+
+  async readTrackerIssue(
+    reference: IssueReference,
+  ): Promise<TrackerIssueProjection | undefined> {
+    const snapshot = await this.#trackerIssues
+      .doc(encodeURIComponent(issueSourceKey(reference)))
+      .get();
+    return snapshot.exists
+      ? trackerIssueProjectionSchema.parse(snapshot.data())
+      : undefined;
+  }
+
+  async writeTrackerIssue(input: TrackerIssueProjection): Promise<void> {
+    const projection = trackerIssueProjectionSchema.parse(input);
+    const ref = this.#trackerIssues.doc(
+      encodeURIComponent(issueSourceKey(projection.issue.reference)),
+    );
+    await this.#firestore.runTransaction(async (tx) => {
+      const previous = await tx.get(ref);
+      if (
+        previous.exists &&
+        Date.parse(
+          trackerIssueProjectionSchema.parse(previous.data()).issue.updatedAt,
+        ) >= Date.parse(projection.issue.updatedAt)
+      )
+        return;
+      tx.set(ref, projection);
+    });
+  }
+
+  async listTrackerIssues(input: {
+    limit: number;
+    cursor?: string;
+  }): Promise<{ issues: TrackerIssueProjection[]; nextCursor?: string }> {
+    const query = this.#trackerIssues.orderBy(FieldPath.documentId());
+    const page = await (
+      input.cursor === undefined
+        ? query
+        : query.startAfter(encodeURIComponent(input.cursor))
+    )
+      .limit(input.limit + 1)
+      .get();
+    const docs = page.docs.slice(0, input.limit);
+    return {
+      issues: docs.map((doc) => trackerIssueProjectionSchema.parse(doc.data())),
+      ...(page.docs.length > input.limit
+        ? { nextCursor: decodeURIComponent(docs[docs.length - 1].id) }
+        : {}),
+    };
   }
 
   async resolveSourceWorkId(

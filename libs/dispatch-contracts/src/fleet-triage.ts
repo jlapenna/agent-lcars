@@ -1,12 +1,24 @@
 import { z } from 'zod';
 
+import { linearIssueReferenceSchema } from './issue-tracker';
+
 export const FLEET_TRIAGE_OPERATION = 'fleet-triage:v1' as const;
-export const fleetTriageInputSchema = z.strictObject({
+const githubTriageInputSchema = z.strictObject({
   operation: z.literal(FLEET_TRIAGE_OPERATION),
   repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/u),
   issue: z.number().int().positive(),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
 });
+const linearTriageInputSchema = githubTriageInputSchema
+  .omit({ issue: true })
+  .extend({ source: linearIssueReferenceSchema });
+export const fleetTriageInputSchema = z.union([
+  githubTriageInputSchema,
+  linearTriageInputSchema,
+]);
+export type TriageAnchor =
+  | { repo: string; issue: number }
+  | { repo: string; source: z.infer<typeof linearIssueReferenceSchema> };
 
 /** A report proposes effects; it never grants its own authority to write. */
 export const fleetTriageReportSchema = z
@@ -39,10 +51,10 @@ export type FleetTriageReport = z.infer<typeof fleetTriageReportSchema>;
 export const triagePublicationSchema = z.strictObject({
   state: z.enum(['pending', 'complete', 'superseded', 'failed']),
   commentBody: z.string().max(16_384).optional(),
-  commentId: z.number().int().positive().optional(),
+  commentId: z.union([z.number().int().positive(), z.uuid()]).optional(),
   sourceComment: z
     .strictObject({
-      id: z.number().int().positive(),
+      id: z.union([z.number().int().positive(), z.uuid()]),
       body: z.string().max(65_536),
       updatedAt: z.iso.datetime(),
     })

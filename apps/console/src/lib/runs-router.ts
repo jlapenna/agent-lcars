@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   parseRunGeneration,
@@ -39,7 +40,10 @@ import type {
   DispatchTokenProvider,
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
+import { issueReferenceForTask, issueTracker } from './issue-trackers';
+import { workAtRun } from './issue-work-brief';
 import { resolveJobGithubCredential } from './job-github-credentials';
+import { linearConfig, linearIssueRepository } from './linear-config';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
   readyDeliveryBinding,
@@ -84,8 +88,9 @@ export interface RunsContext {
   loadReadyDeliveryBinding?: typeof readyDeliveryBinding;
   /** Exact lifecycle read before exposing a claimed GitHub implementation
    * run to a worker. Undefined is allowed for isolated callers/tests. */
-  loadGithubAnchorLifecycle?: (
-    anchor: Extract<Run['task'], { repo: string }>,
+  loadIssueLifecycle?: (
+    anchor: IssueReference,
+    repository?: string,
   ) => Promise<GithubAnchorLifecycle | undefined>;
   /** Injected clock: every timestamp this router stamps (`requireRunToken`'s
    *  lease-expiry check, `claim`'s `claimedAt`, `checkoutToken`'s
@@ -258,6 +263,40 @@ async function drainAfterCompletion(
 }
 
 export const runsRouter = os.router({
+  issueSource: os.issueSource.handler(async ({ input, context, errors }) => {
+    const run = await requireRunToken(context, input.runId);
+    const task = await context.store.readTask(run.task);
+    const reference = task && issueReferenceForTask(task.task);
+    if (!reference) throw errors.NOT_FOUND();
+    const tracker = issueTracker({ tokens: context.tokens });
+    const issue = await tracker.read(reference);
+    if (!issue) throw errors.NOT_FOUND();
+    if (reference.tracker === 'linear' && task) {
+      const config = linearConfig();
+      const spec = storedWorkPayloadSchema.parse(task.task.work).spec;
+      if (
+        !config ||
+        config.organizationId !== reference.organizationId ||
+        !('target' in spec) ||
+        !config.routes.some(
+          (route) =>
+            route.teamId === issue.teamId && route.repo === spec.target.repo,
+        ) ||
+        (linearIssueRepository(config, issue) !== undefined &&
+          linearIssueRepository(config, issue) !== spec.target.repo)
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Issue moved outside this run’s repository scope',
+        });
+    }
+    const page = await tracker.comments(reference, input.cursor);
+    await requireRunToken(context, input.runId);
+    return {
+      issue,
+      ...(run.issue ? { admittedIssue: run.issue } : {}),
+      ...page,
+    };
+  }),
   claim: executor.claim.handler(async ({ input, context }) => {
     // The executor's authenticated grant is the only claim capability
     // source; a caller cannot choose a pipeline set that competes with
@@ -294,12 +333,29 @@ export const runsRouter = os.router({
         tokenHash: hashRunToken(token),
       });
       if (claimed === undefined) return undefined;
+      const storedTask = isWorkAnchor(claimed.task)
+        ? (await context.store.readTask(claimed.task))?.task
+        : undefined;
+      const source = isWorkAnchor(claimed.task)
+        ? storedTask === undefined
+          ? undefined
+          : issueReferenceForTask(storedTask)
+        : { tracker: 'github' as const, ...claimed.task };
       if (
-        !isWorkAnchor(claimed.task) &&
+        source !== undefined &&
         claimed.params?.['mode'] === 'implement' &&
-        context.loadGithubAnchorLifecycle !== undefined
+        context.loadIssueLifecycle !== undefined
       ) {
-        const lifecycle = await context.loadGithubAnchorLifecycle(claimed.task);
+        const spec = storedTask
+          ? storedWorkPayloadSchema.parse(storedTask.work).spec
+          : undefined;
+        const lifecycle =
+          source.tracker === 'linear'
+            ? await context.loadIssueLifecycle(
+                source,
+                spec && 'target' in spec ? spec.target.repo : undefined,
+              )
+            : await context.loadIssueLifecycle(source);
         if (lifecycle === undefined) {
           // The QueueExecutor's whole claim request is bounded at ten
           // seconds. Return uncertain work to the queue under the exact
@@ -331,7 +387,7 @@ export const runsRouter = os.router({
           // queued records without waiting for another webhook.
           const canceled = await context.orchestrator.cancel(
             claimed.runId,
-            `GitHub anchor confirmed closed at ${lifecycle.sourceUpdatedAt}`,
+            `${source.tracker} issue confirmed closed at ${lifecycle.sourceUpdatedAt}`,
           );
           if (!isRefusal(canceled)) {
             await context.drain();
@@ -471,6 +527,7 @@ export const runsRouter = os.router({
       });
     }
     const shared = {
+      ...(run.issue === undefined ? {} : { issue: run.issue }),
       pipeline: run.pipeline,
       ...params,
       attemptId: formatAttemptId({ generation, intentId: run.runId }),
@@ -480,7 +537,9 @@ export const runsRouter = os.router({
     };
 
     if (!isWorkAnchor(run.task)) {
-      const parsed = workPayloadSchema.safeParse(task?.task.work);
+      const parsed = workPayloadSchema.safeParse(
+        workAtRun(run, task?.task.work),
+      );
       if (!parsed.success) {
         throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
       }
@@ -496,7 +555,7 @@ export const runsRouter = os.router({
       };
     }
 
-    const work = task?.task.work;
+    const work = workAtRun(run, task?.task.work);
     if (work === undefined || task === undefined) {
       throw errors.UNAUTHORIZED({ message: 'run has no dispatchable Work' });
     }

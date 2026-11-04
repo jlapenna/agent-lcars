@@ -98,3 +98,11 @@ domain-owned documentation, executable contracts, explicit authority, and
 outcome-matched proof. This direction is informed by Ryan Lopopolo's
 [Harness Engineering](https://github.com/lopopolo/harness-engineering) field
 guide and adapted to Agent LCARS's existing control-plane and fleet contracts.
+
+Issue tracker sources (GitHub and Linear) have typed identities independent of
+checkout repositories. Task holds current source metadata; Run holds the
+immutable admitted snapshot. Tracker adapters own transport, while ownership,
+queue admission, reply/session handling, event-driven triage and delivery use
+the shared Work machinery. `/work/issues` and the issue-source API browse or
+refresh bounded projection pages without dispatching work. See
+[Linear tracker operations](docs/linear.md) for routing and lifecycle policy.

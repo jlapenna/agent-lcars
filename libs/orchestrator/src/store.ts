@@ -1,3 +1,7 @@
+import type {
+  IssueReference,
+  TrackerIssueProjection,
+} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 import type { Decision, Refusal } from './decide';
@@ -227,6 +231,14 @@ export interface OpenGithubAnchorProjectionPage {
  * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
+  readTrackerIssue(
+    reference: IssueReference,
+  ): Promise<TrackerIssueProjection | undefined>;
+  writeTrackerIssue(projection: TrackerIssueProjection): Promise<void>;
+  listTrackerIssues(input: {
+    limit: number;
+    cursor?: string;
+  }): Promise<{ issues: TrackerIssueProjection[]; nextCursor?: string }>;
   /** Bounded, read-only durable feeds; any overflow marks the snapshot incomplete. */
   readLifecycleMetricRecords(
     input: LifecycleMetricRead,

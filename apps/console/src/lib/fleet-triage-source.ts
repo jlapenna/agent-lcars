@@ -2,7 +2,11 @@ import 'server-only';
 
 import { createHash } from 'node:crypto';
 
-import type { TriagePublication } from '@agent-lcars/dispatch-contracts';
+import type {
+  TrackerIssue,
+  TriageAnchor,
+  TriagePublication,
+} from '@agent-lcars/dispatch-contracts';
 import type {
   GithubAnchor,
   OrchestratorStore,
@@ -11,25 +15,34 @@ import type {
 import { readAnchorOwner } from './anchor-owner';
 import { getCliSessions } from './cli-sessions';
 import { getGithubClient } from './github-client';
+import { loadLinearTriageSource } from './linear-triage-source';
 import { getWatchedRepos } from './watched-repos-config';
 import { sessionsForRuns } from './work-sessions';
 
-export const triageSourceKey = (anchor: GithubAnchor) =>
-  `fleet-triage:v1:${anchor.repo}:${anchor.issue}`;
-export const triageMarker = (anchor: GithubAnchor) =>
+export const triageSourceKey = (anchor: TriageAnchor) =>
+  'source' in anchor
+    ? `fleet-triage:v1:linear:${anchor.source.organizationId}:${anchor.source.issueId}`
+    : `fleet-triage:v1:${anchor.repo}:${anchor.issue}`;
+export const triageMarker = (anchor: TriageAnchor) =>
   `<!-- ${triageSourceKey(anchor)} -->`;
 export const triageDigest = (value: unknown) =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export interface TriageSource {
-  anchor: GithubAnchor;
+  anchor: TriageAnchor;
+  issue?: TrackerIssue;
+  pipeline?: 'claude' | 'codex' | 'opencode' | 'goose';
+  bug?: boolean;
+  routed?: boolean;
+  labelIds?: string[];
+  dispatchLabel?: string;
   observedAt: string;
   title: string;
   body: string;
   state: string;
   labels: string[];
   assignees: string[];
-  comments: { id: number; body: string; updatedAt: string }[];
+  comments: { id: number | string; body: string; updatedAt: string }[];
   openFixPr: boolean;
   owned: boolean;
   parked: boolean;
@@ -40,7 +53,9 @@ export function triageEligible(source: TriageSource): boolean {
   return (
     source.enabled &&
     source.state === 'open' &&
-    source.labels.some((label) => label === 'bug' || label === 'type:bug') &&
+    (source.bug ??
+      source.labels.some((label) => label === 'bug' || label === 'type:bug')) &&
+    !source.routed &&
     source.assignees.length === 0 &&
     !source.openFixPr &&
     !source.owned &&
@@ -56,6 +71,9 @@ export function triageFingerprint(
   owned?: TriagePublication,
 ): string {
   return triageDigest({
+    ...(source.bug === undefined
+      ? {}
+      : { bug: source.bug, routed: source.routed }),
     title: source.title,
     body: source.body,
     state: source.state,
@@ -80,7 +98,9 @@ export function triageFingerprint(
             : [owned.sourceComment]
           : [comment],
       )
-      .sort((a, b) => a.id - b.id),
+      .sort((a, b) =>
+        String(a.id).localeCompare(String(b.id), undefined, { numeric: true }),
+      ),
   });
 }
 
@@ -154,8 +174,9 @@ async function hasOpenFixPr(anchor: GithubAnchor): Promise<boolean> {
  * replace a newer decision even if its webhook was delivered later. */
 export async function loadTriageSource(
   store: OrchestratorStore,
-  anchor: GithubAnchor,
+  anchor: TriageAnchor,
 ): Promise<TriageSource> {
+  if ('source' in anchor) return loadLinearTriageSource(store, anchor);
   const observedAt = new Date().toISOString();
   const [owner = '', repo = ''] = anchor.repo.split('/');
   const github = getGithubClient();
@@ -212,4 +233,10 @@ export async function loadTriageSource(
         `${item.owner}/${item.name}` === anchor.repo && item.agents !== false,
     ),
   };
+}
+
+export function hasTriageDispatchLabel(source: TriageSource): boolean {
+  return source.labelIds
+    ? source.labelIds.includes(source.dispatchLabel ?? '')
+    : source.labels.includes('agent:opencode');
 }

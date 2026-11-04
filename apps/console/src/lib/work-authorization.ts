@@ -61,6 +61,8 @@ export function scopedWorkGrant(
  * the transaction-time policy checks in its owning service. */
 const workIdPattern = WORK_ID_PATTERN.source.slice(1, -1);
 const repositoryBoundOperations: ReadonlyArray<readonly [string, RegExp]> = [
+  ['GET', /^\/issues(?:\/(?:owner|source))?$/u],
+  ['POST', /^\/issues\/dispatch$/u],
   ['GET', /^\/(?:items|schedules|jobs)$/u],
   ['GET', /^\/anchors\/github\/owner$/u],
   ['GET', new RegExp(`^/items/${workIdPattern}$`, 'u')],

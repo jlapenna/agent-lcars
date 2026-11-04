@@ -8,6 +8,7 @@ import type {
 
 import { githubAnchorProjectionFromDelivery } from './github-anchor-projection';
 import { getGithubClient } from './github-client';
+import { issueFromGithubProjection } from './issue-trackers';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 
 const ENRICHMENT_BATCH_SIZE = 25;
@@ -403,9 +404,9 @@ export async function refreshCurrentGithubAnchorProjection(
   anchor: GithubAnchorProjection['anchor'],
   input: { deleted?: boolean } = {},
 ): Promise<void> {
-  const { store } = createOrchestratorRuntime();
+  const { store, orchestrator } = createOrchestratorRuntime();
   const github = getGithubClient();
-  await refreshGithubAnchorProjection(
+  const projection = await refreshGithubAnchorProjection(
     {
       store,
       load: (current) => loadCurrentGithubAnchorProjection(github, current),
@@ -413,4 +414,9 @@ export async function refreshCurrentGithubAnchorProjection(
     anchor,
     input,
   );
+  if (projection)
+    await orchestrator.refreshIssue(
+      anchor,
+      issueFromGithubProjection(projection),
+    );
 }

@@ -2,6 +2,7 @@ import type { ItemView } from '@agent-lcars/work/derive';
 import { Anchor, Badge, Code, Group, Stack, Text } from '@mantine/core';
 
 import { HumanNeededSummary } from '../human-needed-summary';
+import { IssueSourceLink } from '../issue-source';
 import { ProviderFallbackSummary } from './provider-fallback-summary';
 import { resultRefs } from './result-refs';
 import { safeHttpUrl } from './safe-url';
@@ -108,16 +109,23 @@ export function Conversation({
     <Stack gap="md">
       {item.runs.map((run, index) => {
         const isFirstRound = index === 0;
-        const humanText = isFirstRound ? item.spec.description : run.reply;
-        const humanPrincipal = isFirstRound
-          ? item.origin.principal
-          : (run.replyPrincipal ?? 'unknown');
-        const humanChannel = isFirstRound
-          ? item.origin.channel
-          : (run.replyChannel ?? 'unknown');
+        const humanText =
+          run.reply ??
+          (isFirstRound
+            ? (run.issue?.description ?? item.spec.description)
+            : undefined);
+        const humanPrincipal =
+          isFirstRound && run.reply === undefined
+            ? item.origin.principal
+            : (run.replyPrincipal ?? 'unknown');
+        const humanChannel =
+          isFirstRound && run.reply === undefined
+            ? item.origin.channel
+            : (run.replyChannel ?? 'unknown');
         const session = item.sessions.find((s) => s.runId === run.runId);
         return (
           <Stack key={run.runId} gap="xs">
+            {run.issue ? <IssueSourceLink issue={run.issue} /> : null}
             <ProviderFallbackSummary run={run} />
             {humanText !== undefined && (
               <HumanTurn

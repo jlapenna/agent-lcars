@@ -2,10 +2,10 @@ import 'server-only';
 
 import type {
   FleetTriageReport,
+  TriageAnchor,
   TriagePublication,
 } from '@agent-lcars/dispatch-contracts';
 import type {
-  GithubAnchor,
   LeasedOutboxEntry,
   OrchestratorStore,
   Run,
@@ -18,16 +18,17 @@ import {
   triageMarker,
   type TriageSource,
 } from './fleet-triage-source';
+import { hasTriageDispatchLabel } from './fleet-triage-source';
+import { hasCodingHistory, triageTracker } from './fleet-triage-tracker';
 import {
   parseTriageReport,
   readTriageHistory,
   recordTriagePublication,
 } from './fleet-triage-work';
-import { getGithubClient } from './github-client';
 
 export function triageComment(
   run: Run,
-  anchor: GithubAnchor,
+  anchor: TriageAnchor,
   report: FleetTriageReport,
   dispatchedBefore = false,
 ): string {
@@ -42,51 +43,6 @@ export function triageComment(
   return published;
 }
 
-/** A label that was added and later removed must never be re-added by recovery.
- * Read its timeline after the recorded intent before retrying an absent label. */
-async function dispatchWasObserved(
-  anchor: GithubAnchor,
-  since: string,
-): Promise<boolean> {
-  const [owner = '', name = ''] = anchor.repo.split('/');
-  const response = await getGithubClient().graphql<{
-    repository: {
-      issue: {
-        timelineItems: {
-          nodes: { createdAt: string; label?: { name: string } }[];
-          pageInfo: { hasPreviousPage: boolean };
-        };
-      };
-    };
-  }>(
-    `query($owner:String!,$name:String!,$number:Int!) {
-    repository(owner:$owner,name:$name) { issue(number:$number) {
-      timelineItems(itemTypes:[LABELED_EVENT],last:100) {
-        nodes { ... on LabeledEvent { createdAt label { name } } }
-        pageInfo { hasPreviousPage }
-      }
-    } }
-  }`,
-    { owner, name, number: anchor.issue },
-  );
-  const timeline = response.repository.issue.timelineItems;
-  const sinceSeconds = Math.floor(Date.parse(since) / 1000) * 1000;
-  if (
-    timeline.nodes.some(
-      (event) =>
-        Date.parse(event.createdAt) >= sinceSeconds &&
-        event.label?.name === 'agent:opencode',
-    )
-  )
-    return true;
-  if (
-    timeline.pageInfo.hasPreviousPage &&
-    (!timeline.nodes[0] || timeline.nodes[0].createdAt >= since)
-  )
-    throw new Error('Triage dispatch read-back is incomplete');
-  return false;
-}
-
 export async function publishFleetTriage(
   store: OrchestratorStore,
   entry: LeasedOutboxEntry,
@@ -95,13 +51,15 @@ export async function publishFleetTriage(
   let run = await store.readRun(entry.runId);
   if (run?.triagePublication?.state !== 'pending') return;
   const { input, report } = parseTriageReport(run, run.result?.message);
-  const anchor = { repo: input.repo, issue: input.issue };
-  const [owner = '', repo = ''] = anchor.repo.split('/');
-  const github = getGithubClient();
+  const anchor: TriageAnchor =
+    'source' in input
+      ? { repo: input.repo, source: input.source }
+      : { repo: input.repo, issue: input.issue };
+  const tracker = await triageTracker(anchor);
   const marker = triageMarker(anchor);
   const history = await readTriageHistory(store, anchor);
   let dispatchedBefore =
-    (await store.listRuns(anchor)).length > 0 ||
+    (await hasCodingHistory(store, anchor)) ||
     history.runs.some(
       (previous) =>
         previous.runId !== entry.runId &&
@@ -114,7 +72,7 @@ export async function publishFleetTriage(
       previous.runId !== entry.runId &&
       requested !== undefined
     )
-      dispatchedBefore = await dispatchWasObserved(anchor, requested);
+      dispatchedBefore = await tracker.dispatchObserved(requested);
   }
   const body = triageComment(run, anchor, report, dispatchedBefore);
   const checkLease = () => {
@@ -152,8 +110,7 @@ export async function publishFleetTriage(
   const intent = run.triagePublication.dispatchRequested;
   if (
     intent !== undefined &&
-    (source.labels.includes('agent:opencode') ||
-      (await dispatchWasObserved(anchor, intent)))
+    (hasTriageDispatchLabel(source) || (await tracker.dispatchObserved(intent)))
   ) {
     await record({ dispatchObserved: true, state: 'complete' });
     return;
@@ -178,23 +135,16 @@ export async function publishFleetTriage(
   source = await fresh();
   if (source === undefined) return;
 
-  const allowed = new Set<string>();
-  for (let page = 1; page <= 5; page++) {
-    const labels = await github.issues.listLabelsForRepo({
-      owner,
-      repo,
-      per_page: 100,
-      page,
-    });
-    for (const label of labels.data)
-      if (
-        /^(type|component|app):/u.test(label.name) &&
-        label.name !== 'type:bug'
+  const labels = await tracker.labels();
+  const allowed = new Map(
+    labels
+      .filter(
+        (label) =>
+          /^(type|component|app):/u.test(label.name) &&
+          label.name !== 'type:bug',
       )
-        allowed.add(label.name);
-    if (labels.data.length < 100) break;
-    if (page === 5) throw new Error('Repository label read exceeds bound');
-  }
+      .map((label) => [label.name, label.id]),
+  );
   if (report.labels.some((label) => !allowed.has(label))) {
     await record({
       state: 'failed',
@@ -218,12 +168,9 @@ export async function publishFleetTriage(
       return;
     source = await fresh();
     if (source === undefined) return;
-    await github.issues.addLabels({
-      owner,
-      repo,
-      issue_number: anchor.issue,
-      labels: missing,
-    });
+    await tracker.addLabels(
+      missing.map((label) => allowed.get(label) as string),
+    );
     source = await fresh();
     if (source === undefined) return;
     if (missing.some((label) => !source?.labels.includes(label)))
@@ -254,31 +201,13 @@ export async function publishFleetTriage(
       return;
     source = await fresh();
     if (source === undefined) return;
-    const posted =
-      current === undefined
-        ? await github.issues.createComment({
-            owner,
-            repo,
-            issue_number: anchor.issue,
-            body,
-          })
-        : await github.issues.updateComment({
-            owner,
-            repo,
-            comment_id: current.id,
-            body,
-          });
-    if (!(await record({ commentId: posted.data.id }))) return;
+    const posted = await tracker.writeComment(body, current?.id);
+    if (!(await record({ commentId: posted }))) return;
   }
   const commentId = run?.triagePublication?.commentId ?? current?.id;
   if (commentId === undefined)
     throw new Error('Triage comment receipt missing');
-  const observed = await github.issues.getComment({
-    owner,
-    repo,
-    comment_id: commentId,
-  });
-  if (observed.data.body !== body)
+  if ((await tracker.readComment(commentId)) !== body)
     throw new Error('Triage comment read-back changed');
   if (report.disposition !== 'ready' || dispatchedBefore) {
     await record({ state: 'complete' });
@@ -289,7 +218,7 @@ export async function publishFleetTriage(
   if (source === undefined) return;
   // A manually requested coding run can settle while this report publishes.
   // Its removed control labels do not authorize another automatic dispatch.
-  if ((await store.listRuns(anchor)).length > 0) {
+  if (await hasCodingHistory(store, anchor)) {
     await record({ state: 'complete' });
     return;
   }
@@ -301,23 +230,9 @@ export async function publishFleetTriage(
   )
     return;
   checkLease();
-  await github.issues.addLabels({
-    owner,
-    repo,
-    issue_number: anchor.issue,
-    labels: ['agent:opencode'],
-  });
-  const dispatched = await github.issues.get({
-    owner,
-    repo,
-    issue_number: anchor.issue,
-  });
-  if (
-    !dispatched.data.labels.some(
-      (label) =>
-        (typeof label === 'string' ? label : label.name) === 'agent:opencode',
-    )
-  )
+  await tracker.addLabels([tracker.dispatchLabel]);
+  const dispatched = await loadSource(store, anchor);
+  if (!hasTriageDispatchLabel(dispatched))
     throw new Error('Triage dispatch label not observed');
   await record({ dispatchObserved: true, state: 'complete' });
 }

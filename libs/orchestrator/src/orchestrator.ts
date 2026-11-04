@@ -1,4 +1,10 @@
 import {
+  issueSourceKey,
+  type TrackerIssue,
+  trackerIssueSchema,
+} from '@agent-lcars/dispatch-contracts';
+
+import {
   changeCredentialOperation,
   reserveCredentialOperation,
 } from './credential-operation';
@@ -101,6 +107,7 @@ export interface RequestInput {
   /** Typed action provenance supplied only by a trusted admission adapter. */
   intervention?: OperationalIntervention;
   work?: WorkPayload;
+  issue?: TrackerIssue;
   /** Trusted source admission; coding requests never set this. */
   sourceRevision?: WorkRevision;
   /** Constructed by the authenticated admission adapter, not a raw API field. */
@@ -153,6 +160,7 @@ export class Orchestrator {
     // Firestore may replay a transaction callback after a concurrent commit;
     // capture time once so every replay evaluates the same pure request.
     const now = this.clock.now();
+    if (input.issue !== undefined) trackerIssueSchema.parse(input.issue);
     if (input.sourceRevision !== undefined) {
       workRevisionSchema.parse(input.sourceRevision);
       if (input.sourceRevision.key !== input.requestId)
@@ -244,6 +252,7 @@ export class Orchestrator {
             ? {}
             : { intervention: input.intervention }),
           ...(input.work === undefined ? {} : { work: input.work }),
+          ...(input.issue === undefined ? {} : { issue: input.issue }),
           ...(providerFallback === undefined ? {} : { providerFallback }),
         };
         if (input.labelProviderRequest !== undefined) {
@@ -655,6 +664,7 @@ export class Orchestrator {
     runId: string;
     notAfter: string;
     note?: string;
+    issue?: TrackerIssue;
   }): Promise<Decision | Refusal> {
     const now = this.clock.now();
     return this.store.transactRun({
@@ -663,6 +673,14 @@ export class Orchestrator {
         if (task === undefined || run === undefined) {
           return refused('unknown-run');
         }
+        if (
+          input.issue !== undefined &&
+          (task.task.issue?.state !== 'closed' ||
+            task.task.issue.updatedAt !== input.issue.updatedAt ||
+            issueSourceKey(task.task.issue.reference) !==
+              issueSourceKey(input.issue.reference))
+        )
+          return refused('stale-issue-source');
         if (run.queue?.state === 'claimed') {
           return refused('run-already-claimed');
         }
@@ -711,6 +729,32 @@ export class Orchestrator {
         work,
       }),
     );
+  }
+
+  /** Refresh source facts without changing any admitted execution intent. */
+  async refreshIssue(
+    taskId: TaskId,
+    input: TrackerIssue,
+  ): Promise<Decision | Refusal> {
+    const issue = trackerIssueSchema.parse(input);
+    return this.transact(taskId, (current) => {
+      if (current === undefined) return refused('unknown-task');
+      const previous = current.task.issue;
+      if (
+        previous !== undefined &&
+        issueSourceKey(previous.reference) !== issueSourceKey(issue.reference)
+      )
+        throw new Error('Issue source identity cannot change');
+      if (
+        previous !== undefined &&
+        Date.parse(previous.updatedAt) >= Date.parse(issue.updatedAt)
+      )
+        return { task: current.task, outbox: [] };
+      return {
+        task: { ...current.task, issue, updatedAt: this.clock.now() },
+        outbox: [],
+      };
+    });
   }
 
   /**
