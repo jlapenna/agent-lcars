@@ -313,7 +313,13 @@ Configure it in `AGENT_LCARS_JOB_PROFILES`. A manifest can use
 Execution profile** for one invocation. The profile must authorize that repository,
 principal, allocation and fixed inputs. The manual override does not change the
 manifest or its schedule. Both invocation endpoints accept an optional `profile`
-name; reusing a request ID with a different selection conflicts. Scheduled runs
+name; the CLI forwards the same selection:
+
+```bash
+lcars work job invoke --repo jlapenna/dev --name JOB --request-id UNIQUE_KEY --profile dev-personal
+```
+
+Reusing a request ID with a different selection conflicts. Scheduled runs
 always use the manifest profile. The built-in `repository` profile stays on the
 GitHub App and cannot be overridden by configuration.
 
@@ -341,8 +347,8 @@ or permission is needed for jobs that keep their existing App credentials.
 The checkout credential endpoint verifies the live run, matching occurrence and
 current profile grant before reading the selected secret. It verifies the token's
 GitHub login, refuses expired/missing/wrong-identity credentials, and never falls
-back to the bot. The worker revalidates through that same endpoint every five
-minutes, or sooner when the token expires. `expiresAt` remains the actual token
+back to the bot. The worker revalidates through that same endpoint at least every five
+minutes, including its existing refresh margin. `expiresAt` remains the actual token
 expiry (possibly null); `refreshAt` controls this refresh cadence. Already issued
 credentials retain their issuer-granted authority until expiry or revocation;
 cancel the Work and retire its worker when stopping an admitted operation.
