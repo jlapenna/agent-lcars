@@ -1,6 +1,6 @@
+/* eslint-disable vitest/no-import-node-test -- runs with node --test inside the runner image gate (direct-runner.test.sh), without Vitest. */
 import assert from 'node:assert/strict';
-
-import { test } from 'vitest';
+import { test } from 'node:test';
 
 import {
   loadGooseEnvironment,
