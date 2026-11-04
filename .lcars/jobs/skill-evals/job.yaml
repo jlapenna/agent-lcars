@@ -1,0 +1,33 @@
+version: 1
+description: Weekly scoring of this repository's agent skills with repo-skill-evals (claude plugin eval); report only.
+triggers:
+  manual: true
+  schedule:
+    cron: '0 7 * * 0'
+    timezone: America/Los_Angeles
+execution:
+  recipe: ./recipe.yaml
+  profile: skill-evals
+  timeout: 30m
+  maxAttempts: 1
+  resources:
+    requests:
+      cpu: 2
+      memory: 6Gi
+      storage: 24Gi
+    limits:
+      cpu: 2
+      memory: 6Gi
+      storage: 24Gi
+inputs:
+  mode: report
+concurrency:
+  maxRuns: 1
+  overlap: skip
+state:
+  previousSuccessfulResult: true
+result:
+  contract: json-v1
+  requiredArtifacts:
+    - report.md
+    - result.json

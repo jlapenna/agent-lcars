@@ -8,3 +8,7 @@ protected PR path.
 
 See [repository-owned jobs](../../docs/repository-jobs.md#configuration-and-operation)
 for the resource contract and repository catalog refresh/enable operations.
+
+`skill-evals` scores this repository's agent skills every Sunday (see
+`.lcars/jobs/skill-evals/job.yaml` for the time) with `repo-skill-evals` and
+keeps the report and per-skill result as artifacts; it changes nothing.
