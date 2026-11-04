@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
+import { issueTracker } from './issue-trackers';
+import { linearQuery } from './linear-client';
 import type { OutcomeWebhookPayload } from './outcome-webhook';
 
 const threadSchema = z.strictObject({
@@ -18,43 +20,6 @@ const lookupSchema = z.object({
     ),
   }),
 });
-const createSchema = z.object({
-  commentCreate: z.object({
-    success: z.boolean(),
-    comment: z
-      .object({ id: z.uuid(), issue: z.object({ id: z.uuid() }).nullable() })
-      .nullable(),
-  }),
-});
-
-async function linearQuery(
-  query: string,
-  variables: Record<string, unknown>,
-  fetchImpl: typeof fetch,
-): Promise<unknown> {
-  const token = process.env['AGENT_LCARS_LINEAR_API_KEY']?.trim();
-  if (!token)
-    throw new Error(
-      'AGENT_LCARS_LINEAR_API_KEY is required for Linear outcome delivery',
-    );
-  const response = await fetchImpl('https://api.linear.app/graphql', {
-    method: 'POST',
-    headers: { Authorization: token, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`Linear API returned ${response.status}`);
-  const result = z
-    .object({
-      data: z.unknown().optional(),
-      errors: z.array(z.unknown()).optional(),
-    })
-    .parse(await response.json());
-  // Do not log API error bodies, which may contain issue content or credentials.
-  if (result.errors?.length || result.data === undefined)
-    throw new Error('Linear GraphQL operation failed');
-  return result.data;
-}
 
 /** Stable UUID v4 per outbox event: a successful API write followed by a lost
  * response is found on retry, including when two drain leases overlap. */
@@ -115,6 +80,7 @@ export async function deliverLinearOutcome(
               ? 'Execution finished'
               : 'Execution failed';
   const body = [
+    '<!-- agent-lcars:outcome -->',
     `**LCARS — ${status}**`,
     payload.message,
     payload.ref ? `Result: ${payload.ref}` : undefined,
@@ -123,19 +89,9 @@ export async function deliverLinearOutcome(
   ]
     .filter((part) => part !== undefined)
     .join('\n\n');
-  const created = createSchema.parse(
-    await linearQuery(
-      `mutation LcarsOutcomeComment($input: CommentCreateInput!) {
-    commentCreate(input: $input) { success comment { id issue { id } } }
-  }`,
-      { input: { id, issueId: thread.issueId, body } },
-      fetchImpl,
-    ),
+  await issueTracker({ fetchImpl }).comment(
+    { tracker: 'linear', ...thread },
+    id,
+    body,
   );
-  if (
-    !created.commentCreate.success ||
-    created.commentCreate.comment?.id !== id ||
-    created.commentCreate.comment.issue?.id !== thread.issueId
-  )
-    throw new Error('Linear outcome comment was not confirmed');
 }

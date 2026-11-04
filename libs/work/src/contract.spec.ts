@@ -33,6 +33,11 @@ describe('itemsContract', () => {
       'cancel',
       'create',
       'get',
+      'issueDispatch',
+      'issueGet',
+      'issueList',
+      'issueOwner',
+      'issueRefresh',
       'lifecycleMetrics',
       'list',
       'maintenanceTick',
@@ -220,6 +225,7 @@ describe('runsContract', () => {
         'placement',
         'brief',
         'introspect',
+        'issueSource',
         'heartbeat',
         'exit',
         'complete',
@@ -502,6 +508,11 @@ describe('generateWorkOpenApi', () => {
         '/anchors/github/owner',
         '/dispatches/github',
         '/dispatches/github/redispatch',
+        '/issues',
+        '/issues/source',
+        '/issues/owner',
+        '/issues/refresh',
+        '/issues/dispatch',
         '/items',
         '/items/{id}',
         '/items/{id}/cancel',
@@ -517,6 +528,7 @@ describe('generateWorkOpenApi', () => {
         '/runs/claim',
         '/runs/{runId}/brief',
         '/runs/{runId}/introspect',
+        '/runs/{runId}/issue-source',
         '/runs/{runId}/claim-status',
         '/runs/{runId}/startup-placement',
         '/runs/{runId}/heartbeat',
@@ -549,7 +561,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(13);
+    expect(operations).toHaveLength(14);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -565,7 +577,7 @@ describe('generateWorkOpenApi', () => {
         (scheme: Record<string, unknown>) => 'runToken' in scheme,
       ),
     );
-    expect(workers).toHaveLength(9);
+    expect(workers).toHaveLength(10);
   });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
@@ -616,6 +628,11 @@ describe('generateWorkOpenApi', () => {
       'PUT /items/{id}': ['201', '403', '409'],
       'GET /items/{id}': ['200', '404'],
       'GET /items': ['200'],
+      'GET /issues': ['200', '400', '403', '404', '409'],
+      'GET /issues/source': ['200', '400', '403', '404', '409'],
+      'GET /issues/owner': ['200', '400', '403', '404', '409'],
+      'POST /issues/refresh': ['200', '400', '403', '404', '409'],
+      'POST /issues/dispatch': ['200', '400', '403', '404', '409'],
       'PATCH /items/{id}': ['200', '404', '409'],
       'POST /items/{id}/cancel': ['200', '404', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
@@ -636,6 +653,7 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/claim': ['200', '401'],
       'GET /runs/{runId}/brief': ['200', '401', '409'],
       'GET /runs/{runId}/introspect': ['200', '401', '409'],
+      'GET /runs/{runId}/issue-source': ['200', '401', '403', '404'],
       'GET /runs/{runId}/recipe': ['200', '401', '403', '409'],
       'POST /runs/{runId}/recipe': ['200', '401', '403', '409'],
       'POST /runs/{runId}/heartbeat': ['200', '401', '409'],

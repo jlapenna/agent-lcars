@@ -124,14 +124,14 @@ env:
   # work.operator; only the maintainer's Google account may impersonate it
   # (infra/terraform/main.tf, work_reader_token_creator).
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.operator"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.reader","costs.reader"]},{"principal":"svc:linear","subjects":["linear-webhook-adapter"],"pipelines":["codex"],"scopes":["work.operator"],"channel":"linear"}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.operator"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.executor","work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode","goose"],"scopes":["work.operator"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode"],"scopes":["work.reader","costs.reader"]},{"principal":"svc:linear","subjects":["linear-webhook-adapter"],"pipelines":["claude","codex","opencode"],"scopes":["work.operator"],"channel":"linear"}]'
     availability:
       - RUNTIME
 
   # Tech issues carrying the dedicated LCARS label enter native Work for this repo.
   # docs/linear.md owns setup and secret ownership. Values remain in Secret Manager.
   - variable: AGENT_LCARS_LINEAR
-    value: '{"organizationId":"8baeaebb-62f3-4c4b-a463-f9b4733173d6","routes":[{"teamId":"6e8229a7-645e-44fa-8aad-415a4e08baa8","labelId":"ac4452a1-87ce-436f-8538-adfa134a718c","repo":"jlapenna/agent-lcars","pipeline":"codex","principal":"svc:linear"}]}'
+    value: '{"organizationId":"8baeaebb-62f3-4c4b-a463-f9b4733173d6","operatorIds":["83b707e1-a261-4dad-af05-338629454e49"],"teams":[{"teamId":"6e8229a7-645e-44fa-8aad-415a4e08baa8","name":"Tech","repositories":[{"repo":"jlapenna/agent-lcars","labelId":"1bd8382c-0fe9-45ad-ba92-b19dade6ddd7"}],"states":{"started":"1fb0308f-e13b-4ccb-bf11-c6ccb47742ea","parked":"553770ec-906a-4a3a-910e-805cf90b426c","failed":"553770ec-906a-4a3a-910e-805cf90b426c","canceled":"c4550227-9f5a-43c1-83d1-c4d712b8705b","completed":"0ab16df0-99e7-4660-8494-12ca1aa865c9"},"triage":{"bugLabelIds":["6b441899-8a55-4070-a361-05229ce78dc2"],"readyLabelId":"ac4452a1-87ce-436f-8538-adfa134a718c","pipeline":"opencode","principal":"svc:linear"}}],"routes":[{"teamId":"6e8229a7-645e-44fa-8aad-415a4e08baa8","labelId":"ac4452a1-87ce-436f-8538-adfa134a718c","repo":"jlapenna/agent-lcars","pipeline":"codex","principal":"svc:linear"},{"teamId":"6e8229a7-645e-44fa-8aad-415a4e08baa8","labelId":"41932d60-9367-464b-b448-a5499ccdda08","repo":"jlapenna/agent-lcars","pipeline":"claude","principal":"svc:linear"},{"teamId":"6e8229a7-645e-44fa-8aad-415a4e08baa8","labelId":"86f9728e-d12d-47de-8080-6980921d5cb3","repo":"jlapenna/agent-lcars","pipeline":"opencode","principal":"svc:linear"}]}'
     availability:
       - RUNTIME
   - variable: AGENT_LCARS_LINEAR_API_KEY
@@ -211,6 +211,11 @@ env:
 
   - variable: AGENT_LCARS_WEBHOOK_QUEUE
     value: 'dispatch-webhooks'
+    availability:
+      - RUNTIME
+
+  - variable: AGENT_LCARS_WEBHOOK_TASK_SERVICE_ACCOUNT
+    value: 'firebase-app-hosting-compute@agent-lcars.iam.gserviceaccount.com'
     availability:
       - RUNTIME
 

@@ -21,9 +21,16 @@ import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
-import { readAnchorOwner } from './anchor-owner';
+import { readAnchorOwner, readTrackerIssueOwner } from './anchor-owner';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
+import {
+  dispatchIssueSource,
+  listIssueSources,
+  lookupIssueSource,
+  refreshIssueSources,
+} from './issue-sources';
+import { issueReferenceForTask } from './issue-trackers';
 import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
@@ -127,6 +134,32 @@ const ownerReader = os.use(async ({ context, next }) => {
 });
 
 export const workRouter = os.router({
+  issueOwner: ownerReader.issueOwner.handler(async ({ input, context }) => {
+    const source = await lookupIssueSource(context, input);
+    if (!source.repo)
+      return {
+        anchor: source.issue.reference,
+        identifier: source.issue.identifier,
+        observedAt: context.now().toISOString(),
+        verdict: 'none' as const,
+        complete: false,
+        warnings: ['Issue has no repository route; ownership is unknown'],
+        cliSessions: [],
+      };
+    return readTrackerIssueOwner(context, source.issue, source.repo);
+  }),
+  issueGet: reader.issueGet.handler(({ input, context }) =>
+    lookupIssueSource(context, input),
+  ),
+  issueList: reader.issueList.handler(({ input, context }) =>
+    listIssueSources(context, input),
+  ),
+  issueRefresh: operator.issueRefresh.handler(({ input, context }) =>
+    refreshIssueSources(context, input),
+  ),
+  issueDispatch: operator.issueDispatch.handler(({ input, context }) =>
+    dispatchIssueSource(context, input),
+  ),
   lifecycleMetrics: metricsReader.lifecycleMetrics.handler(
     async ({ context }) => {
       const observedAt = context.now().toISOString();
@@ -329,6 +362,10 @@ export const workRouter = os.router({
   update: operator.update.handler(async ({ input, context, errors }) => {
     const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
+    if (issueReferenceForTask(task.task))
+      throw errors.CONFLICT({
+        message: 'Edit tracker-backed work in its issue tracker.',
+      });
     if (recipeWorkSpecSchema.safeParse(task.task.work['spec']).success)
       throw errors.CONFLICT({
         message:

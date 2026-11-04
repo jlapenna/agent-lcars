@@ -1,7 +1,7 @@
 # Agent Protocol — Cross-Repo Conventions
 
 The conventions any headless remote coding agent follows when it is dispatched
-against a GitHub issue or pull request — labeled-issue kickoff, an
+against a GitHub issue, Linear issue, native Work item or pull request — labeled-issue kickoff, an
 `@mention`/slash-command reply, or an equivalent trigger. It is the complete
 fleet-wide behavioral contract: every onboarded repository uses
 `agent-lcars-bot` as the fleet claim identity, `jlapenna` as the maintainer,
@@ -29,6 +29,26 @@ Only after those documents are understood, read the JSON file named by
 identifies the anchor, dispatch mode, optional runbook/deployment context,
 and the maintainer's reply without interpolating that reply into the agent
 prompt.
+
+When `source_issue` is present, it identifies the external issue independently
+from the execution anchor and checkout repository. Its `reference.tracker`,
+identifier and URL are authoritative source identity; a Linear identifier is
+never a GitHub issue number. Work remains keyed by its own `anchor.id`.
+The brief's title/body are the source snapshot admitted for this run; later
+edits do not change an executing attempt, while a new human round can admit
+current source facts. Use the source identifier in a new branch name and include
+`Source: <source_issue.url>` alongside the normal Work reference in deliverables.
+The console owns source comments, workflow-state updates and ownership; do not
+post duplicate Linear results, create a shadow GitHub issue, or close the source
+yourself. Execution completion and protected delivery are distinct. Explicit
+commands on the Linear issue enter the same resume/reply flow as Work replies.
+
+Read the issue and its comments through `lcars work source` when a source is
+supplied. The run-scoped read works with either tracker and does not expose its
+service credential. Follow every returned `nextCursor` with
+`lcars work source --cursor <nextCursor>` before concluding that no newer
+evidence exists. `admittedIssue` records this attempt's source snapshot;
+`issue` and `comments` are current evidence, not a new grant or changed task.
 
 Read each required instruction **once**. They are the fixed cost every dispatch pays
 before any work happens, on every provider, and re-reading one you have
@@ -253,8 +273,10 @@ branch on the reference format:
   comment alongside your attempt-claim marker. A blocked run parks the
   same way, with the structured `<!-- agent-result:v1:park -->` marker
   instead (§4).
-- **Work anchor** (`anchor.type` is `work`, no issue): reference the item
-  as `Work: work:<id>` (never `Fixes #N`). No GitHub comment is available.
+- **Work anchor** (`anchor.type` is `work`, including Linear-backed Work): reference the item
+  as `Work: work:<id>` (never `Fixes #N` for a Linear identifier). Add the
+  source issue URL when supplied. The console publishes the result to that
+  tracker; no worker-authored GitHub issue comment is available.
   A parked or evidence-backed no-change Work result is instead recorded in the
   explicit terminal-outcome artifact with its exact attempt claim plus, respectively,
   `<!-- agent-result:v1:park:$ATTEMPT_ID -->` or

@@ -5,6 +5,7 @@ import {
   runPlacementSchema,
   triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
+import { trackerIssueSchema } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -507,6 +508,7 @@ export const runSchema = z.strictObject({
    *  persisted here without a later `runSchema.parse` read throwing on the
    *  run that stored it. */
   params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
+  issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),
   /** Explicit provider alternatives and the exact fresh-attempt provenance. */
@@ -564,6 +566,7 @@ export const taskSchema = z.strictObject({
    *  its first request and never modified by the orchestrator afterward.
    *  A native anchor and a GitHub anchor both carry one. */
   work: workPayloadSchema,
+  issue: trackerIssueSchema.optional(),
   /** Latest admitted source input; updated under the same task mutex. */
   desiredRevision: workRevisionSchema.optional(),
   sourceObservedAt: z.record(z.string(), z.iso.datetime()).optional(),
@@ -596,6 +599,7 @@ const outboxEntryBaseSchema = z.strictObject({
     'monitor-delivery',
     'admit-handoff-summary',
     'publish-triage',
+    'publish-issue-start',
   ]),
   task: taskIdSchema,
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),

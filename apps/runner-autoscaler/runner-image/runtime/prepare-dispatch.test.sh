@@ -91,4 +91,19 @@ jq -e '(has("prior_terminal_state") or has("deliveryHandoffVersion")) | not' "$c
 
 echo "scenario runtime-block: OK"
 
+# Linear source identity stays distinct from the native Work/checkout anchor.
+export WORK='{"id":"01PREPAREDISPATCHTESTFIX1","spec":{"title":"SPR-84: Fix source","description":"Current admitted issue body","pipeline":"claude","target":{"repo":"octo/example"}},"issue":{"reference":{"tracker":"linear","organizationId":"11111111-1111-4111-8111-111111111111","issueId":"44444444-4444-4444-8444-444444444444"},"identifier":"SPR-84","url":"https://linear.app/example/issue/SPR-84","title":"Fix source","state":"open","updatedAt":"2026-11-04T10:00:00Z"}}'
+export MODE='implement'
+export REPLY=''
+run_prepare_dispatch linear-source
+jq -e '.anchor.type == "work" and .anchor.target_repo == "octo/example" and .source_issue.reference.tracker == "linear" and .source_issue.identifier == "SPR-84" and .source_issue.reference.issueId == "44444444-4444-4444-8444-444444444444" and .anchor.body == "Current admitted issue body"' "$context_path" >/dev/null ||
+  fail "Linear source lost its typed identity or changed the checkout anchor"
+
+# Even callers passing an entire source snapshot cannot duplicate its prose
+# outside the bounded anchor body. Full evidence stays in `lcars work source`.
+export WORK="$(jq -c '.issue.description = ("e" * 65536) | .issue.labels = [{id:"label",name:"label"}] | .issue.assignees = [{id:"actor",name:"actor"}]' <<<"$WORK")"
+run_prepare_dispatch linear-source-large
+jq -e '(.source_issue | has("description") or has("labels") or has("assignees")) | not' "$context_path" >/dev/null ||
+  fail "Source metadata duplicated unbounded source prose into the worker brief"
+
 echo "prepare-dispatch.test.sh: all scenarios passed"

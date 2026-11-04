@@ -288,6 +288,14 @@ resource "google_cloud_tasks_queue_iam_member" "apphosting_dispatch_webhooks_enq
   member   = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
 }
 
+# Cloud Tasks signs the deferred Linear processor request as this existing
+# runtime identity. The enqueuer may attach only its own service account.
+resource "google_service_account_iam_member" "apphosting_webhook_task_identity" {
+  service_account_id = "projects/${var.project_id}/serviceAccounts/firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:firebase-app-hosting-compute@${var.project_id}.iam.gserviceaccount.com"
+}
+
 resource "google_storage_bucket_iam_member" "apphosting_transcripts" {
   bucket = google_storage_bucket.transcripts.name
   role   = "roles/storage.objectViewer"

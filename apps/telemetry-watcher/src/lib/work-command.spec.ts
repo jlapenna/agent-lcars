@@ -866,3 +866,94 @@ describe('repository job CLI', () => {
     expect(d.calls).toEqual([]);
   });
 });
+
+describe('lcars first-class tracker operations', () => {
+  const ref = {
+    tracker: 'linear',
+    organizationId: '11111111-1111-4111-8111-111111111111',
+    issueId: '44444444-4444-4444-8444-444444444444',
+  };
+  const source = {
+    issue: {
+      reference: ref,
+      identifier: 'ENG-42',
+      title: 'Search',
+      description: 'Fix',
+      state: 'open',
+      updatedAt: '2026-11-04T10:00:00Z',
+      url: 'https://linear.app/example/issue/ENG-42',
+      labels: [],
+      assignees: [],
+    },
+    repo: 'owner/repo',
+    observedAt: '2026-11-04T10:00:00Z',
+  };
+  it('looks up a Linear source then dispatches its typed identity with an explicit retry key', async () => {
+    const d = deps({
+      'GET /api/work/v1/issues/source': ({ url }) => {
+        expect(new URL(url).searchParams.get('issue')).toBe('ENG-42');
+        return source;
+      },
+      'POST /api/work/v1/issues/dispatch': ({ body }) => {
+        expect(JSON.parse(String(body))).toEqual({
+          issue: ref,
+          repo: 'owner/repo',
+          pipeline: 'codex',
+          requestId: 'retry-key',
+        });
+        return { runId: 'run', location: '/work/id' };
+      },
+    });
+    expect(
+      (
+        await executeWorkCommand(
+          [
+            'dispatch',
+            'linear:ENG-42',
+            '--pipeline',
+            'codex',
+            '--request-id',
+            'retry-key',
+          ],
+          d,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(d.calls).toHaveLength(2);
+  });
+  it('reads source comments with only this run token and forwards pagination', async () => {
+    const stdout = vi.fn();
+    const token = vi.fn(async () => {
+      throw new Error('operator identity must not be used');
+    });
+    const fetchImpl = vi.fn<typeof fetch>(async (url, init) => {
+      expect(String(url)).toContain(
+        '/runs/work%3A01J5Z3K9QX8F0N2B4V6C8D1E3G%2Fr1/issue-source?cursor=next-page',
+      );
+      expect(new Headers(init?.headers).get('authorization')).toBe(
+        'Bearer run-only-token',
+      );
+      return Response.json({
+        issue: source.issue,
+        admittedIssue: source.issue,
+        comments: [],
+        nextCursor: 'another-page',
+      });
+    });
+    const d = {
+      ...deps({}),
+      runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+      runToken: 'run-only-token',
+      token,
+      fetchImpl,
+      stdout,
+    };
+    expect(
+      (await executeWorkCommand(['source', '--cursor', 'next-page'], d)).ok,
+    ).toBe(true);
+    expect(token).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
+      nextCursor: 'another-page',
+    });
+  });
+});

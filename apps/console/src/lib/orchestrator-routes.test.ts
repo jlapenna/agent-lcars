@@ -293,7 +293,7 @@ describe('handleWebhookDelivery', () => {
   });
   it('cancels a queued implementation run when its GitHub anchor closes', async () => {
     const { deps, store } = fixture();
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+    deps.loadIssueLifecycle = vi.fn().mockResolvedValue({
       state: 'closed',
       sourceUpdatedAt: T0,
     });
@@ -427,7 +427,7 @@ describe('handleWebhookDelivery', () => {
 
   it('cancels queued implementation work when its pull request merges', async () => {
     const { deps, store } = fixture();
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+    deps.loadIssueLifecycle = vi.fn().mockResolvedValue({
       state: 'closed',
       sourceUpdatedAt: T0,
     });
@@ -478,7 +478,7 @@ describe('handleWebhookDelivery', () => {
 
   it('makes duplicate and stale close deliveries harmless to a reopened generation', async () => {
     const { clock, deps, store } = fixture();
-    deps.loadGithubAnchorLifecycle = vi
+    deps.loadIssueLifecycle = vi
       .fn()
       .mockResolvedValueOnce({ state: 'closed', sourceUpdatedAt: T0 })
       .mockResolvedValueOnce({ state: 'closed', sourceUpdatedAt: T0 })
@@ -523,7 +523,7 @@ describe('handleWebhookDelivery', () => {
   it('preserves the same queued generation when a delayed close arrives after reopen', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'same-generation-reopened');
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+    deps.loadIssueLifecycle = vi.fn().mockResolvedValue({
       state: 'open',
       sourceUpdatedAt: '2026-08-15T12:01:00.000Z',
     });
@@ -1478,7 +1478,7 @@ describe('handleReconcile', () => {
   it('performs no GitHub lifecycle reads: a closed anchor is caught at claim time, not by a sweep', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'queued-before-close');
-    deps.loadGithubAnchorLifecycle = vi.fn().mockResolvedValue({
+    deps.loadIssueLifecycle = vi.fn().mockResolvedValue({
       state: 'closed',
       sourceUpdatedAt: T0,
     });
@@ -1487,7 +1487,7 @@ describe('handleReconcile', () => {
 
     expect(result.status).toBe(200);
     expect(result.body).not.toHaveProperty('closedAnchorsCanceled');
-    expect(deps.loadGithubAnchorLifecycle).not.toHaveBeenCalled();
+    expect(deps.loadIssueLifecycle).not.toHaveBeenCalled();
     // The queued run stays queued for the claim route's exact check
     // (runs-router.test.ts) rather than being swept here.
     expect(await store.readRun(runId)).toMatchObject({

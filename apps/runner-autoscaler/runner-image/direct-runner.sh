@@ -70,12 +70,12 @@ ANCHOR_TYPE="$(jq -r '.anchor.type' <<<"$brief")"
 PIPELINE="$(jq -r '.pipeline // empty' <<<"$brief")"
 case "$ANCHOR_TYPE" in
   work)
-    WORK="$(jq -c '{id, spec}' <<<"$brief")"
+    WORK="$(jq -c '{id, spec} + (if .issue == null then {} else {issue: (.issue | del(.description, .labels, .assignees))} end)' <<<"$brief")"
     TARGET_REPO="$(jq -r '.anchor.target_repo' <<<"$brief")"
     ISSUE=''
     ;;
   github)
-    WORK="$(jq -c '.work' <<<"$brief")"
+    WORK="$(jq -c '. as $brief | .work + (if $brief.issue == null then {} else {issue: ($brief.issue | del(.description, .labels, .assignees))} end)' <<<"$brief")"
     if [ "$WORK" = "null" ]; then
       echo "FATAL: GitHub-anchored direct runner brief has no Work spec" >&2
       exit 1

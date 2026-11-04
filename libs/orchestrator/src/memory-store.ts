@@ -58,6 +58,49 @@ import {
 
 /** Reference implementation; also the test double. */
 export class MemoryStore implements OrchestratorStore {
+  readonly #trackerIssues = new Map<string, TrackerIssueProjection>();
+
+  async readTrackerIssue(
+    reference: IssueReference,
+  ): Promise<TrackerIssueProjection | undefined> {
+    return structuredClone(this.#trackerIssues.get(issueSourceKey(reference)));
+  }
+
+  async writeTrackerIssue(input: TrackerIssueProjection): Promise<void> {
+    const projection = trackerIssueProjectionSchema.parse(input);
+    const key = issueSourceKey(projection.issue.reference);
+    const previous = this.#trackerIssues.get(key);
+    if (
+      previous === undefined ||
+      Date.parse(projection.issue.updatedAt) >
+        Date.parse(previous.issue.updatedAt)
+    )
+      this.#trackerIssues.set(key, structuredClone(projection));
+  }
+
+  async listTrackerIssues(input: {
+    limit: number;
+    cursor?: string;
+  }): Promise<{ issues: TrackerIssueProjection[]; nextCursor?: string }> {
+    const entries = [...this.#trackerIssues.entries()]
+      .sort(([a], [b]) =>
+        encodeURIComponent(a) < encodeURIComponent(b)
+          ? -1
+          : encodeURIComponent(a) > encodeURIComponent(b)
+            ? 1
+            : 0,
+      )
+      .filter(
+        ([key]) =>
+          input.cursor === undefined ||
+          encodeURIComponent(key) > encodeURIComponent(input.cursor),
+      );
+    const page = entries.slice(0, input.limit);
+    return {
+      issues: structuredClone(page.map(([, issue]) => issue)),
+      ...(entries.length > page.length ? { nextCursor: page.at(-1)?.[0] } : {}),
+    };
+  }
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #priorityPositions = new Map<string, number>();
@@ -773,3 +816,9 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 }
+import {
+  type IssueReference,
+  issueSourceKey,
+  type TrackerIssueProjection,
+  trackerIssueProjectionSchema,
+} from '@agent-lcars/dispatch-contracts';

@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import {
   isRefusal,
   type ScheduleStore,
@@ -138,6 +139,9 @@ export async function mintItem(
     id: string;
     spec: WorkSpec;
     origin: WorkOrigin;
+    issue?: TrackerIssue;
+    params?: Record<string, string>;
+    requestId?: string;
     grantsPrincipal: GrantsPrincipal;
   },
 ): Promise<MintOutcome> {
@@ -161,7 +165,7 @@ export async function mintItem(
 
   const outcome = await context.runtime.orchestrator.request({
     taskId: { workId: input.id },
-    requestId: input.id,
+    requestId: input.requestId ?? input.id,
     pipeline: input.spec.pipeline,
     priority: input.spec.priority,
     providerFallback: authorizeProviderFallback(
@@ -169,8 +173,9 @@ export async function mintItem(
       input.spec.pipeline,
       input.spec.fallbackPipelines,
     ),
-    params: { mode: 'implement' },
+    params: input.params ?? { mode: 'implement' },
     work: { origin: input.origin, spec: input.spec },
+    ...(input.issue === undefined ? {} : { issue: input.issue }),
     // This comparison must execute in the store transaction. Two native
     // creates can both observe an absent Task above; the loser must not mint
     // a Run against the winner's immutable Work specification.

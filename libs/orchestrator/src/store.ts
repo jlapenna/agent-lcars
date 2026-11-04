@@ -1,3 +1,7 @@
+import type {
+  IssueReference,
+  TrackerIssueProjection,
+} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 import type { Decision, Refusal } from './decide';
@@ -227,6 +231,14 @@ export interface OpenGithubAnchorProjectionPage {
  * Firestore transactions provide both guarantees natively.
  */
 export interface OrchestratorStore {
+  readTrackerIssue(
+    reference: IssueReference,
+  ): Promise<TrackerIssueProjection | undefined>;
+  writeTrackerIssue(projection: TrackerIssueProjection): Promise<void>;
+  listTrackerIssues(input: {
+    limit: number;
+    cursor?: string;
+  }): Promise<{ issues: TrackerIssueProjection[]; nextCursor?: string }>;
   /** Bounded, read-only durable feeds; any overflow marks the snapshot incomplete. */
   readLifecycleMetricRecords(
     input: LifecycleMetricRead,
@@ -409,7 +421,9 @@ export interface OrchestratorStore {
    * task past the newest `limit`, however that page's items were later
    * filtered).
    */
-  /** Stable source identity mapped once to a time-ordered native Work ID. */
+  /** Stable source identity mapped once to a time-ordered native Work ID.
+   * This reservation can exist before its Task is committed. Read-only callers
+   * must verify the Task exists before reporting an existing Work binding. */
   readSourceWorkId(sourceKey: string): Promise<string | undefined>;
 
   resolveSourceWorkId(

@@ -1,3 +1,4 @@
+import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import {
   type DeliveryBinding,
   deliveryWaiting,
@@ -86,6 +87,7 @@ export function deriveItemState(
 }
 
 export interface ItemRunView {
+  issue?: TrackerIssue;
   triagePublication?: Run['triagePublication'];
   runId: string;
   state: Run['state'];
@@ -136,6 +138,7 @@ export interface ItemView {
   state: ItemState;
   spec: StoredWorkSpec;
   origin: WorkOrigin;
+  issue?: TrackerIssue;
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
@@ -160,11 +163,18 @@ export interface WorkSummary {
   state: ItemState;
   spec: StoredWorkSpec;
   origin: WorkOrigin;
+  issue?: TrackerIssue;
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
   providerRouting?: Task['providerRouting'];
   runs: ItemRunView[];
+}
+
+export function workTitle(work: Pick<WorkSummary, 'spec' | 'issue'>): string {
+  return work.issue
+    ? `${work.issue.identifier}: ${work.issue.title}`
+    : work.spec.title;
 }
 
 /** The public projection of one run, shared by the item view and the work
@@ -173,6 +183,7 @@ export interface WorkSummary {
  *  view's alone (`toItemView`). */
 function toItemRunView(r: Run): ItemRunView {
   return {
+    ...(r.issue === undefined ? {} : { issue: r.issue }),
     runId: r.runId,
     state: r.state,
     pipeline: r.pipeline,
@@ -244,13 +255,14 @@ function toItemHeader(
   WorkSummary,
   'state' | 'spec' | 'origin' | 'providerRouting' | 'createdAt' | 'updatedAt'
 > &
-  Partial<Pick<WorkSummary, 'closedAt'>> & { ordered: Run[] } {
+  Partial<Pick<WorkSummary, 'closedAt' | 'issue'>> & { ordered: Run[] } {
   const payload = storedWorkPayloadSchema.parse(task.work);
   const ordered = [...runs].sort(compareRunOrder);
   return {
     state: deriveItemState(task, runs),
     spec: payload.spec,
     origin: payload.origin,
+    ...(task.issue === undefined ? {} : { issue: task.issue }),
     ...(task.providerRouting === undefined
       ? {}
       : { providerRouting: task.providerRouting }),

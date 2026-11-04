@@ -1,6 +1,7 @@
 'use client';
 
 import { workRepository } from '@agent-lcars/work';
+import { workTitle } from '@agent-lcars/work/derive';
 import { Anchor, Button, Stack, Text, Textarea, Title } from '@mantine/core';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -13,6 +14,7 @@ import {
   nativeCardTime,
   type NativeDecisionCard,
 } from './inbox-card';
+import { IssueSourceLink } from './issue-source';
 import { actionTypeMeta } from './queue-reason';
 import { RelativeTime } from './relative-time';
 import { replyAdmissionMessage } from './reply-admission-message';
@@ -51,7 +53,7 @@ export function NativeDecisionRow({
         <div className="queue-item-row__text">
           <div className="ops-inbox__kind">{actionTypeMeta(reason).label}</div>
           <span className="ops-inbox__title queue-item-row__title">
-            {work.spec.title}
+            {workTitle(work)}
           </span>
           <span className="queue-item-row__question">
             {card.decisionSummary ?? nativeCardText(card)}
@@ -81,7 +83,7 @@ export function NativeDecisionRow({
         <Button
           variant="subtle"
           size="compact-xs"
-          aria-label={`${report ? 'Dismiss' : 'Snooze'} ${work.spec.title}`}
+          aria-label={`${report ? 'Dismiss' : 'Snooze'} ${workTitle(work)}`}
           onClick={onSnooze}
         >
           {report ? 'Dismiss' : 'Snooze'}
@@ -139,8 +141,9 @@ export function NativeDecisionDetail({
       data-testid="native-decision-detail"
     >
       <Title order={2} size="h3">
-        {work.spec.title}
+        {workTitle(work)}
       </Title>
+      {work.issue ? <IssueSourceLink issue={work.issue} /> : null}
       <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
         {workRepository(work.spec)} / {work.id}
       </Text>
@@ -202,7 +205,9 @@ export function NativeDecisionDetail({
         </>
       ) : work.state === 'parked' || card.kind === 'report' ? (
         <Text size="sm" c="dimmed">
-          Reply requires a Work operator grant for this pipeline.
+          {work.origin.principal === 'svc:fleet-triage' && work.issue
+            ? 'Respond on the source issue; its next update will refresh triage.'
+            : 'Reply requires a Work operator grant for this pipeline.'}
         </Text>
       ) : (
         <Text size="sm" c="dimmed">

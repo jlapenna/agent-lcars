@@ -25,6 +25,7 @@ import { loadGithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { admitHandoffSummary } from './handoff-summary-work';
 import { deliverLinearOutcome } from './linear-outcome';
+import { publishLinearState } from './linear-state';
 import {
   deliverOutcomeWebhook as deliverOutcomeWebhookDefault,
   outcomeWebhookFor,
@@ -216,7 +217,15 @@ export async function drainOutbox(
 
     const failuresBefore = result.failed.length;
     try {
-      if (entry.kind === 'publish-triage') {
+      if (entry.kind === 'publish-issue-start') {
+        await publishLinearState(
+          deps.store,
+          entry.runId,
+          'started',
+          deps.fetchImpl,
+        );
+        await settleClaim(deps, entry, 'done');
+      } else if (entry.kind === 'publish-triage') {
         await publishFleetTriage(deps.store, entry);
         await settleClaim(deps, entry, 'done');
       } else if (entry.kind === 'admit-handoff-summary') {
@@ -827,6 +836,24 @@ async function deliverNativeOutcome(
   try {
     if (origin.channel === 'linear') {
       await deliverLinearOutcome(payload, deps.fetchImpl);
+      if (!fallbackSuccessor) {
+        const status = finalDelivery
+          ? 'completed'
+          : payload.parked
+            ? 'parked'
+            : payload.state === 'canceled'
+              ? 'canceled'
+              : !payload.ok
+                ? 'failed'
+                : undefined;
+        if (status)
+          await publishLinearState(
+            deps.store,
+            run.runId,
+            status,
+            deps.fetchImpl,
+          );
+      }
     } else if (webhookTarget !== undefined) {
       await deliver(webhookTarget, payload);
     }

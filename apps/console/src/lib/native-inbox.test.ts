@@ -170,3 +170,86 @@ describe('native reports', () => {
     ).toEqual([]);
   });
 });
+
+it('lists Linear triage owner decisions with source links and no coding-reply control', async () => {
+  const store = new MemoryStore();
+  const orchestrator = new Orchestrator(store, {
+    now: () => '2026-11-04T10:00:00.000Z',
+  });
+  const taskId = { workId: ID };
+  const issue = {
+    reference: {
+      tracker: 'linear' as const,
+      organizationId: '11111111-1111-4111-8111-111111111111',
+      issueId: '44444444-4444-4444-8444-444444444444',
+    },
+    identifier: 'ENG-42',
+    title: 'A bug',
+    description: 'Evidence needed',
+    url: 'https://linear.app/example/issue/ENG-42',
+    state: 'open' as const,
+    updatedAt: '2026-11-04T10:00:00.000Z',
+    labels: [],
+    assignees: [],
+  };
+  const result = await orchestrator.request({
+    taskId,
+    requestId: 'triage',
+    pipeline: 'claude',
+    issue,
+    work: {
+      ...payload,
+      origin: { principal: 'svc:fleet-triage', channel: 'linear' },
+      spec: { ...payload.spec, deliverable: 'report' },
+    },
+  });
+  if ('refused' in result) throw new Error(result.reason);
+  await orchestrator.confirmDispatch(result.run.runId);
+  await orchestrator.report(result.run.runId, {
+    ok: true,
+    summary: 'report',
+    message: JSON.stringify({
+      sourceRevision: 'revision',
+      disposition: 'needs-owner',
+      summary: 'Choose the expected behavior',
+      evidence: ['Two conflicting requirements'],
+      acceptanceCriteria: [],
+      labels: [],
+    }),
+  });
+  const cards = await getNativeInboxCards(
+    store,
+    operator,
+    undefined,
+    Date.parse('2026-11-04T10:01:00Z'),
+  );
+  expect(cards).toHaveLength(1);
+  expect(cards[0]).toMatchObject({
+    canReply: false,
+    kind: 'report',
+    work: { issue },
+  });
+  await orchestrator.refreshIssue(taskId, {
+    ...issue,
+    state: 'closed',
+    updatedAt: '2026-11-04T10:02:00.000Z',
+  });
+  expect(
+    await getNativeInboxCards(
+      store,
+      operator,
+      undefined,
+      Date.parse('2026-11-04T10:03:00Z'),
+    ),
+  ).toEqual([]);
+  expect(
+    (
+      await getNativeInboxCards(
+        store,
+        operator,
+        cards[0]!.work.id,
+        Date.parse('2026-11-04T10:03:00Z'),
+      )
+    )[0],
+  ).toMatchObject({ queued: false, canReply: false });
+});

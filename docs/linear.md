@@ -1,18 +1,22 @@
-# Linear issue integration
+# Linear issue tracker
 
-Linear issues can enter LCARS as native Work items. The issue's description
-becomes the immutable worker brief; an explicit team and dispatch-label route
-selects the repository and coding pipeline. The ordinary queue, delivery
-verification, parked-work UI and outbox handle execution. Outcomes are posted
-as comments on the same Linear issue, with the Work link and any result URL.
+Linear is an issue source alongside GitHub. Its organization/issue UUIDs identify
+the source; a separate repository binding selects where agents work. Current
+metadata is synchronized onto Work, while each Run retains the source snapshot
+admitted for its own brief. Execution, ownership, replies, queueing, triage,
+Inbox decisions and protected delivery use the shared LCARS machinery.
+
+No import or migration is required. Enabling Linear leaves existing trackers
+and their issues in place.
 
 ## Enable the integration
 
 1. Create a Linear personal API key with access to the intended workspace and
-   teams, permission to read issues/comments and create comments. Store it as
+   teams, with **Read**, **Write** and **Create comments** permissions. Write is
+   required for configured workflow states and triage labels. Store it as
    the runtime secret `AGENT_LCARS_LINEAR_API_KEY`. This adapter uses personal
    API-key authentication, not OAuth or Linear Agent Sessions.
-2. In Linear's API settings, create an **Issues** webhook targeting
+2. In Linear's API settings, create an **Issues and Comments** webhook targeting
    `https://<console-host>/api/control-plane/linear/webhook`. Store its signing
    secret as `AGENT_LCARS_LINEAR_WEBHOOK_SECRET`. Use one webhook for the
    configured workspace, including the teams you intend to route.
@@ -41,6 +45,19 @@ as comments on the same Linear issue, with the Work link and any result URL.
    ```json
    {
      "organizationId": "11111111-1111-4111-8111-111111111111",
+     "operatorIds": ["55555555-5555-4555-8555-555555555555"],
+     "teams": [
+       {
+         "teamId": "22222222-2222-4222-8222-222222222222",
+         "name": "Engineering",
+         "repositories": [
+           {
+             "repo": "jlapenna/agent-lcars",
+             "labelId": "66666666-6666-4666-8666-666666666666"
+           }
+         ]
+       }
+     ],
      "routes": [
        {
          "teamId": "22222222-2222-4222-8222-222222222222",
@@ -57,8 +74,10 @@ as comments on the same Linear issue, with the Work link and any result URL.
    configuration/deployment path (see [deployment boundary](deployment-boundary.md)).
    An absent or blank `AGENT_LCARS_LINEAR` disables intake with HTTP 503;
    enabled but invalid configuration fails startup. This repository's deployment
-   routes the Supersprinkles Tech team's `LCARS: Codex (agent-lcars)` label to
-   `jlapenna/agent-lcars` through Codex. Terraform declares the two secret
+   routes the Supersprinkles Tech team's `LCARS: Codex (agent-lcars)`,
+   `LCARS: Claude (agent-lcars)` and `LCARS: OpenCode (agent-lcars)` labels
+   to `jlapenna/agent-lcars`. `Repository: agent-lcars` selects metadata/triage
+   without dispatching coding work; unrelated Tech issues remain unrouted. Terraform declares the two secret
    containers and their secret-scoped App Hosting grants; their values are
    supplied separately in Secret Manager.
 6. Apply exactly one configured dispatch label to an active issue. A signed
@@ -75,7 +94,7 @@ attributed to one change.
 ### API key
 
 1. Create a replacement Linear personal API key in the same workspace. Preserve
-   the existing **Tech-only** team access and exactly **Read** and **Create
+   the existing **Tech-only** team access and exactly **Read**, **Write** and **Create
    comments** permissions; do not broaden access for rotation. Leave the old
    key valid during the rollout.
 2. Add an enabled version to the existing GCP Secret Manager secret
@@ -112,7 +131,7 @@ changing only one side causes HTTP 401 and does not admit work.
 1. Pause webhook delivery in Linear for the configured endpoint and record any
    affected useful issues for reconciliation. Keep the API key and existing
    Work/outcome processing enabled. If Linear requires recreating the webhook,
-   preserve its Issues subscription, workspace/team scope and endpoint URL
+   preserve its Issues and Comments subscriptions, workspace/team scope and endpoint URL
    `https://<console-host>/api/control-plane/linear/webhook`; leave the old
    webhook disabled during the switch.
 2. Obtain the replacement signing secret from Linear and securely add an enabled
@@ -133,47 +152,133 @@ changing only one side causes HTTP 401 and does not admit work.
    version-and-rollout procedure before resuming; reverting only the runtime
    cannot repair a changed Linear signing secret.
 
-## Intake and retry behavior
+## Browse and operate issues
 
-The route verifies HMAC-SHA256 against the raw request bytes and rejects a
-signed `webhookTimestamp` more than one minute in either direction from the
-console clock, following [Linear's webhook contract](https://linear.app/developers/webhooks).
-Wrong organizations, unmatched teams/labels, ambiguous dispatch labels,
-non-issue events, removed issues and archived/completed/canceled/trashed issues
-start no work. Repository/pipeline authorization uses the common Work policy.
+Open **Work → Issue sources** (`/work/issues`) and select Linear. Refresh reads
+one bounded page at a time, including issues that have never been dispatched;
+it never creates Work. Select a configured repository and agent to run an issue,
+or open its existing Work history. Current title, status, labels and assignee
+remain linked to the original issue. Edit source text in Linear.
 
-The durable source key is organization UUID plus issue UUID. Retries,
-concurrent deliveries, edits, team moves and label removal/re-addition cannot
-create a second Work item for the same issue. The admitted brief is immutable;
-later edits are not synchronized. Use the Work UI/API to reply to parked work
-or redispatch an existing item. Linear comments are outbound results in this
-version; they do not start follow-up runs. Closing or deleting an issue in
-Linear does not cancel already admitted Work; cancel it through LCARS.
+The CLI exposes the same source and ownership operations:
 
-Admission is committed before the response. The outbox drains after the
-response, and ordinary maintenance retries durable pending dispatches after
-process interruption. Transient admission failures return HTTP 500 for Linear
-to retry. Successful admission and valid ignored events return HTTP 200, as required by Linear. Malformed events return 400;
-invalid signatures or stale timestamps return 401. All responses use no-store.
+```bash
+lcars work issues refresh --tracker linear --team <team-uuid>
+lcars work issues --tracker linear
+lcars work issue linear:SPR-84
+lcars work owner linear:SPR-84
+lcars work dispatch linear:SPR-84 --repo jlapenna/agent-lcars --pipeline codex --request-id <retry-key>
+```
 
-## Result comments
+Refresh and list return `nextCursor` when another page exists; pass it as
+`--cursor`. A read or ownership lookup never creates a source-to-Work mapping.
+An unrouted issue reports unknown ownership until a repository is selected.
+Repository-bound callers cannot read another repository's Work through a moved
+issue. Old Work history retains its original target.
 
-The existing native outcome outbox sends execution settlements, parked
-questions, failures, cancellations and protected-delivery completion to
-Linear's [GraphQL API](https://linear.app/developers/graphql). Execution success
-and delivery completion are separate comments; an opened PR is not described
-as a completed delivery. Linear issue state is not changed automatically.
+Inside an authenticated worker, `lcars work source` reads the current issue and
+one page of comments using only that run's token. Follow `nextCursor` with
+`lcars work source --cursor <cursor>`. `admittedIssue` is the immutable Run
+snapshot; `issue` is current source state. No Linear API key reaches the worker.
 
-A stable caller-supplied comment UUID identifies each run/outbox event. Before
-creating a comment, the adapter looks for that UUID and verifies the API key's
-workspace and the comment's issue. Retries after an interrupted response find
-the existing comment. API/GraphQL errors, missing credentials and mismatched
-workspaces remain outbox failures under its existing backoff and retirement
-policy. Keep the API key configured while previously admitted Linear outcomes
-remain pending, even if intake is disabled. No
-`AGENT_LCARS_OUTCOME_WEBHOOKS.linear` entry is needed.
+## Routing, replies and source lifecycle
 
-Local adapter tests exercise admission and delivery boundaries with the real
-in-memory Work state machine and a simulated Linear API. Live acceptance
-additionally requires the workspace settings/credentials above and evidence
-from a real Linear issue through execution and result delivery.
+A team can serve multiple repositories. Optional `teams[].repositories` maps
+repository labels to checkout targets independently of provider dispatch labels.
+An optional `teams[].repo` is an explicit default for a team dedicated to one
+repository. Leave it absent for a shared team. Conflicting routing labels do
+not dispatch. Each team/dispatch label pair selects one authorized repository,
+pipeline and integration principal through the common Work grant policy.
+
+Exactly one configured dispatch label on an open issue starts its first Work.
+Ordinary edits refresh current metadata without changing an admitted brief or
+creating another run. One organization/issue pair owns one durable Work item.
+Moving its team or repository cannot retarget existing Work.
+
+Comments from `operatorIds` can explicitly request the shared reply commands:
+`@claude` (alias `@agent`), `/codex`, `/oc` (alias `/opencode`), when that
+pipeline has a route for the issue's repository. Current comment body and author
+are verified against Linear. Ordinary prose, code, quotes and LCARS output are
+inert. Reapplying a dispatch label is an explicit follow-up only when the signed
+event proves an authorized operator newly added it. Stable source-event receipts
+prevent duplicate runs even when delivery retries after the first run settles.
+Replies use the existing session-resume and provider-switch behavior; a busy run
+retains its execution ownership.
+
+Closing, archiving, deleting, canceling or marking a source duplicate cancels
+only an unstarted implementation. A final fresh source read fences queued work
+before its token reaches a worker. Unknown source state defers the claim for a
+later poll. Running work and explicit reply/review turns retain their ownership;
+use Work cancellation to stop execution. Explicit Work cancellation remains
+authoritative and is not undone by later source edits.
+
+## Durable webhook processing
+
+The public route verifies HMAC-SHA256 over the original bytes and rejects a
+signed `webhookTimestamp` outside one minute of the console clock, following
+[Linear's webhook contract](https://linear.app/developers/webhooks). It returns
+HTTP 200 after the existing Cloud Tasks queue owns the original signed envelope;
+no provider read or worker startup delays the acknowledgment. Malformed events
+return 400, invalid/stale signatures 401 and queue failures 500. Responses use
+`Cache-Control: no-store`.
+
+The internal `/api/control-plane/linear/process` route requires Google's verified
+OIDC identity for `AGENT_LCARS_WEBHOOK_TASK_SERVICE_ACCOUNT` and the exact route
+audience, then rechecks the original HMAC. Only this authenticated path accepts
+delayed queue delivery. Cloud Tasks retries transient failures. The shared hosted
+webhook policy bounds attempts, schedules delayed repair successors and stops
+exhausted repairs with a visible error; an explicit metadata refresh or a fresh
+source event can reconcile the source afterward. Terraform grants the runtime
+permission to attach only its configured task identity.
+
+## Workflow states and protected delivery
+
+Optional `teams[].states` maps `started`, `parked`, `failed`, `canceled` and
+`completed` to actual Linear workflow-state UUIDs. Every write validates the
+state's team/category. Configure a nonterminal state for parked/failed work;
+use a canceled-category state for cancellation and a completed-category state
+for protected delivery.
+
+The first authenticated provider heartbeat records the durable started effect.
+Execution settlement and protected-delivery completion remain distinct comments.
+A successful execution or an open PR never marks the issue Done: completed
+status requires the bound PR's protected merge evidence. Retries reuse the
+existing outbox, including when the comment already exists but its state update
+failed. Older generations, source routing conflicts and observed human closure
+fence status writes. Source-managed report/triage work does not project coding
+workflow states.
+
+Stable caller-supplied comment UUIDs identify each outcome event. Read-back
+verifies the workspace and issue, including archived comments, so a lost write
+response does not duplicate output. API/GraphQL errors and missing credentials
+remain retryable under the existing outbox policy. Keep credentials available
+while old Linear outcomes are pending. No
+`AGENT_LCARS_OUTCOME_WEBHOOKS.linear` setting is needed.
+
+## Event-driven triage and Inbox
+
+Optional `teams[].triage` contains `bugLabelIds`, `readyLabelId`, `pipeline` and
+`principal`. It uses the repository's existing watched-repository opt-in and
+shared triage publisher. `readyLabelId` selects the ready coding provider; each repository binding must
+have exactly one dispatch route for that same provider. Readiness adds the label
+for the issue’s repository, never another repository’s label;
+the analysis pipeline/principal must have the corresponding Work grant.
+Repository labels or a dedicated-team default identify an undispatched bug's
+target. Unrouted issues never become guessed repository work.
+
+Fresh issue text, comments, ownership, assignment, linked PRs and control labels
+fence each report. Metadata proposals are restricted to existing non-triggering
+`type:*`, `component:*` and `app:*` labels. The publisher retains its source
+revision, lease, comment and dispatch receipts. An observed ready label that a
+human later removes is never automatically re-added. A previous coding dispatch
+prevents automatic redispatch.
+
+Linear `needs-owner` and `needs-evidence` reports appear in the existing Inbox,
+linked to their source and Work history. Respond on the Linear issue; its next
+source event refreshes triage. Internal report Work does not accept a coding
+reply. Ready reports use the configured route through normal issue admission.
+
+Local regression tests use the real in-memory orchestrator and simulated provider
+transport. Live acceptance additionally verifies the exact GraphQL queries,
+team-scoped permissions, signed webhook processing, source browsing, a useful
+real worker conversation and protected-delivery/status publication.

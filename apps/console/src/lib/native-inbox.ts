@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { fleetTriageReportSchema } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import type { OrchestratorStore } from '@agent-lcars/orchestrator';
 import { isSourceManagedWork } from '@agent-lcars/work';
@@ -38,10 +39,28 @@ export async function getNativeInboxCards(
       ),
     );
     for (const work of summaries) {
-      if (
-        'sourceKey' in work.spec ||
-        isSourceManagedWork({ origin: work.origin, spec: work.spec })
-      )
+      const closedSource =
+        work.issue?.reference.tracker === 'linear' &&
+        work.issue.state === 'closed';
+      if (closedSource && work.id !== selectedItemKey) continue;
+      const sourceManaged = isSourceManagedWork({
+        origin: work.origin,
+        spec: work.spec,
+      });
+      let triageDecision = false;
+      if (sourceManaged && work.issue?.reference.tracker === 'linear') {
+        try {
+          const report = fleetTriageReportSchema.parse(
+            JSON.parse(work.runs.at(-1)?.result?.message ?? ''),
+          );
+          triageDecision = ['needs-owner', 'needs-evidence'].includes(
+            report.disposition,
+          );
+        } catch {
+          /* An unavailable report does not invent a human decision. */
+        }
+      }
+      if ('sourceKey' in work.spec || (sourceManaged && !triageDecision))
         continue;
       const report = nativeReportRun(work);
       const freshReport =
@@ -67,9 +86,11 @@ export async function getNativeInboxCards(
         humanNeededActions,
         work: { ...work, anchor: work.anchor },
         kind: report ? 'report' : 'decision',
-        queued: work.state === 'parked' || freshReport,
+        queued: !closedSource && (work.state === 'parked' || freshReport),
         // A follow-up on a report starts a new round, as a reply to a park does.
         canReply:
+          !closedSource &&
+          !sourceManaged &&
           (work.state === 'parked' || report !== undefined) &&
           principal?.scopes.has('work.operator') === true &&
           forbiddenReason(principal, {

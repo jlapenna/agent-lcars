@@ -12,12 +12,12 @@ import { required } from '@agent-lcars/util-server';
 
 import { codexAuthStore } from '@/lib/codex-auth-store';
 import { recoverCodexCredentialOperations } from '@/lib/codex-credential-operations';
-import { loadGithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
   createDispatchTokenProvider,
   type DispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
+import { issueTracker } from '@/lib/issue-trackers';
 import { drainOutbox } from '@/lib/orchestrator-dispatch';
 import type { OrchestratorRouteDeps } from '@/lib/orchestrator-routes';
 import { dispatchSessionExpiry } from '@/lib/session-expiry';
@@ -121,9 +121,9 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
         codexAuth: codexAuthStore('agent-lcars-codex-auth'),
         now: () => new Date(),
       }),
-    loadGithubAnchorLifecycle: (anchor) => {
+    loadIssueLifecycle: (anchor, repository) => {
       const github = orchestratorGithubRuntimeDeps(process.env);
-      return loadGithubAnchorLifecycle(github, anchor);
+      return issueTracker(github).lifecycle(anchor, repository);
     },
     expireItemSessions: async (workId: string) => {
       try {

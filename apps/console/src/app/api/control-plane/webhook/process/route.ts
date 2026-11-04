@@ -5,6 +5,14 @@ import { NextResponse } from 'next/server';
 
 import { AUTHORITATIVE_QUEUE_TAG } from '@/lib/cache-tags';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
+import {
+  MAX_PROCESS_ATTEMPTS,
+  MAX_REPAIR_GENERATIONS,
+  parseAttempt,
+  parseRepairGeneration,
+  PermanentAdmissionError,
+  repairSuccessorDelayMs,
+} from '@/lib/hosted-webhook-policy';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
 import {
   handleWebhookDelivery,
@@ -20,12 +28,6 @@ import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
  * with an unwrapped `Error` (orchestrator/Firestore/GitHub API failures),
  * which stays on the retryable 5xx path.
  */
-class PermanentAdmissionError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'PermanentAdmissionError';
-  }
-}
 
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();
@@ -46,8 +48,6 @@ function header(request: Request, name: string): string {
 // error itself, above, is the primary defense). Past this bound the
 // delivery is acked and dropped with a loud log; the reconcile scan
 // rebuilds any state the event carried from GitHub itself.
-const MAX_PROCESS_ATTEMPTS = 10;
-
 /**
  * A projection-only refresh that keeps failing is retried across successor
  * tasks (see below), but each successor now waits before its first attempt
@@ -59,41 +59,6 @@ const MAX_PROCESS_ATTEMPTS = 10;
  * generations, after which the delivery is dropped loudly; the anchor's next
  * real event refreshes it.
  */
-const MAX_REPAIR_GENERATIONS = 10;
-const HOUR_MS = 60 * 60 * 1000;
-
-function repairSuccessorDelayMs(generation: number): number {
-  return Math.min(2 ** generation, 24) * HOUR_MS;
-}
-
-function parseAttempt(retryCount: string | null): number {
-  if (retryCount === null || !/^\d+$/u.test(retryCount)) return 1;
-  const parsed = Number(retryCount);
-  return Number.isSafeInteger(parsed) ? parsed + 1 : 1;
-}
-
-/** The durable repair generation is carried separately from Cloud Tasks'
- * per-task retry count. A successor begins at retry one, so reusing the
- * retry count would recreate the same named repair task after every
- * lifecycle. This header is supplied only by our task enqueue path; malformed
- * values are a deterministic delivery error rather than a reason to choose an
- * arbitrary task name. */
-function parseRepairGeneration(value: string | null): number {
-  if (value === null) return 0;
-  if (!/^\d+$/u.test(value)) {
-    throw new PermanentAdmissionError(
-      'x-agent-lcars-projection-repair-generation must be a nonnegative integer',
-    );
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new PermanentAdmissionError(
-      'x-agent-lcars-projection-repair-generation must be a safe integer',
-    );
-  }
-  return parsed;
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = Buffer.from(await request.arrayBuffer());
   if (

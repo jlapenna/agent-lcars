@@ -1,4 +1,9 @@
 import {
+  issueSourceKey,
+  type TrackerIssue,
+} from '@agent-lcars/dispatch-contracts';
+
+import {
   type DeliveryBinding,
   deliveryWaiting,
   isClaimant,
@@ -63,6 +68,7 @@ export interface Refusal {
     | 'missing-work' // strict Task documents always carry the Work payload
     | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
+    | 'stale-issue-source'
     | 'not-native' // closeTask on a GitHub anchor: closedAt is native-only
     | 'credential-operation-pending' // external CAS must be resolved before replacement
     | 'not-claimant'; // exit report from a principal/runner that did not claim the run
@@ -173,6 +179,7 @@ export interface RequestRunInput {
   params?: Record<string, string>;
   intervention?: OperationalIntervention;
   work?: WorkPayload;
+  issue?: TrackerIssue;
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
   sourceRevision?: WorkRevision;
   revisionAttempt?: number;
@@ -215,6 +222,20 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     return refused('task-busy');
   const work = input.task?.work ?? input.work;
   if (work === undefined) return refused('missing-work');
+  const previousIssue = input.task?.issue;
+  if (
+    previousIssue &&
+    input.issue &&
+    issueSourceKey(previousIssue.reference) !==
+      issueSourceKey(input.issue.reference)
+  )
+    throw new Error('Issue source identity cannot change');
+  const issue =
+    input.issue &&
+    (!previousIssue ||
+      Date.parse(input.issue.updatedAt) > Date.parse(previousIssue.updatedAt))
+      ? input.issue
+      : previousIssue;
   const baseTask: Task = {
     task: taskId,
     runCount: input.task?.runCount ?? 0,
@@ -230,6 +251,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
       : { delivery: input.task.delivery }),
     // Written once: only the request that creates the task may set `work`.
     work,
+    ...(issue === undefined ? {} : { issue }),
     ...(input.sourceRevision === undefined
       ? {}
       : {
@@ -247,6 +269,7 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     now,
     taskId,
     task: baseTask,
+    issue: Object.hasOwn(input, 'issue') ? input.issue : issue,
     requestId,
     requestSource: input.requestSource,
     pipeline: input.pipeline,
@@ -404,6 +427,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     now,
     taskId: run.task,
     task: resetLossBudgets(decision.task),
+    issue: superseded ? decision.task.issue : run.issue,
     requestId: superseded ? desired.key : `retry:${run.runId}`,
     requestSource: superseded ? 'caller' : 'auto-retry',
     pipeline: run.pipeline,
@@ -425,6 +449,7 @@ function mintRun(input: {
   now: string;
   taskId: TaskId;
   task: Task;
+  issue?: TrackerIssue;
   requestId: string;
   requestSource?: RequestSource;
   pipeline: string;
@@ -447,6 +472,9 @@ function mintRun(input: {
     priority: queuePrioritySchema.parse(input.priority ?? 'normal'),
     requestId,
     requestSource: requestSource ?? 'caller',
+    ...((Object.hasOwn(input, 'issue') ? input.issue : task.issue) === undefined
+      ? {}
+      : { issue: Object.hasOwn(input, 'issue') ? input.issue : task.issue }),
     ...(input.sourceRevision === undefined
       ? {}
       : {
@@ -633,7 +661,26 @@ export function renewLease(input: {
       leaseExpiresAt: runLeaseExpiresAt(now),
       updatedAt: now,
     },
-    outbox: [],
+    outbox:
+      input.providerProcessStarted === true &&
+      input.claimFingerprint !== undefined &&
+      run.queue?.state === 'claimed' &&
+      run.queue.providerProcessStartedAt === undefined &&
+      run.issue?.reference.tracker === 'linear' &&
+      run.sourceRevision === undefined
+        ? [
+            {
+              entryId: `issue-start/${run.runId}`,
+              kind: 'publish-issue-start',
+              task: run.task,
+              runId: run.runId,
+              state: 'pending',
+              attempts: 0,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ]
+        : [],
   };
 }
 
@@ -1014,6 +1061,7 @@ function settleLostAndRetry(
     now: input.now,
     taskId: lostRun.task,
     task: lost.task,
+    issue: lostRun.issue,
     requestId: `retry:${lostRun.runId}`,
     requestSource: 'auto-retry',
     pipeline: lostRun.pipeline,
