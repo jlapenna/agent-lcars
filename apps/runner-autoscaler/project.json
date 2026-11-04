@@ -13,6 +13,18 @@
     },
     "typecheck": {
       "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/go.work",
+        "{workspaceRoot}/go.work.sum",
+        { "runtime": "go version" },
+        {
+          "runtime": "go env GOOS GOARCH CGO_ENABLED GOFLAGS GOEXPERIMENT CGO_CFLAGS CGO_CPPFLAGS CGO_CXXFLAGS CGO_LDFLAGS"
+        }
+      ],
+      "outputs": [],
       "options": {
         "command": "go vet ./...",
         "cwd": "apps/runner-autoscaler"
