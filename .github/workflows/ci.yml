@@ -509,7 +509,7 @@ jobs:
           direct_runner_pid=$!
           direct_runner_status=0
           firestore_status=0
-          ./tools/nx run @agent-lcars/orchestrator:test-firestore || firestore_status=$?
+          JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Xmx512m" ./tools/nx run @agent-lcars/orchestrator:test-firestore || firestore_status=$?
           wait "$direct_runner_pid" || direct_runner_status=$?
           if (( direct_runner_status != 0 || firestore_status != 0 )); then
             echo "::error::Console contracts failed (direct-runner=$direct_runner_status, Firestore=$firestore_status)."
