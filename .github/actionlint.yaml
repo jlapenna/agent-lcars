@@ -5,6 +5,7 @@
 # non-provider workflow that later pins one literally.
 self-hosted-runner:
   labels:
+    - agent-lcars-ci-control
     - agent-lcars-ci
     - agent-lcars-e2e
 
