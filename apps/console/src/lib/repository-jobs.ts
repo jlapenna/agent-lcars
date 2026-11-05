@@ -78,6 +78,8 @@ export class RepositoryJobs {
     });
   }
   authorizeOccurrence(occurrence: JobOccurrence): JobProfile {
+    if ('credentials' in occurrence.profile)
+      throw new Error('Legacy credential profile requires migration');
     const profile = this.authorize(
       occurrence.definition,
       occurrence.principal,
@@ -309,6 +311,32 @@ export class RepositoryJobs {
     if (!job.active) return;
     const occurrence = await this.deps.store.readOccurrence(job.active);
     if (!occurrence) throw new Error('Active occurrence missing');
+    if (
+      'credentials' in occurrence.profile &&
+      !(await this.deps.runtime.store.readTask({ workId: occurrence.workId }))
+    ) {
+      // Never mint legacy Work. Wait out the existing retirement backstop
+      // before releasing an interrupted reservation from an older deployment.
+      if (
+        this.deps.now().getTime() - Date.parse(occurrence.createdAt) <
+        RETIREMENT_BACKSTOP_MS
+      )
+        return;
+      await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
+        if (!current || !saved || current.active !== occurrence.id) return {};
+        const { active: _active, ...rest } = current;
+        return {
+          job: rest,
+          occurrence: {
+            ...saved,
+            successful: false,
+            admissionFailure: 'legacy-credentials',
+            reconciledAt: this.deps.now().toISOString(),
+          },
+        };
+      });
+      return;
+    }
     await this.mint(occurrence);
     const runs = await this.deps.runtime.store.listRuns({
       workId: occurrence.workId,

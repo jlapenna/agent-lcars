@@ -209,3 +209,18 @@ All administration paths below are under `/api/work/v1/credentials`, require
 
 The separate runtime delivery route uses the existing run-token contract,
 documented in the generated Work OpenAPI. No runtime route lists the store.
+
+## Legacy occurrence compatibility
+
+Stored occurrences containing the former `profile.credentials.github` field
+remain decodable for historical metadata and terminal Work reconciliation. New
+profile configuration still rejects that field, and live recipe/credential
+routes refuse legacy delivery, including fallback to App credentials. Historical
+reads require the current repository's Goose operator grant rather than an
+execution profile that may have been retired. No secret-store access is granted
+by a historical read.
+
+Interrupted legacy reservations with no Work are never minted again. They release
+the active slot as unsuccessful after the existing worker retirement backstop,
+with a visible legacy-admission failure. This preserves history without leaving
+recurring jobs permanently occupied during migration.

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   jobDefinitionSchema,
   jobInputsSchema,
+  jobProfileNameSchema,
   jobProfileSchema,
 } from './repository-job-definition';
 
@@ -31,6 +32,19 @@ export const catalogJobSchema = z.strictObject({
   baseline: z.strictObject({ occurrence: hash, comparison: hash }).optional(),
 });
 export type CatalogJob = z.infer<typeof catalogJobSchema>;
+// Storage compatibility only. New configuration still uses jobProfileSchema;
+// runtime authorization explicitly refuses legacy credential delivery.
+const storedJobProfileSchema = z.union([
+  jobProfileSchema,
+  jobProfileSchema
+    .safeExtend({
+      credentials: z.strictObject({ github: jobProfileNameSchema }),
+    })
+    .refine(
+      (profile) => !profile.credentialSet && !profile.crossRepo,
+      'Legacy credentials cannot be combined with current credential sets or crossRepo',
+    ),
+]);
 export const jobOccurrenceSchema = z.strictObject({
   id: hash,
   jobId: hash,
@@ -41,7 +55,7 @@ export const jobOccurrenceSchema = z.strictObject({
   trigger: z.enum(['manual', 'schedule']),
   skipped: z.boolean(),
   definition: jobDefinitionSchema,
-  profile: jobProfileSchema,
+  profile: storedJobProfileSchema,
   secretSnapshot: jobSecretSnapshotSchema.optional(),
   comparison: hash,
   parameters: jobInputsSchema.default({}),
@@ -49,6 +63,7 @@ export const jobOccurrenceSchema = z.strictObject({
   artifact: jobArtifactSchema.optional(),
   reconciledAt: z.iso.datetime().optional(),
   successful: z.boolean().optional(),
+  admissionFailure: z.literal('legacy-credentials').optional(),
 });
 export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 // Artifact contents are opaque JSON, not Firestore field values. This preserves

@@ -45,11 +45,15 @@ export async function repositoryJobsHttp(
       );
       if (!occurrence)
         return Response.json({ error: 'Not found' }, { status: 404 });
-      jobs.authorize(
-        occurrence.definition,
-        principal.principal,
-        occurrence.profile.name,
-      );
+      // Historical metadata remains readable when an execution profile is
+      // retired. This never grants execution or access to secret values.
+      if (
+        !jobs.deps.granted(
+          principal.principal,
+          occurrence.definition.repository,
+        )
+      )
+        throw new Error('Goose operator grant required');
       return Response.json(occurrence);
     }
     const profilesPath = /^\/([a-f0-9]{64})\/profiles$/u.exec(path);

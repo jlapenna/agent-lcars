@@ -171,3 +171,33 @@ it('lists all registered jobs, including disabled and invalid definitions', asyn
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual(JSON.parse(JSON.stringify(registered)));
 });
+
+it('reads historical metadata after profile retirement without weakening repository authorization', async () => {
+  const occurrence = {
+    id: 'c'.repeat(64),
+    definition,
+    profile: { name: 'retired-personal', credentials: { github: 'personal' } },
+  };
+  vi.spyOn(store, 'readOccurrence').mockResolvedValue(occurrence as never);
+  const operator: WorkPrincipal = {
+    ...source,
+    via: 'session',
+    sourceRepository: undefined,
+    principal: 'user:joe',
+  };
+  const response = await repositoryJobsHttp(
+    new Request(
+      `https://console.example/api/work/v1/jobs/occurrences/${occurrence.id}`,
+    ),
+    operator,
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(occurrence);
+  const denied = await repositoryJobsHttp(
+    new Request(
+      `https://console.example/api/work/v1/jobs/occurrences/${occurrence.id}`,
+    ),
+    source,
+  );
+  expect(denied.status).toBe(409);
+});
