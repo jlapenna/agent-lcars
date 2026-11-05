@@ -122,8 +122,6 @@ jobs:
     # The supported cold runner path can reach Go/race verification at 30m
     # (#2507). Keep the complete gate bounded without changing its resources.
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
-    env:
-      MALLOC_ARENA_MAX: '2'
 
     steps:
       - name: Register whole-job memory measurement
@@ -416,8 +414,6 @@ jobs:
     name: Full verification (console)
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci' }}
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
-    env:
-      MALLOC_ARENA_MAX: '2'
 
     steps:
       - name: Register whole-job memory measurement
@@ -741,8 +737,6 @@ jobs:
     # sprinkles' own e2e.yml `runs-on: [e2e]`).
     runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-e2e' }}
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 30 }}
-    env:
-      MALLOC_ARENA_MAX: '2'
 
     steps:
       - name: Register whole-job memory measurement
