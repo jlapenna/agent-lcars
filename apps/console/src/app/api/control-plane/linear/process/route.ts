@@ -15,11 +15,17 @@ import { enqueueLinearWebhook } from '@/lib/hosted-webhook-queue';
 import { linearConfig } from '@/lib/linear-config';
 import { admitLinearWebhook, verifyLinearSignature } from '@/lib/linear-intake';
 import { createOrchestratorRuntime } from '@/lib/orchestrator-runtime';
+import { recordLinearWebhook } from '@/lib/webhook-observability';
 import { googleIdTokenVerifier } from '@/lib/work-auth';
 
 export async function POST(request: Request): Promise<Response> {
-  const respond = (body: Record<string, unknown>, status: number) =>
-    Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
+  const respond = (body: Record<string, unknown>, status: number) => {
+    recordLinearWebhook('process', body, status);
+    return Response.json(body, {
+      status,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  };
   const audience = `${required('AUTH_URL').replace(/\/$/u, '')}/api/control-plane/linear/process`;
   const bearer = request.headers
     .get('authorization')

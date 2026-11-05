@@ -168,6 +168,72 @@ describe('Linear admission boundary', () => {
     );
     expect(f.runtime.drain).not.toHaveBeenCalled();
   });
+  it.each([false, true])(
+    'refreshes retained Work identity independent of thread JSON order (typed metadata: %s)',
+    async (typed) => {
+      const f = fixture();
+      const first = await f.admit();
+      const id = { workId: first.body['itemId'] as string };
+      const existing = (await f.store.readTask(id))!;
+      const work = structuredClone(existing.task.work);
+      work['origin'] = {
+        principal: 'svc:linear',
+        channel: 'linear',
+        thread: JSON.stringify({ issueId, organizationId: org }, null, 2),
+      };
+      const task = { ...existing.task, work };
+      if (!typed) delete task.issue;
+      await f.store.apply({
+        expectedRevision: existing.revision,
+        decision: { task, outbox: [] },
+      });
+      expect((await f.admit()).body['itemId']).toBe(id.workId);
+      expect((await f.store.readTask(id))?.task.issue?.reference).toEqual(
+        f.source.current.reference,
+      );
+      expect(await f.store.listRuns(id)).toHaveLength(1);
+    },
+  );
+  it('rejects a binding whose typed source disagrees with its return transport', async () => {
+    const f = fixture();
+    const first = await f.admit();
+    const id = { workId: first.body['itemId'] as string };
+    const existing = (await f.store.readTask(id))!;
+    const task = structuredClone(existing.task);
+    task.work['origin'] = {
+      principal: 'svc:linear',
+      channel: 'linear',
+      thread: JSON.stringify({ organizationId: org, issueId: actor }),
+    };
+    await f.store.apply({
+      expectedRevision: existing.revision,
+      decision: { task, outbox: [] },
+    });
+    await expect(f.admit()).rejects.toThrow(
+      'Linear source mapping does not match stored Work origin',
+    );
+    expect(await f.store.listRuns(id)).toHaveLength(1);
+  });
+  it('rejects a canonical Linear binding with another return channel', async () => {
+    const f = fixture();
+    const first = await f.admit();
+    const id = { workId: first.body['itemId'] as string };
+    const existing = (await f.store.readTask(id))!;
+    const task = structuredClone(existing.task);
+    task.work['origin'] = {
+      principal: 'svc:linear',
+      channel: 'api',
+      thread: JSON.stringify({ organizationId: org, issueId }),
+    };
+    await f.store.apply({
+      expectedRevision: existing.revision,
+      decision: { task, outbox: [] },
+    });
+    await expect(f.admit()).rejects.toThrow(
+      'Linear source mapping does not match stored Work origin',
+    );
+    expect(await f.store.listRuns(id)).toHaveLength(1);
+  });
   it('projects unlabelled sources without minting a Work mapping or dispatching', async () => {
     const f = fixture(snapshot({ labels: [] }));
     expect((await f.admit()).body['outcome']).toBe('ignored');

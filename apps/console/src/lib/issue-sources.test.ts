@@ -256,6 +256,51 @@ describe('first-class issue source operations', () => {
       await f.store.readSourceWorkId(issueSourceKey(issue.reference)),
     ).toBe(first.workId);
   });
+  it.each(['owner/repo', 'owner/other'])(
+    'denies moved live source to %s without transferring its Work binding',
+    async (repository) => {
+      const f = fixture();
+      const first = await dispatchIssueSource(f.context, {
+        issue: issue.reference,
+        pipeline: 'codex',
+        requestId: 'first',
+      });
+      vi.stubEnv(
+        'AGENT_LCARS_LINEAR',
+        JSON.stringify({
+          organizationId: org,
+          routes: [
+            {
+              teamId: team,
+              labelId: label,
+              repo: 'owner/other',
+              pipeline: 'codex',
+              principal: 'svc:linear',
+            },
+          ],
+        }),
+      );
+      await f.store.writeTrackerIssue({
+        issue,
+        repo: 'owner/other',
+        observedAt: now,
+      });
+      f.context.principal = {
+        ...f.context.principal!,
+        sourceRepository: repository,
+      };
+      expect(
+        (await listIssueSources(f.context, { tracker: 'linear', limit: 50 }))
+          .issues,
+      ).toEqual([]);
+      await expect(
+        lookupIssueSource(f.context, { tracker: 'linear', issue: 'ENG-42' }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(
+        await f.store.readSourceWorkId(issueSourceKey(issue.reference)),
+      ).toBe(first.workId);
+    },
+  );
   it('rejects provider-crossed and malformed page cursors', async () => {
     const f = fixture();
     await expect(

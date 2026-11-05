@@ -7,10 +7,16 @@ import {
   linearWebhookEnvelopeSchema,
   verifyLinearSignature,
 } from '@/lib/linear-intake';
+import { recordLinearWebhook } from '@/lib/webhook-observability';
 
 export async function POST(request: Request): Promise<Response> {
-  const respond = (body: Record<string, unknown>, status: number) =>
-    Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
+  const respond = (body: Record<string, unknown>, status: number) => {
+    recordLinearWebhook('intake', body, status);
+    return Response.json(body, {
+      status,
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  };
   try {
     const config = linearConfig();
     if (config === undefined)

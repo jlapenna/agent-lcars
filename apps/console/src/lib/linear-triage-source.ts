@@ -14,6 +14,7 @@ import {
 } from './linear-client';
 import {
   linearConfig,
+  linearIssueInRepository,
   linearIssueRepository,
   linearTeam,
   linearTriageDispatchRoute,
@@ -141,6 +142,7 @@ export async function loadLinearTriageSource(
       triage !== undefined &&
       readyRoute !== undefined &&
       repository === anchor.repo &&
+      linearIssueInRepository(config, issue, anchor.repo) &&
       getWatchedRepos().some(
         (repo) =>
           `${repo.owner}/${repo.name}` === anchor.repo && repo.agents !== false,
