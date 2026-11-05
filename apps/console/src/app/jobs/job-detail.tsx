@@ -105,7 +105,9 @@ export function JobDetail({
           <StateMark tone={job.enabled ? 'ok' : 'idle'}>
             {job.enabled ? 'Enabled' : 'Disabled'}
           </StateMark>
-          {job.enabled ? (
+          {/* A disabled job without a veto reactivates on its next healthy
+              refresh, so the veto stays available while it is off. */}
+          {job.enabled || !job.vetoedBy ? (
             <Button
               variant="light"
               disabled={busy}
@@ -120,7 +122,7 @@ export function JobDetail({
                 )
               }
             >
-              Disable
+              {job.enabled ? 'Disable' : 'Keep disabled'}
             </Button>
           ) : null}
           {definition?.job.triggers.manual && !run ? (
