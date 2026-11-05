@@ -448,7 +448,11 @@ RUN set -eux; \
     # nmap: repository-owned Goose audit recipes (jclaw weekly-security-audit)
     # run bounded, unprivileged report-only scans with the standard package
     # instead of host-only tools; it is present in every lane like gh and jq. \
-    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq nmap xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    # rclone: repository-owned skill-evals jobs archive every run to Homelab's
+    # Garage S3 through repo-eval-history, which drives the standard rclone
+    # client (repo-tools docs/evaluation-history.md); same apt package the
+    # Homelab garage_client role installs on operator hosts. \
+    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq nmap rclone xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     test "$(node -p 'process.versions.node')" = "$NODE_VERSION"; \
     # Actions execute with their bundled Node, independently of PATH.
     cp /usr/bin/node /home/runner/externals/node24/bin/node; \
@@ -482,6 +486,7 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     jq --version; \
+    rclone version; \
     xz --version; \
     python3 -m pip --version; \
     test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
