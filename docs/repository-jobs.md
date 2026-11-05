@@ -215,14 +215,10 @@ run through the existing Work cancellation and retirement lifecycle.
 The QueueExecutor uses its normal configured runner image and resources. Its whole-job allocation must match the execution profile. The existing
 runner credential Secret supplies `goose-environment.json` (a string-valued map of
 provider environment variables) and `goose-config.yaml` (the operator-owned Goose
-configuration). Goose uses one shared tool environment across the fleet. A
-specialized profile may name an `environment` overlay: the runner then also
-reads `goose-environment.<name>.json` from the same Secret and lets its keys
-win, so one job class can carry credentials (for example a Claude token for
-`claude plugin eval`) without widening the shared environment or putting
-values in console configuration. The overlay is Homelab-provisioned; a
-profile naming an overlay the Secret lacks fails the run. Profiles may also
-select a GitHub credential as described below; neither changes Goose tools.
+configuration). Goose uses one shared tool environment across the fleet. A job
+class that needs its own credentials (for example the Claude token `claude
+plugin eval` uses in `skill-evals`) selects an LCARS credential set through its
+profile, as described below; credential sets do not change Goose tools.
 Do not add model credentials to repository recipes. The image publication lifecycle
 is the existing supported stack lifecycle; source merging does not bypass its publication or activation holds.
 

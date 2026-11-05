@@ -21,7 +21,7 @@ const base = {
   LITELLM_API_KEY: 'k',
 };
 
-test('without an overlay the shared environment is used unchanged', async () => {
+test('the shared environment is used unchanged', async () => {
   assert.deepEqual(
     await loadGooseEnvironment({
       read: files({ 'goose-environment.json': base }),
@@ -30,53 +30,12 @@ test('without an overlay the shared environment is used unchanged', async () => 
   );
 });
 
-test('a profile overlay is merged over the shared environment and its keys win', async () => {
-  const env = await loadGooseEnvironment({
-    overlay: 'skill-evals',
-    read: files({
-      'goose-environment.json': base,
-      'goose-environment.skill-evals.json': {
-        CLAUDE_CODE_OAUTH_TOKEN: 't',
-        GOOSE_MODEL: 'big',
-      },
-    }),
-  });
-  assert.deepEqual(env, {
-    ...base,
-    CLAUDE_CODE_OAUTH_TOKEN: 't',
-    GOOSE_MODEL: 'big',
-  });
-});
-
-test('an overlay the Secret does not carry fails the run instead of running on the shared environment', async () => {
+test('the shared environment follows the provider environment rules', async () => {
   await assert.rejects(
     loadGooseEnvironment({
-      overlay: 'skill-evals',
-      read: files({ 'goose-environment.json': base }),
+      read: files({ 'goose-environment.json': { LCARS_RUN_TOKEN: 'no' } }),
     }),
-    /goose-environment\.skill-evals\.json is not provisioned/,
-  );
-});
-
-test('overlay names and contents follow the shared environment rules', async () => {
-  for (const overlay of ['Skill', 'a/b', '../x', '']) {
-    await assert.rejects(
-      loadGooseEnvironment({
-        overlay,
-        read: files({ 'goose-environment.json': base }),
-      }),
-      /overlay name/,
-    );
-  }
-  await assert.rejects(
-    loadGooseEnvironment({
-      overlay: 'x',
-      read: files({
-        'goose-environment.json': base,
-        'goose-environment.x.json': { LCARS_RUN_TOKEN: 'no' },
-      }),
-    }),
-    /Invalid Goose provider environment \(goose-environment\.x\.json\)/,
+    /Invalid Goose provider environment \(goose-environment\.json\)/,
   );
   assert.throws(
     () =>
