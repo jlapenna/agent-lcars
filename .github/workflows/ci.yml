@@ -376,7 +376,7 @@ jobs:
         run: pnpm check:dependencies
 
       - name: Check contracts
-        run: pnpm check:contracts
+        run: NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--max-old-space-size=256" pnpm check:contracts
 
       - name: Check formatting
         run: pnpm format:check
