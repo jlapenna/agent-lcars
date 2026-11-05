@@ -314,8 +314,9 @@ LCARS's already-native summaries, triage, queue maintenance and delivery remain
 native Work. Fork contribution checkouts are not first-party migration targets.
 
 Catalog refresh and model summaries start independently within the same bounded
-maintenance window. Every control-plane repository's catalog refreshes
-oldest-first (by its last recorded refresh attempt) in batches of at most four,
+maintenance window. Every control-plane repository's catalog, plus any
+repository that still has stored jobs, refreshes in batches of at most four:
+repositories with an enabled job first, then oldest recorded refresh attempt,
 while occurrence settlement and scheduling start independently. A second
 deadline-checked tick admits current schedule slots after a stale catalog
 refreshes; occurrence IDs make replay idempotent. Refresh timestamps and disabled

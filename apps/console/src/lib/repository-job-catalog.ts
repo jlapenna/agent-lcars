@@ -15,8 +15,10 @@ import type { CatalogJob, JobStore } from './repository-job-store';
 export type JobActivation = (definition: JobDefinition) => string | undefined;
 
 /** Null when no operator veto stands. A record written before automatic
- * activation has no `vetoedBy`: one that was enabled and later disabled
- * without a source error was an explicit operator disable, so it stays one. */
+ * activation has no `vetoedBy`. One that was enabled and is now disabled
+ * without a source error was either an operator disable or a digest change
+ * awaiting re-enablement; both kept it off pending an operator, so it stays a
+ * veto. Records disabled by a source error activate again once healthy. */
 export function operatorVeto(job: CatalogJob | undefined): string | null {
   if (job?.vetoedBy !== undefined) return job.vetoedBy;
   return job && !job.enabled && job.enabledBy && !job.error
@@ -246,15 +248,29 @@ export async function refreshJobCatalogs(
   activate: JobActivation,
 ): Promise<void> {
   const refreshed = await store.sourceRefreshes();
-  const oldest = new Map<string, number>(
-    repositories.map((repository) => [
+  // Repositories with an enabled job come first so their catalogs stay
+  // inside the admission freshness window; discovery fills later batches.
+  // Repositories that only have stored jobs keep refreshing so removal and
+  // source changes still reach those records.
+  const enabled = new Set<string>();
+  const known = new Set(repositories);
+  for (const job of await store.list()) {
+    known.add(job.repository);
+    if (job.enabled) enabled.add(job.repository);
+  }
+  const ordered = [...known]
+    .map((repository) => ({
       repository,
-      Date.parse(refreshed.get(repository) ?? '') || 0,
-    ]),
-  );
-  const ordered = [...oldest]
-    .sort(([a, at], [b, bt]) => at - bt || a.localeCompare(b))
-    .map(([repository]) => repository);
+      enabled: enabled.has(repository),
+      at: Date.parse(refreshed.get(repository) ?? '') || 0,
+    }))
+    .sort(
+      (a, b) =>
+        Number(b.enabled) - Number(a.enabled) ||
+        a.at - b.at ||
+        a.repository.localeCompare(b.repository),
+    )
+    .map(({ repository }) => repository);
   for (let offset = 0; offset < ordered.length; offset += 4) {
     if (Date.now() + 25_000 > deadline) break;
     await Promise.all(

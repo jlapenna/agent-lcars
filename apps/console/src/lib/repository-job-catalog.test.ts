@@ -404,7 +404,7 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
     repositories,
     slow,
     now + 35_000,
-    automation(store),
+    () => undefined,
   );
   await vi.advanceTimersByTimeAsync(19_000);
   await first;
@@ -421,7 +421,7 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
     repositories,
     slow,
     Date.now() + 35_000,
-    automation(store),
+    () => undefined,
   );
   await vi.advanceTimersByTimeAsync(19_000);
   await next;
@@ -431,6 +431,62 @@ it('refreshes oldest repositories first within a bounded batch and advances on t
     'owner/repo2',
     'owner/repo3',
   ]);
+});
+
+it('refreshes repositories with enabled jobs first and keeps stored repositories current', async () => {
+  const store = new MemoryJobStore();
+  const id = jobKey('owner/enabled', 'audit');
+  const { manifest, recipe } = catalogFiles();
+  store.rows.set(id, {
+    id,
+    repository: 'owner/enabled',
+    name: 'audit',
+    enabled: true,
+    definition: parseJobDefinition(
+      'owner/enabled',
+      'a'.repeat(40),
+      'audit',
+      manifest,
+      recipe,
+    ),
+    refreshedAt: '2026-10-27T11:00:00.000Z',
+  });
+  const dropped = jobKey('owner/dropped', 'audit');
+  store.rows.set(dropped, {
+    ...store.rows.get(id)!,
+    id: dropped,
+    repository: 'owner/dropped',
+    enabled: false,
+  });
+  store.sources.set('owner/enabled', '2026-10-27T11:59:00.000Z');
+  store.sources.set('owner/dropped', '2026-10-27T11:00:00.000Z');
+  const order: string[] = [];
+  const requested: string[] = [];
+  vi.stubGlobal(
+    'fetch',
+    github({ 'owner/enabled': { audit: catalogFiles() } }, requested),
+  );
+  await refreshJobCatalogs(
+    store,
+    ['owner/a', 'owner/b', 'owner/c', 'owner/d', 'owner/enabled'],
+    () => ({
+      tokenFor: async (repository: string) => {
+        order.push(repository);
+        return 'fixture';
+      },
+    }),
+    Date.now() + 45_000,
+    automation(store),
+  );
+  // The recently refreshed enabled repository still leads the first batch.
+  expect(order[0]).toBe('owner/enabled');
+  expect(order).toHaveLength(6);
+  // A repository outside the configured list with stored jobs is refreshed,
+  // so its removed definition stops admission.
+  expect(store.rows.get(dropped)).toMatchObject({
+    enabled: false,
+    error: 'Definition removed',
+  });
 });
 
 it('records a failed refresh and disables admission until a successful one', async () => {
