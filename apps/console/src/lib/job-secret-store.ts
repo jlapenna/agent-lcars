@@ -64,7 +64,10 @@ export class FirestoreJobSecretStore implements JobSecretStore {
   }
   async audit(event: Record<string, string>) {
     const batch = this.database.batch();
-    batch.create(this.database.collection('job-credential-audit').doc(), event);
+    batch.create(this.database.collection('job-credential-audit').doc(), {
+      ...event,
+      recordedAt: FieldValue.serverTimestamp(),
+    });
     const counters: Record<string, string | undefined> = {
       'delivery-completed': 'deliveries',
       'admission-refused': 'admissionRefusals',

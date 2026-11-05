@@ -101,6 +101,10 @@ export class JobSecrets {
     try {
       await this.event(job.principal, `${stage}-refused`, {
         runOccurrence: job.id,
+        repository: job.definition.repository,
+        job: job.definition.name,
+        profile: job.profile.name,
+        trigger: job.trigger,
       });
     } catch {
       // Never replace the original refusal with credential-bearing SDK errors.

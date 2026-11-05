@@ -166,6 +166,10 @@ describe('credential monitoring', () => {
         operation,
         actor: job.principal,
         runOccurrence: job.id,
+        repository: job.definition.repository,
+        job: job.definition.name,
+        profile: job.profile.name,
+        trigger: job.trigger,
         at: now.toISOString(),
       })),
     );

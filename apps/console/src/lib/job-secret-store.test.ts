@@ -132,6 +132,12 @@ it('uses commit clocks under reversed writes and normalizes them for every metad
       .map((row) => row.at)
       .sort(),
   ).toEqual([older, newer]);
+  const laterCommit = [...rows.values()].find(
+    (row) => row.operation === 'admission-refused' && row.at === older,
+  );
+  expect((laterCommit?.recordedAt as Timestamp).toDate().toISOString()).toBe(
+    '2026-11-05T00:03:00.000Z',
+  );
   rows.set('job-credential-secrets/example-key', {
     name: 'example-key',
     kind: 'opaque',

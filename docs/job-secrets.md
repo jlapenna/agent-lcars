@@ -243,8 +243,11 @@ Work record. The last refusal clock also detects an error that precedes the firs
 metrics sample. These are API operations, including retries, not successful jobs
 or Git operations. Runtime job outcomes retain the normal Work lifecycle owner.
 Aggregate and last-access clocks use Firestore commit time so concurrent writers
-and instance clock skew cannot move them backwards; audit events retain their
-original event clock.
+and instance clock skew cannot move them backwards. Private audit events retain
+their original event clock and a server `recordedAt` clock for correlation with
+alerts. Refusal events include repository, job, profile and trigger metadata so
+operators can identify a denied job even before an occurrence exists; this
+context never enters metric labels or aggregate observations.
 
 The observation reports ready, disabled, unpromoted, expired and unknown metadata
 separately; expiring is the ready subset whose GitHub expiry is within 24 hours.
