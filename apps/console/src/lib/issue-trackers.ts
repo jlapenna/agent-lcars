@@ -3,8 +3,8 @@ import 'server-only';
 import {
   type IssueComment,
   type IssueReference,
-  issueReferenceSchema,
   issueSourceKey,
+  linearIssueReferenceSchema,
   type TrackerIssue,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
@@ -22,14 +22,8 @@ import {
   linearQuery,
   readLinearCommentsPage,
   readLinearIssue,
-  updateLinearIssue,
 } from './linear-client';
-import {
-  linearConfig,
-  linearIssueRepository,
-  linearIssueRouting,
-  linearTeam,
-} from './linear-config';
+import { linearConfig, linearIssueInRepository } from './linear-config';
 
 export interface IssueTrackerDeps {
   tokens?: DispatchTokenProvider;
@@ -46,7 +40,6 @@ export interface IssueTracker {
     repository?: string,
   ): Promise<{ state: 'open' | 'closed'; sourceUpdatedAt: string } | undefined>;
   comment(reference: IssueReference, id: string, body: string): Promise<void>;
-  status(reference: IssueReference, status: string): Promise<void>;
   comments(
     reference: IssueReference,
     cursor?: string,
@@ -202,21 +195,7 @@ export function issueTracker(deps: IssueTrackerDeps = {}): IssueTracker {
         const issue = await read(ref);
         if (!issue) return undefined;
         const config = linearConfig();
-        if (config && linearIssueRouting(config, issue).ambiguous)
-          throw new Error('Conflicting Linear repository routes');
-        if (
-          issue &&
-          (!config ||
-            config.organizationId !== ref.organizationId ||
-            !linearTeam(config, issue.teamId ?? '') ||
-            (repository &&
-              (!config.routes.some(
-                (route) =>
-                  route.teamId === issue.teamId && route.repo === repository,
-              ) ||
-                (linearIssueRepository(config, issue) !== undefined &&
-                  linearIssueRepository(config, issue) !== repository))))
-        )
+        if (!linearIssueInRepository(config, issue, repository))
           throw new Error(
             'Linear source moved outside its admitted repository scope',
           );
@@ -266,27 +245,48 @@ export function issueTracker(deps: IssueTrackerDeps = {}): IssueTracker {
       )
         throw new Error('Linear outcome comment was not confirmed');
     },
-    status: async (ref, status) => {
-      if (ref.tracker === 'github') {
-        if (!['open', 'closed'].includes(status))
-          throw new Error('Unsupported GitHub issue state');
-        await githubRequest(ref, '', {
-          method: 'PATCH',
-          body: JSON.stringify({ state: status }),
-        });
-      } else
-        await updateLinearIssue(
-          ref.organizationId,
-          ref.issueId,
-          { stateId: status },
-          fetchImpl,
-        );
-    },
   };
 }
 
-/** Older persisted Linear work used an opaque return address. Read it only
- * to recover its existing identity; normal refresh persists the typed source. */
+type LinearReference = Extract<IssueReference, { tracker: 'linear' }>;
+const linearThreadSchema = linearIssueReferenceSchema.omit({ tracker: true });
+
+/** Native Work's generic return transport retains this wire format across
+ * deployments. The typed source and transport use the same identity codec. */
+export function linearIssueThread({
+  organizationId,
+  issueId,
+}: LinearReference): string {
+  return JSON.stringify(linearThreadSchema.parse({ organizationId, issueId }));
+}
+
+export function parseLinearIssueThread(thread: string): LinearReference {
+  return { tracker: 'linear', ...linearThreadSchema.parse(JSON.parse(thread)) };
+}
+
+/** Canonical Linear bindings must agree with both native return transport and
+ * typed metadata. Generic source readers still prefer the typed snapshot. */
+export function isLinearWorkSource(
+  task: Task,
+  reference: IssueReference,
+): boolean {
+  const origin = task.work['origin'] as
+    { channel?: string; thread?: string } | undefined;
+  if (!isWorkAnchor(task.task) || origin?.channel !== 'linear') return false;
+  try {
+    const source = parseLinearIssueThread(origin.thread ?? '');
+    return (
+      issueSourceKey(source) === issueSourceKey(reference) &&
+      (!task.issue ||
+        issueSourceKey(task.issue.reference) === issueSourceKey(source))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Typed metadata owns source identity. Pre-metadata Work can recover it from
+ * the unchanged return-transport format without migrating stored records. */
 export function issueReferenceForTask(task: Task): IssueReference | undefined {
   if (task.issue) return task.issue.reference;
   if (!isWorkAnchor(task.task)) return { tracker: 'github', ...task.task };
@@ -294,10 +294,7 @@ export function issueReferenceForTask(task: Task): IssueReference | undefined {
     { channel?: string; thread?: string } | undefined;
   if (origin?.channel !== 'linear' || !origin.thread) return undefined;
   try {
-    return issueReferenceSchema.parse({
-      tracker: 'linear',
-      ...JSON.parse(origin.thread),
-    });
+    return parseLinearIssueThread(origin.thread);
   } catch {
     return undefined;
   }

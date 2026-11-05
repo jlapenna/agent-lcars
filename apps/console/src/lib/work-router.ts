@@ -32,8 +32,10 @@ import {
 } from './issue-sources';
 import { issueReferenceForTask } from './issue-trackers';
 import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
+import { linearConfig } from './linear-config';
 import { handleReconcile } from './orchestrator-routes';
 import { scheduleRouter } from './schedule-router';
+import { recordLinearWebhookHealth } from './webhook-observability';
 import {
   mayAccessStoredWork,
   repositoryForbiddenReason,
@@ -185,6 +187,7 @@ export const workRouter = os.router({
         message: 'maintenance tick failed',
       });
     }
+    recordLinearWebhookHealth(linearConfig() !== undefined);
     return result.body as MaintenanceTickOutput;
   }),
   create: operator.create.handler(async ({ input, context, errors }) => {

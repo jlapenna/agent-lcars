@@ -29,6 +29,7 @@ import {
 import { listLinearIssues, readLinearIssue } from './linear-client';
 import {
   linearConfig,
+  linearIssueInRepository,
   linearIssueRepository,
   linearIssueRouting,
   linearTeam,
@@ -68,7 +69,7 @@ export async function lookupIssueSource(
       throw new ORPCError('NOT_FOUND', { message: 'Linear is not configured' });
     issue = await readLinearIssue(config.organizationId, lookup.issue);
     const team = issue?.teamId ? linearTeam(config, issue.teamId) : undefined;
-    if (!issue || !team)
+    if (!issue || !team || !linearIssueInRepository(config, issue))
       throw new ORPCError('NOT_FOUND', {
         message: 'No configured Linear issue',
       });
@@ -87,8 +88,19 @@ export async function lookupIssueSource(
         message: 'Issue source binding does not match stored Work',
       });
     const stored = storedWorkPayloadSchema.safeParse(binding.task.work);
-    if (stored?.success && 'target' in stored.data.spec)
+    if (stored.success && 'target' in stored.data.spec) {
+      if (
+        !linearIssueInRepository(
+          linearConfig(),
+          issue,
+          stored.data.spec.target.repo,
+        )
+      )
+        throw new ORPCError('FORBIDDEN', {
+          message: 'Issue moved outside its Work repository scope',
+        });
       repo = stored.data.spec.target.repo;
+    }
   }
   if (repo) assertRepository(context, repo);
   else if (context.principal?.sourceRepository)
@@ -165,7 +177,7 @@ export async function listIssueSources(
               source.issue.reference.tracker === 'linear' &&
               source.issue.reference.organizationId === config.organizationId &&
               source.issue.state === 'open' &&
-              linearTeam(config, source.issue.teamId ?? '') !== undefined,
+              linearIssueInRepository(config, source.issue),
           )
           .map((source) => ({
             issue: source.issue,
@@ -178,8 +190,8 @@ export async function listIssueSources(
         JSON.stringify({ tracker: 'linear', key: page.nextCursor }),
       ).toString('base64url');
   }
-  // A source can move teams/repositories after admission. Authorize the
-  // immutable Work target before exposing its binding, not the new projection.
+  // Live source access must satisfy the same scope as the bound Work target.
+  // Moving a source never transfers its existing Work into another repository.
   const bound = await Promise.all(
     sources.map(async (source) => {
       const binding =
@@ -200,6 +212,11 @@ export async function listIssueSources(
           message: 'Issue source binding does not match stored Work',
         });
       const spec = storedWorkPayloadSchema.parse(binding.task.work).spec;
+      if (
+        'target' in spec &&
+        !linearIssueInRepository(linearConfig(), source.issue, spec.target.repo)
+      )
+        return undefined;
       return {
         ...source,
         ...(spec && 'target' in spec ? { repo: spec.target.repo } : {}),
@@ -207,14 +224,18 @@ export async function listIssueSources(
       };
     }),
   );
-  const issues = bound.filter(
-    (source) =>
-      (!repo || source.repo?.toLowerCase() === repo.toLowerCase()) &&
-      (source.repo
-        ? repositoryForbiddenReason(context.principal ?? {}, source.repo) ===
-          undefined
-        : !context.principal?.sourceRepository),
-  );
+  const issues = bound
+    .filter(
+      (source): source is NonNullable<typeof source> => source !== undefined,
+    )
+    .filter(
+      (source) =>
+        (!repo || source.repo?.toLowerCase() === repo.toLowerCase()) &&
+        (source.repo
+          ? repositoryForbiddenReason(context.principal ?? {}, source.repo) ===
+            undefined
+          : !context.principal?.sourceRepository),
+    );
   return { issues, ...(nextCursor ? { nextCursor } : {}) };
 }
 

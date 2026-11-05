@@ -44,11 +44,7 @@ import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
 import type { JobSecrets } from './job-secrets';
 import { jobSecrets } from './job-secrets-runtime';
-import {
-  linearConfig,
-  linearIssueRepository,
-  linearIssueRouting,
-} from './linear-config';
+import { linearConfig, linearIssueInRepository } from './linear-config';
 import type { DrainOutboxResult } from './orchestrator-dispatch';
 import {
   readyDeliveryBinding,
@@ -312,16 +308,8 @@ export const runsRouter = os.router({
       const config = linearConfig();
       const spec = storedWorkPayloadSchema.parse(task.task.work).spec;
       if (
-        !config ||
-        linearIssueRouting(config, issue).ambiguous ||
-        config.organizationId !== reference.organizationId ||
         !('target' in spec) ||
-        !config.routes.some(
-          (route) =>
-            route.teamId === issue.teamId && route.repo === spec.target.repo,
-        ) ||
-        (linearIssueRepository(config, issue) !== undefined &&
-          linearIssueRepository(config, issue) !== spec.target.repo)
+        !linearIssueInRepository(config, issue, spec.target.repo)
       )
         throw new ORPCError('FORBIDDEN', {
           message: 'Issue moved outside this run’s repository scope',

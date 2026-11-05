@@ -71,6 +71,30 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe('queued Linear authenticated processor', () => {
+  it('exports semantic HTTP 200 drops as bounded error telemetry', async () => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    try {
+      mocks.admit.mockRejectedValue(new Error('private provider response'));
+      const response = await POST(
+        request({
+          'x-cloudtasks-taskretrycount': '10',
+          'x-agent-lcars-projection-repair-generation': '10',
+        }),
+      );
+      expect(response.status).toBe(200);
+      expect(
+        log.mock.calls.map(([line]) => JSON.parse(line as string)),
+      ).toContainEqual({
+        severity: 'ERROR',
+        component: 'lcars-webhook',
+        tracker: 'linear',
+        stage: 'process',
+        outcome: 'projection_repair_dropped',
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
   it('accepts delayed signed bytes only behind the exact Google audience and verified task identity', async () => {
     expect((await POST(request())).status).toBe(200);
     expect(mocks.audience).toHaveBeenCalledWith(

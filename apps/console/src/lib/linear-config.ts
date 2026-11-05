@@ -118,6 +118,31 @@ export function linearIssueRepository(
   return linearIssueRouting(config, issue).repo;
 }
 
+/** One scope policy for live reads, claim lifecycle and status writes. A bound
+ * Work target never grants access to a source now routed into another repo. */
+export function linearIssueInRepository(
+  config: LinearConfig | undefined,
+  issue: TrackerIssue,
+  repository?: string,
+): boolean {
+  if (
+    !config ||
+    issue.reference.tracker !== 'linear' ||
+    issue.reference.organizationId !== config.organizationId ||
+    !linearTeam(config, issue.teamId ?? '')
+  )
+    return false;
+  const routing = linearIssueRouting(config, issue);
+  return (
+    !routing.ambiguous &&
+    (!repository ||
+      (config.routes.some(
+        (route) => route.teamId === issue.teamId && route.repo === repository,
+      ) &&
+        (routing.repo === undefined || routing.repo === repository)))
+  );
+}
+
 /** The ready label selects the coding provider. Each repository uses its
  * unique route for that provider; the team's other repositories never inherit
  * a label that would dispatch into the wrong checkout. */

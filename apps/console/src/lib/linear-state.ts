@@ -14,8 +14,7 @@ import { issueReferenceForTask } from './issue-trackers';
 import { linearQuery, readLinearIssue } from './linear-client';
 import {
   linearConfig,
-  linearIssueRepository,
-  linearIssueRouting,
+  linearIssueInRepository,
   linearTeam,
 } from './linear-config';
 
@@ -66,15 +65,9 @@ export async function publishLinearState(
   const spec = storedWorkPayloadSchema.parse(task.work).spec;
   if (
     !('target' in spec) ||
-    !config.routes.some(
-      (route) =>
-        route.teamId === issue.teamId && route.repo === spec.target.repo,
-    )
+    !linearIssueInRepository(config, issue, spec.target.repo)
   )
     return;
-  if (linearIssueRouting(config, issue).ambiguous) return;
-  const repository = linearIssueRepository(config, issue);
-  if (repository && repository !== spec.target.repo) return;
   const team = linearTeam(config, issue.teamId ?? '');
   const states = team && 'states' in team ? team.states : undefined;
   if (!states) return;

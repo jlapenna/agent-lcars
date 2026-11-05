@@ -158,7 +158,11 @@ Open **Work → Issue sources** (`/work/issues`) and select Linear. Refresh read
 one bounded page at a time, including issues that have never been dispatched;
 it never creates Work. Select a configured repository and agent to run an issue,
 or open its existing Work history. Current title, status, labels and assignee
-remain linked to the original issue. Edit source text in Linear.
+remain linked to the original issue. Edit source text in Linear. If an issue
+moves outside its admitted repository, live source reads and listing its Work
+binding are refused until the route matches again. The existing Work and its
+admitted snapshots keep their original repository; moving a source never
+transfers that Work to a different repository.
 
 External HTTP clients can use the [tracker-source API guide](api/tracker-sources.md)
 for authentication, source reads, pagination, refresh and explicit dispatch.

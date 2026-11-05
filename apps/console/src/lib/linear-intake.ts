@@ -15,7 +15,11 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import { readSourceWorkBinding } from './issue-trackers';
+import {
+  isLinearWorkSource,
+  linearIssueThread,
+  readSourceWorkBinding,
+} from './issue-trackers';
 import { readLinearComment, readLinearIssue } from './linear-client';
 import {
   type LinearConfig,
@@ -98,15 +102,7 @@ export async function refreshLinearIssue(
   const workId = binding?.workId;
   if (binding) {
     const { task, workId } = binding;
-    const origin = storedWorkPayloadSchema.parse(task.work).origin;
-    if (
-      origin.channel !== 'linear' ||
-      origin.thread !==
-        JSON.stringify({
-          organizationId: config.organizationId,
-          issueId: issue.reference.issueId,
-        })
-    )
+    if (!isLinearWorkSource(task, issue.reference))
       throw new Error(
         'Linear source mapping does not match stored Work origin',
       );
@@ -169,14 +165,10 @@ export async function dispatchLinearIssue(
     issueSourceKey(issue.reference),
     ulid(),
   );
-  const thread = JSON.stringify({
-    organizationId: config.organizationId,
-    issueId: issue.reference.issueId,
-  });
+  const thread = linearIssueThread(issue.reference);
   const existing = await runtime.store.readTask({ workId: id });
   if (existing) {
-    const origin = storedWorkPayloadSchema.parse(existing.task.work).origin;
-    if (origin.channel !== 'linear' || origin.thread !== thread)
+    if (!isLinearWorkSource(existing.task, issue.reference))
       throw new Error(
         'Linear source mapping does not match stored Work origin',
       );
@@ -228,8 +220,7 @@ export async function dispatchLinearIssue(
     const winner = await runtime.store.readTask({ workId: id });
     if (!winner)
       throw new Error(`Linear admission conflict: ${result.message}`);
-    const origin = storedWorkPayloadSchema.parse(winner.task.work).origin;
-    if (origin.channel !== 'linear' || origin.thread !== thread)
+    if (!isLinearWorkSource(winner.task, issue.reference))
       throw new Error(
         'Linear source mapping does not match stored Work origin',
       );

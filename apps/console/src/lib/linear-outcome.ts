@@ -4,14 +4,10 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { issueTracker } from './issue-trackers';
+import { issueTracker, parseLinearIssueThread } from './issue-trackers';
 import { linearQuery } from './linear-client';
 import type { OutcomeWebhookPayload } from './outcome-webhook';
 
-const threadSchema = z.strictObject({
-  organizationId: z.uuid(),
-  issueId: z.uuid(),
-});
 const lookupSchema = z.object({
   organization: z.object({ id: z.uuid() }),
   comments: z.object({
@@ -45,7 +41,7 @@ export async function deliverLinearOutcome(
   payload: OutcomeWebhookPayload,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  const thread = threadSchema.parse(JSON.parse(payload.thread));
+  const thread = parseLinearIssueThread(payload.thread);
   const id = commentId(payload);
   const lookup = lookupSchema.parse(
     await linearQuery(
@@ -89,9 +85,5 @@ export async function deliverLinearOutcome(
   ]
     .filter((part) => part !== undefined)
     .join('\n\n');
-  await issueTracker({ fetchImpl }).comment(
-    { tracker: 'linear', ...thread },
-    id,
-    body,
-  );
+  await issueTracker({ fetchImpl }).comment(thread, id, body);
 }
