@@ -7,10 +7,10 @@ import {
   githubJobSecretSchema,
   type JobCredentialGrant,
   jobCredentialGrantSchema,
+  type JobCredentialObservation,
   type JobSecretRecord,
   jobSecretRecordSchema,
   type JobSecretSnapshot,
-  type JobCredentialObservation,
   jobSecretSnapshotSchema,
   jobSecretValueSchema,
 } from '@agent-lcars/work';

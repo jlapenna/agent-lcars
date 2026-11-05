@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { type JobSecretRecord, jobSecretRecordSchema } from '@agent-lcars/work';
-import { FieldValue, Firestore } from '@google-cloud/firestore';
+import { FieldValue, Firestore, Timestamp } from '@google-cloud/firestore';
 
 export type JobSecretCollection = 'secrets' | 'sets' | 'grants' | 'health';
 export interface JobSecretStore {
@@ -24,15 +24,33 @@ export class FirestoreJobSecretStore implements JobSecretStore {
   private collection(kind: JobSecretCollection) {
     return this.database.collection(`job-credential-${kind}`);
   }
+  private decode(
+    kind: JobSecretCollection,
+    value: Record<string, unknown> | undefined,
+  ) {
+    if (!value) return value;
+    const fields =
+      kind === 'health'
+        ? ['lastDeliveryAt', 'lastRefusalAt']
+        : kind === 'secrets'
+          ? ['lastUsedAt']
+          : [];
+    for (const field of fields) {
+      const clock = value[field];
+      if (clock instanceof Timestamp)
+        value[field] = clock.toDate().toISOString();
+    }
+    return value;
+  }
   async get(kind: JobSecretCollection, id: string) {
     const doc = await this.collection(kind).doc(id).get();
-    return doc.exists ? doc.data() : undefined;
+    return doc.exists ? this.decode(kind, doc.data()) : undefined;
   }
   async list(kind: JobSecretCollection) {
     const result = await this.collection(kind).limit(501).get();
     if (result.size > 500)
       throw new Error('Credential registry exceeds supported bound');
-    return result.docs.map((doc) => doc.data());
+    return result.docs.map((doc) => this.decode(kind, doc.data()));
   }
   async put(
     kind: JobSecretCollection,
@@ -59,8 +77,12 @@ export class FirestoreJobSecretStore implements JobSecretStore {
         this.collection('health').doc('current'),
         {
           [counter]: FieldValue.increment(1),
-          ...(counter === 'deliveries' ? { lastDeliveryAt: event.at } : {}),
-          ...(counter !== 'deliveries' ? { lastRefusalAt: event.at } : {}),
+          ...(counter === 'deliveries'
+            ? { lastDeliveryAt: FieldValue.serverTimestamp() }
+            : {}),
+          ...(counter !== 'deliveries'
+            ? { lastRefusalAt: FieldValue.serverTimestamp() }
+            : {}),
           ...(counter === 'deliveries' &&
           Number.isFinite(duration) &&
           duration >= 0
@@ -75,7 +97,7 @@ export class FirestoreJobSecretStore implements JobSecretStore {
     }
     if (event.operation?.startsWith('deliver') && event.secret)
       batch.update(this.collection('secrets').doc(event.secret), {
-        lastUsedAt: event.at,
+        lastUsedAt: FieldValue.serverTimestamp(),
       });
     await batch.commit();
   }
@@ -86,7 +108,9 @@ export class FirestoreJobSecretStore implements JobSecretStore {
     const ref = this.collection('secrets').doc(name);
     return this.database.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(ref);
-      const current = jobSecretRecordSchema.parse(snapshot.data());
+      const current = jobSecretRecordSchema.parse(
+        this.decode('secrets', snapshot.data()),
+      );
       if (current.name !== name)
         throw new Error('Secret registry name mismatch');
       const next = jobSecretRecordSchema.parse(change(current));

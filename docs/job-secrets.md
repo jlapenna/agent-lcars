@@ -242,6 +242,9 @@ an occurrence is reserved, so a denied scheduled job remains visible without a
 Work record. The last refusal clock also detects an error that precedes the first
 metrics sample. These are API operations, including retries, not successful jobs
 or Git operations. Runtime job outcomes retain the normal Work lifecycle owner.
+Aggregate and last-access clocks use Firestore commit time so concurrent writers
+and instance clock skew cannot move them backwards; audit events retain their
+original event clock.
 
 The observation reports ready, disabled, unpromoted, expired and unknown metadata
 separately; expiring is the ready subset whose GitHub expiry is within 24 hours.

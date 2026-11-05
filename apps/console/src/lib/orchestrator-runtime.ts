@@ -25,8 +25,8 @@ import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
-import { maintainRepositoryJobs } from './repository-jobs-runtime';
 import { observeJobCredentials } from './job-secrets-runtime';
+import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
 /**
  * Builds the orchestrator's real runtime dependencies -- a Firestore-backed

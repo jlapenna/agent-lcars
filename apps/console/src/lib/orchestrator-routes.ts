@@ -10,8 +10,8 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { z } from 'zod';
 import type { JobCredentialObservation } from '@agent-lcars/work';
+import { z } from 'zod';
 
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
 import {
@@ -477,7 +477,7 @@ export async function handleReconcile(
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
     // Independent I/O-bound maintenance shares the same wall-clock window.
-    // Await both even on failure; one must not outlive the HTTP request.
+    // Await every pass even on failure; none may outlive the HTTP request.
     const maintenance = await Promise.allSettled([
       deps.executeModelWork?.(modelDeadline),
       deps.executeRepositoryJobs?.(modelDeadline),
