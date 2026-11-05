@@ -85,9 +85,11 @@ export function RunResult({ occurrence }: { occurrence: JobOccurrence }) {
           <dd>{occurrence.profile.name}</dd>
         </div>
         <div>
-          <dt>GitHub credential</dt>
+          <dt>Credential set</dt>
           <dd>
-            {occurrence.profile.credentials?.github ?? 'LCARS GitHub App'}
+            {'credentials' in occurrence.profile
+              ? `${occurrence.profile.credentials.github} (legacy; migration required)`
+              : (occurrence.profile.credentialSet?.name ?? 'LCARS GitHub App')}
           </dd>
         </div>
         <div>
@@ -95,7 +97,12 @@ export function RunResult({ occurrence }: { occurrence: JobOccurrence }) {
           <dd>{occurrence.trigger}</dd>
         </div>
       </dl>
-      {!occurrence.skipped ? (
+      {occurrence.admissionFailure && (
+        <p className={styles.muted}>
+          Legacy credential reservation retired without launching Work.
+        </p>
+      )}
+      {!occurrence.skipped && !occurrence.admissionFailure ? (
         <Link href={`/work/${encodeURIComponent(occurrence.workId)}`}>
           Open Work for status and cancellation
         </Link>

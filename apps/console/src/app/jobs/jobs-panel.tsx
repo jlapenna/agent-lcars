@@ -1,6 +1,7 @@
 'use client';
 
 import { Button, TextInput } from '@mantine/core';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 
 import type { CatalogJob, JobOccurrence } from '@/lib/repository-job-store';
@@ -127,6 +128,7 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
               <option value="issues">Source issues</option>
             </select>
           </div>
+          <Link href="/jobs/credentials">Credentials</Link>
           <Button variant="light" disabled={busy} onClick={() => void act()}>
             Refresh list
           </Button>

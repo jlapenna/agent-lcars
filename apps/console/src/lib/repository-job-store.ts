@@ -1,9 +1,11 @@
+import { jobSecretSnapshotSchema } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
 import {
   jobDefinitionSchema,
   jobInputsSchema,
+  jobProfileNameSchema,
   jobProfileSchema,
 } from './repository-job-definition';
 
@@ -30,6 +32,19 @@ export const catalogJobSchema = z.strictObject({
   baseline: z.strictObject({ occurrence: hash, comparison: hash }).optional(),
 });
 export type CatalogJob = z.infer<typeof catalogJobSchema>;
+// Storage compatibility only. New configuration still uses jobProfileSchema;
+// runtime authorization explicitly refuses legacy credential delivery.
+const storedJobProfileSchema = z.union([
+  jobProfileSchema,
+  jobProfileSchema
+    .safeExtend({
+      credentials: z.strictObject({ github: jobProfileNameSchema }),
+    })
+    .refine(
+      (profile) => !profile.credentialSet && !profile.crossRepo,
+      'Legacy credentials cannot be combined with current credential sets or crossRepo',
+    ),
+]);
 export const jobOccurrenceSchema = z.strictObject({
   id: hash,
   jobId: hash,
@@ -40,13 +55,15 @@ export const jobOccurrenceSchema = z.strictObject({
   trigger: z.enum(['manual', 'schedule']),
   skipped: z.boolean(),
   definition: jobDefinitionSchema,
-  profile: jobProfileSchema,
+  profile: storedJobProfileSchema,
+  secretSnapshot: jobSecretSnapshotSchema.optional(),
   comparison: hash,
   parameters: jobInputsSchema.default({}),
   baselineOccurrence: hash.optional(),
   artifact: jobArtifactSchema.optional(),
   reconciledAt: z.iso.datetime().optional(),
   successful: z.boolean().optional(),
+  admissionFailure: z.literal('legacy-credentials').optional(),
 });
 export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 // Artifact contents are opaque JSON, not Firestore field values. This preserves
@@ -88,10 +105,9 @@ export interface JobStore {
     change: (
       job: CatalogJob | undefined,
       occurrence: JobOccurrence | undefined,
-    ) => {
-      job?: CatalogJob;
-      occurrence?: JobOccurrence;
-    },
+    ) =>
+      | { job?: CatalogJob; occurrence?: JobOccurrence }
+      | Promise<{ job?: CatalogJob; occurrence?: JobOccurrence }>,
   ): Promise<{ job?: CatalogJob; occurrence?: JobOccurrence }>;
 }
 
@@ -142,7 +158,7 @@ export class FirestoreJobStore implements JobStore {
         occurrenceRef === undefined
           ? undefined
           : await transaction.get(occurrenceRef);
-      const result = change(
+      const result = await change(
         job.exists ? catalogJobSchema.parse(job.data()) : undefined,
         occurrence?.exists ? decodeOccurrence(occurrence.data()) : undefined,
       );

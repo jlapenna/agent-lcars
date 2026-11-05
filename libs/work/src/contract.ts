@@ -13,6 +13,7 @@ import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
 import { parseCron } from './cron';
+import { jobSecretDeliverySchema } from './job-secrets';
 import {
   fallbackPipelinesSchema,
   PIPELINES,
@@ -1189,6 +1190,23 @@ const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
+  jobSecrets: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/job-secrets',
+        operationId: 'getRunJobSecrets',
+        summary: 'Resolve the admitted credential set for a live recipe run',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      FORBIDDEN: { message: 'Job credential grant refused' },
+      CONFLICT: { message: 'Selected secret unavailable' },
+    })
+    .input(z.strictObject({ runId: runIdSchema }))
+    .output(jobSecretDeliverySchema),
   issueSource: runBase
     .meta(
       openapi({

@@ -6,6 +6,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import { slotItemId } from '@agent-lcars/work';
 
+import type { JobSecrets } from './job-secrets';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import {
   authorizeJob,
@@ -33,6 +34,7 @@ export interface RepositoryJobsDeps {
   profiles: () => JobProfile[];
   granted: (principal: string, repository: string) => boolean;
   now: () => Date;
+  secrets?: Pick<JobSecrets, 'pin' | 'authorize'>;
 }
 export class RepositoryJobBusyError extends Error {}
 
@@ -76,6 +78,8 @@ export class RepositoryJobs {
     });
   }
   authorizeOccurrence(occurrence: JobOccurrence): JobProfile {
+    if ('credentials' in occurrence.profile)
+      throw new Error('Legacy credential profile requires migration');
     const profile = this.authorize(
       occurrence.definition,
       occurrence.principal,
@@ -135,7 +139,7 @@ export class RepositoryJobs {
     const reserved = await this.deps.store.mutate(
       id,
       occurrenceId,
-      (job, existing) => {
+      async (job, existing) => {
         if (existing) {
           this.authorize(existing.definition, principal, existing.profile.name);
           const parameters = resolveJobParameters(existing.definition, values);
@@ -175,8 +179,8 @@ export class RepositoryJobs {
           job.definition.job.inputs,
           job.definition.job.result,
           parameters,
-          ...(profile.credentials || profile.gitIdentity
-            ? [profile.credentials ?? null, profile.gitIdentity ?? null]
+          ...(profile.credentialSet || profile.gitIdentity
+            ? [profile.credentialSet ?? null, profile.gitIdentity ?? null]
             : []),
         ]);
         const occurrence: JobOccurrence = {
@@ -197,6 +201,17 @@ export class RepositoryJobs {
             ? { baselineOccurrence: job.baseline.occurrence }
             : {}),
         };
+        if (profile.credentialSet && !occurrence.skipped) {
+          try {
+            if (!this.deps.secrets)
+              throw new Error('Secret store not configured');
+            // Metadata-only preparation may repeat on a transaction retry. It
+            // commits with the occurrence, so denial cannot strand job.active.
+            occurrence.secretSnapshot = await this.deps.secrets.pin(occurrence);
+          } catch {
+            throw new Error('Job credential admission refused or unavailable');
+          }
+        }
         return {
           job: {
             ...job,
@@ -210,7 +225,7 @@ export class RepositoryJobs {
     const occurrence = reserved.occurrence;
     if (!occurrence) throw new Error('Admission reservation missing');
     if (!occurrence.skipped) await this.mint(occurrence);
-    return occurrence;
+    return (await this.deps.store.readOccurrence(occurrence.id)) ?? occurrence;
   }
   async invoke(
     repository: string,
@@ -245,6 +260,8 @@ export class RepositoryJobs {
       workId: occurrence.workId,
     });
     if (existing) return;
+    if (occurrence.profile.credentialSet && !occurrence.secretSnapshot)
+      throw new Error('Credential snapshot missing');
     // Authorization may be revoked after reservation. Keep it durable and
     // visible; do not launch until the current grant permits it again.
     const profile = this.authorizeOccurrence(occurrence);
@@ -294,6 +311,32 @@ export class RepositoryJobs {
     if (!job.active) return;
     const occurrence = await this.deps.store.readOccurrence(job.active);
     if (!occurrence) throw new Error('Active occurrence missing');
+    if (
+      'credentials' in occurrence.profile &&
+      !(await this.deps.runtime.store.readTask({ workId: occurrence.workId }))
+    ) {
+      // Never mint legacy Work. Wait out the existing retirement backstop
+      // before releasing an interrupted reservation from an older deployment.
+      if (
+        this.deps.now().getTime() - Date.parse(occurrence.createdAt) <
+        RETIREMENT_BACKSTOP_MS
+      )
+        return;
+      await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
+        if (!current || !saved || current.active !== occurrence.id) return {};
+        const { active: _active, ...rest } = current;
+        return {
+          job: rest,
+          occurrence: {
+            ...saved,
+            successful: false,
+            admissionFailure: 'legacy-credentials',
+            reconciledAt: this.deps.now().toISOString(),
+          },
+        };
+      });
+      return;
+    }
     await this.mint(occurrence);
     const runs = await this.deps.runtime.store.listRuns({
       workId: occurrence.workId,

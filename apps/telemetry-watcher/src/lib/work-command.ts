@@ -33,23 +33,17 @@ import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
 import { ulid } from 'ulid';
 
-export interface WorkCommandDeps {
-  runId?: string;
-  runToken?: string;
-  fetchImpl: typeof fetch;
-  token: () => Promise<string>;
-  origin: string;
-  now: () => Date;
-  sleep: (ms: number) => Promise<void>;
-  stdout: (line: string) => void;
-  stderr: (line: string) => void;
-}
+import { executeJobSecretsCommand } from './job-secrets-command';
+import type { WorkCommandDeps } from './work-command-deps';
+
+export type { WorkCommandDeps } from './work-command-deps';
 
 export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
   '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
   '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] [--profile <name>] | work job get <occurrence-id>\n' +
+  '       work secrets <secrets|sets|grants|register|publish|grant|upload NAME|promote NAME --version N|disable NAME|enable NAME> (writes read protected stdin)\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
   '       work owner linear:<identifier> [--json] | work issue <owner/repo#n|linear:identifier>\n' +
@@ -255,6 +249,7 @@ export async function executeWorkCommand(
   deps: WorkCommandDeps,
 ): Promise<{ ok: boolean; usage?: string }> {
   const [sub, ...rest] = argv;
+  if (sub === 'secrets') return executeJobSecretsCommand(rest, deps);
   const c = client(deps);
   try {
     switch (sub) {

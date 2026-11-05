@@ -446,3 +446,12 @@ The same reader also has `costs.reader` for the operator's fixed-selection
 from Costs, never session transcripts or Work mutation authority. Homelab's
 cost collector impersonates this existing account through its existing
 maintainer credential; it does not distribute a new service-account key.
+
+## Job-specific application credentials
+
+[LCARS job secrets](job-secrets.md) owns credentials selected by recurring or
+manual Goose jobs: a dedicated Google Secret Manager project, versioned sets,
+per-job grants and runtime delivery. These values are independent of homegit
+and Homelab secret stores. This document's platform bootstrap, Work transport,
+provider subscription and runner-registration credentials retain their existing
+owning workflows; they are not implicitly exposed to job credential sets.

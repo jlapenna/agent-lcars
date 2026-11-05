@@ -72,10 +72,12 @@ policy; reconcile them against live code and canonical contracts.
   workflows, and runner image from this repository. They keep their own domain
   facts locally. Do not restore byte-synced doctrine or cross-repository source
   imports.
-- Homelab owns the running fleet, host configuration, execution credentials,
+- Homelab owns the running fleet, host configuration, execution bootstrap credentials,
   and centralized apply paths. This repository owns LCARS application behavior,
   published interfaces, runner-image inputs, and its infrastructure
   declarations. Follow `docs/deployment-boundary.md` at the handoff.
+  Job-specific application credentials belong to LCARS's separate secret store
+  and grants; see `docs/job-secrets.md`.
 - Shared runtime helpers come from `@jlapenna/fleet-runtime`; shared repository
   tooling and Nx-aware lint rules come from `@jlapenna/repo-tools`. Do not
   recreate local source copies.

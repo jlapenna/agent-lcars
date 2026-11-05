@@ -15,7 +15,9 @@ import {
 import { validateJobResult } from './repository-job-result';
 import {
   type CatalogJob,
+  FirestoreJobStore,
   type JobOccurrence,
+  jobOccurrenceSchema,
   type JobStore,
 } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
@@ -37,7 +39,7 @@ class TestStore implements JobStore {
     occurrenceId: string | undefined,
     change: Parameters<JobStore['mutate']>[2],
   ) {
-    const result = change(
+    const result = await change(
       this.jobs.get(id),
       occurrenceId ? this.occurrences.get(occurrenceId) : undefined,
     );
@@ -619,7 +621,14 @@ it('bounds recipe timeouts below the executor Pod deadline', () => {
 
 it('pins an explicitly authorized manual profile without changing the manifest or schedule', async () => {
   const f = fixture([], 'repository');
-  f.profile.credentials = { github: 'personal' };
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  f.jobs.deps.secrets = {
+    pin: async () => ({
+      credentialSet: { name: 'personal', revision: 1 },
+      versions: {},
+    }),
+    authorize: vi.fn(),
+  };
   f.profile.gitIdentity = { name: 'Joe LaPenna', email: 'joe@example.invalid' };
   expect(f.jobs.availableProfiles(f.definition, 'user:joe')).toEqual([
     'repository',
@@ -636,7 +645,7 @@ it('pins an explicitly authorized manual profile without changing the manifest o
     {},
     'audit',
   );
-  expect(occurrence.profile.credentials?.github).toBe('personal');
+  expect(occurrence.profile.credentialSet?.name).toBe('personal');
   expect(occurrence.definition.job.execution.profile).toBe('repository');
   expect(f.jobs.authorizeOccurrence(occurrence)).toEqual(f.profile);
   expect(
@@ -675,7 +684,7 @@ it('pins an explicitly authorized manual profile without changing the manifest o
     ),
   ).rejects.toThrow('Scheduled runs use the manifest profile');
   const pinned = (await f.store.readOccurrence(occurrence.id))!;
-  f.profile.credentials = { github: 'different' };
+  f.profile.credentialSet = { name: 'different', revision: 1 };
   expect(() => f.jobs.authorizeOccurrence(pinned)).toThrow(
     'Reserved execution profile changed',
   );
@@ -683,7 +692,14 @@ it('pins an explicitly authorized manual profile without changing the manifest o
 
 it('rejects a manual profile for another principal or repository', async () => {
   const f = fixture([], 'repository');
-  f.profile.credentials = { github: 'personal' };
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  f.jobs.deps.secrets = {
+    pin: async () => ({
+      credentialSet: { name: 'personal', revision: 1 },
+      versions: {},
+    }),
+    authorize: vi.fn(),
+  };
   await expect(
     f.jobs.invoke(
       'octo/repo',
@@ -698,4 +714,141 @@ it('rejects a manual profile for another principal or repository', async () => {
   await expect(
     f.jobs.invoke('octo/repo', 'audit', 'wrong-repo', 'user:joe', {}, 'audit'),
   ).rejects.toThrow('not granted');
+});
+
+it('refuses credential admission before reserving the active slot and retries after access is restored', async () => {
+  const f = fixture();
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  const pin = vi.fn().mockRejectedValue(new Error('fixture-private-error'));
+  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  await expect(
+    f.jobs.admit(
+      f.id,
+      'denied-credentials',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    ),
+  ).rejects.toThrow('Job credential admission refused');
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect(f.store.occurrences.size).toBe(0);
+  pin.mockResolvedValue({
+    credentialSet: f.profile.credentialSet,
+    versions: { 'github-jlapenna': '1' },
+  });
+  const admitted = await f.jobs.admit(
+    f.id,
+    'denied-credentials',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  expect(admitted.secretSnapshot?.versions).toEqual({ 'github-jlapenna': '1' });
+  expect(await f.native.listRuns({ workId: admitted.workId })).toHaveLength(1);
+});
+
+it('settles terminal Work after credential or profile revocation without stranding future occurrences', async () => {
+  const f = fixture();
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  const pin = vi.fn(async () => ({
+    credentialSet: { name: 'personal', revision: 1 },
+    versions: { 'github-jlapenna': '1' },
+  }));
+  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  const occurrence = await f.jobs.admit(
+    f.id,
+    'before-revocation',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  pin.mockRejectedValue(new Error('Grant revoked'));
+  f.profile.credentialSet = { name: 'replacement', revision: 2 };
+  const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+  await f.orchestrator.report(run.runId, { ok: false });
+  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect(
+    (await f.store.readOccurrence(occurrence.id))?.reconciledAt,
+  ).toBeDefined();
+});
+
+it('decodes legacy profiles for stored reads and settlement while refusing new delivery/configuration', async () => {
+  const f = fixture();
+  const occurrence = await f.jobs.admit(
+    f.id,
+    'legacy-history',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  const legacy = jobOccurrenceSchema.parse({
+    ...occurrence,
+    profile: { ...occurrence.profile, credentials: { github: 'personal' } },
+  });
+  expect(() => jobProfileSchema.parse(legacy.profile)).toThrow();
+  expect(() => f.jobs.authorizeOccurrence(legacy)).toThrow(
+    'Legacy credential profile',
+  );
+  const document = { exists: true, data: () => structuredClone(legacy) };
+  const database = {
+    collection: () => ({
+      doc: () => ({ get: async () => document }),
+      where: () => ({
+        limit: () => ({ get: async () => ({ docs: [document] }) }),
+      }),
+    }),
+  };
+  const persisted = new FirestoreJobStore(
+    database as unknown as ConstructorParameters<typeof FirestoreJobStore>[0],
+  );
+  expect(await persisted.readOccurrence(legacy.id)).toEqual(legacy);
+  expect(await persisted.history(legacy.jobId)).toEqual([legacy]);
+  f.store.occurrences.set(legacy.id, legacy);
+  const run = (await f.native.listRuns({ workId: legacy.workId }))[0]!;
+  await f.orchestrator.report(run.runId, { ok: false });
+  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect((await f.store.readOccurrence(legacy.id))?.profile).toEqual(
+    legacy.profile,
+  );
+});
+
+it('retires an unminted legacy reservation only after the existing backstop and admits its successor', async () => {
+  const f = fixture();
+  const legacy = jobOccurrenceSchema.parse({
+    id: 'b'.repeat(64),
+    jobId: f.id,
+    workId: '01JOBS00000000000000000000',
+    requestDigest: 'c'.repeat(64),
+    createdAt: '2026-10-27T06:00:00.000Z',
+    principal: 'user:joe',
+    trigger: 'manual',
+    skipped: false,
+    definition: f.definition,
+    profile: { ...f.profile, credentials: { github: 'personal' } },
+    comparison: 'd'.repeat(64),
+    parameters: {},
+  });
+  f.store.occurrences.set(legacy.id, legacy);
+  f.store.jobs.get(f.id)!.active = legacy.id;
+  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+  expect(f.store.jobs.get(f.id)?.active).toBe(legacy.id);
+  expect(await f.native.listRuns({ workId: legacy.workId })).toEqual([]);
+  f.setTime('2026-10-27T10:00:00.000Z');
+  f.store.jobs.get(f.id)!.refreshedAt = '2026-10-27T10:00:00.000Z';
+  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect((await f.store.readOccurrence(legacy.id))?.admissionFailure).toBe(
+    'legacy-credentials',
+  );
+  expect(await f.native.listRuns({ workId: legacy.workId })).toEqual([]);
+  const successor = await f.jobs.admit(
+    f.id,
+    'after-legacy-retirement',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  expect(await f.native.listRuns({ workId: successor.workId })).toHaveLength(1);
 });

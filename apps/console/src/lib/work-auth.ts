@@ -5,6 +5,7 @@ import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { resolvePrincipal, type WorkGrant } from './work-grants';
 
 export type WorkScope =
+  | 'secrets.admin'
   | 'costs.reader'
   | 'work.operator'
   | 'work.reader'

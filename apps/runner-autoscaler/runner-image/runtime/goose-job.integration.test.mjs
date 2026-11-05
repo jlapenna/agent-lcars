@@ -128,6 +128,11 @@ for (const cancel of [false, true]) {
               failed = body;
               return json({});
             }
+            if (req.url === `${root}/job-secrets`)
+              return json({
+                environment: { EXAMPLE_API_KEY: 'fixture-job-key' },
+                files: { certificate: 'fixture-certificate' },
+              });
             if (req.url === `${root}/recipe` && req.method === 'GET')
               return json({
                 definition: {
@@ -144,6 +149,7 @@ for (const cancel of [false, true]) {
                     },
                   },
                 },
+                profile: { credentialSet: { name: 'fixture', revision: 1 } },
                 baseline: null,
                 parameters: { subject: 'fixture invocation' },
               });
@@ -194,6 +200,8 @@ for (const cancel of [false, true]) {
           const command = `set -eu
             test "$(pwd)" = "$WORKSPACE"
             test "$REPOSITORY" = fixture/repo
+            test "$EXAMPLE_API_KEY" = fixture-job-key
+            test "$(cat "$LCARS_JOB_SECRET_FILES_DIR/certificate")" = fixture-certificate
             test "$(cat recipe-source.txt)" = 'pinned source'
             test "$(cat "$HOME/.claude/skills/fixture.md")" = 'installed skill'
             test -z "\${LCARS_RUN_TOKEN:-}\${GH_TOKEN:-}\${GITHUB_TOKEN:-}"
