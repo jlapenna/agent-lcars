@@ -2,6 +2,7 @@ locals {
   services = toset([
     "firebaseapphosting.googleapis.com", "artifactregistry.googleapis.com",
     "billingbudgets.googleapis.com", "cloudbuild.googleapis.com",
+    "cloudbilling.googleapis.com",
     "cloudtasks.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "compute.googleapis.com", "firebase.googleapis.com",
