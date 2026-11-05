@@ -20,11 +20,13 @@ describe('watched repository agent capabilities', () => {
       'claude',
       'codex',
       'opencode',
+      'agy',
     ]);
     expect(supportedAgentLabels(standardRepo)).toEqual([
       'agent:claude',
       'agent:codex',
       'agent:opencode',
+      'agent:agy',
     ]);
     expect(selectedAgentPipeline(standardRepo, ['agent:codex'])).toBe('codex');
   });

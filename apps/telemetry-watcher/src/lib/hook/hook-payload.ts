@@ -1,7 +1,7 @@
 import { type SessionEventKind } from '@agent-lcars/telemetry';
 
 /** Runtimes whose hooks the `lcars hook <runtime>` client understands. */
-export const HOOK_RUNTIMES = ['claude', 'codex', 'opencode'] as const;
+export const HOOK_RUNTIMES = ['claude', 'codex', 'opencode', 'agy'] as const;
 export type HookRuntime = (typeof HOOK_RUNTIMES)[number];
 
 export function isHookRuntime(value: unknown): value is HookRuntime {
@@ -46,6 +46,7 @@ export interface HookPayload {
 export const HOOK_EVENT_KINDS: Readonly<Record<string, SessionEventKind>> = {
   SessionStart: 'start',
   UserPromptSubmit: 'prompt',
+  PreInvocation: 'prompt',
   PostToolUse: 'tool',
   Stop: 'stop',
   Interrupt: 'stop',
@@ -56,7 +57,10 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-export function parseHookPayload(raw: string): HookPayload | undefined {
+export function parseHookPayload(
+  raw: string,
+  fallbackEventName?: string,
+): HookPayload | undefined {
   if (raw.trim().length === 0) return undefined;
   let parsed: unknown;
   try {
@@ -68,14 +72,27 @@ export function parseHookPayload(raw: string): HookPayload | undefined {
     return undefined;
   }
   const record = parsed as Record<string, unknown>;
-  const hookEventName = optionalString(record['hook_event_name']);
-  const sessionId = optionalString(record['session_id']);
+  const hookEventName =
+    optionalString(record['hook_event_name']) ??
+    optionalString(fallbackEventName);
+  const sessionId =
+    optionalString(record['session_id']) ??
+    optionalString(record['conversationId']);
   if (!hookEventName || !sessionId) return undefined;
-  const transcriptPath = optionalString(record['transcript_path']);
-  const cwd = optionalString(record['cwd']);
+  const transcriptPath =
+    optionalString(record['transcript_path']) ??
+    optionalString(record['transcriptPath']);
+  const workspacePaths = Array.isArray(record['workspacePaths'])
+    ? record['workspacePaths']
+    : undefined;
+  const cwd =
+    optionalString(record['cwd']) ?? optionalString(workspacePaths?.[0]);
   const source = optionalString(record['source']);
-  const reason = optionalString(record['reason']);
-  const model = optionalString(record['model']);
+  const reason =
+    optionalString(record['reason']) ??
+    optionalString(record['terminationReason']);
+  const model =
+    optionalString(record['model']) ?? optionalString(record['modelName']);
   const agentId = optionalString(record['agent_id']);
   const agentTranscriptPath = optionalString(record['agent_transcript_path']);
   return {

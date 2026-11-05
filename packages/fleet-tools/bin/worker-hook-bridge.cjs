@@ -94,7 +94,7 @@ function recoveryState(env = process.env) {
     const context = JSON.parse(fs.readFileSync(contextPath, 'utf8'));
     if (
       context.policyVersion !== 1 ||
-      !['claude', 'codex', 'opencode'].includes(context.provider) ||
+      !['claude', 'codex', 'opencode', 'agy'].includes(context.provider) ||
       context.runId !== env.LCARS_RUN_ID ||
       (env.ATTEMPT_ID && env.ATTEMPT_ID !== context.attemptId) ||
       typeof context.attemptId !== 'string' ||
@@ -154,10 +154,11 @@ function recover(handler, input, options = {}) {
       ['echo LCARS_RECOVERY_READ_PROBE', 'allow'],
       ['git commit --no-verify', 'deny'],
     ]) {
+      const parsedInput = JSON.parse(input);
       const result = run(
         JSON.stringify({
           tool_name: 'Bash',
-          session_id: JSON.parse(input).session_id,
+          session_id: parsedInput.session_id ?? parsedInput.conversationId,
           tool_input: { command },
           cwd: process.cwd(),
         }),
@@ -182,14 +183,31 @@ function invoke(handler, input, options = {}) {
 
 if (require.main === module && isDispatch(process.env)) {
   let output;
+  const rawArgs = process.argv.slice(2);
+  const isAgy = rawArgs[0] === '--agy';
+  const args = isAgy ? rawArgs.slice(1) : rawArgs;
   try {
-    const [handler, ...extra] = process.argv.slice(2);
+    const [handler, ...extra] = args;
     if (!handler || extra.length) throw new Error('invalid handler');
     output = invoke(handler, fs.readFileSync(0, 'utf8'));
   } catch {
     output = deny();
   }
-  process.stdout.write(`${JSON.stringify(output)}\n`);
+  if (isAgy) {
+    const d = output?.hookSpecificOutput;
+    const agyOutput =
+      d?.permissionDecision === 'allow'
+        ? { decision: 'allow' }
+        : {
+            decision: 'deny',
+            reason:
+              d?.permissionDecisionReason ??
+              deny().hookSpecificOutput.permissionDecisionReason,
+          };
+    process.stdout.write(`${JSON.stringify(agyOutput)}\n`);
+  } else {
+    process.stdout.write(`${JSON.stringify(output)}\n`);
+  }
 }
 
 module.exports = { invoke, recover, isDispatch, recoveryState, failure: deny };

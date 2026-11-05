@@ -5,7 +5,7 @@
 // authentication boundary: only a trusted runner may supply this evidence.
 const fs = require('node:fs');
 
-const providers = ['claude', 'codex', 'opencode'];
+const providers = ['claude', 'codex', 'opencode', 'agy'];
 const scenarios = [
   'valid-work',
   'invalid-identity',

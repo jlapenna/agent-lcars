@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
+  antigravityAdapter,
   applySessionTitleOverlay,
   claudeCodeAdapter,
   codexAdapter,
@@ -61,6 +62,7 @@ export const HOOK_CLI_USAGE =
   'usage: lcars hook claude [--inline]   (reads one Claude Code hook payload on stdin)\n' +
   '       lcars hook codex  [--inline]   (reads one Codex hook payload on stdin)\n' +
   '       lcars hook opencode [--inline] (reads one payload from the OpenCode lcars-telemetry plugin on stdin)\n' +
+  '       lcars hook agy [<event>] [--inline] (reads one Antigravity hook payload on stdin)\n' +
   '       lcars hook flush               (writes spooled events to the telemetry store, via lcars-hook-flush.cjs)\n' +
   '       Exits 0 and prints nothing on stdout in every case; decisions go to\n' +
   '       ~/.local/state/agent-lcars/hook.log.';
@@ -197,6 +199,7 @@ const RUNTIME_PROFILES: Readonly<Record<HookRuntime, RuntimeProfile>> = {
   // export-shaped snapshot as transcript_path; the same reducer that reads
   // `opencode export` output summarizes it.
   opencode: { agent: 'opencode', adapter: opencodeAdapter },
+  agy: { agent: 'antigravity', adapter: antigravityAdapter },
 };
 
 /** `lcars-hook-flush.cjs` beside the running bundle (`process.argv[1]`). */
@@ -258,7 +261,10 @@ function reduceTranscript(
 ): SessionSummary | undefined {
   if (!transcriptPath) return undefined;
   try {
-    const summaries = adapter.reduce(deps.readTranscriptLines(transcriptPath));
+    const summaries = adapter.reduce(
+      deps.readTranscriptLines(transcriptPath),
+      transcriptPath,
+    );
     return (
       summaries.find((summary) => summary.sessionId === sessionId) ??
       summaries[0]
@@ -453,6 +459,7 @@ async function handleRuntimeHook(
   deps: HookCommandDependencies,
   runtime: HookRuntime,
   inline: boolean,
+  fallbackEventName?: string,
 ): Promise<HookCommandResult> {
   const profile = RUNTIME_PROFILES[runtime];
   const stateDirectory = stateDirectoryFor(deps);
@@ -463,7 +470,7 @@ async function handleRuntimeHook(
       `${now} ${runtime} ${action} ${detail}`.trimEnd(),
     );
 
-  let payload = parseHookPayload(deps.readStdin());
+  let payload = parseHookPayload(deps.readStdin(), fallbackEventName);
   if (!payload) {
     log('ignored', 'unparseable payload');
     return { action: 'ignored', detail: 'unparseable payload' };
@@ -745,9 +752,10 @@ export async function executeHookCommand(
   try {
     if (isHookRuntime(subcommand)) {
       const inline = rest.includes('--inline');
+      const fallbackEventName = rest.find((arg) => !arg.startsWith('--'));
       return subcommand === 'opencode'
         ? await handleOpencodeHook(deps, inline)
-        : await handleRuntimeHook(deps, subcommand, inline);
+        : await handleRuntimeHook(deps, subcommand, inline, fallbackEventName);
     }
     if (subcommand === 'flush' || subcommand === '--flush') {
       await deps.runFlusher();

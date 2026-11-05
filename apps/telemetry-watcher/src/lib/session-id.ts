@@ -11,6 +11,7 @@ export const SESSION_ID_ENV_VARS = [
   'LCARS_SESSION_ID',
   'CLAUDE_CODE_SESSION_ID',
   'CODEX_THREAD_ID',
+  'ANTIGRAVITY_CONVERSATION_ID',
 ] as const;
 
 export type SessionIdEnvVar = (typeof SESSION_ID_ENV_VARS)[number];

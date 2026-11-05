@@ -83,16 +83,23 @@ describe('selected session spend', () => {
       aggregateSessionSpend(docs, projections, false, 'lifecycle').byPipeline,
     ).toEqual([
       expect.objectContaining({
-        key: 'unknown',
-        sessions: 3,
-        reportedCostUsd: 10,
+        key: 'agy',
+        sessions: 1,
+        reportedCostUsd: 5,
         mergedPRs: 1,
-        costPerMergedDeliverableUsd: 10,
+        costPerMergedDeliverableUsd: 5,
+      }),
+      expect.objectContaining({
+        key: 'unknown',
+        sessions: 2,
+        reportedCostUsd: 5,
+        mergedPRs: 1,
+        costPerMergedDeliverableUsd: 5,
       }),
     ]);
     expect(
       aggregateSessionSpend(docs, projections).byPipeline.map((row) => row.key),
-    ).toEqual(['other: antigravity', 'other: gemini']);
+    ).toEqual(['agy', 'other: gemini']);
   });
 
   it('reconciles mixed providers/models and repeated attempts with both existing ledgers', () => {

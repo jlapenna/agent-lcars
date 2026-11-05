@@ -9,7 +9,12 @@ export interface QuickTaskPreferences {
 }
 
 function isConfiguredPipeline(value: unknown): value is AgentPipeline {
-  return value === 'claude' || value === 'codex' || value === 'opencode';
+  return (
+    value === 'claude' ||
+    value === 'codex' ||
+    value === 'opencode' ||
+    value === 'agy'
+  );
 }
 
 /** Read the browser-local Quick Task defaults. Invalid or unavailable

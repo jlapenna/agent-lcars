@@ -31,7 +31,7 @@ import { workPayloadFromGithub } from './work-from-github';
  * module only decides *whether* and *what*.
  */
 
-export type Pipeline = 'claude' | 'codex' | 'opencode';
+export type Pipeline = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export interface IngestDecision {
   kind: 'request';

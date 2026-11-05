@@ -130,7 +130,10 @@ export async function _runRunnerResumeForTesting(
     !flags.transcriptUri ||
     !flags.cwd ||
     !isSafeIdentifier(flags.sessionId) ||
-    (agent !== 'claude-code' && agent !== 'codex' && agent !== 'opencode')
+    (agent !== 'claude-code' &&
+      agent !== 'codex' &&
+      agent !== 'opencode' &&
+      agent !== 'antigravity')
   ) {
     return undefined;
   }

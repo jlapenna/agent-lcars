@@ -10,7 +10,7 @@ import {
 /** Each query reads at most limit+1 documents; overflow fails closed. */
 export const LIFECYCLE_METRICS_READ_LIMIT = 1_000;
 export const LIFECYCLE_METRICS_WINDOW_SECONDS = 3_600;
-const PIPELINES = ['claude', 'codex', 'opencode', 'unknown'] as const;
+const PIPELINES = ['claude', 'codex', 'opencode', 'agy', 'unknown'] as const;
 const OUTCOMES = [
   'pull-request',
   'merged-deliverable',
