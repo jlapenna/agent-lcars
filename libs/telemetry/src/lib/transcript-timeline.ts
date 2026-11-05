@@ -1,3 +1,4 @@
+import { extractAntigravityUserRequest } from './antigravity-transcript-adapter';
 import { SessionAgent } from './types';
 import { asArray, asBoolean, asRecord, asString } from './unknown-value';
 
@@ -279,10 +280,7 @@ function eventsFromAntigravityLine(
 
   if (stepType === 'USER_INPUT' && source === 'USER_EXPLICIT') {
     if (!content) return [];
-    const match = content.match(
-      /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/,
-    );
-    const body = (match ? match[1] : content).trim();
+    const body = extractAntigravityUserRequest(content);
     if (!body) return [];
     return [{ kind: 'text', role: 'user', text: truncate(body), timestamp }];
   }

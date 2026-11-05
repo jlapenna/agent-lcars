@@ -52,10 +52,21 @@ function unwrapStringArg(value: unknown): string | undefined {
   return str;
 }
 
+const USER_REQUEST_OPEN_TAG = '<USER_REQUEST>';
+const USER_REQUEST_CLOSE_TAG = '</USER_REQUEST>';
+
+export function extractAntigravityUserRequest(content: string): string {
+  const openIdx = content.indexOf(USER_REQUEST_OPEN_TAG);
+  if (openIdx === -1) return content.trim();
+  const bodyStart = openIdx + USER_REQUEST_OPEN_TAG.length;
+  const closeIdx = content.indexOf(USER_REQUEST_CLOSE_TAG, bodyStart);
+  if (closeIdx === -1) return content.trim();
+  return content.slice(bodyStart, closeIdx).trim();
+}
+
 function cleanUserInputForTitle(content: string): string | undefined {
   if (content.includes('<CONTEXT_SUMMARY>')) return undefined;
-  const match = content.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/);
-  const body = (match ? match[1] : content).trim();
+  const body = extractAntigravityUserRequest(content);
   if (!body) return undefined;
   return body;
 }
