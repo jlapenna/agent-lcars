@@ -49,6 +49,10 @@ const storedJobProfileSchema = z.union([
       (profile) => !profile.credentialSet && !profile.crossRepo,
       'Legacy credentials cannot be combined with current credential sets or crossRepo',
     ),
+  // Retired Homelab Goose environment overlay selector. Occurrences admitted
+  // while it existed stay readable; job credentials now come from credential
+  // sets, and the runner no longer reads overlay files.
+  jobProfileSchema.safeExtend({ environment: jobProfileNameSchema }),
 ]);
 const sourceRefreshSchema = z.strictObject({
   repository: z.string(),

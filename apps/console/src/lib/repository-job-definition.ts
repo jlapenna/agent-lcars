@@ -139,13 +139,6 @@ export const jobProfileSchema = z
     crossRepo: z.boolean().optional(),
     credentialSet: credentialSetReferenceSchema.optional(),
     gitIdentity: jobGitIdentitySchema.optional(),
-    // Names a Homelab-owned overlay on the shared Goose provider environment:
-    // the runner reads `goose-environment.<name>.json` beside the shared
-    // `goose-environment.json` from its credential Secret and lets its keys
-    // win. A profile cannot carry environment values itself; it only selects
-    // an operator-provisioned overlay, so model credentials stay out of
-    // console configuration and repository recipes.
-    environment: name.optional(),
     allocation,
     // Exact approved input sets keep network and write scopes operator-owned.
     inputSets: z.array(jobInputsSchema).min(1).max(100),

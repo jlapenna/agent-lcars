@@ -234,14 +234,9 @@ describe('production repository job admission', () => {
       if (crossRepo !== undefined) f.profile.crossRepo = crossRepo;
       // Parsing old persisted profiles must preserve their digest.
       expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
-      // A profile may select a Homelab-provisioned Goose environment overlay
-      // by name only; the brief carries the whole profile to the runner.
-      expect(
-        jobProfileSchema.parse({ ...f.profile, environment: 'skill-evals' })
-          .environment,
-      ).toBe('skill-evals');
+      // The retired Goose environment overlay selector is not configuration.
       expect(() =>
-        jobProfileSchema.parse({ ...f.profile, environment: 'Skill Evals' }),
+        jobProfileSchema.parse({ ...f.profile, environment: 'skill-evals' }),
       ).toThrow();
       const occurrence = await f.jobs.admit(
         f.id,
@@ -864,6 +859,28 @@ it('decodes legacy profiles for stored reads and settlement while refusing new d
   expect((await f.store.readOccurrence(legacy.id))?.profile).toEqual(
     legacy.profile,
   );
+});
+
+it('decodes occurrences admitted with the retired Goose environment overlay', async () => {
+  const f = fixture();
+  const occurrence = await f.jobs.admit(
+    f.id,
+    'overlay-history',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  const stored = {
+    ...occurrence,
+    profile: { ...occurrence.profile, environment: 'skill-evals' },
+  };
+  expect(jobOccurrenceSchema.parse(stored).profile).toEqual(stored.profile);
+  expect(() =>
+    jobOccurrenceSchema.parse({
+      ...stored,
+      profile: { ...stored.profile, environment: 'Skill Evals' },
+    }),
+  ).toThrow();
 });
 
 it('retires an unminted legacy reservation only after the existing backstop and admits its successor', async () => {
