@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
+
 /** Bounded metadata only: Cloud Logging is the durable source for Homelab's
  * existing node-exporter/Loki monitoring, including HTTP 200 semantic drops. */
 export function recordLinearWebhook(
@@ -18,29 +20,26 @@ export function recordLinearWebhook(
         : status >= 400
           ? 'rejected'
           : 'processed';
-  console.info(
-    JSON.stringify({
-      severity: ['dropped_permanent', 'projection_repair_dropped'].includes(
-        outcome,
-      )
-        ? 'ERROR'
-        : 'INFO',
-      component: 'lcars-webhook',
-      tracker: 'linear',
-      stage,
-      outcome,
-    }),
+  logger.structured(
+    ['dropped_permanent', 'projection_repair_dropped'].includes(outcome)
+      ? 'error'
+      : 'info',
+    'LCARS Linear webhook outcome',
+    { component: 'lcars-webhook', tracker: 'linear', stage, outcome },
+    { enrich: false },
   );
 }
 
 export function recordLinearWebhookHealth(enabled: boolean): void {
-  console.info(
-    JSON.stringify({
-      severity: 'INFO',
+  logger.structured(
+    'info',
+    'LCARS Linear webhook health',
+    {
       component: 'lcars-webhook',
       tracker: 'linear',
       stage: 'health',
       enabled,
-    }),
+    },
+    { enrich: false },
   );
 }

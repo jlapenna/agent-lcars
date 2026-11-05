@@ -72,8 +72,9 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 describe('queued Linear authenticated processor', () => {
   it('exports semantic HTTP 200 drops as bounded error telemetry', async () => {
-    const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
+      vi.stubEnv('FORCE_STRUCTURED_LOGGING', 'true');
       mocks.admit.mockRejectedValue(new Error('private provider response'));
       const response = await POST(
         request({
@@ -86,6 +87,7 @@ describe('queued Linear authenticated processor', () => {
         log.mock.calls.map(([line]) => JSON.parse(line as string)),
       ).toContainEqual({
         severity: 'ERROR',
+        message: 'LCARS Linear webhook outcome',
         component: 'lcars-webhook',
         tracker: 'linear',
         stage: 'process',
