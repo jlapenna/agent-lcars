@@ -19,6 +19,7 @@ set -uo pipefail
 lib="${AGENT_LCARS_LIB_DIR:-/usr/local/lib/agent-lcars}"
 home="${AGENT_LCARS_RUNNER_HOME:-$HOME}"
 opencode="${AGENT_LCARS_OPENCODE:-/usr/local/bin/opencode}"
+agy="${AGENT_LCARS_AGY:-/usr/local/bin/agy}"
 lcars="${AGENT_LCARS_LCARS:-/usr/local/bin/lcars}"
 archive_cache="${AGENT_LCARS_ARCHIVE_CACHE:-/opt/actions-archive-cache}"
 skills_list="${AGENT_LCARS_LAYER1_SKILLS:-$lib/runtime/layer1-skills.conf}"
@@ -52,12 +53,14 @@ check "managed Python 3.14 runs as runner" bash -c '"$(uv python find --managed-
 check "trusted OpenCode CLI runs" trusted_opencode_runs "$opencode"
 check "trusted OpenCode CLI supports QueueExecutor's --auto mode" \
   trusted_opencode_supports_auto "$opencode"
+check "trusted Antigravity CLI runs" trusted_agy_runs "$agy"
 check "empty version-matched OpenCode store is baked" bash "$lib/check-opencode-store.sh"
 check "action-archive cache is baked at $archive_cache" test -d "$archive_cache"
 check "lcars CLI is executable at $lcars" test -x "$lcars"
 check "repo-tools commands are installed and the worktree guard executes" \
   node "$lib/repo-tools-bins.mjs" verify "$repo_tools" "$repo_tools_bin"
 check "image carries no Codex authentication" test ! -e "$home/.codex/auth.json"
+check "image carries no Antigravity authentication" test ! -e "$home/.gemini/antigravity-cli/antigravity-oauth-token"
 
 skills=0
 if [ -f "$skills_list" ]; then

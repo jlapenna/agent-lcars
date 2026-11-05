@@ -406,6 +406,12 @@ COPY install-goose-release.sh /usr/local/lib/agent-lcars/install-goose-release.s
 RUN GOOSE_VERSION="$(cat /usr/local/share/agent-lcars-tooling/goose-version)" \
     TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-goose-release.sh
 
+# Antigravity CLI (agy) is a supported runtime in the same image and publication lifecycle.
+COPY agy-version /usr/local/share/agent-lcars-tooling/agy-version
+COPY install-agy-release.sh /usr/local/lib/agent-lcars/install-agy-release.sh
+RUN AGY_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/agy-version)" \
+    TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-agy-release.sh
+
 # Forward-looking hook (homelab#97): lets a future registration-specific
 # build add extra tooling without forking this Dockerfile. Empty by
 # default; canonical homelab publication sets a real value today --

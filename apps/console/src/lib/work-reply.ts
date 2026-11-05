@@ -115,7 +115,7 @@ export function resumeUriFor(doc: SessionDoc): string | undefined {
   if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
     return undefined;
   }
-  if (doc.agent === 'opencode' || doc.agent === 'antigravity') {
+  if (doc.agent === 'opencode') {
     return doc.resumeGcsUri;
   }
   return doc.resumeGcsUri ?? doc.transcriptGcsUri;
