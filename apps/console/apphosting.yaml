@@ -305,8 +305,8 @@ env:
 
   # Application-owned job credentials; values are resolved at runtime, never during build.
   - variable: AGENT_LCARS_JOB_SECRETS_PROJECT
-    value: agent-lcars-job-secrets
+    value: homeforjla-169908
     availability: [RUNTIME]
   - variable: AGENT_LCARS_JOB_SECRETS_WRITER
-    value: job-secret-writer@agent-lcars-job-secrets.iam.gserviceaccount.com
+    value: job-secret-writer@homeforjla-169908.iam.gserviceaccount.com
     availability: [RUNTIME]

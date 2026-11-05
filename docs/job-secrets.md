@@ -1,13 +1,15 @@
 # LCARS job secrets
 
-LCARS owns job credentials in a dedicated Google Secret Manager project. This
-store is independent of homegit and Homelab's secret stores. Never import a host's
+LCARS owns its job credentials in Google Secret Manager in the existing billed
+project `homeforjla-169908`, separate from the Console project `agent-lcars`.
+Its labeled containers and credential registry are independent of homegit and
+Homelab's secret stores. Never import a host's
 credential environment or its personal `gh` authentication into a job.
 
 The application keeps secret metadata, immutable credential-set revisions,
 per-job grants and access records in its existing dispatch Firestore database.
 Secret values exist only in Secret Manager and the authorized runtime. Terraform
-provisions projects, secret containers and IAM; it never handles secret values.
+provisions secret containers and IAM in the existing project; it never handles secret values.
 
 ## Administration
 
@@ -60,9 +62,16 @@ bounded to 16 KiB and cannot contain NUL.
 
 ## Provision and register
 
-`infra/terraform/job_secrets.tf` declares the dedicated project, Data Access
-auditing, operator and uploader identities, protected secret containers, and
-individual-secret IAM. Add each new logical name to `job_secret_names` and
+`infra/terraform/job_secrets.tf` references the existing project and owns the
+required API enablement, Secret Manager Data Access auditing, operator and
+uploader identities, protected secret containers, and individual-secret IAM.
+It does not create a project or attach a billing account. Homelab's Terraform
+root owns other resources in `homeforjla-169908`; it does not declare these APIs
+or the Secret Manager audit configuration. Audit logging applies only to
+`secretmanager.googleapis.com`. Runtime read/metadata and uploader version-add
+roles are bound to individual LCARS containers, never the whole project.
+The former empty `agent-lcars-job-secrets` project is released from this state
+without deletion or billing changes. Add each new logical name to `job_secret_names` and
 apply through the owning reviewed infrastructure workflow before registering it.
 The default container is `github-jlapenna`; it contains no initial value.
 
@@ -73,10 +82,10 @@ containers have deletion protection and 30-day delayed version destruction.
 
 Deployment configuration:
 
-| Variable                          | Meaning                                                      |
-| --------------------------------- | ------------------------------------------------------------ |
-| `AGENT_LCARS_JOB_SECRETS_PROJECT` | Dedicated Secret Manager project, distinct from `PROJECT_ID` |
-| `AGENT_LCARS_JOB_SECRETS_WRITER`  | Dedicated uploader service-account email                     |
+| Variable                          | Meaning                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `AGENT_LCARS_JOB_SECRETS_PROJECT` | Existing Secret Manager project, distinct from `PROJECT_ID` |
+| `AGENT_LCARS_JOB_SECRETS_WRITER`  | Dedicated uploader service-account email                    |
 
 Both variables must be present together. Omitting both disables the feature;
 ordinary GitHub App jobs continue to work. No Secret Manager credential or
