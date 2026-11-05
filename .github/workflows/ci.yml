@@ -124,12 +124,6 @@ jobs:
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
 
     steps:
-      - name: Register whole-job memory measurement
-        if: runner.environment == 'self-hosted'
-        uses: jlapenna/agent-lcars/.github/actions/research-memory@1a76ff3ed25f5b31c25cc1951063a94cf7d90584
-        with:
-          memory-limit-bytes: '5368709120'
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -416,12 +410,6 @@ jobs:
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 60 }}
 
     steps:
-      - name: Register whole-job memory measurement
-        if: runner.environment == 'self-hosted'
-        uses: jlapenna/agent-lcars/.github/actions/research-memory@1a76ff3ed25f5b31c25cc1951063a94cf7d90584
-        with:
-          memory-limit-bytes: '5368709120'
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -739,12 +727,6 @@ jobs:
     timeout-minutes: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 15 || 30 }}
 
     steps:
-      - name: Register whole-job memory measurement
-        if: runner.environment == 'self-hosted'
-        uses: jlapenna/agent-lcars/.github/actions/research-memory@1a76ff3ed25f5b31c25cc1951063a94cf7d90584
-        with:
-          memory-limit-bytes: '6442450944'
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
