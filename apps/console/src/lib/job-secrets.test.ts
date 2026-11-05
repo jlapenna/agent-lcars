@@ -231,12 +231,11 @@ it('does not enable a different version than the one it validated', async () => 
     return 'fixture-original-key';
   });
   const pending = service.setEnabled('example-key', true, actor);
-  const rejected = await expect(pending).rejects.toThrow('version changed');
   await reading;
   await service.upload('example-key', 'fixture-rotated-key', actor);
   await service.promote('example-key', '2', actor);
   resume();
-  await rejected;
+  await expect(pending).rejects.toThrow('version changed');
   await service.setEnabled('example-key', true, actor);
   expect(
     (await service.deliver(job, await service.pin(job))).environment
