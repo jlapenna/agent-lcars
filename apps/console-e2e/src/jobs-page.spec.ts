@@ -236,7 +236,7 @@ for (const width of [390, 1280]) {
       .getByRole('button', { name: 'Refresh list', exact: true })
       .click();
     await page
-      .getByRole('button', { name: 'Install repository jobs', exact: true })
+      .getByRole('button', { name: 'Refresh repository jobs', exact: true })
       .press('Enter');
     await expect(sourceHeading).toBeFocused();
     await expect(sourceHeading).toBeInViewport({ ratio: 1 });

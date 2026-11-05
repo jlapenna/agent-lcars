@@ -10,5 +10,5 @@ pnpm exec vitest run --config libs/orchestrator/vitest.config.mts \
   credential-fallback.spec.ts provider-fallback.spec.ts \
   --maxWorkers=1 --no-passWithNoTests
 pnpm exec vitest run --config apps/console/vitest.config.mts \
-  runs-router.test.ts work-provider-fallback.test.ts \
+  runs-router.test.ts work-provider-fallback.test.ts repository-job-store.test.ts \
   --maxWorkers=1 --no-passWithNoTests

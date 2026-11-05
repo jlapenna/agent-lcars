@@ -33,6 +33,9 @@ export interface RepositoryJobsDeps {
   runtime: OrchestratorRouteDeps;
   profiles: () => JobProfile[];
   granted: (principal: string, repository: string) => boolean;
+  /** The principal automatic activation is attributed to; undefined
+   * disables automatic activation. Schedule admission re-checks its grant. */
+  automationPrincipal?: () => string | undefined;
   now: () => Date;
   secrets?: Pick<JobSecrets, 'pin' | 'authorize'>;
 }
@@ -77,6 +80,18 @@ export class RepositoryJobs {
       }
     });
   }
+  /** Activation on merge: the definition activates when its execution profile
+   * admits the automation principal exactly as it would an enabling operator. */
+  automaticActivation(definition: JobDefinition): string | undefined {
+    const principal = this.deps.automationPrincipal?.();
+    if (principal === undefined) return undefined;
+    try {
+      this.authorize(definition, principal);
+      return principal;
+    } catch {
+      return undefined;
+    }
+  }
   authorizeOccurrence(occurrence: JobOccurrence): JobProfile {
     if ('credentials' in occurrence.profile)
       throw new Error('Legacy credential profile requires migration');
@@ -100,13 +115,21 @@ export class RepositoryJobs {
       if (!enabled) {
         if (!job || !this.deps.granted(principal, job.repository))
           throw new Error('Goose operator grant required');
-        return { job: { ...job, enabled: false } };
+        // An explicit disable is the operator's per-job veto: it survives
+        // definition changes until an explicit enable clears it.
+        return { job: { ...job, enabled: false, vetoedBy: principal } };
       }
       if (!job?.definition || job.error || job.definition.digest !== digest)
         throw new Error('Refresh and review the current definition');
       this.authorize(job.definition, principal);
       return {
-        job: { ...job, enabled, enabledBy: principal, activationFloor: at },
+        job: {
+          ...job,
+          enabled,
+          enabledBy: principal,
+          activationFloor: at,
+          vetoedBy: null,
+        },
       };
     });
   }

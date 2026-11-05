@@ -105,7 +105,9 @@ export function JobDetail({
           <StateMark tone={job.enabled ? 'ok' : 'idle'}>
             {job.enabled ? 'Enabled' : 'Disabled'}
           </StateMark>
-          {job.enabled ? (
+          {/* A disabled job without a veto reactivates on its next healthy
+              refresh, so the veto stays available while it is off. */}
+          {job.enabled || !job.vetoedBy ? (
             <Button
               variant="light"
               disabled={busy}
@@ -116,11 +118,11 @@ export function JobDetail({
                       digest: definition?.digest ?? '',
                       enabled: false,
                     }),
-                  'Job disabled. Existing Work continues.',
+                  'Job disabled until an operator enables it. Existing Work continues.',
                 )
               }
             >
-              Disable
+              {job.enabled ? 'Disable' : 'Keep disabled'}
             </Button>
           ) : null}
           {definition?.job.triggers.manual && !run ? (
@@ -134,7 +136,11 @@ export function JobDetail({
         </div>
         {!job.enabled ? (
           <p className={styles.muted}>
-            Review and enable this job before it can run.
+            {job.vetoedBy
+              ? `Disabled by ${job.vetoedBy}. Repository changes do not re-enable it; review and enable it to resume.`
+              : job.error
+                ? 'This job activates again after a successful source refresh.'
+                : 'Its execution profile does not admit automatic activation. Review and enable it before it can run.'}
           </p>
         ) : null}
       </header>

@@ -27,16 +27,37 @@ timezone, one attempt, one active occurrence and overlap=skip. UTC occurrence
 identity distinguishes repeated DST minutes; nonexistent local minutes do not
 run. The existing five-minute maintenance tick admits at most the latest due
 minute in its five-minute window; older occurrences are never backfilled.
-Explicit enablement establishes an activation floor. Publishing a
-manifest does not enable it. Updating its execution definition disables it until
-the operator re-enables the new digest.
+
+Jobs activate on merge to the default branch. Every maintenance tick refreshes
+the catalogs of all control-plane repositories
+(`AGENT_LCARS_CONTROL_PLANE_REPOSITORIES`); a repository without `.lcars/jobs`
+costs one small root-tree read and is not an error. A definition that parses and
+whose execution profile admits the automation principal becomes enabled at its
+current digest, including after a digest change. Each activation, automatic or
+explicit, sets an activation floor at that moment, so only schedule slots after
+it are admitted and nothing is backfilled.
+
+Automatic activation is attributed to the scheduler: the single
+`AGENT_LCARS_WORK_GRANTS` entry holding `work.cron` for the `goose` pipeline
+(the principal that drives the maintenance tick). Zero or several such grants
+disable automatic activation. Scheduled admission re-checks that principal's
+current grant and the profile, exactly as it does for an operator's enablement;
+removing the grant stops its schedules. The built-in `repository` profile admits
+it; a specialized profile admits automatic activation only when its `principals`
+list the scheduler principal.
+
+The operator keeps a veto. An explicit disable is recorded per job, not per
+digest, and later definition changes do not re-enable it. An explicit enable of
+the reviewed digest clears the veto. Invalid, unauthorized and deleted
+definitions stay visible and disabled; a source refresh failure disables
+admission until a successful refresh.
 
 The built-in `repository` profile uses the existing Goose Work operator grant
 for the owning repository and the supported 2 CPU / 6 GiB / 24 GiB allocation.
-The operator reviews the definition's fixed inputs when enabling its digest.
+Its fixed inputs are reviewed with the repository change that merges them.
 New jobs using this profile need no LCARS configuration change or deployment.
 Specialized profiles remain operator-owned configuration for additional authority.
-The server checks the current grant on enablement, invocation and scheduled
+The server checks the current grant on activation, invocation and scheduled
 admission. A recipe cannot install extensions, change model settings, nest jobs,
 retry, or choose a shell command. The configured worker image supplies Goose and
 the profile's tools. Runtime credentials/configuration remain Homelab-owned.
@@ -125,7 +146,7 @@ their names alone grant no capabilities.
 
 The authenticated Jobs surface lists definitions, source errors, enabled state,
 schedule/timezone, resources, latest occurrence and baseline. Operators can
-refresh, enable/disable a reviewed digest, invoke a manual occurrence, inspect
+refresh a repository now, disable (veto) or re-enable a job, invoke a manual occurrence, inspect
 artifacts and follow the native Work link for cancellation and execution detail.
 API authorization is enforced server-side independently of the UI.
 
@@ -151,14 +172,16 @@ source verification does not establish deployed tool access.
 
 ## Configuration and operation
 
-To install a repository job, publish `.lcars/jobs/<name>/job.yaml` and
-`recipe.yaml` on its default branch. Set `execution.profile: repository` and
-requests equal to limits at 2 CPU / 6 GiB / 24 GiB. In `/jobs`, select the
-repository and **Install / refresh jobs**, then review and enable its definition.
-The screen lists all registered jobs the operator may access, including disabled
-and invalid definitions; the repository selector chooses which catalog to refresh,
-not which jobs to display. Adding a job or changing its weekly cron is entirely
-repository-owned. Definition changes require review and re-enablement.
+To add a repository job, merge `.lcars/jobs/<name>/job.yaml` and `recipe.yaml`
+to a control-plane repository's default branch. Set
+`execution.profile: repository` and requests equal to limits at
+2 CPU / 6 GiB / 24 GiB. The next maintenance ticks discover and activate it; the
+pull request is the review. In `/jobs`, **Refresh jobs** reads a repository's
+catalog immediately instead of waiting for its turn. The screen lists all
+registered jobs the operator may access, including disabled and invalid
+definitions; the repository selector chooses which catalog to refresh, not which
+jobs to display. Adding a job or changing its weekly cron is entirely
+repository-owned. **Disable** vetoes a job until an operator enables it again.
 
 The built-in `repository` profile is reserved, always uses repository-scoped
 credentials, and cannot be overridden by `AGENT_LCARS_JOB_PROFILES`. Its fixed
@@ -214,13 +237,16 @@ the transport fixture.
 The authenticated `/jobs` screen uses these Work API endpoints:
 
 - `POST /api/work/v1/jobs/refresh` with a managed `repository`.
-- `POST /api/work/v1/jobs/{id}/enable` with the reviewed `digest` and `enabled`.
+- `POST /api/work/v1/jobs/{id}/enable` with the current `digest` and `enabled`:
+  `false` records the operator veto, `true` clears it and enables that digest.
+  Enabling is needed only for a vetoed job or one whose profile does not admit
+  automatic activation.
 - `POST /api/work/v1/jobs/{id}/invoke` with that `digest` and a stable `requestId`.
 - `GET /api/work/v1/jobs/occurrences/{id}` for the pinned occurrence and artifacts.
 
 Refresh is required before admitting from a catalog older than ten minutes.
-Source failures disable admission until a successful refresh and explicit
-enablement. Disable stops new occurrences; use native Work cancellation to stop
+Source failures disable admission until a successful refresh, which
+reactivates an unvetoed, authorized job. Disable stops new occurrences; use native Work cancellation to stop
 an admitted occurrence. A lost occurrence is failed and never automatically
 retried. An unreleased retirement keeps the job occupied until the existing
 capacity recovery protocol establishes physical termination.
@@ -288,7 +314,9 @@ LCARS's already-native summaries, triage, queue maintenance and delivery remain
 native Work. Fork contribution checkouts are not first-party migration targets.
 
 Catalog refresh and model summaries start independently within the same bounded
-maintenance window. Catalogs refresh oldest-first in batches of at most four,
+maintenance window. Every control-plane repository's catalog, plus any
+repository that still has stored jobs, refreshes in batches of at most four:
+repositories with an enabled job first, then oldest recorded refresh attempt,
 while occurrence settlement and scheduling start independently. A second
 deadline-checked tick admits current schedule slots after a stale catalog
 refreshes; occurrence IDs make replay idempotent. Refresh timestamps and disabled

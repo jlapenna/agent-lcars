@@ -78,6 +78,8 @@ const store: JobStore = {
   list: async () => [catalog],
   readOccurrence: async () => undefined,
   history: async () => [],
+  sourceRefreshes: async () => new Map(),
+  recordSourceRefresh: async () => undefined,
   mutate: async (_id, _occurrence, change) => change(catalog, undefined),
 };
 beforeEach(() => {
