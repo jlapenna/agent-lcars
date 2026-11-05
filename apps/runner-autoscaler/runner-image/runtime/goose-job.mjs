@@ -8,6 +8,7 @@ import {
   gooseExecutor,
   subprocess,
 } from './goose-executor.mjs';
+import { applyJobSecrets } from './job-secret-environment.mjs';
 
 // Invoked by direct-runner after activation, heartbeat and shared checkout/tool bootstrap.
 // The shell owns periodic heartbeats, failure settlement and container retirement.
@@ -31,17 +32,20 @@ async function call(path, body) {
     redirect: 'error',
   });
   if (!response.ok) throw new Error(`Work API HTTP ${response.status}`);
+  const maximum = path === 'job-secrets' ? 2 * 1024 * 1024 : 262144;
   let size = 0;
   const chunks = [];
   for await (const chunk of response.body) {
     size += chunk.length;
-    if (size > 262144) throw new Error('Recipe response exceeds 256 KiB');
+    if (size > maximum)
+      throw new Error('Work API response exceeds supported size');
     chunks.push(chunk);
   }
   controller.signal.throwIfAborted();
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 let home;
+let secretHome;
 let timeout;
 try {
   const brief = await call('recipe');
@@ -71,6 +75,14 @@ try {
     TMPDIR: tmpdir(),
     GOOSE_DISABLE_KEYRING: 'true',
   });
+  if (brief.profile?.credentialSet) {
+    secretHome = await mkdtemp(join('/dev/shm', 'lcars-job-secrets-'));
+    await applyJobSecrets(
+      await call('job-secrets'),
+      environment,
+      join(secretHome, 'files'),
+    );
+  }
   timeout = setTimeout(
     () => controller.abort(),
     parseInt(brief.definition.job.execution.timeout, 10) * 60000,
@@ -110,4 +122,5 @@ try {
 } finally {
   clearTimeout(timeout);
   if (home) await rm(home, { recursive: true, force: true });
+  if (secretHome) await rm(secretHome, { recursive: true, force: true });
 }

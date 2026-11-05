@@ -42,7 +42,8 @@ import type {
 } from './github-app-tokens';
 import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
-import { resolveJobGithubCredential } from './job-github-credentials';
+import type { JobSecrets } from './job-secrets';
+import { jobSecrets } from './job-secrets-runtime';
 import {
   linearConfig,
   linearIssueRepository,
@@ -78,7 +79,7 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
   codexAuth: CodexAuthStore;
-  jobGithubCredential?: typeof resolveJobGithubCredential;
+  jobCredentials?: Pick<JobSecrets, 'github' | 'deliver'>;
   /** Same outbox drain every other mutating route reaches through
    *  `WorkContext.runtime.drain` (`work-router.ts`, `work-mint.ts`,
    *  `work-reply.ts`) -- `RunsContext` has no `runtime` object of its own
@@ -267,6 +268,38 @@ async function drainAfterCompletion(
 }
 
 export const runsRouter = os.router({
+  jobSecrets: os.jobSecrets.handler(async ({ input, context }) => {
+    const run = await requireRunToken(context, input.runId);
+    if (run.pipeline !== 'goose' || !('workId' in run.task))
+      throw new ORPCError('FORBIDDEN', { message: 'Not a recipe run' });
+    const jobs = repositoryJobs({
+      store: context.store,
+      orchestrator: context.orchestrator,
+      drain: context.drain,
+    });
+    const id = run.params?.['jobOccurrence'];
+    const occurrence =
+      id === undefined ? undefined : await jobs.deps.store.readOccurrence(id);
+    const task = await context.store.readTask(run.task);
+    if (
+      !occurrence ||
+      occurrence.workId !== run.task.workId ||
+      occurrence.definition.repository !== anchorTarget(run, task?.task).repo
+    )
+      throw new ORPCError('FORBIDDEN', { message: 'Not a recipe occurrence' });
+    const profile = authorizedRecipeProfile(jobs, occurrence);
+    if (!profile.credentialSet) return { environment: {}, files: {} };
+    const service = context.jobCredentials ?? jobSecrets();
+    if (!service || !occurrence.secretSnapshot)
+      throw new ORPCError('CONFLICT', {
+        message: 'Job credentials unavailable',
+      });
+    return service.deliver(occurrence, occurrence.secretSnapshot).catch(() => {
+      throw new ORPCError('CONFLICT', {
+        message: 'Job credential delivery refused or unavailable',
+      });
+    });
+  }),
   issueSource: os.issueSource.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
@@ -997,28 +1030,34 @@ export const runsRouter = os.router({
           message: 'Not a recipe occurrence',
         });
       profile = authorizedRecipeProfile(jobs, occurrence);
-      if (profile.credentials) {
-        const credential = await (
-          context.jobGithubCredential ?? resolveJobGithubCredential
-        )(profile.credentials.github, context.now()).catch(() => {
+      if (profile.credentialSet) {
+        const service = context.jobCredentials ?? jobSecrets();
+        if (!service || !occurrence.secretSnapshot)
           throw new ORPCError('CONFLICT', {
-            message:
-              'Selected GitHub credential is unavailable, expired, or has the wrong identity',
+            message: 'Job credentials unavailable',
           });
-        });
-        return {
-          token: credential.token,
-          expiresAt: credential.expiresAt,
-          refreshAt: credential.refreshAt,
-          repository: target.repo,
-          identity: {
-            login: credential.login,
-            git: profile.gitIdentity ?? {
-              name: credential.login,
-              email: `${credential.login}@users.noreply.github.com`,
+        const credential = await service
+          .github(occurrence, occurrence.secretSnapshot)
+          .catch(() => {
+            throw new ORPCError('CONFLICT', {
+              message:
+                'Selected GitHub credential is unavailable, expired, or has the wrong identity',
+            });
+          });
+        if (credential)
+          return {
+            token: credential.token,
+            expiresAt: credential.expiresAt,
+            refreshAt: credential.refreshAt,
+            repository: target.repo,
+            identity: {
+              login: credential.login,
+              git: profile.gitIdentity ?? {
+                name: credential.login,
+                email: `${credential.login}@users.noreply.github.com`,
+              },
             },
-          },
-        };
+          };
       }
     }
 

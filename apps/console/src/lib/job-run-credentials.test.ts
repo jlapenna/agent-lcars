@@ -29,10 +29,17 @@ beforeEach(() => {
   readOccurrence.mockResolvedValue({
     workId,
     definition: { repository: 'jlapenna/dev' },
-    profile: { name: 'personal' },
+    profile: {
+      name: 'personal',
+      credentialSet: { name: 'personal', revision: 1 },
+    },
+    secretSnapshot: {
+      credentialSet: { name: 'personal', revision: 1 },
+      versions: { 'github-jlapenna': '1' },
+    },
   });
   authorize.mockReturnValue({
-    credentials: { github: 'jlapenna' },
+    credentialSet: { name: 'personal', revision: 1 },
     gitIdentity: { name: 'Joe LaPenna', email: 'joe@example.invalid' },
   });
   credential.mockResolvedValue({
@@ -55,7 +62,10 @@ beforeEach(() => {
     },
     now: () => now,
     checkoutTokens: { expiringTokenFor: appToken },
-    jobGithubCredential: credential,
+    jobCredentials: {
+      github: credential,
+      deliver: vi.fn(async () => ({ environment: {}, files: {} })),
+    },
   } as unknown as RunsContext;
 });
 async function request() {
@@ -78,7 +88,10 @@ it('vends the authorized occurrence identity to both runner credential consumers
       git: { name: 'Joe LaPenna', email: 'joe@example.invalid' },
     },
   });
-  expect(credential).toHaveBeenCalledExactlyOnceWith('jlapenna', now);
+  expect(credential).toHaveBeenCalledExactlyOnceWith(
+    await readOccurrence(),
+    (await readOccurrence()).secretSnapshot,
+  );
   expect(appToken).not.toHaveBeenCalled();
 });
 it.each([

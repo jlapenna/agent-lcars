@@ -25,6 +25,9 @@ Decisions the prototype already carries:
   Review is bound to the installed definition digest. Production uses the
   allowed-repository selector and existing refresh API; prototype source previews
   and simulated confirmations illustrate state changes, not additional APIs.
+- Jobs exposes a Credentials administration view for secret metadata, version
+  upload/promotion and credential-set consumers. The prototype uses only
+  simulated values; production requires the explicit secrets administration grant.
 - Work includes an Issue sources subview for GitHub and Linear, with source links, current status, target repository, existing Work links, bounded refresh and explicit Run controls. The prototype shows its source panel below Work; production opens it from the Work toolbar. Source refresh never dispatches work.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source

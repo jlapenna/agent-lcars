@@ -296,74 +296,22 @@ failures persist progress across ticker instances. The batch admission threshold
 allows for the 20-second source fetch budget; token and storage calls retain
 their own timeouts.
 
-## Selecting credentials for a job or one manual run
+## Selecting credentials for recurring or manual jobs
 
-A specialized profile may select a named GitHub credential and commit identity:
+[LCARS job secrets](job-secrets.md) owns credential storage, credential-set
+revisions, per-job grants, administration and runtime delivery. Select a profile
+with `credentialSet: {name: dev-maintenance, revision: 1}` through the existing
+`execution.profile` manifest field. Scheduled jobs inherit that profile; a manual
+Run now or CLI `--profile` override changes only that invocation.
 
-```yaml
-name: dev-personal
-repositories: [jlapenna/dev]
-principals: [user:jlapenna]
-allocation: { cpu: 2, memory: 6Gi, storage: 24Gi }
-inputSets: [{}] # Replace with the job's exact fixed inputs.
-credentials:
-  github: jlapenna
-gitIdentity:
-  name: Joe LaPenna
-  email: joe@example.invalid # Replace with the intended verified commit email.
-```
+Credential values live in LCARS's dedicated Google Secret Manager project,
+independently of homegit and Homelab stores. Repository manifests contain no
+values or arbitrary backend references. The built-in `repository` profile keeps
+the GitHub App identity. `gitIdentity` controls authorship independently.
 
-Configure it in `AGENT_LCARS_JOB_PROFILES`. A manifest can use
-`execution.profile: dev-personal`, or an operator can select it under **Run now →
-Execution profile** for one invocation. The profile must authorize that repository,
-principal, allocation and fixed inputs. The manual override does not change the
-manifest or its schedule. Both invocation endpoints accept an optional `profile`
-name; the CLI forwards the same selection:
-
-```bash
-lcars work job invoke --repo jlapenna/dev --name JOB --request-id UNIQUE_KEY --profile dev-personal
-```
-
-Reusing a request ID with a different selection conflicts. Scheduled runs
-always use the manifest profile. The built-in `repository` profile stays on the
-GitHub App and cannot be overridden by configuration.
-
-`AGENT_LCARS_JOB_GITHUB_CREDENTIALS` maps names to operator-owned Secret Manager
-references and expected GitHub logins, without containing tokens itself:
-
-```json
-{
-  "jlapenna": {
-    "login": "jlapenna",
-    "secretVersion": "projects/PROJECT/secrets/lcars-github-jlapenna/versions/latest"
-  }
-}
-```
-
-The selected secret version contains a JSON object with `token` and `expiresAt`.
-Use the issuer's actual ISO timestamp, or explicit `null` for a non-expiring
-credential. Provision values through the secrets workflow; never put values in
-profiles, manifests, recipe parameters or Git. Homelab owns credential provisioning
-and distribution. Grant the Console runtime identity `roles/secretmanager.secretAccessor`
-on each selected secret through the owning reviewed IAM declaration; the worker
-receives neither Secret Manager access nor its storage reference. No new secret
-or permission is needed for jobs that keep their existing App credentials.
-
-The checkout credential endpoint verifies the live run, matching occurrence and
-current profile grant before reading the selected secret. It verifies the token's
-GitHub login, refuses expired/missing/wrong-identity credentials, and never falls
-back to the bot. The worker revalidates through that same endpoint at least every five
-minutes, including its existing refresh margin. `expiresAt` remains the actual token
-expiry (possibly null); `refreshAt` controls this refresh cadence. Already issued
-credentials retain their issuer-granted authority until expiry or revocation;
-cancel the Work and retire its worker when stopping an admitted operation.
-
-Personal profiles give Git and `gh` the same user credential, including access to
-forks and upstream repositories according to that token's actual GitHub permissions.
-They cannot combine `credentials.github` with `crossRepo`. `gitIdentity` controls
-commit authorship independently; when omitted for a personal credential, the
-runner uses its expected login and GitHub noreply address. Personal profiles also
-install the Git helper and author identity for additional checkouts within that
-job's private HOME. Source delivery still requires Console deployment, runner
-image publication/adoption, and the operator's credential configuration before
-this is usable in production.
+The former `credentials.github` profile field and
+`AGENT_LCARS_JOB_GITHUB_CREDENTIALS` map are replaced by the registry, immutable
+sets and exact job grants. Migrate aliases explicitly through the administration
+workflow before changing a job's profile. Never copy personal host credentials
+implicitly. Source changes require Console deployment and runner-image adoption;
+credential provisioning and real recurring-job qualification are separate checks.

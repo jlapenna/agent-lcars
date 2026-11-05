@@ -19,6 +19,7 @@ import {
   lazyDispatchTokenProvider,
   ORCHESTRATOR_GITHUB_PERMISSIONS,
 } from '@/lib/github-app-tokens';
+import { jobSecretsHttp } from '@/lib/job-secrets-http';
 import {
   createOrchestratorRuntime,
   createScheduleStore,
@@ -101,6 +102,11 @@ async function handle(request: Request): Promise<Response> {
     return withNoStore(await costBudgetResponse(request, principal));
 
   const pathname = new URL(request.url).pathname;
+  if (
+    pathname === `${PREFIX}/credentials` ||
+    pathname.startsWith(`${PREFIX}/credentials/`)
+  )
+    return withNoStore(await jobSecretsHttp(request, principal));
   if (pathname === `${PREFIX}/jobs` || pathname.startsWith(`${PREFIX}/jobs/`))
     return withNoStore(await repositoryJobsHttp(request, principal));
   const runtime = createOrchestratorRuntime();

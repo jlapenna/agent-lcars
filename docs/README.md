@@ -88,3 +88,5 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   as policy. Provide the command or API that reads them.
 - Delete retired paths and duplicated doctrine instead of presenting competing
   instructions or adding synchronization machinery.
+
+- [LCARS job secrets](job-secrets.md): Google Secret Manager storage, credential sets, per-job grants and administration.

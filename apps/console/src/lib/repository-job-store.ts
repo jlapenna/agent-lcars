@@ -1,3 +1,4 @@
+import { jobSecretSnapshotSchema } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
@@ -41,6 +42,7 @@ export const jobOccurrenceSchema = z.strictObject({
   skipped: z.boolean(),
   definition: jobDefinitionSchema,
   profile: jobProfileSchema,
+  secretSnapshot: jobSecretSnapshotSchema.optional(),
   comparison: hash,
   parameters: jobInputsSchema.default({}),
   baselineOccurrence: hash.optional(),
@@ -88,10 +90,9 @@ export interface JobStore {
     change: (
       job: CatalogJob | undefined,
       occurrence: JobOccurrence | undefined,
-    ) => {
-      job?: CatalogJob;
-      occurrence?: JobOccurrence;
-    },
+    ) =>
+      | { job?: CatalogJob; occurrence?: JobOccurrence }
+      | Promise<{ job?: CatalogJob; occurrence?: JobOccurrence }>,
   ): Promise<{ job?: CatalogJob; occurrence?: JobOccurrence }>;
 }
 
@@ -142,7 +143,7 @@ export class FirestoreJobStore implements JobStore {
         occurrenceRef === undefined
           ? undefined
           : await transaction.get(occurrenceRef);
-      const result = change(
+      const result = await change(
         job.exists ? catalogJobSchema.parse(job.data()) : undefined,
         occurrence?.exists ? decodeOccurrence(occurrence.data()) : undefined,
       );

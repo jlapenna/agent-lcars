@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { latestDueSlot, parseCron } from '@agent-lcars/work';
+import {
+  credentialSetReferenceSchema,
+  latestDueSlot,
+  parseCron,
+} from '@agent-lcars/work';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
@@ -133,7 +137,7 @@ export const jobProfileSchema = z
     principals: z.array(z.string().min(1).max(128)).min(1),
     // Reuse ordinary watched-repository credentials only by operator opt-in.
     crossRepo: z.boolean().optional(),
-    credentials: z.strictObject({ github: name }).optional(),
+    credentialSet: credentialSetReferenceSchema.optional(),
     gitIdentity: jobGitIdentitySchema.optional(),
     // Names a Homelab-owned overlay on the shared Goose provider environment:
     // the runner reads `goose-environment.<name>.json` beside the shared
@@ -147,8 +151,8 @@ export const jobProfileSchema = z
     inputSets: z.array(jobInputsSchema).min(1).max(100),
   })
   .refine(
-    (profile) => !(profile.credentials && profile.crossRepo),
-    'Personal GitHub credentials cannot be combined with crossRepo',
+    (profile) => !(profile.credentialSet && profile.crossRepo),
+    'Credential sets cannot be combined with crossRepo',
   );
 export type JobProfile = z.infer<typeof jobProfileSchema>;
 

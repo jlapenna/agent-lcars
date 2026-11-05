@@ -6,6 +6,7 @@ import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
 import { createDispatchTokenProvider } from './github-app-tokens';
+import { jobSecrets } from './job-secrets-runtime';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
 import { refreshEnabledJobCatalogs } from './repository-job-catalog';
 import { jobProfileSchema } from './repository-job-definition';
@@ -26,6 +27,7 @@ export function repositoryJobs(runtime: OrchestratorRouteDeps): RepositoryJobs {
     store,
     runtime,
     now: () => new Date(),
+    secrets: jobSecrets(),
     profiles: () =>
       z
         .array(jobProfileSchema)

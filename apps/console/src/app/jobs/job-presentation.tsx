@@ -87,7 +87,7 @@ export function RunResult({ occurrence }: { occurrence: JobOccurrence }) {
         <div>
           <dt>GitHub credential</dt>
           <dd>
-            {occurrence.profile.credentials?.github ?? 'LCARS GitHub App'}
+            {occurrence.profile.credentialSet?.name ?? 'LCARS GitHub App'}
           </dd>
         </div>
         <div>

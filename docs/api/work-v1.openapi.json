@@ -13052,6 +13052,121 @@
         ]
       }
     },
+    "/runs/{runId}/job-secrets": {
+      "get": {
+        "operationId": "getRunJobSecrets",
+        "summary": "Resolve the admitted credential set for a live recipe run",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "environment": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16384
+                      }
+                    },
+                    "files": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16384
+                      }
+                    }
+                  },
+                  "required": ["environment", "files"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired run token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Job credential grant refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Selected secret unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
+          }
+        ]
+      }
+    },
     "/runs/{runId}/issue-source": {
       "get": {
         "operationId": "getRunIssueSource",

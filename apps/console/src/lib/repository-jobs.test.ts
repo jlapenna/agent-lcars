@@ -37,7 +37,7 @@ class TestStore implements JobStore {
     occurrenceId: string | undefined,
     change: Parameters<JobStore['mutate']>[2],
   ) {
-    const result = change(
+    const result = await change(
       this.jobs.get(id),
       occurrenceId ? this.occurrences.get(occurrenceId) : undefined,
     );
@@ -619,7 +619,14 @@ it('bounds recipe timeouts below the executor Pod deadline', () => {
 
 it('pins an explicitly authorized manual profile without changing the manifest or schedule', async () => {
   const f = fixture([], 'repository');
-  f.profile.credentials = { github: 'personal' };
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  f.jobs.deps.secrets = {
+    pin: async () => ({
+      credentialSet: { name: 'personal', revision: 1 },
+      versions: {},
+    }),
+    authorize: vi.fn(),
+  };
   f.profile.gitIdentity = { name: 'Joe LaPenna', email: 'joe@example.invalid' };
   expect(f.jobs.availableProfiles(f.definition, 'user:joe')).toEqual([
     'repository',
@@ -636,7 +643,7 @@ it('pins an explicitly authorized manual profile without changing the manifest o
     {},
     'audit',
   );
-  expect(occurrence.profile.credentials?.github).toBe('personal');
+  expect(occurrence.profile.credentialSet?.name).toBe('personal');
   expect(occurrence.definition.job.execution.profile).toBe('repository');
   expect(f.jobs.authorizeOccurrence(occurrence)).toEqual(f.profile);
   expect(
@@ -675,7 +682,7 @@ it('pins an explicitly authorized manual profile without changing the manifest o
     ),
   ).rejects.toThrow('Scheduled runs use the manifest profile');
   const pinned = (await f.store.readOccurrence(occurrence.id))!;
-  f.profile.credentials = { github: 'different' };
+  f.profile.credentialSet = { name: 'different', revision: 1 };
   expect(() => f.jobs.authorizeOccurrence(pinned)).toThrow(
     'Reserved execution profile changed',
   );
@@ -683,7 +690,14 @@ it('pins an explicitly authorized manual profile without changing the manifest o
 
 it('rejects a manual profile for another principal or repository', async () => {
   const f = fixture([], 'repository');
-  f.profile.credentials = { github: 'personal' };
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  f.jobs.deps.secrets = {
+    pin: async () => ({
+      credentialSet: { name: 'personal', revision: 1 },
+      versions: {},
+    }),
+    authorize: vi.fn(),
+  };
   await expect(
     f.jobs.invoke(
       'octo/repo',
@@ -698,4 +712,61 @@ it('rejects a manual profile for another principal or repository', async () => {
   await expect(
     f.jobs.invoke('octo/repo', 'audit', 'wrong-repo', 'user:joe', {}, 'audit'),
   ).rejects.toThrow('not granted');
+});
+
+it('refuses credential admission before reserving the active slot and retries after access is restored', async () => {
+  const f = fixture();
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  const pin = vi.fn().mockRejectedValue(new Error('fixture-private-error'));
+  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  await expect(
+    f.jobs.admit(
+      f.id,
+      'denied-credentials',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    ),
+  ).rejects.toThrow('Job credential admission refused');
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect(f.store.occurrences.size).toBe(0);
+  pin.mockResolvedValue({
+    credentialSet: f.profile.credentialSet,
+    versions: { 'github-jlapenna': '1' },
+  });
+  const admitted = await f.jobs.admit(
+    f.id,
+    'denied-credentials',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  expect(admitted.secretSnapshot?.versions).toEqual({ 'github-jlapenna': '1' });
+  expect(await f.native.listRuns({ workId: admitted.workId })).toHaveLength(1);
+});
+
+it('settles terminal Work after credential or profile revocation without stranding future occurrences', async () => {
+  const f = fixture();
+  f.profile.credentialSet = { name: 'personal', revision: 1 };
+  const pin = vi.fn(async () => ({
+    credentialSet: { name: 'personal', revision: 1 },
+    versions: { 'github-jlapenna': '1' },
+  }));
+  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  const occurrence = await f.jobs.admit(
+    f.id,
+    'before-revocation',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  pin.mockRejectedValue(new Error('Grant revoked'));
+  f.profile.credentialSet = { name: 'replacement', revision: 2 };
+  const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+  await f.orchestrator.report(run.runId, { ok: false });
+  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
+  expect(
+    (await f.store.readOccurrence(occurrence.id))?.reconciledAt,
+  ).toBeDefined();
 });
