@@ -75,7 +75,7 @@ export interface RunsContext {
   tokens: DispatchTokenProvider;
   checkoutTokens: ExpiringDispatchTokenProvider;
   codexAuth: CodexAuthStore;
-  jobCredentials?: Pick<JobSecrets, 'github' | 'deliver'>;
+  jobCredentials?: Pick<JobSecrets, 'github' | 'deliver' | 'refused'>;
   /** Same outbox drain every other mutating route reaches through
    *  `WorkContext.runtime.drain` (`work-router.ts`, `work-mint.ts`,
    *  `work-reply.ts`) -- `RunsContext` has no `runtime` object of its own
@@ -290,11 +290,14 @@ export const runsRouter = os.router({
       throw new ORPCError('CONFLICT', {
         message: 'Job credentials unavailable',
       });
-    return service.deliver(occurrence, occurrence.secretSnapshot).catch(() => {
-      throw new ORPCError('CONFLICT', {
-        message: 'Job credential delivery refused or unavailable',
+    return service
+      .deliver(occurrence, occurrence.secretSnapshot)
+      .catch(async () => {
+        await service.refused(occurrence, 'delivery');
+        throw new ORPCError('CONFLICT', {
+          message: 'Job credential delivery refused or unavailable',
+        });
       });
-    });
   }),
   issueSource: os.issueSource.handler(async ({ input, context, errors }) => {
     const run = await requireRunToken(context, input.runId);
@@ -1026,7 +1029,8 @@ export const runsRouter = os.router({
           });
         const credential = await service
           .github(occurrence, occurrence.secretSnapshot)
-          .catch(() => {
+          .catch(async () => {
+            await service.refused(occurrence, 'delivery');
             throw new ORPCError('CONFLICT', {
               message:
                 'Selected GitHub credential is unavailable, expired, or has the wrong identity',

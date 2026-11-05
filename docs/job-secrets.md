@@ -224,3 +224,47 @@ Interrupted legacy reservations with no Work are never minted again. They releas
 the active slot as unsuccessful after the existing worker retirement backstop,
 with a visible legacy-admission failure. This preserves history without leaving
 recurring jobs permanently occupied during migration.
+
+## Observability
+
+The existing five-minute control-plane maintenance tick produces an aggregate
+credential observation. The queue executor caches this reply and exports
+`lcars_job_credentials_*` through its existing metrics endpoint; scraping never
+fetches a secret, invokes GitHub or runs inference. One rotating enabled secret
+container gets a bounded metadata check per observation. This establishes only
+that sampled container's metadata access, not every secret's value permission or
+the continued validity of a GitHub token. Actual admission and delivery refusals
+provide that operational evidence when a job uses its credential set.
+
+Successful delivery materializations, their measured server duration and refused
+operations use durable Firestore counters. Admission refusals are recorded before
+an occurrence is reserved, so a denied scheduled job remains visible without a
+Work record. The last refusal clock also detects an error that precedes the first
+metrics sample. These are API operations, including retries, not successful jobs
+or Git operations. Runtime job outcomes retain the normal Work lifecycle owner.
+Aggregate and last-access clocks use Firestore commit time so concurrent writers
+and instance clock skew cannot move them backwards. Private audit events retain
+their original event clock and a server `recordedAt` clock for correlation with
+alerts. Refusal events include repository, job, profile and trigger metadata so
+operators can identify a denied job even before an occurrence exists; this
+context never enters metric labels or aggregate observations.
+
+The observation reports ready, disabled, unpromoted, expired and unknown metadata
+separately; expiring is the ready subset whose GitHub expiry is within 24 hours.
+Disabled and unpromoted records do not trigger expiry failures. An empty/disabled
+registry is idle; it does not establish backend readiness. Missing or invalid
+observations retain the previous sample's completion time and mark the read
+unavailable. A job's old last-delivery time is never treated as a stalled worker.
+
+Homelab's existing **Runner fleet (ARC)** dashboard owns the **LCARS job
+credentials** row, its actual Prometheus queries and relevant queue-executor Loki
+logs. Its existing scrape-loss and delivery alerts remain the infrastructure
+owners; credential alerts cover lost observations, metadata/dependency failures,
+expiry and refused operations. Dependent alerts require a fresh successful scrape.
+No secret names, principal identities, job identifiers or values are metric labels.
+
+Live acceptance requires a deployed producer revision, fresh observations, the
+provisioned dashboard queries, Loki stream and loaded/evaluating alert rules.
+Fixture and source checks do not establish live delivery. Value access and GitHub
+identity are qualified by actual authorized job use, without a synthetic job or
+health-only secret access.

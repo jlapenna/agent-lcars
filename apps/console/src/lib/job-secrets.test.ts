@@ -64,6 +64,117 @@ const githubValue = JSON.stringify({
   token: 'fixture-github-token',
   expiresAt: null,
 });
+
+describe('credential monitoring', () => {
+  it('observes bounded metadata and expiry states without accessing any secret value', async () => {
+    const github = registry.rows.get(
+      'secrets/github-jlapenna',
+    ) as JobSecretRecord;
+    for (const [name, change] of [
+      ['expired', { expiresAt: '2026-11-03T23:59:00Z' }],
+      ['expiring', { expiresAt: '2026-11-04T00:30:00Z' }],
+      ['unknown', { expiresAt: undefined }],
+      ['disabled', { enabled: false, expiresAt: '2026-11-03T23:59:00Z' }],
+      ['unpromoted', { promotedVersion: undefined, expiresAt: undefined }],
+    ] as const)
+      registry.rows.set(`secrets/${name}`, { ...github, ...change, name });
+    registry.rows.set('health/current', {
+      deliveries: 4,
+      admissionRefusals: 2,
+      deliveryRefusals: 3,
+      lastDeliveryAt: now.toISOString(),
+      lastRefusalAt: now.toISOString(),
+    });
+    vi.clearAllMocks();
+    const observation = await service.observe();
+    expect(observation).toMatchObject({
+      version: 1,
+      configured: true,
+      metadataAvailable: true,
+      dependency: 'ready',
+      counts: {
+        total: 7,
+        ready: 3,
+        disabled: 1,
+        unpromoted: 1,
+        expired: 1,
+        expiring: 1,
+        unknown: 1,
+      },
+      deliveries: 4,
+      admissionRefusals: 2,
+      deliveryRefusals: 3,
+    });
+    expect(backend.checkContainer).toHaveBeenCalledTimes(1);
+    expect(backend.readVersion).not.toHaveBeenCalled();
+    expect(backend.addVersion).not.toHaveBeenCalled();
+    expect(JSON.stringify(observation)).not.toMatch(
+      /jlapenna|fixture-|github-jlapenna|example-key/u,
+    );
+  });
+  it('distinguishes an idle registry from missing or corrupt telemetry and a failed metadata dependency', async () => {
+    registry.rows.clear();
+    vi.clearAllMocks();
+    expect(await service.observe()).toMatchObject({
+      metadataAvailable: true,
+      dependency: 'idle',
+      counts: { total: 0 },
+      deliveries: 0,
+    });
+    expect(backend.checkContainer).not.toHaveBeenCalled();
+    registry.rows.set('health/current', { deliveries: 'not-a-counter' });
+    expect(await service.observe()).toEqual({
+      version: 1,
+      observedAt: now.toISOString(),
+      configured: true,
+      metadataAvailable: false,
+      dependency: 'unknown',
+    });
+    registry.rows.delete('health/current');
+    registry.rows.set('secrets/example-key', {
+      name: 'example-key',
+      kind: 'opaque',
+      enabled: true,
+      updatedBy: actor,
+      updatedAt: now.toISOString(),
+    });
+    vi.mocked(backend.checkContainer).mockRejectedValue(
+      new Error('fixture-private-sdk-credential'),
+    );
+    const unavailable = await service.observe();
+    expect(unavailable).toMatchObject({
+      metadataAvailable: true,
+      dependency: 'unavailable',
+      counts: { unpromoted: 1 },
+    });
+    expect(JSON.stringify(unavailable)).not.toContain(
+      'fixture-private-sdk-credential',
+    );
+    vi.spyOn(registry, 'list').mockRejectedValue(
+      new Error('fixture-private-read-error'),
+    );
+    expect(await service.observe()).toMatchObject({
+      metadataAvailable: false,
+      dependency: 'unknown',
+    });
+  });
+  it('records refused operations before Work exists without recording the failing input or SDK error', async () => {
+    await service.refused(job, 'admission');
+    await service.refused(job, 'delivery');
+    expect(registry.events.slice(-2)).toEqual(
+      ['admission-refused', 'delivery-refused'].map((operation) => ({
+        operation,
+        actor: job.principal,
+        runOccurrence: job.id,
+        repository: job.definition.repository,
+        job: job.definition.name,
+        profile: job.profile.name,
+        trigger: job.trigger,
+        at: now.toISOString(),
+      })),
+    );
+  });
+});
 beforeEach(async () => {
   registry = new Registry();
   versions = new Map();
@@ -153,6 +264,9 @@ it('runs unattended with only its approved GitHub, environment and file bindings
   );
   expect(JSON.stringify([...registry.rows])).not.toContain('fixture-');
   expect(JSON.stringify(registry.events)).not.toContain('fixture-');
+  expect(
+    registry.events.filter((event) => event.operation === 'delivery-completed'),
+  ).toHaveLength(2);
 });
 it('pins existing occurrences while newly admitted occurrences follow a validated promotion', async () => {
   const snapshot = await service.pin(job);

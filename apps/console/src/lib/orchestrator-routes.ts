@@ -10,6 +10,7 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
+import type { JobCredentialObservation } from '@agent-lcars/work';
 import { z } from 'zod';
 
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
@@ -50,6 +51,7 @@ export interface OrchestratorRouteDeps {
     deleted?: boolean,
   ) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
+  observeJobCredentials?: () => Promise<JobCredentialObservation>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -475,10 +477,11 @@ export async function handleReconcile(
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
     // Independent I/O-bound maintenance shares the same wall-clock window.
-    // Await both even on failure; one must not outlive the HTTP request.
+    // Await every pass even on failure; none may outlive the HTTP request.
     const maintenance = await Promise.allSettled([
       deps.executeModelWork?.(modelDeadline),
       deps.executeRepositoryJobs?.(modelDeadline),
+      deps.observeJobCredentials?.(),
     ]);
     for (const result of maintenance)
       if (result.status === 'rejected') throw result.reason;
@@ -486,9 +489,15 @@ export async function handleReconcile(
       drained.dispatched.length +
       drained.reported.length +
       drained.failed.length;
+    const credentialObservation = maintenance[2];
+    const jobCredentials =
+      credentialObservation?.status === 'fulfilled'
+        ? credentialObservation.value
+        : undefined;
     return {
       status: 200,
       body: {
+        ...(jobCredentials === undefined ? {} : { jobCredentials }),
         ...(credentialRecovery === undefined ? {} : { credentialRecovery }),
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,

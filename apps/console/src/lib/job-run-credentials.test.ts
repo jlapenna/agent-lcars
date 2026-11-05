@@ -63,6 +63,7 @@ beforeEach(() => {
     now: () => now,
     checkoutTokens: { expiringTokenFor: appToken },
     jobCredentials: {
+      refused: vi.fn(async () => undefined),
       github: credential,
       deliver: vi.fn(async () => ({ environment: {}, files: {} })),
     },
@@ -123,6 +124,9 @@ it.each([
   expect(appToken).not.toHaveBeenCalled();
   expect(JSON.stringify(response.body)).not.toContain('fixture-private-error');
   expect(credential).toHaveBeenCalledTimes(
+    failure === 'expired-credential' ? 1 : 0,
+  );
+  expect(context.jobCredentials?.refused).toHaveBeenCalledTimes(
     failure === 'expired-credential' ? 1 : 0,
   );
 });

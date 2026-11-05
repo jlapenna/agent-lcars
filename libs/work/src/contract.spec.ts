@@ -76,6 +76,31 @@ describe('itemsContract.maintenanceTick output', () => {
     }
   });
 
+  it('accepts aggregate credential observations while refusing identifiers and credential values', () => {
+    if (!shape) throw new Error('Expected maintenance output schema');
+    const jobCredentials = {
+      version: 1,
+      observedAt: '2026-11-05T00:00:00Z',
+      configured: false,
+      metadataAvailable: false,
+      dependency: 'disabled',
+    };
+    expect(shape.parse({ ...body, jobCredentials })).toEqual({
+      ...body,
+      jobCredentials,
+    });
+    expect(
+      shape.safeParse({
+        ...body,
+        jobCredentials: {
+          ...jobCredentials,
+          secret: 'private-name',
+          value: 'private-value',
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it.each([
     { name: 'unknown top-level output', extra: { unexpected: true } },
     {

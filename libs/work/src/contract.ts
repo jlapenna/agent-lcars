@@ -13,7 +13,10 @@ import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
 import { z } from 'zod';
 
 import { parseCron } from './cron';
-import { jobSecretDeliverySchema } from './job-secrets';
+import {
+  jobCredentialObservationSchema,
+  jobSecretDeliverySchema,
+} from './job-secrets';
 import {
   fallbackPipelinesSchema,
   PIPELINES,
@@ -188,6 +191,7 @@ const withBearer = <T extends object>(current: T) => ({
 const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const maintenanceTickOutputSchema = z.strictObject({
+  jobCredentials: jobCredentialObservationSchema.optional(),
   credentialRecovery: z
     .strictObject({
       recovered: z.array(z.string()),
