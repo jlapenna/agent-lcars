@@ -161,7 +161,11 @@ due slot to one item/run. Its image and mounts are documented in
 `apps/runner-autoscaler/README.md`. This repository owns server routing,
 executor/scheduler grants, and the Kubernetes Job backend (the queue
 executor's only backend); Homelab owns autoscaler deployment, Kubernetes
-namespace/RBAC, provider Secrets, node readiness taints, and sizing. Executor
+namespace/RBAC, provider Secrets, node readiness taints, and sizing. Job-specific
+application credentials are a separate LCARS-owned boundary: its dedicated
+Google Secret Manager project, credential sets and exact job grants are described
+in [job secrets](job-secrets.md). They are not provisioned through homegit or
+Homelab's secret store. Executor
 configuration changes how workers launch, never server admission or provider
 credential authorization.
 

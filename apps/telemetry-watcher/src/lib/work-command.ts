@@ -34,18 +34,9 @@ import { OpenAPILink } from '@orpc/openapi/fetch';
 import { ulid } from 'ulid';
 
 import { executeJobSecretsCommand } from './job-secrets-command';
+import type { WorkCommandDeps } from './work-command-deps';
 
-export interface WorkCommandDeps {
-  runId?: string;
-  runToken?: string;
-  fetchImpl: typeof fetch;
-  token: () => Promise<string>;
-  origin: string;
-  now: () => Date;
-  sleep: (ms: number) => Promise<void>;
-  stdout: (line: string) => void;
-  stderr: (line: string) => void;
-}
+export type { WorkCommandDeps } from './work-command-deps';
 
 export const WORK_CLI_USAGE =
   'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +

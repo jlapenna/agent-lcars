@@ -29,11 +29,21 @@ const View = withConsolePageShell(
     title: 'Job credentials',
     subtitle: 'Secrets, credential sets and job access',
     utilities: (
-      <ConsoleCommandUtilities
-        watchedRepos={watchedRepos}
-        includeNavigation
-        includeQuickTask={false}
-      />
+      <>
+        <div className="console-utilities--desktop">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeQuickTask={false}
+          />
+        </div>
+        <div className="console-utilities--mobile">
+          <ConsoleCommandUtilities
+            watchedRepos={watchedRepos}
+            includeNavigation
+            includeQuickTask={false}
+          />
+        </div>
+      </>
     ),
   }),
 );

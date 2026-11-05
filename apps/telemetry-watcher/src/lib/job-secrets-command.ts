@@ -7,7 +7,7 @@ import {
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
-import type { WorkCommandDeps } from './work-command';
+import type { WorkCommandDeps } from './work-command-deps';
 
 async function stdin(maximum = 65536): Promise<string> {
   if (process.stdin.isTTY)
