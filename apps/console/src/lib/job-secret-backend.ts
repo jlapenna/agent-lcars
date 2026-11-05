@@ -65,21 +65,34 @@ export class GoogleJobSecretBackend implements JobSecretBackend {
   }
   async addVersion(name: string, value: string) {
     const resource = this.resource(name);
+    const data = Buffer.from(jobSecretValueSchema.parse(value)).toString(
+      'base64',
+    );
+    // Google returns project numbers in canonical resource names even when the
+    // request uses a project ID. Resolve this exact container before writing.
+    const canonicalResource = z
+      .object({
+        name: z
+          .string()
+          .regex(
+            new RegExp(
+              `^projects/(?:${this.project}|[0-9]+)/secrets/${name}$`,
+              'u',
+            ),
+          ),
+      })
+      .parse(await this.request(resource)).name;
     const result = z.object({ name: z.string() }).parse(
       await this.request(`${resource}:addVersion`, {
-        payload: {
-          data: Buffer.from(jobSecretValueSchema.parse(value)).toString(
-            'base64',
-          ),
-        },
+        payload: { data },
       }),
     );
-    if (!result.name.startsWith(`${resource}/versions/`))
+    if (!result.name.startsWith(`${canonicalResource}/versions/`))
       throw new Error('Unexpected secret version resource');
     return z
       .string()
       .regex(/^[1-9][0-9]*$/u)
-      .parse(result.name.slice(`${resource}/versions/`.length));
+      .parse(result.name.slice(`${canonicalResource}/versions/`.length));
   }
   async readVersion(name: string, version: string) {
     z.string()
