@@ -194,16 +194,17 @@ lcars work source --cursor '<nextCursor-from-issue-source>'   # next comments pa
 ```
 
 The HTTP form is the same route the CLI uses; supply the claim token that your
-`POST /runs/claim` returned:
+`POST /runs/claim` returned. Encode the full `runId` as one URL path segment,
+including reserved characters such as `/` (`%2F`), `:` (`%3A`) and `#` (`%23`):
 
 ```bash
 curl --fail-with-body --get \
-  'https://<console-host>/api/work/v1/runs/<run-id>/issue-source' \
+  'https://<console-host>/api/work/v1/runs/<url-encoded-run-id>/issue-source' \
   -H 'Authorization: Bearer <run-claim-token>'
 
 # Only when the preceding response supplied nextCursor:
 curl --fail-with-body --get \
-  'https://<console-host>/api/work/v1/runs/<run-id>/issue-source' \
+  'https://<console-host>/api/work/v1/runs/<url-encoded-run-id>/issue-source' \
   -H 'Authorization: Bearer <run-claim-token>' \
   --data-urlencode 'cursor=<nextCursor-from-issue-source>'
 ```
@@ -212,9 +213,9 @@ This is a run capability, not an operator credential. The `runToken` scheme here
 is the opaque claim token minted by `POST /runs/claim`, valid only for routes
 under this one `runId`. It carries no `work.reader`/`work.operator` scope and
 cannot call the bearer-JWT `/issues/*` operations above; conversely a Work API
-JWT is refused here with 401. The worker path stays read-only: it reads the
-source, and refreshing metadata, listing sources, ownership, and dispatch remain
-operator scope under the separate `bearerAuth` scheme. Server-side it is the
+JWT is refused here with 401. The worker path stays read-only. Refresh, source
+browsing, ownership, and dispatch use the separate `bearerAuth` scheme and the
+Work scopes listed in the table above. Server-side it is the
 `issueSource` handler over `requireRunToken` in
 [`runs-router.ts`](../../apps/console/src/lib/runs-router.ts); the CLI is the
 `source` command in
