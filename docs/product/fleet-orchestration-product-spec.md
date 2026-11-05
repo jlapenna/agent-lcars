@@ -678,7 +678,7 @@ consumed by every dispatched run in every member repository.
   access. Job credential sets and grants are implemented. Broader service-secret
   migration remains planned, and the populated job-secret project stays in place
   while consumers and rotation requirements are inventoried. Sharing storage
-  never exposes service or deployment credentials to jobs. The canonical
+  does not itself grant jobs access to service or deployment credentials. The canonical
   [runtime secret decision and migration contract](../job-secrets.md#runtime-secret-storage-and-access-decision)
   owns the boundary and current implementation constraints.
 
