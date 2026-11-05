@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { logger } from '@agent-lcars/logging';
 import {
   type CredentialSet,
   credentialSetSchema,
@@ -9,9 +10,11 @@ import {
   type JobSecretRecord,
   jobSecretRecordSchema,
   type JobSecretSnapshot,
+  type JobCredentialObservation,
   jobSecretSnapshotSchema,
   jobSecretValueSchema,
 } from '@agent-lcars/work';
+import { z } from 'zod';
 
 import type { JobSecretBackend } from './job-secret-backend';
 import type { JobSecretStore } from './job-secret-store';
@@ -93,6 +96,122 @@ export class JobSecrets {
       operation,
       ...fields,
     });
+  }
+  async refused(job: SecretJob, stage: 'admission' | 'delivery') {
+    try {
+      await this.event(job.principal, `${stage}-refused`, {
+        runOccurrence: job.id,
+      });
+    } catch {
+      // Never replace the original refusal with credential-bearing SDK errors.
+      logger.error('Job credential refusal audit unavailable');
+    }
+  }
+  async observe(): Promise<JobCredentialObservation> {
+    const now = this.now();
+    const base = {
+      version: 1 as const,
+      observedAt: now.toISOString(),
+      configured: true,
+    };
+    try {
+      const [raw, health] = await Promise.all([
+        this.store.list('secrets'),
+        this.store.get('health', 'current'),
+      ]);
+      const records = z.array(jobSecretRecordSchema).max(500).parse(raw);
+      const count = z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER)
+        .default(0);
+      const counters = z
+        .strictObject({
+          deliveries: count,
+          deliveryTimed: count,
+          deliveryDurationSeconds: z
+            .number()
+            .nonnegative()
+            .max(Number.MAX_SAFE_INTEGER)
+            .default(0),
+          admissionRefusals: count,
+          deliveryRefusals: count,
+          lastDeliveryAt: z.iso.datetime().optional(),
+          lastRefusalAt: z.iso.datetime().optional(),
+        })
+        .parse(health ?? {});
+      if (counters.deliveries > 0 && !counters.lastDeliveryAt)
+        throw new Error('Credential counter clock unavailable');
+      if (
+        counters.deliveryTimed > counters.deliveries ||
+        (counters.admissionRefusals + counters.deliveryRefusals > 0 &&
+          !counters.lastRefusalAt)
+      )
+        throw new Error('Credential counter evidence unavailable');
+      const counts = {
+        total: records.length,
+        ready: 0,
+        disabled: 0,
+        unpromoted: 0,
+        expired: 0,
+        expiring: 0,
+        unknown: 0,
+      };
+      for (const record of records) {
+        if (!record.enabled) counts.disabled++;
+        else if (!record.promotedVersion) counts.unpromoted++;
+        else if (record.kind === 'github' && record.expiresAt === undefined)
+          counts.unknown++;
+        else if (
+          record.kind === 'github' &&
+          record.expiresAt &&
+          Date.parse(record.expiresAt) <= now.getTime() + 60_000
+        )
+          counts.expired++;
+        else {
+          counts.ready++;
+          if (
+            record.kind === 'github' &&
+            record.expiresAt &&
+            Date.parse(record.expiresAt) <= now.getTime() + 86_400_000
+          )
+            counts.expiring++;
+        }
+      }
+      // One bounded, rotating container-metadata read; never read a secret value
+      // or contact GitHub/inference merely to manufacture health evidence.
+      const candidates = records
+        .filter((record) => record.enabled)
+        .sort((a, b) => a.name.localeCompare(b.name));
+      let dependency: JobCredentialObservation['dependency'] = 'idle';
+      if (candidates.length) {
+        const candidate =
+          candidates[Math.floor(now.getTime() / 300_000) % candidates.length];
+        try {
+          if (!candidate) throw new Error('No credential metadata candidate');
+          await this.backend.checkContainer(candidate.name);
+          dependency = 'ready';
+        } catch {
+          dependency = 'unavailable';
+        }
+      }
+      return {
+        ...base,
+        observedAt: this.now().toISOString(),
+        metadataAvailable: true,
+        dependency,
+        counts,
+        ...counters,
+      };
+    } catch {
+      return {
+        ...base,
+        observedAt: this.now().toISOString(),
+        metadataAvailable: false,
+        dependency: 'unknown',
+      };
+    }
   }
   async register(value: JobSecretRecord) {
     const record = jobSecretRecordSchema.parse(value);
@@ -254,6 +373,7 @@ export class JobSecrets {
     });
   }
   async deliver(job: SecretJob, snapshot: JobSecretSnapshot) {
+    const started = performance.now();
     const { set, records, versions } = await this.authorize(job, snapshot);
     const values = new Map<string, string>();
     for (const name of new Set([
@@ -271,7 +391,7 @@ export class JobSecrets {
       });
       values.set(name, value);
     }
-    return {
+    const delivery = {
       environment: Object.fromEntries(
         Object.entries(set.environment).map(([key, name]) => [
           key,
@@ -285,8 +405,14 @@ export class JobSecrets {
         ]),
       ),
     };
+    await this.event(job.principal, 'delivery-completed', {
+      runOccurrence: job.id,
+      durationSeconds: String((performance.now() - started) / 1000),
+    });
+    return delivery;
   }
   async github(job: SecretJob, snapshot: JobSecretSnapshot) {
+    const started = performance.now();
     const { set, records, versions } = await this.authorize(job, snapshot);
     if (!set.github) return undefined;
     const record = records.get(set.github);
@@ -300,6 +426,10 @@ export class JobSecrets {
       runOccurrence: job.id,
       secret: record.name,
       version,
+    });
+    await this.event(job.principal, 'delivery-completed', {
+      runOccurrence: job.id,
+      durationSeconds: String((performance.now() - started) / 1000),
     });
     return {
       ...credential,

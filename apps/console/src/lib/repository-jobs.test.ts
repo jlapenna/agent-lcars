@@ -623,6 +623,7 @@ it('pins an explicitly authorized manual profile without changing the manifest o
   const f = fixture([], 'repository');
   f.profile.credentialSet = { name: 'personal', revision: 1 };
   f.jobs.deps.secrets = {
+    refused: vi.fn(async () => undefined),
     pin: async () => ({
       credentialSet: { name: 'personal', revision: 1 },
       versions: {},
@@ -694,6 +695,7 @@ it('rejects a manual profile for another principal or repository', async () => {
   const f = fixture([], 'repository');
   f.profile.credentialSet = { name: 'personal', revision: 1 };
   f.jobs.deps.secrets = {
+    refused: vi.fn(async () => undefined),
     pin: async () => ({
       credentialSet: { name: 'personal', revision: 1 },
       versions: {},
@@ -720,7 +722,8 @@ it('refuses credential admission before reserving the active slot and retries af
   const f = fixture();
   f.profile.credentialSet = { name: 'personal', revision: 1 };
   const pin = vi.fn().mockRejectedValue(new Error('fixture-private-error'));
-  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  const refused = vi.fn(async () => undefined);
+  f.jobs.deps.secrets = { pin, authorize: vi.fn(), refused };
   await expect(
     f.jobs.admit(
       f.id,
@@ -732,6 +735,10 @@ it('refuses credential admission before reserving the active slot and retries af
   ).rejects.toThrow('Job credential admission refused');
   expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
   expect(f.store.occurrences.size).toBe(0);
+  expect(refused).toHaveBeenCalledWith(
+    expect.objectContaining({ trigger: 'manual' }),
+    'admission',
+  );
   pin.mockResolvedValue({
     credentialSet: f.profile.credentialSet,
     versions: { 'github-jlapenna': '1' },
@@ -754,7 +761,11 @@ it('settles terminal Work after credential or profile revocation without strandi
     credentialSet: { name: 'personal', revision: 1 },
     versions: { 'github-jlapenna': '1' },
   }));
-  f.jobs.deps.secrets = { pin, authorize: vi.fn() };
+  f.jobs.deps.secrets = {
+    pin,
+    authorize: vi.fn(),
+    refused: vi.fn(async () => undefined),
+  };
   const occurrence = await f.jobs.admit(
     f.id,
     'before-revocation',

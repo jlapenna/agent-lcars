@@ -1,9 +1,9 @@
 import 'server-only';
 
 import { type JobSecretRecord, jobSecretRecordSchema } from '@agent-lcars/work';
-import { Firestore } from '@google-cloud/firestore';
+import { FieldValue, Firestore } from '@google-cloud/firestore';
 
-export type JobSecretCollection = 'secrets' | 'sets' | 'grants';
+export type JobSecretCollection = 'secrets' | 'sets' | 'grants' | 'health';
 export interface JobSecretStore {
   get(collection: JobSecretCollection, id: string): Promise<unknown>;
   list(collection: JobSecretCollection): Promise<unknown[]>;
@@ -47,6 +47,32 @@ export class FirestoreJobSecretStore implements JobSecretStore {
   async audit(event: Record<string, string>) {
     const batch = this.database.batch();
     batch.create(this.database.collection('job-credential-audit').doc(), event);
+    const counters: Record<string, string | undefined> = {
+      'delivery-completed': 'deliveries',
+      'admission-refused': 'admissionRefusals',
+      'delivery-refused': 'deliveryRefusals',
+    };
+    const counter = counters[event.operation ?? ''];
+    if (counter) {
+      const duration = Number(event.durationSeconds);
+      batch.set(
+        this.collection('health').doc('current'),
+        {
+          [counter]: FieldValue.increment(1),
+          ...(counter === 'deliveries' ? { lastDeliveryAt: event.at } : {}),
+          ...(counter !== 'deliveries' ? { lastRefusalAt: event.at } : {}),
+          ...(counter === 'deliveries' &&
+          Number.isFinite(duration) &&
+          duration >= 0
+            ? {
+                deliveryTimed: FieldValue.increment(1),
+                deliveryDurationSeconds: FieldValue.increment(duration),
+              }
+            : {}),
+        },
+        { merge: true },
+      );
+    }
     if (event.operation?.startsWith('deliver') && event.secret)
       batch.update(this.collection('secrets').doc(event.secret), {
         lastUsedAt: event.at,

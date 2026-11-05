@@ -34,7 +34,7 @@ export interface RepositoryJobsDeps {
   profiles: () => JobProfile[];
   granted: (principal: string, repository: string) => boolean;
   now: () => Date;
-  secrets?: Pick<JobSecrets, 'pin' | 'authorize'>;
+  secrets?: Pick<JobSecrets, 'pin' | 'authorize' | 'refused'>;
 }
 export class RepositoryJobBusyError extends Error {}
 
@@ -209,6 +209,7 @@ export class RepositoryJobs {
             // commits with the occurrence, so denial cannot strand job.active.
             occurrence.secretSnapshot = await this.deps.secrets.pin(occurrence);
           } catch {
+            await this.deps.secrets?.refused(occurrence, 'admission');
             throw new Error('Job credential admission refused or unavailable');
           }
         }

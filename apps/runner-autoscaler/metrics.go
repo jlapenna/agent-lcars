@@ -102,6 +102,7 @@ func recordMaintenanceTick(success bool) {
 func registerMetrics() {
 	metricsOnce.Do(func() {
 		prometheus.MustRegister(
+			credentialMetrics,
 			queueExecutorReadyGauge,
 			queueExecutorStateGauge,
 			queueExecutorPollsTotal,

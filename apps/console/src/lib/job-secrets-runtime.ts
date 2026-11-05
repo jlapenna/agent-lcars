@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { required } from '@agent-lcars/util-server';
+import type { JobCredentialObservation } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 
 import { GoogleJobSecretBackend } from './job-secret-backend';
@@ -35,4 +36,26 @@ export function jobSecrets(): JobSecrets | undefined {
     ),
   );
   return instance;
+}
+
+export async function observeJobCredentials(): Promise<JobCredentialObservation> {
+  try {
+    const service = jobSecrets();
+    if (service) return await service.observe();
+    return {
+      version: 1,
+      observedAt: new Date().toISOString(),
+      configured: false,
+      metadataAvailable: false,
+      dependency: 'disabled',
+    };
+  } catch {
+    return {
+      version: 1,
+      observedAt: new Date().toISOString(),
+      configured: true,
+      metadataAvailable: false,
+      dependency: 'unknown',
+    };
+  }
 }

@@ -1,5 +1,59 @@
 import { z } from 'zod';
 
+/** Aggregate metadata only; this response never contains logical names or values. */
+export const jobCredentialObservationSchema = z.strictObject({
+  version: z.literal(1),
+  observedAt: z.iso.datetime(),
+  configured: z.boolean(),
+  metadataAvailable: z.boolean(),
+  dependency: z.enum(['disabled', 'idle', 'ready', 'unavailable', 'unknown']),
+  counts: z
+    .strictObject({
+      total: z.number().int().min(0).max(500),
+      ready: z.number().int().min(0).max(500),
+      disabled: z.number().int().min(0).max(500),
+      unpromoted: z.number().int().min(0).max(500),
+      expired: z.number().int().min(0).max(500),
+      expiring: z.number().int().min(0).max(500),
+      unknown: z.number().int().min(0).max(500),
+    })
+    .optional(),
+  deliveries: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  deliveryTimed: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  deliveryDurationSeconds: z
+    .number()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  admissionRefusals: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  deliveryRefusals: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  lastDeliveryAt: z.iso.datetime().optional(),
+  lastRefusalAt: z.iso.datetime().optional(),
+});
+export type JobCredentialObservation = z.infer<
+  typeof jobCredentialObservationSchema
+>;
+
 export const jobSecretNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
 const repository = z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u);
 const revision = z.number().int().positive().max(1000000);

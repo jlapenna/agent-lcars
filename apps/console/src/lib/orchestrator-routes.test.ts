@@ -1561,10 +1561,24 @@ describe('handleReconcile', () => {
   });
 });
 
-it('starts repository maintenance while model work is still pending and awaits both', async () => {
+it('starts independent maintenance and waits for credential observations before returning', async () => {
   const { deps } = fixture();
   let finishModel: (() => void) | undefined;
   let finishJobs: (() => void) | undefined;
+  let finishObservation: (() => void) | undefined;
+  const observation = {
+    version: 1 as const,
+    observedAt: '2026-11-05T00:00:00Z',
+    configured: false,
+    metadataAvailable: false,
+    dependency: 'disabled' as const,
+  };
+  const observe = vi.fn(
+    () =>
+      new Promise<typeof observation>((resolve) => {
+        finishObservation = () => resolve(observation);
+      }),
+  );
   const model = vi.fn(
     () =>
       new Promise<void>((resolve) => {
@@ -1581,9 +1595,11 @@ it('starts repository maintenance while model work is still pending and awaits b
     ...deps,
     executeModelWork: model,
     executeRepositoryJobs: jobs,
+    observeJobCredentials: observe,
   });
   await vi.waitFor(() => expect(jobs).toHaveBeenCalledOnce());
   expect(model).toHaveBeenCalledOnce();
+  expect(observe).toHaveBeenCalledOnce();
   expect(jobs.mock.calls[0]).toEqual(model.mock.calls[0]);
   let completed = false;
   void maintenance.then(() => {
@@ -1593,5 +1609,11 @@ it('starts repository maintenance while model work is still pending and awaits b
   await Promise.resolve();
   expect(completed).toBe(false);
   finishModel?.();
-  expect((await maintenance).status).toBe(200);
+  await Promise.resolve();
+  expect(completed).toBe(false);
+  finishObservation?.();
+  expect(await maintenance).toMatchObject({
+    status: 200,
+    body: { jobCredentials: observation },
+  });
 });

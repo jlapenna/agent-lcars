@@ -45,11 +45,12 @@ type scheduleTickFailure struct {
 }
 
 type maintenanceTickResponse struct {
-	Lost                     []string `json:"lost"`
-	Dispatched               []string `json:"dispatched"`
-	Reported                 []string `json:"reported"`
-	OutboxProcessed          int      `json:"outboxProcessed"`
-	OutboxContinuationNeeded bool     `json:"outboxContinuationNeeded"`
+	JobCredentials           *jobCredentialObservation `json:"jobCredentials"`
+	Lost                     []string                  `json:"lost"`
+	Dispatched               []string                  `json:"dispatched"`
+	Reported                 []string                  `json:"reported"`
+	OutboxProcessed          int                       `json:"outboxProcessed"`
+	OutboxContinuationNeeded bool                      `json:"outboxContinuationNeeded"`
 	OutboxDrainFailed        []struct {
 		EntryID string `json:"entryId"`
 		Error   string `json:"error"`
@@ -199,15 +200,25 @@ func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *sl
 		}
 		result, err := tickMaintenanceOnce(cfg)
 		if err != nil {
+			credentialMetrics.record(nil, time.Now())
 			recordMaintenanceTick(false)
 			logger.Warn("maintenance tick failed", slog.String("error", err.Error()))
 			return
+		}
+		credentialState := "unknown"
+		if !credentialMetrics.record(result.JobCredentials, time.Now()) {
+			logger.Warn("job credential observation unavailable")
+		} else {
+			credentialState = result.JobCredentials.Dependency
+			if *result.JobCredentials.Configured && (!*result.JobCredentials.MetadataAvailable || result.JobCredentials.Dependency == "unavailable") {
+				logger.Warn("job credential metadata dependency unavailable")
+			}
 		}
 		recordMaintenanceTick(true)
 		for _, failure := range result.OutboxDrainFailed {
 			logger.Warn("maintenance tick outbox entry failed; the Console retries and retires it", slog.String("entryId", failure.EntryID), slog.String("error", failure.Error))
 		}
-		logger.Info("maintenance tick completed", slog.Int("outboxDrainFailed", len(result.OutboxDrainFailed)))
+		logger.Info("maintenance tick completed", slog.Int("outboxDrainFailed", len(result.OutboxDrainFailed)), slog.String("jobCredentialState", credentialState))
 	}
 	tick()
 	ticker := time.NewTicker(scheduleTickInterval)
