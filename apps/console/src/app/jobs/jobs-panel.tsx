@@ -170,8 +170,9 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
               Repository sources
             </h2>
             <p className={styles.muted}>
-              Install or refresh job definitions from a repository. Changed
-              definitions must be reviewed before enabling.
+              Definitions on each repository&apos;s default branch are
+              discovered automatically and activate on merge. Refresh a
+              repository to read a change now.
             </p>
             <form
               className={styles.sourceForm}
@@ -196,11 +197,11 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
                 </select>
               </label>
               <Button type="submit" loading={busy} disabled={!repository}>
-                Install / refresh jobs
+                Refresh jobs
               </Button>
             </form>
             {!repositories.length ? (
-              <p>No repositories are available for installation.</p>
+              <p>No repositories are available to refresh.</p>
             ) : null}
           </section>
         ) : null}
@@ -231,11 +232,12 @@ export function JobsPanel({ repositories }: { repositories: string[] }) {
               <div className={styles.empty}>
                 <h2>No jobs registered</h2>
                 <p>
-                  Install repository definitions, then review and enable each
-                  job.
+                  Merge <code>.lcars/jobs/&lt;name&gt;/</code> to a
+                  repository&apos;s default branch; its jobs are discovered and
+                  activated automatically.
                 </p>
                 <Button onClick={() => openSources()}>
-                  Install repository jobs
+                  Refresh repository jobs
                 </Button>
               </div>
             ) : (

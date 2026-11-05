@@ -3,8 +3,26 @@ import { z } from 'zod';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { readJobBody } from './repository-job-body';
-import { jobKey, parseJobDefinition } from './repository-job-definition';
+import {
+  type JobDefinition,
+  jobKey,
+  parseJobDefinition,
+} from './repository-job-definition';
 import type { CatalogJob, JobStore } from './repository-job-store';
+
+/** The principal an automatic activation is attributed to, or undefined when
+ * the definition's execution profile does not admit automatic activation. */
+export type JobActivation = (definition: JobDefinition) => string | undefined;
+
+/** Null when no operator veto stands. A record written before automatic
+ * activation has no `vetoedBy`: one that was enabled and later disabled
+ * without a source error was an explicit operator disable, so it stays one. */
+export function operatorVeto(job: CatalogJob | undefined): string | null {
+  if (job?.vetoedBy !== undefined) return job.vetoedBy;
+  return job && !job.enabled && job.enabledBy && !job.error
+    ? job.enabledBy
+    : null;
+}
 
 /** Fetch only committed regular blobs. One deadline covers the repository. */
 export async function refreshJobCatalog(
@@ -12,6 +30,7 @@ export async function refreshJobCatalog(
   repository: string,
   tokens: DispatchTokenProvider,
   now: Date,
+  activate: JobActivation,
 ): Promise<void> {
   const existing = (await store.list()).filter(
     (job) => job.repository === repository,
@@ -61,17 +80,34 @@ export async function refreshJobCatalog(
         }),
       ),
     });
-    const tree = treeSchema.parse(
-      await get(`git/trees/${commit.commit.tree.sha}?recursive=1`),
+    const readTree = async (sha: string, recursive = false) => {
+      const tree = treeSchema.parse(
+        await get(`git/trees/${sha}${recursive ? '?recursive=1' : ''}`),
+      );
+      if (tree.truncated) throw new Error('Catalog tree truncated');
+      return tree.tree;
+    };
+    // Walk to `.lcars/jobs` one level at a time instead of reading the whole
+    // repository tree: a repository without jobs costs one small root read.
+    const directory = async (sha: string | undefined, name: string) =>
+      sha === undefined
+        ? undefined
+        : (await readTree(sha)).find(
+            (entry) => entry.path === name && entry.type === 'tree',
+          )?.sha;
+    const jobsTree = await directory(
+      await directory(commit.commit.tree.sha, '.lcars'),
+      'jobs',
     );
-    if (tree.truncated) throw new Error('Catalog tree truncated');
-    const manifests = tree.tree.filter((entry) =>
-      /^\.lcars\/jobs\/[^/]+\/job.yaml$/u.test(entry.path),
+    const entries =
+      jobsTree === undefined ? [] : await readTree(jobsTree, true);
+    const manifests = entries.filter((entry) =>
+      /^[^/]+\/job\.yaml$/u.test(entry.path),
     );
     if (manifests.length > 50) throw new Error('Repository exceeds 50 jobs');
     const rows: CatalogJob[] = [];
     for (const manifest of manifests) {
-      const jobName = manifest.path.split('/')[2]!;
+      const jobName = manifest.path.split('/')[0]!;
       const id = jobKey(repository, jobName);
       const row: CatalogJob = {
         id,
@@ -81,8 +117,8 @@ export async function refreshJobCatalog(
         enabled: false,
       };
       try {
-        const recipe = tree.tree.find(
-          (entry) => entry.path === `.lcars/jobs/${jobName}/recipe.yaml`,
+        const recipe = entries.find(
+          (entry) => entry.path === `${jobName}/recipe.yaml`,
         );
         const blob = async (
           entry: typeof manifest | undefined,
@@ -124,17 +160,30 @@ export async function refreshJobCatalog(
       await store.mutate(row.id, undefined, (current) => {
         if (current && Date.parse(current.refreshedAt) > now.getTime())
           return {};
+        const vetoedBy = operatorVeto(current);
+        const unchanged = Boolean(
+          current?.enabled &&
+          !row.error &&
+          current.definition?.digest === row.definition?.digest,
+        );
+        // A merged, authorized definition activates at this observation
+        // unless the operator vetoed the job. The new floor admits only
+        // schedule slots after now, so activation never backfills.
+        const activatedBy =
+          unchanged || vetoedBy !== null || !row.definition || row.error
+            ? undefined
+            : activate(row.definition);
         return {
           job: {
             ...current,
             ...row,
             error: row.error,
             definition: row.definition,
-            enabled: Boolean(
-              current?.enabled &&
-              !row.error &&
-              current.definition?.digest === row.definition?.digest,
-            ),
+            vetoedBy,
+            enabled: unchanged || activatedBy !== undefined,
+            ...(activatedBy === undefined
+              ? {}
+              : { enabledBy: activatedBy, activationFloor: now.toISOString() }),
           },
         };
       });
@@ -147,6 +196,7 @@ export async function refreshJobCatalog(
         return {
           job: {
             ...current!,
+            vetoedBy: operatorVeto(current),
             enabled: false,
             error: 'Definition removed',
             refreshedAt: now.toISOString(),
@@ -161,6 +211,7 @@ export async function refreshJobCatalog(
         return {
           job: {
             ...current!,
+            vetoedBy: operatorVeto(current),
             enabled: false,
             error: 'Source refresh failed',
             refreshedAt: now.toISOString(),
@@ -168,35 +219,60 @@ export async function refreshJobCatalog(
         };
       });
     throw error;
+  } finally {
+    // Ordering only: a lost write makes this source look older, never newer.
+    await store
+      .recordSourceRefresh(repository, now.toISOString())
+      .catch((error: unknown) =>
+        logger.error(
+          'Repository job source refresh time not recorded: %s',
+          repository,
+          error,
+        ),
+      );
   }
 }
 
-/** Refresh oldest enabled repositories first, at most four network reads at
- * once. Start a batch only with room for its 20-second source fetch budget
- * plus headroom; shared token/store operations retain their own timeouts.
- * Successful refresh timestamps persist fairness across processes and ticks. */
-export async function refreshEnabledJobCatalogs(
+/** Refresh every configured repository's catalog, oldest refresh first, at
+ * most four network reads at once. Start a batch only with room for its
+ * 20-second source fetch budget plus headroom; shared token/store operations
+ * retain their own timeouts. Recorded refresh attempts persist fairness across
+ * processes and ticks; a never-refreshed repository goes first. */
+export async function refreshJobCatalogs(
   store: JobStore,
+  repositories: readonly string[],
   tokens: () => DispatchTokenProvider,
   deadline: number,
+  activate: JobActivation,
 ): Promise<void> {
-  const oldest = new Map<string, number>();
-  for (const job of await store.list()) {
-    if (!job.enabled) continue;
-    const at = Date.parse(job.refreshedAt);
-    oldest.set(job.repository, Math.min(oldest.get(job.repository) ?? at, at));
-  }
-  const repositories = [...oldest]
+  const refreshed = await store.sourceRefreshes();
+  const oldest = new Map<string, number>(
+    repositories.map((repository) => [
+      repository,
+      Date.parse(refreshed.get(repository) ?? '') || 0,
+    ]),
+  );
+  const ordered = [...oldest]
     .sort(([a, at], [b, bt]) => at - bt || a.localeCompare(b))
     .map(([repository]) => repository);
-  for (let offset = 0; offset < repositories.length; offset += 4) {
+  for (let offset = 0; offset < ordered.length; offset += 4) {
     if (Date.now() + 25_000 > deadline) break;
     await Promise.all(
-      repositories.slice(offset, offset + 4).map(async (repository) => {
+      ordered.slice(offset, offset + 4).map(async (repository) => {
         try {
-          await refreshJobCatalog(store, repository, tokens(), new Date());
-        } catch {
-          logger.error('Repository job source refresh failed: %s', repository);
+          await refreshJobCatalog(
+            store,
+            repository,
+            tokens(),
+            new Date(),
+            activate,
+          );
+        } catch (error) {
+          logger.error(
+            'Repository job source refresh failed: %s',
+            repository,
+            error,
+          );
         }
       }),
     );

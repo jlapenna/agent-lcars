@@ -82,6 +82,8 @@ export async function repositoryJobsHttp(
         repository,
         createDispatchTokenProvider(process.env, { contents: 'read' }),
         new Date(),
+        // Activation is the scheduler's, not this caller's request-scoped grant.
+        (definition) => base.automaticActivation(definition),
       );
       return Response.json({ refreshed: repository });
     }

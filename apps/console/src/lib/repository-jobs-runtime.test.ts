@@ -2,7 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn(), tick: vi.fn() }));
 vi.mock('./repository-job-catalog', () => ({
-  refreshEnabledJobCatalogs: mocks.refresh,
+  refreshJobCatalogs: mocks.refresh,
+}));
+vi.mock('./deployment', () => ({
+  controlPlaneRepositories: () => ['octo/repo'],
 }));
 vi.mock('./repository-jobs', () => ({
   RepositoryJobs: class {

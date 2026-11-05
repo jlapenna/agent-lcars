@@ -34,6 +34,12 @@ class TestStore implements JobStore {
   async history(id: string) {
     return [...this.occurrences.values()].filter((value) => value.jobId === id);
   }
+  async sourceRefreshes() {
+    return new Map<string, string>();
+  }
+  async recordSourceRefresh() {
+    return undefined;
+  }
   async mutate(
     id: string,
     occurrenceId: string | undefined,
@@ -252,6 +258,41 @@ describe('production repository job admission', () => {
       );
     },
   );
+  it('admits automatically activated schedules only after the activation floor', async () => {
+    const f = fixture([], 'repository');
+    f.jobs.deps.profiles = () => [];
+    f.jobs.deps.automationPrincipal = () => 'svc:scheduler';
+    f.definition.job.triggers.schedule = { cron: '0 6 * * 2', timezone: 'UTC' };
+    const job = f.store.jobs.get(f.id)!;
+    // Activated two minutes after Tuesday's 06:00 slot, still inside the
+    // tick's five-minute window: that slot predates activation.
+    f.setTime('2026-10-27T06:02:00.000Z');
+    expect(f.jobs.automaticActivation(f.definition)).toBe('svc:scheduler');
+    Object.assign(job, {
+      enabledBy: 'svc:scheduler',
+      activationFloor: '2026-10-27T06:02:00.000Z',
+      refreshedAt: '2026-10-27T06:02:00.000Z',
+    });
+    f.setTime('2026-10-27T06:04:00.000Z');
+    expect(await f.jobs.tick()).toEqual([]);
+    expect(f.store.occurrences.size).toBe(0);
+    f.setTime('2026-11-03T06:01:00.000Z');
+    job.refreshedAt = '2026-11-03T06:00:30.000Z';
+    expect(await f.jobs.tick()).toEqual([]);
+    const occurrence = [...f.store.occurrences.values()][0]!;
+    expect(occurrence).toMatchObject({
+      trigger: 'schedule',
+      principal: 'svc:scheduler',
+    });
+    // Admission still re-checks the scheduler's current grant.
+    f.granted.mockReturnValue(false);
+    f.setTime('2026-11-10T06:01:00.000Z');
+    job.refreshedAt = '2026-11-10T06:00:30.000Z';
+    delete f.store.jobs.get(f.id)!.active;
+    expect(await f.jobs.tick()).toEqual([
+      'octo/repo:audit: Goose operator grant required',
+    ]);
+  });
   it('replays one request, skips overlap, and rejects changed request content', async () => {
     const f = fixture();
     const run = await f.jobs.admit(

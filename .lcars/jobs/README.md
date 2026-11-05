@@ -7,7 +7,8 @@ the existing cron scheduler. The recipe retains evidence and uses the normal
 protected PR path.
 
 See [repository-owned jobs](../../docs/repository-jobs.md#configuration-and-operation)
-for the resource contract and repository catalog refresh/enable operations.
+for the resource contract and activation: jobs merged here activate
+automatically; an operator disable is a sticky veto.
 
 `skill-evals` scores this repository's agent skills every Sunday (see
 `.lcars/jobs/skill-evals/job.yaml` for the time) with `repo-skill-evals` and

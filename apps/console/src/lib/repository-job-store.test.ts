@@ -131,5 +131,36 @@ describe.skipIf(!emulatorHost)(
         await database.terminate();
       }
     });
+    it('persists a cleared veto and per-repository refresh times', async () => {
+      const database = new Firestore({
+        projectId: `demo-sources-${Date.now()}`,
+        host: emulatorHost,
+        ssl: false,
+      });
+      const store = new FirestoreJobStore(database);
+      const id = 'e'.repeat(64);
+      try {
+        await store.mutate(id, undefined, () => ({
+          job: {
+            id,
+            repository: 'octo/repo',
+            name: 'audit',
+            refreshedAt: '2026-10-27T00:00:00.000Z',
+            enabled: false,
+            vetoedBy: null,
+          },
+        }));
+        expect((await store.list())[0]?.vetoedBy).toBeNull();
+        await store.recordSourceRefresh(
+          'octo/empty',
+          '2026-10-27T00:05:00.000Z',
+        );
+        expect(await store.sourceRefreshes()).toEqual(
+          new Map([['octo/empty', '2026-10-27T00:05:00.000Z']]),
+        );
+      } finally {
+        await database.terminate();
+      }
+    });
   },
 );

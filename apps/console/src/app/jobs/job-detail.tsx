@@ -116,7 +116,7 @@ export function JobDetail({
                       digest: definition?.digest ?? '',
                       enabled: false,
                     }),
-                  'Job disabled. Existing Work continues.',
+                  'Job disabled until an operator enables it. Existing Work continues.',
                 )
               }
             >
@@ -134,7 +134,11 @@ export function JobDetail({
         </div>
         {!job.enabled ? (
           <p className={styles.muted}>
-            Review and enable this job before it can run.
+            {job.vetoedBy
+              ? `Disabled by ${job.vetoedBy}. Repository changes do not re-enable it; review and enable it to resume.`
+              : job.error
+                ? 'This job activates again after a successful source refresh.'
+                : 'Its execution profile does not admit automatic activation. Review and enable it before it can run.'}
           </p>
         ) : null}
       </header>

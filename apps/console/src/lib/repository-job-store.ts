@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import {
   jobDefinitionSchema,
+  jobDigest,
   jobInputsSchema,
   jobProfileNameSchema,
   jobProfileSchema,
@@ -27,6 +28,10 @@ export const catalogJobSchema = z.strictObject({
   enabled: z.boolean(),
   enabledBy: z.string().optional(),
   activationFloor: z.iso.datetime().optional(),
+  /** The operator's sticky per-job veto: a principal while an explicit
+   * disable stands, null once an explicit enable clears it. Records written
+   * before automatic activation omit it (see `operatorVeto`). */
+  vetoedBy: z.string().nullable().optional(),
   active: hash.optional(),
   latest: hash.optional(),
   baseline: z.strictObject({ occurrence: hash, comparison: hash }).optional(),
@@ -45,6 +50,10 @@ const storedJobProfileSchema = z.union([
       'Legacy credentials cannot be combined with current credential sets or crossRepo',
     ),
 ]);
+const sourceRefreshSchema = z.strictObject({
+  repository: z.string(),
+  refreshedAt: z.iso.datetime(),
+});
 export const jobOccurrenceSchema = z.strictObject({
   id: hash,
   jobId: hash,
@@ -97,6 +106,10 @@ function encodeOccurrence(value: JobOccurrence): unknown {
 }
 export interface JobStore {
   list(): Promise<CatalogJob[]>;
+  /** Last catalog refresh attempt per repository, including repositories
+   * that define no jobs, so refresh fairness survives across instances. */
+  sourceRefreshes(): Promise<Map<string, string>>;
+  recordSourceRefresh(repository: string, refreshedAt: string): Promise<void>;
   readOccurrence(id: string): Promise<JobOccurrence | undefined>;
   history(jobId: string): Promise<JobOccurrence[]>;
   mutate(
@@ -122,6 +135,29 @@ export class FirestoreJobStore implements JobStore {
     if (snapshot.size > 500)
       throw new Error('Job catalog exceeds supported bound');
     return snapshot.docs.map((doc) => catalogJobSchema.parse(doc.data()));
+  }
+  async sourceRefreshes(): Promise<Map<string, string>> {
+    const snapshot = await this.database
+      .collection('orchestrator-job-sources')
+      .limit(501)
+      .get();
+    if (snapshot.size > 500)
+      throw new Error('Job sources exceed supported bound');
+    return new Map(
+      snapshot.docs.map((doc) => {
+        const source = sourceRefreshSchema.parse(doc.data());
+        return [source.repository, source.refreshedAt];
+      }),
+    );
+  }
+  async recordSourceRefresh(
+    repository: string,
+    refreshedAt: string,
+  ): Promise<void> {
+    await this.database
+      .collection('orchestrator-job-sources')
+      .doc(jobDigest(['source', repository]))
+      .set(sourceRefreshSchema.parse({ repository, refreshedAt }));
   }
   async readOccurrence(id: string): Promise<JobOccurrence | undefined> {
     const snapshot = await this.database
