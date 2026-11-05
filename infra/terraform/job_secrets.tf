@@ -23,6 +23,9 @@ resource "google_project" "job_secrets" {
   project_id      = var.job_secrets_project_id
   billing_account = var.billing_account
   deletion_policy = "PREVENT"
+  # The provider validates the billing link through the quota project before
+  # creating this project. Keep that prerequisite in the owning declaration.
+  depends_on = [google_project_service.services["cloudbilling.googleapis.com"]]
   lifecycle { prevent_destroy = true }
 }
 
