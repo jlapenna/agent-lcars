@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import { defaultAntigravityBrainDir } from './config';
 import {
   defaultRunOpenCode,
   OPENCODE_CAPTURE_LIMITS,
@@ -18,13 +19,15 @@ const IMPORT_MAX_BYTES = 64 * 1024;
 
 export interface ResumeTranscriptOptions {
   /** Defaults to 'claude-code' so existing callers are unchanged. */
-  agent?: 'claude-code' | 'codex' | 'opencode';
+  agent?: 'claude-code' | 'codex' | 'opencode' | 'antigravity';
   sessionId: string;
   transcriptGcsUri: string;
   cwd: string;
   claudeProjectsDir: string;
   /** Required when `agent` is 'codex': the per-run CODEX_HOME. */
   codexHome?: string;
+  /** Optional when `agent` is 'antigravity': defaults to `~/.gemini/antigravity-cli/brain`. */
+  antigravityBrainDir?: string;
   projectId?: string;
   download?: (
     gcsUri: string,
@@ -68,6 +71,17 @@ function destinationFor(options: ResumeTranscriptOptions): string | undefined {
       options.codexHome,
       'sessions/1970/01/01',
       `rollout-1970-01-01T00-00-00-${options.sessionId}.jsonl`,
+    );
+  }
+  if (options.agent === 'antigravity') {
+    const brainRoot =
+      options.antigravityBrainDir ?? defaultAntigravityBrainDir();
+    return path.join(
+      brainRoot,
+      options.sessionId,
+      '.system_generated',
+      'logs',
+      'transcript.jsonl',
     );
   }
   return path.join(

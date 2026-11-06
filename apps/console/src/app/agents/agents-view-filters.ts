@@ -108,6 +108,7 @@ const SESSION_AGENT: Record<AgentPipeline, SessionAgent> = {
   claude: 'claude-code',
   codex: 'codex',
   opencode: 'opencode',
+  agy: 'antigravity',
 };
 
 /** Agent and find narrow interactive sessions too; they are live, so the

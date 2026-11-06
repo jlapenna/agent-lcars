@@ -28,7 +28,7 @@ worker_policy_bootstrap() {
   IFS=, read -r -a providers <<< "${LCARS_WORKER_POLICY_PROVIDERS:-}"
   for provider in "${providers[@]}"; do
     case "$provider" in
-      claude|codex|opencode) ;;
+      claude|codex|opencode|agy) ;;
       '') continue ;;
       *) echo 'FATAL: invalid worker-policy rollout selection' >&2; return 1 ;;
     esac

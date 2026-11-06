@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   adapterFor,
+  antigravityAdapter,
   claudeCodeAdapter,
   codexAdapter,
   getTranscriptAdapter,
@@ -109,8 +110,11 @@ describe('getTranscriptAdapter', () => {
     expect(getTranscriptAdapter('opencode')).toBe(opencodeAdapter);
   });
 
+  it('resolves antigravity by name', () => {
+    expect(getTranscriptAdapter('antigravity')).toBe(antigravityAdapter);
+  });
+
   it('returns undefined for an agent with no registered adapter yet', () => {
     expect(getTranscriptAdapter('gemini')).toBeUndefined();
-    expect(getTranscriptAdapter('antigravity')).toBeUndefined();
   });
 });

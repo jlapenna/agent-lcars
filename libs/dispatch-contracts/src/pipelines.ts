@@ -13,7 +13,7 @@
  * some systems and invisible in others.
  */
 
-export type AgentPipeline = 'claude' | 'codex' | 'opencode';
+export type AgentPipeline = 'claude' | 'codex' | 'opencode' | 'agy';
 
 export interface PipelineContract {
   /** Stable identifier used as the orchestrator's
@@ -80,6 +80,16 @@ export const PIPELINE_CONTRACTS: Readonly<
     replyTrigger: '/oc',
     replyTriggerAliases: Object.freeze(['/opencode']),
     redispatchCommand: '/opencode',
+    botLogin: 'agent-lcars[bot]',
+  }),
+  agy: Object.freeze({
+    pipeline: 'agy',
+    displayName: 'Antigravity',
+    label: 'agent:agy',
+    reviewLabel: 'review:agy',
+    replyTrigger: '/agy',
+    replyTriggerAliases: Object.freeze(['/antigravity']),
+    redispatchCommand: '/agy',
     botLogin: 'agent-lcars[bot]',
   }),
 } as Record<AgentPipeline, PipelineContract>);

@@ -189,6 +189,9 @@ export async function finalizeSidecar(
       claudeProjectsDir: config.claudeProjectsDir,
       codexSessionsDir: config.codexSessionsDir,
       opencodeExportsDir: config.opencodeExportsDir,
+      ...(config.antigravityBrainDir && {
+        antigravityBrainDir: config.antigravityBrainDir,
+      }),
     }),
     discover,
   );
@@ -218,7 +221,7 @@ export async function finalizeSidecar(
 
     let summaries: SessionSummary[];
     try {
-      summaries = adapter.reduce(content.split('\n'));
+      summaries = adapter.reduce(content.split('\n'), file);
     } catch (error) {
       logger.warn(
         `agent-lcars-telemetry-watcher: finalize failed to reduce transcript ${file}, skipping`,

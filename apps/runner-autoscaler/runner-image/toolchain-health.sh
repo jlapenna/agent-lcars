@@ -77,6 +77,11 @@ trusted_opencode_supports_auto() {
     "$opencode_command" run --help 2>&1 | grep -Fq -- '--auto'
 }
 
+trusted_agy_runs() {
+  local agy_command="${1:-/usr/local/bin/agy}"
+  [ -x "$agy_command" ] && "$agy_command" --version >/dev/null 2>&1
+}
+
 # Exact scanner versions must be executable through the same PATH jobs use.
 repo_checks_run() (
   pins="${AGENT_LCARS_REPO_CHECKS_PINS:-/usr/local/share/agent-lcars-tooling/repo-checks.env}"

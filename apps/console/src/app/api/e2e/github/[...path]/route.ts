@@ -463,7 +463,7 @@ export async function PUT(
     if (
       !fixtureIssue ||
       agentLabels.length !== 1 ||
-      !['agent:claude', 'agent:codex', 'agent:opencode'].includes(
+      !['agent:claude', 'agent:codex', 'agent:opencode', 'agent:agy'].includes(
         agentLabels[0],
       ) ||
       JSON.stringify(unrelatedLabels) !==

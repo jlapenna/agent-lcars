@@ -54,6 +54,9 @@ ARGS=(runner "$CLI_SUBCOMMAND" --run-id "$RUN_ID" --projects-dir "$HOME/.claude/
 if [ -n "${CODEX_SESSIONS_DIR:-}" ]; then
   ARGS+=(--codex-sessions-dir "$CODEX_SESSIONS_DIR")
 fi
+if [ -n "${ANTIGRAVITY_BRAIN_DIR:-}" ]; then
+  ARGS+=(--antigravity-brain-dir "$ANTIGRAVITY_BRAIN_DIR")
+fi
 if [ -n "${NUM:-}" ]; then
   ARGS+=(--issue-number "$NUM")
 fi

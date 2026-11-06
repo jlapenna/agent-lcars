@@ -84,6 +84,7 @@ const HIDDEN_ROUTING_LABELS = new Set([
   'agent:claude',
   'agent:codex',
   'agent:opencode',
+  'agent:agy',
   'status:ready-for-agent',
   'status:needs-human',
 ]);

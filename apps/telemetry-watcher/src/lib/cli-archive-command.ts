@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 
 import {
+  antigravityAdapter,
   claudeCodeAdapter,
   CLI_TRANSCRIPT_MAX_BYTES,
   codexAdapter,
@@ -152,7 +153,7 @@ export async function executeCliArchiveCommand(
     if (
       !session.repo ||
       !matchesRepoAllowlist(session.repo, deps.repos) ||
-      !['claude-code', 'codex'].includes(session.agent)
+      !['claude-code', 'codex', 'antigravity'].includes(session.agent)
     )
       return {
         ok: false,
@@ -160,7 +161,11 @@ export async function executeCliArchiveCommand(
       };
     const bytes = readCliArchive(args[1]);
     const adapter =
-      session.agent === 'codex' ? codexAdapter : claudeCodeAdapter;
+      session.agent === 'codex'
+        ? codexAdapter
+        : session.agent === 'antigravity'
+          ? antigravityAdapter
+          : claudeCodeAdapter;
     const lines = bytes
       .toString('utf8')
       .split('\n')
@@ -174,11 +179,16 @@ export async function executeCliArchiveCommand(
           ? record['type'] === 'session_meta'
             ? (record['payload'] as { id?: unknown } | undefined)?.id
             : undefined
-          : record['sessionId'];
+          : session.agent === 'antigravity'
+            ? (record['conversationId'] ??
+              record['conversation_id'] ??
+              record['session_id'] ??
+              record['sessionId'])
+            : record['sessionId'];
       if (embeddedId !== undefined && embeddedId !== target.sessionId)
         throw new Error('mixed-session-transcript');
     }
-    const summaries = adapter.reduce(lines);
+    const summaries = adapter.reduce(lines, args[1]);
     if (summaries.length !== 1 || summaries[0].sessionId !== target.sessionId)
       return {
         ok: false,

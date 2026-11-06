@@ -695,7 +695,7 @@ export const itemsContract = {
         /** Defaults to true. False starts a fresh session that still
          *  carries the reply text. */
         resume: z.boolean().optional(),
-        pipeline: z.enum(['claude', 'codex', 'opencode']).optional(),
+        pipeline: z.enum(PIPELINES).optional(),
         fallbackPipelines: fallbackPipelinesSchema.optional(),
       }),
     )

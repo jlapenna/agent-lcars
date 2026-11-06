@@ -42,6 +42,7 @@ export const RUNNER_CAPTURE_AGENTS: readonly SessionAgent[] = [
   'claude-code',
   'codex',
   'opencode',
+  'antigravity',
 ];
 
 /**
@@ -70,6 +71,7 @@ export function runnerWatchRoots(config: {
   claudeProjectsDir: string;
   codexSessionsDir: string;
   opencodeExportsDir: string;
+  antigravityBrainDir?: string;
 }): WatchRootConfig[] {
   return [
     {
@@ -90,6 +92,16 @@ export function runnerWatchRoots(config: {
       adapter: 'opencode',
       projectDirAllowlist: ['sessions'],
     },
+    ...(config.antigravityBrainDir
+      ? [
+          {
+            path: config.antigravityBrainDir,
+            adapter: 'antigravity' as const,
+            recursive: true,
+            cwdAllowlist: ['*'],
+          },
+        ]
+      : []),
   ];
 }
 

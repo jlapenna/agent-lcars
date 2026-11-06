@@ -1,3 +1,4 @@
+import { extractAntigravityUserRequest } from './antigravity-transcript-adapter';
 import { SessionAgent } from './types';
 import { asArray, asBoolean, asRecord, asString } from './unknown-value';
 
@@ -31,6 +32,7 @@ export const RENDERABLE_TRANSCRIPT_AGENTS: readonly SessionAgent[] = [
   'claude-code',
   'codex',
   'opencode',
+  'antigravity',
 ];
 
 /** Whether {@link parseTranscriptTimeline} can render this agent's raw
@@ -267,6 +269,63 @@ function eventsFromCodexLine(
   return [];
 }
 
+/** Converts an Antigravity step line into zero or more shared timeline events. */
+function eventsFromAntigravityLine(
+  raw: Record<string, unknown>,
+  timestamp: string | undefined,
+): TranscriptTimelineEvent[] {
+  const source = asString(raw['source']);
+  const stepType = asString(raw['type']);
+  const content = asString(raw['content']);
+
+  if (stepType === 'USER_INPUT' && source === 'USER_EXPLICIT') {
+    if (!content) return [];
+    const body = extractAntigravityUserRequest(content);
+    if (!body) return [];
+    return [{ kind: 'text', role: 'user', text: truncate(body), timestamp }];
+  }
+
+  if (stepType === 'PLANNER_RESPONSE') {
+    const events: TranscriptTimelineEvent[] = [];
+    if (content && content.trim()) {
+      events.push({
+        kind: 'text',
+        role: 'assistant',
+        text: truncate(content),
+        timestamp,
+      });
+    }
+    for (const tc of asArray(raw['tool_calls']) ?? []) {
+      const record = asRecord(tc);
+      const name = asString(record?.['name']);
+      if (!name) continue;
+      const args = record?.['args'] ?? {};
+      const inputJson =
+        typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+      events.push({
+        kind: 'tool_use',
+        name: truncate(name, 128),
+        inputJson: truncate(inputJson),
+        timestamp,
+      });
+    }
+    return events;
+  }
+
+  if (stepType === 'GENERIC' && source === 'MODEL') {
+    if (!content) return [];
+    return [
+      {
+        kind: 'tool_result',
+        content: truncate(content),
+        timestamp,
+      },
+    ];
+  }
+
+  return [];
+}
+
 /** OpenCode exports are one JSON envelope, even when pretty-printed. The
  * telemetry archive uses the same envelope with conversation fields removed. */
 function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
@@ -407,7 +466,11 @@ export function parseTranscriptTimeline(
       continue;
     }
 
-    const timestamp = asString(raw['timestamp']);
+    const timestamp = asString(raw['timestamp']) ?? asString(raw['created_at']);
+    if (agent === 'antigravity') {
+      events.push(...eventsFromAntigravityLine(raw, timestamp));
+      continue;
+    }
     if (agent === 'codex') {
       for (const event of eventsFromCodexLine(raw, timestamp)) {
         const previous = events.at(-1);
