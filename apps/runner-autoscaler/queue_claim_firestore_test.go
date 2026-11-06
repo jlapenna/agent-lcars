@@ -62,13 +62,13 @@ func TestQueueClaimWindowFirestoreCommitEncoding(t *testing.T) {
 	var commitCount int
 	for _, value := range []uint64{0, 1, 9007199254740991} {
 		t.Run(strconv.FormatUint(value, 10), func(t *testing.T) {
-			counts := [3]uint64{}
+			counts := [4]uint64{}
 			// Exercise the production emitter, including its first nil baseline.
-			source := &queueExecutorStatusSource{claimCounters: func() ([3]uint64, error) { return counts, nil }}
+			source := &queueExecutorStatusSource{claimCounters: func() ([4]uint64, error) { return counts, nil }}
 			source.configureCapacity(5, func(context.Context) (int, error) { return 2, nil })
 			source.ready.Store(true)
 			baseline := source.snapshot(ctx, start)
-			counts = [3]uint64{value, value, value}
+			counts = [4]uint64{value, value, value, value}
 			end := start.Add(consoleStatusInterval)
 			measured := source.snapshot(ctx, end)
 			for _, status := range []consoleQueueExecutorStatus{baseline, measured} {
@@ -100,10 +100,10 @@ func TestQueueClaimWindowFirestoreCommitEncoding(t *testing.T) {
 					continue
 				}
 				claims := fields["claims"].GetMapValue().GetFields()
-				for _, name := range []string{"claude", "codex", "opencode"} {
+				for _, name := range []string{"claude", "codex", "opencode", "agy"} {
 					assertQueueClaimInteger(t, claims, name, int64(value))
 				}
-				if len(claims) != 5 || claims["windowStart"].GetStringValue() != start.Format(time.RFC3339Nano) || claims["windowEnd"].GetStringValue() != end.Format(time.RFC3339Nano) {
+				if len(claims) != 6 || claims["windowStart"].GetStringValue() != start.Format(time.RFC3339Nano) || claims["windowEnd"].GetStringValue() != end.Format(time.RFC3339Nano) {
 					t.Fatalf("wrong observed window: %v", claims)
 				}
 			}

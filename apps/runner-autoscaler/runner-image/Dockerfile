@@ -897,7 +897,9 @@ RUN pnpm --version
 # own skills directory once, failing the build if the list names a skill the
 # image does not carry, instead of copying them on every dispatch (#2033).
 RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \
-    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.claude/skills
+    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.claude/skills && \
+    bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \
+    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.gemini/antigravity-cli/skills
 
 # The single gate for every image-owned invariant (#2033). It replaces the
 # per-boot entrypoint preflight and the per-dispatch OpenCode probes: an image

@@ -69,6 +69,7 @@ if [ -f "$skills_list" ]; then
     case "$name" in \#*) continue ;; esac
     skills=$((skills + 1))
     check "layer-1 skill '$name' is installed" test -f "$home/.claude/skills/$name/SKILL.md"
+    check "layer-1 skill '$name' is installed for Antigravity" test -f "$home/.gemini/antigravity-cli/skills/$name/SKILL.md"
   done < "$skills_list"
 fi
 check "layer-1 skill list names at least one skill" test "$skills" -gt 0

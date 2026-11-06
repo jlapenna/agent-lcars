@@ -67,7 +67,8 @@ gate() {
 }
 
 install_skills() {
-  bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.claude/skills" >/dev/null 2>"$tmp/install.err"
+  bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.claude/skills" >/dev/null 2>"$tmp/install.err" &&
+    bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.gemini/antigravity-cli/skills" >/dev/null 2>>"$tmp/install.err"
 }
 
 # Setup order matters: the gate refuses an image whose skills were never installed.
