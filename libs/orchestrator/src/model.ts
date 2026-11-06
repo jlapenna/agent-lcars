@@ -827,3 +827,7 @@ export function usesCodexCredentials(
     (run.pipeline === 'goose' && run.params?.['providerAuth'] === 'codex')
   );
 }
+
+/** Durable physical-exit observation while exact credential cleanup blocks retirement. */
+export const RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP =
+  'Worker exited; credential cleanup pending';
