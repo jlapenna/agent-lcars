@@ -138,6 +138,9 @@ export const jobProfileSchema = z
     // Reuse ordinary watched-repository credentials only by operator opt-in.
     crossRepo: z.boolean().optional(),
     credentialSet: credentialSetReferenceSchema.optional(),
+    // Provider state is restored through its existing leased broker, never
+    // copied into an immutable job credential set.
+    providerAuth: z.literal('codex').optional(),
     gitIdentity: jobGitIdentitySchema.optional(),
     // Names a Homelab-owned overlay on the shared Goose provider environment:
     // the runner reads `goose-environment.<name>.json` beside the shared

@@ -1,4 +1,5 @@
 import { type Decision, type Refusal, refused, reportResult } from './decide';
+import { usesCodexCredentials } from './model';
 import {
   type CredentialMutation,
   type CredentialOperation,
@@ -25,7 +26,7 @@ export function reserveCredentialOperation(input: {
   kind: CredentialOperation['kind'];
 }): Decision | Refusal {
   const { run, task, now } = input;
-  if (run.pipeline !== 'codex' || !isClaimant(run, input.claimFingerprint))
+  if (!usesCodexCredentials(run) || !isClaimant(run, input.claimFingerprint))
     return refused('not-claimant');
   if (run.credentialOperation !== undefined)
     return refused('credential-operation-pending');

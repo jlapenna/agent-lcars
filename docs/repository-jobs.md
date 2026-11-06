@@ -343,3 +343,23 @@ sets and exact job grants. Migrate aliases explicitly through the administration
 workflow before changing a job's profile. Never copy personal host credentials
 implicitly. Source changes require Console deployment and runner-image adoption;
 credential provisioning and real recurring-job qualification are separate checks.
+
+### Codex tools inside recipes
+
+An operator profile can set `providerAuth: "codex"` when its recipe needs
+Codex tools. Admission pins that choice into the exact occurrence and Run.
+The broker reauthorizes the occurrence and profile before restoring the
+existing central Codex lineage, with the same shared lease, generation CAS,
+ambiguous-write recovery and terminal cleanup used by native Codex runs.
+There is no static `auth.json` job-secret binding or cloud IAM in the Pod.
+Held-lease renewal and exact-generation persistence remain available after a
+profile revocation so an already-restored rotating login can be returned;
+revocation denies new restores. They still require the original run claim
+and the existing broker's lease/write checks.
+
+The runner creates an auth-only home in memory, runs the recipe, persists
+through the broker before submitting its result and removes that exact home
+on exit. `REPO_SKILL_EVALS_RUNNER=codex` selects the shared evaluator backend;
+normal repository App checkout and the job allocation remain unchanged.
+The profile must only be activated after the matching broker deployment and
+worker image (including the updated repo-tools backend) are both verified.

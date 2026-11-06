@@ -816,3 +816,14 @@ export function isClaimant(run: Run, claimFingerprint: string): boolean {
     run.queue?.state === 'claimed' && run.queue.tokenHash === claimFingerprint
   );
 }
+
+/** A recipe may explicitly consume the shared Codex provider lineage. The
+ * Console separately reauthorizes its exact occurrence/profile before IO. */
+export function usesCodexCredentials(
+  run: Pick<Run, 'pipeline' | 'params'>,
+): boolean {
+  return (
+    run.pipeline === 'codex' ||
+    (run.pipeline === 'goose' && run.params?.['providerAuth'] === 'codex')
+  );
+}
