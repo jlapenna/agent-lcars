@@ -25,15 +25,16 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## Identity, credentials, and security
 
-| Need                             | Canonical document                                                                                        |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Fleet credentials                | [`fleet-credentials.md`](fleet-credentials.md)                                                            |
-| IAM contract                     | [`iam-contract.md`](iam-contract.md)                                                                      |
-| Bot identity formats             | [`bot-identity-formats.md`](bot-identity-formats.md)                                                      |
-| GitHub App webhook events        | [`github-app-webhook-events.md`](github-app-webhook-events.md)                                            |
-| GitHub label vocabulary          | [`github-label-contract.md`](github-label-contract.md)                                                    |
-| E2E credential boundary          | [`e2e-security-boundary.md`](e2e-security-boundary.md)                                                    |
-| Quick-task identity and evidence | [`quick-task-identity.md`](quick-task-identity.md) and [`quick-task-evidence.md`](quick-task-evidence.md) |
+| Need                                | Canonical document                                                                                        |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Fleet credentials                   | [`fleet-credentials.md`](fleet-credentials.md)                                                            |
+| Runtime secrets and job credentials | [`job-secrets.md`](job-secrets.md)                                                                        |
+| IAM contract                        | [`iam-contract.md`](iam-contract.md)                                                                      |
+| Bot identity formats                | [`bot-identity-formats.md`](bot-identity-formats.md)                                                      |
+| GitHub App webhook events           | [`github-app-webhook-events.md`](github-app-webhook-events.md)                                            |
+| GitHub label vocabulary             | [`github-label-contract.md`](github-label-contract.md)                                                    |
+| E2E credential boundary             | [`e2e-security-boundary.md`](e2e-security-boundary.md)                                                    |
+| Quick-task identity and evidence    | [`quick-task-identity.md`](quick-task-identity.md) and [`quick-task-evidence.md`](quick-task-evidence.md) |
 
 ## Development and fleet adoption
 
@@ -88,5 +89,3 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   as policy. Provide the command or API that reads them.
 - Delete retired paths and duplicated doctrine instead of presenting competing
   instructions or adding synchronization machinery.
-
-- [LCARS job secrets](job-secrets.md): Google Secret Manager storage, credential sets, per-job grants and administration.

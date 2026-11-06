@@ -10,7 +10,7 @@ const path = require('node:path');
 function rejection(input, context, env = process.env, allowBinding = true) {
   let temporary;
   try {
-    const sessionId = input.session_id;
+    const sessionId = input.session_id ?? input.conversationId;
     const contextPath = env.LCARS_WORKER_CONTEXT;
     if (
       typeof sessionId !== 'string' ||

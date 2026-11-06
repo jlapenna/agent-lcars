@@ -30,7 +30,8 @@ interface HookEntrySpec {
 
 interface IntegrationTarget {
   /** Environment variable that relocates the runtime's config directory. */
-  readonly configDirEnv: 'CLAUDE_CONFIG_DIR' | 'CODEX_HOME';
+  readonly configDirEnv:
+    'CLAUDE_CONFIG_DIR' | 'CODEX_HOME' | 'ANTIGRAVITY_CONFIG_DIR';
   /** Config directory relative to `$HOME` when that variable is unset. */
   readonly defaultConfigDir: string;
   /** Settings file holding `hooks`, relative to the config directory. */
@@ -85,6 +86,18 @@ export const INTEGRATION_TARGETS: Readonly<
       { event: 'SessionEnd', timeout: 3 },
     ],
   },
+  agy: {
+    configDirEnv: 'ANTIGRAVITY_CONFIG_DIR',
+    defaultConfigDir: path.join('.gemini', 'config'),
+    settingsFile: 'hooks.json',
+    stubFile: path.join('hooks', 'lcars-hook.sh'),
+    entries: [
+      { event: 'SessionStart', timeout: 10 },
+      { event: 'PreInvocation', timeout: 10 },
+      { event: 'PostToolUse', timeout: 10 },
+      { event: 'Stop', timeout: 10 },
+    ],
+  },
 };
 
 interface ResolvedTarget {
@@ -123,6 +136,9 @@ export function stubCommand(
   event: string,
   stubRef = `$HOME/${path.join(INTEGRATION_TARGETS[runtime].defaultConfigDir, INTEGRATION_TARGETS[runtime].stubFile)}`,
 ): string {
+  if (runtime === 'agy') {
+    return `[ -x "${stubRef}" ] && sh "${stubRef}" agy ${event} || printf '{}\\n'`;
+  }
   const argument =
     runtime === 'codex' && event !== 'SessionEnd' ? ` ${event}` : '';
   return `[ -x "${stubRef}" ] && sh "${stubRef}" ${runtime}${argument} || true`;
@@ -130,7 +146,7 @@ export function stubCommand(
 
 /** Current commands plus the previous event-less command, for managed-entry migration. */
 const OUR_COMMAND_RE =
-  /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex(?: (?:SessionStart|UserPromptSubmit|PostToolUse|Stop|SubagentStop|Interrupt))?) \|\| true$/u;
+  /^\[ -x "([^"]+\/lcars-hook\.sh)" \] && sh "\1" (claude|codex(?: (?:SessionStart|UserPromptSubmit|PostToolUse|Stop|SubagentStop|Interrupt))?|agy (?:SessionStart|PreInvocation|PostToolUse|Stop)) \|\| (?:true|printf '\{\}\\n')$/u;
 
 export function stubScript(runtime: SettingsRuntime): string {
   return [
@@ -143,6 +159,7 @@ export function stubScript(runtime: SettingsRuntime): string {
     '',
     'set -u',
     `runtime="\${1:-${runtime}}"`,
+    ...(runtime === 'agy' ? ['event="${2:-}"', "printf '{}\\n'"] : []),
     'if command -v lcars >/dev/null 2>&1; then',
     '  lcars_bin=lcars',
     'elif [ -x "$HOME/.local/bin/lcars" ]; then',
@@ -163,7 +180,9 @@ export function stubScript(runtime: SettingsRuntime): string {
           'fi',
         ]
       : []),
-    'exec "$lcars_bin" hook "$runtime" >/dev/null 2>&1',
+    runtime === 'agy'
+      ? 'exec "$lcars_bin" hook "$runtime" "$event" >/dev/null 2>&1'
+      : 'exec "$lcars_bin" hook "$runtime" >/dev/null 2>&1',
     '',
   ].join('\n');
 }
@@ -390,6 +409,22 @@ function stubVersionOf(script: string | undefined): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+function agyManagedHooksForEvent(
+  hookSet: JsonRecord,
+  event: string,
+): unknown[] {
+  const entries = hookSet[event];
+  if (!Array.isArray(entries)) return [];
+  if (event === 'PostToolUse' || event === 'PreToolUse') {
+    return entries.flatMap((group) =>
+      isRecord(group) && Array.isArray(group['hooks'])
+        ? group['hooks'].filter(hookIsOurs)
+        : [],
+    );
+  }
+  return entries.filter(hookIsOurs);
+}
+
 function settingsIntegrationStatus(
   runtime: SettingsRuntime,
   homeDirectory: string,
@@ -410,15 +445,21 @@ function settingsIntegrationStatus(
   let duplicateEntries = 0;
   try {
     const settings = readSettings(resolved.settingsPath);
-    const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
+    const hooksKey = runtime === 'agy' ? 'lcars' : 'hooks';
+    const hooks = isRecord(settings[hooksKey]) ? settings[hooksKey] : {};
     for (const spec of target.entries) {
-      const groups = hooks[spec.event];
-      if (!Array.isArray(groups)) continue;
-      const managedHooks = groups.flatMap((group) =>
-        isRecord(group) && Array.isArray(group['hooks'])
-          ? group['hooks'].filter(hookIsOurs)
-          : [],
-      );
+      let managedHooks: unknown[];
+      if (runtime === 'agy') {
+        managedHooks = agyManagedHooksForEvent(hooks, spec.event);
+      } else {
+        const groups = hooks[spec.event];
+        if (!Array.isArray(groups)) continue;
+        managedHooks = groups.flatMap((group) =>
+          isRecord(group) && Array.isArray(group['hooks'])
+            ? group['hooks'].filter(hookIsOurs)
+            : [],
+        );
+      }
       if (managedHooks.length === 0) continue;
       entriesPresent++;
       duplicateEntries += managedHooks.length - 1;
@@ -464,22 +505,42 @@ function settingsInstallIntegration(
   writeAtomically(resolved.stubPath, stubScript(runtime), 0o700);
   const settingsPath = resolved.settingsPath;
   const settings = readSettings(settingsPath);
-  const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
-  for (const spec of target.entries) {
-    placeOurGroup(hooks, spec.event, ourGroup(runtime, spec, resolved.stubRef));
-  }
-  // Events we no longer install into (or stray copies) lose only our entries.
-  for (const [event, groups] of Object.entries(hooks)) {
-    if (target.entries.some((spec) => spec.event === event)) continue;
-    if (Array.isArray(groups) && groups.some(groupIsOurs)) {
-      stripOurHooks({ [event]: groups } as JsonRecord);
-      hooks[event] = (groups as unknown[]).filter(
-        (group) => !groupIsOurs(group),
-      );
-      if ((hooks[event] as unknown[]).length === 0) delete hooks[event];
+  if (runtime === 'agy') {
+    const hookSet: JsonRecord = {};
+    for (const spec of target.entries) {
+      const handler: JsonRecord = {
+        type: 'command',
+        command: stubCommand(runtime, spec.event, resolved.stubRef),
+        ...(spec.timeout !== undefined && { timeout: spec.timeout }),
+      };
+      hookSet[spec.event] =
+        spec.event === 'PostToolUse' || spec.event === 'PreToolUse'
+          ? [{ matcher: '*', hooks: [handler] }]
+          : [handler];
     }
+    settings['lcars'] = hookSet;
+  } else {
+    const hooks = isRecord(settings['hooks']) ? settings['hooks'] : {};
+    for (const spec of target.entries) {
+      placeOurGroup(
+        hooks,
+        spec.event,
+        ourGroup(runtime, spec, resolved.stubRef),
+      );
+    }
+    // Events we no longer install into (or stray copies) lose only our entries.
+    for (const [event, groups] of Object.entries(hooks)) {
+      if (target.entries.some((spec) => spec.event === event)) continue;
+      if (Array.isArray(groups) && groups.some(groupIsOurs)) {
+        stripOurHooks({ [event]: groups } as JsonRecord);
+        hooks[event] = (groups as unknown[]).filter(
+          (group) => !groupIsOurs(group),
+        );
+        if ((hooks[event] as unknown[]).length === 0) delete hooks[event];
+      }
+    }
+    settings['hooks'] = hooks;
   }
-  settings['hooks'] = hooks;
   writeAtomically(
     settingsPath,
     `${JSON.stringify(settings, null, 2)}\n`,
@@ -501,7 +562,16 @@ function settingsUninstallIntegration(
   } catch {
     settings = undefined;
   }
-  if (settings && isRecord(settings['hooks'])) {
+  if (runtime === 'agy') {
+    if (settings && isRecord(settings['lcars'])) {
+      delete settings['lcars'];
+      writeAtomically(
+        settingsPath,
+        `${JSON.stringify(settings, null, 2)}\n`,
+        settingsMode(settingsPath),
+      );
+    }
+  } else if (settings && isRecord(settings['hooks'])) {
     const hooks = settings['hooks'];
     if (stripOurHooks(hooks) > 0) {
       if (Object.keys(hooks).length === 0) delete settings['hooks'];

@@ -31,6 +31,13 @@ export function defaultCodexSessionsDir(): string {
   );
 }
 
+export function defaultAntigravityBrainDir(): string {
+  return (
+    optional('AGENT_TELEMETRY_ANTIGRAVITY_BRAIN_DIR') ??
+    path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain')
+  );
+}
+
 /** `~/.local/state/agent-lcars` — the session-title overlay root (issue
  * #1212), see `session-title-paths.ts`'s `SESSION_STATE_DIRECTORY`. */
 export function defaultSessionStateDir(): string {

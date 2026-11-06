@@ -9,5 +9,5 @@ export interface TranscriptAdapter {
    * can then stream a large JSONL transcript through a reducer without first
    * materializing an array of every line alongside the file contents.
    */
-  reduce(lines: Iterable<string>): SessionSummary[];
+  reduce(lines: Iterable<string>, filePath?: string): SessionSummary[];
 }

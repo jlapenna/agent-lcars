@@ -100,6 +100,7 @@ case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;
   opencode) AGENT_NAME=OpenCode ;;
+  agy) AGENT_NAME=Antigravity ;;
   goose) AGENT_NAME=Goose ;;
   *) AGENT_NAME=Unknown ;;
 esac
@@ -151,12 +152,17 @@ redact_runner_secrets() {
   local -a secrets=("${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}"
     "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}")
   for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
-    "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}"; do
+    "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}"; do
     if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
   done
   if [ -n "${CODEX_AUTH_FILE:-}" ] && [ -r "$CODEX_AUTH_FILE" ]; then
     mapfile -t -O "${#secrets[@]}" secrets < <(jq -r '.. | strings | select(length >= 16)' "$CODEX_AUTH_FILE" 2>/dev/null || true)
   fi
+  for file in "${AGY_TOKEN_FILE:-/run/secrets/antigravity-oauth-token}" "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"; do
+    if [ -n "$file" ] && [ -r "$file" ]; then
+      mapfile -t -O "${#secrets[@]}" secrets < <(jq -r '.. | strings | select(length >= 16)' "$file" 2>/dev/null || true)
+    fi
+  done
   text="$(cat)"
   for secret in "${secrets[@]}"; do
     if [ "${#secret}" -ge 8 ]; then text="${text//"$secret"/[redacted]}"; fi
@@ -273,7 +279,7 @@ if [ "$AGENT_NAME" = "Unknown" ]; then
   exit 1
 fi
 case "$PIPELINE:$MODE" in
-  goose:recipe|claude:implement|claude:review|claude:reply|codex:implement|codex:review|codex:reply|opencode:implement|opencode:review|opencode:reply) ;;
+  goose:recipe|claude:implement|claude:review|claude:reply|codex:implement|codex:review|codex:reply|opencode:implement|opencode:review|opencode:reply|agy:implement|agy:review|agy:reply) ;;
   *)
     echo "FATAL: direct runner received unsupported mode '$MODE' for pipeline '$PIPELINE'" >&2
     exit 1
@@ -1169,6 +1175,88 @@ CURLCFG
       echo "FATAL: Codex authentication persistence failed; refusing a successful outcome" >&2
       AGENT_EXIT=1
     fi
+  fi
+elif [ "$PIPELINE" = "agy" ]; then
+  AGY_TOKEN_FILE="${AGY_TOKEN_FILE:-/run/secrets/antigravity-oauth-token}"
+  if [ ! -r "$AGY_TOKEN_FILE" ]; then
+    echo "FATAL: $AGY_TOKEN_FILE is required (Antigravity OAuth token source) but is missing or unreadable" >&2
+    exit 1
+  fi
+  mkdir -m 700 -p "$HOME/.gemini/antigravity-cli"
+  cp "$AGY_TOKEN_FILE" "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+  chmod 600 "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+  worker_policy_bootstrap "${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}/hooks.json"
+  activate_hook_telemetry
+
+  AGY_RESUME_ARGS=()
+  if [ -n "$RESUME_SESSION_ID" ] && [ -n "$RESUME_TRANSCRIPT_URI" ]; then
+    if ! resumed_path="$(GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json \
+      AGENT_TELEMETRY_PROJECT_ID=agent-lcars \
+      node /usr/local/lib/agent-lcars/sidecar.cjs runner resume \
+      --agent antigravity \
+      --session-id "$RESUME_SESSION_ID" --transcript-uri "$RESUME_TRANSCRIPT_URI" \
+      --cwd "$PWD" 2>/dev/null)"; then
+      echo "FATAL: requested Antigravity session restore failed" >&2
+      exit 1
+    fi
+    if [ -z "$resumed_path" ]; then
+      echo "FATAL: requested Antigravity session restore returned no local path" >&2
+      exit 1
+    fi
+    AGY_RESUME_ARGS=(--conversation "$RESUME_SESSION_ID")
+  fi
+
+  AGY_TIMEOUT_SECONDS="${AGY_TIMEOUT_SECONDS:-$PROVIDER_TIMEOUT_SECONDS}"
+  if ! [[ "$AGY_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$AGY_TIMEOUT_SECONDS" -lt 1 ]; then
+    echo "FATAL: AGY_TIMEOUT_SECONDS must be a positive integer" >&2
+    exit 1
+  fi
+  AGY_BIN="${AGY_BIN:-agy}"
+  LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
+  AGY_BASELINE_SESSIONS="$RUNNER_TEMP/agy-baseline-sessions.txt"
+  if [ -d "$HOME/.gemini/antigravity-cli/brain" ]; then
+    find "$HOME/.gemini/antigravity-cli/brain" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u > "$AGY_BASELINE_SESSIONS"
+  else
+    : > "$AGY_BASELINE_SESSIONS"
+  fi
+  AGY_DEADLINE=$(($(monotonic_seconds) + AGY_TIMEOUT_SECONDS))
+  run_agy_round() {
+    local prompt="$1" remaining
+    shift
+    remaining=$((AGY_DEADLINE - $(monotonic_seconds)))
+    [ "$remaining" -gt 0 ] || return 124
+    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+      "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$AGY_BIN" --dangerously-skip-permissions \
+      "$@" -p "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
+    return "${PIPESTATUS[0]}"
+  }
+  agy_round_session() {
+    if [ -n "$RESUME_SESSION_ID" ]; then
+      printf '%s\n' "$RESUME_SESSION_ID"
+      return
+    fi
+    if [ -d "$HOME/.gemini/antigravity-cli/brain" ]; then
+      local after_sessions="$RUNNER_TEMP/agy-after-first-round.txt"
+      find "$HOME/.gemini/antigravity-cli/brain" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u > "$after_sessions"
+      mapfile -t new_agy_sessions < <(comm -13 "$AGY_BASELINE_SESSIONS" "$after_sessions")
+      if [ "${#new_agy_sessions[@]}" -eq 1 ]; then
+        printf '%s\n' "${new_agy_sessions[0]}"
+      fi
+    fi
+  }
+  set +e
+  run_agy_round "$AGENT_PROMPT" "${AGY_RESUME_ARGS[@]}"
+  AGENT_EXIT=$?
+  set -e
+  AGY_CONTINUATION_SESSION=''
+  if worker_completion_needed "$AGENT_EXIT" "$AGY_DEADLINE" "$LAST_MESSAGE_FILE"; then
+    AGY_CONTINUATION_SESSION="$(agy_round_session)"
+  fi
+  if [ -n "$AGY_CONTINUATION_SESSION" ] && worker_authorize_correction && [ $((AGY_DEADLINE - $(monotonic_seconds))) -gt 0 ]; then
+    set +e
+    run_agy_round "$WORKER_COMPLETION_PROMPT" --conversation "$AGY_CONTINUATION_SESSION"
+    AGENT_EXIT=$?
+    set -e
   fi
 else
   # OpenCode's LiteLLM virtual key follows the same file-mounted credential

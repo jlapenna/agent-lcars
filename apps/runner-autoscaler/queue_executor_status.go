@@ -23,7 +23,7 @@ type queueExecutorStatusSource struct {
 	maxConcurrent int
 	activeRuns    func(context.Context) (int, error)
 	logger        *slog.Logger
-	claimCounters func() ([3]uint64, error)
+	claimCounters func() ([4]uint64, error)
 	claimSamples  []queueClaimSample
 	// Nil disables the Work API latency window (tests).
 	latency       func() *cumulativeHistogram
@@ -32,21 +32,21 @@ type queueExecutorStatusSource struct {
 
 type queueClaimSample struct {
 	at     time.Time
-	counts [3]uint64
+	counts [4]uint64
 }
 
 // Both Prometheus's float64 counters and the Console's JavaScript reader
 // must retain exact integer values across the signed Firestore boundary.
 const maxQueueClaimCounter = uint64(1<<53 - 1)
 
-func newConsoleClaimWindow(counts [3]uint64, start, end time.Time) *consoleClaimWindow {
+func newConsoleClaimWindow(counts [4]uint64, start, end time.Time) *consoleClaimWindow {
 	for _, count := range counts {
 		if count > maxQueueClaimCounter {
 			return nil
 		}
 	}
 	return &consoleClaimWindow{
-		Claude: int64(counts[0]), Codex: int64(counts[1]), OpenCode: int64(counts[2]),
+		Claude: int64(counts[0]), Codex: int64(counts[1]), OpenCode: int64(counts[2]), Agy: int64(counts[3]),
 		WindowStart: start.UTC().Format(time.RFC3339Nano), WindowEnd: end.UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -114,11 +114,11 @@ func (s *queueExecutorStatusSource) workAPILatencyWindow(now time.Time) *console
 	return s.latencyWindow.observe(now, s.latency())
 }
 
-// Reading these three existing metric series does not touch the claim path,
+// Reading these four existing metric series does not touch the claim path,
 // Firestore, or the network. A read/reset/gap is explicitly unavailable.
-func currentQueueClaimCounters() ([3]uint64, error) {
-	var counts [3]uint64
-	for i, pipeline := range [3]string{"claude", "codex", "opencode"} {
+func currentQueueClaimCounters() ([4]uint64, error) {
+	var counts [4]uint64
+	for i, pipeline := range [4]string{"claude", "codex", "opencode", "agy"} {
 		var metric dto.Metric
 		if err := queueExecutorClaimsTotal.WithLabelValues(pipeline).Write(&metric); err != nil {
 			return counts, err
@@ -145,7 +145,7 @@ func (s *queueExecutorStatusSource) claimWindow(now time.Time) *consoleClaimWind
 	}
 	if len(s.claimSamples) > 0 {
 		previous := s.claimSamples[len(s.claimSamples)-1]
-		if !now.After(previous.at) || now.Sub(previous.at) > consoleStatusTTL || counts[0] < previous.counts[0] || counts[1] < previous.counts[1] || counts[2] < previous.counts[2] {
+		if !now.After(previous.at) || now.Sub(previous.at) > consoleStatusTTL || counts[0] < previous.counts[0] || counts[1] < previous.counts[1] || counts[2] < previous.counts[2] || counts[3] < previous.counts[3] {
 			s.claimSamples = nil
 		}
 	}
@@ -166,7 +166,7 @@ func (s *queueExecutorStatusSource) claimWindow(now time.Time) *consoleClaimWind
 	if !now.After(first.at) {
 		return nil
 	}
-	return newConsoleClaimWindow([3]uint64{counts[0] - first.counts[0], counts[1] - first.counts[1], counts[2] - first.counts[2]}, first.at, now)
+	return newConsoleClaimWindow([4]uint64{counts[0] - first.counts[0], counts[1] - first.counts[1], counts[2] - first.counts[2], counts[3] - first.counts[3]}, first.at, now)
 }
 
 // runQueueExecutorStatusPublisher shares the scale-set publisher's bounded

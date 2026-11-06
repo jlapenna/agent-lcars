@@ -276,9 +276,23 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
 
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
+        doc.agent === 'antigravity' && (
+          <Stack gap={4}>
+            <Eyebrow>Archived transcript</Eyebrow>
+            <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
+              Archived at <code>{doc.transcriptGcsUri}</code>. No workstation
+              resume command yet for Antigravity sessions, but replying on this
+              item continues the same work item automatically.
+            </Text>
+          </Stack>
+        )}
+
+      {doc.source === 'issue-agent' &&
+        doc.transcriptGcsUri &&
         doc.agent !== 'claude-code' &&
         doc.agent !== 'codex' &&
-        doc.agent !== 'opencode' && (
+        doc.agent !== 'opencode' &&
+        doc.agent !== 'antigravity' && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">

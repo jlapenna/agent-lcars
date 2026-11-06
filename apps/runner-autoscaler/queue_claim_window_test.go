@@ -7,16 +7,16 @@ import (
 )
 
 func TestQueueClaimWindowUsesExistingCountersAndExactObservedInterval(t *testing.T) {
-	counts := [3]uint64{100, 20, 40}
+	counts := [4]uint64{100, 20, 40, 10}
 	var failure error
-	source := &queueExecutorStatusSource{claimCounters: func() ([3]uint64, error) { return counts, failure }}
+	source := &queueExecutorStatusSource{claimCounters: func() ([4]uint64, error) { return counts, failure }}
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	if got := source.claimWindow(now); got != nil {
 		t.Fatal("initial baseline must be unavailable, not zero claims")
 	}
-	counts = [3]uint64{103, 20, 41}
+	counts = [4]uint64{103, 20, 41, 12}
 	got := source.claimWindow(now.Add(10 * time.Second))
-	if got == nil || got.Claude != 3 || got.Codex != 0 || got.OpenCode != 1 || got.WindowStart != now.Format(time.RFC3339Nano) || got.WindowEnd != now.Add(10*time.Second).Format(time.RFC3339Nano) {
+	if got == nil || got.Claude != 3 || got.Codex != 0 || got.OpenCode != 1 || got.Agy != 2 || got.WindowStart != now.Format(time.RFC3339Nano) || got.WindowEnd != now.Add(10*time.Second).Format(time.RFC3339Nano) {
 		t.Fatalf("wrong claim window: %#v", got)
 	}
 	// Drain changes admission, not history; a measured zero is valid after
@@ -24,7 +24,7 @@ func TestQueueClaimWindowUsesExistingCountersAndExactObservedInterval(t *testing
 	for i := 2; i <= 94; i++ {
 		got = source.claimWindow(now.Add(time.Duration(i) * 10 * time.Second))
 	}
-	if got == nil || got.Claude != 0 || got.OpenCode != 0 {
+	if got == nil || got.Claude != 0 || got.OpenCode != 0 || got.Agy != 0 {
 		t.Fatalf("old claims retained: %#v", got)
 	}
 	start, _ := time.Parse(time.RFC3339Nano, got.WindowStart)
@@ -70,9 +70,9 @@ func TestClaimWindowDoesNotForceUnchangedStatusWrites(t *testing.T) {
 
 func TestConsoleClaimWindowRejectsUnsafeIntegerConversion(t *testing.T) {
 	start := time.Date(2026, 10, 10, 5, 23, 42, 0, time.UTC)
-	for i := range 3 {
+	for i := range 4 {
 		for _, unsafe := range []uint64{maxQueueClaimCounter + 1, 1 << 63, ^uint64(0)} {
-			counts := [3]uint64{}
+			counts := [4]uint64{}
 			counts[i] = unsafe
 			if got := newConsoleClaimWindow(counts, start, start.Add(consoleStatusInterval)); got != nil {
 				t.Fatalf("unsafe provider %d count %d became %#v", i, unsafe, got)

@@ -8,7 +8,7 @@
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
-FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
+FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS node-runtime
 FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target

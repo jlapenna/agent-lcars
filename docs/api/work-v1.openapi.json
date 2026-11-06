@@ -1911,7 +1911,7 @@
                   },
                   "pipeline": {
                     "type": "string",
-                    "enum": ["claude", "codex", "opencode"]
+                    "enum": ["claude", "codex", "opencode", "agy"]
                   },
                   "requestId": {
                     "type": "string",
@@ -3234,7 +3234,7 @@
                       },
                       "pipeline": {
                         "type": "string",
-                        "enum": ["claude", "codex", "opencode"]
+                        "enum": ["claude", "codex", "opencode", "agy"]
                       },
                       "priority": {
                         "default": "normal",
@@ -3242,11 +3242,11 @@
                         "enum": ["urgent", "normal", "background"]
                       },
                       "fallbackPipelines": {
-                        "maxItems": 2,
+                        "maxItems": 3,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         }
                       },
                       "deliveryRuntime": {
@@ -3321,7 +3321,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -3329,11 +3329,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -4424,7 +4424,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -4432,11 +4432,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -5533,7 +5533,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -5541,11 +5541,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -6687,7 +6687,12 @@
                                   },
                                   "pipeline": {
                                     "type": "string",
-                                    "enum": ["claude", "codex", "opencode"]
+                                    "enum": [
+                                      "claude",
+                                      "codex",
+                                      "opencode",
+                                      "agy"
+                                    ]
                                   },
                                   "priority": {
                                     "default": "normal",
@@ -6695,11 +6700,16 @@
                                     "enum": ["urgent", "normal", "background"]
                                   },
                                   "fallbackPipelines": {
-                                    "maxItems": 2,
+                                    "maxItems": 3,
                                     "type": "array",
                                     "items": {
                                       "type": "string",
-                                      "enum": ["claude", "codex", "opencode"]
+                                      "enum": [
+                                        "claude",
+                                        "codex",
+                                        "opencode",
+                                        "agy"
+                                      ]
                                     }
                                   },
                                   "deliveryRuntime": {
@@ -7789,7 +7799,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -7797,11 +7807,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -8867,11 +8877,11 @@
                     "maxLength": 256
                   },
                   "fallbackPipelines": {
-                    "maxItems": 2,
+                    "maxItems": 3,
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["claude", "codex", "opencode"]
+                      "enum": ["claude", "codex", "opencode", "agy"]
                     }
                   }
                 }
@@ -8918,7 +8928,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -8926,11 +8936,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -10040,14 +10050,14 @@
                   },
                   "pipeline": {
                     "type": "string",
-                    "enum": ["claude", "codex", "opencode"]
+                    "enum": ["claude", "codex", "opencode", "agy"]
                   },
                   "fallbackPipelines": {
-                    "maxItems": 2,
+                    "maxItems": 3,
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["claude", "codex", "opencode"]
+                      "enum": ["claude", "codex", "opencode", "agy"]
                     }
                   }
                 },
@@ -10095,7 +10105,7 @@
                             },
                             "pipeline": {
                               "type": "string",
-                              "enum": ["claude", "codex", "opencode"]
+                              "enum": ["claude", "codex", "opencode", "agy"]
                             },
                             "priority": {
                               "default": "normal",
@@ -10103,11 +10113,11 @@
                               "enum": ["urgent", "normal", "background"]
                             },
                             "fallbackPipelines": {
-                              "maxItems": 2,
+                              "maxItems": 3,
                               "type": "array",
                               "items": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               }
                             },
                             "deliveryRuntime": {
@@ -11214,7 +11224,7 @@
                       },
                       "pipeline": {
                         "type": "string",
-                        "enum": ["claude", "codex", "opencode"]
+                        "enum": ["claude", "codex", "opencode", "agy"]
                       },
                       "priority": {
                         "default": "normal",
@@ -11222,11 +11232,11 @@
                         "enum": ["urgent", "normal", "background"]
                       },
                       "fallbackPipelines": {
-                        "maxItems": 2,
+                        "maxItems": 3,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         }
                       },
                       "deliveryRuntime": {
@@ -11291,7 +11301,7 @@
                         },
                         "pipeline": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         },
                         "priority": {
                           "default": "normal",
@@ -11299,11 +11309,11 @@
                           "enum": ["urgent", "normal", "background"]
                         },
                         "fallbackPipelines": {
-                          "maxItems": 2,
+                          "maxItems": 3,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "enum": ["claude", "codex", "opencode"]
+                            "enum": ["claude", "codex", "opencode", "agy"]
                           }
                         },
                         "deliveryRuntime": {
@@ -11497,7 +11507,7 @@
                       },
                       "pipeline": {
                         "type": "string",
-                        "enum": ["claude", "codex", "opencode"]
+                        "enum": ["claude", "codex", "opencode", "agy"]
                       },
                       "priority": {
                         "default": "normal",
@@ -11505,11 +11515,11 @@
                         "enum": ["urgent", "normal", "background"]
                       },
                       "fallbackPipelines": {
-                        "maxItems": 2,
+                        "maxItems": 3,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         }
                       },
                       "deliveryRuntime": {
@@ -11574,7 +11584,7 @@
                         },
                         "pipeline": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         },
                         "priority": {
                           "default": "normal",
@@ -11582,11 +11592,11 @@
                           "enum": ["urgent", "normal", "background"]
                         },
                         "fallbackPipelines": {
-                          "maxItems": 2,
+                          "maxItems": 3,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "enum": ["claude", "codex", "opencode"]
+                            "enum": ["claude", "codex", "opencode", "agy"]
                           }
                         },
                         "deliveryRuntime": {
@@ -11913,7 +11923,7 @@
                         },
                         "pipeline": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         },
                         "priority": {
                           "default": "normal",
@@ -11921,11 +11931,11 @@
                           "enum": ["urgent", "normal", "background"]
                         },
                         "fallbackPipelines": {
-                          "maxItems": 2,
+                          "maxItems": 3,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "enum": ["claude", "codex", "opencode"]
+                            "enum": ["claude", "codex", "opencode", "agy"]
                           }
                         },
                         "deliveryRuntime": {
@@ -12093,7 +12103,7 @@
                               },
                               "pipeline": {
                                 "type": "string",
-                                "enum": ["claude", "codex", "opencode"]
+                                "enum": ["claude", "codex", "opencode", "agy"]
                               },
                               "priority": {
                                 "default": "normal",
@@ -12101,11 +12111,11 @@
                                 "enum": ["urgent", "normal", "background"]
                               },
                               "fallbackPipelines": {
-                                "maxItems": 2,
+                                "maxItems": 3,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "enum": ["claude", "codex", "opencode"]
+                                  "enum": ["claude", "codex", "opencode", "agy"]
                                 }
                               },
                               "deliveryRuntime": {
@@ -12271,7 +12281,7 @@
                         },
                         "pipeline": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         },
                         "priority": {
                           "default": "normal",
@@ -12279,11 +12289,11 @@
                           "enum": ["urgent", "normal", "background"]
                         },
                         "fallbackPipelines": {
-                          "maxItems": 2,
+                          "maxItems": 3,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "enum": ["claude", "codex", "opencode"]
+                            "enum": ["claude", "codex", "opencode", "agy"]
                           }
                         },
                         "deliveryRuntime": {
@@ -12512,7 +12522,7 @@
                         },
                         "pipeline": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         },
                         "priority": {
                           "default": "normal",
@@ -12520,11 +12530,11 @@
                           "enum": ["urgent", "normal", "background"]
                         },
                         "fallbackPipelines": {
-                          "maxItems": 2,
+                          "maxItems": 3,
                           "type": "array",
                           "items": {
                             "type": "string",
-                            "enum": ["claude", "codex", "opencode"]
+                            "enum": ["claude", "codex", "opencode", "agy"]
                           }
                         },
                         "deliveryRuntime": {
@@ -12822,14 +12832,14 @@
                       },
                       "pipeline": {
                         "type": "string",
-                        "enum": ["claude", "codex", "opencode"]
+                        "enum": ["claude", "codex", "opencode", "agy"]
                       },
                       "fallbackPipelines": {
-                        "maxItems": 2,
+                        "maxItems": 3,
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "enum": ["claude", "codex", "opencode"]
+                          "enum": ["claude", "codex", "opencode", "agy"]
                         }
                       },
                       "target": {
@@ -13045,11 +13055,11 @@
                     "maxLength": 128
                   },
                   "fallbackPipelines": {
-                    "maxItems": 2,
+                    "maxItems": 3,
                     "type": "array",
                     "items": {
                       "type": "string",
-                      "enum": ["claude", "codex", "opencode"]
+                      "enum": ["claude", "codex", "opencode", "agy"]
                     }
                   }
                 },
@@ -14087,7 +14097,7 @@
                                 },
                                 "pipeline": {
                                   "type": "string",
-                                  "enum": ["claude", "codex", "opencode"]
+                                  "enum": ["claude", "codex", "opencode", "agy"]
                                 },
                                 "priority": {
                                   "default": "normal",
@@ -14095,11 +14105,16 @@
                                   "enum": ["urgent", "normal", "background"]
                                 },
                                 "fallbackPipelines": {
-                                  "maxItems": 2,
+                                  "maxItems": 3,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": ["claude", "codex", "opencode"]
+                                    "enum": [
+                                      "claude",
+                                      "codex",
+                                      "opencode",
+                                      "agy"
+                                    ]
                                   }
                                 },
                                 "deliveryRuntime": {
@@ -14519,7 +14534,7 @@
                                 },
                                 "pipeline": {
                                   "type": "string",
-                                  "enum": ["claude", "codex", "opencode"]
+                                  "enum": ["claude", "codex", "opencode", "agy"]
                                 },
                                 "priority": {
                                   "default": "normal",
@@ -14527,11 +14542,16 @@
                                   "enum": ["urgent", "normal", "background"]
                                 },
                                 "fallbackPipelines": {
-                                  "maxItems": 2,
+                                  "maxItems": 3,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "enum": ["claude", "codex", "opencode"]
+                                    "enum": [
+                                      "claude",
+                                      "codex",
+                                      "opencode",
+                                      "agy"
+                                    ]
                                   }
                                 },
                                 "deliveryRuntime": {

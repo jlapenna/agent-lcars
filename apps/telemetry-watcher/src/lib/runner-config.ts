@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
+  defaultAntigravityBrainDir,
   defaultClaudeProjectsDir,
   defaultCodexSessionsDir,
   defaultSessionStateDir,
@@ -31,6 +32,9 @@ export interface RunnerConfig extends Pick<
   codexSessionsDir: string;
   /** Scratch root holding bounded `opencode export` materializations. */
   opencodeExportsDir: string;
+  /** Root to discover Antigravity transcripts under, defaulting to
+   * `~/.gemini/antigravity-cli/brain`. */
+  antigravityBrainDir?: string;
   /** Exact checkout directory OpenCode sessions must report to be captured. */
   opencodeWorkspaceDir: string;
   /** Well-known file to write the OpenCode pipeline's final assistant
@@ -77,6 +81,7 @@ interface RunnerFlags {
   issueNumber?: string;
   projectsDir?: string;
   codexSessionsDir?: string;
+  antigravityBrainDir?: string;
   repo?: string;
   opencodeLastMessageFile?: string;
 }
@@ -115,6 +120,9 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
       i++;
     } else if (arg === '--codex-sessions-dir') {
       flags.codexSessionsDir = next;
+      i++;
+    } else if (arg === '--antigravity-brain-dir') {
+      flags.antigravityBrainDir = next;
       i++;
     } else if (arg === '--repo') {
       flags.repo = next;
@@ -171,6 +179,8 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
     codexSessionsDir: flags.codexSessionsDir ?? defaultCodexSessionsDir(),
+    antigravityBrainDir:
+      flags.antigravityBrainDir ?? defaultAntigravityBrainDir(),
     opencodeExportsDir: path.join(os.tmpdir(), 'agent-lcars-opencode-exports'),
     opencodeWorkspaceDir: process.env['GITHUB_WORKSPACE'] ?? process.cwd(),
     sessionStateDir: defaultSessionStateDir(),

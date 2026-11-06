@@ -108,8 +108,11 @@ async function IssuesContent({ query }: { query: Query }) {
                       .filter(
                         (
                           pipeline,
-                        ): pipeline is 'claude' | 'codex' | 'opencode' =>
-                          ['claude', 'codex', 'opencode'].includes(pipeline),
+                        ): pipeline is
+                          'claude' | 'codex' | 'opencode' | 'agy' =>
+                          ['claude', 'codex', 'opencode', 'agy'].includes(
+                            pipeline,
+                          ),
                       )
                       .map((pipeline) => ({ repo: reference.repo, pipeline }));
               return (

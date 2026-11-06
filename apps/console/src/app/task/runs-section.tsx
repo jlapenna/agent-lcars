@@ -39,7 +39,12 @@ const EVENT_BY_LABELS: Record<RunEvent['by'], string> = {
   'provider-fallback': 'provider fallback',
 };
 
-const KNOWN_PIPELINES = new Set<AgentPipeline>(['claude', 'codex', 'opencode']);
+const KNOWN_PIPELINES = new Set<AgentPipeline>([
+  'claude',
+  'codex',
+  'opencode',
+  'agy',
+]);
 
 function isKnownPipeline(pipeline: string): pipeline is AgentPipeline {
   return KNOWN_PIPELINES.has(pipeline as AgentPipeline);

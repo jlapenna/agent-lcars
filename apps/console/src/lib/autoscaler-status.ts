@@ -36,6 +36,7 @@ export interface QueueClaimWindow {
   claude: number;
   codex: number;
   opencode: number;
+  agy?: number;
   windowStart: string;
   windowEnd: string;
 }
@@ -253,13 +254,16 @@ function parseClaimWindow(
     ['claude', 'codex', 'opencode'].some(
       (key) =>
         !Number.isSafeInteger(record[key]) || (record[key] as number) < 0,
-    )
+    ) ||
+    (record['agy'] !== undefined &&
+      (!Number.isSafeInteger(record['agy']) || (record['agy'] as number) < 0))
   )
     return undefined;
   return {
     claude: record['claude'] as number,
     codex: record['codex'] as number,
     opencode: record['opencode'] as number,
+    ...(record['agy'] !== undefined ? { agy: record['agy'] as number } : {}),
     windowStart: start,
     windowEnd: end,
   };

@@ -6,7 +6,7 @@ import {
   type SessionArchiveResult,
 } from './session-archive';
 
-const PIPELINES = ['claude', 'codex', 'opencode', 'unknown'] as const;
+const PIPELINES = ['claude', 'codex', 'opencode', 'agy', 'unknown'] as const;
 
 /** The existing SessionSpend owner supplies all arithmetic and PR qualification.
  * These gauges describe cumulative selected-session spend, not hourly charges,

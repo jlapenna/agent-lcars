@@ -91,6 +91,17 @@ describe('selectResumeSession', () => {
     );
   });
 
+  it('selects an antigravity session for an agy reply using transcriptGcsUri', () => {
+    const doc = session({
+      agent: 'antigravity',
+      transcriptGcsUri: 'gs://b/runs/work:01ABC%2Fr1/antigravity/s1.jsonl',
+      resumeGcsUri: undefined,
+    });
+    expect(selectResumeSession([doc], runIds, 'agy')?.sessionId).toBe(
+      doc.sessionId,
+    );
+  });
+
   it('still refuses to cross pipelines', () => {
     expect(
       selectResumeSession([session({ agent: 'codex' })], runIds, 'claude'),
@@ -128,10 +139,18 @@ describe('resumeUriFor', () => {
     expect(resumeUriFor(doc)).toBe('gs://b/runs/r1/opencode/s1.export.json');
   });
 
-  it('falls back to transcriptGcsUri for claude and codex', () => {
+  it('falls back to transcriptGcsUri for claude, codex, and antigravity', () => {
     expect(resumeUriFor(session({ agent: 'claude-code' }))).toBe(
       'gs://b/runs/work:01ABC%2Fr1/claude-code/s1.jsonl',
     );
+    expect(
+      resumeUriFor(
+        session({
+          agent: 'antigravity',
+          transcriptGcsUri: 'gs://b/runs/work:01ABC%2Fr1/antigravity/s1.jsonl',
+        }),
+      ),
+    ).toBe('gs://b/runs/work:01ABC%2Fr1/antigravity/s1.jsonl');
   });
 });
 

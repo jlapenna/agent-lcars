@@ -44,6 +44,7 @@ const LOCAL_AGENT_INVOCATIONS: Record<
   claude: (prompt) => `claude ${prompt}`,
   codex: (prompt) => `codex ${prompt}`,
   opencode: (prompt) => `opencode run ${prompt}`,
+  agy: (prompt) => `agy ${prompt}`,
 };
 
 /** The full command line a maintainer pastes into a local `pipeline` CLI

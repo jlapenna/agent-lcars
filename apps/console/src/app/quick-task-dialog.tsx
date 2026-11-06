@@ -59,6 +59,7 @@ const PIPELINE_OPTIONS: { value: AgentPipeline; label: string }[] = [
   { value: 'claude', label: 'claude' },
   { value: 'codex', label: 'codex' },
   { value: 'opencode', label: 'opencode' },
+  { value: 'agy', label: 'agy' },
 ];
 
 const emptySourceContext = (): QuickTaskSourceContext => ({

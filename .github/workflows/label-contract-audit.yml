@@ -56,6 +56,9 @@ jobs:
           - full_name: jlapenna/homegit
             owner: jlapenna
             repository: homegit
+          - full_name: jlapenna/dev
+            owner: jlapenna
+            repository: dev
 
     steps:
       - uses: actions/checkout@v7

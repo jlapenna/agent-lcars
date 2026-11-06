@@ -47,9 +47,11 @@ export interface TokenRateFilter {
   agent?: string;
 }
 
-/** Session agents name the runtime; Work pipelines drop `-code`. */
+/** Session agents name the runtime; Work pipelines drop `-code` or map `antigravity` to `agy`. */
 function pipelineOf(agent: string): string {
-  return agent === 'claude-code' ? 'claude' : agent;
+  if (agent === 'claude-code') return 'claude';
+  if (agent === 'antigravity') return 'agy';
+  return agent;
 }
 
 /**

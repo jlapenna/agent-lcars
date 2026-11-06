@@ -155,7 +155,7 @@ func TestKubernetesOrphanPlacementRequiresQueueOwnership(t *testing.T) {
 	}
 }
 func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
-	for _, provider := range []string{"claude", "codex", "opencode"} {
+	for _, provider := range []string{"claude", "codex", "opencode", "agy"} {
 		t.Run(provider, func(t *testing.T) {
 			q, c := kubeQueueFixture()
 			ctx := context.Background()
@@ -200,7 +200,7 @@ func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
 					volatile = v.EmptyDir != nil && v.EmptyDir.Medium == core.StorageMediumMemory
 				}
 			}
-			if !keys["telemetry-writer.json"] || keys["claude-code-oauth-token"] != (provider == "claude") || keys["opencode-llm-api-key"] != (provider == "opencode") || volatile != (provider == "codex") {
+			if !keys["telemetry-writer.json"] || keys["claude-code-oauth-token"] != (provider == "claude") || keys["opencode-llm-api-key"] != (provider == "opencode") || keys["antigravity-oauth-token"] != (provider == "agy") || volatile != (provider == "codex") {
 				t.Fatal("provider isolation violated")
 			}
 			secret, _ := c.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})
@@ -328,7 +328,7 @@ func TestKubernetesWorkerPolicySelection(t *testing.T) {
 		invalid   bool
 	}{
 		{"", "", false}, {" ", "", false},
-		{"claude", "claude", false}, {"codex", "codex", false}, {"opencode", "opencode", false},
+		{"claude", "claude", false}, {"codex", "codex", false}, {"opencode", "opencode", false}, {"agy", "agy", false},
 		{" opencode,claude,claude ", "claude,opencode", false},
 		{"all", "", true}, {"codex,", "", true}, {"codex,,claude", "", true},
 	} {
@@ -343,7 +343,7 @@ func TestKubernetesWorkerPolicySelection(t *testing.T) {
 			}
 			q, c := kubeQueueFixture()
 			q.workerPolicyProviders = selected
-			for _, provider := range []string{"claude", "codex", "opencode"} {
+			for _, provider := range []string{"claude", "codex", "opencode", "agy"} {
 				launch := directRunnerLaunch{runID: "work:policy-" + provider + "/r1", pipeline: provider, runToken: "fixture-token"}
 				if err := q.launch(context.Background(), launch); err != nil {
 					t.Fatal(err)
