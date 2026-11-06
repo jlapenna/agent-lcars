@@ -266,7 +266,7 @@ describe('finalizeSidecar', () => {
       {
         projectId: undefined,
         bucket: 'agent-lcars-session-transcripts',
-        object: `runs/work_01M6RVDSR33D74CQ0GGB7Y4DHK_r1/antigravity/${sessionId}.jsonl`,
+        object: `runs/work:01M6RVDSR33D74CQ0GGB7Y4DHK/r1/antigravity/${sessionId}.jsonl`,
         contents: antigravityTranscript,
       },
     ]);
@@ -276,7 +276,7 @@ describe('finalizeSidecar', () => {
         agent: 'antigravity',
         liveness: 'ended',
         renderable: true,
-        transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/work_01M6RVDSR33D74CQ0GGB7Y4DHK_r1/antigravity/${sessionId}.jsonl`,
+        transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/work:01M6RVDSR33D74CQ0GGB7Y4DHK/r1/antigravity/${sessionId}.jsonl`,
       }),
     ]);
   });
