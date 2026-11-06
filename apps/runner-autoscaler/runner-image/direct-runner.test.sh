@@ -2615,6 +2615,7 @@ bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/goose-executor.test.mjs"
+"$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/codex-job-auth.test.mjs"
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/goose-environment.test.mjs"
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/job-secret-environment.test.mjs"
 echo "direct-runner.sh: OK"

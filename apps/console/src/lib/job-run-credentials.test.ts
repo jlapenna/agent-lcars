@@ -199,3 +199,49 @@ it('delivers Claude auth for the deployed eval profile while retaining repositor
   expect(checkout.body.identity).toBeUndefined();
   expect(appToken).toHaveBeenCalledExactlyOnceWith('jlapenna/agent-lcars');
 });
+
+it.each([
+  'ordinary',
+  'forged-provider',
+  'foreign-occurrence',
+  'revoked-profile',
+])(
+  'refuses Codex auth for %s recipes before any credential store IO',
+  async (failure) => {
+    const read = vi.fn();
+    context.codexAuth = { read } as unknown as RunsContext['codexAuth'];
+    if (failure !== 'ordinary')
+      run.params = { ...run.params, providerAuth: 'codex' };
+    if (failure === 'foreign-occurrence')
+      readOccurrence.mockResolvedValue({
+        workId: 'foreign',
+        definition: { repository: 'jlapenna/dev' },
+      });
+    if (failure === 'revoked-profile')
+      authorize.mockImplementation(() => {
+        throw new Error('revoked');
+      });
+    const response = await request('codex-auth');
+    expect(response.status).toBe(failure === 'ordinary' ? 401 : 403);
+    expect(read).not.toHaveBeenCalled();
+  },
+);
+
+it('authorizes a Codex-enabled recipe before entering the existing lease broker', async () => {
+  run.params = { ...run.params, providerAuth: 'codex' };
+  authorize.mockReturnValue({ name: 'skill-evals', providerAuth: 'codex' });
+  // A deliberate controlled broker refusal proves the request reached the
+  // broker only after exact profile authorization; it vends no credentials.
+  const reserve = vi.fn(async () => ({
+    refused: true,
+    reason: 'credential-operation-pending',
+  }));
+  context.store = {
+    ...context.store,
+    transactRun: reserve,
+  } as unknown as RunsContext['store'];
+  const response = await request('codex-auth');
+  expect(response.status).toBe(409);
+  expect(authorize).toHaveBeenCalled();
+  expect(reserve).toHaveBeenCalled();
+});

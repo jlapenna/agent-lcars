@@ -748,6 +748,8 @@ RUN chmod +x /usr/local/bin/lcars
 # runner is an integrated first-party delivery surface, not a pinned artifact.
 ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 RUN npm install -g @openai/codex && codex --version
+# Native Codex protocol and read-only eval tooling are publication contracts.
+RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skill-evals-codex.test.mjs
 
 # QueueExecutor direct mode invokes `claude` itself instead of the GitHub
 # Action that normally provisions that CLI. Keep it in the shared runner image
