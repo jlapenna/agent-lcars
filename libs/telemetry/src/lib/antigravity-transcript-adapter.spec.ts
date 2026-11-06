@@ -92,12 +92,14 @@ describe('antigravityAdapter', () => {
     ]);
   });
 
-  it('skips transcript_full.jsonl during recursive directory discovery to prevent duplicate session summaries', () => {
+  it('skips transcript_full.jsonl and chunks/*.jsonl during recursive directory discovery to prevent duplicate session summaries', () => {
     const fullPath = BRAIN_PATH.replace(
       'transcript.jsonl',
       'transcript_full.jsonl',
     );
+    const chunkPath = `/home/user/.gemini/antigravity-cli/brain/${SESSION_ID}/.system_generated/logs/chunks/transcript/00000000.jsonl`;
     expect(antigravityAdapter.reduce(FIXTURE_LINES, fullPath)).toEqual([]);
+    expect(antigravityAdapter.reduce(FIXTURE_LINES, chunkPath)).toEqual([]);
   });
 
   it('renders Antigravity transcript lines as timeline events', () => {

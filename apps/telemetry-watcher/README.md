@@ -35,7 +35,7 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
 
 1. **Mid-run, live (provider hooks — hooks telemetry phase 3):**
    `direct-runner.sh` installs the provider's hook entries for every
-   pipeline (Claude Code and Codex through `lcars integration install`;
+   pipeline (Claude Code, Codex, and Antigravity through `lcars integration install`;
    OpenCode through the `lcars-telemetry.js` plugin already in the image's
    OpenCode config) and exports the run context the hook client stamps on
    each event. There is no selector and no polling fallback: if the hook
@@ -190,7 +190,7 @@ always exits 0. Every decision is one line in
 3. Install the hook entries and their launcher stubs:
 
    ```bash
-   lcars integration install all      # or: claude | codex
+   lcars integration install all      # or: claude | codex | opencode | agy
    lcars integration status all
    ```
 

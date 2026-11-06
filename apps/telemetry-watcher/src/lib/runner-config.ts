@@ -174,6 +174,8 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   // QueueExecutor supplies its run identity explicitly.
   const repo =
     parseOwnerRepo(flags.repo) ??
+    parseOwnerRepo(process.env['LCARS_REPO']) ??
+    parseOwnerRepo(process.env['REPOSITORY']) ??
     parseOwnerRepo(process.env['GITHUB_REPOSITORY']);
 
   return {
