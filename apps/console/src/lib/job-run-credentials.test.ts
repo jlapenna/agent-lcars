@@ -1,6 +1,12 @@
-import type { Run } from '@agent-lcars/orchestrator';
-import { beforeEach, expect, it, vi } from 'vitest';
+// @vitest-environment node
 
+import type { Run } from '@agent-lcars/orchestrator';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { beforeEach, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
+
+import { jobProfileSchema } from './repository-job-definition';
 import { hashRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 
@@ -69,10 +75,10 @@ beforeEach(() => {
     },
   } as unknown as RunsContext;
 });
-async function request() {
+async function request(path = 'checkout-token') {
   const { response } = await createRunsHandler().handle(
     new Request(
-      `https://console.test/api/work/v1/runs/${encodeURIComponent(runId)}/checkout-token`,
+      `https://console.test/api/work/v1/runs/${encodeURIComponent(runId)}/${path}`,
     ),
     { prefix: '/api/work/v1', context },
   );
@@ -141,4 +147,54 @@ it('keeps ordinary Goose profiles on installation credentials', async () => {
   expect(response.body.token).toBe('fixture-app-token');
   expect(response.body.identity).toBeUndefined();
   expect(credential).not.toHaveBeenCalled();
+});
+
+it('delivers Claude auth for the deployed eval profile while retaining repository App checkout', async () => {
+  const config = parseYaml(
+    readFileSync(
+      path.join(import.meta.dirname, '../../apphosting.yaml'),
+      'utf8',
+    ),
+  ) as { env: { variable: string; value?: string }[] };
+  const profiles = JSON.parse(
+    config.env.find((entry) => entry.variable === 'AGENT_LCARS_JOB_PROFILES')!
+      .value!,
+  ) as { name: string }[];
+  const profile = jobProfileSchema.parse(
+    profiles.find((entry) => entry.name === 'skill-evals'),
+  );
+  authorize.mockReturnValue(profile);
+  readOccurrence.mockResolvedValue({
+    workId,
+    definition: { repository: 'jlapenna/agent-lcars', name: 'skill-evals' },
+    profile,
+    secretSnapshot: {
+      credentialSet: profile.credentialSet,
+      versions: { 'skill-evals-claude-token': '1' },
+    },
+  });
+  context.store.readTask = vi.fn(async () => ({
+    task: { work: { spec: { target: { repo: 'jlapenna/agent-lcars' } } } },
+  })) as typeof context.store.readTask;
+  context.jobCredentials!.deliver = vi.fn(async () => ({
+    environment: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-claude-token' },
+    files: {},
+  }));
+  credential.mockResolvedValue(undefined);
+  appToken.mockResolvedValue({
+    token: 'fixture-app-token',
+    expiresAt: '2026-11-04T01:00:00Z',
+  });
+
+  const delivered = await request('job-secrets');
+  expect(delivered.status).toBe(200);
+  expect(delivered.body).toEqual({
+    environment: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-claude-token' },
+    files: {},
+  });
+  const checkout = await request();
+  expect(checkout.status).toBe(200);
+  expect(checkout.body.token).toBe('fixture-app-token');
+  expect(checkout.body.identity).toBeUndefined();
+  expect(appToken).toHaveBeenCalledExactlyOnceWith('jlapenna/agent-lcars');
 });

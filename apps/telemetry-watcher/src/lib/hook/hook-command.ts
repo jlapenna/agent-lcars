@@ -85,7 +85,7 @@ export interface HookCommandDependencies {
   env: NodeJS.ProcessEnv;
   homeDirectory: string;
   now: () => Date;
-  readStdin: () => string;
+  readStdin: () => string | Promise<string>;
   readTranscriptLines: (filePath: string) => Iterable<string>;
   fileExists: (filePath: string) => boolean;
   /** Locates a Codex rollout by session id when the payload has no path. */
@@ -123,10 +123,15 @@ export function defaultHookCommandDependencies(
     env,
     homeDirectory: os.homedir(),
     now: () => new Date(),
-    readStdin: () => {
+    readStdin: async () => {
       if (process.stdin.isTTY) return '';
       try {
-        return fs.readFileSync(0, 'utf8');
+        // Runtime-spawned pipes can be nonblocking. A synchronous read may
+        // throw EAGAIN before the payload or EOF arrives and lose the event.
+        const chunks: Buffer[] = [];
+        for await (const chunk of process.stdin)
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        return Buffer.concat(chunks).toString('utf8');
       } catch {
         return '';
       }
@@ -441,8 +446,8 @@ async function handleOpencodeHook(
   inline: boolean,
 ): Promise<HookCommandResult> {
   let snapshotDirectory: string | undefined;
-  const readStdin = () => {
-    const raw = deps.readStdin();
+  const readStdin = async () => {
+    const raw = await deps.readStdin();
     snapshotDirectory = opencodeSnapshotDirectory(raw);
     return raw;
   };
@@ -470,7 +475,7 @@ async function handleRuntimeHook(
       `${now} ${runtime} ${action} ${detail}`.trimEnd(),
     );
 
-  let payload = parseHookPayload(deps.readStdin(), fallbackEventName);
+  let payload = parseHookPayload(await deps.readStdin(), fallbackEventName);
   if (!payload) {
     log('ignored', 'unparseable payload');
     return { action: 'ignored', detail: 'unparseable payload' };
