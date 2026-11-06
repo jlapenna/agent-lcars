@@ -18,7 +18,7 @@ state remain their respective artifact facts.
 - `agent:*` requests the canonical executor to take the anchor over -- on an
   issue, implement it and open a PR; on a pull request, take the PR over and
   keep pushing commits to its branch. Apply one of `agent:claude`,
-  `agent:codex`, or `agent:opencode`. Label-triggered admission checks the
+  `agent:codex`, `agent:opencode`, or `agent:agy`. Label-triggered admission checks the
   complete delivered anchor label set and refuses multiple choices with
   `routing-label-conflict`, the namespace, sorted conflicting labels, and
   explicit maintainer resolution guidance. Immutable Work admission remains
@@ -26,7 +26,7 @@ state remain their respective artifact facts.
 - `review:*` (pull requests only; declared fleet-wide since #1312 -- #567
   introduced it on Agent LCARS alone, while the native verifier's
   `MODE=review` support was already fleet-wide) asks an agent to leave a
-  review on the diff instead of taking it over -- no commits pushed. Same one-of-three-and-only-within-its-own-namespace
+  review on the diff instead of taking it over -- no commits pushed. Same one-of-four-and-only-within-its-own-namespace
   contract as `agent:*`, evaluated independently: a PR may carry an
   `agent:*` label, a `review:*` label, both, or neither, and each drives
   its own dispatch mode when applied.
@@ -68,8 +68,8 @@ state remain their respective artifact facts.
 | ----------------- | ---------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
 | `type:*`          | All canonical types                      | All canonical types                                               | All canonical types                      |
 | `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy                          | Ready, blocked, needs-human, post-deploy |
-| `agent:*`         | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                                           | Claude, Codex, OpenCode                  |
-| `review:*`        | Claude, Codex, OpenCode                  | Claude, Codex, OpenCode                                           | Claude, Codex, OpenCode                  |
+| `agent:*`         | Claude, Codex, OpenCode, Antigravity     | Claude, Codex, OpenCode, Antigravity                              | Claude, Codex, OpenCode, Antigravity     |
+| `review:*`        | Claude, Codex, OpenCode, Antigravity     | Claude, Codex, OpenCode, Antigravity                              | Claude, Codex, OpenCode, Antigravity     |
 | `agent-option:*`  | Cross-repo                               | Cross-repo                                                        | Cross-repo                               |
 | Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                                              | Quick task, Renovate                     |
 | Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, functional/full E2E, snapshots | None                                     |
@@ -78,7 +78,7 @@ state remain their respective artifact facts.
 
 Repository profiles deliberately share names without requiring every
 repository to install every label. Every watched repository uses the same
-canonical Claude, Codex, and OpenCode integrations unless it explicitly opts
+canonical Claude, Codex, OpenCode, and Antigravity integrations unless it explicitly opts
 out with `agents: false`. The admitted Work pipeline remains historical intent. An authorized sole
 `agent:*` replacement requests a fresh execution-provider handoff through the
 controller; the console does not rewrite historical provider facts.

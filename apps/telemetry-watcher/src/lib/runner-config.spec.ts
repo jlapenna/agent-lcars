@@ -10,7 +10,9 @@ const ENV_KEYS = [
   'AGENT_TELEMETRY_WRITER_KEY_JSON',
   'FIRESTORE_EMULATOR_HOST',
   'GITHUB_REPOSITORY',
+  'LCARS_REPO',
   'OPENCODE_RESOLVED_MODEL',
+  'REPOSITORY',
 ] as const;
 
 describe('loadRunnerConfig', () => {
@@ -144,14 +146,23 @@ describe('loadRunnerConfig', () => {
     ).toBeUndefined();
   });
 
-  it('falls back to GITHUB_REPOSITORY when --repo is not passed', () => {
+  it('falls back to LCARS_REPO, REPOSITORY, or GITHUB_REPOSITORY when --repo is not passed', () => {
     process.env['GITHUB_REPOSITORY'] = 'supersprinklesracing/sprinkles';
-
-    const config = loadRunnerConfig([]);
-
-    expect(config.repo).toEqual({
+    expect(loadRunnerConfig([]).repo).toEqual({
       owner: 'supersprinklesracing',
       name: 'sprinkles',
+    });
+
+    process.env['REPOSITORY'] = 'jlapenna/homelab';
+    expect(loadRunnerConfig([]).repo).toEqual({
+      owner: 'jlapenna',
+      name: 'homelab',
+    });
+
+    process.env['LCARS_REPO'] = 'jlapenna/agent-lcars';
+    expect(loadRunnerConfig([]).repo).toEqual({
+      owner: 'jlapenna',
+      name: 'agent-lcars',
     });
   });
 

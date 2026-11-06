@@ -63,6 +63,9 @@ fi
 if [ -n "${INTENT_ID:-}" ]; then
   ARGS+=(--intent-id "$INTENT_ID")
 fi
+if [ -n "${REPO:-${REPOSITORY:-${LCARS_REPO:-}}}" ]; then
+  ARGS+=(--repo "${REPO:-${REPOSITORY:-${LCARS_REPO:-}}}")
+fi
 if [ -n "${OPENCODE_LAST_MESSAGE_FILE:-}" ]; then
   ARGS+=(--opencode-last-message-file "$OPENCODE_LAST_MESSAGE_FILE")
 fi

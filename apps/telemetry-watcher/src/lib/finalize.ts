@@ -239,19 +239,25 @@ export async function finalizeSidecar(
       : undefined;
 
     for (const summary of summaries) {
-      shippedCount++;
-      await finalizeSummary(summary, content, root.adapter, {
-        config,
-        store,
-        resolveGitBranch,
-        resolveGitRepo,
-        uploadTranscript,
-        statusAnnotations,
-        titleOverlay,
-        file,
-        exists,
-        readFile,
-      });
+      try {
+        await finalizeSummary(summary, content, root.adapter, {
+          config,
+          store,
+          resolveGitBranch,
+          resolveGitRepo,
+          uploadTranscript,
+          statusAnnotations,
+          titleOverlay,
+          file,
+          exists,
+          readFile,
+        });
+        shippedCount++;
+      } catch (error) {
+        const message = `agent-lcars-telemetry-watcher: finalize failed to build session ${summary.sessionId} from ${file}, skipping`;
+        logger.warn(message, error);
+        annotateWarning(`${message}: ${error}`);
+      }
     }
   }
 

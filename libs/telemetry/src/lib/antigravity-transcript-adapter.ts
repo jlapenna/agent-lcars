@@ -125,7 +125,13 @@ export const antigravityAdapter: TranscriptAdapter = {
     return firstLines.some(looksLikeAntigravityLine);
   },
   reduce(lines: Iterable<string>, filePath?: string): SessionSummary[] {
-    if (filePath?.endsWith('transcript_full.jsonl')) {
+    if (
+      filePath?.endsWith('transcript_full.jsonl') ||
+      (filePath !== undefined && /[\\/]chunks[\\/]/.test(filePath)) ||
+      (filePath !== undefined &&
+        /[\\/]brain[\\/]/.test(filePath) &&
+        !BRAIN_SESSION_ID_RE.test(filePath))
+    ) {
       return [];
     }
     let sessionId = extractSessionIdFromPath(filePath);
