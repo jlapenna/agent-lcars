@@ -1,8 +1,9 @@
 // @vitest-environment node
 
-import type { Run } from '@agent-lcars/orchestrator';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import type { Run } from '@agent-lcars/orchestrator';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
