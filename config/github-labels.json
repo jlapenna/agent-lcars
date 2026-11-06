@@ -155,6 +155,11 @@
     }
   },
   "repositories": {
+    "jlapenna/dev": {
+      "labels": [],
+      "migrations": {},
+      "remove": []
+    },
     "jlapenna/agent-lcars": {
       "labels": [
         "type:bug",

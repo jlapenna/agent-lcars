@@ -1,6 +1,10 @@
 {
   "version": 1,
   "profiles": {
+    "jobs-only": {
+      "repositories": ["jlapenna/dev"],
+      "variables": {}
+    },
     "agent-lcars": {
       "repositories": ["jlapenna/agent-lcars"],
       "variables": {
