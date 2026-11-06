@@ -20,9 +20,10 @@
     },
     {
       "customType": "regex",
-      "description": "Runner image Corepack: Node 25+ stopped bundling it, so the image installs this npm release before resolving pnpm from packageManager.",
+      "description": "Runner and E2E sandbox Corepack: Node 25+ stopped bundling it, so the images install this npm release before resolving pnpm from packageManager.",
       "managerFilePatterns": [
-        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/"
+        "/^apps\\/runner-autoscaler\\/runner-image\\/Dockerfile$/",
+        "/^tools\\/e2e\\/Dockerfile$/"
       ],
       "matchStrings": [
         "ARG COREPACK_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
