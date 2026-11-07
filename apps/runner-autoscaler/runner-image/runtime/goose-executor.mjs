@@ -1,7 +1,16 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  lstat,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 // The adapter runs ONLY inside a caller-owned, enforced job allocation. The
 // caller supplies its admission proof; an unguarded workstation invocation is
@@ -12,6 +21,7 @@ export function gooseExecutor({
   environment,
   workingDirectory,
   onProviderStarted,
+  resultFile,
 }) {
   if (typeof assertAllocation !== 'function')
     throw new Error('an enforced allocation verifier is required');
@@ -26,6 +36,16 @@ export function gooseExecutor({
     signal,
   }) => {
     await assertAllocation(run.definition.job.execution.resources);
+    if (resultFile) {
+      validateResultPath(resultFile);
+      // A stale file must never stand in for work this invocation did not do.
+      const existing = await lstat(resultFile).catch((error) => {
+        if (error.code !== 'ENOENT') throw error;
+        return null;
+      });
+      if (existing)
+        throw new Error('Declared Goose result file already exists');
+    }
     const directory = await mkdtemp(join(tmpdir(), 'lcars-goose-'));
     try {
       const recipe = join(directory, 'recipe.yaml');
@@ -64,6 +84,11 @@ export function gooseExecutor({
       });
       // Goose's machine output wraps the conversation; --quiet alone still
       // renders tool activity. Only the final assistant response is a result.
+      if (resultFile) {
+        completedConversation(output);
+        signal.throwIfAborted();
+        return await readGooseResultFile(resultFile);
+      }
       return parseGooseResult(output);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -71,13 +96,18 @@ export function gooseExecutor({
   };
 }
 
-export function parseGooseResult(output) {
+function completedConversation(output) {
   const envelope = JSON.parse(output);
   if (
     envelope.metadata?.status !== 'completed' ||
     !Array.isArray(envelope.messages)
   )
     throw new Error('Goose did not return a completed conversation');
+  return envelope;
+}
+
+export function parseGooseResult(output) {
+  const envelope = completedConversation(output);
   const final = envelope.messages.findLast(
     (message) => message.role === 'assistant',
   );
@@ -90,6 +120,55 @@ export function parseGooseResult(output) {
   )
     throw new Error('Goose final assistant response is not result text');
   return JSON.parse(final.content.map((part) => part.text).join(''));
+}
+
+function validateResultPath(path) {
+  if (
+    typeof path !== 'string' ||
+    path.length > 256 ||
+    !/^\/tmp\/[a-zA-Z0-9_./-]+\.json$/u.test(path) ||
+    path
+      .split('/')
+      .slice(2)
+      .some((part) => !part || part === '.' || part === '..')
+  )
+    throw new Error('Invalid declared Goose result file path');
+}
+
+export async function readGooseResultFile(path) {
+  validateResultPath(path);
+  // Reject links in the file or its parents. No model-selected path or fallback.
+  if ((await realpath(path)) !== resolve(path))
+    throw new Error('Declared Goose result file must not use symbolic links');
+  const file = await open(
+    path,
+    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  );
+  try {
+    const info = await file.stat();
+    const maximum = 262144; // Same bound as the Work recipe-result endpoint.
+    if (!info.isFile() || info.size > maximum)
+      throw new Error(
+        'Declared Goose result must be a regular JSON file within 256 KiB',
+      );
+    const buffer = Buffer.alloc(maximum + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const { bytesRead } = await file.read(
+        buffer,
+        size,
+        buffer.length - size,
+        null,
+      );
+      if (!bytesRead) break;
+      size += bytesRead;
+    }
+    if (size > maximum)
+      throw new Error('Declared Goose result exceeds 256 KiB');
+    return JSON.parse(buffer.subarray(0, size).toString('utf8'));
+  } finally {
+    await file.close();
+  }
 }
 
 export async function subprocess(

@@ -130,6 +130,7 @@ try {
     workingDirectory,
     environment,
     assertAllocation: cgroupAllocation,
+    resultFile: brief.profile?.resultFile,
     onProviderStarted: () =>
       call('heartbeat', { providerProcessStarted: true }),
   });

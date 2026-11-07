@@ -1,12 +1,13 @@
 /* eslint-disable vitest/no-import-node-test -- runner-image shell suite and Docker image use node --test without Vitest. */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
   gooseExecutor,
   parseGooseResult,
+  readGooseResultFile,
   subprocess,
 } from './goose-executor.mjs';
 
@@ -137,6 +138,98 @@ test('adapter validates before invoking and acknowledges actual provider spawn',
       { complete: true },
     );
     assert.equal(starts, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('declared file preserves failed grades and nested fields instead of model copies', async () => {
+  const directory = await mkdtemp('/tmp/lcars-goose-file-');
+  try {
+    const resultFile = join(directory, 'result.json');
+    const expected = {
+      report: 'Two legitimate criteria failures',
+      complete: false,
+      data: { cases: [{ skill: 'labels-dev', score: 0.5, errors: [] }] },
+    };
+    const executable = join(directory, 'goose');
+    const script = (exit = 0, status = 'completed') => `#!${process.execPath}
+if(process.argv[2]!=='recipe') {
+  require('node:fs').writeFileSync(${JSON.stringify(resultFile)},${JSON.stringify(JSON.stringify(expected))});
+  console.log(JSON.stringify({metadata:{status:${JSON.stringify(status)}},messages:[{role:'assistant',content:[{type:'text',text:'A shortened, non-JSON model answer'}]}]}));
+  process.exit(${exit});
+}`;
+    await writeFile(executable, script(), { mode: 0o700 });
+    const execute = gooseExecutor({
+      executable,
+      resultFile,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process and result transport fixture; allocation has its own boundary. */
+      },
+    });
+    const request = {
+      run: {
+        definition: {
+          recipeText: 'fixture',
+          job: { inputs: {}, execution: { resources: {} } },
+        },
+      },
+      baseline: null,
+      signal: new AbortController().signal,
+    };
+    assert.deepEqual(await execute(request), expected);
+    await assert.rejects(execute(request), /already exists/);
+    await rm(resultFile);
+    await writeFile(executable, script(1));
+    await assert.rejects(execute(request), /Goose exited 1/);
+    await rm(resultFile);
+    await writeFile(executable, script(0, 'failed'));
+    await assert.rejects(execute(request), /completed conversation/);
+    await rm(resultFile);
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+if(process.argv[2]!=='recipe')console.log(JSON.stringify({metadata:{status:'completed'},messages:[]}));`,
+    );
+    await assert.rejects(execute(request), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('declared result rejects unsafe paths, links, nonfiles, invalid JSON and oversized output', async () => {
+  const directory = await mkdtemp('/tmp/lcars-goose-boundary-');
+  try {
+    const path = join(directory, 'result.json');
+    for (const invalid of [
+      '/run/secrets/result.json',
+      '/tmp/../result.json',
+      '/tmp//result.json',
+      '/tmp/./result.json',
+    ])
+      await assert.rejects(readGooseResultFile(invalid), /Invalid declared/);
+    await writeFile(path, 'not JSON');
+    await assert.rejects(readGooseResultFile(path), SyntaxError);
+    await writeFile(path, 'x'.repeat(262145));
+    await assert.rejects(readGooseResultFile(path), /256 KiB/);
+    await rm(path);
+    await mkdir(path);
+    await assert.rejects(readGooseResultFile(path), /regular JSON file/);
+    await rm(path, { recursive: true });
+    await writeFile(join(directory, 'original.json'), '{}');
+    await symlink(join(directory, 'original.json'), path);
+    await assert.rejects(readGooseResultFile(path), /symbolic links/);
+    await symlink(directory, join(directory, 'alias'));
+    await assert.rejects(
+      readGooseResultFile(join(directory, 'alias', 'original.json')),
+      /symbolic links/,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

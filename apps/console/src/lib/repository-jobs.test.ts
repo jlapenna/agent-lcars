@@ -261,6 +261,23 @@ describe('production repository job admission', () => {
       );
     },
   );
+  it('accepts operator-owned result files without changing existing profiles', () => {
+    const f = fixture([]);
+    expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
+    const resultFile = '/tmp/skill-evals/report/result.json';
+    expect(
+      jobProfileSchema.parse({ ...f.profile, resultFile }).resultFile,
+    ).toBe(resultFile);
+    for (const path of [
+      '/run/secrets/result.json',
+      '/tmp/../result.json',
+      '/tmp//result.json',
+      '/tmp/./result.json',
+    ])
+      expect(() =>
+        jobProfileSchema.parse({ ...f.profile, resultFile: path }),
+      ).toThrow();
+  });
   it('admits automatically activated schedules only after the activation floor', async () => {
     const f = fixture([], 'repository');
     f.jobs.deps.profiles = () => [];
