@@ -39,9 +39,9 @@ The core promises:
 3. **Nothing is silently lost.** Leases, executor exit reports, and a
    reconciliation tick settle every run. Bounded auto-retry follows, then a
    park for a human.
-4. **Provider-agnostic.** Claude Code, Codex, and OpenCode are interchangeable
-   _pipelines_ behind the same admission, queue, protocol, and evidence
-   contracts.
+4. **Provider-agnostic.** Claude Code, Codex, OpenCode, and Antigravity are
+   interchangeable _pipelines_ behind the same admission, queue, protocol, and
+   evidence contracts.
 5. **A fleet, not a repo.** Member repositories consume published actions,
    reusable workflows, the shared worker protocol, and the runner image. They
    never import LCARS source.
@@ -89,17 +89,17 @@ The core promises:
 
 ### 4.1 Request sources
 
-| Source                                    | Trigger                                                                                                 | Mode                 | Request identity                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------- |
-| GitHub label                              | `agent:{claude,codex,opencode}` labeled on an open issue or PR                                          | `implement`          | Webhook delivery GUID               |
-| GitHub label                              | `review:{claude,codex,opencode}` on a PR                                                                | `review`             | Delivery GUID                       |
-| GitHub reply                              | `@claude`/`@agent`, `/codex`, or `/oc`/`/opencode` in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
-| Tagged reply on a parked or finished task | Same commands                                                                                           | `reply` with resume  | Principal `svc:github-tagged-reply` |
-| Work API                                  | `PUT /items/{ulid}`                                                                                     | native               | Client ULID (idempotent)            |
-| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                 | `implement`/`review` | Caller-supplied                     |
-| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                       | native or GitHub     | `console-retry:<uuid>`, ULID        |
-| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                             | native               | Deterministic per-slot ID           |
-| Slack                                     | `/lcars` in the Sprinkles bot                                                                           | native               | ULID, `origin.channel=slack`        |
+| Source                                    | Trigger                                                                                                                          | Mode                 | Request identity                    |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------- |
+| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                               | `implement`          | Webhook delivery GUID               |
+| GitHub label                              | `review:{claude,codex,opencode,agy}` on a PR                                                                                     | `review`             | Delivery GUID                       |
+| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy` (`@antigravity`) in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
+| Tagged reply on a parked or finished task | Same commands                                                                                                                    | `reply` with resume  | Principal `svc:github-tagged-reply` |
+| Work API                                  | `PUT /items/{ulid}`                                                                                                              | native               | Client ULID (idempotent)            |
+| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                          | `implement`/`review` | Caller-supplied                     |
+| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                                | native or GitHub     | `console-retry:<uuid>`, ULID        |
+| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                      | native               | Deterministic per-slot ID           |
+| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                    | native               | ULID, `origin.channel=slack`        |
 
 - **FL-IN-1 [Shipped]** The GitHub App webhook (`/api/control-plane/webhook`)
   verifies the HMAC. It accepts `issues`, `issue_comment`, `pull_request`,
@@ -391,10 +391,10 @@ executor is working an issue; a human assignee owns it regardless.
   5. Verify the outcome.
   6. Call `/complete`.
 
-  Every pipeline (Claude, Codex, OpenCode) reports live telemetry through
-  provider hooks, with no selector. A failed hook install warns and continues
-  without live telemetry; `runner finalize` still writes the final session
-  doc.
+  Every pipeline (Claude, Codex, OpenCode, Antigravity) reports live telemetry
+  through provider hooks, with no selector. A failed hook install warns and
+  continues without live telemetry; `runner finalize` still writes the final
+  session doc.
 
   If the agent exits 0 with no deliverable, it gets one completion-correction
   round.
@@ -406,6 +406,7 @@ executor is working an issue; a human assignee owns it regardless.
   - Codex: `auth.json` brokered through `/runs/{id}/codex-auth` under a global
     lease, waiting up to 30 minutes on a 409.
   - OpenCode: a LiteLLM virtual key.
+  - Antigravity: an OAuth token from a projected file.
 
 ### 6.4 Loss, retry, and parking
 
@@ -518,12 +519,9 @@ consumed by every dispatched run in every member repository.
 - **FL-RC-2 [Shipped]** A reply resumes the prior provider session
   (`resumeSessionId`) when its transcript is archived. If it is not, the reply
   starts a fresh session and passes the reply text through, and the console
-  says so. The design is
-  [`2026-09-03-resumable-agent-conversations-design.md`](../superpowers/specs/2026-09-03-resumable-agent-conversations-design.md).
-  Sub-projects 1–4 have shipped. On GitHub, a resume requires the reply
-  trigger tag (`lib/tagged-reply-resume.ts`). The design doc's mention of an
-  `AGENT_LCARS_IMPLICIT_REPLY_REPOS` gate is stale; that variable no longer
-  exists. Historical session-identity proof is recorded in the
+  says so. Sub-projects 1–4 have shipped. On GitHub, a resume requires the
+  reply trigger tag (`lib/tagged-reply-resume.ts`). Historical session-identity
+  proof is recorded in the
   [canonical smoke ledger](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#tagged-gate-re-gating-three-live-proofs-2026-09-06):
   Claude [#1794](https://github.com/jlapenna/agent-lcars/issues/1794#issuecomment-5557261018)
   archived `6c2030cb-cebc-4d3d-953c-13b8fd390cd1` in both rounds;
@@ -556,8 +554,8 @@ consumed by every dispatched run in every member repository.
 
 ## 10. Telemetry and observability
 
-- **FL-OB-1 [Shipped]** `libs/telemetry` normalizes Claude, Codex, and
-  OpenCode transcripts into sessions:
+- **FL-OB-1 [Shipped]** `libs/telemetry` normalizes Claude, Codex, OpenCode,
+  and Antigravity transcripts into sessions:
   - `SessionSource`: `cli` or `issue-agent`.
   - `SessionLiveness`: `live`, `idle`, `ended`, or `stale`.
   - A run-status classifier: `running`, `timeout`, `cancelled`, `failed`,
@@ -565,7 +563,7 @@ consumed by every dispatched run in every member repository.
   - Cost from the provider's `costUSD`, or estimated from `MODEL_RATES`.
 - **FL-OB-2 [Shipped]** `apps/telemetry-watcher` reports sessions in two ways:
   - Through provider hooks, on workstations and dispatched workers alike:
-    `lcars hook claude|codex|opencode|flush` writes sessions directly to
+    `lcars hook claude|codex|opencode|agy|flush` writes sessions directly to
     Firestore as the telemetry writer, installed with
     `lcars integration install`
     ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers

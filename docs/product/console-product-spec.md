@@ -661,8 +661,9 @@ CLI sessions and dispatched runs.
   and resume notes.
 - **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView`, from GCS)
   for dispatched `issue-agent` sessions whose agent is in
-  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, and OpenCode (archived
-  OpenCode exports, #2253). An archive that is neither shows "Session archive
+  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, OpenCode (archived
+  OpenCode exports, #2253), and Antigravity (#3226). An archive that is none of
+  these shows "Session archive
   stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
   sessions use the same timeline only when their doc already carries an
   unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
@@ -736,7 +737,7 @@ counterpart of the Work destination.
 - `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--deliverable report]`
 - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
   `cancel <id>`, and `redispatch <id> [--fallback-pipelines <ordered,csv|none>]`
-- `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
+- `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode|agy>] [--request-id <key>] [--fresh]`
 - `lcars work owner <owner/repo>#<n> [--json]`
 - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
 

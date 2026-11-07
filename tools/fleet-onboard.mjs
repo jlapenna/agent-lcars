@@ -337,9 +337,6 @@ jobs:
       app-client-id: \${{ vars.AGENT_LCARS_CLIENT_ID }}
       # Glue work must never queue behind a long agent session.
       runs-on: ${jsonArray([runsOn])}
-      # The required checks in this repository's Protect main ruleset
-      # (infra/github-ruleset/main.tf).
-      required-checks: ${jsonArray(spec.requiredChecks)}
     secrets:
       APP_PRIVATE_KEY: \${{ secrets.AGENT_LCARS_PRIVATE_KEY }}
 `;
@@ -982,19 +979,6 @@ function automergeConflict(text, spec) {
   const doc = parseWorkflow(text);
   if (!doc) return 'is not valid YAML';
   const problems = [];
-  let required = null;
-  try {
-    required = JSON.parse(
-      doc.jobs?.automerge?.with?.['required-checks'] ?? 'null',
-    );
-  } catch {
-    required = null;
-  }
-  const missing = spec.requiredChecks.filter((c) => !required?.includes(c));
-  if (!Array.isArray(required) || missing.length)
-    problems.push(
-      `required-checks does not include ${JSON.stringify(missing.length ? missing : spec.requiredChecks)}`,
-    );
   const subscribed = doc.on?.workflow_run?.workflows ?? [];
   const unsubscribed = workflowRunNames(spec).filter(
     (n) => !subscribed.includes(n),
