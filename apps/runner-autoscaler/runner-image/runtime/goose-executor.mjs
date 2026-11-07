@@ -63,6 +63,11 @@ export function gooseExecutor({
         '--output-format',
         'json',
       ];
+      if (resultFile)
+        args.push(
+          '--system',
+          `The admitted execution profile collects the tool-written JSON at ${resultFile} directly. Complete the recipe's actual work and preserve that file, including failed grades and errors. This replaces instructions to copy that file into your final response: return only the shortest acknowledgement allowed by the recipe response schema, without copying its contents or rewriting the file. The worker submits the file, not the acknowledgement.`,
+        );
       const parameters = {
         ...invocationParameters,
         ...run.definition.job.inputs,
