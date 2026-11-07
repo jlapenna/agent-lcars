@@ -132,8 +132,19 @@ The QueueExecutor's `max_concurrent`, storage accounting and retirement remain
 the owners of resource enforcement. A failed capped run remains failed.
 
 The adapter requests Goose's JSON machine envelope, requires completed status,
-and validates only the final assistant result. Intermediate tool output cannot
-be mistaken for success. Provider credentials use the runner's existing projected
+and normally validates only the final assistant result. Intermediate tool output
+cannot be mistaken for success. An operator profile may instead declare
+`resultFile: "/tmp/skill-evals/report/result.json"` for a recipe whose tool
+writes the complete result. After Goose exits successfully with a completed
+conversation, the adapter submits that parsed file directly, preserving fields
+and failed grades without asking a model to copy them. The path must be under
+`/tmp`, must not use symbolic links, must not already exist when execution
+starts, and must produce a regular JSON file at most 256 KiB. A missing,
+invalid or oversized file fails; there is no model-text fallback. Process,
+cancellation and resource failures still fail even if a file exists. The
+existing result contract and authorization remain server-enforced. Deploy and
+verify the supporting runner image **before** activating this field on a
+production profile; capability delivery alone does not switch any profile. Provider credentials use the runner's existing projected
 Secret mechanism. The Goose child receives the configured provider environment plus the shared
 PATH, HOME and repository paths, without inheriting the run token or static
 GitHub tokens;
