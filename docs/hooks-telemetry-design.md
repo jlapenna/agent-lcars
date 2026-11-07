@@ -180,7 +180,7 @@ interface SessionEventV1 {
   seq: number; // per-session monotonic, from the state file
   occurredAt: string; // ISO
   host: string;
-  agent: SessionAgent; // 'claude-code' | 'codex' | 'opencode'
+  agent: SessionAgent; // 'claude-code' | 'codex' | 'opencode' | 'antigravity'
   sessionId: string;
   kind:
     | 'start'
@@ -328,7 +328,7 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|opencode|all`
+- **Self-installing integration.** `lcars integration install claude|codex|opencode|agy|all`
   writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
   `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
   report an outdated or hand-edited install, and appends the hook entries on
@@ -643,7 +643,7 @@ To check a runner on real work:
    [the real-work proof policy](testing-policy.md#development-proof-uses-real-work)
    and start a run on it: apply an `agent:*` label (removing and re-adding
    it on a finished task starts a fresh run), or post a tagged reply
-   (`@claude`, `/codex`, or `/oc`; triggers are in
+   (`@claude`, `/codex`, `/oc`, or `/agy`; triggers are in
    `libs/dispatch-contracts/src/pipelines.ts`), which resumes the previous
    session when one parked or finished.
 2. After the run ends, query `sessions` for its `runId`

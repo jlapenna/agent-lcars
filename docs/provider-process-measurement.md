@@ -16,7 +16,8 @@ in PR #2330. This additive event does not qualify the fleet's proposed SLOs.
 
 All durable clocks are server UTC observation times. The process observer is
 inside the existing workload timeout, after bootstrap/credential restore, and
-wraps Claude's print workload, Codex's exec workload and OpenCode's run workload.
+wraps Claude's print workload, Codex's exec workload, OpenCode's run workload
+and Antigravity's prompt workload.
 Session listing, import, credential waits and telemetry setup do not report it.
 An executable can spawn and then immediately reject authentication or quota;
 this event proves neither a model request nor first useful token. The metric's

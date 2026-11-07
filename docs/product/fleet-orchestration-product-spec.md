@@ -89,17 +89,17 @@ The core promises:
 
 ### 4.1 Request sources
 
-| Source                                    | Trigger                                                                                                                          | Mode                 | Request identity                    |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------- |
-| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                               | `implement`          | Webhook delivery GUID               |
-| GitHub label                              | `review:{claude,codex,opencode,agy}` on a PR                                                                                     | `review`             | Delivery GUID                       |
-| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy` (`@antigravity`) in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
-| Tagged reply on a parked or finished task | Same commands                                                                                                                    | `reply` with resume  | Principal `svc:github-tagged-reply` |
-| Work API                                  | `PUT /items/{ulid}`                                                                                                              | native               | Client ULID (idempotent)            |
-| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                          | `implement`/`review` | Caller-supplied                     |
-| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                                | native or GitHub     | `console-retry:<uuid>`, ULID        |
-| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                      | native               | Deterministic per-slot ID           |
-| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                    | native               | ULID, `origin.channel=slack`        |
+| Source                                    | Trigger                                                                                                                        | Mode                 | Request identity                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ----------------------------------- |
+| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                             | `implement`          | Webhook delivery GUID               |
+| GitHub label                              | `review:{claude,codex,opencode,agy}` on a PR                                                                                   | `review`             | Delivery GUID                       |
+| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy`/`/antigravity` in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
+| Tagged reply on a parked or finished task | Same commands                                                                                                                  | `reply` with resume  | Principal `svc:github-tagged-reply` |
+| Work API                                  | `PUT /items/{ulid}`                                                                                                            | native               | Client ULID (idempotent)            |
+| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                        | `implement`/`review` | Caller-supplied                     |
+| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                              | native or GitHub     | `console-retry:<uuid>`, ULID        |
+| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                    | native               | Deterministic per-slot ID           |
+| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                  | native               | ULID, `origin.channel=slack`        |
 
 - **FL-IN-1 [Shipped]** The GitHub App webhook (`/api/control-plane/webhook`)
   verifies the HMAC. It accepts `issues`, `issue_comment`, `pull_request`,

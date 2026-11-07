@@ -56,7 +56,7 @@ export function localAgentCommand(
   );
 }
 
-/** Human-facing name for the agent picker - "Claude"/"Codex"/"OpenCode",
+/** Human-facing name for the agent picker - "Claude"/"Codex"/"OpenCode"/"Antigravity",
  * not the `agent:*` label or reply-trigger spellings other pickers use. */
 export function localAgentDisplayName(pipeline: AgentPipeline): string {
   return pipelineContract(pipeline).displayName;

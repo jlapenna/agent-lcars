@@ -87,9 +87,10 @@ interface RunnerFlags {
 }
 
 /**
- * Minimal `--flag value` parser for the sidecar CLI's own 7 flags
+ * Minimal `--flag value` parser for the sidecar CLI's own 8 flags
  * (`--run-id`, `--intent-id`, `--issue-number`, `--projects-dir`,
- * `--codex-sessions-dir`, `--repo`, `--opencode-last-message-file`).
+ * `--codex-sessions-dir`, `--antigravity-brain-dir`, `--repo`,
+ * `--opencode-last-message-file`).
  * Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in

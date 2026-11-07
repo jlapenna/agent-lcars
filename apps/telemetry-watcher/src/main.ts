@@ -49,7 +49,7 @@ interface RunnerResumeFlags {
 }
 
 /**
- * Minimal `--flag value` parser for `runner resume`'s 5 flags, matching
+ * Minimal `--flag value` parser for `runner resume`'s 7 flags, matching
  * `runner-config.ts`'s `parseRunnerFlags` in spirit (hand-rolled rather than
  * a dependency, for the same single-file-bundle reason) — unknown flags are
  * ignored, not rejected.
@@ -104,7 +104,7 @@ function parseRunnerResumeFlags(argv: string[]): RunnerResumeFlags {
  * `RunnerConfig.firestoreProjectId` (`finalize.ts` passes that value as
  * `uploadTranscript`'s own `projectId`), so a caller that already exports
  * it for `runner finalize` needs no extra flag here.
- * `--agent <claude-code|codex|opencode>` defaults to `claude-code` so every
+ * `--agent <claude-code|codex|opencode|antigravity>` defaults to `claude-code` so every
  * existing production call site (none of which pass it) is unaffected;
  * any other value is rejected the same fail-soft way as a missing
  * required flag. `--codex-home` is required only when `--agent codex` is

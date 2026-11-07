@@ -20,7 +20,6 @@ import { OPENCODE_TELEMETRY_PLUGIN } from './opencode-plugin-source';
  * retains its buffered handoff, including for already-loaded old commands.
  */
 export const INTEGRATION_VERSION = 1;
-export const STUB_MARKER = 'lcars-hook.sh';
 
 interface HookEntrySpec {
   readonly event: string;

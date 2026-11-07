@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Direct-mode bootstrap for one claimed QueueExecutor run. It invokes the
-# `claude`, `codex`, `opencode`, and `goose` providers through the run-token-
-# authenticated /api/work/v1/runs/* routes. Exact Claude SDK parity (its
-# internal max_turns enforcement, MCP wiring) is out of scope for this
+# `claude`, `codex`, `opencode`, `agy`, and `goose` providers through the
+# run-token-authenticated /api/work/v1/runs/* routes. Exact Claude SDK parity
+# (its internal max_turns enforcement, MCP wiring) is out of scope for this
 # sub-project -- ruling, recorded in the design spec.
 set -euo pipefail
 # Defensive: nothing above sets -x, but every command below that touches

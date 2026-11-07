@@ -28,8 +28,8 @@
 
 The Agent LCARS console (`apps/console`, served at `lcars.jlapenna.net`) is the
 human control surface for a fleet of headless coding agents (Claude Code,
-Codex, OpenCode). Those agents work GitHub issues, pull requests, and native
-work items across a set of onboarded repositories.
+Codex, OpenCode, Antigravity). Those agents work GitHub issues, pull requests,
+and native work items across a set of onboarded repositories.
 
 The console answers four questions, in this order:
 

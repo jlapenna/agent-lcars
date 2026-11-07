@@ -2,12 +2,6 @@ import type { QueuePriority } from '@agent-lcars/dispatch-contracts';
 
 import type { RepositoryRef } from './watched-repo';
 
-/** The only multipart fields accepted by the future Quick Task upload route. */
-export const QUICK_TASK_MULTIPART_FIELDS = {
-  intent: 'intent',
-  evidence: 'evidence',
-} as const;
-
 export const QUICK_TASK_EVIDENCE_SCHEMA_VERSION = 'v1';
 export const QUICK_TASK_EVIDENCE_ROUTE_PREFIX =
   '/api/quick-task-evidence/v1/' as const;
@@ -111,13 +105,6 @@ export interface QuickTaskEvidenceStore {
   ): Promise<void>;
 }
 
-export type QuickTaskEvidenceLifecycleDisposition =
-  | 'none'
-  | 'release-claim'
-  | 'delete-created-generation'
-  | 'delete-created-generation-and-release-claim'
-  | 'retain-for-reconciliation';
-
 export type QuickTaskEvidenceErrorStatus =
   400 | 401 | 404 | 409 | 413 | 415 | 422 | 503;
 
@@ -147,12 +134,6 @@ export const QUICK_TASK_EVIDENCE_NOT_FOUND_RESPONSE: QuickTaskEvidenceReadRespon
   {
     status: 404,
     headers: {},
-  };
-
-export const QUICK_TASK_EVIDENCE_SUCCESS_RESPONSE: QuickTaskEvidenceReadResponse =
-  {
-    status: 200,
-    headers: QUICK_TASK_EVIDENCE_RESPONSE_HEADERS,
   };
 
 export function isQuickTaskEvidenceId(value: string): boolean {
