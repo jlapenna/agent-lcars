@@ -309,9 +309,7 @@ describe('scaffold', () => {
     expect(JSON.parse(automerge.jobs.automerge.with['runs-on'])).toEqual([
       'project-default',
     ]);
-    expect(
-      JSON.parse(automerge.jobs.automerge.with['required-checks']),
-    ).toEqual([...BASELINE_CHECKS, 'Unit tests', 'Build']);
+    expect(automerge.jobs.automerge.with['required-checks']).toBeUndefined();
     expect(
       parseYaml(read(target, '.github/actionlint.yaml'))['self-hosted-runner']
         .labels,
@@ -356,9 +354,7 @@ describe('scaffold', () => {
     expect(JSON.parse(automerge.jobs.automerge.with['runs-on'])).toEqual([
       'ubuntu-slim',
     ]);
-    expect(
-      JSON.parse(automerge.jobs.automerge.with['required-checks']),
-    ).toEqual([...BASELINE_CHECKS]);
+    expect(automerge.jobs.automerge.with['required-checks']).toBeUndefined();
     expect(
       parseYaml(read(target, '.github/workflows/gitleaks.yml')).jobs.gitleaks[
         'runs-on'
@@ -726,12 +722,6 @@ describe('scaffold', () => {
   it('escapes check names safely and rejects the ones it cannot', () => {
     const target = scratch('fleet-onboard-target');
     scaffold(target, { 'ci-workflow': 'ci.yml', 'ci-checks': "Bob's build" });
-    const automerge = parseYaml(
-      read(target, '.github/workflows/agent-automerge.yml'),
-    );
-    expect(
-      JSON.parse(automerge.jobs.automerge.with['required-checks']),
-    ).toContain("Bob's build");
     expect(read(target, 'infra/github-ruleset/main.tf')).toContain(
       'context = "Bob\'s build"',
     );
@@ -918,15 +908,9 @@ describe('scaffold', () => {
       ruleset.jobs.terraform.name,
     ];
     expect(emitted).toEqual([...BASELINE_CHECKS]);
-    const automerge = parseYaml(
-      read(target, '.github/workflows/agent-automerge.yml'),
-    );
-    const required = JSON.parse(
-      automerge.jobs.automerge.with['required-checks'],
-    );
     const tf = read(target, 'infra/github-ruleset/main.tf');
     const contexts = [...tf.matchAll(/context = "([^"]+)"/g)].map((m) => m[1]);
-    expect(contexts).toEqual(required);
+    expect(contexts).toEqual([...BASELINE_CHECKS]);
   });
 
   it('reports guarded Husky hooks as unchanged and trusts an existing prepare script', () => {

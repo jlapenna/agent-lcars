@@ -142,7 +142,8 @@ set in this repo's `apphosting.yaml`): a JSON array of
   `repoKey()` produces. It never affects GitHub API calls, URLs, or the
   identity keys used to join items/runs/sessions to a repo — those always
   use the real `owner`/`name`.
-- Omit `agents` for the canonical Claude, Codex, and OpenCode integrations.
+- Omit `agents` for the canonical Claude, Codex, OpenCode, and Antigravity
+  integrations.
   Set `agents: false` only for a watched repository with no agent dispatch.
   QueueExecutor does not invoke a target-repository workflow file; repository
   configuration cannot override agent labels or reply commands.

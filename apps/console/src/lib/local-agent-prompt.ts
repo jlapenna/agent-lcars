@@ -34,9 +34,7 @@ export function localAgentPromptText(item: LocalAgentPromptItem): string {
 
 /** Each pipeline's plain interactive CLI invocation - no headless/resume
  * flags, matching how a maintainer already runs these tools on their own
- * workstation (see docs/superpowers/specs/2026-09-03-resumable-agent-
- * conversations-design.md's CLI table for the flagged headless variants this
- * deliberately omits). */
+ * workstation. */
 const LOCAL_AGENT_INVOCATIONS: Record<
   AgentPipeline,
   (quotedPrompt: string) => string

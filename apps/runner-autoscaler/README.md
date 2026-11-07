@@ -205,9 +205,9 @@ their launch configuration. See
 
 Every pipeline reports live telemetry through provider hooks
 ([design](../../docs/hooks-telemetry-design.md), phase 3); there is no
-selector. Claude and Codex workers install `lcars` hook entries after their
-own config exists; for OpenCode the image's `lcars-telemetry.js` plugin
-activates once the writer credentials path is exported. The worker fences
+selector. Claude, Codex, and Antigravity workers install `lcars` hook entries
+after their own config exists; for OpenCode the image's `lcars-telemetry.js`
+plugin activates once the writer credentials path is exported. The worker fences
 and drains the hook flusher before `runner finalize`, which writes the
 authoritative final session doc. A worker that dies first never finalizes;
 when the Work API settles that run `lost`, the executor marks the run's
@@ -266,9 +266,9 @@ credential never reaches worker pods. Startup verifies the account exists and
 write grants are allowed before claiming. `--check-config` performs the same
 read-only API inventory and permission preflight before a deployment stops its
 previous controller; it creates no Jobs, Secrets or workers. The provider
-Secret must have nonempty `telemetry-writer.json`, `claude-code-oauth-token`, and
-`opencode-llm-api-key` keys. Each pod projects only the writer and its own
-provider key. Codex restores subscription credentials through the existing
+Secret must have nonempty `telemetry-writer.json`, `claude-code-oauth-token`,
+`opencode-llm-api-key`, and `antigravity-oauth-token` keys. Each pod projects
+only the writer and its own provider key. Codex restores subscription credentials through the existing
 Console broker and keeps rotating credentials/transcripts in a 64Mi memory
 `emptyDir`. Workers disable ServiceAccount token mounting, run as uid/gid 1001,
 and use no host paths, Docker socket, or SSH key.
@@ -362,10 +362,10 @@ per `(scheduleId, due slot)` and the orchestrator persists it with
 compare-and-set, so simultaneous ticks coalesce to one durable item and run.
 
 Provider credentials stay behind the direct-runner adapter boundary: each
-Claude or OpenCode pod projects only its own key from the credential Secret
-as a read-only file, never an environment value; Codex receives no provider
-key and uses the run-token-authenticated Console broker for its repository
-auth.json. The Secret's `opencode-llm-api-key` must hold the LiteLLM virtual
+Claude, OpenCode, or Antigravity pod projects only its own key from the
+credential Secret as a read-only file, never an environment value; Codex
+receives no provider key and uses the run-token-authenticated Console broker
+for its repository auth.json. The Secret's `opencode-llm-api-key` must hold the LiteLLM virtual
 key (`OPENCODE_LLM_API_KEY`). The direct adapter
 uses the baked, trusted `/usr/local/bin/opencode run` entry point, not its
 GitHub Actions-only `github run` integration. It defaults `OPENCODE_MODEL`
@@ -402,10 +402,11 @@ over by the poller goroutine for its whole lifetime. Changing any of them
 needs a full daemon restart; the process handles no reload or pause signal.
 
 `LCARS_QUEUE_RUNNER_IMAGE` is the one container image reference every
-direct-mode run launches, whichever pipeline (Claude, Codex, or OpenCode)
-claimed it. It has no fleet-named default: this is deployment-specific
-registry/tag knowledge the autoscaler cannot infer, so it is required for
-queue-executor startup and a missing value fails boot, naming the variable.
+direct-mode run launches, whichever pipeline (Claude, Codex, OpenCode, or
+Antigravity) claimed it. It has no fleet-named default: this is
+deployment-specific registry/tag knowledge the autoscaler cannot infer, so it
+is required for queue-executor startup and a missing value fails boot, naming
+the variable.
 
 Each Job uses `imagePullPolicy: Always`, so a launch follows the configured
 tag as soon as a new runner image is promoted; there is no background refresh.
@@ -430,7 +431,7 @@ The metrics endpoint exposes the queue worker's own health:
   followed by a failed launch, rather than looking like an idle poll.
 
 The existing v2 `runner-status` document carries an additive `claims` sample
-for Shuttlebay. It differences these same three provider counters over an
+for Shuttlebay. It differences these same four provider counters over an
 exact `windowStart`–`windowEnd` interval, bounded to 15 minutes and 92 samples.
 The initial baseline, a metric error, counter reset, or gap beyond the status
 TTL is unavailable; a restart never invents a full preceding window. Changed
