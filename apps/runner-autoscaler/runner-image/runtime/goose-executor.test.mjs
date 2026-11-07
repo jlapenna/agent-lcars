@@ -176,7 +176,7 @@ if(process.argv[2]!=='recipe') {
     const request = {
       run: {
         definition: {
-          recipeText: 'instructions: Transport fixture',
+          recipeText: 'fixture',
           job: { inputs: {}, execution: { resources: {} } },
         },
       },

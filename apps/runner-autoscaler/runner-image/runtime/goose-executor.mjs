@@ -55,26 +55,6 @@ export function gooseExecutor({
         signal,
         environment,
       });
-      if (resultFile) {
-        // Goose disallows --system with --recipe. Use the image's existing
-        // python3-yaml to append only the trusted output-transport instruction;
-        // preserve the recipe, parameters, tools and response schema.
-        const rendered = await subprocess(
-          'python3',
-          [
-            '-c',
-            String.raw`import json, sys, yaml
-with open(sys.argv[1]) as source:
-    recipe = yaml.safe_load(source)
-recipe['instructions'] = recipe.get('instructions', '') + "\n\nExecution-profile output transport: complete the recipe's actual work and preserve the tool-written JSON at " + sys.argv[2] + ". For final-response handling only, replace instructions to copy that file with the shortest acknowledgement allowed by the response schema. Do not copy its contents, rewrite the file, or change failed grades or errors. The worker submits the file directly, not the acknowledgement."
-print(json.dumps(recipe))`,
-            recipe,
-            resultFile,
-          ],
-          { cwd: workingDirectory, signal, environment },
-        );
-        await writeFile(recipe, rendered, { mode: 0o600 });
-      }
       const args = [
         'run',
         '--recipe',
@@ -83,6 +63,11 @@ print(json.dumps(recipe))`,
         '--output-format',
         'json',
       ];
+      if (resultFile)
+        args.push(
+          '--system',
+          `The admitted execution profile collects the tool-written JSON at ${resultFile} directly. Complete the recipe's actual work and preserve that file, including failed grades and errors. This replaces instructions to copy that file into your final response: return only the shortest acknowledgement allowed by the recipe response schema, without copying its contents or rewriting the file. The worker submits the file, not the acknowledgement.`,
+        );
       const parameters = {
         ...invocationParameters,
         ...run.definition.job.inputs,
