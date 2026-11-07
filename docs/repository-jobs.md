@@ -135,8 +135,7 @@ The adapter requests Goose's JSON machine envelope, requires completed status,
 and normally validates only the final assistant result. Intermediate tool output
 cannot be mistaken for success. An operator profile may instead declare
 `resultFile: "/tmp/skill-evals/report/result.json"` for a recipe whose tool
-writes the complete result. The worker tells Goose to acknowledge completion
-without copying or rewriting that file. After Goose exits successfully with a completed
+writes the complete result. After Goose exits successfully with a completed
 conversation, the adapter submits that parsed file directly, preserving fields
 and failed grades without asking a model to copy them. The path must be under
 `/tmp`, must not use symbolic links, must not already exist when execution
