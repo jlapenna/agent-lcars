@@ -31,11 +31,11 @@ function renderTable(rows: SessionRow[]) {
 }
 
 // Below `sm`, SessionTable renders a card list instead of the 12-column
-// table (#3107); both branches render unconditionally in jsdom (which
-// doesn't evaluate the visibleFrom/hiddenFrom CSS media queries that keep
-// only one visible in a real browser - see InvitesTable.test.tsx for the
-// same pattern elsewhere in this repo), so any row content shared by both
-// views appears twice and needs getAllBy* rather than getBy*.
+// table (#3107). Both branches mount in the DOM, and jsdom 31+ evaluates
+// Mantine's visibleFrom/hiddenFrom media queries at the default desktop
+// viewport (hiding the `hiddenFrom="sm"` card list with `display: none`).
+// Text/testId queries still see both branches, while role queries pass
+// `{ hidden: true }` when asserting across both views.
 describe('SessionTable', () => {
   it('renders an empty state with no rows', () => {
     renderTable([]);
@@ -45,7 +45,10 @@ describe('SessionTable', () => {
 
   it('links a row title to its session detail page in both views', () => {
     renderTable([makeRow({ sessionId: 'abc-123' })]);
-    const links = screen.getAllByRole('link', { name: 'Fix flaky login test' });
+    const links = screen.getAllByRole('link', {
+      name: 'Fix flaky login test',
+      hidden: true,
+    });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe('/sessions/abc-123');
@@ -60,7 +63,10 @@ describe('SessionTable', () => {
         issueUrl: 'https://github.com/o/r/issues/42',
       }),
     ]);
-    const links = screen.getAllByRole('link', { name: 'sprinkles#42' });
+    const links = screen.getAllByRole('link', {
+      name: 'sprinkles#42',
+      hidden: true,
+    });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link.getAttribute('href')).toBe(
@@ -83,8 +89,8 @@ describe('SessionTable', () => {
         ],
       }),
     ]);
-    const pr10 = screen.getAllByRole('link', { name: 'PR #10' });
-    const pr20 = screen.getAllByRole('link', { name: 'PR #20' });
+    const pr10 = screen.getAllByRole('link', { name: 'PR #10', hidden: true });
+    const pr20 = screen.getAllByRole('link', { name: 'PR #20', hidden: true });
     expect(pr10).toHaveLength(1);
     expect(pr20).toHaveLength(2);
     for (const link of pr10) {
@@ -106,9 +112,15 @@ describe('SessionTable', () => {
       }),
     ]);
     // Table: #3-#5 and "+2 earlier"; phone card: #5 and "+4 earlier".
-    expect(screen.queryByRole('link', { name: 'PR #2' })).toBeNull();
-    expect(screen.getAllByRole('link', { name: 'PR #3' })).toHaveLength(1);
-    expect(screen.getAllByRole('link', { name: 'PR #5' })).toHaveLength(2);
+    expect(
+      screen.queryByRole('link', { name: 'PR #2', hidden: true }),
+    ).toBeNull();
+    expect(
+      screen.getAllByRole('link', { name: 'PR #3', hidden: true }),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByRole('link', { name: 'PR #5', hidden: true }),
+    ).toHaveLength(2);
     expect(screen.getByText('+2 earlier')).toBeTruthy();
     expect(screen.getByText('+4 earlier')).toBeTruthy();
   });
@@ -258,7 +270,10 @@ describe('SessionTable', () => {
 
     expect(screen.queryByTestId('session-status-line')).toBeNull();
     expect(
-      screen.getAllByRole('link', { name: 'Fix flaky login test' }),
+      screen.getAllByRole('link', {
+        name: 'Fix flaky login test',
+        hidden: true,
+      }),
     ).toHaveLength(2);
   });
 

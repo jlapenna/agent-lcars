@@ -31,9 +31,10 @@ function renderGroups(groups: IssueSessionGroup[]) {
   );
 }
 
-// SessionTable renders both a desktop table and a mobile card list
-// unconditionally in jsdom (see session-table.test.tsx's own note), so any
-// row content it renders inside a group appears twice here too.
+// SessionTable mounts both a desktop table (`visibleFrom="sm"`) and a mobile
+// card list (`hiddenFrom="sm"`), and jsdom 31+ hides the card branch at the
+// default desktop viewport (see session-table.test.tsx), so role queries pass
+// `{ hidden: true }` when asserting across both views.
 describe('IssueGroupedSessions', () => {
   it('renders the same empty state as the flat table with no groups', () => {
     renderGroups([]);
@@ -133,11 +134,11 @@ describe('IssueGroupedSessions', () => {
       },
     ]);
 
-    expect(screen.getAllByRole('link', { name: 'First session' })).toHaveLength(
-      2,
-    );
     expect(
-      screen.getAllByRole('link', { name: 'Second session' }),
+      screen.getAllByRole('link', { name: 'First session', hidden: true }),
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole('link', { name: 'Second session', hidden: true }),
     ).toHaveLength(2);
   });
 
@@ -151,7 +152,7 @@ describe('IssueGroupedSessions', () => {
 
     expect(screen.getByText('No issue')).toBeTruthy();
     expect(
-      screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
+      screen.queryByRole('link', { name: 'Ad-hoc CLI session', hidden: true }),
     ).toBeNull();
   });
 
@@ -173,14 +174,14 @@ describe('IssueGroupedSessions', () => {
       'Collapse No issue sessions',
     );
     expect(
-      screen.getAllByRole('link', { name: 'Ad-hoc CLI session' }),
+      screen.getAllByRole('link', { name: 'Ad-hoc CLI session', hidden: true }),
     ).toHaveLength(2);
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(toggle.getAttribute('aria-label')).toBe('Expand No issue sessions');
     expect(
-      screen.queryByRole('link', { name: 'Ad-hoc CLI session' }),
+      screen.queryByRole('link', { name: 'Ad-hoc CLI session', hidden: true }),
     ).toBeNull();
   });
 
@@ -194,7 +195,10 @@ describe('IssueGroupedSessions', () => {
     ]);
 
     expect(
-      screen.getAllByRole('link', { name: 'Fix flaky login test' }),
+      screen.getAllByRole('link', {
+        name: 'Fix flaky login test',
+        hidden: true,
+      }),
     ).toHaveLength(2);
     expect(screen.queryByTestId('no-issue-group-toggle')).toBeNull();
   });
