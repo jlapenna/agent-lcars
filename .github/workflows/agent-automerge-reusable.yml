@@ -53,14 +53,6 @@ on:
           agent run.
         required: true
         type: string
-      required-checks:
-        description: >-
-          Deprecated compatibility input; ignored. Existing callers may keep
-          their JSON check-name array until updated. GitHub's native ruleset
-          and current check rollup enforce merge requirements.
-        required: false
-        type: string
-        default: ''
     secrets:
       APP_PRIVATE_KEY:
         description: >-
