@@ -150,7 +150,7 @@ it('keeps ordinary Goose profiles on installation credentials', async () => {
   expect(credential).not.toHaveBeenCalled();
 });
 
-it('delivers Claude auth for the deployed eval profile while retaining repository App checkout', async () => {
+it('uses leased Codex auth for the deployed eval profile with repository App checkout and no job secrets', async () => {
   const config = parseYaml(
     readFileSync(
       path.join(import.meta.dirname, '../../apphosting.yaml'),
@@ -164,24 +164,21 @@ it('delivers Claude auth for the deployed eval profile while retaining repositor
   const profile = jobProfileSchema.parse(
     profiles.find((entry) => entry.name === 'skill-evals'),
   );
+  run.params = { ...run.params, providerAuth: profile.providerAuth };
   authorize.mockReturnValue(profile);
   readOccurrence.mockResolvedValue({
     workId,
     definition: { repository: 'jlapenna/agent-lcars', name: 'skill-evals' },
     profile,
-    secretSnapshot: {
-      credentialSet: profile.credentialSet,
-      versions: { 'skill-evals-claude-token': '1' },
-    },
   });
   context.store.readTask = vi.fn(async () => ({
     task: { work: { spec: { target: { repo: 'jlapenna/agent-lcars' } } } },
   })) as typeof context.store.readTask;
-  context.jobCredentials!.deliver = vi.fn(async () => ({
-    environment: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-claude-token' },
-    files: {},
+  const reserve = vi.fn(async () => ({
+    refused: true,
+    reason: 'credential-operation-pending',
   }));
-  credential.mockResolvedValue(undefined);
+  context.store.transactRun = reserve;
   appToken.mockResolvedValue({
     token: 'fixture-app-token',
     expiresAt: '2026-11-04T01:00:00Z',
@@ -189,15 +186,19 @@ it('delivers Claude auth for the deployed eval profile while retaining repositor
 
   const delivered = await request('job-secrets');
   expect(delivered.status).toBe(200);
-  expect(delivered.body).toEqual({
-    environment: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-claude-token' },
-    files: {},
-  });
+  expect(delivered.body).toEqual({ environment: {}, files: {} });
+  expect(context.jobCredentials!.deliver).not.toHaveBeenCalled();
+  expect(credential).not.toHaveBeenCalled();
   const checkout = await request();
   expect(checkout.status).toBe(200);
   expect(checkout.body.token).toBe('fixture-app-token');
   expect(checkout.body.identity).toBeUndefined();
   expect(appToken).toHaveBeenCalledExactlyOnceWith('jlapenna/agent-lcars');
+  // A controlled refusal proves the real deployed profile reaches the shared
+  // lease broker, without issuing credentials or performing provider work.
+  const provider = await request('codex-auth');
+  expect(provider.status).toBe(409);
+  expect(reserve).toHaveBeenCalledTimes(1);
 });
 
 it.each([
