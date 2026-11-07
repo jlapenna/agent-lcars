@@ -4,6 +4,11 @@ set -eu
 
 work="${TMPDIR:-/tmp}/skill-evals"
 state="$work/invocation"
+withhold_result() {
+  if [ -e "$work/report/result.json" ] || [ -L "$work/report/result.json" ]; then
+    mv "$work/report/result.json" "$state/failed-result.json"
+  fi
+}
 mkdir -p "$work"
 if mkdir "$state" 2>/dev/null; then
   set -- --root .agents/skills --root agents/shared/skills --evals-root agents/shared/skill-evals --json --out "$work/run" --report "$work/report"
@@ -28,7 +33,7 @@ fi
 # Keep signals and unexpected command failures visible, even if a file exists.
 case "$status" in
   0|1|2) ;;
-  *) tail -n 40 "$state/output.log" >&2; exit "$status" ;;
+  *) withhold_result; tail -n 40 "$state/output.log" >&2; exit "$status" ;;
 esac
 if ! node --input-type=module - "$work/report/result.json" "$status" <<'JS'
 import {readFileSync, statSync} from 'node:fs';
@@ -40,6 +45,7 @@ if (!statSync(file).isFile() || typeof result.report !== 'string' || typeof resu
 console.log(`Evaluator exited ${status}. Exact report saved at ${file}; evaluation will not run again.`);
 JS
 then
+  withhold_result
   tail -n 40 "$state/output.log" >&2
   exit 1
 fi
