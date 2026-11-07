@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "go.yaml.in/yaml/v4"
 )
 
 // OrchestratorConfig is the configuration surface for the LCARS queue
