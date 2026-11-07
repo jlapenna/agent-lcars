@@ -169,7 +169,9 @@ if(process.argv[2]!=='recipe') {
         HOME: directory,
         GOOSE_PATH_ROOT: directory,
       },
-      assertAllocation: async () => {},
+      assertAllocation: async () => {
+        /* Process and result transport fixture; allocation has its own boundary. */
+      },
     });
     const request = {
       run: {
