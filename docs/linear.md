@@ -204,7 +204,7 @@ Moving its team or repository cannot retarget existing Work.
 
 Comments from `operatorIds` can explicitly request the shared reply commands:
 `@claude` (alias `@agent`), `/codex`, `/oc` (alias `/opencode`), or `/agy`
-(alias `@antigravity`), when that
+(alias `/antigravity`), when that
 pipeline has a route for the issue's repository. Current comment body and author
 are verified against Linear. Ordinary prose, code, quotes and LCARS output are
 inert. Reapplying a dispatch label is an explicit follow-up only when the signed

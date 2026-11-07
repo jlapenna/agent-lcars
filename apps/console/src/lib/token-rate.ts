@@ -43,7 +43,7 @@ export interface TokenRate {
 export interface TokenRateFilter {
   /** `owner/name`. */
   repo?: string;
-  /** A Work pipeline: `claude`, `codex` or `opencode`. */
+  /** A Work pipeline: `claude`, `codex`, `opencode` or `agy`. */
   agent?: string;
 }
 
