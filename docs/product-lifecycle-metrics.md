@@ -35,8 +35,8 @@ The inclusive rolling hour is `[observedAt-3600s, observedAt]`; old live
 runs and dead letters remain in stock measures. Never use `rate()` or
 `increase()` on these rolling counts, sum overlapping windows, or sum
 collector replicas. Choose one logical collector per fleet; retain its
-job/instance labels. Only the four pipeline labels `claude`, `codex`,
-`opencode`, `unknown` are possible. No repo, task/run/request ID, principal,
+job/instance labels. Only the five pipeline labels `claude`, `codex`,
+`opencode`, `agy`, `unknown` are possible. No repo, task/run/request ID, principal,
 error prose, token, URL, or monetary estimate becomes a metric label.
 
 Every metric has HELP metadata and gauge TYPE metadata. Latency uses

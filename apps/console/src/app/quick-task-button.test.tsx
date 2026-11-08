@@ -122,13 +122,18 @@ describe('New work creation', () => {
     ).toBeUndefined();
   });
 
-  it('opts only the ticked task into a read-only report', async () => {
+  it('opts only the ticked task into a read-only report and disables filing a tracking issue', async () => {
     renderButton();
     fireEvent.click(await screen.findByRole('button', { name: 'New work' }));
     await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    const issueCheckbox = screen.getByLabelText(/File a GitHub issue/u);
+    fireEvent.click(issueCheckbox);
+    expect(issueCheckbox).toBeChecked();
     fireEvent.click(
       screen.getByRole('checkbox', { name: /Read-only report/u }),
     );
+    expect(issueCheckbox).not.toBeChecked();
+    expect(issueCheckbox).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Description'), {
       target: { value: 'Audit the retry paths' },
     });
@@ -137,6 +142,7 @@ describe('New work creation', () => {
     expect((createItem as Mock).mock.calls[0][0].spec.deliverable).toBe(
       'report',
     );
+    expect(createTrackingIssue).not.toHaveBeenCalled();
     await submit('Fix what the audit found');
     await waitFor(() => expect(createItem).toHaveBeenCalledTimes(2));
     expect(
@@ -288,7 +294,7 @@ describe('New work creation', () => {
     expect(createItem).not.toHaveBeenCalled();
   });
 
-  it('sends a report opt-in but never the tracking-issue choice with evidence', async () => {
+  it('sends a report opt-in with evidence and omits the tracking-issue choice from the wire intent', async () => {
     (createItemWithEvidence as Mock).mockResolvedValue([
       undefined,
       { id: 'created' },
@@ -311,16 +317,37 @@ describe('New work creation', () => {
     fireEvent.click(
       screen.getByRole('checkbox', { name: /Read-only report/u }),
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
+    await waitFor(() =>
+      expect(createItemWithEvidence).toHaveBeenCalledTimes(1),
+    );
+    expect(createTrackingIssue).not.toHaveBeenCalled();
+    const reportSubmitted = (createItemWithEvidence as Mock).mock
+      .calls[0][0] as FormData;
+    const reportIntent = JSON.parse(
+      reportSubmitted.get('intent') as string,
+    ) as Record<string, unknown>;
+    expect(reportIntent.deliverable).toBe('report');
+    expect(reportIntent).not.toHaveProperty('fileGithubIssue');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New work' }));
+    await screen.findByRole('dialog', undefined, { timeout: 5_000 });
+    fireEvent.change(await screen.findByLabelText('Description'), {
+      target: { value: 'Fix this screen' },
+    });
+    fireEvent.change(screen.getByLabelText('Screenshot file'), {
+      target: {
+        files: [new File(['image'], 'screen.png', { type: 'image/png' })],
+      },
+    });
     fireEvent.click(screen.getByLabelText(/File a GitHub issue/u));
     fireEvent.click(screen.getByRole('button', { name: 'Create work item' }));
     await waitFor(() => expect(createTrackingIssue).toHaveBeenCalledTimes(1));
-    const submitted = (createItemWithEvidence as Mock).mock
-      .calls[0][0] as FormData;
-    const wireIntent = JSON.parse(submitted.get('intent') as string) as Record<
-      string,
-      unknown
-    >;
-    expect(wireIntent.deliverable).toBe('report');
-    expect(wireIntent).not.toHaveProperty('fileGithubIssue');
+    const issueSubmitted = (createItemWithEvidence as Mock).mock
+      .calls[1][0] as FormData;
+    const issueIntent = JSON.parse(
+      issueSubmitted.get('intent') as string,
+    ) as Record<string, unknown>;
+    expect(issueIntent).not.toHaveProperty('fileGithubIssue');
   });
 });

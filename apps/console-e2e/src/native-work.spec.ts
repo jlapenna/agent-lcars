@@ -344,4 +344,34 @@ test.describe('native Work mutation journeys', () => {
     ).toBeVisible();
     await expect(page.getByText('parked', { exact: true })).toBeVisible();
   });
+
+  test('lists stored tracker issues on /work/issues and dispatches a GitHub issue to its task detail route', async ({
+    page,
+    request,
+  }) => {
+    const response = await request.post('/api/e2e/seed', {
+      data: { action: 'seed-populated' },
+    });
+    expect(response.ok()).toBe(true);
+    await page.goto('/work/issues');
+    await expect(
+      page.getByRole('heading', { name: 'Issue sources', exact: true }),
+    ).toBeVisible();
+    const issueRow = page.getByTestId(
+      'issue-source-supersprinklesracing/sprinkles#9004',
+    );
+    await expect(
+      issueRow.getByRole('link', {
+        name: 'supersprinklesracing/sprinkles#9004 · Verify the session-cost budget alert after the next deploy',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await issueRow.getByRole('button', { name: 'Run', exact: true }).click();
+    await expect(page).toHaveURL('/task/supersprinklesracing/sprinkles/9004');
+    await expect(
+      page.getByText('supersprinklesracing/sprinkles#9004/r1', {
+        exact: false,
+      }),
+    ).toBeVisible();
+  });
 });

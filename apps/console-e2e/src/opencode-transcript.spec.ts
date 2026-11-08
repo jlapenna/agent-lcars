@@ -55,6 +55,30 @@ test('renders an archived OpenCode detail with bounded turns and safe tool discl
   expect(await page.evaluate(() => 'archiveInjected' in window)).toBe(false);
 });
 
+test('renders an archived Antigravity detail with user, assistant, and tool disclosures', async ({
+  page,
+}) => {
+  await page.goto('/sessions/e2e-antigravity-full');
+  const header = page.getByTestId('session-header');
+  await expect(header).toBeVisible();
+  await expect(header.getByText('antigravity', { exact: true })).toBeVisible();
+  const timeline = page.getByTestId('transcript-timeline');
+  await expect(
+    timeline.getByText('Audit the Antigravity session archive.'),
+  ).toBeVisible();
+  await expect(
+    timeline.getByText('Inspecting the Antigravity archive.'),
+  ).toBeVisible();
+  await timeline.getByText('tool: run_command', { exact: true }).click();
+  await expect(
+    timeline.getByText('git status --short', { exact: false }),
+  ).toBeVisible();
+  await timeline.getByText('tool result', { exact: true }).first().click();
+  await expect(
+    timeline.getByText('Command exited with code 0.', { exact: false }),
+  ).toBeVisible();
+});
+
 test('distinguishes a valid empty OpenCode archive', async ({ page }) => {
   await page.goto('/sessions/e2e-opencode-empty');
   await expect(page.getByTestId('session-header')).toBeVisible();

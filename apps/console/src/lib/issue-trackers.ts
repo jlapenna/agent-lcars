@@ -110,7 +110,7 @@ export function issueTracker(deps: IssueTrackerDeps = {}): IssueTracker {
           ]),
         ),
         assignees: z
-          .array(z.object({ login: z.string(), id: z.number() }))
+          .array(z.object({ login: z.string(), id: z.number().optional() }))
           .nullish(),
       })
       .parse(await githubRequest(ref, ''));
@@ -128,7 +128,7 @@ export function issueTracker(deps: IssueTrackerDeps = {}): IssueTracker {
           : { id: String(label.id ?? label.name), name: label.name },
       ),
       assignees: (data.assignees ?? []).map((user) => ({
-        id: String(user.id),
+        id: String(user.id ?? user.login),
         name: user.login,
       })),
     };

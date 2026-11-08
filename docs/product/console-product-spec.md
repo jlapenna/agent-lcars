@@ -1,7 +1,7 @@
 # Agent LCARS product spec, part 1: the console
 
 - **Status:** Product specification of record for the console, reviewed against
-  `main` at `7d379e44` and live-qualified on `https://lcars.jlapenna.net`
+  `main` at `6c118a4b` and live-qualified on `https://lcars.jlapenna.net`
   (2026-11-08). Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
@@ -577,7 +577,10 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   shown):
   - Fields: Repo, Agent (`claude`, `codex`, `opencode`, `agy`), Priority
     (`urgent`, `normal`, or `background`), Allowed fallback order, Description,
-    and an optional screenshot (paste or attach).
+    Read-only report (`deliverable: 'report'`), an optional screenshot (paste
+    or attach), and "File a GitHub issue to track this work" (mutually
+    exclusive with Read-only report so read-only findings do not leave an open
+    tracking issue).
   - The work ID is a ULID minted on the client, so retries are idempotent.
   - The chosen agent is remembered in localStorage.
   - Screenshots are normalized to WebP and stored in the evidence bucket, with
@@ -892,7 +895,7 @@ defined in `libs/work/README.md` and the generated Work API contract.
 | FE-NF-1 | Every page streams: a `Suspense` boundary with a `NavPageLoading` header renders before data arrives                                                                                      | Shipped |
 | FE-NF-2 | No secret (App key, `AUTH_SECRET`, OAuth token, cookies) ever reaches the client or the logs                                                                                              | Shipped |
 | FE-NF-3 | External links that come from agent output pass through `safeHttpUrl`                                                                                                                     | Shipped |
-| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                                                                       | Partial |
+| FE-NF-4 | Hermetic E2E (Playwright against the standalone build, the Firestore emulator, and fake GitHub) covers each journey                                                                       | Shipped |
 | FE-NF-5 | The production build is a standalone bundle and has a smoke test from an isolated copy; Google Cloud clients are kept out of the server bundle                                            | Shipped |
 | FE-NF-6 | Deploys happen only through `deploy-console.yml`, triggered by green CI on `main` (or a manual recovery dispatch of an exact CI-validated revision)                                       | Shipped |
 | FE-NF-7 | P95 loaded-decision / working-primary-action readiness under 2s warm and under 3.5s cold (the accepted lab baseline) for phone journeys; [measurement contract](../inbox-phone-budget.md) | Partial |
