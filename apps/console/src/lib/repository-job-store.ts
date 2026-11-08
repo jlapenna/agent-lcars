@@ -38,10 +38,15 @@ export const catalogJobSchema = z.strictObject({
 });
 export type CatalogJob = z.infer<typeof catalogJobSchema>;
 // Storage compatibility only. New configuration still uses jobProfileSchema;
-// runtime authorization explicitly refuses legacy credential delivery.
+// runtime authorization explicitly refuses legacy credential delivery, while
+// occurrences admitted with the retired Homelab Goose environment overlay
+// selector remain readable.
+const storedJobProfileBaseSchema = jobProfileSchema.safeExtend({
+  environment: jobProfileNameSchema.optional(),
+});
 const storedJobProfileSchema = z.union([
-  jobProfileSchema,
-  jobProfileSchema
+  storedJobProfileBaseSchema,
+  storedJobProfileBaseSchema
     .safeExtend({
       credentials: z.strictObject({ github: jobProfileNameSchema }),
     })

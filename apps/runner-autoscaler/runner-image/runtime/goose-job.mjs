@@ -52,12 +52,8 @@ let codexAuth;
 try {
   const brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
-  // The execution profile may select a Homelab-provisioned overlay on the
-  // shared provider environment (for example model credentials one job
-  // class needs); the brief carries the admitted profile.
-  const environment = await loadGooseEnvironment({
-    overlay: brief.profile?.environment,
-  });
+  // Job-specific credentials arrive below from the profile's credential set.
+  const environment = await loadGooseEnvironment();
   // GitHub authority is supplied by the shared renewable command wrappers.
   for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RERUN_TOKEN'])
     delete environment[key];
