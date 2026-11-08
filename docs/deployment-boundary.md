@@ -111,7 +111,11 @@ redispatch. Callers and work specifications never choose a route.
 The autoscaler's own identity needs its own grant row in
 `AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. It receives
 `work.executor` to claim queued runs and the separately checked `work.cron`
-scope to call `POST /schedules/tick`; neither scope implies `work.operator`:
+scope to call `POST /schedules/tick` (or delegates `work.cron` to the dedicated
+`svc:job-scheduler` principal once `LCARS_SCHEDULER_CREDENTIALS` is mounted on
+the autoscaler, separating repository-job automatic activation from the
+runner-mounted `telemetry-writer.json` key per `#3217`); neither scope implies
+`work.operator`:
 
 ```json
 {

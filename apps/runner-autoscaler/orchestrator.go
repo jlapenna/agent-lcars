@@ -63,22 +63,27 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// configuration fails startup elsewhere in this function -- loudly, at
 	// startup, rather than silently every 15s.
 	tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, audience)
-	if tokenErr != nil {
-		logger.Error("Queue executor misconfigured: could not build the claim ID token source", slog.Any("error", tokenErr))
+	schedulerTokenSource, schedulerTokenErr := newScheduleTickerIDTokenSource(ctx, keyPath, audience, tokenSource, tokenErr)
+	if schedulerTokenErr != nil {
+		logger.Error("Schedule ticker misconfigured: could not build the schedule ID token source", slog.Any("error", schedulerTokenErr))
 	} else {
-		// Schedule ticking needs only the Console URL and the existing Google
-		// key, no cluster access or provider credential. Keep it independent
-		// from direct-runner launch preflight so a temporary cluster fault
-		// cannot couple the two together: the server still safely owns schedule
-		// admission and queue state. The API enforces the distinct work.cron
-		// grant on this same Google identity.
+		// Schedule ticking needs only the Console URL and its Google key
+		// (LCARS_SCHEDULER_CREDENTIALS when separated from the executor key,
+		// falling back to GOOGLE_APPLICATION_CREDENTIALS), no cluster access
+		// or provider credential. Keep it independent from direct-runner
+		// launch preflight so a temporary cluster fault cannot couple the two
+		// together: the server still safely owns schedule admission and queue
+		// state. The API enforces the distinct work.cron grant.
 		go runScheduleTicker(ctx, scheduleTickerConfig{
 			consoleURL: consoleURL,
 			idToken: func() (string, error) {
-				return idTokenFromSource(tokenSource)
+				return idTokenFromSource(schedulerTokenSource)
 			},
 		}, logger.With("component", "schedule-ticker"))
-
+	}
+	if tokenErr != nil {
+		logger.Error("Queue executor misconfigured: could not build the claim ID token source", slog.Any("error", tokenErr))
+	} else {
 		hostname, hostErr := os.Hostname()
 		runnerName := queueExecutorRunnerName(hostname, hostErr)
 		queue, err := newKubernetesQueue(ctx, *resolved.Raw.Kubernetes, logger)

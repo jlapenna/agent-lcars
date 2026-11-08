@@ -341,12 +341,19 @@ checks and the read-only Kubernetes preflight described above.
 
 The same continuously running process ticks native schedules through
 `POST /api/work/v1/schedules/tick` once at startup and then every five
-minutes. It reuses the queue executor's Google ID-token source and Work API
-audience, but needs the separate `work.cron` scope; `work.executor` alone
-cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule
-state and admission in the Work API and removes GitHub Actions schedule
-delivery from the ingress path. `github_runner_autoscaler_schedule_ticks_total`
-reports `success` and `error` outcomes for operations monitoring.
+minutes. By default it reuses the queue executor's Google ID-token source and
+Work API audience (`GOOGLE_APPLICATION_CREDENTIALS`); setting
+`LCARS_SCHEDULER_CREDENTIALS` points the schedule and maintenance ticker at a
+dedicated service-account key (`job-scheduler@agent-lcars.iam.gserviceaccount.com`)
+so the `work.cron` scope and repository-job automatic activation (`#3217`) can
+be separated from the runner-mounted `telemetry-writer.json` executor key. When
+`LCARS_SCHEDULER_CREDENTIALS` is set to a distinct path, an unreadable or
+missing file fails closed for the schedule ticker without falling back to the
+executor identity. `work.executor` alone cannot mint schedules, and `work.cron`
+cannot claim runs. This keeps schedule state and admission in the Work API and
+removes GitHub Actions schedule delivery from the ingress path.
+`github_runner_autoscaler_schedule_ticks_total` reports `success` and `error`
+outcomes for operations monitoring.
 
 The same cadence posts `POST /api/work/v1/maintenance/tick`, which settles
 expired leases and drains the Console's outbox

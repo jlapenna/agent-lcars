@@ -8,8 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 // scheduleTickInterval keeps the native schedule cadence independent of
@@ -64,6 +67,45 @@ type scheduleTickerConfig struct {
 	consoleURL string
 	httpClient *http.Client
 	idToken    func() (string, error)
+}
+
+// schedulerCredentialsPath resolves the Google service-account key file used
+// by the schedule and maintenance ticker (#3217). When
+// LCARS_SCHEDULER_CREDENTIALS is set, the ticker authenticates with that
+// dedicated scheduler key so work.cron and repository-job automatic activation
+// do not share the runner-mounted executor key; otherwise it falls back to
+// executorKeyPath (GOOGLE_APPLICATION_CREDENTIALS).
+func schedulerCredentialsPath(executorKeyPath string) string {
+	if configured := strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS")); configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(executorKeyPath)
+}
+
+// newScheduleTickerIDTokenSource builds or reuses the ID token source for
+// schedule and maintenance ticks. When LCARS_SCHEDULER_CREDENTIALS names the
+// same file as executorKeyPath (or is unset) and executorSource is already
+// built, it reuses executorSource to avoid duplicate file reads and token
+// refreshes. When a distinct LCARS_SCHEDULER_CREDENTIALS path is configured,
+// it builds a dedicated token source and fails closed on a bad/missing file
+// rather than falling back to the executor identity.
+func newScheduleTickerIDTokenSource(
+	ctx context.Context,
+	executorKeyPath string,
+	audience string,
+	executorSource oauth2.TokenSource,
+	executorErr error,
+) (oauth2.TokenSource, error) {
+	schedulerPath := schedulerCredentialsPath(executorKeyPath)
+	if schedulerPath == strings.TrimSpace(executorKeyPath) {
+		if executorErr != nil {
+			return nil, executorErr
+		}
+		if executorSource != nil {
+			return executorSource, nil
+		}
+	}
+	return newDirectRunnerIDTokenSource(ctx, schedulerPath, audience)
 }
 
 // tickSchedulesOnce invokes the one server-owned schedule ingress route. The

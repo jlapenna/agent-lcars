@@ -690,6 +690,16 @@ resource "google_service_account_iam_member" "work_reader_token_creator" {
   member             = "user:jlapenna@gmail.com"
 }
 
+# Dedicated Work API schedule-ticker and repository-job automation identity
+# (#3217). It holds no project role and no resource grant: its only use is
+# minting a Google ID token for the autoscaler's schedule/maintenance ticker
+# (`LCARS_SCHEDULER_CREDENTIALS`) once `work.cron` is separated from the
+# runner-mounted `telemetry-writer` executor key.
+resource "google_service_account" "job_scheduler" {
+  account_id   = "job-scheduler"
+  display_name = "Agent LCARS schedule ticker and job automation caller"
+}
+
 resource "google_service_account" "homelab_codex_agent" {
   account_id   = "homelab-codex-agent"
   display_name = "Homelab Codex issue agent"
