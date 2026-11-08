@@ -923,6 +923,17 @@ it('decodes occurrences admitted with the retired Goose environment overlay', as
     profile: { ...occurrence.profile, environment: 'skill-evals' },
   };
   expect(jobOccurrenceSchema.parse(stored).profile).toEqual(stored.profile);
+  const storedWithLegacyCredentials = {
+    ...occurrence,
+    profile: {
+      ...occurrence.profile,
+      credentials: { github: 'personal' },
+      environment: 'skill-evals',
+    },
+  };
+  expect(
+    jobOccurrenceSchema.parse(storedWithLegacyCredentials).profile,
+  ).toEqual(storedWithLegacyCredentials.profile);
   expect(() =>
     jobOccurrenceSchema.parse({
       ...stored,
