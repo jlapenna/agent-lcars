@@ -179,15 +179,11 @@ function isNotFound(error: unknown): boolean {
   );
 }
 
-/** Default page size for `listSessionDocs` when the caller doesn't ask for a
- * specific `limit` - generous enough for the dashboard's 24h window, small
- * enough to keep the archive page's default 14-day window cheap. */
+/** Default retained result size for dashboard and scoped session readers.
+ * Archive consumers explicitly opt into exhaustive streamed results. */
 const DEFAULT_LIST_LIMIT = 100;
-/** Hard ceiling on `limit`, regardless of what a caller (ultimately a
- * client-controlled query param on the /sessions archive page) requests -
- * this is a read-only reader path with no auth boundary of its own beyond
- * the console's admin gate, so the cap is enforced here rather than trusted
- * to every caller. */
+/** Maximum retained result size for bounded readers. Exhaustive archive
+ * reads retain all matches in their selected time window instead. */
 export const MAX_LIST_LIMIT = 200;
 
 export interface ListSessionDocsOptions {
@@ -223,6 +219,10 @@ export interface ListSessionDocsOptions {
    * Clamped to [1, {@link MAX_LIST_LIMIT}]; defaults to
    * {@link DEFAULT_LIST_LIMIT} when omitted. */
   limit?: number;
+  /** Retain every matching session for archive rows and aggregate totals.
+   * The query is still streamed, with SDK backpressure; callers should supply
+   * activeSince to bound the time window. Overrides limit. */
+  exhaustive?: boolean;
 }
 
 /**
@@ -279,6 +279,10 @@ export async function listSessionDocs(
         expireAt: expireAt.toDate().toISOString(),
       }),
     });
+    if (options.exhaustive) {
+      docs.push(doc);
+      continue;
+    }
     // Stable descending insertion keeps at most the requested page. Equal
     // activity clocks retain query order, matching the previous stable sort.
     let low = 0;
@@ -294,6 +298,8 @@ export async function listSessionDocs(
       if (docs.length > limit) docs.pop();
     }
   }
+  if (options.exhaustive)
+    docs.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
   return docs;
 }
 

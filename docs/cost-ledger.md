@@ -5,8 +5,12 @@ existing issue/week ledgers: `days` (default 14, maximum 90), `source`, `issue`,
 and watched `repo`. The window selects **last activity**, not billing events.
 Each selected session contributes its whole cumulative recorded usage and cost.
 A session resumed today can therefore include costs incurred before the window.
-The newest 200 sessions are the archive ceiling; reaching it displays a partial
-coverage warning, including after repository filtering.
+All sessions matching the selected window are retained from the streamed read,
+then repository and agent filters narrow that complete set. There is no session
+count ceiling; memory use and rendered rows scale with the selected window.
+A failed stream makes the archive unavailable rather than returning partial
+results. Snapshot activity-clock exclusions still display a partial coverage
+warning.
 
 ## Accounting
 

@@ -92,14 +92,14 @@ describe('bridgeReadouts', () => {
     ).toBe('—');
   });
 
-  it('marks a spend total the archive limit truncated as a lower bound', () => {
+  it('marks spend with incomplete archive coverage as a lower bound', () => {
     const r = byId({
       ...healthy,
       spendToday: { costUsd: 38.42, estimated: false, partial: true },
     });
     expect(r['spend']).toMatchObject({
       value: '$38.42+',
-      detail: 'partial: session archive limit reached',
+      detail: 'partial: session archive coverage incomplete',
     });
   });
 

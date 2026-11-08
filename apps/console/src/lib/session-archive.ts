@@ -47,12 +47,6 @@ export {
 
 export const MAX_ARCHIVE_DAYS = 90;
 
-/** Server-side page-size cap for the archive table - the store's own
- * MAX_LIST_LIMIT (200) already bounds this; passed explicitly rather than
- * relying on the store's default (100) so a wide `days` window still shows
- * everything within the store's hard ceiling. */
-const ARCHIVE_LIST_LIMIT = 200;
-
 export interface SessionArchiveQuery {
   /** Whole days, or ONE_HOUR_DAYS (archive-window.ts). */
   days: number;
@@ -313,7 +307,7 @@ export async function getSessionArchive(
       ...(query.issueNumber !== undefined && {
         issueNumber: query.issueNumber,
       }),
-      limit: ARCHIVE_LIST_LIMIT,
+      exhaustive: true,
     });
   } catch (error) {
     logger.error('agent-lcars: failed to list session archive:', error);
@@ -328,10 +322,9 @@ export async function getSessionArchive(
     };
   }
 
-  const pageCapped = docs.length >= ARCHIVE_LIST_LIMIT;
-  let coverageLimited = pageCapped;
+  let coverageLimited = false;
   // Snapshot consumers must not charge future or malformed activity clocks.
-  // Apply after the bounded page; excluded rows make coverage explicitly partial.
+  // Excluded rows make coverage explicitly partial.
   if (options.observedAt !== undefined) {
     const selected = docs.filter((doc) => {
       const activity = Date.parse(doc.lastActivityAt);
@@ -370,12 +363,7 @@ export async function getSessionArchive(
   }
 
   const warnings = [
-    ...(pageCapped
-      ? [
-          'Session limit reached; totals may be partial, including repository-filtered totals.',
-        ]
-      : []),
-    ...(coverageLimited && !pageCapped
+    ...(coverageLimited
       ? ['Snapshot activity clocks excluded; totals may be partial.']
       : []),
   ];

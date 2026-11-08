@@ -48,7 +48,7 @@ export interface BridgeReadoutInput {
     /** `costUsd` split by the UTC hour of each session's last activity. */
     byHourUsd?: number[];
     estimated: boolean;
-    /** The archive hit its session limit: the total is a lower bound. */
+    /** Archive coverage is incomplete: the total is a lower bound. */
     partial: boolean;
   };
 }
@@ -265,7 +265,7 @@ export function bridgeReadouts(input: BridgeReadoutInput): ConsoleReadout[] {
         spend === undefined
           ? 'unavailable'
           : input.spendToday?.partial
-            ? 'partial: session archive limit reached'
+            ? 'partial: session archive coverage incomplete'
             : `since 00:00 UTC · no daily budget${input.spendToday?.estimated ? ' · est.' : ''}`,
       spark: {
         label: input.spendToday?.partial
