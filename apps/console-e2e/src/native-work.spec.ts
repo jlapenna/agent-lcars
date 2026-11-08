@@ -355,7 +355,11 @@ test.describe('native Work mutation journeys', () => {
     expect(response.ok()).toBe(true);
     await page.goto('/work/issues');
     await expect(
-      page.getByRole('heading', { name: 'Issue sources', exact: true }),
+      page.getByRole('heading', {
+        name: 'Issue sources',
+        level: 1,
+        exact: true,
+      }),
     ).toBeVisible();
     const issueRow = page.getByTestId(
       'issue-source-supersprinklesracing/sprinkles#9004',
