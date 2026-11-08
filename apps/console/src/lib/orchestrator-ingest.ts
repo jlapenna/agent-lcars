@@ -14,7 +14,8 @@ import { z } from 'zod';
 
 import { isControlPlaneRepository } from '@/lib/deployment';
 import { matchReplyTrigger } from '@/lib/reply-trigger';
-import { hasCrossRepoOption } from '@/lib/watched-repo';
+import { hasCrossRepoOption, repoKey } from '@/lib/watched-repo';
+import { getWatchedRepos } from '@/lib/watched-repos-config';
 
 import {
   checkGithubLabelRouting,
@@ -212,7 +213,9 @@ function crossRepoParams(
 }
 
 function checkRepository(fullName: string): IngestIgnore | undefined {
-  return isControlPlaneRepository(fullName) ? undefined : ignore('wrong-repo');
+  if (!isControlPlaneRepository(fullName)) return ignore('wrong-repo');
+  const watched = getWatchedRepos().find((repo) => repoKey(repo) === fullName);
+  return watched?.agents === false ? ignore('agents-disabled') : undefined;
 }
 
 /** Builds the decision, re-validating the assembled task identifier against

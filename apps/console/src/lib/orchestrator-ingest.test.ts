@@ -1128,6 +1128,59 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
 
     expect(result).toEqual({ kind: 'ignore', reason: 'wrong-repo' });
   });
+
+  it('ignores coding-agent intake when a watched repository declares agents: false', () => {
+    const GOOSE_ONLY_REPO = 'jlapenna/jclaw';
+    process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
+      `${REPO},${GOOSE_ONLY_REPO}`;
+    process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+      { owner: 'jlapenna', name: 'agent-lcars' },
+      { owner: 'jlapenna', name: 'jclaw', agents: false },
+    ]);
+
+    expect(
+      interpretDelivery({
+        event: 'issues',
+        deliveryId: DELIVERY_ID,
+        payload: issuesLabeledPayload({
+          repository: { full_name: GOOSE_ONLY_REPO },
+        }),
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'agents-disabled' });
+
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'opened',
+          repository: { full_name: GOOSE_ONLY_REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 83,
+            title: 'Goose PR',
+            body: 'Body',
+            user: { login: 'jlapenna', type: 'User' },
+            head: { ref: 'feat/test', sha: 'a'.repeat(40) },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'agents-disabled' });
+
+    expect(
+      interpretDelivery({
+        event: 'issue_comment',
+        deliveryId: DELIVERY_ID,
+        payload: issueCommentPayload({
+          repository: { full_name: GOOSE_ONLY_REPO },
+          comment: { body: '/review', author_association: 'OWNER' },
+        }),
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'agents-disabled' });
+  });
 });
 
 describe('unified cross-model PR review intake', () => {
