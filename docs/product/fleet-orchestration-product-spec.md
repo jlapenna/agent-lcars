@@ -3,7 +3,7 @@
 - **Status:** Product specification of record for the agent fleet control
   plane. Originally written from `main` at `608500a`; requirement statuses,
   state model, runtime, worker contract, published interfaces, and roadmap
-  were reviewed against `7d379e44` (2026-11-08). Part 1 is
+  were reviewed against `6c118a4b` (2026-11-08). Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -218,7 +218,7 @@ declared in `STORED_PIPELINES` (`libs/work/src/spec.ts`).
 
 ### Authorized label provider handoff
 
-**FL-IN-7 [Implemented; runtime qualification pending]** Replacing the sole
+**FL-IN-7 [Shipped]** Replacing the sole
 canonical `agent:*` label by a Console administrator requests a source-ordered
 handoff through the controller. Delivered full-set validation and immutable
 non-provider Work comparison remain mandatory. Original Work and every Run's
@@ -232,8 +232,8 @@ clear, terminal and parked work may start fresh on the requested provider.
 Refusal is visible with requested/effective provider, actor and source clock;
 it is never an automatically deferred execution request. Reapply after gates
 clear. Stale/equal-clock deliveries and unauthorized changes cannot reroute.
-Same-provider requests keep ordinary redispatch behavior. Source coverage, CI,
-protected delivery and eventual supported runtime proof are separate gates.
+Same-provider requests keep ordinary redispatch behavior. Live-qualified on
+`https://lcars.jlapenna.net/task/jlapenna/homelab/3200`.
 
 ### 5.1 Entities
 
@@ -626,8 +626,9 @@ consumed by every dispatched run in every member repository.
     `CHANGES_REQUESTED` reviews.
   - Merge operations require explicit repository-scoped App identity;
     unsupported `GITHUB_TOKEN` mode fails before mutation. Native events own
-    post-merge CI/deployment and issue closure. The bounded migration of an
-    existing legacy auto-merge arm to App identity remains.
+    post-merge CI/deployment and issue closure, and `reconcile-automerge`
+    migrates any existing legacy `app/github-actions` auto-merge arm to the App
+    identity.
 - **FL-CM-3 [Shipped]** Maintainer merge actions are available in the console:
   Approve & Merge, Approve & Rebase, Rebase, Unstick, Clear needs-human,
   Assign pipeline, and Close.

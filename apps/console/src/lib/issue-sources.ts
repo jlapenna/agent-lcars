@@ -60,9 +60,18 @@ export async function lookupIssueSource(
     );
     if (!repo) throw new ORPCError('FORBIDDEN');
     assertRepository(context, repo);
-    issue = await issueTracker({
-      tokens: createDispatchTokenProvider(process.env),
-    }).read({ tracker: 'github', repo, issue: Number(lookup.issue) });
+    const fixtureBaseUrl =
+      process.env['AGENT_CONSOLE_GITHUB_API_BASE_URL']?.trim();
+    issue = await issueTracker(
+      fixtureBaseUrl
+        ? {
+            tokens: { tokenFor: async () => 'e2e-fixture-token' },
+            githubApiBaseUrl: fixtureBaseUrl,
+          }
+        : {
+            tokens: createDispatchTokenProvider(process.env),
+          },
+    ).read({ tracker: 'github', repo, issue: Number(lookup.issue) });
   } else {
     const config = linearConfig();
     if (!config)

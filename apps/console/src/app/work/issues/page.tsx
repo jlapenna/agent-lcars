@@ -118,6 +118,7 @@ async function IssuesContent({ query }: { query: Query }) {
               return (
                 <Group
                   key={source.issue.url}
+                  data-testid={`issue-source-${source.issue.identifier}`}
                   justify="space-between"
                   align="flex-start"
                   wrap="wrap"

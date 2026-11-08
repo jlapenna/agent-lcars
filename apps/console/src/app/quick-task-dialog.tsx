@@ -445,7 +445,7 @@ export function QuickTaskDialog({
       description,
       source,
       ...(screenshot ? { file: screenshot } : {}),
-      ...(fileGithubIssue ? { fileGithubIssue: true } : {}),
+      ...(fileGithubIssue && !readOnlyReport ? { fileGithubIssue: true } : {}),
     };
     setDescription('');
     setPriority('normal');
@@ -581,7 +581,13 @@ export function QuickTaskDialog({
             label="Read-only report"
             description="Asks for findings, not changes; the final message is the result."
             checked={readOnlyReport}
-            onChange={(e) => setReadOnlyReport(e.currentTarget.checked)}
+            onChange={(e) => {
+              const checked = e.currentTarget.checked;
+              setReadOnlyReport(checked);
+              if (checked) {
+                setFileGithubIssue(false);
+              }
+            }}
           />
           <QuickTaskScreenshotField
             value={screenshot ?? undefined}
@@ -601,7 +607,13 @@ export function QuickTaskDialog({
           </Group>
           <Checkbox
             label="File a GitHub issue to track this work"
-            checked={fileGithubIssue}
+            description={
+              readOnlyReport
+                ? 'Read-only reports return findings in Work without a tracking issue.'
+                : undefined
+            }
+            checked={fileGithubIssue && !readOnlyReport}
+            disabled={readOnlyReport}
             onChange={(e) => setFileGithubIssue(e.currentTarget.checked)}
           />
 

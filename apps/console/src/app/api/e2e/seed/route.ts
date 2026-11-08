@@ -29,7 +29,10 @@ import {
   resetE2eOrchestratorFixtures,
   seedPopulatedE2eOrchestratorFixtures,
 } from '../../../../lib/e2e-orchestrator-fixtures';
-import { E2E_OPENCODE_SESSION_IDS } from '../../../../lib/e2e-transcript-fixtures';
+import {
+  E2E_ANTIGRAVITY_SESSION_IDS,
+  E2E_OPENCODE_SESSION_IDS,
+} from '../../../../lib/e2e-transcript-fixtures';
 
 const RUNNER_STATUS_COLLECTION = 'runner-status';
 const E2E_RUNNER_STATUS_ID = 'e2e-fixture-arc-lane';
@@ -437,6 +440,16 @@ export async function POST(req: NextRequest) {
           resumeGcsUri: `gs://e2e-transcripts/${sessionId}.export.json`,
           // Covers already-stored docs from before OpenCode timeline support.
           renderable: false,
+        });
+      }
+      for (const sessionId of Object.values(E2E_ANTIGRAVITY_SESSION_IDS)) {
+        docs.push({
+          ...fixtureIssueAgentSession(),
+          sessionId,
+          agent: 'antigravity',
+          title: `Antigravity archive ${sessionId}`,
+          transcriptGcsUri: `gs://e2e-transcripts/${sessionId}.jsonl`,
+          renderable: true,
         });
       }
     }
