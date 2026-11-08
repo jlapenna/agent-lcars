@@ -1,7 +1,8 @@
 # Agent LCARS product spec, part 1: the console
 
 - **Status:** Product specification of record for the console, reviewed against
-  `main` at `f88533f5` (2026-11-08). Part 2 is
+  `main` at `7d379e44` and live-qualified on `https://lcars.jlapenna.net`
+  (2026-11-08). Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -482,7 +483,7 @@ review current items.`) so repository titles and handoff text never cross the
   render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
-- **FE-SB-3a [Implemented]** Runtime qualification remains pending. Task history shows
+- **FE-SB-3a [Shipped]** Task history shows
   requested and effective execution providers and the latest label handoff
   outcome. A refused handoff names the owner/retirement gate and asks the
   administrator to reapply after it clears. Original admitted Work remains
@@ -496,7 +497,7 @@ review current items.`) so repository titles and handoff text never cross the
   sample, failed read or stale/reset-crossing observation is unavailable,
   never an inferred zero. Eligibility does not prove worker placement or
   successful execution.
-- **FE-SB-5 [Implemented]** The Runner fleet panel on the Bridge and Shuttlebay
+- **FE-SB-5 [Shipped]** The Runner fleet panel on the Bridge and Shuttlebay
   shows CI wait p50: the median time from an ARC job being assigned to a
   runner until that runner starts it, over the last 30 minutes, with a
   per-minute sparkline. The data comes from each listener's
@@ -504,21 +505,21 @@ review current items.`) so repository titles and handoff text never cross the
   is unavailable until a lane reports a window, and partial when some lanes
   do not. Its label names the minutes actually covered, which are fewer than 30
   after an autoscaler start or reset. A quiet window reads "no job started", never 0s.
-- **FE-SB-6 [Implemented]** The same panel shows Tokens / min: the
+- **FE-SB-6 [Shipped]** The same panel shows Tokens / min: the
   cost-weighted token spend of sessions active in the last 30 minutes,
   averaged over the last 5 complete minutes, with a per-minute sparkline. The
   source is each session's `tokenMinutes`, recorded by hook telemetry. It
   follows the page's repository and agent filters. It is unavailable when the
   session store fails or no active session is measured, partial when some
   are not, and a known zero when no session is active.
-- **FE-SB-7 [Implemented]** The same panel shows Work API p95: the 95th
+- **FE-SB-7 [Shipped]** The same panel shows Work API p95: the 95th
   percentile response time (request sent to response headers) of the queue
   executor's own Work API calls (claims, placements, fences, exits and
   schedule ticks), counting a call that times out at the time it waited, over the last 30 minutes, with a per-minute sparkline. The
   executor windows the samples itself and publishes them on its status
   document. It is unavailable without that window, reads "no calls" for a
   quiet one, and names the minutes covered.
-- **FE-SB-8 [Implemented]** The Runner fleet panel draws one row per cluster
+- **FE-SB-8 [Shipped]** The Runner fleet panel draws one row per cluster
   host, as the mockup does: allocatable vCPU and GiB, runner and queue-job
   pods as slots, and CPU and memory meters. The meters show metrics-server's
   live usage (labeled "used") where the executor may list `metrics.k8s.io`
@@ -527,13 +528,13 @@ review current items.`) so repository titles and handoff text never cross the
   "used or requested". A NotReady host says so, and a cordoned one reads
   "draining". Without a fresh inventory the rows
   fall back to ARC lanes with host load unavailable.
-- **FE-SB-9 [Implemented]** Shuttlebay's toolbar carries the mockup's window
+- **FE-SB-9 [Shipped]** Shuttlebay's toolbar carries the mockup's window
   control. Its readouts are live or cover the last 30 minutes, the most the
   autoscaler and session windows keep, so 30m is the one choosable window.
   1h, 24h and 7d are drawn disabled, with a visible note beside the control,
   "Runner telemetry keeps the last 30 minutes", that also describes them to
   assistive technology.
-- **FE-SB-10 [Implemented]** The Runners panel draws one row per runner pod,
+- **FE-SB-10 [Shipped]** The Runners panel draws one row per runner pod,
   as the mockup does: ARC ephemeral runners and queue executor Job pods, with
   state, job, request (`6c/18G`) and age, headed `N/M online`. The executor
   publishes the rows on its host inventory from the pods it already lists. An
@@ -547,7 +548,7 @@ review current items.`) so repository titles and handoff text never cross the
   allocatable (already net of reserves), and counts the requests that do not.
   An executor that predates the rows, or a fleet past 128 runners, keeps the
   per-lane totals.
-- **FE-SB-11 [Implemented]** CI runners online (the rail labels it so, since
+- **FE-SB-11 [Shipped]** CI runners online (the rail labels it so, since
   agent Jobs and hosts are not counted) reads `online/total` wherever it
   appears, as the mockup's `11/12`: the rail, the Bridge's Runners online
   readout and the Runner fleet panel on the Bridge and Shuttlebay. Both halves
@@ -932,21 +933,31 @@ defined in `libs/work/README.md` and the generated Work API contract.
 - One ground and contrast on every destination.
 - Header bounds at phone, tablet, and desktop widths.
 
-**Not covered:** merge and rebase against real GitHub, and production
-qualification of these journeys. Hermetic E2E does not prove the live
-deployment.
+**Live production qualification (2026-11-08):** Verified against
+`https://lcars.jlapenna.net` with `@agent-lcars/console:verify-session` using
+`AGENT_LCARS_ADMIN_STORAGE_STATE` across `/`, `/inbox`, `/agents`,
+`/shuttlebay`, `/work`, `/work/schedules`, `/work/issues`,
+`/work/01M20HYC30880FW18N8TCQCRXY`, `/jobs`, `/jobs/credentials` (verifying the
+non-`secrets.admin` access gate for `svc:production-verifier`), `/sessions`,
+`/sessions/31686b29-9dc4-4f89-b29c-c038602de746`, `/costs`, `/settings`,
+`/task/jlapenna/homelab/3200` (verifying `FE-SB-3a` requested/effective provider
+handoff provenance), and `/task/jlapenna/agent-lcars/3133`.
+
+**Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
+and live write mutations (which are intentionally excluded from automated
+production verification).
 
 ## 10. Gaps and roadmap
 
 Priorities follow the expert-maintainer design center. This table lists only
 remaining work. Completed roadmap entries R1, R3–R11 are retired;
 their behavior is owned by the corresponding destination requirements above.
-R2 now identifies the live qualification gap rather than repeating shipped E2E
-coverage. Existing IDs are not reused.
+R2 now tracks live qualification of mutating journeys beyond the read-only
+route and telemetry qualification recorded in §9. Existing IDs are not reused.
 
-| #   | Remaining work                                                                   | Acceptance boundary                                                                                                               | Priority |
-| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey | P0       |
+| #   | Remaining work                                                                                       | Acceptance boundary                                                                                                          | Priority |
+| --- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify mutating production journeys in §9 (including real GitHub merge/rebase and secrets.admin UI) | Record live evidence separately from the shipped hermetic suite; read-only route qualification does not prove mutating paths | P0       |
 
 ## 11. Success metrics
 
