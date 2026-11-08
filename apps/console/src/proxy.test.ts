@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
 
-import proxy, { publicPrefixes, publicRoutes } from './proxy';
+import proxy, { config, publicPrefixes, publicRoutes } from './proxy';
 
 // Kept independent of proxy.ts's publicRoutes export on purpose (Codex
 // review on #894): asserting against a copy of THIS list, rather than
@@ -186,5 +186,28 @@ describe('console proxy public control-plane routes', () => {
 
     expect(proxy(evidence).status).toBe(200);
     expect(proxy(adjacent).status).toBe(401);
+  });
+});
+
+describe('console proxy matcher', () => {
+  // Next compiles the matcher source as a path regex; this pattern is plain
+  // JavaScript regex syntax, so anchoring it reproduces the match decision.
+  const gated = (path: string) =>
+    config.matcher.some((source) => new RegExp(`^${source}$`).test(path));
+
+  it('leaves the install manifest and app icons public for Chrome installation', () => {
+    for (const path of [
+      '/manifest.webmanifest',
+      '/icon-192.png',
+      '/icon-512.png',
+      '/apple-touch-icon.png',
+    ]) {
+      expect(gated(path)).toBe(false);
+    }
+  });
+
+  it('keeps console pages behind the session gate', () => {
+    expect(gated('/')).toBe(true);
+    expect(gated('/inbox')).toBe(true);
   });
 });

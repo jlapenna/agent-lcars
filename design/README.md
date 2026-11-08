@@ -3,6 +3,10 @@
 Browser-renderable design prototypes for the LCARS console. Open the HTML files
 directly (they load bundled fonts from `assets/fonts/` with no build step).
 
+`assets/icons/app-icon.svg` is the installed-app icon. Its glyph stays inside
+the central 80% maskable safe zone. Re-render `apps/console/public/icon-192.png`,
+`icon-512.png` and `apple-touch-icon.png` (180px) from it when it changes.
+
 `fleet-console.html` is the layout target for the console: its elbow rail,
 header, workspace frame, panels and tables are what the routes are built to,
 at three widths — desktop (64em and up), tablet (48–64em: compact elbow,
