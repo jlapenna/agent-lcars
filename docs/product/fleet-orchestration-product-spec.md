@@ -152,10 +152,10 @@ The core promises:
   `/api/control-plane/linear/webhook` verifies `Linear-Signature` (HMAC-SHA256)
   and rejects payloads older than 1 minute (`webhookTimestamp`), then enqueues
   to Cloud Tasks for `/api/control-plane/linear/process`. Mapped Linear teams
-  (`AGENT_LCARS_LINEAR_CONFIG`) admit native Work items carrying
+  (`AGENT_LCARS_LINEAR`) admit native Work items carrying
   `issue: { source: 'linear', id: '<uuid>', identifier: '<KEY-N>', url }` with
   principal `svc:linear` and `origin.channel = 'linear'`. Linear workflow states
-  advance through configured `stateIds` (`started`, `parked`, `failed`,
+  advance through configured `teams[].states` (`started`, `parked`, `failed`,
   `canceled`, and `completed` only after protected GitHub PR merge). Canonical
   owners: [`linear.md`](../linear.md) and
   [`tracker-sources.md`](../api/tracker-sources.md).
@@ -466,8 +466,9 @@ executor is working an issue; a human assignee owns it regardless.
   - OpenCode: a LiteLLM virtual key.
   - Antigravity: an OAuth token from a projected file (`AGY_AUTH_JSON_FILE`).
   - Goose recipes: LiteLLM virtual key by default, or leased Codex auth when
-    `job.yaml` sets `providerAuth: "codex"`, plus any granted per-job secret
-    bindings (`environment` and `/dev/shm` `files`) resolved from
+    the selected operator profile (`AGENT_LCARS_JOB_PROFILES`) sets
+    `providerAuth: "codex"`, plus any granted per-job secret bindings
+    (`environment` and `/dev/shm` `files`) resolved from
     `/runs/{id}/job-secrets`.
 
 ### 6.4 Loss, retry, and parking
