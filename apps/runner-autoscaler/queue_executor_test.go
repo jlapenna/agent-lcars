@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"golang.org/x/oauth2"
 )
 
 // discardLogger matches this package's own test convention
@@ -610,6 +611,66 @@ func TestNewDirectRunnerIDTokenSourceErrors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error building an id token source from a nonexistent key file")
 	}
+}
+
+func TestScheduleTickerIDTokenSourceSeparatesOrFallsBackToExecutorKey(t *testing.T) {
+	executorStub := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "executor-id-token"})
+
+	t.Run("unset LCARS_SCHEDULER_CREDENTIALS reuses executor token source", func(t *testing.T) {
+		t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "")
+		if got := schedulerCredentialsPath(" /run/secrets/telemetry-writer.json "); got != "/run/secrets/telemetry-writer.json" {
+			t.Fatalf("schedulerCredentialsPath = %q, want trimmed executor path", got)
+		}
+		source, err := newScheduleTickerIDTokenSource(
+			context.Background(),
+			"/run/secrets/telemetry-writer.json",
+			"agent-lcars-work",
+			executorStub,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("newScheduleTickerIDTokenSource error = %v", err)
+		}
+		tok, err := idTokenFromSource(source)
+		if err != nil || tok != "executor-id-token" {
+			t.Fatalf("token = %q, err = %v; want executor-id-token", tok, err)
+		}
+	})
+
+	t.Run("matching LCARS_SCHEDULER_CREDENTIALS reuses executor token source", func(t *testing.T) {
+		t.Setenv("LCARS_SCHEDULER_CREDENTIALS", " /run/secrets/telemetry-writer.json ")
+		source, err := newScheduleTickerIDTokenSource(
+			context.Background(),
+			"/run/secrets/telemetry-writer.json",
+			"agent-lcars-work",
+			executorStub,
+			nil,
+		)
+		if err != nil {
+			t.Fatalf("newScheduleTickerIDTokenSource error = %v", err)
+		}
+		tok, err := idTokenFromSource(source)
+		if err != nil || tok != "executor-id-token" {
+			t.Fatalf("token = %q, err = %v; want executor-id-token", tok, err)
+		}
+	})
+
+	t.Run("distinct LCARS_SCHEDULER_CREDENTIALS fails closed without falling back to executor key", func(t *testing.T) {
+		t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/nonexistent/job-scheduler.json")
+		if got := schedulerCredentialsPath("/run/secrets/telemetry-writer.json"); got != "/nonexistent/job-scheduler.json" {
+			t.Fatalf("schedulerCredentialsPath = %q, want configured scheduler path", got)
+		}
+		_, err := newScheduleTickerIDTokenSource(
+			context.Background(),
+			"/run/secrets/telemetry-writer.json",
+			"agent-lcars-work",
+			executorStub,
+			nil,
+		)
+		if err == nil {
+			t.Fatalf("expected error when LCARS_SCHEDULER_CREDENTIALS points to an unreadable file, even with a healthy executor source")
+		}
+	})
 }
 
 func TestQueueExecutorPollerRecoversEachTickWithoutOverlapOrBlockingClaims(t *testing.T) {
