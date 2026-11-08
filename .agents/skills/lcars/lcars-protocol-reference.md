@@ -13,8 +13,12 @@ enough.
   `apps/console/src/lib/orchestrator-ingest.ts`'s `interpretDelivery`, pure
   and stateless: an `issues`/`pull_request` `labeled` event whose label is
   `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy` requests mode `implement`
-  (issue or PR); the same on a PR with `review:claude`/`review:codex`/
-  `review:opencode`/`review:agy` requests mode `review`. Label routing validates the full
+  (issue or PR); a non-draft `pull_request` `opened` / `ready_for_review`
+  event, a unified `review` or `review:claude`/`review:codex`/
+  `review:opencode`/`review:agy` label on a PR, or a `/review` PR comment by an
+  `OWNER` or `MEMBER` requests mode `review`, routed by
+  `apps/console/src/lib/pr-review-routing.ts` to an opposite model with quota
+  `fallbackPipelines` under principal `svc:github-pr-review`. Label routing validates the full
   delivered anchor label snapshot against the canonical pipeline registry;
   multiple choices within the triggering namespace produce an actionable
   `routing-label-conflict` refusal before admission. Missing/inconsistent
@@ -58,14 +62,16 @@ enough.
 Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy`
 dispatches `mode: implement`. Tagging a **pull request** with the same
 `agent:*` label dispatches `mode: implement` too (#567). A pull request
-tagged instead with `review:claude`/`review:codex`/`review:opencode`/`review:agy`
-dispatches `mode: review` (#565/#568, revised by #567 once the maintainer
-picked `review:*` as the dedicated review trigger rather than overloading
-`agent:*` for both meanings). The two label families are independent: a PR
+opened as non-draft, marked `ready_for_review`, commented with `/review` by an
+`OWNER` or `MEMBER`, or tagged with `review` or
+`review:claude`/`review:codex`/`review:opencode`/`review:agy` dispatches
+`mode: review` (#565/#568, revised by #567 and unified under cross-model
+routing in `pr-review-routing.ts`, which selects an opposite model and wires
+quota `fallbackPipelines`). The two label families are independent: a PR
 may carry `agent:*`, `review:*`, both, or neither, and each drives its own
 dispatch mode when applied (`libs/dispatch-contracts/src/pipelines.ts`'s
-`AGENT_LABELS`/`REVIEW_LABELS`). `review:*` is not a recognized label at all
-on a plain issue — there is no diff to review.
+`AGENT_LABELS`/`REVIEW_LABELS`). `review` and `review:*` are not recognized on
+a plain issue — there is no diff to review.
 
 #815 is why the gate no longer accepts a bare review, or a bare push to the
 anchor PR, from your bot login on its own: both were inference clauses that
@@ -73,8 +79,10 @@ could not tell your run's work from an unrelated bot touch in the same
 window.
 
 The GitHub App subscribes to issue, issue-comment, and pull-request events.
-`orchestrator-ingest.ts` acts on the `labeled` action for both label families
-(#565) and on `issue_comment`'s `created` action for reply commands. An
+`orchestrator-ingest.ts` acts on `labeled` for both label families (#565), on
+non-draft `pull_request` `opened` and `ready_for_review` events for automatic
+cross-model review, and on `issue_comment`'s `created` action for reply and
+`/review` commands. An
 `issues` or `pull_request` `closed` action also retires a queued, unclaimed
 `mode: implement` run for that anchor (#1937). The transition is transactional
 with queue claiming and fenced by GitHub's `closed_at`, so claimed workers and

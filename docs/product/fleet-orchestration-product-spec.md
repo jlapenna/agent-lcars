@@ -60,21 +60,21 @@ The core promises:
 
 ## 2. Actors
 
-| Actor                 | Identity                                                                       | Interacts via                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| Maintainers           | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna` | GitHub/Linear labels and replies, the console, the `lcars` CLI                                                   |
-| GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                           | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                  |
-| Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                   | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                       |
-| Claude App            | `claude[bot]`                                                                  | Authors Claude pipeline deliverables                                                                             |
-| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                            | Claims runs, launches Kubernetes Jobs, reports placements and exits, ticks schedules/maintenance                 |
-| Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)           | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                       |
-| Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`                 | Event-driven issue triage and model-generated Inbox/handoff summaries through durable Work                       |
-| Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)             | `POST /dispatches/github` from member repositories                                                               |
-| Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                         | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                       |
-| Slack bot             | Sprinkles App Hosting service account, channel `slack`                         | Creates items; receives outcomes over webhook                                                                    |
-| Production verifier   | `svc:production-verifier`                                                      | Authenticated live verification with `work.operator`                                                             |
-| Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                  | Read-only item access (`work.reaper`) to expire sessions of closed items                                         |
-| Homelab               | Platform operator                                                              | Runs k3s, ARC, QueueExecutor, and `investigate.lan.jlapenna.net`; holds host and execution bootstrap credentials |
+| Actor                 | Identity                                                                               | Interacts via                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Maintainers           | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna`         | GitHub/Linear labels and replies, the console, the `lcars` CLI                                                           |
+| GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                                   | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                          |
+| Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                           | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                               |
+| Claude App            | `claude[bot]`                                                                          | Authors Claude pipeline deliverables                                                                                     |
+| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                                    | Claims runs, launches Kubernetes Jobs, reports placements and exits, ticks schedules/maintenance                         |
+| Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)                   | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                               |
+| Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`, `svc:github-pr-review` | Event-driven issue triage, model-generated Inbox/handoff summaries, and cross-model GitHub PR review with quota fallback |
+| Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)                     | `POST /dispatches/github` from member repositories                                                                       |
+| Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                                 | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                               |
+| Slack bot             | Sprinkles App Hosting service account, channel `slack`                                 | Creates items; receives outcomes over webhook                                                                            |
+| Production verifier   | `svc:production-verifier`                                                              | Authenticated live verification with `work.operator`                                                                     |
+| Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                          | Read-only item access (`work.reaper`) to expire sessions of closed items                                                 |
+| Homelab               | Platform operator                                                                      | Runs k3s, ARC, QueueExecutor, and `investigate.lan.jlapenna.net`; holds host and execution bootstrap credentials         |
 
 ## 3. Goals and non-goals
 
@@ -103,21 +103,21 @@ The core promises:
 
 ### 4.1 Request sources
 
-| Source                                    | Trigger                                                                                                                        | Mode                 | Request identity                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ----------------------------------- |
-| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                             | `implement`          | Webhook delivery GUID               |
-| GitHub label                              | `review:{claude,codex,opencode,agy}` on a PR                                                                                   | `review`             | Delivery GUID                       |
-| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy`/`/antigravity` in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
-| Tagged reply on a parked or finished task | Same commands                                                                                                                  | `reply` with resume  | Principal `svc:github-tagged-reply` |
-| Linear webhook                            | `agent:{claude,codex,opencode,agy}` label or `@claude`/`/codex`/`/oc`/`/agy` comment on a mapped Linear team issue             | native + issue ref   | `svc:linear`, `channel=linear`      |
-| Tracker issue dispatch                    | `POST /issues/dispatch` (`lcars work dispatch` or `/work/issues`)                                                              | native + issue ref   | Caller-supplied `requestId`         |
-| Event-driven issue triage                 | Unassigned open `bug` / `type:bug` issue in a watched GitHub or Linear tracker                                                 | `fleet-triage`       | `svc:fleet-triage`, source revision |
-| Work API                                  | `PUT /items/{ulid}`                                                                                                            | native               | Client ULID (idempotent)            |
-| Repository Goose job                      | Scheduled slot on `/schedules/tick` or manual `POST /jobs/{owner}/{repo}/{job}/invoke`                                         | `goose` recipe       | Slot ID or caller `requestId`       |
-| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                        | `implement`/`review` | Caller-supplied                     |
-| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                              | native or GitHub     | `console-retry:<uuid>`, ULID        |
-| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                    | native               | Deterministic per-slot ID           |
-| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                  | native               | ULID, `origin.channel=slack`        |
+| Source                                    | Trigger                                                                                                                                                                | Mode                 | Request identity                                |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------------------- |
+| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                                                                     | `implement`          | Webhook delivery GUID                           |
+| GitHub PR review                          | Non-draft `pull_request` `opened` / `ready_for_review`, `review` or `review:{claude,codex,opencode,agy}` label on a PR, or `/review` comment by an `OWNER` or `MEMBER` | `review`             | Delivery GUID, principal `svc:github-pr-review` |
+| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy`/`/antigravity` in a comment by an `OWNER` or `MEMBER` (never a Bot)                                         | `reply`              | Delivery GUID                                   |
+| Tagged reply on a parked or finished task | Same commands                                                                                                                                                          | `reply` with resume  | Principal `svc:github-tagged-reply`             |
+| Linear webhook                            | `agent:{claude,codex,opencode,agy}` label or `@claude`/`/codex`/`/oc`/`/agy` comment on a mapped Linear team issue                                                     | native + issue ref   | `svc:linear`, `channel=linear`                  |
+| Tracker issue dispatch                    | `POST /issues/dispatch` (`lcars work dispatch` or `/work/issues`)                                                                                                      | native + issue ref   | Caller-supplied `requestId`                     |
+| Event-driven issue triage                 | Unassigned open `bug` / `type:bug` issue in a watched GitHub or Linear tracker                                                                                         | `fleet-triage`       | `svc:fleet-triage`, source revision             |
+| Work API                                  | `PUT /items/{ulid}`                                                                                                                                                    | native               | Client ULID (idempotent)                        |
+| Repository Goose job                      | Scheduled slot on `/schedules/tick` or manual `POST /jobs/{owner}/{repo}/{job}/invoke`                                                                                 | `goose` recipe       | Slot ID or caller `requestId`                   |
+| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                                                                | `implement`/`review` | Caller-supplied                                 |
+| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                                                                      | native or GitHub     | `console-retry:<uuid>`, ULID                    |
+| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                                                            | native               | Deterministic per-slot ID                       |
+| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                                                          | native               | ULID, `origin.channel=slack`                    |
 
 - **FL-IN-1 [Shipped]** The GitHub App webhook (`/api/control-plane/webhook`)
   verifies the HMAC. It accepts `issues`, `issue_comment`, `pull_request`,
@@ -169,6 +169,28 @@ The core promises:
   before posting or updating a single `<!-- agent-lcars:fleet-triage ... -->`
   comment and applying approved metadata/routing labels (`ready` authorizes
   configured dispatch; `needs-owner` applies `status:needs-human`).
+- **FL-IN-10 [Shipped] Unified cross-model pull-request review with quota fallback.**
+  Non-draft `pull_request` `opened` and `ready_for_review` webhooks (excluding
+  `renovate[bot]`, `dependabot[bot]`, `github-actions[bot]`,
+  `status:needs-human`, `bot:renovate`, and PRs already carrying a `review` or
+  `review:*` label), the unified `review` label, `/review` PR comments by an
+  `OWNER` or `MEMBER`, and `review:{claude,codex,opencode,agy}` labels admit
+  `mode: 'review'` runs through `lib/pr-review-routing.ts` with principal
+  `svc:github-pr-review`. Authoring pipeline detection resolves the stored
+  `Run.pipeline` from the PR's `<!-- attempt-claim:g<n>:<runId> -->` marker (or
+  the latest prior `implement` run on the task) before falling back to static PR
+  signals (`agent:*` label, `claude[bot]` login, `Claude-Session:` /
+  `Co-Authored-By:` trailers, branch prefix, or `agent-lcars[bot]` login), so
+  `codex`, `agy`, and `opencode` PRs that share `agent-lcars[bot]` are
+  distinguished accurately. Reviews route to an opposite model with quota
+  fallback (`codex` PR -> `claude` with fallback `['agy']`; `claude` PR ->
+  `codex` with fallback `['agy']`; `agy` PR -> `claude` with fallback
+  `['codex']`, or `codex` with `['claude']` when `review:codex` is requested;
+  `opencode` PR -> `claude` with fallback `['codex', 'agy']`; human/unknown PR
+  -> requested pipeline or `claude` with fallback `['codex', 'agy']`). Same-model
+  `review:<pipeline>` labels on agent-authored PRs override to the opposite
+  model (`crossModelOverride: true`) so `updateTaskWork` replaces any prior task
+  `WorkSpec.pipeline` before minting the review run.
 
 ### 4.2 Pipelines
 
@@ -497,6 +519,16 @@ executor is working an issue; a human assignee owns it regardless.
   maintenance can reroute an unclaimed queued run blocked by a cooldown
   (`libs/orchestrator/src/provider-fallback.ts`;
   [lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback)).
+  `direct-runner.sh` classifies `provider-limit` from anchored CLI limit
+  banners at the start of `$AGENT_MESSAGE` (`You've hit your weekly limit`,
+  `You've hit your usage limit`, `Credit balance is too low`, `API Error: 429`
+  quota errors) and from structured provider failure events in
+  `$PROVIDER_FAILURES` (`usage_limit_reached`, `insufficient_quota`,
+  `exceeded your current quota`, `credit balance is too low`,
+  `monthly spend limit`, `ResourceExhausted`, `RESOURCE_EXHAUSTED`), keeping
+  ordinary `report` prose distinct from provider quota stops. GitHub PR review
+  runs admitted under `svc:github-pr-review` automatically carry cross-model
+  `fallbackPipelines` (e.g. `['agy']` for `codex`/`claude` reviews).
   Real provider-limit qualification is tracked under R7.
 - **FL-RT-4 [Shipped]** Only an explicit `park` result adds
   `status:needs-human`. A later successful non-park run removes it, with
