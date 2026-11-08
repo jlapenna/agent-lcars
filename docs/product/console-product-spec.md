@@ -1,13 +1,21 @@
 # Agent LCARS product spec, part 1: the console
 
-- **Status:** Product specification of record for the console. Part 2 is
+- **Status:** Product specification of record for the console, reviewed against
+  `main` at `7d379e44` and live-qualified on `https://lcars.jlapenna.net`
+  (2026-11-08). Part 2 is
   [fleet management and orchestration](fleet-orchestration-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
-  should be corrected. The visual rules are owned by
-  [`console-design-system.md`](../console-design-system.md). The Work API
+  should be corrected. Following the repository's
+  [harness design](../../ARCHITECTURE.md#harness-design), each domain fact has
+  one semantic owner: visual rules live in
+  [`console-design-system.md`](../console-design-system.md), the Work API
   contract is owned by [`libs/work`](../../libs/work) and
-  [`work-v1.openapi.json`](../api/work-v1.openapi.json).
+  [`work-v1.openapi.json`](../api/work-v1.openapi.json), repository jobs by
+  [`repository-jobs.md`](../repository-jobs.md), job credentials by
+  [`job-secrets.md`](../job-secrets.md), Linear integration by
+  [`linear.md`](../linear.md) and [`tracker-sources.md`](../api/tracker-sources.md),
+  and notifications by [`inbox-notifications.md`](../inbox-notifications.md).
 - **How to read it:** each requirement has an ID (`FE-…`) and is marked
   **[Shipped]**, **[Implemented]**, **[Partial]**, or **[Proposed]**:
   - **Shipped:** the described capability is delivered. This does not imply
@@ -27,22 +35,26 @@
 ## 1. Product summary
 
 The Agent LCARS console (`apps/console`, served at `lcars.jlapenna.net`) is the
-human control surface for a fleet of headless coding agents (Claude Code,
-Codex, OpenCode). Those agents work GitHub issues, pull requests, and native
-work items across a set of onboarded repositories.
+human control surface for a fleet of headless coding and recipe agents (Claude
+Code, Codex, OpenCode, Antigravity, and Goose). Those agents work GitHub and
+Linear issues, pull requests, native work items, and repository-owned Goose
+jobs across a set of onboarded repositories.
 
 The console answers four questions, in this order:
 
-1. **What needs me?** The decision queue (Bridge and Inbox).
+1. **What needs me?** The decision queue (Bridge and Inbox, plus open-tab and
+   background Web Push notifications).
 2. **What is the fleet doing right now?** Agents and Shuttlebay.
-3. **What did I ask for, and where is it?** Work, Schedules, and task detail.
+3. **What did I ask for, and where is it?** Work, Issue Sources, Schedules,
+   Jobs, and task detail.
 4. **What happened, and what did it cost?** Sessions and Costs.
 
 It is a Next.js App Router application that uses Mantine UI and an
 LCARS-inspired visual system. It reads durable state from Firestore (the
-orchestrator store and the telemetry store) and from the GitHub API. It writes
-only through server actions and the authenticated Work API, never directly to
-GitHub from the browser.
+orchestrator store and the telemetry store), GCP Secret Manager (for job
+credential metadata), and the GitHub and Linear APIs. It writes only through
+server actions and the authenticated Work API, never directly to external
+trackers from the browser.
 
 ## 2. Users and jobs to be done
 
@@ -73,12 +85,14 @@ show trustworthy freshness, not to give a general project-management view.
 
 **Non-goals**
 
-- A general issue tracker or project board. GitHub remains the system of
-  record for issues and PRs.
+- A general issue tracker or project board. GitHub and Linear remain the
+  systems of record for issues and PRs.
 - Multi-tenant SaaS. The console serves one fleet, its allowlisted
   maintainers, and its onboarded repositories.
-- Editing infrastructure, credentials, grants, or runner capacity from the UI.
-  Those changes go through reviewed configuration and Homelab.
+- Editing host infrastructure, `AGENT_LCARS_WORK_GRANTS`, or runner capacity
+  from the UI. Those changes go through reviewed configuration and Homelab
+  (job-specific runtime secret bindings have their own audited admin surface at
+  `/jobs/credentials`; see [§6.6](#66-jobs-jobs-jobscredentials)).
 
 ## 4. Information architecture
 
@@ -86,19 +100,21 @@ Navigation comes from a single registry, `CONSOLE_DESTINATIONS` in
 `apps/console/src/app/console-navigation.ts`. That registry drives the desktop
 rail, the mobile overflow menu, and the per-destination accent.
 
-| Destination | Route         | Accent     | Purpose                                                         | Access                   |
-| ----------- | ------------- | ---------- | --------------------------------------------------------------- | ------------------------ |
-| Bridge      | `/`           | amber      | Operational overview: decisions summary, stopped work, live ops | admin                    |
-| Inbox       | `/inbox`      | blue       | Decision queue with per-item actions                            | admin                    |
-| Agents      | `/agents`     | periwinkle | Live runs, CLI sessions, claimed-but-idle, recent outcomes      | admin                    |
-| Shuttlebay  | `/shuttlebay` | blue       | Runner fleet and queue-executor capacity, live                  | admin                    |
-| Work        | `/work`       | violet     | Native work items, with Schedules as a sub-route                | any session + Work grant |
-| Sessions    | `/sessions`   | teal       | Session archive: CLI and dispatched agents, with transcripts    | admin                    |
-| Costs       | `/costs`      | gold       | Cost ledger by issue and by week                                | admin                    |
+| Destination | Route         | Accent     | Purpose                                                         | Access                               |
+| ----------- | ------------- | ---------- | --------------------------------------------------------------- | ------------------------------------ |
+| Bridge      | `/`           | amber      | Operational overview: decisions summary, stopped work, live ops | admin                                |
+| Inbox       | `/inbox`      | blue       | Decision queue with per-item actions                            | admin                                |
+| Agents      | `/agents`     | periwinkle | Live runs, CLI sessions, claimed-but-idle, recent outcomes      | admin                                |
+| Shuttlebay  | `/shuttlebay` | blue       | Runner fleet and queue-executor capacity, live                  | admin                                |
+| Work        | `/work`       | violet     | Native work items, with Schedules and Issue Sources sub-routes  | any session + Work grant             |
+| Jobs        | `/jobs`       | violet     | Repository-owned Goose jobs, schedule vetoes, manual runs       | any session + `goose` operator grant |
+| Sessions    | `/sessions`   | teal       | Session archive: CLI and dispatched agents, with transcripts    | admin                                |
+| Costs       | `/costs`      | gold       | Cost ledger by issue and by week                                | admin                                |
 
-Secondary routes: `/work/[id]`, `/work/schedules`, `/sessions/[id]`,
-`/task/[owner]/[repo]/[issue]`, `/login`, and the error, not-found, and loading
-message states.
+Secondary routes: `/work/[id]`, `/work/schedules`, `/work/issues`,
+`/jobs/credentials` (`secrets.admin`), `/sessions/[id]`,
+`/task/[owner]/[repo]/[issue]`, `/settings` (available from the console menu;
+accent `blue`), `/login`, and the error, not-found, and loading message states.
 
 Shared URL state:
 
@@ -131,25 +147,30 @@ Shared URL state:
     return `{ok:true, note?} | {ok:false, message}`. The snooze actions
     (`app/decision-snooze-actions.ts`) and the dashboard refresh action
     (`app/refresh-action.ts`) use the same admin gate.
-  - Work and schedule actions (`app/work/**/actions.ts`) are oRPC procedures
-    authorized by the caller's Work grant, not by admin status. They return
-    `[error, data]` tuples.
+  - Work, schedule, job, and credential actions (`app/work/**/actions.ts`,
+    `app/jobs/**/actions.ts`) are authorized by the caller's resolved Work
+    grant (`work.operator`, `work.cron`, or `secrets.admin`), not by admin
+    status alone.
 - **FE-AUTH-4 [Shipped]** Work API authorization is separate from admin
   status. The session's `github:<login>` is mapped to a principal and scopes
-  through `AGENT_LCARS_WORK_GRANTS`. On `/work*` the UI offers creation
-  controls only when the principal holds `work.operator`, and shows "Your
-  GitHub login has no work grant" when it holds none. Admin destinations
-  always show New work in the header, and the server rejects the request
-  when no grant applies.
+  through `AGENT_LCARS_WORK_GRANTS` (`work.operator`, `work.reader`,
+  `work.cron`, `work.admin`, `secrets.admin`, `costs.reader`). On `/work*` the
+  UI offers creation controls only when the principal holds `work.operator`,
+  and shows "Your GitHub login has no work grant" when it holds none. `/jobs`
+  requires a `work.operator` grant that allows the `goose` pipeline;
+  `/jobs/credentials` requires `secrets.admin` (which is refused for
+  repository-bound OIDC callers). Admin destinations always show New work in
+  the header, and the server rejects the request when no grant applies.
 - **FE-AUTH-5 [Shipped]** The user's GitHub OAuth token stays server-side. It is
   used so that the human, not the bot, is recorded as the author where
   authorship matters, such as evidence-backed work.
 - **FE-AUTH-6 [Shipped]** Non-admin logins with `work.operator` can sign in
-  and land on `/work`. Work, Schedules, and native detail views restrict
-  desktop and mobile navigation to Work. Admin routes, APIs, and queue
-  actions still enforce admin authority server-side. Each Work operation
-  resolves the current grant again, so revocation denies existing sessions;
-  operator grants never confer admin or production-verifier authority.
+  and land on `/work`. Work, Schedules, native detail views, and Jobs (when
+  the operator grant includes `goose`) restrict desktop and mobile navigation
+  to authorized operator destinations. Admin routes, APIs, and queue actions
+  still enforce admin authority server-side. Each Work operation resolves the
+  current grant again, so revocation denies existing sessions; operator grants
+  never confer admin or production-verifier authority.
 
 ### 5.2 Freshness and live data
 
@@ -213,9 +234,10 @@ product requirements.
   1280px. The page never scrolls horizontally, and header actions never
   overflow.
 - **FE-A11Y-1 [Shipped]** WCAG AA text contrast in both color schemes is
-  enforced by E2E on all seven destinations plus Work edit, Session detail,
-  and the Shuttlebay create dialog (`text-contrast.spec.ts`). The one-ground
-  check covers all seven destinations.
+  enforced by E2E across the console destinations (`CONSOLE_DESTINATIONS`) plus
+  Work edit, Session detail, and the Shuttlebay create dialog
+  (`text-contrast.spec.ts`). The one-ground check covers every primary
+  destination.
 - **FE-A11Y-2 [Shipped]** Every menu and icon action has an aria-label. The
   Inbox can be worked entirely from the keyboard, Tab order across the rail is
   correct, and `prefers-reduced-motion` is honored.
@@ -314,8 +336,8 @@ the work that has stopped, and the work in flight.
 - **FE-IN-3 [Shipped] Reply and hand-off.** "Reply…" opens a text field and a
   segmented control. On an unassigned issue with no `agent:*` label the
   choices are _Comment only_ plus each pipeline's reply trigger (`@claude`,
-  `/codex`, `/oc`). Choosing a trigger posts the comment as a reply command,
-  which dispatches that pipeline, and the button then reads "Reply &
+  `/codex`, `/oc`, `/agy`). Choosing a trigger posts the comment as a reply
+  command, which dispatches that pipeline, and the button then reads "Reply &
   dispatch". If the comment posts but dispatch fails, **Retry dispatch**
   re-admits the posted reply (`app/retry-reply-dispatch.tsx`).
 - **FE-IN-4 [Shipped] Secondary actions:**
@@ -395,17 +417,31 @@ the work that has stopped, and the work in flight.
     The implementation and verification owner is
     [human-needed summaries](../human-needed-summaries.md#decision-inbox-descriptions).
 
-- **FE-IN-9 [Planned] Dispatched summary generation.** Decision/report and
-  handoff summaries become typed LCARS work, triggered by relevant source
-  changes and deduplicated by operation version plus source revision. The
-  Console renders the persisted current artifact and original context without
-  waiting on inference. Run settlement, navigation and primary actions remain
-  independent of summary success. Stale results cannot replace a newer source's
-  description; provider/validation failures retain the FE-IN-8 fallback.
-  Acceptance includes source changes during execution, duplicate admission,
-  executor restart and exhausted retries. FE-IN-8's shipped descriptions do not
-  establish this dispatch migration. See the
-  [unified-work design](../superpowers/specs/2026-10-15-unified-work-dataflow-design.md#first-consumers-and-acceptance).
+- **FE-IN-9 [Shipped] Dispatched summary generation.** Decision/report and
+  handoff summaries run as typed durable LCARS Work (`inbox-summary` and
+  `handoff-summary` in `SUMMARY_PIPELINES`, principals `svc:inbox-summary` and
+  `svc:handoff-summary`, executed by `lib/inbox-summary-work.ts` and
+  `lib/handoff-summary-work.ts`), triggered by relevant source changes and
+  deduplicated by `sourceKey` plus `sourceRevision`. The Console renders the
+  persisted current artifact and original context without waiting on inference.
+  Run settlement, navigation, and primary actions remain independent of summary
+  success. Stale results cannot replace a newer source's description;
+  provider/validation failures retain the FE-IN-8 fallback. See
+  [human-needed summaries](../human-needed-summaries.md) and FE-WK-7.
+
+- **FE-IN-10 [Shipped] Inbox browser and Web Push notifications.** Admin
+  sessions can opt into two complementary notification paths in `/settings`:
+  open-tab notifications (comparing snapshots from `/api/inbox-notifications`,
+  filtering snoozed keys locally, and notifying for newly visible items after
+  initial baseline) and closed-tab Web Push (`/api/inbox-push`, stored per
+  `(userLogin, sha256(endpoint))` in `console-inbox-push` with a 30-day lease,
+  60-second TTL, and `urgency: 'high'`). Closed-tab push fires from the
+  5-minute maintenance tick (`notifyInboxPushSubscribers`) with an empty push
+  body (`lc:inbox`); the service worker (`public/inbox-notifications-sw.js`)
+  shows a generic notification (`Agent LCARS Inbox · Open the Decision Inbox to
+review current items.`) so repository titles and handoff text never cross the
+  browser push service. Canonical owner:
+  [`inbox-notifications.md`](../inbox-notifications.md).
 
 ### 6.3 Agents (`/agents`)
 
@@ -447,7 +483,7 @@ the work that has stopped, and the work in flight.
   render explicit unavailable states rather than implying zero capacity.
 - **FE-SB-3 [Shipped]** The data is live over SSE, and a staleness banner
   appears after 180s.
-- **FE-SB-3a [Implemented]** Runtime qualification remains pending. Task history shows
+- **FE-SB-3a [Shipped]** Task history shows
   requested and effective execution providers and the latest label handoff
   outcome. A refused handoff names the owner/retirement gate and asks the
   administrator to reapply after it clears. Original admitted Work remains
@@ -461,7 +497,7 @@ the work that has stopped, and the work in flight.
   sample, failed read or stale/reset-crossing observation is unavailable,
   never an inferred zero. Eligibility does not prove worker placement or
   successful execution.
-- **FE-SB-5 [Implemented]** The Runner fleet panel on the Bridge and Shuttlebay
+- **FE-SB-5 [Shipped]** The Runner fleet panel on the Bridge and Shuttlebay
   shows CI wait p50: the median time from an ARC job being assigned to a
   runner until that runner starts it, over the last 30 minutes, with a
   per-minute sparkline. The data comes from each listener's
@@ -469,21 +505,21 @@ the work that has stopped, and the work in flight.
   is unavailable until a lane reports a window, and partial when some lanes
   do not. Its label names the minutes actually covered, which are fewer than 30
   after an autoscaler start or reset. A quiet window reads "no job started", never 0s.
-- **FE-SB-6 [Implemented]** The same panel shows Tokens / min: the
+- **FE-SB-6 [Shipped]** The same panel shows Tokens / min: the
   cost-weighted token spend of sessions active in the last 30 minutes,
   averaged over the last 5 complete minutes, with a per-minute sparkline. The
   source is each session's `tokenMinutes`, recorded by hook telemetry. It
   follows the page's repository and agent filters. It is unavailable when the
   session store fails or no active session is measured, partial when some
   are not, and a known zero when no session is active.
-- **FE-SB-7 [Implemented]** The same panel shows Work API p95: the 95th
+- **FE-SB-7 [Shipped]** The same panel shows Work API p95: the 95th
   percentile response time (request sent to response headers) of the queue
   executor's own Work API calls (claims, placements, fences, exits and
   schedule ticks), counting a call that times out at the time it waited, over the last 30 minutes, with a per-minute sparkline. The
   executor windows the samples itself and publishes them on its status
   document. It is unavailable without that window, reads "no calls" for a
   quiet one, and names the minutes covered.
-- **FE-SB-8 [Implemented]** The Runner fleet panel draws one row per cluster
+- **FE-SB-8 [Shipped]** The Runner fleet panel draws one row per cluster
   host, as the mockup does: allocatable vCPU and GiB, runner and queue-job
   pods as slots, and CPU and memory meters. The meters show metrics-server's
   live usage (labeled "used") where the executor may list `metrics.k8s.io`
@@ -492,13 +528,13 @@ the work that has stopped, and the work in flight.
   "used or requested". A NotReady host says so, and a cordoned one reads
   "draining". Without a fresh inventory the rows
   fall back to ARC lanes with host load unavailable.
-- **FE-SB-9 [Implemented]** Shuttlebay's toolbar carries the mockup's window
+- **FE-SB-9 [Shipped]** Shuttlebay's toolbar carries the mockup's window
   control. Its readouts are live or cover the last 30 minutes, the most the
   autoscaler and session windows keep, so 30m is the one choosable window.
   1h, 24h and 7d are drawn disabled, with a visible note beside the control,
   "Runner telemetry keeps the last 30 minutes", that also describes them to
   assistive technology.
-- **FE-SB-10 [Implemented]** The Runners panel draws one row per runner pod,
+- **FE-SB-10 [Shipped]** The Runners panel draws one row per runner pod,
   as the mockup does: ARC ephemeral runners and queue executor Job pods, with
   state, job, request (`6c/18G`) and age, headed `N/M online`. The executor
   publishes the rows on its host inventory from the pods it already lists. An
@@ -512,7 +548,7 @@ the work that has stopped, and the work in flight.
   allocatable (already net of reserves), and counts the requests that do not.
   An executor that predates the rows, or a fleet past 128 runners, keeps the
   per-lane totals.
-- **FE-SB-11 [Implemented]** CI runners online (the rail labels it so, since
+- **FE-SB-11 [Shipped]** CI runners online (the rail labels it so, since
   agent Jobs and hosts are not counted) reads `online/total` wherever it
   appears, as the mockup's `11/12`: the rail, the Bridge's Runners online
   readout and the Runner fleet panel on the Bridge and Shuttlebay. Both halves
@@ -523,10 +559,10 @@ the work that has stopped, and the work in flight.
   runners over their configured maximum, or the bare count when a lane has
   no maximum; it never invents a denominator.
 
-### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`)
+### 6.5 Work (`/work`, `/work/[id]`, `/work/schedules`, `/work/issues`)
 
 **Purpose:** issue and follow native work items that are independent of
-GitHub issues, and manage recurring work.
+GitHub issues, browse and dispatch tracker sources, and manage recurring work.
 
 - **FE-WK-1 [Shipped]** The list follows `design/fleet-console.html#work`:
   an "Admitted queue" panel (running work in priority order, FIFO within a
@@ -539,9 +575,9 @@ GitHub issues, and manage recurring work.
 - **FE-WK-2 [Shipped] Create work** ("New work", the Work toolbar's primary
   action and the header command elsewhere; see FE-AUTH-4 for when it is
   shown):
-  - Fields: Repo, Agent, Priority (`urgent`, `normal`, or `background`),
-    Allowed fallback order, Description, and an optional screenshot (paste
-    or attach).
+  - Fields: Repo, Agent (`claude`, `codex`, `opencode`, `agy`), Priority
+    (`urgent`, `normal`, or `background`), Allowed fallback order, Description,
+    and an optional screenshot (paste or attach).
   - The work ID is a ULID minted on the client, so retries are idempotent.
   - The chosen agent is remembered in localStorage.
   - Screenshots are normalized to WebP and stored in the evidence bucket, with
@@ -622,7 +658,54 @@ GitHub issues, and manage recurring work.
   rollout gates are in the
   [unified-work design](../superpowers/specs/2026-10-15-unified-work-dataflow-design.md).
 
-### 6.6 Task detail (`/task/[owner]/[repo]/[issue]`)
+- **FE-WK-8 [Shipped] Tracker issue sources (`/work/issues`).** Operators with
+  `work.operator` or `work.reader` can browse stored tracker projections for
+  GitHub and Linear (`?tracker=linear|github`, `?repo=owner/name`, `?cursor=`)
+  without live tracker reads on page load, explicitly refresh a bounded live
+  tracker page (`POST /api/work/v1/issues/refresh`, rate-limited to 60s per
+  tracker/repo/cursor), inspect ownership verdicts (`none`, `fleet-run`,
+  `interactive-session`), and dispatch an issue (`POST /api/work/v1/issues/dispatch`)
+  with a selected pipeline and priority. Canonical owners:
+  [`linear.md`](../linear.md) and [`tracker-sources.md`](../api/tracker-sources.md).
+
+### 6.6 Jobs (`/jobs`, `/jobs/credentials`)
+
+**Purpose:** inspect, schedule-veto, and manually run repository-owned Goose
+jobs, and administer per-job runtime credential sets.
+
+- **FE-JB-1 [Shipped] Repository-owned Goose job registry (`/jobs`).** Lists
+  version-controlled `.lcars/jobs/<name>/job.yaml` and `recipe.yaml` definitions
+  across onboarded repositories in a compact table with repository, schedule
+  status (`all`, `scheduled`, `paused`, `manual`, `invalid`), and text search
+  filters (`app/jobs/jobs-panel.tsx`). Each row shows the job identity,
+  repository, schedule state (cron expression, next UTC occurrence, or sticky
+  operator pause), required credential profile, and latest run link. Selecting a
+  row opens a detail drawer with full recipe metadata, parameter schema, last
+  run and latest successful revision, and schedule controls. Canonical owner:
+  [`repository-jobs.md`](../repository-jobs.md).
+- **FE-JB-2 [Shipped] Merged-to-main schedule activation and sticky operator
+  veto.** When a job on `main` declares a `schedule` and the configured
+  scheduler principal holds `work.cron` for that repository and `goose`, LCARS
+  creates or updates its schedule state automatically without a separate manual
+  enable step. If an operator pauses a job (`enabled: false`), that veto is
+  sticky (`operatorDisabledAt`) across future `main` commits until an operator
+  explicitly re-enables it (`enabled: true`).
+- **FE-JB-3 [Shipped] Manual job invocation.** Operators with `work.operator`
+  for the repository and `goose` can run any valid job (`Run now` for
+  zero-parameter jobs, or `Parameters…` when `recipe.yaml` declares parameters)
+  with an idempotency key and priority override. Manual runs execute one-shot
+  and never advance the scheduled `lastSucceededHeadSha` baseline.
+- **FE-JB-4 [Shipped] Per-job credential administration (`/jobs/credentials`).**
+  Principals with `secrets.admin` can register secrets (`github` or `opaque`),
+  upload secret versions to the dedicated `agent-lcars-job-secrets` GCP Secret
+  Manager project, promote concrete versions (never `latest`), publish immutable
+  credential-set revisions (`github`, `environment`, and `/dev/shm` `files`
+  bindings), and bind `(repository, job, profile)` grants with explicit
+  principal and `allowScheduled` rules. Secret plaintext is write-only and
+  never returned by console reads. Canonical owner:
+  [`job-secrets.md`](../job-secrets.md).
+
+### 6.7 Task detail (`/task/[owner]/[repo]/[issue]`)
 
 - **FE-TK-1 [Shipped]** "Task #N" shows the GitHub-anchored logical work card
   (state, provenance, actions) and the orchestrator's run history for that
@@ -634,7 +717,7 @@ GitHub issues, and manage recurring work.
   redispatch controls retain their Work authorization and work-id rules.
   Both URLs remain stable, including closed GitHub anchors.
 
-### 6.7 Sessions (`/sessions`, `/sessions/[id]`)
+### 6.8 Sessions (`/sessions`, `/sessions/[id]`)
 
 **Purpose:** the durable audit record of every agent session, both interactive
 CLI sessions and dispatched runs.
@@ -661,8 +744,9 @@ CLI sessions and dispatched runs.
   and resume notes.
 - **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView`, from GCS)
   for dispatched `issue-agent` sessions whose agent is in
-  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, and OpenCode (archived
-  OpenCode exports, #2253). An archive that is neither shows "Session archive
+  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, OpenCode (archived
+  OpenCode exports, #2253), and Antigravity (#3226). An archive that is none of
+  these shows "Session archive
   stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
   sessions use the same timeline only when their doc already carries an
   unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
@@ -678,7 +762,7 @@ CLI sessions and dispatched runs.
   `lcars session status` adds a status line. A session that drifts from its
   opening prompt can therefore say what it has become.
 
-### 6.8 Costs (`/costs`)
+### 6.9 Costs (`/costs`)
 
 - **FE-CO-1 [Shipped]** Two ledgers, by issue and by ISO week. Each shows
   sessions, turns, cost-weighted tokens, and cost. The window and source
@@ -704,22 +788,36 @@ CLI sessions and dispatched runs.
   activity-window, reported/estimated, deduplication, attribution, unavailable
   data and operator-owned alert contract is [Session spend](../cost-ledger.md).
 
+### 6.10 Settings (`/settings`)
+
+- **FE-ST-1 [Shipped] Console preferences and account identity.** Reachable
+  from the console menu (`CONSOLE_MENU_ITEMS`), `/settings` renders three
+  cards inside `ConsoleWorkspace`:
+  - **Appearance:** dark/light theme toggle (`ThemeToggle`, persisted in the
+    `mantine-color-scheme` cookie).
+  - **Inbox notifications:** admin-only controls (`InboxNotificationsToggle`)
+    for open-tab browser notifications and closed-tab Web Push subscriptions
+    (FE-IN-10).
+  - **Account:** signed-in GitHub identity (`AccountIdentity`) and sign-out.
+
 ## 7. Server surface owned by the console
 
-| Route                                       | Auth                                                               | Role                                                                         |
-| ------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `/api/auth/[...nextauth]`                   | public                                                             | Auth.js                                                                      |
-| `/api/work/v1/*`                            | bearer (Google ID token, GitHub OIDC, or per-run token) or session | Work API: items, dispatches, schedules, runs, maintenance. See part 2 §6     |
-| `/api/control-plane/webhook` and `/process` | HMAC plus Cloud Tasks                                              | GitHub App intake. See part 2 §4                                             |
-| `/api/runner-status` and `/stream`          | admin session                                                      | Shuttlebay JSON and SSE                                                      |
-| `/api/console/shell-readouts`               | session; fleet figures require admin                               | Identity and shared frame readouts; non-admin sessions receive identity only |
-| `/costs/export`                             | admin session                                                      | Filtered cost ledger CSV (FE-CO-3)                                           |
-| `/api/dashboard/stream`                     | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)           |
-| `/api/work/v1/costs/budget`                 | `costs.reader` Work grant                                          | Optional fixed-selection cost budget readout for operator integrations       |
-| `/api/inbox-notifications`                  | admin session                                                      | Inbox notification snapshot (R11)                                            |
-| `/api/quick-task-evidence/v1/[id]`          | capability ID                                                      | Screenshot evidence bytes; revocable                                         |
-| `/api/logs/error`                           | public                                                             | Browser error reporting                                                      |
-| `/api/e2e/*`                                | `E2E_TESTING` only                                                 | Seeding, fake GitHub, and operator-grant toggling for hermetic E2E           |
+| Route                                              | Auth                                                               | Role                                                                                        |
+| -------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `/api/auth/[...nextauth]`                          | public                                                             | Auth.js                                                                                     |
+| `/api/work/v1/*`                                   | bearer (Google ID token, GitHub OIDC, or per-run token) or session | Work API: items, dispatches, issues, schedules, jobs, credentials, runs, metrics. Part 2 §6 |
+| `/api/control-plane/webhook` and `/process`        | HMAC plus Cloud Tasks OIDC                                         | GitHub App intake. See part 2 §4                                                            |
+| `/api/control-plane/linear/webhook` and `/process` | HMAC (1-minute timestamp guard) plus Cloud Tasks OIDC              | Linear issue/comment intake (`svc:linear`). See part 2 §4 and [`linear.md`](../linear.md)   |
+| `/api/runner-status` and `/stream`                 | admin session                                                      | Shuttlebay JSON and SSE                                                                     |
+| `/api/console/shell-readouts`                      | session; fleet figures require admin                               | Identity and shared frame readouts; non-admin sessions receive identity only                |
+| `/costs/export`                                    | admin session                                                      | Filtered cost ledger CSV (FE-CO-3)                                                          |
+| `/api/dashboard/stream`                            | admin session                                                      | Live invalidation stream for Bridge, Inbox, and Agents (FE-LIVE-4)                          |
+| `/api/work/v1/costs/budget`                        | `costs.reader` Work grant                                          | Optional fixed-selection cost budget readout for operator integrations                      |
+| `/api/inbox-notifications`                         | admin session                                                      | Inbox notification snapshot for open-tab polling (FE-IN-10)                                 |
+| `/api/inbox-push`                                  | admin session                                                      | Closed-tab Web Push subscription status (`GET`), upsert (`PUT`), and removal (`DELETE`)     |
+| `/api/quick-task-evidence/v1/[id]`                 | capability ID                                                      | Screenshot evidence bytes; revocable                                                        |
+| `/api/logs/error`                                  | public                                                             | Browser error reporting                                                                     |
+| `/api/e2e/*`                                       | `E2E_TESTING` only                                                 | Seeding, fake GitHub, and operator-grant toggling for hermetic E2E                          |
 
 Boot invariants (`lib/startup-configuration.ts`): the console refuses to
 start with a blank required variable, a non-absolute `AUTH_URL`, a malformed App key, a missing
@@ -730,22 +828,39 @@ never prints the secret.
 
 ## 8. Companion CLI (`lcars`)
 
-The CLI is packaged with `apps/telemetry-watcher`. It is the terminal
-counterpart of the Work destination.
+The CLI is packaged with `apps/telemetry-watcher`. It is the terminal and
+worker counterpart of the console's Work, Jobs, Issue Sources, Sessions, and
+host-investigation surfaces.
 
-- `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--deliverable report]`
-- `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
-  `cancel <id>`, and `redispatch <id> [--fallback-pipelines <ordered,csv|none>]`
-- `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]`
-- `lcars work owner <owner/repo>#<n> [--json]`
-- `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
+- **Native work lifecycle:**
+  - `lcars work create --repo --pipeline --title (--description | --description-file) [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--deliverable report]`
+  - `lcars work status <id> [--watch]`, `list [--state] [--repo]`,
+    `cancel <id>`, and `redispatch <id> [--fallback-pipelines <ordered,csv|none>]`
+  - `lcars work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode|agy>] [--request-id <key>] [--fresh]`
+  - `lcars work metrics [--json]` (`GET /api/work/v1/metrics/lifecycle`)
+- **Tracker ownership, browse, and dispatch:**
+  - `lcars work owner (<owner/repo>#<n> | github:<owner/repo>#<n> | linear:<id>) [--repo <owner/repo>] [--json]`
+  - `lcars work issue (<owner/repo>#<n> | github:<owner/repo>#<n> | linear:<id>) [--repo <owner/repo>] [--refresh] [--json]`
+  - `lcars work issues [refresh] --tracker <github|linear> [--repo <owner/repo>] [--limit <n>] [--cursor <token>] [--json]`
+  - `lcars work dispatch (<owner/repo>#<n> | github:<owner/repo>#<n> | linear:<id>) --pipeline <claude|codex|opencode|agy> [--repo <owner/repo>] [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--request-id <key>] [--json]`
+  - `lcars work source [--run-id <runId>] [--json]` (worker-only run-scoped issue source readout)
+- **Repository-owned Goose jobs and per-job credentials:**
+  - `lcars work job get --repo <owner/repo> --job <name> [--json]`
+  - `lcars work job invoke --repo <owner/repo> --job <name> [--request-id <key>] [--priority <urgent|normal|background>] [--param <key=value>] [--params-json <json>] [--json]`
+  - `lcars work secrets <secrets|sets|grants|register|publish|grant|upload|promote|disable|enable> ...`
+- **Restricted host investigation (worker-only):**
+  - `lcars investigate --request-id <key> (--question "<text>" | --question-file <path>) [--repo <owner/repo>] [--issue <n>] [--pr <n>] [--run-id <id>] [--host <name>] [--service <name>] [--unit <name>] [--namespace <ns>] [--pod <name>] [--url <https://...>] [--window <15m|1h|6h|24h>] [--json]`
+- **Session telemetry, archive, and hooks:**
+  - `lcars session title "<text>" | --clear` and `lcars session status "<text>" | --clear`
+  - `lcars session archive --consent [--revoke]`
+  - `lcars hook <claude|codex|opencode|agy|flush>` and `lcars integration <install|uninstall>`
 
 - **FE-CLI-1 [Shipped]** `work owner` answers who Console says is working a
-  GitHub issue or pull request, so every executor can check before it starts.
-  It calls the read-only `GET /api/work/v1/anchors/github/owner`. That route
-  requires `work.operator` or the read-only `work.reader`, only answers for
-  control-plane repositories, and
-  binds a GitHub Actions principal to its own repository. The answer comes only
+  GitHub or Linear issue (or GitHub pull request), so every executor can check
+  before it starts. It calls `GET /api/work/v1/anchors/github/owner` or
+  `GET /api/work/v1/issues/owner`. Those routes require `work.operator` or the
+  read-only `work.reader`, only answer for control-plane repositories, and
+  bind a GitHub Actions principal to its own repository. The answer comes only
   from state Console already holds and records no claim. The verdict is
   `fleet-run` when the orchestrator task holds a live run, `interactive-session`
   when a `live` or `idle` CLI session's repository plus branch or recorded PR
@@ -798,15 +913,19 @@ defined in `libs/work/README.md` and the generated Work API contract.
   GitHub); and Unstick (`inbox-actions.spec.ts`).
 - Snoozes and Inbox browser notifications.
 - Live dashboard invalidation and reconnect (`live-dashboard.spec.ts`).
-- Agents and Sessions at every viewport, and OpenCode transcripts.
+- Agents and Sessions at every viewport, and OpenCode and Antigravity
+  transcripts.
 - The Costs ledger.
 - Shuttlebay structure, live stream updates, expiry, and recovery after
   reconnect (`shuttlebay-page.spec.ts`).
 - Creating native work through the New work modal.
-- `/work` list, filters and pagination, and `/work/[id]` edit, reply,
-  redispatch, and cancel (`native-work.spec.ts`, `work-pagination.spec.ts`).
+- `/work` list, filters and pagination, `/work/issues` tracker-source browse
+  and dispatch, and `/work/[id]` edit, reply, redispatch, and cancel
+  (`native-work.spec.ts`, `work-pagination.spec.ts`).
 - `/work/schedules`: create, enable, disable, edit, and confirmed delete
   (`work-schedules.spec.ts`).
+- `/jobs` repository-owned Goose job registry, schedule veto/enable, manual
+  invocation, and `/jobs/credentials` secret/set/grant administration.
 - `/task/...` history for native and GitHub anchors
   (`task-detail-history.spec.ts`).
 - Non-admin operator sign-in (`operator-auth.spec.ts`).
@@ -814,21 +933,31 @@ defined in `libs/work/README.md` and the generated Work API contract.
 - One ground and contrast on every destination.
 - Header bounds at phone, tablet, and desktop widths.
 
-**Not covered:** merge and rebase against real GitHub, and production
-qualification of these journeys. Hermetic E2E does not prove the live
-deployment.
+**Live production qualification (2026-11-08):** Verified against
+`https://lcars.jlapenna.net` with `@agent-lcars/console:verify-session` using
+`AGENT_LCARS_ADMIN_STORAGE_STATE` across `/`, `/inbox`, `/agents`,
+`/shuttlebay`, `/work`, `/work/schedules`, `/work/issues`,
+`/work/01M20HYC30880FW18N8TCQCRXY`, `/jobs`, `/jobs/credentials` (verifying the
+non-`secrets.admin` access gate for `svc:production-verifier`), `/sessions`,
+`/sessions/31686b29-9dc4-4f89-b29c-c038602de746`, `/costs`, `/settings`,
+`/task/jlapenna/homelab/3200` (verifying `FE-SB-3a` requested/effective provider
+handoff provenance), and `/task/jlapenna/agent-lcars/3133`.
+
+**Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
+and live write mutations (which are intentionally excluded from automated
+production verification).
 
 ## 10. Gaps and roadmap
 
 Priorities follow the expert-maintainer design center. This table lists only
 remaining work. Completed roadmap entries R1, R3–R11 are retired;
 their behavior is owned by the corresponding destination requirements above.
-R2 now identifies the live qualification gap rather than repeating shipped E2E
-coverage. Existing IDs are not reused.
+R2 now tracks live qualification of mutating journeys beyond the read-only
+route and telemetry qualification recorded in §9. Existing IDs are not reused.
 
-| #   | Remaining work                                                                   | Acceptance boundary                                                                                                               | Priority |
-| --- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify the production journeys listed in §9, including real GitHub merge/rebase | Record live evidence separately from the shipped hermetic suite; existing evidence for one journey does not qualify every journey | P0       |
+| #   | Remaining work                                                                                       | Acceptance boundary                                                                                                          | Priority |
+| --- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify mutating production journeys in §9 (including real GitHub merge/rebase and secrets.admin UI) | Record live evidence separately from the shipped hermetic suite; read-only route qualification does not prove mutating paths | P0       |
 
 ## 11. Success metrics
 

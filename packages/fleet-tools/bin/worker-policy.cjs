@@ -22,7 +22,7 @@ const decision = (permissionDecision, permissionDecisionReason) => ({
 function prepareContext(brief, identity) {
   const { runId, attemptId, provider } = identity;
   if (
-    !['claude', 'codex', 'opencode'].includes(provider) ||
+    !['claude', 'codex', 'opencode', 'agy'].includes(provider) ||
     typeof runId !== 'string' ||
     typeof attemptId !== 'string'
   )
@@ -237,9 +237,15 @@ function fileOperations(files, cwd) {
 }
 
 function operations(input) {
-  const name = input.tool_name;
-  const args = input.tool_input ?? {};
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  const name = input.tool_name ?? input.toolCall?.name;
+  const args = input.tool_input ?? input.toolCall?.args ?? {};
+  const cwd =
+    typeof input.cwd === 'string'
+      ? input.cwd
+      : Array.isArray(input.workspacePaths) &&
+          typeof input.workspacePaths[0] === 'string'
+        ? input.workspacePaths[0]
+        : process.cwd();
   if (name === 'apply_patch') {
     try {
       return fileOperations(
@@ -255,10 +261,19 @@ function operations(input) {
     }
   }
   if (
-    ['Edit', 'Write', 'MultiEdit', 'edit', 'write', 'multiedit'].includes(name)
+    [
+      'Edit',
+      'Write',
+      'MultiEdit',
+      'edit',
+      'write',
+      'multiedit',
+      'edit_file',
+      'write_file',
+    ].includes(name)
   ) {
     const files = [];
-    const file = args.file_path ?? args.filePath;
+    const file = args.file_path ?? args.filePath ?? args.Path;
     if (file !== undefined) files.push(file);
     if (['MultiEdit', 'multiedit'].includes(name) && Array.isArray(args.edits))
       for (const edit of args.edits) {
@@ -267,9 +282,15 @@ function operations(input) {
       }
     return fileOperations(files, cwd);
   }
-  if (!['Bash', 'exec_command', 'shell_command', 'bash'].includes(name))
+  if (
+    !['Bash', 'exec_command', 'shell_command', 'bash', 'run_command'].includes(
+      name,
+    )
+  )
     return [];
-  const commands = literalCommands(args.command ?? args.cmd);
+  const commands = literalCommands(
+    args.command ?? args.cmd ?? args.CommandLine,
+  );
   if (!commands) return [];
   let directory =
     typeof args.workdir === 'string' ? path.resolve(cwd, args.workdir) : cwd;
@@ -538,11 +559,17 @@ function repairArtifact(input, context, dependencies = {}) {
 
 function nativeOutcomeDecision(input, context) {
   if (context.anchor.type !== 'work' || !context.nativeOutcomePath) return null;
-  const args = input.tool_input ?? {};
-  const cwd = input.cwd ?? process.cwd();
-  let file = args.file_path ?? args.filePath;
-  let content = args.content;
-  if (input.tool_name === 'apply_patch') {
+  const toolName = input.tool_name ?? input.toolCall?.name;
+  const args = input.tool_input ?? input.toolCall?.args ?? {};
+  const cwd =
+    input.cwd ??
+    (Array.isArray(input.workspacePaths)
+      ? input.workspacePaths[0]
+      : undefined) ??
+    process.cwd();
+  let file = args.file_path ?? args.filePath ?? args.Path;
+  let content = args.content ?? args.Content;
+  if (toolName === 'apply_patch') {
     const patch =
       typeof args === 'string'
         ? args
@@ -571,7 +598,7 @@ function nativeOutcomeDecision(input, context) {
     } catch {
       return null;
     }
-  } else if (!['Write', 'write'].includes(input.tool_name)) return null;
+  } else if (!['Write', 'write', 'write_file'].includes(toolName)) return null;
   if (
     typeof file === 'string' &&
     path.resolve(cwd, file) === context.nativeOutcomePath

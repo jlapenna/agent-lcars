@@ -12,7 +12,7 @@ name: Repo Validation
 # reusable workflow's job reports as "<caller job> / <this job's name>",
 # so a caller whose job key is `validate` produces the check
 # "validate / repository validation" — that composed string is what
-# rulesets and agent-automerge `required-checks` must name.
+# Protect main rulesets must name.
 #
 # actionlint's repo config (.github/actionlint.yaml, e.g. self-hosted
 # runner labels) is read from the caller's own checkout, so per-repo label

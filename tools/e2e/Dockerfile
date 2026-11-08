@@ -8,8 +8,9 @@
 # pnpm-lock.yaml, or the bundled browser build won't match. The image tag used
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
-FROM node:26.13.0-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS node-runtime
-FROM mcr.microsoft.com/playwright:v1.64.1-noble
+FROM node:26.13.0-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS node-runtime
+FROM mcr.microsoft.com/playwright:v1.65.0-noble
+ARG COREPACK_VERSION=0.36.0
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
 # require a JRE, which the base Playwright image does not include. jq is part
@@ -28,11 +29,16 @@ RUN test "$(node -p 'process.versions.node')" = 26.13.0
 
 # This image has no repo checkout at build time (tools/e2e-docker.sh bind-
 # mounts one at run time instead), so there's no packageManager field to pre-
-# fetch a pinned pnpm version from here. `corepack enable` alone is enough:
-# corepack resolves and fetches the right version on first `pnpm` invocation
+# fetch a pinned pnpm version from here. Node 25+ no longer bundles Corepack,
+# so install the reviewed release explicitly before enabling its shims.
+# Corepack resolves and fetches the right version on first `pnpm` invocation
 # against whichever repo ends up mounted, so this never goes stale the way a
 # hardcoded `corepack prepare pnpm@X --activate` here would.
-RUN corepack enable
+# Playwright already owns /usr/bin/yarn{,pkg}; keep this installation in
+# /usr/local rather than overwriting those binaries through npm's /usr prefix.
+RUN npm install --global --prefix /usr/local "corepack@${COREPACK_VERSION}" \
+    && test "$(corepack --version)" = "$COREPACK_VERSION" \
+    && corepack enable
 
 # Trigger multi-platform rebuild to support arm64 runners natively
 ENV CI=1

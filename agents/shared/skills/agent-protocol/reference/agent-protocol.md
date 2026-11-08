@@ -376,10 +376,10 @@ The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.
 
 Reply dispatches recognize `@claude`, the generic `@agent` alias for Claude,
-`/codex`, `/opencode`, and `/oc` in an owner or member's comment. GitHub-style
-`@claude`/`@agent` mentions may appear in ordinary prose; slash commands must
-begin an unquoted line. Mentions and commands inside blockquotes or code are
-inert.
+`/codex`, `/opencode`, `/oc`, `/agy`, and `/antigravity` in an owner or
+member's comment. GitHub-style `@claude`/`@agent` mentions may appear in
+ordinary prose; slash commands must begin an unquoted line. Mentions and
+commands inside blockquotes or code are inert.
 
 ## 6. Push early — never hold finished work locally
 

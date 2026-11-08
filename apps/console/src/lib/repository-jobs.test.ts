@@ -4,6 +4,8 @@ import { deriveItemState } from '@agent-lcars/work/derive';
 import { describe, expect, it, vi } from 'vitest';
 import { stringify } from 'yaml';
 
+import { GcsCodexAuthStore } from './codex-auth-store';
+import { releaseCodexCredentialLease } from './codex-credential-operations';
 import {
   jobDueAt,
   jobKey,
@@ -21,6 +23,7 @@ import {
   type JobStore,
 } from './repository-job-store';
 import { RepositoryJobs } from './repository-jobs';
+import { ConditionalCodexBucket } from './testing/codex-auth-bucket';
 
 class TestStore implements JobStore {
   jobs = new Map<string, CatalogJob>();
@@ -253,6 +256,23 @@ describe('production repository job admission', () => {
       );
     },
   );
+  it('accepts operator-owned result files without changing existing profiles', () => {
+    const f = fixture([]);
+    expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
+    const resultFile = '/tmp/skill-evals/report/result.json';
+    expect(
+      jobProfileSchema.parse({ ...f.profile, resultFile }).resultFile,
+    ).toBe(resultFile);
+    for (const path of [
+      '/run/secrets/result.json',
+      '/tmp/../result.json',
+      '/tmp//result.json',
+      '/tmp/./result.json',
+    ])
+      expect(() =>
+        jobProfileSchema.parse({ ...f.profile, resultFile: path }),
+      ).toThrow();
+  });
   it('admits automatically activated schedules only after the activation floor', async () => {
     const f = fixture([], 'repository');
     f.jobs.deps.profiles = () => [];
@@ -463,37 +483,65 @@ describe('production repository job admission', () => {
       f.jobs.admit(f.id, 'manual-1', 'user:joe', 'manual', f.definition.digest),
     ).rejects.toThrow('refresh');
   });
-  it('holds overlap until the executor reports the worker exited', async () => {
-    const f = fixture();
-    const occurrence = await f.jobs.admit(
-      f.id,
-      'manual-1',
-      'user:joe',
-      'manual',
-      f.definition.digest,
-    );
-    const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
-    const at = '2026-10-27T06:00:00.000Z';
-    await f.native.enqueueRun({ runId: run.runId, now: at });
-    await f.native.claimQueuedRun({
-      pipelines: ['goose'],
-      now: at,
-      claimedBy: 'executor',
-      claimedBySubject: 'executor@example.iam.gserviceaccount.com',
-      tokenHash: 'a'.repeat(64),
-    });
-    await f.orchestrator.report(run.runId, { ok: false }, 'a'.repeat(64));
-    // A settled run is not evidence that its worker stopped.
-    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
-    expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
-    await f.orchestrator.executorExited(run.runId, {
-      subject: 'executor@example.iam.gserviceaccount.com',
-      runner: 'executor',
-      claimFingerprint: 'a'.repeat(64),
-    });
-    await f.jobs.reconcile(f.store.jobs.get(f.id)!);
-    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
-  });
+  it.each([false, true])(
+    'holds overlap and baseline until actual executor exit (Codex provider=%s)',
+    async (codex) => {
+      const f = fixture();
+      if (codex) f.profile.providerAuth = 'codex';
+      const occurrence = await f.jobs.admit(
+        f.id,
+        'manual-1',
+        'user:joe',
+        'manual',
+        f.definition.digest,
+      );
+      const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+      const at = '2026-10-27T06:00:00.000Z';
+      await f.native.enqueueRun({ runId: run.runId, now: at });
+      await f.native.claimQueuedRun({
+        pipelines: ['goose'],
+        now: at,
+        claimedBy: 'executor',
+        claimedBySubject: 'executor@example.iam.gserviceaccount.com',
+        tokenHash: 'a'.repeat(64),
+      });
+      const artifact = validateJobResult(f.definition, {
+        report: 'Probe inventory verified',
+        complete: true,
+        data: { count: 3 },
+      });
+      await f.jobs.stage(occurrence, artifact);
+      await f.orchestrator.report(
+        run.runId,
+        { ok: true, ref: `job-result:${artifact.digest}` },
+        'a'.repeat(64),
+      );
+      if (codex) {
+        await releaseCodexCredentialLease(
+          {
+            store: f.native,
+            orchestrator: f.orchestrator,
+            codexAuth: new GcsCodexAuthStore(
+              new ConditionalCodexBucket().bucket,
+            ),
+            now: () => new Date(at),
+          },
+          (await f.native.readRun(run.runId))!,
+        );
+      }
+      // A settled run is not evidence that its worker stopped.
+      await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+      expect(f.store.jobs.get(f.id)!.active).toBe(occurrence.id);
+      await f.orchestrator.executorExited(run.runId, {
+        subject: 'executor@example.iam.gserviceaccount.com',
+        runner: 'executor',
+        claimFingerprint: 'a'.repeat(64),
+      });
+      await f.jobs.reconcile(f.store.jobs.get(f.id)!);
+      expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+      expect(f.store.jobs.get(f.id)!.baseline?.occurrence).toBe(occurrence.id);
+    },
+  );
   it('releases occupancy once the worker can no longer be running', async () => {
     const f = fixture();
     const occurrence = await f.jobs.admit(
@@ -920,4 +968,23 @@ it('retires an unminted legacy reservation only after the existing backstop and 
     f.definition.digest,
   );
   expect(await f.native.listRuns({ workId: successor.workId })).toHaveLength(1);
+});
+
+it('pins provider auth into the admitted recipe run and revokes it with the profile', async () => {
+  const f = fixture();
+  f.profile.providerAuth = 'codex';
+  const occurrence = await f.jobs.invoke(
+    'octo/repo',
+    'audit',
+    'codex-provider',
+    'user:joe',
+  );
+  const task = await f.native.readTask({ workId: occurrence.workId });
+  const run = await f.native.readRun(task!.task.activeRunId!);
+  expect(run?.params).toMatchObject({
+    jobOccurrence: occurrence.id,
+    providerAuth: 'codex',
+  });
+  delete f.profile.providerAuth;
+  expect(() => f.jobs.authorizeOccurrence(occurrence)).toThrow();
 });

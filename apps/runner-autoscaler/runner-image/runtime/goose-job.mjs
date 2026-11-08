@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { codexJobAuth } from './codex-job-auth.mjs';
 import { loadGooseEnvironment } from './goose-environment.mjs';
 import {
   cgroupAllocation,
@@ -47,6 +48,7 @@ async function call(path, body) {
 let home;
 let secretHome;
 let timeout;
+let codexAuth;
 try {
   const brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
@@ -97,10 +99,34 @@ try {
       environment,
       signal: controller.signal,
     });
+  if (brief.profile?.providerAuth === 'codex') {
+    codexAuth = await codexJobAuth({
+      signal: controller.signal,
+      environment,
+      request: (method, body) =>
+        fetch(`${base}/codex-auth`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${required('LCARS_RUN_TOKEN')}`,
+            ...(body ? { 'Content-Type': 'application/json' } : {}),
+          },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+          signal:
+            method === 'PUT'
+              ? AbortSignal.timeout(60000)
+              : AbortSignal.any([
+                  controller.signal,
+                  AbortSignal.timeout(60000),
+                ]),
+          redirect: 'error',
+        }),
+    });
+  }
   const execute = gooseExecutor({
     workingDirectory,
     environment,
     assertAllocation: cgroupAllocation,
+    resultFile: brief.profile?.resultFile,
     onProviderStarted: () =>
       call('heartbeat', { providerProcessStarted: true }),
   });
@@ -111,12 +137,23 @@ try {
     signal: controller.signal,
   });
   controller.signal.throwIfAborted();
+  if (codexAuth) await codexAuth.persist();
   await call('recipe', { result });
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Goose recipe failed');
   process.exitCode = 1;
 } finally {
   clearTimeout(timeout);
+  if (codexAuth) {
+    try {
+      if (!codexAuth.persistenceAttempted) await codexAuth.persist();
+    } catch {
+      console.error('Codex credential persistence failed after recipe failure');
+      process.exitCode = 1;
+    } finally {
+      await codexAuth.close();
+    }
+  }
   if (home) await rm(home, { recursive: true, force: true });
   if (secretHome) await rm(secretHome, { recursive: true, force: true });
 }

@@ -15,7 +15,7 @@ export const WORK_TITLE_MAX = 256;
 export const WORK_DESCRIPTION_MAX = 16_384;
 
 export const PIPELINES = Object.freeze(
-  Object.keys(PIPELINE_CONTRACTS) as ['claude', 'codex', 'opencode'],
+  Object.keys(PIPELINE_CONTRACTS) as ['claude', 'codex', 'opencode', 'agy'],
 );
 
 export const workTargetSchema = z.strictObject({

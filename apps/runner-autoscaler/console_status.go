@@ -140,6 +140,7 @@ type consoleClaimWindow struct {
 	Claude      int64  `firestore:"claude"`
 	Codex       int64  `firestore:"codex"`
 	OpenCode    int64  `firestore:"opencode"`
+	Agy         int64  `firestore:"agy"`
 	WindowStart string `firestore:"windowStart"`
 	WindowEnd   string `firestore:"windowEnd"`
 }

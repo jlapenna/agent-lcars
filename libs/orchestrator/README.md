@@ -24,8 +24,7 @@ is present; nothing persisted changed shape when the second anchor was
 added. A native task carries an opaque, bounded `work` payload written by
 the request that creates it and never read by the orchestrator, plus an
 orchestrator-owned `closedAt` set by `closeTask` — a closed task refuses
-further requests (`task-closed`). See
-`docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
+further requests (`task-closed`).
 
 ## The three collections
 
@@ -42,8 +41,8 @@ further requests (`task-closed`). See
   are never committed in one step; a separate drain worker transactionally
   leases and delivers pending entries. A unique claim id fences completion or
   release, while an expired lease makes a crashed attempt retryable. See
-  `apps/console/src/lib/orchestrator-dispatch.ts` for the real drain (GitHub
-  `workflow_dispatch` + issue comments).
+  `apps/console/src/lib/orchestrator-dispatch.ts` for the real drain (QueueExecutor
+  queue admission + issue comments and channel webhooks).
 
 ## The decision layer
 
@@ -54,11 +53,9 @@ values decode as `normal`; new runs validate and persist the selected value.
 The per-task mutex, provider cooldowns, and server-owned Codex/OpenCode live
 claim ceilings apply to every priority.
 
-Legacy claim selection first chooses the provider with the least live claimed
-occupancy, then its oldest eligible queue head (regardless of priority).
-Capacity claims retain their physical domain occupancy, pool limits, inventory
-proof and task exclusion before choosing the provider; logical completion
-alone does not free that capacity.
+Claim selection first chooses the provider with the least live claimed
+occupancy, then its oldest eligible queue head (regardless of priority) to
+break occupancy ties.
 Inside that provider, successful atomic claim reservations follow the durable
 cycle `urgent, urgent, normal, urgent, urgent, normal, background`. Empty
 classes are skipped, and each class remains FIFO by creation time and run ID.
@@ -204,8 +201,8 @@ FIRESTORE_EMULATOR_HOST=localhost:4002 npx vitest run --project '@agent-lcars/or
   outbox delivery lease — not exactly-once execution. A lost run's work may
   have partially landed; likewise, a process can still crash after GitHub
   accepted a request but before the outbox entry was confirmed. Lease recovery
-  retries that ambiguous delivery, which can mean an outcome comment or a
-  `workflow_dispatch` call is attempted more than once across crashed attempts.
+  retries that ambiguous delivery, which can mean an outcome comment or webhook
+  delivery is attempted more than once across crashed attempts.
 - **Provide multi-tenant or cross-repository authority.** One task is keyed
   by `(repo, issue)`; there is no tenant concept above that. The consumer
   repos' formerly separate dispatch loops have since migrated onto this

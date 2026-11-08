@@ -1,8 +1,8 @@
 # Agent LCARS
 
-Agent LCARS is the control plane for headless Claude Code, Codex, and OpenCode
-work on the shared self-hosted GitHub Actions runner fleet. It turns GitHub
-issues into accountable agent work, shows maintainers where attention is
+Agent LCARS is the control plane for headless Claude Code, Codex, OpenCode, and
+Antigravity work on the shared self-hosted GitHub Actions runner fleet. It turns
+GitHub issues into accountable agent work, shows maintainers where attention is
 needed, and retains the session evidence behind each outcome.
 
 ![Agent LCARS decision inbox showing a selected item and its takeover context](docs/images/console-inbox.png)
@@ -17,6 +17,7 @@ repository:
 | `agent:claude`   | Claude Code |
 | `agent:codex`    | Codex       |
 | `agent:opencode` | OpenCode    |
+| `agent:agy`      | Antigravity |
 
 The [shared agent protocol](.agents/skills/agent-protocol/reference/agent-protocol.md)
 is the complete behavioral contract for every dispatched run. The

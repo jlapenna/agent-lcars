@@ -19,6 +19,7 @@ history — move values with pipes, `read -rs`, or files created under
 | `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)                                            | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
 | Codex `auth.json` lineage | Console QueueExecutor (run time)                                            | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
 | `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                            | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
+| `antigravity-oauth-token` | Console QueueExecutor (run time)                                            | homelab vault `agent_lcars_antigravity_oauth_token` (`lcars-runner-credentials`)         | maintainer only (`agy auth login`) |
 | `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                        | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
 | Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab) | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
 | `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                 | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
@@ -447,9 +448,36 @@ from Costs, never session transcripts or Work mutation authority. Homelab's
 cost collector impersonates this existing account through its existing
 maintainer credential; it does not distribute a new service-account key.
 
+## Runtime secret storage
+
+[LCARS runtime secrets and job credentials](job-secrets.md) records the approved
+shared Google Secret Manager backend and access by consuming process. Broader
+service-secret migration is planned; the existing service and deployment
+credential workflows in this document remain authoritative until their owning
+consumers migrate.
+
+The Console already declares these service credentials in Secret Manager in its
+application project. The references are owned by
+[`apphosting.yaml`](../apps/console/apphosting.yaml); containers and grants are
+owned by [`infra/terraform/main.tf`](../infra/terraform/main.tf).
+
+| Consumer                               | Secret references                                                 |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| Console sessions and GitHub sign-in    | `AUTH_SECRET`, `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`             |
+| GitHub App authentication and webhooks | `AGENT_LCARS_APP_PRIVATE_KEY`, `AGENT_LCARS_WEBHOOK_SECRET`       |
+| Linear integration                     | `AGENT_LCARS_LINEAR_API_KEY`, `AGENT_LCARS_LINEAR_WEBHOOK_SECRET` |
+| Handoff summaries                      | `AGENT_LCARS_HANDOFF_SUMMARY_API_KEY`                             |
+| Inbox Web Push                         | `AGENT_LCARS_PUSH_VAPID`                                          |
+
+These declarations identify consumers and references; they do not prove live
+value availability or qualify a rotation. They need no project move to follow
+the shared-backend decision. Provider session state, including the Codex auth
+lineage and lease described above, retains its existing refresh and concurrency
+protocol rather than becoming an interchangeable static job secret.
+
 ## Job-specific application credentials
 
-[LCARS job secrets](job-secrets.md) owns credentials selected by recurring or
+[LCARS runtime secrets and job credentials](job-secrets.md) owns credentials selected by recurring or
 manual Goose jobs: a dedicated Google Secret Manager project, versioned sets,
 per-job grants and runtime delivery. These values are independent of homegit
 and Homelab secret stores. This document's platform bootstrap, Work transport,

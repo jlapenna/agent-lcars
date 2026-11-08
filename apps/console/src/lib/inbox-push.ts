@@ -9,7 +9,7 @@ import {
   Firestore,
   type Transaction,
 } from '@google-cloud/firestore';
-import webPush from 'web-push';
+import { sendNotification } from 'web-push';
 import { z } from 'zod';
 
 import { isAdminGithubLogin } from './deployment';
@@ -389,11 +389,10 @@ export async function deliverInboxPush() {
       );
       if (!payload) continue;
       try {
-        await webPush.sendNotification(
-          browser.subscription,
-          JSON.stringify(payload),
-          { ...INBOX_PUSH_SEND_OPTIONS, vapidDetails: config },
-        );
+        await sendNotification(browser.subscription, JSON.stringify(payload), {
+          ...INBOX_PUSH_SEND_OPTIONS,
+          vapidDetails: config,
+        });
       } catch (error) {
         const status = (error as { statusCode?: number }).statusCode;
         if (status === 404 || status === 410)

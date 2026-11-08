@@ -1,10 +1,10 @@
 # Hooks-based session telemetry (design)
 
 Status: shipped. Owner: telemetry. Hooks are the only live telemetry path for
-Claude Code, Codex, and OpenCode on workstations and QueueExecutor runners. The
-polling host watcher daemon (`apps/telemetry-watcher` host mode, #2540) and the
-runner's live polling sidecar are retired and their code is deleted; the
-workstation CLI installer is
+Claude Code, Codex, OpenCode, and Antigravity on workstations and
+QueueExecutor runners. The polling host watcher daemon (`apps/telemetry-watcher`
+host mode, #2540) and the runner's live polling sidecar are retired and their
+code is deleted; the workstation CLI installer is
 `apps/telemetry-watcher/bin/install-session-title-cli.sh`.
 
 ## GitHub actor observation for spend attribution
@@ -22,10 +22,10 @@ offline and rollout contract.
 
 ## Runners and OpenCode
 
-**Runners:** every QueueExecutor pipeline (Claude, Codex, OpenCode) reports
-through hooks unconditionally (`runtime/hook-telemetry-bootstrap.sh`); the
-flusher uses the runner's telemetry-writer credentials file through
-`LCARS_TELEMETRY_CREDENTIALS_FILE`. The executor ignores the retired
+**Runners:** every QueueExecutor pipeline (Claude, Codex, OpenCode,
+Antigravity) reports through hooks unconditionally
+(`runtime/hook-telemetry-bootstrap.sh`); the flusher uses the runner's
+telemetry-writer credentials file through `LCARS_TELEMETRY_CREDENTIALS_FILE`. The executor ignores the retired
 `LCARS_HOOK_TELEMETRY_PROVIDERS` selector if a deployment still sets it. A
 failed hook install
 (for example, unreadable credentials) prints a `::warning::` and the run
@@ -80,10 +80,10 @@ and all three now expose that knowledge through hooks.
 
 Goal: the agent runtime tells LCARS about its own session through native
 hooks, so that the host watcher daemon is no longer needed for Claude Code,
-Codex, or OpenCode sessions on workstations or runners. Session docs keep the
-exact `SessionDoc` contract (`libs/telemetry/src/lib/types.ts`), so the
-console, the Decision Inbox, `/agents`, `/sessions`, and `displayLiveness`
-need no schema change.
+Codex, OpenCode, or Antigravity sessions on workstations or runners. Session
+docs keep the exact `SessionDoc` contract (`libs/telemetry/src/lib/types.ts`),
+so the console, the Decision Inbox, `/agents`, `/sessions`, and
+`displayLiveness` need no schema change.
 
 Non-goals:
 
@@ -93,7 +93,6 @@ Non-goals:
 - Replacing `runner finalize` (GCS transcript upload + authoritative final
   doc, `src/lib/finalize.ts`). That is a one-shot command, not a daemon, and
   it needs the whole transcript file after provider exit.
-- Antigravity. It has no hook surface; see section 7.
 
 ## 3. Runtime hook surfaces
 
@@ -181,7 +180,7 @@ interface SessionEventV1 {
   seq: number; // per-session monotonic, from the state file
   occurredAt: string; // ISO
   host: string;
-  agent: SessionAgent; // 'claude-code' | 'codex' | 'opencode'
+  agent: SessionAgent; // 'claude-code' | 'codex' | 'opencode' | 'antigravity'
   sessionId: string;
   kind:
     | 'start'
@@ -329,7 +328,7 @@ this fleet (`~/.claude/hooks/herdr-agent-state.sh`,
 Its choices were made under the same constraints and this design adopts
 them:
 
-- **Self-installing integration.** `lcars integration install claude|codex|opencode|all`
+- **Self-installing integration.** `lcars integration install claude|codex|opencode|agy|all`
   writes the launcher script, idempotently, with `# LCARS_INTEGRATION_ID` /
   `# LCARS_INTEGRATION_VERSION` headers so `lcars integration status` can
   report an outdated or hand-edited install, and appends the hook entries on
@@ -603,16 +602,14 @@ a CPU-starved runner (`--cpus=1` plus busy loops) lost the `Stop` report in
 
 ## 7. Decisions
 
-1. Antigravity is not supported: it has no hook surface, and its poller was
-   deleted with the daemon.
-2. Per-repo opt-in via committed `.claude/settings.json` / `.codex/hooks.json`:
+1. Per-repo opt-in via committed `.claude/settings.json` / `.codex/hooks.json`:
    **rejected.** `--settings` and project settings do merge additively, but
    worktrees outside the repo and Codex trust prompts make it noisier than
    one homegit-managed allowlist.
-3. Codex hook trust from homegit: **constant launcher stub plus managed
+2. Codex hook trust from homegit: **constant launcher stub plus managed
    hooks** (section 4.7), not pre-computed `trusted_hash` entries. The hash
    input is undocumented and did not match any simple serialization.
-4. Hook distribution: **`lcars integration install`** owns the hook entries
+3. Hook distribution: **`lcars integration install`** owns the hook entries
    and launcher scripts (section 4.7); homegit calls it rather than
    templating hook JSON.
 
@@ -646,7 +643,7 @@ To check a runner on real work:
    [the real-work proof policy](testing-policy.md#development-proof-uses-real-work)
    and start a run on it: apply an `agent:*` label (removing and re-adding
    it on a finished task starts a fresh run), or post a tagged reply
-   (`@claude`, `/codex`, or `/oc`; triggers are in
+   (`@claude`, `/codex`, `/oc`, or `/agy`; triggers are in
    `libs/dispatch-contracts/src/pipelines.ts`), which resumes the previous
    session when one parked or finished.
 2. After the run ends, query `sessions` for its `runId`

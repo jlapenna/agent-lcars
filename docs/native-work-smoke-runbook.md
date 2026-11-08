@@ -5,15 +5,14 @@ orchestrator → QueueExecutor → direct container. Webhooks, the public
 GitHub-anchor endpoint, and Console Retry all use that one admission service,
 which derives and validates a Work specification before it enters the route;
 no hosted provider workflow, raw-GitHub runner, or console-specific fallback
-is supported. The dated sections below are historical evidence only, not
-operational instructions.
+is supported.
 
 This runbook drives that route on **real useful work**, per
 [Development proof uses real work](testing-policy.md#development-proof-uses-real-work):
 exercise the normal intake, dispatch, execution, and delivery paths with a
 genuine outcome. Do not invent a no-op task, disposable README edit, or
 throwaway PR to manufacture a green run or telemetry, and do not close or
-discard useful delivery to replay the dated smokes recorded below.
+discard useful delivery to end a run sooner.
 
 ## Select the work
 
@@ -104,7 +103,7 @@ anchor. For an implementation item on the default PR path:
 gh workflow run work-create.yml \
   -f title='<real task title>' \
   -f description='<authorized useful standalone outcome and acceptance>' \
-  -f repo=<owner/repo> -f pipeline=<claude|codex|opencode>
+  -f repo=<owner/repo> -f pipeline=<claude|codex|opencode|agy>
 gh run watch <actual-work-create-workflow-run-id>
 ```
 
@@ -157,8 +156,7 @@ path, not as one green light:
   a PR fails a report item.
 
 Then let normal delivery and cleanup take their course. Do not close useful
-delivery to end the run sooner; the dated smokes below were evidence for their own
-fixes, not a delivery contract to copy.
+delivery to end the run sooner.
 
 ## Narrow synthetic canaries
 

@@ -189,6 +189,9 @@ export async function finalizeSidecar(
       claudeProjectsDir: config.claudeProjectsDir,
       codexSessionsDir: config.codexSessionsDir,
       opencodeExportsDir: config.opencodeExportsDir,
+      ...(config.antigravityBrainDir && {
+        antigravityBrainDir: config.antigravityBrainDir,
+      }),
     }),
     discover,
   );
@@ -218,7 +221,7 @@ export async function finalizeSidecar(
 
     let summaries: SessionSummary[];
     try {
-      summaries = adapter.reduce(content.split('\n'));
+      summaries = adapter.reduce(content.split('\n'), file);
     } catch (error) {
       logger.warn(
         `agent-lcars-telemetry-watcher: finalize failed to reduce transcript ${file}, skipping`,
@@ -236,19 +239,25 @@ export async function finalizeSidecar(
       : undefined;
 
     for (const summary of summaries) {
-      shippedCount++;
-      await finalizeSummary(summary, content, root.adapter, {
-        config,
-        store,
-        resolveGitBranch,
-        resolveGitRepo,
-        uploadTranscript,
-        statusAnnotations,
-        titleOverlay,
-        file,
-        exists,
-        readFile,
-      });
+      try {
+        await finalizeSummary(summary, content, root.adapter, {
+          config,
+          store,
+          resolveGitBranch,
+          resolveGitRepo,
+          uploadTranscript,
+          statusAnnotations,
+          titleOverlay,
+          file,
+          exists,
+          readFile,
+        });
+        shippedCount++;
+      } catch (error) {
+        const message = `agent-lcars-telemetry-watcher: finalize failed to build session ${summary.sessionId} from ${file}, skipping`;
+        logger.warn(message, error);
+        annotateWarning(`${message}: ${error}`);
+      }
     }
   }
 

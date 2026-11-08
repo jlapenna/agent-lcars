@@ -3,64 +3,78 @@
 - **Status:** Product specification of record for the agent fleet control
   plane. Originally written from `main` at `608500a`; requirement statuses,
   state model, runtime, worker contract, published interfaces, and roadmap
-  were reviewed against `6515f8f` (2026-10-12). Part 1 is
+  were reviewed against `7d379e44` (2026-11-08). Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
-  should be corrected. Canonical owners for the details are:
-  - [`libs/orchestrator`](../../libs/orchestrator/README.md): state machine.
-  - [`lifecycle-systems.md`](../lifecycle-systems.md): dispatch ownership.
+  should be corrected. Following the repository's
+  [harness design](../../ARCHITECTURE.md#harness-design), each domain fact has
+  one semantic owner:
+  - [`libs/orchestrator`](../../libs/orchestrator/README.md) and
+    [`libs/work`](../../libs/work/README.md): state machine and Work API schemas.
+  - [`lifecycle-systems.md`](../lifecycle-systems.md): dispatch, startup
+    placement, provider fallback, and ready deliverable ownership.
+  - [`repository-jobs.md`](../repository-jobs.md): repository-owned Goose jobs.
+  - [`job-secrets.md`](../job-secrets.md): per-job credential sets and GCP
+    Secret Manager bindings.
+  - [`linear.md`](../linear.md) and
+    [`tracker-sources.md`](../api/tracker-sources.md): Linear intake, workflow
+    state mapping, and tracker projections.
   - [agent protocol](../../agents/shared/skills/agent-protocol/reference/agent-protocol.md):
     worker behavior.
   - [`deployment-boundary.md`](../deployment-boundary.md): the Homelab
     handoff.
 - **How to read it:** each requirement has an ID (`FL-…`) and is marked
-  **[Shipped]**, **[Partial]**, or **[Proposed]**. Shipped and partial items
-  describe what exists today. Proposed items are the recommended backlog in
-  [§12](#12-gaps-and-roadmap).
+  **[Shipped]**, **[Implemented]**, **[Partial]**, or **[Proposed]**. Shipped
+  and partial items describe what exists today. Proposed items are the
+  recommended backlog in [§12](#12-gaps-and-roadmap).
 
 ---
 
 ## 1. Product summary
 
-Agent LCARS turns requests (GitHub labels and replies, Work API calls,
-schedules, Slack) into **accountable, single-flight agent runs** on a
-self-hosted runner fleet. It then drives each run's deliverable through
-review and merge, and parks the run for a human when the agent cannot
-proceed.
+Agent LCARS turns requests (GitHub and Linear labels and replies, Work API
+calls, schedules, repository-owned Goose jobs, and Slack) into **accountable,
+single-flight agent runs** on a self-hosted runner fleet. It then drives each
+run's deliverable through review and protected merge, advances tracker state,
+and parks the run for a human when the agent cannot proceed.
 
 The core promises:
 
 1. **One live run per task.** A durable per-task mutex with an audit trail.
    A duplicate request is refused, never queued twice.
-2. **Every run ends in evidence.** A successful run must produce an artifact
-   (a PR, comment, or review) stamped with its attempt marker, or an explicit
-   park or no-op. "Exited zero" is not success.
+2. **Every run ends in evidence.** A successful coding run must produce an
+   artifact (a PR, comment, or review) stamped with its attempt marker, or an
+   explicit park or no-op; a Goose job or internal summary run must satisfy its
+   typed result contract. "Exited zero" is not success.
 3. **Nothing is silently lost.** Leases, executor exit reports, and a
    reconciliation tick settle every run. Bounded auto-retry follows, then a
    park for a human.
-4. **Provider-agnostic.** Claude Code, Codex, and OpenCode are interchangeable
-   _pipelines_ behind the same admission, queue, protocol, and evidence
-   contracts.
+4. **Provider-agnostic.** Claude Code, Codex, OpenCode, and Antigravity are
+   interchangeable coding _pipelines_ behind the same admission, queue,
+   protocol, and evidence contracts, while Goose executes declarative
+   repository recipes on the same runner pool.
 5. **A fleet, not a repo.** Member repositories consume published actions,
-   reusable workflows, the shared worker protocol, and the runner image. They
-   never import LCARS source.
+   reusable workflows, the shared worker protocol, `.lcars/jobs/` recipes, and
+   the runner image. They never import LCARS source.
 
 ## 2. Actors
 
-| Actor                | Identity                                                                       | Interacts via                                                                              |
-| -------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| Maintainers          | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna` | GitHub labels and replies, the console, the `lcars` CLI                                    |
-| GitHub App (fleet)   | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                           | Webhooks into the console; claim, react, and comment on anchors                            |
-| Claude App           | `claude[bot]`                                                                  | Authors Claude pipeline deliverables                                                       |
-| QueueExecutor        | Grant with `work.executor` (`svc:telemetry-writer`)                            | Claims runs, launches Kubernetes Jobs, reports exits, ticks                                |
-| Dispatched worker    | Per-run token plus its own App token                                           | Brief, checkout token, heartbeat, complete                                                 |
-| Member automation    | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)             | `POST /dispatches/github` from member repositories                                         |
-| Work-create workflow | `workflow:work-create` (`codex-agent` service account)                         | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules |
-| Slack bot            | Sprinkles App Hosting service account, channel `slack`                         | Creates items; receives outcomes over webhook                                              |
-| Production verifier  | `svc:production-verifier`                                                      | Authenticated live verification with `work.operator`                                       |
-| Session reaper       | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                  | Read-only item access (`work.reaper`) to expire sessions of closed items                   |
-| Homelab              | Platform operator                                                              | Runs k3s, ARC, and the QueueExecutor deployment; holds credentials                         |
+| Actor                 | Identity                                                                       | Interacts via                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Maintainers           | Console allowlist (`jlapenna`, `lizsprinkles`); Work principal `user:jlapenna` | GitHub/Linear labels and replies, the console, the `lcars` CLI                                                   |
+| GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                           | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                  |
+| Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                   | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                       |
+| Claude App            | `claude[bot]`                                                                  | Authors Claude pipeline deliverables                                                                             |
+| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                            | Claims runs, launches Kubernetes Jobs, reports placements and exits, ticks schedules/maintenance                 |
+| Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)           | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                       |
+| Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`                 | Event-driven issue triage and model-generated Inbox/handoff summaries through durable Work                       |
+| Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)             | `POST /dispatches/github` from member repositories                                                               |
+| Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                         | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                       |
+| Slack bot             | Sprinkles App Hosting service account, channel `slack`                         | Creates items; receives outcomes over webhook                                                                    |
+| Production verifier   | `svc:production-verifier`                                                      | Authenticated live verification with `work.operator`                                                             |
+| Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                  | Read-only item access (`work.reaper`) to expire sessions of closed items                                         |
+| Homelab               | Platform operator                                                              | Runs k3s, ARC, QueueExecutor, and `investigate.lan.jlapenna.net`; holds host and execution bootstrap credentials |
 
 ## 3. Goals and non-goals
 
@@ -89,17 +103,21 @@ The core promises:
 
 ### 4.1 Request sources
 
-| Source                                    | Trigger                                                                                                 | Mode                 | Request identity                    |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------- |
-| GitHub label                              | `agent:{claude,codex,opencode}` labeled on an open issue or PR                                          | `implement`          | Webhook delivery GUID               |
-| GitHub label                              | `review:{claude,codex,opencode}` on a PR                                                                | `review`             | Delivery GUID                       |
-| GitHub reply                              | `@claude`/`@agent`, `/codex`, or `/oc`/`/opencode` in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
-| Tagged reply on a parked or finished task | Same commands                                                                                           | `reply` with resume  | Principal `svc:github-tagged-reply` |
-| Work API                                  | `PUT /items/{ulid}`                                                                                     | native               | Client ULID (idempotent)            |
-| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                 | `implement`/`review` | Caller-supplied                     |
-| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                       | native or GitHub     | `console-retry:<uuid>`, ULID        |
-| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                             | native               | Deterministic per-slot ID           |
-| Slack                                     | `/lcars` in the Sprinkles bot                                                                           | native               | ULID, `origin.channel=slack`        |
+| Source                                    | Trigger                                                                                                                        | Mode                 | Request identity                    |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------- | ----------------------------------- |
+| GitHub label                              | `agent:{claude,codex,opencode,agy}` labeled on an open issue or PR                                                             | `implement`          | Webhook delivery GUID               |
+| GitHub label                              | `review:{claude,codex,opencode,agy}` on a PR                                                                                   | `review`             | Delivery GUID                       |
+| GitHub reply                              | `@claude`/`@agent`, `/codex`, `/oc`/`/opencode`, or `/agy`/`/antigravity` in a comment by an `OWNER` or `MEMBER` (never a Bot) | `reply`              | Delivery GUID                       |
+| Tagged reply on a parked or finished task | Same commands                                                                                                                  | `reply` with resume  | Principal `svc:github-tagged-reply` |
+| Linear webhook                            | `agent:{claude,codex,opencode,agy}` label or `@claude`/`/codex`/`/oc`/`/agy` comment on a mapped Linear team issue             | native + issue ref   | `svc:linear`, `channel=linear`      |
+| Tracker issue dispatch                    | `POST /issues/dispatch` (`lcars work dispatch` or `/work/issues`)                                                              | native + issue ref   | Caller-supplied `requestId`         |
+| Event-driven issue triage                 | Unassigned open `bug` / `type:bug` issue in a watched GitHub or Linear tracker                                                 | `fleet-triage`       | `svc:fleet-triage`, source revision |
+| Work API                                  | `PUT /items/{ulid}`                                                                                                            | native               | Client ULID (idempotent)            |
+| Repository Goose job                      | Scheduled slot on `/schedules/tick` or manual `POST /jobs/{owner}/{repo}/{job}/invoke`                                         | `goose` recipe       | Slot ID or caller `requestId`       |
+| Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                        | `implement`/`review` | Caller-supplied                     |
+| Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                              | native or GitHub     | `console-retry:<uuid>`, ULID        |
+| Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                    | native               | Deterministic per-slot ID           |
+| Slack                                     | `/lcars` in the Sprinkles bot                                                                                                  | native               | ULID, `origin.channel=slack`        |
 
 - **FL-IN-1 [Shipped]** The GitHub App webhook (`/api/control-plane/webhook`)
   verifies the HMAC. It accepts `issues`, `issue_comment`, `pull_request`,
@@ -130,16 +148,43 @@ The core promises:
   deliveries preserve immutable Work and ownership. The console never
   rewrites routing labels or removes bot assignment after outcomes. Authorized
   resolution follows [the label contract](../github-label-contract.md#resolving-ambiguous-routing-intent).
+- **FL-IN-8 [Shipped] Linear issue intake and tracker projection.**
+  `/api/control-plane/linear/webhook` verifies `Linear-Signature` (HMAC-SHA256)
+  and rejects payloads older than 1 minute (`webhookTimestamp`), then enqueues
+  to Cloud Tasks for `/api/control-plane/linear/process`. Mapped Linear teams
+  (`AGENT_LCARS_LINEAR`) admit native Work items carrying
+  `issue: { source: 'linear', id: '<uuid>', identifier: '<KEY-N>', url }` with
+  principal `svc:linear` and `origin.channel = 'linear'`. Linear workflow states
+  advance through configured `teams[].states` (`started`, `parked`, `failed`,
+  `canceled`, and `completed` only after protected GitHub PR merge). Canonical
+  owners: [`linear.md`](../linear.md) and
+  [`tracker-sources.md`](../api/tracker-sources.md).
+- **FL-IN-9 [Shipped] Event-driven fleet issue triage.** Eligible unassigned
+  open bug issues (`bug` or `type:bug`) in watched GitHub and Linear trackers
+  admit read-only `fleet-triage` Work (`lib/fleet-triage-work.ts`, principal
+  `svc:fleet-triage`, `sourceRevision` fingerprinted by issue content). The
+  worker returns a strict `fleetTriageReportSchema` JSON report (`ready`,
+  `needs-evidence`, `needs-owner`, `duplicate`, or `not-a-bug`). An idempotent
+  publication outbox (`lib/fleet-triage-publish.ts`) re-verifies live ownership
+  before posting or updating a single `<!-- agent-lcars:fleet-triage ... -->`
+  comment and applying approved metadata/routing labels (`ready` authorizes
+  configured dispatch; `needs-owner` applies `status:needs-human`).
 
 ### 4.2 Pipelines
 
-The registry is `PIPELINE_CONTRACTS` in `libs/dispatch-contracts/src/pipelines.ts`.
+The coding pipeline registry is `PIPELINE_CONTRACTS` in
+`libs/dispatch-contracts/src/pipelines.ts`. Internal stored work pipelines are
+declared in `STORED_PIPELINES` (`libs/work/src/spec.ts`).
 
-| Pipeline   | Implement label  | Review label      | Reply command       | Deliverable author | Concurrency rule                          |
-| ---------- | ---------------- | ----------------- | ------------------- | ------------------ | ----------------------------------------- |
-| `claude`   | `agent:claude`   | `review:claude`   | `@claude`, `@agent` | `claude[bot]`      | Bounded by executor `max_concurrent`      |
-| `codex`    | `agent:codex`    | `review:codex`    | `/codex`            | `agent-lcars[bot]` | Serialized (one global credential lease)  |
-| `opencode` | `agent:opencode` | `review:opencode` | `/oc`, `/opencode`  | `agent-lcars[bot]` | Serialized (one shared inference backend) |
+| Pipeline          | Implement label  | Review label      | Reply command          | Deliverable author | Concurrency rule                             |
+| ----------------- | ---------------- | ----------------- | ---------------------- | ------------------ | -------------------------------------------- |
+| `claude`          | `agent:claude`   | `review:claude`   | `@claude`, `@agent`    | `claude[bot]`      | Bounded by executor `max_concurrent`         |
+| `codex`           | `agent:codex`    | `review:codex`    | `/codex`               | `agent-lcars[bot]` | Serialized (one global credential lease)     |
+| `opencode`        | `agent:opencode` | `review:opencode` | `/oc`, `/opencode`     | `agent-lcars[bot]` | Serialized (one shared inference backend)    |
+| `agy`             | `agent:agy`      | `review:agy`      | `/agy`, `/antigravity` | `agent-lcars[bot]` | Bounded by executor `max_concurrent`         |
+| `goose`           | — (repo job)     | —                 | —                      | `agent-lcars[bot]` | Bounded by executor `max_concurrent`         |
+| `inbox-summary`   | — (internal)     | —                 | —                      | console model call | Bounded server-side summary pass + cron tick |
+| `handoff-summary` | — (internal)     | —                 | —                      | console model call | Bounded server-side summary pass + cron tick |
 
 - **FL-PL-1 [Shipped]** A Work grant lists the pipelines its principal may
   request. Not every caller may trigger every provider.
@@ -172,20 +217,25 @@ protected delivery and eventual supported runtime proof are separate gates.
 
 These are stored in the `dispatch-controller` Firestore database.
 
-| Entity                                                    | Key                                                       | Purpose                                                                                                                                                             |
-| --------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Task** (`orchestrator-tasks`)                           | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native) | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, opaque `work` payload (≤32 KiB), `closedAt`, `revision` for compare-and-set                               |
-| **Run** (`orchestrator-runs`)                             | `<taskKey>/r<n>`                                          | `state`, `pipeline`, `requestId`, `requestSource` (`caller`, `auto-retry`, or `provider-fallback`), `params`, `queue`, `leaseExpiresAt`, `result`, `events[]` (≤64) |
-| **Outbox** (`orchestrator-outbox`)                        | entry ID                                                  | Side effects: `dispatch-run` and `report-outcome`                                                                                                                   |
-| **Schedule**                                              | ULID                                                      | `cron` (UTC), `spec`, `enabled`, `lastSlotAt`, `lastItemId`, `disabledReason`                                                                                       |
-| **Provider cooldown**                                     | pipeline                                                  | Written atomically with a `provider-limit` or `provider-capacity` failure; claims skip that pipeline until it expires                                               |
-| **Request binding**                                       | binding key                                               | Converges historical Quick Task markers to a canonical request                                                                                                      |
-| **GitHub anchor** (`orchestrator-github-anchors`)         | anchor                                                    | Projection of accepted GitHub anchor state                                                                                                                          |
-| **Priority position** (`orchestrator-priority-positions`) | pipeline                                                  | The durable weighted-priority cursor (FL-CL-5)                                                                                                                      |
+| Entity                                                    | Key                                                            | Purpose                                                                                                                                                                               |
+| --------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Task** (`orchestrator-tasks`)                           | Anchor: `owner/name#N` (GitHub) or `work:<ulid>` (native)      | The mutex (`activeRunId`), `runCount`, `consecutiveLost`, opaque `work` payload (≤32 KiB), `delivery` (`waiting` \| `complete`), `desiredRevision`, `closedAt`, `revision` for CAS    |
+| **Run** (`orchestrator-runs`)                             | `<taskKey>/r<n>`                                               | `state`, `pipeline`, `requestId`, `requestSource` (`caller`, `auto-retry`, `provider-fallback`), `params`, `queue`, `placement`, `startupPlacement`, `delivery`, `result`, `events[]` |
+| **Outbox** (`orchestrator-outbox`)                        | entry ID                                                       | Side effects: `dispatch-run`, `report-outcome`, and `monitor-delivery`                                                                                                                |
+| **Schedule**                                              | ULID                                                           | `cron` (UTC), `spec`, `enabled`, `lastSlotAt`, `lastItemId`, `disabledReason`                                                                                                         |
+| **Repository job** (`orchestrator-repository-jobs`)       | `owner/name:job`                                               | Catalog projection of `.lcars/jobs/<name>/{job,recipe}.yaml`, schedule state, sticky `operatorDisabledAt` veto, `activeWorkId`, and `lastSucceededHeadSha`                            |
+| **Job secrets / sets / grants**                           | secret ID, `setId@rev`, `owner/name:job:profile`               | Metadata and bindings in Firestore; secret versions in `agent-lcars-job-secrets` GCP Secret Manager (`libs/work/src/job-secrets.ts`)                                                  |
+| **Provider cooldown**                                     | pipeline                                                       | Written atomically with a `provider-limit` or `provider-capacity` failure; claims skip that pipeline until it expires                                                                 |
+| **Source work binding**                                   | `<operation>:<sourceKey>` (e.g. `linear:<uuid>`, `triage:...`) | Maps external tracker anchors and internal summary/triage sources to their canonical `workId`                                                                                         |
+| **GitHub / Linear projections**                           | `owner/name#N` or `linear:<uuid>`                              | Bounded projections of GitHub and Linear issue/anchor state                                                                                                                           |
+| **Priority position** (`orchestrator-priority-positions`) | pipeline                                                       | The durable weighted-priority cursor (FL-CL-5)                                                                                                                                        |
 
 A **WorkSpec** for native items is `{title ≤256, description ≤16 KiB, pipeline,
-target:{repo}, priority, fallbackPipelines?}`; `priority` defaults to `normal`. A **WorkOrigin** is `{principal, channel:
-api|cron|console|github|slack, thread?}`.
+target:{repo}, priority, fallbackPipelines?, deliverable?, operation?,
+sourceKey?, recipe?, issue?}`; `priority` defaults to `normal`. An
+`issueReferenceSchema` is `{source: 'github', repo, number, url?}` or
+`{source: 'linear', id, identifier?, url?}`. A **WorkOrigin** is `{principal,
+channel: api|cron|console|github|slack|linear, thread?}`.
 
 ### 5.2 Run lifecycle
 
@@ -234,12 +284,14 @@ rule wins:
 
 - **Success** (`OK_OUTCOMES` in `apps/console/src/lib/run-result.ts`):
   `pull-request`, `merged-deliverable`, `comment`, `review`, `no-op`, `park`,
-  `report` (only for an opted-in native report item).
+  `report` (for an opted-in native report item), `goose-recipe` (for a
+  repository-owned Goose job), `inbox-summary`, and `handoff-summary`.
 - **Failure** (emitted by
-  `apps/runner-autoscaler/runner-image/direct-runner.sh`): `no-deliverable`,
-  `agent-timeout`, `agent-failed`, `verification-failed`, `provider-limit`,
-  `provider-capacity` (the selected model reported it is at capacity),
-  `worker-control-failed`, `runner-failed`.
+  `apps/runner-autoscaler/runner-image/direct-runner.sh` or internal summary
+  executors): `no-deliverable`, `agent-timeout`, `agent-failed`,
+  `verification-failed`, `provider-limit`, `provider-capacity` (the selected
+  model reported it is at capacity), `worker-control-failed`, `runner-failed`,
+  and `summary-unavailable`.
 
 `RunResult = {ok, summary ≤4 KiB, ref?, relatedRefs?, message ≤16 KiB}`.
 The runner carries the exact bot-authored, attempt-marker-verified PR,
@@ -274,16 +326,19 @@ executor is working an issue; a human assignee owns it regardless.
   A human assignee owns the issue regardless of Console's verdict; Console
   does not report human assignment, so executors check the issue's assignees
   as well.
-- **FL-OWN-2 [Shipped]** `lcars work owner <owner/repo>#<n>` (FE-CLI-1) is the
-  one query for that answer. Its verdict is `fleet-run`, `interactive-session`,
-  or `none`. An incomplete answer (exit 1) means `none` is unproven, not that
-  the anchor is free.
+- **FL-OWN-2 [Shipped]** `lcars work owner (<owner/repo>#<n> | linear:<id>)`
+  (FE-CLI-1) is the one query for that answer across GitHub and Linear. Its
+  verdict is `fleet-run`, `interactive-session`, or `none`. An incomplete
+  answer (exit 1) means `none` is unproven, not that the anchor is free.
 - **FL-OWN-3 [Partial]** Every executor asks Console, and checks the issue's
   human assignees, before starting work on an anchor. Dispatched fleet runs are single-flight per task, so admission
   refuses a second run (FL-AD-1). Interactive and cloud sessions run
   `lcars work owner` as the read-only `work-reader` identity and do not start
-  when the verdict names someone else. Partial: this is repository guidance,
-  not enforced, and the session read's completeness fix is in flight.
+  when the verdict names someone else. The repository-scoped Firestore CLI
+  session query (`sessions_source_repo_last_activity`, #2502 / #2575 / #2576)
+  is shipped and returns `complete: true` in production. Partial: interactive
+  and cloud session preflight remains repository guidance rather than a
+  server-enforced pre-edit gate.
 - **FL-OWN-4 [Shipped]** Nothing outside Console establishes, refreshes, or
   expires ownership: takeover or "implementing this now" comments, occupied
   local worktrees, draft pull requests, and elapsed time since assignment are
@@ -381,31 +436,43 @@ executor is working an issue; a human assignee owns it regardless.
 
 - **FL-EX-5 [Shipped]** The direct runner (`runner-image/direct-runner.sh`)
   runs these steps in order:
-  1. Fetch the brief.
-  2. Get a checkout token.
+  1. Fetch the brief (`/runs/{id}/brief`, or `/runs/{id}/recipe` for `goose`
+     jobs).
+  2. Get a checkout token (or resolve a granted per-job credential set via
+     `/runs/{id}/job-secrets`).
   3. Install the shared skills, plus the worker-policy hooks when
      `LCARS_WORKER_POLICY_PROVIDERS` names the pipeline (otherwise this step
      is a no-op).
-  4. Launch the provider, with a 7200s timeout per provider. The runner
-     heartbeats and reports the observed provider process start.
-  5. Verify the outcome.
+  4. Launch the provider (`claude`, `codex`, `opencode`, `agy`, or `goose`
+     with Playwright/Chromium in the standard runner image), with a 7200s
+     timeout per provider. The runner heartbeats and reports the observed
+     provider process start.
+  5. Verify the outcome (and for `goose` jobs with `resultFile`, validate and
+     extract the structured result from `/tmp/...`).
   6. Call `/complete`.
 
-  Every pipeline (Claude, Codex, OpenCode) reports live telemetry through
-  provider hooks, with no selector. A failed hook install warns and continues
-  without live telemetry; `runner finalize` still writes the final session
-  doc.
+  Every coding pipeline (Claude, Codex, OpenCode, Antigravity) reports live
+  telemetry through provider hooks, with no selector. A failed hook install
+  warns and continues without live telemetry; `runner finalize` still writes
+  the final session doc.
 
-  If the agent exits 0 with no deliverable, it gets one completion-correction
-  round.
+  If a coding agent exits 0 with no deliverable, it gets one
+  completion-correction round.
 
 - **FL-EX-6 [Shipped] Credential separation.** The agent never receives
   `github.token`. It receives its own App token, separate telemetry
   credentials, and an optional scoped rerun token:
   - Claude: an OAuth token from a projected file.
   - Codex: `auth.json` brokered through `/runs/{id}/codex-auth` under a global
-    lease, waiting up to 30 minutes on a 409.
+    lease, waiting up to 30 minutes on a 409; refreshed OAuth tokens can be
+    persisted back through `PUT /runs/{id}/codex-auth`.
   - OpenCode: a LiteLLM virtual key.
+  - Antigravity: an OAuth token from a projected file (`AGY_AUTH_JSON_FILE`).
+  - Goose recipes: LiteLLM virtual key by default, or leased Codex auth when
+    the selected operator profile (`AGENT_LCARS_JOB_PROFILES`) sets
+    `providerAuth: "codex"`, plus any granted per-job secret bindings
+    (`environment` and `/dev/shm` `files`) resolved from
+    `/runs/{id}/job-secrets`.
 
 ### 6.4 Loss, retry, and parking
 
@@ -441,15 +508,34 @@ executor is working an issue; a human assignee owns it regardless.
   starts once the Pod is assigned
   ([lifecycle systems](../lifecycle-systems.md#queue-placement-and-startup-clocks)).
 
-### 6.5 Schedules and the maintenance clock
+### 6.5 Schedules, repository-owned Goose jobs, and the maintenance clock
 
 - **FL-SC-1 [Shipped]** The executor calls `POST /maintenance/tick` and
   `POST /schedules/tick` every 5 minutes, using the `work.cron` scope. The
-  maintenance tick sweeps expired leases and then drains the outbox. The
-  schedule tick coalesces each cron slot into one item through deterministic
-  IDs, so a missed tick never double-fires.
+  maintenance tick sweeps expired leases, executes a bounded summary pass,
+  evaluates job-credential health (`jobCredentials`), notifies closed-tab
+  Inbox Web Push subscribers, and drains the outbox. The schedule tick
+  evaluates both operator schedules and repository-owned Goose jobs,
+  coalescing each cron slot into one item through deterministic IDs so a
+  missed tick never double-fires.
 - **FL-SC-2 [Shipped]** A schedule is auto-disabled when its creator's grant is
   revoked (`grant-revoked`) or its spec becomes `invalid`.
+- **FL-JB-1 [Shipped] Repository-owned Goose job catalog and merged-to-main
+  activation.** Repositories declare jobs under `.lcars/jobs/<name>/job.yaml`
+  and `recipe.yaml` on `main`. When a job declares a `schedule` and the
+  configured scheduler principal holds `work.cron` for that repository and
+  `goose`, `/schedules/tick` activates and updates its schedule automatically.
+  An operator pause (`PATCH /api/work/v1/jobs/{owner}/{repo}/{job}` with
+  `enabled: false`) sets a sticky veto (`operatorDisabledAt`) that persists
+  across future `main` commits until an operator explicitly re-enables the job.
+  Canonical owner: [`repository-jobs.md`](../repository-jobs.md).
+- **FL-JB-2 [Shipped] Single-active-occurrence and baseline advancement.**
+  Scheduled Goose jobs enforce `overlap: skip` through a transactional
+  `activeWorkId` reservation on the job state document. Only a reconciled
+  `ok: true` scheduled run whose `recipe.headSha` matches the run's pinned
+  `headSha` advances `lastSucceededHeadSha`; manual invocations (`POST
+/jobs/{owner}/{repo}/{job}/invoke`) run one-shot without advancing the
+  scheduled baseline.
 
 ## 7. Worker contract
 
@@ -476,16 +562,27 @@ consumed by every dispatched run in every member repository.
   `verification-failed`, which is distinct from `no-deliverable`.
 - **FL-WP-11 [Partial] Runtime enforcement.** Worker-policy and review hooks
   live in `packages/fleet-tools` (see
-  [`worker-behavior-enforcement.md`](../worker-behavior-enforcement.md)). They
-  exist but are **not enabled in production**, and no provider has graduated
-  to them. See R2.
+  [`worker-behavior-enforcement.md`](../worker-behavior-enforcement.md)).
+  Policy-enabled member-repository dispatches are proven for Claude Code,
+  Codex, and OpenCode on AMD64 and Codex on ARM64 (#2956), while standing
+  production activation on the single executor remains off until runner-image
+  publication qualifies every provider automatically. See R2.
+- **FL-WP-12 [Shipped] Restricted host investigation (`lcars investigate`).**
+  When a dispatched worker needs read-only Homelab host, systemd, pod, or
+  endpoint facts to diagnose an issue without parking for a human, it calls
+  `lcars investigate --request-id <key> --question ...` using its run token.
+  The Homelab investigation service (`https://investigate.lan.jlapenna.net/v1/investigations`)
+  verifies the active run claim through `GET /api/work/v1/runs/{runId}/introspect`
+  (`runIntrospectionSchema`) and returns a bounded `completed`, `park`, or
+  `refused` report (`<= 16 KiB`).
 
 ## 8. Completion, review, and merge
 
 - **FL-CM-1 [Shipped]** On `reportResult`, a `report-outcome` outbox entry
   posts an outcome comment on the anchor: ✅ finished, ❌ failed, ⏹️ canceled,
-  or the lost/retry text, with the ref and the park message. For native work
-  with a registered origin, the entry delivers a webhook to
+  or the lost/retry text, with the ref and the park message. For Linear-backed
+  work it updates the Linear issue state and posts an outcome comment; for
+  native work with a registered origin, the entry delivers a webhook to
   `AGENT_LCARS_OUTCOME_WEBHOOKS` instead.
 - **FL-CM-2 [Shipped]** Auto-merge comes from the reusable workflow
   `agent-automerge-reusable.yml`:
@@ -507,23 +604,38 @@ consumed by every dispatched run in every member repository.
   for example `DEPLOY_ARMED` and `POST_SUBMIT_ARMED`). They are declared in
   `config/github-variables.json`; workflows read them directly and surface an
   engaged flag through the `control-flag` action.
+- **FL-CM-5 [Shipped] Ready deliverable ownership and delivery monitor.**
+  When a run settles `finished` with `ok: true` and `summary: 'pull-request'`
+  or `'merged-deliverable'`, the completion transaction records a two-state
+  `deliveryBindingSchema` (`waiting` -> `complete`) on the Run and Task and
+  enqueues a `monitor-delivery` outbox entry (`lib/ready-delivery.ts`).
+  Check-run, review, review-thread, and PR webhooks (plus an hourly fallback)
+  evaluate the PR against protected-branch rules:
+  - **Merged (`merge_commit_sha`):** transitions delivery to `complete` (and
+    marks linked Linear issues `completed`).
+  - **Closed unmerged or retargeted away from `baseRef`:** drops the Task
+    delivery binding.
+  - **Blocking required check conclusion (`failure`, `timed_out`,
+    `action_required`, `cancelled`, `startup_failure`, `stale`) or unresolved
+    actionable review feedback:** admits a bounded same-provider correction run
+    on the PR (`MAX_DELIVERY_CORRECTIONS`), or escalates to `status:needs-human`
+    when the correction budget is exhausted. Canonical owner:
+    [`lifecycle-systems.md`](../lifecycle-systems.md#ready-deliverable-ownership).
 
 ## 9. Resumable conversations
 
 - **FL-RC-1 [Shipped]** A _round_ is one run. Round 1's human turn is
   `spec.description`, and round n's is `params.reply` (up to 16 KiB). The run
-  records `replyChannel` (`github`, `slack`, `console`, or `api`) and
+  records `replyChannel` (`github`, `linear`, `slack`, `console`, or `api`) and
   `replyPrincipal`; the channel address of the turn (a comment URL, a Slack
   ts) lives only in the run's idempotent `requestId` (`reply:<ref>`).
 - **FL-RC-2 [Shipped]** A reply resumes the prior provider session
-  (`resumeSessionId`) when its transcript is archived. If it is not, the reply
+  (`resumeSessionId`) when its transcript is archived (supported across Claude
+  Code, Codex, OpenCode, and Antigravity). If it is not, the reply
   starts a fresh session and passes the reply text through, and the console
-  says so. The design is
-  [`2026-09-03-resumable-agent-conversations-design.md`](../superpowers/specs/2026-09-03-resumable-agent-conversations-design.md).
-  Sub-projects 1–4 have shipped. On GitHub, a resume requires the reply
-  trigger tag (`lib/tagged-reply-resume.ts`). The design doc's mention of an
-  `AGENT_LCARS_IMPLICIT_REPLY_REPOS` gate is stale; that variable no longer
-  exists. Historical session-identity proof is recorded in the
+  says so. Sub-projects 1–4 have shipped. On GitHub, a resume requires the
+  reply trigger tag (`lib/tagged-reply-resume.ts`). Historical session-identity
+  proof is recorded in the
   [canonical smoke ledger](https://github.com/jlapenna/agent-lcars/blob/47c5769bc54cb7258af00619b4315b1c7c09c004/docs/native-work-smoke-runbook.md#tagged-gate-re-gating-three-live-proofs-2026-09-06):
   Claude [#1794](https://github.com/jlapenna/agent-lcars/issues/1794#issuecomment-5557261018)
   archived `6c2030cb-cebc-4d3d-953c-13b8fd390cd1` in both rounds;
@@ -556,8 +668,8 @@ consumed by every dispatched run in every member repository.
 
 ## 10. Telemetry and observability
 
-- **FL-OB-1 [Shipped]** `libs/telemetry` normalizes Claude, Codex, and
-  OpenCode transcripts into sessions:
+- **FL-OB-1 [Shipped]** `libs/telemetry` normalizes Claude, Codex, OpenCode,
+  and Antigravity transcripts into sessions:
   - `SessionSource`: `cli` or `issue-agent`.
   - `SessionLiveness`: `live`, `idle`, `ended`, or `stale`.
   - A run-status classifier: `running`, `timeout`, `cancelled`, `failed`,
@@ -565,7 +677,7 @@ consumed by every dispatched run in every member repository.
   - Cost from the provider's `costUSD`, or estimated from `MODEL_RATES`.
 - **FL-OB-2 [Shipped]** `apps/telemetry-watcher` reports sessions in two ways:
   - Through provider hooks, on workstations and dispatched workers alike:
-    `lcars hook claude|codex|opencode|flush` writes sessions directly to
+    `lcars hook claude|codex|opencode|agy|flush` writes sessions directly to
     Firestore as the telemetry writer, installed with
     `lcars integration install`
     ([hooks telemetry](../hooks-telemetry-design.md)). Dispatched workers
@@ -647,10 +759,13 @@ consumed by every dispatched run in every member repository.
 - **FL-FM-4 [Shipped] Authority separation.** These authorities are
   deliberately distinct:
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
-    `work.reader` (the issue-owner query only), `costs.reader` (aggregate Costs budget readout only), `work.executor` and
-    `work.cron`). `work.reaper` is not a grantable
-    scope. It is fixed to the `session:expiry` identity.
-  - The worker's App token.
+    `work.reader` (tracker ownership and issue-source reads), `costs.reader`
+    (aggregate Costs budget readout only), `work.executor`, `work.cron`,
+    `work.admin`, and `secrets.admin` (per-job credential administration,
+    refused for repository-bound OIDC callers)). `work.reaper` is not a
+    grantable scope. It is fixed to the `session:expiry` identity.
+  - The worker's App token and optional per-job credential grant
+    (`/runs/{id}/job-secrets`).
   - The telemetry writer.
   - The QueueExecutor credential.
   - The maintainer's session.
@@ -671,12 +786,25 @@ consumed by every dispatched run in every member repository.
     from green CI on `main`. The branch ruleset lives in
     `infra/github-ruleset`.
 
+- **FL-FM-6 [Partial] Runtime secret access and per-job credential sets.**
+  Google Secret Manager is the approved backend for LCARS service credentials
+  and job credentials. Per-job credential sets (`Secret`, immutable
+  `CredentialSet` revisions with `github`, `environment`, and `/dev/shm` `files`
+  bindings, and `(repository, job, profile)` `JobGrant` records) are shipped in
+  the dedicated `agent-lcars-job-secrets` GCP project with 5-minute maintenance
+  health observations (`jobCredentials` -> `lcars_job_credentials_*`). Access
+  follows the consuming service, job, or deployment identity, with concrete
+  promoted secret versions (never `latest`); common repository ownership does
+  not grant access. Broader service-secret migration remains planned. The
+  canonical [runtime secret decision and migration contract](../job-secrets.md#runtime-secret-storage-and-access-decision)
+  owns the boundary and current implementation constraints.
+
 ## 12. Gaps and roadmap
 
 | #   | Item                                                                                                                                 | Why                                                                                                                               | Priority |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (shipped, #2210; part 1 FE-IN-1)        | Native parks now appear in the Inbox beside GitHub decisions                                                                      | P0       |
-| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                       | The protocol's hard limits are currently honor-system at runtime                                                                  | P0       |
+| R2  | Enable standing worker-policy enforcement (FL-WP-11) once runner-image publication qualifies every provider automatically            | AMD64 Claude/Codex/OpenCode and ARM64 Codex dispatches are proven (#2956), but standing production selection remains off          | P0       |
 | R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline (shipped at 15 minutes, #2264)                            | A failed launch no longer stalls a task for about 2h                                                                              | P1       |
 | R4  | A priority field on runs (`urgent`, `normal`, `background`), honored inside provider-fair selection (FL-CL-5, shipped, #2324)        | Scheduled maintenance work and urgent fixes no longer share one FIFO                                                              | P1       |
 | R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                          | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
@@ -685,8 +813,9 @@ consumed by every dispatched run in every member repository.
 
 R7's explicit opt-in source contract is documented in
 [Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
-[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
-real provider-limit qualification separately from local mechanism tests.
+[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) delivered the
+mechanism and serving proof; natural production `provider-limit` reroute
+observation remains separate from local mechanism tests.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled

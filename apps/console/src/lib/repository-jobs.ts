@@ -202,6 +202,7 @@ export class RepositoryJobs {
           job.definition.job.inputs,
           job.definition.job.result,
           parameters,
+          ...(profile.providerAuth ? [profile.providerAuth] : []),
           ...(profile.credentialSet || profile.gitIdentity
             ? [profile.credentialSet ?? null, profile.gitIdentity ?? null]
             : []),
@@ -297,6 +298,7 @@ export class RepositoryJobs {
       params: {
         mode: 'recipe',
         jobOccurrence: occurrence.id,
+        ...(profile.providerAuth ? { providerAuth: profile.providerAuth } : {}),
         ...(profile.crossRepo === true ? { crossRepo: 'true' } : {}),
       },
       work: {

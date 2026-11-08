@@ -87,8 +87,9 @@ export interface TaskRef {
 }
 
 export interface WatchedRepo extends RepositoryRef {
-  /** Omit for the canonical Claude, Codex, and OpenCode integrations. Set
-   * explicitly to false only for a watched repository with no agents. */
+  /** Omit for the canonical Claude, Codex, OpenCode, and Antigravity
+   * integrations. Set explicitly to false only for a watched repository with no
+   * agents. */
   agents?: false;
   /** Display name shown in the UI instead of `owner/name` (repoKey's
    * format) wherever a repo badge/title is rendered - e.g. a shorter label

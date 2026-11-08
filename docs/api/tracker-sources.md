@@ -127,7 +127,7 @@ from dispatch.
 
 Persist one `requestId` (1–128 characters) for the intended action before sending
 it, then reuse it on transport retries. Choose `pipeline` explicitly from
-`claude`, `codex` or `opencode`; include the selected checkout repository as `repo`.
+`claude`, `codex`, `opencode` or `agy`; include the selected checkout repository as `repo`.
 
 ```bash
 curl --fail-with-body 'https://<console-host>/api/work/v1/issues/dispatch' \

@@ -1,3 +1,4 @@
+import { antigravityAdapter } from './antigravity-transcript-adapter';
 import { codexAdapter } from './codex-transcript-adapter';
 import { opencodeAdapter } from './opencode-transcript-adapter';
 import { reduceTranscriptLines } from './reducer';
@@ -5,6 +6,7 @@ import { TranscriptAdapter } from './transcript-adapter-types';
 import { SessionAgent, SessionSummary } from './types';
 import { asRecord } from './unknown-value';
 
+export { antigravityAdapter } from './antigravity-transcript-adapter';
 export { codexAdapter } from './codex-transcript-adapter';
 export { opencodeAdapter } from './opencode-transcript-adapter';
 export type { TranscriptAdapter } from './transcript-adapter-types';
@@ -71,6 +73,7 @@ export const TRANSCRIPT_ADAPTERS: TranscriptAdapter[] = [
   claudeCodeAdapter,
   codexAdapter,
   opencodeAdapter,
+  antigravityAdapter,
 ];
 
 /**

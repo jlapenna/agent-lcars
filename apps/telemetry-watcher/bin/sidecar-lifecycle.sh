@@ -54,11 +54,17 @@ ARGS=(runner "$CLI_SUBCOMMAND" --run-id "$RUN_ID" --projects-dir "$HOME/.claude/
 if [ -n "${CODEX_SESSIONS_DIR:-}" ]; then
   ARGS+=(--codex-sessions-dir "$CODEX_SESSIONS_DIR")
 fi
+if [ -n "${ANTIGRAVITY_BRAIN_DIR:-}" ]; then
+  ARGS+=(--antigravity-brain-dir "$ANTIGRAVITY_BRAIN_DIR")
+fi
 if [ -n "${NUM:-}" ]; then
   ARGS+=(--issue-number "$NUM")
 fi
 if [ -n "${INTENT_ID:-}" ]; then
   ARGS+=(--intent-id "$INTENT_ID")
+fi
+if [ -n "${REPO:-${REPOSITORY:-${LCARS_REPO:-}}}" ]; then
+  ARGS+=(--repo "${REPO:-${REPOSITORY:-${LCARS_REPO:-}}}")
 fi
 if [ -n "${OPENCODE_LAST_MESSAGE_FILE:-}" ]; then
   ARGS+=(--opencode-last-message-file "$OPENCODE_LAST_MESSAGE_FILE")

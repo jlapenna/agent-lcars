@@ -1,6 +1,13 @@
+// @vitest-environment node
+
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import type { Run } from '@agent-lcars/orchestrator';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
+import { jobProfileSchema } from './repository-job-definition';
 import { hashRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 
@@ -69,10 +76,10 @@ beforeEach(() => {
     },
   } as unknown as RunsContext;
 });
-async function request() {
+async function request(path = 'checkout-token') {
   const { response } = await createRunsHandler().handle(
     new Request(
-      `https://console.test/api/work/v1/runs/${encodeURIComponent(runId)}/checkout-token`,
+      `https://console.test/api/work/v1/runs/${encodeURIComponent(runId)}/${path}`,
     ),
     { prefix: '/api/work/v1', context },
   );
@@ -141,4 +148,101 @@ it('keeps ordinary Goose profiles on installation credentials', async () => {
   expect(response.body.token).toBe('fixture-app-token');
   expect(response.body.identity).toBeUndefined();
   expect(credential).not.toHaveBeenCalled();
+});
+
+it('uses leased Codex auth for the deployed eval profile with repository App checkout and no job secrets', async () => {
+  const config = parseYaml(
+    readFileSync(
+      path.join(import.meta.dirname, '../../apphosting.yaml'),
+      'utf8',
+    ),
+  ) as { env: { variable: string; value?: string }[] };
+  const profiles = JSON.parse(
+    config.env.find((entry) => entry.variable === 'AGENT_LCARS_JOB_PROFILES')!
+      .value!,
+  ) as { name: string }[];
+  const profile = jobProfileSchema.parse(
+    profiles.find((entry) => entry.name === 'skill-evals'),
+  );
+  run.params = { ...run.params, providerAuth: profile.providerAuth };
+  authorize.mockReturnValue(profile);
+  readOccurrence.mockResolvedValue({
+    workId,
+    definition: { repository: 'jlapenna/agent-lcars', name: 'skill-evals' },
+    profile,
+  });
+  context.store.readTask = vi.fn(async () => ({
+    task: { work: { spec: { target: { repo: 'jlapenna/agent-lcars' } } } },
+  })) as typeof context.store.readTask;
+  const reserve = vi.fn(async () => ({
+    refused: true,
+    reason: 'credential-operation-pending',
+  }));
+  context.store.transactRun = reserve;
+  appToken.mockResolvedValue({
+    token: 'fixture-app-token',
+    expiresAt: '2026-11-04T01:00:00Z',
+  });
+
+  const delivered = await request('job-secrets');
+  expect(delivered.status).toBe(200);
+  expect(delivered.body).toEqual({ environment: {}, files: {} });
+  expect(context.jobCredentials!.deliver).not.toHaveBeenCalled();
+  expect(credential).not.toHaveBeenCalled();
+  const checkout = await request();
+  expect(checkout.status).toBe(200);
+  expect(checkout.body.token).toBe('fixture-app-token');
+  expect(checkout.body.identity).toBeUndefined();
+  expect(appToken).toHaveBeenCalledExactlyOnceWith('jlapenna/agent-lcars');
+  // A controlled refusal proves the real deployed profile reaches the shared
+  // lease broker, without issuing credentials or performing provider work.
+  const provider = await request('codex-auth');
+  expect(provider.status).toBe(409);
+  expect(reserve).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  'ordinary',
+  'forged-provider',
+  'foreign-occurrence',
+  'revoked-profile',
+])(
+  'refuses Codex auth for %s recipes before any credential store IO',
+  async (failure) => {
+    const read = vi.fn();
+    context.codexAuth = { read } as unknown as RunsContext['codexAuth'];
+    if (failure !== 'ordinary')
+      run.params = { ...run.params, providerAuth: 'codex' };
+    if (failure === 'foreign-occurrence')
+      readOccurrence.mockResolvedValue({
+        workId: 'foreign',
+        definition: { repository: 'jlapenna/dev' },
+      });
+    if (failure === 'revoked-profile')
+      authorize.mockImplementation(() => {
+        throw new Error('revoked');
+      });
+    const response = await request('codex-auth');
+    expect(response.status).toBe(failure === 'ordinary' ? 401 : 403);
+    expect(read).not.toHaveBeenCalled();
+  },
+);
+
+it('authorizes a Codex-enabled recipe before entering the existing lease broker', async () => {
+  run.params = { ...run.params, providerAuth: 'codex' };
+  authorize.mockReturnValue({ name: 'skill-evals', providerAuth: 'codex' });
+  // A deliberate controlled broker refusal proves the request reached the
+  // broker only after exact profile authorization; it vends no credentials.
+  const reserve = vi.fn(async () => ({
+    refused: true,
+    reason: 'credential-operation-pending',
+  }));
+  context.store = {
+    ...context.store,
+    transactRun: reserve,
+  } as unknown as RunsContext['store'];
+  const response = await request('codex-auth');
+  expect(response.status).toBe(409);
+  expect(authorize).toHaveBeenCalled();
+  expect(reserve).toHaveBeenCalled();
 });

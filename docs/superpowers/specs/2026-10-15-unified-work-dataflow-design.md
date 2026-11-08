@@ -1,6 +1,6 @@
 # Unified work-item dataflow: declarative intent, observed verification, any agent
 
-Status: proposed design, revised 2026-10-27. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends [native work items](2026-08-23-native-work-items-design.md) (#1502) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
+Status: proposed design, revised 2026-10-27. Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends native work items ([#1502](https://github.com/jlapenna/agent-lcars/issues/1502)) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; named OpenClaw agents are one execution adapter. Nothing ships until each [phase](#phases) lands with its own qualification.
 
 ## Problem
 

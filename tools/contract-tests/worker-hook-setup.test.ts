@@ -213,7 +213,7 @@ it('installs OpenCode without dropping existing plugins and repeats without dupl
   expect(setup.installOpenCode(config).changed).toBe(false);
 });
 
-it.each(['claude', 'codex', 'opencode'])(
+it.each(['claude', 'codex', 'opencode', 'agy'])(
   'binds %s once and refuses identity replacement',
   (provider) => {
     const { config } = fixture();
@@ -283,7 +283,7 @@ it('invalid identity fails before setup writes any state', () => {
   expect(existsSync(contextPath)).toBe(false);
 });
 
-it.each(['claude', 'codex', 'opencode'])(
+it.each(['claude', 'codex', 'opencode', 'agy'])(
   'executes installed %s allow/deny controls during bootstrap',
   async (provider) => {
     const { config } = fixture();

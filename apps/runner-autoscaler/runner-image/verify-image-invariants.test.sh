@@ -46,6 +46,7 @@ write_exe "$bin/python314" 'exit 0'
 write_exe "$bin/uv" 'command -v python314'
 write_exe "$bin/java" "echo 'openjdk version \"21.0.8\" 2025-07-15' >&2"
 write_exe "$bin/opencode" '[ "$1 $2" = "run --help" ] && echo "      --auto   auto-approve permissions"; exit 0'
+write_exe "$bin/agy" '[ "$1" = "--version" ] && echo "1.5.1"; exit 0'
 write_exe "$bin/lcars" 'exit 0'
 # Real SQLite/schema behavior is tested by the image's two build layers.
 write_exe "$lib/check-opencode-store.sh" 'exit 0'
@@ -59,13 +60,15 @@ gate() {
     AGENT_LCARS_ACTIONLINT_PIN="$here/actionlint-version" \
     AGENT_LCARS_JAVA_COMMAND="$bin/java" \
     AGENT_LCARS_OPENCODE="$bin/opencode" \
+    AGENT_LCARS_AGY="$bin/agy" \
     AGENT_LCARS_LCARS="$bin/lcars" \
     AGENT_LCARS_ARCHIVE_CACHE="$tmp/archive" \
     bash "$lib/verify-image-invariants.sh" >"$tmp/out" 2>&1
 }
 
 install_skills() {
-  bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.claude/skills" >/dev/null 2>"$tmp/install.err"
+  bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.claude/skills" >/dev/null 2>"$tmp/install.err" &&
+    bash "$lib/runtime/install-skills.sh" "$lib/agents/shared/skills" "$home/.gemini/antigravity-cli/skills" >/dev/null 2>>"$tmp/install.err"
 }
 
 # Setup order matters: the gate refuses an image whose skills were never installed.

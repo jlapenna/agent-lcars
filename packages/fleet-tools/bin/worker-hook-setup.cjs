@@ -133,6 +133,53 @@ function installOpenCode(
   });
 }
 
+function installAgy(
+  configPath,
+  handlerPath = path.join(__dirname, 'worker-policy.cjs'),
+) {
+  const bridge = path.join(__dirname, 'worker-hook-bridge.cjs');
+  verifyModules([bridge, handlerPath]);
+  const command =
+    [
+      quote(process.execPath),
+      quote(bridge),
+      "'--agy'",
+      quote(handlerPath),
+    ].join(' ') +
+    ' || { printf \'{"decision":"deny","reason":"LCARS hook bridge failed; action denied"}\\n\'; exit 0; } ' +
+    marker;
+  const result = updateJson(configPath, (config) => {
+    const hookSet = config['lcars-worker-policy'] ?? {};
+    if (!object(hookSet)) throw new Error('Invalid Antigravity hook set');
+    const groups = hookSet.PreToolUse ?? [];
+    if (
+      !Array.isArray(groups) ||
+      groups.some((group) => !object(group) || !Array.isArray(group.hooks))
+    )
+      throw new Error('Invalid Antigravity PreToolUse groups');
+    const retained = groups.flatMap((group) => {
+      const hooks = group.hooks.filter(
+        (hook) =>
+          !(typeof hook?.command === 'string' && hook.command.endsWith(marker)),
+      );
+      if (hooks.length === group.hooks.length) return [group];
+      return hooks.length ? [{ ...group, hooks }] : [];
+    });
+    config['lcars-worker-policy'] = {
+      ...hookSet,
+      PreToolUse: [
+        ...retained,
+        {
+          matcher: '*',
+          hooks: [{ type: 'command', command, timeout: 15 }],
+        },
+      ],
+    };
+    return config;
+  });
+  return { ...result, command };
+}
+
 function prepareWorker({
   provider,
   configPath,
@@ -169,10 +216,12 @@ function prepareWorker({
   const registration =
     provider === 'opencode'
       ? installOpenCode(configPath)
-      : installRegistration(
-          configPath,
-          path.join(__dirname, 'worker-policy.cjs'),
-        );
+      : provider === 'agy'
+        ? installAgy(configPath, path.join(__dirname, 'worker-policy.cjs'))
+        : installRegistration(
+            configPath,
+            path.join(__dirname, 'worker-policy.cjs'),
+          );
   return {
     changed: binding.changed || registration.changed,
     contextPath,
@@ -251,6 +300,55 @@ async function executeControl(provider, configPath, contextPath) {
       else process.env.LCARS_WORKER_CONTEXT = previousContext;
       if (previousAttempt === undefined) delete process.env.ATTEMPT_ID;
       else process.env.ATTEMPT_ID = previousAttempt;
+    }
+  } else if (provider === 'agy') {
+    const installed = config['lcars-worker-policy']?.PreToolUse?.flatMap(
+      (group) => group.hooks ?? [],
+    ).filter(
+      (hook) =>
+        typeof hook.command === 'string' && hook.command.endsWith(marker),
+    );
+    if (installed?.length !== 1)
+      throw new Error(
+        'Missing or ambiguous installed Antigravity registration',
+      );
+    const agyInputs = [
+      {
+        conversationId: 'lcars-control-smoke',
+        workspacePaths: [process.cwd()],
+        toolCall: {
+          name: 'run_command',
+          args: { CommandLine: 'echo LCARS_SETUP_READ_PROBE' },
+        },
+      },
+      {
+        conversationId: 'lcars-control-smoke',
+        workspacePaths: [process.cwd()],
+        toolCall: {
+          name: 'run_command',
+          args: { CommandLine: 'git commit --no-verify' },
+        },
+      },
+    ];
+    for (let i = 0; i < agyInputs.length; i++) {
+      const result = spawnSync('/bin/sh', ['-c', installed[0].command], {
+        input: JSON.stringify(agyInputs[i]),
+        encoding: 'utf8',
+        timeout: 8000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          ...process.env,
+          LCARS_RUN_ID: context.runId,
+          LCARS_WORKER_CONTEXT: contextPath,
+          ATTEMPT_ID: context.attemptId,
+        },
+      });
+      if (
+        result.error ||
+        result.status !== 0 ||
+        JSON.parse(result.stdout).decision !== (i === 0 ? 'allow' : 'deny')
+      )
+        throw new Error('Antigravity control execution smoke failed');
     }
   } else {
     const installed = config.hooks?.PreToolUse?.flatMap(
@@ -356,6 +454,7 @@ if (require.main === module) {
 module.exports = {
   installRegistration,
   installOpenCode,
+  installAgy,
   prepareWorker,
   verifyControl,
   bootstrapWorker,

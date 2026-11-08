@@ -771,7 +771,10 @@ describe('lcars integration', () => {
     expect(stdout).toHaveBeenCalledWith(
       expect.stringContaining('codex: installed'),
     );
-    expect(stdout).toHaveBeenLastCalledWith('opencode: installed (plugin v1)');
+    expect(stdout).toHaveBeenCalledWith('opencode: installed (plugin v1)');
+    expect(stdout).toHaveBeenLastCalledWith(
+      'agy: installed (stub v1, 4/4 hook entries)',
+    );
     expect(
       executeIntegrationCommand(['bogus', 'claude'], {
         homeDirectory: home,
@@ -832,5 +835,66 @@ describe('lcars integration', () => {
       'utf8',
     );
     expect(OPENCODE_TELEMETRY_PLUGIN).toBe(source);
+  });
+
+  it('installs and uninstalls Antigravity hooks in ~/.gemini/config/hooks.json without disturbing foreign hook sets', () => {
+    const home = tempHome();
+    const hooksPath = path.join(home, '.gemini/config/hooks.json');
+    fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
+    fs.writeFileSync(
+      hooksPath,
+      JSON.stringify(
+        {
+          herdr: {
+            PreInvocation: [
+              { type: 'command', command: 'echo "{}"', timeout: 10 },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    expect(installIntegration('agy', home, {})).toMatchObject({
+      runtime: 'agy',
+      stubInstalled: true,
+      stubVersion: 1,
+      entriesPresent: 4,
+      entriesExpected: 4,
+      installed: true,
+    });
+
+    const parsed = JSON.parse(fs.readFileSync(hooksPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed['herdr']).toBeDefined();
+    expect(parsed['lcars']).toMatchObject({
+      SessionStart: [expect.objectContaining({ type: 'command', timeout: 10 })],
+      PreInvocation: [
+        expect.objectContaining({ type: 'command', timeout: 10 }),
+      ],
+      PostToolUse: [
+        {
+          matcher: '*',
+          hooks: [expect.objectContaining({ type: 'command', timeout: 10 })],
+        },
+      ],
+      Stop: [expect.objectContaining({ type: 'command', timeout: 10 })],
+    });
+
+    expect(uninstallIntegration('agy', home, {})).toMatchObject({
+      runtime: 'agy',
+      stubInstalled: false,
+      entriesPresent: 0,
+      installed: false,
+    });
+    const after = JSON.parse(fs.readFileSync(hooksPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    expect(after['herdr']).toBeDefined();
+    expect(after['lcars']).toBeUndefined();
   });
 });

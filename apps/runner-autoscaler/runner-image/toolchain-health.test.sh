@@ -38,6 +38,17 @@ if ! grep -Fqx 'ARG TARGETARCH' "$dockerfile" ||
   echo "runner image must install and smoke-check a reviewed root-owned OpenCode CLI" >&2
   exit 1
 fi
+agy_version="$(tr -d '\r\n' < "$here/agy-version")"
+if ! [[ "$agy_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "agy-version must contain an exact semantic version" >&2
+  exit 1
+fi
+if ! grep -Fqx 'COPY agy-version /usr/local/share/agent-lcars-tooling/agy-version' "$dockerfile" ||
+  ! grep -Fqx 'COPY install-agy-release.sh /usr/local/lib/agent-lcars/install-agy-release.sh' "$dockerfile" ||
+  ! grep -Fq 'bash /usr/local/lib/agent-lcars/install-agy-release.sh' "$dockerfile"; then
+  echo "runner image must install a reviewed root-owned Antigravity CLI" >&2
+  exit 1
+fi
 if grep -Fq 'https://opencode.ai/install' "$dockerfile"; then
   echo "runner image must not run OpenCode's mutable installer as root" >&2
   exit 1

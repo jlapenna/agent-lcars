@@ -11,15 +11,6 @@ import {
   STATUS_SUBDIRECTORY,
 } from './session-title-paths';
 
-/** The `declared` channel's directory, relative to the writer's home
- * directory. Kept as its own export -- it's still the channel most callers
- * (and the reader side) reference directly -- but it's derived from
- * `session-title-paths.ts`'s shared constants rather than hardcoded here. */
-export const SESSION_TITLE_ANNOTATION_DIRECTORY = sessionTitleChannelDirectory(
-  SESSION_STATE_DIRECTORY,
-  DECLARED_TITLE_SUBDIRECTORY,
-);
-
 /** Any directory an annotation can be written into -- the directory itself
  * determines whether it is a title or, for `STATUS_SUBDIRECTORY`, a status,
  * so this writer never accepts an arbitrary

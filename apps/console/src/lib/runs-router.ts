@@ -6,6 +6,7 @@ import {
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
+import { usesCodexCredentials } from '@agent-lcars/orchestrator';
 import {
   type DeliveryBinding,
   deliveryWaiting,
@@ -191,9 +192,10 @@ function authorizedRecipeProfile(
 async function requireCodexRun(
   context: RunsContext,
   runId: string,
+  persistence = false,
 ): Promise<{ run: Run; repository: string }> {
   const run = await requireRunToken(context, runId);
-  if (run.pipeline !== 'codex') {
+  if (!usesCodexCredentials(run)) {
     throw new ORPCError('UNAUTHORIZED', {
       message: 'Codex authentication is only available to Codex runs',
     });
@@ -202,7 +204,31 @@ async function requireCodexRun(
     'workId' in run.task
       ? (await context.store.readTask(run.task))?.task
       : undefined;
-  return { run, repository: anchorTarget(run, task).repo };
+  const repository = anchorTarget(run, task).repo;
+  if (run.pipeline === 'goose') {
+    const jobs = repositoryJobs({
+      store: context.store,
+      orchestrator: context.orchestrator,
+      drain: context.drain,
+    });
+    const id = run.params?.['jobOccurrence'];
+    const occurrence = id
+      ? await jobs.deps.store.readOccurrence(id)
+      : undefined;
+    if (
+      !occurrence ||
+      !('workId' in run.task) ||
+      occurrence.workId !== run.task.workId ||
+      occurrence.definition.repository !== repository ||
+      (persistence
+        ? occurrence.profile.providerAuth
+        : authorizedRecipeProfile(jobs, occurrence).providerAuth) !== 'codex'
+    )
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Codex provider not authorized for this recipe occurrence',
+      });
+  }
+  return { run, repository };
 }
 
 function codexAuthError(
@@ -502,7 +528,12 @@ export const runsRouter = os.router({
     );
     if (isRefusal(settled))
       throw new ORPCError('CONFLICT', { message: settled.reason });
-    await drainAfterCompletion(context, run.runId);
+    try {
+      await drainAfterCompletion(context, run.runId);
+    } finally {
+      if (usesCodexCredentials(run))
+        await releaseCodexCredentialLease(context, run);
+    }
     return { runId: run.runId, state: settled.run?.state ?? 'finished' };
   }),
   brief: os.brief.handler(async ({ input, context, errors }) => {
@@ -649,8 +680,6 @@ export const runsRouter = os.router({
           : `https://github.com/${target.repo}/issues/${target.issue}`,
       verifiedAt,
       validUntil,
-      // Compatibility with pre-removal runner images; see the schema.
-      worker: null,
     };
   }),
 
@@ -670,10 +699,13 @@ export const runsRouter = os.router({
         });
       return renewed.run ?? run;
     };
-    const renewed =
-      run.pipeline === 'codex'
-        ? await renewCodexCredentialLease(context, run, renew)
-        : await renew();
+    const renewed = usesCodexCredentials(run)
+      ? await renewCodexCredentialLease(
+          context,
+          (await requireCodexRun(context, run.runId, true)).run,
+          renew,
+        )
+      : await renew();
     const expiresAt = renewed.leaseExpiresAt;
     return {
       runId: run.runId,
@@ -807,7 +839,7 @@ export const runsRouter = os.router({
       run.runId,
       input.runner,
     );
-    if (run.pipeline === 'codex') {
+    if (usesCodexCredentials(run)) {
       try {
         await releaseCodexCredentialLease(context, run);
       } catch (error) {
@@ -982,7 +1014,7 @@ export const runsRouter = os.router({
       try {
         if (!isRefusal(settled)) await drainAfterCompletion(context, run.runId);
       } finally {
-        if (run.pipeline === 'codex') {
+        if (usesCodexCredentials(run)) {
           await releaseCodexCredentialLease(context, run);
         }
       }
@@ -1137,7 +1169,11 @@ export const runsRouter = os.router({
 
   persistCodexAuth: os.persistCodexAuth.handler(
     async ({ input, context, errors }) => {
-      const { run, repository } = await requireCodexRun(context, input.runId);
+      const { run, repository } = await requireCodexRun(
+        context,
+        input.runId,
+        true,
+      );
       try {
         return await persistCodexCredential(context, run, repository, input);
       } catch (error) {

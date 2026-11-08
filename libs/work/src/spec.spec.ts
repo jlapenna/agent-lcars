@@ -64,7 +64,7 @@ describe('workSpecSchema', () => {
     expect(() =>
       workSpecSchema.parse({ ...spec, pipeline: 'gemini' }),
     ).toThrow();
-    expect(PIPELINES).toEqual(['claude', 'codex', 'opencode']);
+    expect(PIPELINES).toEqual(['claude', 'codex', 'opencode', 'agy']);
   });
 
   it('requires target.repo in owner/name form', () => {
@@ -170,6 +170,7 @@ describe('readStoredWorkSpec', () => {
       'claude',
       'codex',
       'opencode',
+      'agy',
       'goose',
       'inbox-summary',
       'handoff-summary',

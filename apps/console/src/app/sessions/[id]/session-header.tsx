@@ -232,44 +232,24 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
           </Stack>
         )}
 
-      {/* Codex sessions are archived raw and are now genuinely resumable
-          (resumable-conversations plan 3): a reply on the owning work item
-          resumes this exact thread through `POST /items/{id}/reply`
-          (`work-reply.ts`'s `RESUMABLE_PIPELINES`). What is still missing
-          is only the *operator's own workstation* command -- `fleet-tools`
-          has no Codex adapter for `resume-archive` yet -- so this note
-          must not claim the conversation itself is stuck, only that the
-          manual command doesn't exist. */}
+      {/* Codex, OpenCode, and Antigravity issue-agent sessions archive their
+          transcripts to GCS and continue on work-item replies, but
+          `fleet-tools` only ships a workstation `resume-archive` CLI for
+          Claude today. */}
       {doc.source === 'issue-agent' &&
         doc.transcriptGcsUri &&
-        doc.agent === 'codex' && (
+        (doc.agent === 'codex' ||
+          doc.agent === 'opencode' ||
+          doc.agent === 'antigravity') && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
-              Archived at <code>{doc.transcriptGcsUri}</code>. No workstation
-              resume command yet for Codex sessions, but replying on this item
-              continues the same conversation automatically.
-            </Text>
-          </Stack>
-        )}
-
-      {/* OpenCode sessions are archived raw too now (resumable-conversations
-          plan 4): a reply on the owning work item resumes this exact
-          session through `POST /items/{id}/reply` (`work-reply.ts`'s
-          `RESUMABLE_PIPELINES`), restoring the separate raw export
-          (`resumeGcsUri`) rather than this rendered, sanitized transcript.
-          No `fleet-tools` adapter exists for the operator's own workstation
-          command either -- same shape as the Codex note above, so this note
-          must not claim the conversation itself is stuck. */}
-      {doc.source === 'issue-agent' &&
-        doc.transcriptGcsUri &&
-        doc.agent === 'opencode' && (
-          <Stack gap={4}>
-            <Eyebrow>Archived transcript</Eyebrow>
-            <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">
-              Archived at <code>{doc.transcriptGcsUri}</code>. No workstation
-              resume command yet for OpenCode sessions, but replying on this
-              item continues the same conversation automatically.
+              Archived at <code>{doc.transcriptGcsUri}</code>.{' '}
+              {doc.agent === 'codex'
+                ? 'No workstation resume command yet for Codex sessions, but replying on this item continues the same conversation automatically.'
+                : doc.agent === 'opencode'
+                  ? 'No workstation resume command yet for OpenCode sessions, but replying on this item continues the same conversation automatically.'
+                  : 'No workstation resume command yet for Antigravity sessions, but replying on this item continues the same work item automatically.'}
             </Text>
           </Stack>
         )}
@@ -278,7 +258,8 @@ export function SessionHeader({ doc, now }: { doc: SessionDoc; now: string }) {
         doc.transcriptGcsUri &&
         doc.agent !== 'claude-code' &&
         doc.agent !== 'codex' &&
-        doc.agent !== 'opencode' && (
+        doc.agent !== 'opencode' &&
+        doc.agent !== 'antigravity' && (
           <Stack gap={4}>
             <Eyebrow>Archived transcript</Eyebrow>
             <Text size="xs" c="dimmed" data-testid="archive-no-resume-note">

@@ -406,6 +406,12 @@ COPY install-goose-release.sh /usr/local/lib/agent-lcars/install-goose-release.s
 RUN GOOSE_VERSION="$(cat /usr/local/share/agent-lcars-tooling/goose-version)" \
     TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-goose-release.sh
 
+# Antigravity CLI (agy) is a supported runtime in the same image and publication lifecycle.
+COPY agy-version /usr/local/share/agent-lcars-tooling/agy-version
+COPY install-agy-release.sh /usr/local/lib/agent-lcars/install-agy-release.sh
+RUN AGY_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/agy-version)" \
+    TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-agy-release.sh
+
 # Forward-looking hook (homelab#97): lets a future registration-specific
 # build add extra tooling without forking this Dockerfile. Empty by
 # default; canonical homelab publication sets a real value today --
@@ -448,7 +454,11 @@ RUN set -eux; \
     # nmap: repository-owned Goose audit recipes (jclaw weekly-security-audit)
     # run bounded, unprivileged report-only scans with the standard package
     # instead of host-only tools; it is present in every lane like gh and jq. \
-    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq nmap xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
+    # rclone: repository-owned skill-evals jobs archive every run to Homelab's
+    # Garage S3 through repo-eval-history, which drives the standard rclone
+    # client (repo-tools docs/evaluation-history.md); same apt package the
+    # Homelab garage_client role installs on operator hosts. \
+    apt-get install -y --no-install-recommends "nodejs=${NODE_VERSION}-1nodesource1" git-lfs gh jq nmap rclone xz-utils python3-pip python3-yaml openjdk-21-jre-headless $EXTRA_APT_PACKAGES; \
     test "$(node -p 'process.versions.node')" = "$NODE_VERSION"; \
     # Actions execute with their bundled Node, independently of PATH.
     cp /usr/bin/node /home/runner/externals/node24/bin/node; \
@@ -482,6 +492,7 @@ RUN set -eux; \
     git-lfs --version; \
     gh --version; \
     jq --version; \
+    rclone version; \
     xz --version; \
     python3 -m pip --version; \
     test "$(go env GOVERSION)" = "go${GO_VERSION}"; \
@@ -737,6 +748,8 @@ RUN chmod +x /usr/local/bin/lcars
 # runner is an integrated first-party delivery surface, not a pinned artifact.
 ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 RUN npm install -g @openai/codex && codex --version
+# Native Codex protocol and read-only eval tooling are publication contracts.
+RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skill-evals-codex.test.mjs
 
 # QueueExecutor direct mode invokes `claude` itself instead of the GitHub
 # Action that normally provisions that CLI. Keep it in the shared runner image
@@ -886,7 +899,9 @@ RUN pnpm --version
 # own skills directory once, failing the build if the list names a skill the
 # image does not carry, instead of copying them on every dispatch (#2033).
 RUN bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \
-    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.claude/skills
+    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.claude/skills && \
+    bash /usr/local/lib/agent-lcars/runtime/install-skills.sh \
+    /usr/local/lib/agent-lcars/agents/shared/skills /home/runner/.gemini/antigravity-cli/skills
 
 # The single gate for every image-owned invariant (#2033). It replaces the
 # per-boot entrypoint preflight and the per-dispatch OpenCode probes: an image

@@ -351,7 +351,8 @@ const (
 )
 
 // directRunnerImage is the one image contract for QueueExecutor Jobs: Claude,
-// Codex, and OpenCode all execute through this same direct-runner image.
+// Codex, OpenCode, and Antigravity all execute through this same direct-runner
+// image.
 // LCARS_QUEUE_RUNNER_IMAGE is deployment knowledge (this fleet's own registry
 // and image tag) this repo cannot infer, so it is required, explicit, and
 // fails loudly rather than defaulting to any fleet's image.

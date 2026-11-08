@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	yaml "go.yaml.in/yaml/v3"
+	yaml "go.yaml.in/yaml/v4"
 	auth "k8s.io/api/authorization/v1"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"

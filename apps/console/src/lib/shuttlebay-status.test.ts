@@ -48,7 +48,7 @@ describe('Shuttlebay provider evidence', () => {
       providerAdmission: admission,
     });
     expect(mocks.read).toHaveBeenCalledWith({
-      pipelines: ['claude', 'codex', 'opencode'],
+      pipelines: ['claude', 'codex', 'opencode', 'agy'],
       now: expect.any(String),
     });
   });

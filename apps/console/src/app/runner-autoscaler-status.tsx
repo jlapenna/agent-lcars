@@ -222,7 +222,7 @@ function ProviderAdmissionRows({
                   </Text>
                 )}
                 <Text size="xs" c="dimmed">
-                  {window === undefined ? (
+                  {window?.[pipeline] === undefined ? (
                     'Recent claims unavailable.'
                   ) : (
                     <>

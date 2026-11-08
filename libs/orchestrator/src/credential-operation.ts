@@ -1,5 +1,9 @@
 import { type Decision, type Refusal, refused, reportResult } from './decide';
 import {
+  RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP,
+  usesCodexCredentials,
+} from './model';
+import {
   type CredentialMutation,
   type CredentialOperation,
   type CredentialWriteReceipt,
@@ -25,7 +29,7 @@ export function reserveCredentialOperation(input: {
   kind: CredentialOperation['kind'];
 }): Decision | Refusal {
   const { run, task, now } = input;
-  if (run.pipeline !== 'codex' || !isClaimant(run, input.claimFingerprint))
+  if (!usesCodexCredentials(run) || !isClaimant(run, input.claimFingerprint))
     return refused('not-claimant');
   if (run.credentialOperation !== undefined)
     return refused('credential-operation-pending');
@@ -124,6 +128,21 @@ export function changeCredentialOperation(input: {
                 ? withoutMutation
                 : { ...op, recoverAfter: credentialRecoverAfter(now) },
         };
+  // An executor-loss event is already physical-exit evidence. Recipes keep
+  // the original claim only until its exact credential cleanup is proven;
+  // retiring it now lets the job reconcile without another exit callback.
+  if (
+    change.kind === 'finish' &&
+    op.kind === 'cleanup' &&
+    next.pipeline === 'goose' &&
+    !isLive(next.state) &&
+    next.events.at(-1)?.by === 'executor' &&
+    (next.state === 'lost' ||
+      next.events.at(-1)?.note === RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP) &&
+    next.queue?.state === 'claimed'
+  ) {
+    next.queue = { ...next.queue, state: 'retired' };
+  }
   if (change.kind === 'acknowledge' && change.receipt !== undefined)
     next.credentialWriteReceipt = change.receipt;
   if (change.kind === 'finish' && change.restored === true)
