@@ -103,7 +103,8 @@ A repository is onboarded only when all of the following are true:
    runner scale set accepts those jobs.
 3. The repository has its label and local-instruction contract.
 4. The console knows to watch the repository and QueueExecutor can report its
-   telemetry.
+   telemetry (and bind Hindsight coding-agent memory to its isolated
+   `agent-lcars::<repo>` bank when `hindsight-api-token` is mounted).
 5. A real issue dispatch reaches QueueExecutor and leaves useful,
    inspectable evidence.
 

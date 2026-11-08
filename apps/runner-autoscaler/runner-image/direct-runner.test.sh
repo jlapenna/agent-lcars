@@ -31,6 +31,8 @@ export tmp
 # unreadable writer credential so the hook install fails soft (warn, no live
 # telemetry) independent of whatever the host has under /run/secrets.
 export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/no-hook-telemetry-writer.json"
+export HINDSIGHT_TOKEN_FILE="$tmp/no-hindsight-token"
+unset HINDSIGHT_API_TOKEN HINDSIGHT_DISABLED HINDSIGHT_CONFIG HINDSIGHT_BANK_ID
 cleanup() {
   local result=$?
   trap - EXIT
@@ -150,6 +152,7 @@ BAKED_VERIFY_OUTCOME="$baked/runtime/verify-outcome.sh"
 export WORKER_COMPLETION_HELPER="$baked/runtime/worker-completion.sh"
 export WORKER_POLICY_BOOTSTRAP_HELPER="$baked/runtime/worker-policy-bootstrap.sh"
 export HOOK_TELEMETRY_HELPER="$baked/runtime/hook-telemetry-bootstrap.sh"
+export HINDSIGHT_BOOTSTRAP_HELPER="$baked/runtime/hindsight-bootstrap.sh"
 export WORKER_POLICY_SETUP="$repo_root/packages/fleet-tools/bin/worker-hook-setup.cjs"
 export WORKER_POLICY_NODE="$real_node"
 # sidecar-lifecycle.sh only needs this baked entrypoint to exist before it
@@ -1431,6 +1434,8 @@ grep -q '"outcome":"pull-request"' "$COMPLETE_LOG" ||
   fail "hook telemetry unavailable: run did not complete with its deliverable"
 echo "scenario hook-telemetry-unavailable: OK"
 export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/no-hook-telemetry-writer.json"
+export HINDSIGHT_TOKEN_FILE="$tmp/no-hindsight-token"
+unset HINDSIGHT_API_TOKEN HINDSIGHT_DISABLED HINDSIGHT_CONFIG HINDSIGHT_BANK_ID
 unset HOOK_TELEMETRY_CLI HOOK_TELEMETRY_FLUSHER
 
 # --- Scenario 1a-i: no resume in the brief keeps the fresh codex path -------
@@ -2623,6 +2628,35 @@ for provider in claude codex opencode; do
 done
 
 unset FAKE_GH_NO_MATCH
+# Hindsight per-repo memory bootstrap contract: disabled without a token,
+# enabled with mode-0600 agent-lcars::<repo> config when HINDSIGHT_TOKEN_FILE is mounted.
+run_scenario hindsight-disabled-by-default claude
+[ "$rc" -eq 0 ] || fail "hindsight-disabled-by-default scenario failed"
+jq -e '.disabled == true and (.apiToken // null) == null' "$HOME/.hindsight/coding-agent.json" >/dev/null ||
+  fail "expected disabled coding-agent.json when HINDSIGHT_TOKEN_FILE is absent"
+grep -Fq 'Bash,Edit,Write,MultiEdit,mcp__hindsight__*' "$CLAUDE_ARGS_LOG" ||
+  fail "claude --allowedTools did not include mcp__hindsight__*"
+
+printf 'fake-hindsight-token-secret987654\n' > "$tmp/hindsight-api-token"
+export HINDSIGHT_TOKEN_FILE="$tmp/hindsight-api-token"
+run_scenario hindsight-enabled-per-repo claude
+export HINDSIGHT_TOKEN_FILE="$tmp/no-hindsight-token"
+[ "$rc" -eq 0 ] || fail "hindsight-enabled-per-repo scenario failed"
+[ "$(stat -c '%a' "$HOME/.hindsight/coding-agent.json")" = "600" ] ||
+  fail "coding-agent.json must be mode 0600"
+jq -e '
+  .serverMode == "self-hosted" and
+  .apiUrl == "https://memory.lan.jlapenna.net" and
+  .apiToken == "fake-hindsight-token-secret987654" and
+  .bankId == "agent-lcars::example" and
+  .autoInject == "recall" and
+  .manageBankConfig == true and
+  (.retainTags | index("repo:octo/example") != null) and
+  (.retainTags | index("lcars:dispatched") != null)
+' "$HOME/.hindsight/coding-agent.json" >/dev/null ||
+  fail "coding-agent.json did not match expected per-repo agent-lcars::<repo> contract"
+echo "scenario hindsight-per-repo-bootstrap: OK"
+
 [ ! -e "$tmp/live-sidecar-started" ] ||
   fail "a scenario started the retired live polling sidecar (runner sidecar)"
 # Exact-reference verification is part of this required runner contract gate.

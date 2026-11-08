@@ -74,6 +74,7 @@ cp "$source_config_dir/instructions.md" \
   "$source_config_dir/context-lifecycle.js" \
   "$source_config_dir/lcars-session.js" \
   "$source_config_dir/lcars-telemetry.js" \
+  "$source_config_dir/hindsight.js" \
   "$tmp/home/.config/opencode/"
 # Match the runner's configuration copy, including build-installed SDK deps.
 # Missing preparation fails here rather than being repaired over the network.

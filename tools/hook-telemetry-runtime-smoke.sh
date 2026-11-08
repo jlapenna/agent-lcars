@@ -34,7 +34,7 @@ cp -R "$HOME/.config/opencode/package.json" "$HOME/.config/opencode/package-lock
   "$HOME/.config/opencode/node_modules" "$opencode_config/"
 cp agents/opencode/opencode.json agents/opencode/instructions.md \
   agents/opencode/context-lifecycle.js agents/opencode/lcars-session.js \
-  agents/opencode/lcars-telemetry.js "$opencode_config/"
+  agents/opencode/lcars-telemetry.js agents/opencode/hindsight.js "$opencode_config/"
 
 # CI exercises the installed CLI/SDK pair with this checkout's plugins and
 # assertions. A future image-pin update must not require its new image before

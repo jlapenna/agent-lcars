@@ -72,6 +72,7 @@ try {
     GOOSE_PATH_ROOT: home,
     TMPDIR: tmpdir(),
     GOOSE_DISABLE_KEYRING: 'true',
+    HINDSIGHT_DISABLED: 'true',
   });
   if (brief.profile?.credentialSet) {
     secretHome = await mkdtemp(join('/dev/shm', 'lcars-job-secrets-'));

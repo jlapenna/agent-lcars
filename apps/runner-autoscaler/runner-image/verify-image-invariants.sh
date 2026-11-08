@@ -61,6 +61,13 @@ check "repo-tools commands are installed and the worktree guard executes" \
   node "$lib/repo-tools-bins.mjs" verify "$repo_tools" "$repo_tools_bin"
 check "image carries no Codex authentication" test ! -e "$home/.codex/auth.json"
 check "image carries no Antigravity authentication" test ! -e "$home/.gemini/antigravity-cli/antigravity-oauth-token"
+check "Hindsight coding-agents CLI is installed" test -x /usr/local/bin/hindsight-coding-agents
+check "Hindsight runtime is staged for runner" test -f "$home/.hindsight/coding-agents/dist/index.js"
+check "Hindsight OpenCode wrapper is installed" test -f "$home/.config/opencode/hindsight.js"
+check "Hindsight skill is installed for Claude, Codex and Antigravity" bash -c \
+  'test -f "$1/.claude/skills/hindsight-coding-agent/SKILL.md" && test -f "$1/.agents/skills/hindsight-coding-agent/SKILL.md" && test -f "$1/.gemini/antigravity-cli/skills/hindsight-coding-agent/SKILL.md"' _ "$home"
+check "image carries disabled Hindsight config with no baked token" \
+  jq -e '.disabled == true and (.apiToken // null) == null' "$home/.hindsight/coding-agent.json"
 
 skills=0
 if [ -f "$skills_list" ]; then

@@ -54,8 +54,8 @@ grep -Fq "Commit and push at the first working slice" "$orders" ||
 # LCARS_SESSION_ID contract used by the annotation CLI.
 session_plugin="$repo_root/agents/opencode/lcars-session.js"
 test -f "$session_plugin" || fail "agents/opencode/lcars-session.js is missing"
-jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js", "./lcars-telemetry.js"]' "$config" >/dev/null ||
-  fail "opencode.json must load the native LCARS session environment plugin"
+jq -e '.plugin == ["./lcars-session.js", "./context-lifecycle.js", "./lcars-telemetry.js", "./hindsight.js"]' "$config" >/dev/null ||
+  fail "opencode.json must load the native LCARS session environment and Hindsight plugins"
 plugin_url="data:text/javascript;base64,$(base64 -w0 "$session_plugin")"
 node --input-type=module - "$plugin_url" <<'NODE'
 import assert from 'node:assert/strict';
@@ -141,6 +141,23 @@ grep -Fq '/home/runner/.config/opencode/lcars-session.js' "$runner_dockerfile" |
   fail "runner image does not preserve opencode.json's relative session plugin path"
 grep -Fq '/home/runner/.config/opencode/lcars-telemetry.js' "$runner_dockerfile" ||
   fail "runner image does not install the OpenCode hook telemetry plugin beside opencode.json"
+grep -Fq '/home/runner/.config/opencode/hindsight.js' "$runner_dockerfile" ||
+  fail "runner image does not install the OpenCode Hindsight plugin beside opencode.json"
+hindsight_plugin="$repo_root/agents/opencode/hindsight.js"
+HINDSIGHT_DISABLED=true node --input-type=module - \
+  "data:text/javascript;base64,$(base64 -w0 "$hindsight_plugin")" <<'NODE' ||
+import assert from 'node:assert/strict';
+const module = await import(process.argv[2]);
+assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+NODE
+  fail "hindsight.js must be inert when HINDSIGHT_DISABLED=true"
+HINDSIGHT_CONFIG="/nonexistent/hindsight/coding-agent.json" node --input-type=module - \
+  "data:text/javascript;base64,$(base64 -w0 "$hindsight_plugin")" <<'NODE' ||
+import assert from 'node:assert/strict';
+const module = await import(process.argv[2]);
+assert.deepEqual(await module.default({ client: {}, directory: '/' }), {});
+NODE
+  fail "hindsight.js must be inert when coding-agent.json is absent"
 # The telemetry plugin must stay inert on a dispatched runner that did not
 # select hook telemetry (no LCARS_TELEMETRY_CREDENTIALS_FILE).
 telemetry_plugin="$repo_root/agents/opencode/lcars-telemetry.js"
