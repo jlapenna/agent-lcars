@@ -18,6 +18,7 @@ import { z } from 'zod';
 
 import { controlPlaneRepositories } from './deployment';
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
+import { createDispatchTokenProvider } from './github-app-tokens';
 import { admitGithubWork } from './github-work-admission';
 import {
   issueFromGithubProjection,
@@ -34,7 +35,6 @@ import {
   linearTeam,
 } from './linear-config';
 import { dispatchLinearIssue, refreshLinearIssue } from './linear-intake';
-import { orchestratorGithubRuntimeDeps } from './orchestrator-runtime';
 import { repositoryForbiddenReason } from './work-authorization';
 import { normalizeWorkPayload } from './work-from-github';
 import { forbiddenReason, type WorkContext } from './work-mint';
@@ -60,9 +60,18 @@ export async function lookupIssueSource(
     );
     if (!repo) throw new ORPCError('FORBIDDEN');
     assertRepository(context, repo);
-    issue = await issueTracker(orchestratorGithubRuntimeDeps(process.env)).read(
-      { tracker: 'github', repo, issue: Number(lookup.issue) },
-    );
+    const fixtureBaseUrl =
+      process.env['AGENT_CONSOLE_GITHUB_API_BASE_URL']?.trim();
+    issue = await issueTracker(
+      fixtureBaseUrl
+        ? {
+            tokens: { tokenFor: async () => 'e2e-fixture-token' },
+            githubApiBaseUrl: fixtureBaseUrl,
+          }
+        : {
+            tokens: createDispatchTokenProvider(process.env),
+          },
+    ).read({ tracker: 'github', repo, issue: Number(lookup.issue) });
   } else {
     const config = linearConfig();
     if (!config)

@@ -11,8 +11,7 @@ vi.mock('./linear-client', async (original) => ({
   readLinearIssue: mock.read,
   listLinearIssues: mock.list,
 }));
-vi.mock('./github-app-tokens', async (original) => ({
-  ...(await original<typeof import('./github-app-tokens')>()),
+vi.mock('./github-app-tokens', () => ({
   createDispatchTokenProvider: () => ({ tokenFor: async () => 'token' }),
 }));
 vi.mock('./issue-trackers', async (original) => ({
