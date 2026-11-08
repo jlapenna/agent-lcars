@@ -30,6 +30,7 @@ import {
   updateTaskWork,
 } from './decide';
 import { advanceDelivery, type DeliveryObservation } from './delivery';
+import { usesCodexCredentials } from './model';
 import {
   type DeliveryBinding,
   isLive,
@@ -875,7 +876,7 @@ export class Orchestrator {
           !isLive(run.state) ||
           outcome.run === undefined ||
           isLive(outcome.run.state) ||
-          run.pipeline !== 'codex' ||
+          !usesCodexCredentials(run) ||
           run.queue?.state !== 'claimed' ||
           run.queue.tokenHash === undefined ||
           outcome.run.credentialOperation !== undefined

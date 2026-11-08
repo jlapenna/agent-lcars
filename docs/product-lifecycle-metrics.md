@@ -251,7 +251,7 @@ worker claims and unqualified PR numbers never establish a merge. A PR shared
 by multiple selected sessions counts once within each pipeline; pipeline PR
 counts must not be summed to obtain a globally unique denominator.
 
-Only `claude`, `codex`, `opencode` and `unknown` pipeline labels are exported.
+Only `claude`, `codex`, `opencode`, `agy` and `unknown` pipeline labels are exported.
 Other adapters fold into `unknown` before canonical PR deduplication. No session,
 model, repository, principal, URL or error labels are exported. The existing
 Costs page retains its adapter-specific grouping.

@@ -34,9 +34,7 @@ export function localAgentPromptText(item: LocalAgentPromptItem): string {
 
 /** Each pipeline's plain interactive CLI invocation - no headless/resume
  * flags, matching how a maintainer already runs these tools on their own
- * workstation (see docs/superpowers/specs/2026-09-03-resumable-agent-
- * conversations-design.md's CLI table for the flagged headless variants this
- * deliberately omits). */
+ * workstation. */
 const LOCAL_AGENT_INVOCATIONS: Record<
   AgentPipeline,
   (quotedPrompt: string) => string
@@ -44,6 +42,7 @@ const LOCAL_AGENT_INVOCATIONS: Record<
   claude: (prompt) => `claude ${prompt}`,
   codex: (prompt) => `codex ${prompt}`,
   opencode: (prompt) => `opencode run ${prompt}`,
+  agy: (prompt) => `agy ${prompt}`,
 };
 
 /** The full command line a maintainer pastes into a local `pipeline` CLI
@@ -57,7 +56,7 @@ export function localAgentCommand(
   );
 }
 
-/** Human-facing name for the agent picker - "Claude"/"Codex"/"OpenCode",
+/** Human-facing name for the agent picker - "Claude"/"Codex"/"OpenCode"/"Antigravity",
  * not the `agent:*` label or reply-trigger spellings other pickers use. */
 export function localAgentDisplayName(pipeline: AgentPipeline): string {
   return pipelineContract(pipeline).displayName;

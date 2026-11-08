@@ -2,6 +2,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import {
+  defaultAntigravityBrainDir,
   defaultClaudeProjectsDir,
   defaultCodexSessionsDir,
   defaultSessionStateDir,
@@ -31,6 +32,9 @@ export interface RunnerConfig extends Pick<
   codexSessionsDir: string;
   /** Scratch root holding bounded `opencode export` materializations. */
   opencodeExportsDir: string;
+  /** Root to discover Antigravity transcripts under, defaulting to
+   * `~/.gemini/antigravity-cli/brain`. */
+  antigravityBrainDir?: string;
   /** Exact checkout directory OpenCode sessions must report to be captured. */
   opencodeWorkspaceDir: string;
   /** Well-known file to write the OpenCode pipeline's final assistant
@@ -77,14 +81,16 @@ interface RunnerFlags {
   issueNumber?: string;
   projectsDir?: string;
   codexSessionsDir?: string;
+  antigravityBrainDir?: string;
   repo?: string;
   opencodeLastMessageFile?: string;
 }
 
 /**
- * Minimal `--flag value` parser for the sidecar CLI's own 7 flags
+ * Minimal `--flag value` parser for the sidecar CLI's own 8 flags
  * (`--run-id`, `--intent-id`, `--issue-number`, `--projects-dir`,
- * `--codex-sessions-dir`, `--repo`, `--opencode-last-message-file`).
+ * `--codex-sessions-dir`, `--antigravity-brain-dir`, `--repo`,
+ * `--opencode-last-message-file`).
  * Deliberately hand-rolled
  * rather than a dependency like yargs: pulling in a full CLI-parsing
  * library would bloat the single-file bundle (`bundle` target in
@@ -115,6 +121,9 @@ function parseRunnerFlags(argv: string[]): RunnerFlags {
       i++;
     } else if (arg === '--codex-sessions-dir') {
       flags.codexSessionsDir = next;
+      i++;
+    } else if (arg === '--antigravity-brain-dir') {
+      flags.antigravityBrainDir = next;
       i++;
     } else if (arg === '--repo') {
       flags.repo = next;
@@ -166,11 +175,15 @@ export function loadRunnerConfig(argv: string[]): RunnerConfig {
   // QueueExecutor supplies its run identity explicitly.
   const repo =
     parseOwnerRepo(flags.repo) ??
+    parseOwnerRepo(process.env['LCARS_REPO']) ??
+    parseOwnerRepo(process.env['REPOSITORY']) ??
     parseOwnerRepo(process.env['GITHUB_REPOSITORY']);
 
   return {
     claudeProjectsDir: flags.projectsDir ?? defaultClaudeProjectsDir(),
     codexSessionsDir: flags.codexSessionsDir ?? defaultCodexSessionsDir(),
+    antigravityBrainDir:
+      flags.antigravityBrainDir ?? defaultAntigravityBrainDir(),
     opencodeExportsDir: path.join(os.tmpdir(), 'agent-lcars-opencode-exports'),
     opencodeWorkspaceDir: process.env['GITHUB_WORKSPACE'] ?? process.cwd(),
     sessionStateDir: defaultSessionStateDir(),

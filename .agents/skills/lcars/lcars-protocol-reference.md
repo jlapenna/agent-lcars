@@ -12,9 +12,9 @@ enough.
 - **Dispatch (current, #1015):** a webhook delivery is interpreted by
   `apps/console/src/lib/orchestrator-ingest.ts`'s `interpretDelivery`, pure
   and stateless: an `issues`/`pull_request` `labeled` event whose label is
-  `agent:claude`/`agent:codex`/`agent:opencode` requests mode `implement`
+  `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy` requests mode `implement`
   (issue or PR); the same on a PR with `review:claude`/`review:codex`/
-  `review:opencode` requests mode `review`. Label routing validates the full
+  `review:opencode`/`review:agy` requests mode `review`. Label routing validates the full
   delivered anchor label snapshot against the canonical pipeline registry;
   multiple choices within the triggering namespace produce an actionable
   `routing-label-conflict` refusal before admission. Missing/inconsistent
@@ -55,10 +55,10 @@ enough.
 > the shared agent protocol's "Dispatch mode" table. This
 > section is only how a label becomes a mode.
 
-Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`
+Tagging an **issue** with `agent:claude`/`agent:codex`/`agent:opencode`/`agent:agy`
 dispatches `mode: implement`. Tagging a **pull request** with the same
 `agent:*` label dispatches `mode: implement` too (#567). A pull request
-tagged instead with `review:claude`/`review:codex`/`review:opencode`
+tagged instead with `review:claude`/`review:codex`/`review:opencode`/`review:agy`
 dispatches `mode: review` (#565/#568, revised by #567 once the maintainer
 picked `review:*` as the dedicated review trigger rather than overloading
 `agent:*` for both meanings). The two label families are independent: a PR
@@ -178,15 +178,19 @@ credentials, or reaches into an ephemeral container; the archive is the only
 supported session-recovery boundary.
 
 Do not post the retired `fleet-claude-agent-session resume <id>` command or
-describe a live JIT resume path. Console cleanup for that old command parser
-is tracked separately; it is not a compatibility promise for agents to rely
-on.
+describe a live JIT resume path.
 
 For other pipelines, state the actual archive behavior without inventing a
-resume command:
+workstation resume command:
 
-- **Codex:** its completed run transcript is archived to GCS. The console can
-  show the archive URI, but no Codex archive-resume tool exists today.
-- **OpenCode:** the runner captures a bounded, sanitized metadata export under
-  `runs/<run-id>/opencode/<session-id>.jsonl`; it is durable but not
-  timeline-renderable and has no resume command.
+- **Codex:** its completed run transcript is archived raw to GCS and is
+  resumable across work-item rounds via reply, but no workstation
+  archive-resume CLI exists today.
+- **OpenCode:** the runner archives a sanitized export for Console timeline
+  rendering (`transcriptGcsUri`) plus a separate raw export (`resumeGcsUri`)
+  used to resume the session on work-item replies; no workstation
+  archive-resume CLI exists today.
+- **Antigravity (`agy`):** its completed trajectory (`transcript.jsonl`) is
+  archived to GCS (`runs/<run-id>/antigravity/<session-id>.jsonl`) and
+  rendered in the Console timeline; no workstation archive-resume CLI exists
+  today.

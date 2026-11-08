@@ -107,11 +107,8 @@ callers explicitly enable App mode. The former `GITHUB_TOKEN` recovery jobs
 and their inputs are retired: `restore-runs-on`, `ci-workflow`,
 `extra-main-workflows`, `post-ci-workflows`, `deploy-workflow`,
 `post-deploy-verify-workflow`, `post-submit-enabled`, `check-wait-minutes`,
-`restore-timeout-minutes`, `monitor-pr`, and `monitor-head-sha`.
-
-`required-checks` remains a deprecated, ignored compatibility input while
-existing callers remove it. It does not enforce merge gates; GitHub's native
-ruleset and the live check rollup remain authoritative.
+`restore-timeout-minutes`, `monitor-pr`, `monitor-head-sha`, and
+`required-checks`.
 
 An App-enabled caller reconciles on events instead of a short poll: `push` to
 main (when an armed PR falls behind) and `workflow_run` `completed` for every

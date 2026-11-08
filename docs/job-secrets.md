@@ -1,13 +1,68 @@
-# LCARS job secrets
+# LCARS runtime secrets and job credentials
 
-LCARS owns job credentials in a dedicated Google Secret Manager project. This
-store is independent of homegit and Homelab's secret stores. Never import a host's
-credential environment or its personal `gh` authentication into a job.
+Google Secret Manager is the approved storage backend for both LCARS service
+credentials and job credentials. Access follows the consuming process and its
+required permissions. Repository ownership and credential purpose do not require
+separate stores or Google projects.
+
+The current job-credential implementation uses a dedicated Google Secret Manager
+project, independent of homegit and Homelab's secret stores. Broader service-secret
+migration is planned; the administration and delivery procedures below describe
+the implemented job path. Never import a host's credential environment or its
+personal `gh` authentication into a job.
 
 The application keeps secret metadata, immutable credential-set revisions,
 per-job grants and access records in its existing dispatch Firestore database.
 Secret values exist only in Secret Manager and the authorized runtime. Terraform
 provisions projects, secret containers and IAM; it never handles secret values.
+
+## Runtime secret storage and access decision
+
+Shared storage does not imply shared access. Classify each credential by its
+actual consumers and capabilities:
+
+| Consumer           | Examples                                                        | Access boundary                                                                             |
+| ------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| LCARS service      | GitHub App private key, webhook secret, service API credentials | Its service identity receives access to the individual secrets it needs.                    |
+| Repository job     | Selected GitHub identity, Garage credential, task API key       | The job receives only its granted credential-set bindings and pinned versions.              |
+| Deployment tooling | Credentials needed to deploy or start services                  | The deployment identity receives its required access; sharing storage adds no job bindings. |
+
+An API credential can have several legitimate consumers. Grant each consumer
+explicit access; where their issuer permissions or rotation requirements differ,
+issue separate credentials. A repository name or a service label is descriptive
+metadata, not an access grant. Repository GitHub App checkout and centrally
+granted job credentials retain their existing authorization paths.
+
+Services use their established Google authentication and startup paths. Jobs
+continue to use LCARS's authorized delivery path and receive no Google Secret
+Manager identity. Storing a service or deployment credential alongside job
+credentials must not automatically register it in the job registry or expose it
+through credential sets, job administration or runtime delivery. A job that
+legitimately needs the same credential requires a separately reviewed explicit
+binding, the existing container eligibility checks and an exact job grant.
+
+Google project placement is a deployment choice for administration, billing and
+lifecycle. It does not require one project per repository or credential category.
+Keep the populated job-secret project and its selectors in place while planning
+further migrations. The current implementation still requires
+`AGENT_LCARS_JOB_SECRETS_PROJECT` to differ from `PROJECT_ID`; accepting another
+layout requires an explicit implementation and deployment change.
+
+Before migrating another runtime secret:
+
+1. Inventory its current storage, consumers, issuer permissions, rotation and
+   revocation requirements, and owning deployment path. Record references and
+   metadata only.
+2. Review its individual-secret IAM and consumer delivery configuration. Preserve
+   startup authentication without depending on LCARS's job-secret API.
+3. Transfer the value through a protected input path, deploy the owning consumer,
+   and verify its intended operation and existing observability. A migration
+   alone grants no job access to the value and authorizes no paid or
+   outward-facing actions solely as health tests.
+4. Retire the previous delivery path only after its consumers have moved and its
+   owning workflow verifies the change. Do not bulk-import homegit or Homelab
+   secrets, alter other owners' credentials, or remove shared values to resolve
+   storage duplication.
 
 ## Administration
 

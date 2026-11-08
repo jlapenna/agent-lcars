@@ -225,6 +225,62 @@ describe('finalizeSidecar', () => {
     });
   });
 
+  it('archives an Antigravity brain transcript under the antigravity/ prefix while skipping chunks and transcript_full.jsonl', async () => {
+    const { store, upserts } = createFakeStore();
+    const { uploadTranscript, uploads } = createFakeUploader();
+    const brainRoot = '/home/runner/.gemini/antigravity-cli/brain';
+    const sessionId = '54a4d726-d9c7-4b8d-9690-57870d145dc4';
+    const transcriptFile = `${brainRoot}/${sessionId}/.system_generated/logs/transcript.jsonl`;
+    const fullFile = `${brainRoot}/${sessionId}/.system_generated/logs/transcript_full.jsonl`;
+    const chunkFile = `${brainRoot}/${sessionId}/.system_generated/logs/chunks/transcript/00000000.jsonl`;
+    const antigravityTranscript = JSON.stringify({
+      step_index: 0,
+      source: 'USER_EXPLICIT',
+      type: 'USER_INPUT',
+      status: 'DONE',
+      created_at: '2026-11-06T16:36:12.429Z',
+      content: '<USER_REQUEST>\nVerify QueueExecutor run\n</USER_REQUEST>',
+    });
+    const files = {
+      [chunkFile]: antigravityTranscript,
+      [fullFile]: antigravityTranscript,
+      [transcriptFile]: antigravityTranscript,
+    };
+
+    await finalizeSidecar({
+      config: baseConfig({
+        runId: 'work:01M6RVDSR33D74CQ0GGB7Y4DHK/r1',
+        antigravityBrainDir: brainRoot,
+        transcriptsBucket: 'agent-lcars-session-transcripts',
+      }),
+      store,
+      discover: (rootPath: string) =>
+        Object.keys(files).filter((f) => f.startsWith(rootPath)),
+      readFile: (p: string) => files[p as keyof typeof files],
+      resolveGitBranch: async () => undefined,
+      resolveGitRepo: async () => undefined,
+      uploadTranscript,
+    });
+
+    expect(uploads).toEqual([
+      {
+        projectId: undefined,
+        bucket: 'agent-lcars-session-transcripts',
+        object: `runs/work:01M6RVDSR33D74CQ0GGB7Y4DHK/r1/antigravity/${sessionId}.jsonl`,
+        contents: antigravityTranscript,
+      },
+    ]);
+    expect(upserts).toEqual([
+      expect.objectContaining({
+        sessionId,
+        agent: 'antigravity',
+        liveness: 'ended',
+        renderable: true,
+        transcriptGcsUri: `gs://agent-lcars-session-transcripts/runs/work:01M6RVDSR33D74CQ0GGB7Y4DHK/r1/antigravity/${sessionId}.jsonl`,
+      }),
+    ]);
+  });
+
   it('archives only the strict OpenCode metadata allowlist under the opencode prefix', async () => {
     const { store, upserts } = createFakeStore();
     const { uploadTranscript, uploads } = createFakeUploader();

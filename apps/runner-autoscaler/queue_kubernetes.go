@@ -143,9 +143,9 @@ func directRunnerProviderSelection(name string) (string, error) {
 	for _, entry := range strings.Split(raw, ",") {
 		provider := strings.TrimSpace(entry)
 		switch provider {
-		case "claude", "codex", "opencode":
+		case "claude", "codex", "opencode", "agy":
 		default:
-			return "", fmt.Errorf("%s must contain only claude, codex, or opencode", name)
+			return "", fmt.Errorf("%s must contain only claude, codex, opencode, or agy", name)
 		}
 		if !seen[provider] {
 			seen[provider] = true
@@ -514,6 +514,8 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	case "codex":
 	case "opencode":
 		providerKey = "opencode-llm-api-key"
+	case "agy":
+		providerKey = "antigravity-oauth-token"
 	case "goose":
 		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
 			request, requestErr := resource.ParseQuantity(q.config.Requests[name])

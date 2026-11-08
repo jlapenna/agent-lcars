@@ -233,11 +233,13 @@ export type SpendPipelineGrouping = 'adapter' | 'lifecycle';
 function pipelineKey(doc: SessionDoc, grouping: SpendPipelineGrouping): string {
   return doc.agent === 'claude-code'
     ? 'claude'
-    : doc.agent === 'codex' || doc.agent === 'opencode'
-      ? doc.agent
-      : grouping === 'lifecycle'
-        ? 'unknown'
-        : `other: ${doc.agent}`;
+    : doc.agent === 'antigravity'
+      ? 'agy'
+      : doc.agent === 'codex' || doc.agent === 'opencode'
+        ? doc.agent
+        : grouping === 'lifecycle'
+          ? 'unknown'
+          : `other: ${doc.agent}`;
 }
 
 type Bucket = SpendTotals & { prs: Set<string> };

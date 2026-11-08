@@ -33,13 +33,6 @@ export const VARIABLE_NAMES = Object.freeze([
   'AGENT_LCARS_CLIENT_ID',
 ]);
 export const SECRET_NAME = 'AGENT_LCARS_PRIVATE_KEY';
-export const STATUSES = Object.freeze([
-  'PASS',
-  'FAIL',
-  'SKIP',
-  'PLAN',
-  'UNVERIFIED',
-]);
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const INSTALLATION_NOTE =
   'installations are a maintainer UI step; this tool never modifies them';

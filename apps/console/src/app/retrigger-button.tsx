@@ -11,11 +11,10 @@ import { showErrorToast } from './show-error-toast';
 
 /**
  * Retrigger-with-steering-note, shared by queue cards and compact rows.
- * Only rendered for claude- or opencode-labeled issues (the server 400s
- * otherwise) and disabled while a run is in flight. The dispatch pipeline
- * itself is no longer a caller-supplied prop (#1183): the orchestrator
- * derives it from the task's own run history, so this component only needs
- * to know which issue to retry.
+ * Rendered for retryable coding-agent tasks and disabled while a run is in
+ * flight. The dispatch pipeline itself is no longer a caller-supplied prop
+ * (#1183): the orchestrator derives it from the task's own run history, so
+ * this component only needs to know which issue to retry.
  */
 export function RetriggerButton({
   repo,

@@ -39,16 +39,16 @@ import type { WorkCommandDeps } from './work-command-deps';
 export type { WorkCommandDeps } from './work-command-deps';
 
 export const WORK_CLI_USAGE =
-  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
+  'usage: work create --repo <owner/name> --pipeline <claude|codex|opencode|agy> [--priority <urgent|normal|background>] --title "<text>" (--description "<text>" | --description-file <path>) [--fallback-pipelines <ordered,csv|none>] [--deliverable report]\n' +
   '       work status <id> [--watch] | work list [--state <running|done|parked|failed|canceled>] [--repo <owner/name>] | work cancel <id> | work redispatch <id> [--fallback-pipelines <ordered,csv|none>]\n' +
-  '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode>] [--request-id <key>] [--fresh]\n' +
+  '       work reply <id> (--text "<text>" | --text-file <path>) [--pipeline <claude|codex|opencode|agy>] [--request-id <key>] [--fresh]\n' +
   '       work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] [--profile <name>] | work job get <occurrence-id>\n' +
   '       work secrets <secrets|sets|grants|register|publish|grant|upload NAME|promote NAME --version N|disable NAME|enable NAME> (writes read protected stdin)\n' +
   '       work metrics [--json] (read-only lifecycle snapshot; rolling gauges, not counters)\n' +
   '       work owner <owner/repo>#<n> [--json] (read-only: who Console says is working a GitHub issue or PR)\n' +
   '       work owner linear:<identifier> [--json] | work issue <owner/repo#n|linear:identifier>\n' +
   '       work issues [refresh] --tracker <github|linear> [--repo <owner/name>] [--team <uuid>] [--cursor <cursor>]\n' +
-  '       work dispatch <owner/repo#n|linear:identifier> --pipeline <claude|codex|opencode> --request-id <key> [--repo <owner/name>]\n' +
+  '       work dispatch <owner/repo#n|linear:identifier> --pipeline <claude|codex|opencode|agy> --request-id <key> [--repo <owner/name>]\n' +
   '       work source [--cursor <cursor>] (inside an LCARS run: read its issue and comments without tracker credentials)\n' +
   '       --watch polls every 15 seconds until done, parked, failed, or canceled.\n' +
   '       status exits 1 for failed work (with or without --watch); other states exit 0.\n' +
@@ -570,7 +570,7 @@ export async function executeWorkCommand(
           spec: {
             title,
             description,
-            pipeline: pipeline as 'claude' | 'codex' | 'opencode',
+            pipeline: pipeline as 'claude' | 'codex' | 'opencode' | 'agy',
             priority: (priority ?? 'normal') as QueuePriority,
             ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
             ...(deliverable === undefined ? {} : { deliverable: 'report' }),

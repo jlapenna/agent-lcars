@@ -43,7 +43,6 @@ export const fleetTriageReportSchema = z
       message: 'Ready triage needs concrete acceptance criteria',
     },
   );
-export type FleetTriageInput = z.infer<typeof fleetTriageInputSchema>;
 export type FleetTriageReport = z.infer<typeof fleetTriageReportSchema>;
 
 /** Triage effects use the existing outbox's leases and retries. These receipts

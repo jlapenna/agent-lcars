@@ -89,10 +89,10 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                     | This deployment                                                                                                                                                            |
-| ------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor/scheduler, and the read-only `svc:work-reader`: `claude`, `codex`, `opencode` |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                         |
+| Value                    | Env var                     | This deployment                                                                                                                                                                   |
+| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor/scheduler, and the read-only `svc:work-reader`: `claude`, `codex`, `opencode`, `agy` |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                                |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
 enter the durable queue even when the fleet is full. QueueExecutor reserves
@@ -117,7 +117,7 @@ scope to call `POST /schedules/tick`; neither scope implies `work.operator`:
 {
   "principal": "svc:telemetry-writer",
   "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
-  "pipelines": ["claude", "codex", "opencode"],
+  "pipelines": ["claude", "codex", "opencode", "agy", "goose"],
   "scopes": ["work.executor", "work.cron"]
 }
 ```
@@ -131,8 +131,8 @@ tests). `pipelines` gates which pipelines the executor may claim, the same
 field an operator's grant uses to gate `create`/`redispatch`. `POST
 /runs/claim` derives selection from that grant alone.
 
-The current operator grants list all three supported pipelines (`claude`,
-`codex`, `opencode`), including the maintainer, repository-bounded
+The current operator grants list all four supported coding pipelines (`claude`,
+`codex`, `opencode`, `agy`), including the maintainer, repository-bounded
 `workflow:work-create`, `workflow:member-automation`, and Sprinkles' App
 Hosting service principal. Each declares `work.operator` explicitly. The
 published `work-create.yml` workflow is contract-tested against that list, so

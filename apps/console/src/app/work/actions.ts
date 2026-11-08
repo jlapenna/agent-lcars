@@ -36,7 +36,7 @@ const evidenceIntentSchema = z.strictObject({
     owner: z.string().min(1),
     name: z.string().min(1),
   }),
-  pipeline: z.enum(['claude', 'codex', 'opencode']),
+  pipeline: workSpecSchema.shape.pipeline,
   priority: workSpecSchema.shape.priority,
   fallbackPipelines: fallbackPipelinesSchema.optional(),
   deliverable: workSpecSchema.shape.deliverable,

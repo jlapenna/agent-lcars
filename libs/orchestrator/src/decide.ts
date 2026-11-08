@@ -4,6 +4,10 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 
 import {
+  RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP,
+  usesCodexCredentials,
+} from './model';
+import {
   type DeliveryBinding,
   deliveryWaiting,
   isClaimant,
@@ -1003,7 +1007,10 @@ function settleLost(
     ...run,
     // The executor reports an exit only after observing its worker's Job
     // terminate (or never created), so that report also retires the claim.
-    ...(by === 'executor' && run.queue !== undefined && retiresOnExit(run)
+    ...(by === 'executor' &&
+    run.queue !== undefined &&
+    retiresOnExit(run) &&
+    !usesCodexCredentials(run)
       ? { queue: { ...run.queue, state: 'retired' as const } }
       : {}),
     state: 'lost',
@@ -1117,12 +1124,34 @@ function retireSettledClaim(input: {
   run: Run;
 }): Decision | Refusal {
   const { run } = input;
-  if (
-    run.queue === undefined ||
-    !retiresOnExit(run) ||
-    run.credentialOperation !== undefined
-  )
+  if (run.queue === undefined || !retiresOnExit(run))
     return refused('run-not-live');
+  if (run.credentialOperation !== undefined) {
+    // Preserve an authenticated physical-exit receipt without clearing any
+    // claim, unknown mutation, result or original settlement timestamp.
+    if (!usesCodexCredentials(run)) return refused('run-not-live');
+    const observed =
+      run.events.at(-1)?.note === RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP &&
+      run.events.at(-1)?.by === 'executor';
+    return {
+      task: input.task,
+      run: observed
+        ? run
+        : {
+            ...run,
+            events: [
+              ...run.events,
+              {
+                at: input.now,
+                to: run.state,
+                by: 'executor',
+                note: RECIPE_EXIT_PENDING_CREDENTIAL_CLEANUP,
+              },
+            ],
+          },
+      outbox: [],
+    };
+  }
   return {
     task: input.task,
     // Only the claim changes: the settled Run keeps its settlement time, which

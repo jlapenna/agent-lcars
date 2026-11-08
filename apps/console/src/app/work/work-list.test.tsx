@@ -35,11 +35,11 @@ function renderList(items: ItemView[]) {
 }
 
 // Below `sm`, WorkList renders a card list instead of the 6-column table
-// (#1814); both branches render unconditionally in jsdom (which doesn't
-// evaluate the visibleFrom/hiddenFrom CSS media queries that keep only one
-// visible in a real browser - see session-table.test.tsx for the same
-// pattern elsewhere in this repo), so any row content shared by both views
-// appears twice and needs getAllBy* rather than getBy*.
+// (#1814). Both branches mount in the DOM, and jsdom 31+ evaluates Mantine's
+// visibleFrom/hiddenFrom media queries at the default desktop viewport (hiding
+// the `hiddenFrom="sm"` card list with `display: none` - see
+// session-table.test.tsx), so role queries pass `{ hidden: true }` when
+// asserting across both views.
 describe('WorkList', () => {
   it('shows the actual fallback pipeline while retaining the requested provider', () => {
     renderList([
@@ -167,7 +167,10 @@ describe('WorkList', () => {
 
   it('links a title to its item detail page in both the card and table views', () => {
     renderList([item]);
-    const links = screen.getAllByRole('link', { name: 'Add healthz' });
+    const links = screen.getAllByRole('link', {
+      name: 'Add healthz',
+      hidden: true,
+    });
     expect(links).toHaveLength(2);
     for (const link of links) {
       expect(link).toHaveAttribute('href', `/work/${item.id}`);

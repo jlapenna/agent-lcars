@@ -132,8 +132,19 @@ The QueueExecutor's `max_concurrent`, storage accounting and retirement remain
 the owners of resource enforcement. A failed capped run remains failed.
 
 The adapter requests Goose's JSON machine envelope, requires completed status,
-and validates only the final assistant result. Intermediate tool output cannot
-be mistaken for success. Provider credentials use the runner's existing projected
+and normally validates only the final assistant result. Intermediate tool output
+cannot be mistaken for success. An operator profile may instead declare
+`resultFile: "/tmp/skill-evals/report/result.json"` for a recipe whose tool
+writes the complete result. After Goose exits successfully with a completed
+conversation, the adapter submits that parsed file directly, preserving fields
+and failed grades without asking a model to copy them. The path must be under
+`/tmp`, must not use symbolic links, must not already exist when execution
+starts, and must produce a regular JSON file at most 256 KiB. A missing,
+invalid or oversized file fails; there is no model-text fallback. Process,
+cancellation and resource failures still fail even if a file exists. The
+existing result contract and authorization remain server-enforced. Deploy and
+verify the supporting runner image **before** activating this field on a
+production profile; capability delivery alone does not switch any profile. Provider credentials use the runner's existing projected
 Secret mechanism. The Goose child receives the configured provider environment plus the shared
 PATH, HOME and repository paths, without inheriting the run token or static
 GitHub tokens;
@@ -343,3 +354,23 @@ sets and exact job grants. Migrate aliases explicitly through the administration
 workflow before changing a job's profile. Never copy personal host credentials
 implicitly. Source changes require Console deployment and runner-image adoption;
 credential provisioning and real recurring-job qualification are separate checks.
+
+### Codex tools inside recipes
+
+An operator profile can set `providerAuth: "codex"` when its recipe needs
+Codex tools. Admission pins that choice into the exact occurrence and Run.
+The broker reauthorizes the occurrence and profile before restoring the
+existing central Codex lineage, with the same shared lease, generation CAS,
+ambiguous-write recovery and terminal cleanup used by native Codex runs.
+There is no static `auth.json` job-secret binding or cloud IAM in the Pod.
+Held-lease renewal and exact-generation persistence remain available after a
+profile revocation so an already-restored rotating login can be returned;
+revocation denies new restores. They still require the original run claim
+and the existing broker's lease/write checks.
+
+The runner creates an auth-only home in memory, runs the recipe, persists
+through the broker before submitting its result and removes that exact home
+on exit. `REPO_SKILL_EVALS_RUNNER=codex` selects the shared evaluator backend;
+normal repository App checkout and the job allocation remain unchanged.
+The profile must only be activated after the matching broker deployment and
+worker image (including the updated repo-tools backend) are both verified.

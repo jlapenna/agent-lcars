@@ -22,8 +22,7 @@ variables: `LCARS_URL`, and either `LCARS_TOKEN` or the combination of
 `LCARS_SERVICE_ACCOUNT` and `LCARS_AUDIENCE`.
 
 Regenerate `docs/api/work-v1.openapi.json` with `pnpm work:openapi`; CI
-fails when it is stale. Design:
-`docs/superpowers/specs/2026-08-23-native-work-items-design.md`.
+fails when it is stale.
 
 ## Read-only lifecycle metrics
 
@@ -206,24 +205,3 @@ undo an operator edit. Revoked retries first reconcile already-created work.
 
 The console displays the next occurrence in UTC and the browser's explicitly
 labeled local time zone. Local display never changes cron evaluation.
-
-## Composing schedule admission and executor capacity
-
-Schedule admission freezes an occurrence's spec and creator before creating
-its deterministic Work item. It does not reserve physical executor capacity.
-With receipt enforcement enabled, the resulting Run must still pass the
-capacity claim and worker activation protocol before execution. A settled
-schedule watermark records successful
-item minting; it does not prove worker activation, completion or retirement.
-
-Editing, disabling or deleting a schedule preserves an already admitted
-occurrence; its Run settles through the normal lifecycle. Schedule revision
-checks and tombstones continue to govern future occurrence admission.
-
-Both contracts share the generated Work API: regenerate OpenAPI after schema
-changes and verify schedule revision/tombstone/pending-admission cases together
-with capacity inventory/activation/retirement cases. The owning Work contract
-tests, schedule Store tests and capacity Memory/Firestore and HTTP contracts
-protect different boundaries; documentation conflict resolution alone cannot
-qualify their composition. Source delivery also leaves executor adoption and
-the separately approved runtime/Homelab qualification gates in force.

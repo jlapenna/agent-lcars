@@ -33,6 +33,7 @@ const RESUMABLE_PIPELINES: Record<string, string> = {
   claude: 'claude-code',
   codex: 'codex',
   opencode: 'opencode',
+  agy: 'antigravity',
 };
 
 /** Bounded to match `WORK_DESCRIPTION_MAX`: a reply is the same kind of
@@ -114,7 +115,9 @@ export function resumeUriFor(doc: SessionDoc): string | undefined {
   if (doc.source !== 'issue-agent' || doc.transcriptGcsUri === undefined) {
     return undefined;
   }
-  if (doc.agent === 'opencode') return doc.resumeGcsUri;
+  if (doc.agent === 'opencode') {
+    return doc.resumeGcsUri;
+  }
   return doc.resumeGcsUri ?? doc.transcriptGcsUri;
 }
 

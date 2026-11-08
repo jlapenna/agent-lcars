@@ -6,7 +6,7 @@ import type {
 export interface TriageSource {
   anchor: TriageAnchor;
   issue?: TrackerIssue;
-  pipeline?: 'claude' | 'codex' | 'opencode' | 'goose';
+  pipeline?: 'claude' | 'codex' | 'opencode' | 'agy' | 'goose';
   bug?: boolean;
   routed?: boolean;
   labelIds?: string[];

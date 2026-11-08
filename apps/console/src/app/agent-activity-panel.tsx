@@ -184,6 +184,7 @@ const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
+  agy: 'agy',
   goose: 'goose',
   'inbox-summary': 'inbox summary',
   'handoff-summary': 'handoff summary',
@@ -194,6 +195,7 @@ const PIPELINE_COLORS: Record<StoredPipeline, string> = {
   codex: 'teal',
   // The default violet outline shade fails AA on the dark ground.
   opencode: 'var(--lcars-periwinkle)',
+  agy: 'grape',
   // Internal recipe and summary work is background context, not a coding
   // provider, so it stays neutral.
   goose: 'gray',

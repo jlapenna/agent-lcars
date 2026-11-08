@@ -51,7 +51,7 @@ export function isSessionEventKind(value: unknown): value is SessionEventKind {
 /** Which runtime hook produced the event, for provenance on the stored doc
  * (`SessionObserver`) and for debugging a client/runtime version skew. */
 export interface SessionEventRuntime {
-  /** `claude-code`, `codex`, `opencode`: the agent whose hook fired. */
+  /** `claude-code`, `codex`, `opencode`, `antigravity`: the agent whose hook fired. */
   name: SessionAgent;
   /** The runtime's own hook event name (`PostToolUse`, `session.idle`...). */
   hookEvent?: string;

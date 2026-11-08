@@ -1,6 +1,6 @@
 import type { ActionItem } from './action-items';
 
-export type Pipeline = 'claude' | 'codex' | 'opencode';
+export type Pipeline = 'claude' | 'codex' | 'opencode' | 'agy';
 
 /**
  * The single next thing the maintainer should do with a queue item. Every

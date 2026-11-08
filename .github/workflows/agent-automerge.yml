@@ -76,7 +76,5 @@ jobs:
       app-token-enabled: true
       app-client-id: ${{ vars.AGENT_LCARS_CLIENT_ID }}
       runs-on: '["agent-lcars-ci-control"]'
-      # The required CI checks in the Protect main ruleset.
-      required-checks: '["E2E","Verify","Runner image pnpm-store seed","repository-owned Terraform"]'
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.AGENT_LCARS_PRIVATE_KEY }}

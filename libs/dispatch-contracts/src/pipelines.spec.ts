@@ -13,6 +13,7 @@ import {
 describe('pipeline registry', () => {
   it('resolves a contract and rejects an unknown pipeline', () => {
     expect(pipelineContract('opencode').displayName).toBe('OpenCode');
+    expect(pipelineContract('agy').displayName).toBe('Antigravity');
     expect(() => pipelineContract('gemini' as never)).toThrowError(
       /Unsupported worker pipeline/u,
     );
