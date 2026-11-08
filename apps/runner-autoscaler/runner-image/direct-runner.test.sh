@@ -2164,6 +2164,12 @@ context_path="$scenario_runner_temp/agent-dispatch/context.json"
 jq -e '.anchor.type == "pull-request" and .anchor.number == 42 and .mode == "review"' \
   "$context_path" >/dev/null ||
   fail "github review: prepare context lost the PR anchor or review mode ($(cat "$context_path"))"
+grep -Fq 'Submit a GitHub pull-request' "$OPENCODE_ARGS_LOG" ||
+  fail "github review: review prompt did not require a pull-request review ($(cat "$OPENCODE_ARGS_LOG"))"
+grep -Fq 'Do not use the NO-OP comment path' "$OPENCODE_ARGS_LOG" ||
+  fail "github review: review prompt did not forbid the NO-OP comment path ($(cat "$OPENCODE_ARGS_LOG"))"
+grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCODE_ARGS_LOG" ||
+  fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id:100,url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
 
