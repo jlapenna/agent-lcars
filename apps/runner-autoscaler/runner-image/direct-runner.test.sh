@@ -1917,6 +1917,14 @@ jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex native report limit: limit text settled as a report ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-limit: OK"
 
+# Ordinary report prose discussing quota errors must still settle as a report.
+export FAKE_CODEX_LAST_MESSAGE="# Quota Audit Findings
+Investigated RESOURCE_EXHAUSTED, insufficient_quota, and monthly spend limit errors."
+run_scenario codex-native-report-quota-prose codex
+jq -e '.outcome == "report" and (.message | contains("RESOURCE_EXHAUSTED"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report quota prose: report discussing quota errors was reclassified ($(cat "$COMPLETE_LOG"))"
+echo "scenario codex-native-report-quota-prose: OK"
+
 # The message capture keeps only the tail; an oversized report is refused
 # rather than settled without its head.
 export FAKE_CODEX_LAST_MESSAGE="# Title$(printf '%*s' 16400 '' | tr ' ' x)"
@@ -2458,6 +2466,13 @@ run_scenario provider-quota
 unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
 [ "$rc" -ne 0 ] || fail "quota: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "quota: wrong failure classification"
+
+export FAKE_GH_NO_MATCH=1
+export FAKE_CLAUDE_STDOUT="API Error: 429 {\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You have exceeded your current quota, please check your plan and billing details.\"}}"
+run_scenario provider-insufficient-quota
+unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
+[ "$rc" -ne 0 ] || fail "insufficient-quota: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "insufficient-quota: wrong failure classification"
 
 # #2537: a provider that stops on structured stream events leaves no final
 # message, so an empty LAST_MESSAGE_FILE must not degrade the report to a

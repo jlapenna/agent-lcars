@@ -1129,3 +1129,225 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
     expect(result).toEqual({ kind: 'ignore', reason: 'wrong-repo' });
   });
 });
+
+describe('unified cross-model PR review intake', () => {
+  it('auto-triggers Claude review with Antigravity fallback when a Codex PR opens ready for review', () => {
+    const result = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: {
+        action: 'opened',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: 77,
+          title: 'feat: codex change',
+          body: 'Implemented by Codex.\n\n<!-- attempt-claim:g1:jlapenna/agent-lcars#42/r1 -->',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+          head: { ref: 'codex/issue-42', sha: 'a'.repeat(40) },
+          labels: [],
+        },
+        sender: { login: 'agent-lcars[bot]' },
+      },
+    });
+    expect(result).toMatchObject({
+      kind: 'request',
+      taskId: { repo: REPO, issue: 77 },
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      fallbackPipelines: ['agy'],
+      reviewContext: {
+        authorPipeline: 'codex',
+        claimRunId: 'jlapenna/agent-lcars#42/r1',
+      },
+    });
+  });
+
+  it('auto-triggers Codex review with Antigravity fallback when a Claude PR becomes ready_for_review', () => {
+    const result = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: {
+        action: 'ready_for_review',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: 78,
+          title: 'feat: claude change',
+          body: 'Implemented by Claude.',
+          user: { login: 'claude[bot]', type: 'Bot' },
+          head: { ref: 'claude/issue-43', sha: 'b'.repeat(40) },
+          labels: [],
+        },
+        sender: { login: 'claude[bot]' },
+      },
+    });
+    expect(result).toMatchObject({
+      kind: 'request',
+      taskId: { repo: REPO, issue: 78 },
+      pipeline: 'codex',
+      params: { mode: 'review' },
+      fallbackPipelines: ['agy'],
+      reviewContext: {
+        authorPipeline: 'claude',
+      },
+    });
+  });
+
+  it('auto-triggers Claude review with Codex fallback when an Antigravity PR opens', () => {
+    const result = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: {
+        action: 'opened',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: 79,
+          title: 'feat: agy change',
+          body: 'Co-Authored-By: Antigravity <noreply@google.com>',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+          head: { ref: 'agy/issue-44', sha: 'c'.repeat(40) },
+          labels: [],
+        },
+        sender: { login: 'agent-lcars[bot]' },
+      },
+    });
+    expect(result).toMatchObject({
+      kind: 'request',
+      taskId: { repo: REPO, issue: 79 },
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      fallbackPipelines: ['codex'],
+      reviewContext: {
+        authorPipeline: 'agy',
+      },
+    });
+  });
+
+  it('ignores draft PRs and dependency bot PRs on opened', () => {
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'opened',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: true,
+            number: 80,
+            title: 'WIP',
+            user: { login: 'jlapenna' },
+            labels: [],
+          },
+          sender: { login: 'jlapenna' },
+        },
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'draft-pull-request' });
+
+    expect(
+      interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: {
+          action: 'opened',
+          repository: { full_name: REPO },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 81,
+            title: 'chore(deps): update deps',
+            user: { login: 'renovate[bot]' },
+            labels: [],
+          },
+          sender: { login: 'renovate[bot]' },
+        },
+      }),
+    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+  });
+
+  it('supports the unified review label and redirects same-model review:* labels to the opposite model', () => {
+    const unified = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: pullRequestLabeledPayload({
+        label: { name: 'review' },
+        pull_request: {
+          state: 'open',
+          number: 82,
+          title: 'Codex PR',
+          body: 'Fix',
+          user: { login: 'agent-lcars[bot]' },
+          labels: [{ name: 'review' }],
+        },
+      }),
+    });
+    expect(unified).toMatchObject({
+      kind: 'request',
+      pipeline: 'claude',
+      fallbackPipelines: ['agy'],
+      params: { mode: 'review' },
+    });
+
+    const redirected = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: pullRequestLabeledPayload({
+        label: { name: 'review:codex' },
+        pull_request: {
+          state: 'open',
+          number: 83,
+          title: 'Codex PR labeled review:codex',
+          body: 'Fix',
+          user: { login: 'agent-lcars[bot]' },
+          labels: [{ name: 'review:codex' }],
+        },
+      }),
+    });
+    expect(redirected).toMatchObject({
+      kind: 'request',
+      pipeline: 'claude',
+      fallbackPipelines: ['agy'],
+      labelRouting: {
+        mode: 'review',
+        trigger: 'review:codex',
+        crossModelOverride: true,
+      },
+    });
+  });
+
+  it('supports /review comment command on pull requests', () => {
+    const result = interpretDelivery({
+      event: 'issue_comment',
+      deliveryId: DELIVERY_ID,
+      payload: issueCommentPayload({
+        issue: {
+          state: 'open',
+          number: 84,
+          title: 'Claude PR',
+          body: 'Implemented by Claude',
+          pull_request: {
+            url: 'https://api.github.com/repos/jlapenna/agent-lcars/pulls/84',
+          },
+          user: { login: 'claude[bot]' },
+          labels: [],
+        },
+        comment: {
+          body: '/review',
+          author_association: 'OWNER',
+        },
+      }),
+    });
+    expect(result).toMatchObject({
+      kind: 'request',
+      taskId: { repo: REPO, issue: 84 },
+      pipeline: 'codex',
+      fallbackPipelines: ['agy'],
+      params: { mode: 'review' },
+    });
+  });
+});

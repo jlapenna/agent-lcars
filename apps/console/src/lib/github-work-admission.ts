@@ -23,10 +23,14 @@ import {
   type RoutingLabelConflict,
 } from './github-routing-labels';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
+import { UNIFIED_REVIEW_LABEL } from './pr-review-routing';
 import { repositoryForbiddenReason } from './work-authorization';
 import { normalizeWorkPayload } from './work-from-github';
 import { forbiddenReason, type GrantsPrincipal, sameSpec } from './work-mint';
-import { authorizeProviderFallback } from './work-provider-fallback';
+import {
+  authorizeGithubReviewProviderFallback,
+  authorizeProviderFallback,
+} from './work-provider-fallback';
 
 /** The one internal admission boundary for a GitHub issue or pull-request
  * anchor. HTTP, webhook, and console callers prepare their own identity and
@@ -46,6 +50,8 @@ export interface GithubWorkAdmissionInput {
   /** Present only for label-triggered requests; validate again at the one
    * admission boundary before any durable request or executor dispatch. */
   labelRouting?: GithubLabelRouting;
+  /** Ordered quota/cooldown fallback pipelines for signed GitHub review intake. */
+  fallbackPipelines?: readonly WorkPayload['spec']['pipeline'][];
   /** Console reply guard: this is an expectation, never a provider switch. */
   expectedEffectivePipeline?: string;
   /** A retry inherits execution intent; explicit API/reply selections do not. */
@@ -156,8 +162,15 @@ export async function admitGithubWork(
     if (conflict !== undefined) return conflict;
     const choices =
       input.labelRouting.mode === 'implement' ? AGENT_LABELS : REVIEW_LABELS;
+    const triggerPipeline = choices.get(input.labelRouting.trigger);
+    const triggerMatchesPipeline =
+      triggerPipeline === work.spec.pipeline ||
+      (input.labelRouting.mode === 'review' &&
+        (input.labelRouting.trigger === UNIFIED_REVIEW_LABEL ||
+          (input.labelRouting.crossModelOverride === true &&
+            triggerPipeline !== undefined)));
     if (
-      choices.get(input.labelRouting.trigger) !== work.spec.pipeline ||
+      !triggerMatchesPipeline ||
       input.labelRouting.mode !== input.params['mode']
     ) {
       return {
@@ -204,16 +217,22 @@ export async function admitGithubWork(
     pipeline: work.spec.pipeline,
     priority: work.spec.priority,
     providerFallbackForPipeline: (pipeline) =>
-      input.authorization?.grantsPrincipal === undefined
-        ? undefined
-        : authorizeProviderFallback(
+      input.authorization?.grantsPrincipal !== undefined
+        ? authorizeProviderFallback(
             {
               ...input.authorization.grantsPrincipal,
               sourceRepository: input.authorization.sourceRepository,
             },
             pipeline,
-            work.spec.fallbackPipelines,
-          ),
+            input.fallbackPipelines ?? work.spec.fallbackPipelines,
+          )
+        : input.params['mode'] === 'review' && input.fallbackPipelines?.length
+          ? authorizeGithubReviewProviderFallback(
+              anchor.repo,
+              pipeline,
+              input.fallbackPipelines,
+            )
+          : undefined,
     params: input.params,
     work,
     ...(input.issue === undefined ? {} : { issue: input.issue }),
@@ -232,9 +251,12 @@ export async function admitGithubWork(
       if (!coding.success) return false;
       const spec = coding.data.spec;
       // Authorization changes only execution intent, never the admitted payload.
+      // Cross-model review on an existing PR task may execute on a different
+      // reviewer pipeline than the initial task's pipeline while keeping the
+      // stored Work payload immutable.
       return sameSpec(
         spec,
-        labelProviderRequest === undefined
+        labelProviderRequest === undefined && input.params['mode'] !== 'review'
           ? work.spec
           : { ...work.spec, pipeline: spec.pipeline },
       );

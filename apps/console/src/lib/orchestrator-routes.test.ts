@@ -19,6 +19,7 @@ import {
   ProjectionRefreshError,
 } from './orchestrator-routes';
 import { workPayloadFromGithub } from './work-from-github';
+import { providerFallbackAuthority } from './work-provider-fallback';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
@@ -1615,5 +1616,121 @@ it('starts independent maintenance and waits for credential observations before 
   expect(await maintenance).toMatchObject({
     status: 200,
     body: { jobCredentials: observation },
+  });
+});
+
+describe('handleWebhookDelivery cross-model PR review and quota fallback', () => {
+  it('routes a Codex PR to Claude review and automatically falls back to Antigravity on provider-limit', async () => {
+    const { deps, store } = fixture(
+      (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
+    );
+    const prTask: TaskId = { repo: REPO, issue: 90 };
+
+    const reviewResponse = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'codex-pr-opened-review',
+      payload: {
+        action: 'opened',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: prTask.issue,
+          title: 'feat: codex change',
+          body: 'Implemented by Codex.',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+          head: { ref: 'codex/issue-90', sha: 'a'.repeat(40) },
+          labels: [],
+        },
+        sender: { login: 'agent-lcars[bot]' },
+      },
+    });
+
+    expect(reviewResponse).toEqual({
+      status: 200,
+      body: { runId: `${REPO}#90/r1`, dispatched: true },
+    });
+    const firstRun = await store.readRun(`${REPO}#90/r1`);
+    expect(firstRun).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      providerFallback: {
+        principal: 'svc:github-pr-review',
+        allowedPipelines: ['agy'],
+      },
+    });
+
+    const settled = await deps.orchestrator.report(`${REPO}#90/r1`, {
+      ok: false,
+      summary: 'provider-limit',
+    });
+    expect(settled).toMatchObject({
+      additionalRuns: [
+        expect.objectContaining({
+          runId: `${REPO}#90/r2`,
+          pipeline: 'agy',
+          params: { mode: 'review' },
+        }),
+      ],
+    });
+  });
+
+  it('resolves an Antigravity PR author from its attempt-claim run in the store even under shared agent-lcars[bot] login', async () => {
+    const { deps, store } = fixture(
+      (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
+    );
+
+    const agyImplement = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'agy-implement-delivery',
+      payload: {
+        action: 'labeled',
+        repository: { full_name: REPO },
+        issue: {
+          state: 'open',
+          number: 91,
+          title: 'Fix widget',
+          body: 'Please fix widget.',
+          labels: [{ name: 'agent:agy' }],
+        },
+        label: { name: 'agent:agy' },
+        sender: { login: 'jlapenna' },
+      },
+    });
+    expect(agyImplement.body['runId']).toBe(`${REPO}#91/r1`);
+
+    const prReview = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'agy-pr-opened-delivery',
+      payload: {
+        action: 'opened',
+        repository: { full_name: REPO },
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: 92,
+          title: 'fix: widget (#91)',
+          body: 'Fixes #91\n\n<!-- attempt-claim:g1:jlapenna/agent-lcars#91/r1 -->',
+          user: { login: 'agent-lcars[bot]', type: 'Bot' },
+          head: { ref: 'fix/widget', sha: 'd'.repeat(40) },
+          labels: [],
+        },
+        sender: { login: 'agent-lcars[bot]' },
+      },
+    });
+
+    expect(prReview).toEqual({
+      status: 200,
+      body: { runId: `${REPO}#92/r1`, dispatched: true },
+    });
+    const reviewRun = await store.readRun(`${REPO}#92/r1`);
+    expect(reviewRun).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      providerFallback: {
+        principal: 'svc:github-pr-review',
+        allowedPipelines: ['codex'],
+      },
+    });
   });
 });

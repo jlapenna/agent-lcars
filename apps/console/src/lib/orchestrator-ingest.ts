@@ -21,6 +21,14 @@ import {
   type GithubLabelRouting,
   type RoutingLabelConflict,
 } from './github-routing-labels';
+import {
+  detectPullRequestAuthorPipeline,
+  isAutomatedReviewExcludedAuthor,
+  parseAttemptClaimRunId,
+  selectCrossModelReviewer,
+  UNIFIED_REVIEW_COMMAND,
+  UNIFIED_REVIEW_LABEL,
+} from './pr-review-routing';
 import { workPayloadFromGithub } from './work-from-github';
 
 /**
@@ -32,6 +40,15 @@ import { workPayloadFromGithub } from './work-from-github';
  */
 
 export type Pipeline = 'claude' | 'codex' | 'opencode' | 'agy';
+
+export interface IngestReviewContext {
+  requestedPipeline?: Pipeline;
+  authorPipeline?: Pipeline;
+  claimRunId?: string;
+  actor: string;
+  title: string;
+  body?: string | null;
+}
 
 export interface IngestDecision {
   kind: 'request';
@@ -50,6 +67,8 @@ export interface IngestDecision {
    * direct runner will execute. */
   work: WorkPayload;
   labelRouting?: GithubLabelRouting;
+  fallbackPipelines?: readonly Pipeline[];
+  reviewContext?: IngestReviewContext;
 }
 
 export interface IngestIgnore {
@@ -90,6 +109,13 @@ const issueBodySchema = z.object({
   // parses -- absent labels reads as "no agent-option present", never a
   // parse failure. See `hasCrossRepoOption` (watched-repo.ts).
   labels: z.array(labelSchema).optional().default([]),
+  pull_request: z.record(z.string(), z.unknown()).optional(),
+  user: z
+    .object({
+      login: z.string().min(1),
+      type: z.string().optional(),
+    })
+    .optional(),
 });
 
 // Label routing requires lifecycle evidence. Tagged-comment follow-ups have
@@ -99,6 +125,16 @@ const labelAnchorSchema = issueBodySchema.extend({
   state: z.enum(['open', 'closed']),
   // Missing full-set evidence must not become a fabricated empty snapshot.
   labels: z.array(labelSchema).optional(),
+});
+
+const pullRequestAnchorSchema = labelAnchorSchema.extend({
+  draft: z.boolean().optional(),
+  head: z
+    .object({
+      ref: z.string().min(1).optional(),
+      sha: z.string().min(1).optional(),
+    })
+    .optional(),
 });
 
 const issuesEventSchema = z.object({
@@ -112,7 +148,7 @@ const issuesEventSchema = z.object({
 const pullRequestEventSchema = z.object({
   action: z.string(),
   repository: repositorySchema,
-  pull_request: labelAnchorSchema,
+  pull_request: pullRequestAnchorSchema,
   label: labelSchema.optional(),
   sender: senderSchema,
 });
@@ -190,6 +226,8 @@ function buildRequestDecision(
   work: WorkPayload,
   requestBinding?: RequestBinding,
   labelRouting?: GithubLabelRouting,
+  fallbackPipelines?: readonly Pipeline[],
+  reviewContext?: IngestReviewContext,
 ): IngestResult {
   const taskId = taskIdSchema.safeParse({ repo, issue });
   if (!taskId.success) return ignore('malformed-payload');
@@ -202,6 +240,8 @@ function buildRequestDecision(
     params,
     work,
     ...(labelRouting === undefined ? {} : { labelRouting }),
+    ...(fallbackPipelines === undefined ? {} : { fallbackPipelines }),
+    ...(reviewContext === undefined ? {} : { reviewContext }),
   };
 }
 
@@ -215,6 +255,72 @@ function terminalQuickTaskBinding(
   if (!quickTask) return undefined;
   const canonicalRequestId = `console-quick-task:${quickTask.requestId}`;
   return { bindingKey: canonicalRequestId, canonicalRequestId };
+}
+
+function buildReviewRequestDecision(input: {
+  repo: string;
+  issue: number;
+  deliveryId: string;
+  title: string;
+  body: string | null | undefined;
+  actor: string;
+  labels: readonly { name: string }[];
+  userLogin?: string;
+  headRef?: string;
+  requestedPipeline?: Pipeline;
+  labelRouting?: GithubLabelRouting;
+}): IngestResult {
+  const authorPipeline = detectPullRequestAuthorPipeline({
+    labels: input.labels,
+    userLogin: input.userLogin,
+    body: input.body,
+    headRef: input.headRef,
+  });
+  const selection = selectCrossModelReviewer({
+    repo: input.repo,
+    authorPipeline,
+    requestedPipeline: input.requestedPipeline,
+  });
+  const labelRouting =
+    input.labelRouting === undefined
+      ? undefined
+      : {
+          ...input.labelRouting,
+          ...(selection.crossModelOverride ? { crossModelOverride: true } : {}),
+        };
+  if (labelRouting !== undefined) {
+    const conflict = checkGithubLabelRouting(labelRouting);
+    if (conflict) return conflict;
+  }
+  const work = workPayloadFromGithub({
+    title: input.title,
+    body: input.body,
+    pipeline: selection.pipeline,
+    repo: input.repo,
+    actor: input.actor,
+  });
+  const claimRunId = parseAttemptClaimRunId(input.body);
+  return buildRequestDecision(
+    input.repo,
+    input.issue,
+    input.deliveryId,
+    selection.pipeline,
+    { mode: 'review', ...crossRepoParams(input.labels) },
+    work,
+    undefined,
+    labelRouting,
+    selection.fallbackPipelines,
+    {
+      ...(input.requestedPipeline === undefined
+        ? {}
+        : { requestedPipeline: input.requestedPipeline }),
+      ...(authorPipeline === undefined ? {} : { authorPipeline }),
+      ...(claimRunId === undefined ? {} : { claimRunId }),
+      actor: input.actor,
+      title: input.title,
+      body: input.body,
+    },
+  );
 }
 
 function interpretIssuesEvent(
@@ -282,6 +388,44 @@ function interpretPullRequestEvent(
 
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
+
+  if (action === 'opened' || action === 'ready_for_review') {
+    if (pullRequest.state !== 'open') return ignore('anchor-closed');
+    if (pullRequest.draft === true) return ignore('draft-pull-request');
+    if (pullRequest.draft !== false || pullRequest.user === undefined) {
+      return ignore('unhandled-action');
+    }
+    const labels = pullRequest.labels ?? [];
+    if (
+      isAutomatedReviewExcludedAuthor(pullRequest.user.login) ||
+      labels.some(
+        (item) =>
+          item.name === 'status:needs-human' || item.name === 'bot:renovate',
+      )
+    ) {
+      return ignore('excluded-review-author');
+    }
+    if (
+      labels.some(
+        (item) =>
+          REVIEW_LABELS.has(item.name) || item.name === UNIFIED_REVIEW_LABEL,
+      )
+    ) {
+      return ignore('explicit-review-label-present');
+    }
+    return buildReviewRequestDecision({
+      repo: repository.full_name,
+      issue: pullRequest.number,
+      deliveryId,
+      title: pullRequest.title,
+      body: pullRequest.body,
+      actor: sender.login,
+      labels,
+      userLogin: pullRequest.user.login,
+      headRef: pullRequest.head?.ref,
+    });
+  }
+
   if (action !== 'labeled') return ignore('unhandled-action');
   if (pullRequest.state !== 'open') return ignore('anchor-closed');
 
@@ -318,33 +462,26 @@ function interpretPullRequestEvent(
   }
 
   const reviewPipeline = REVIEW_LABELS.get(labelName);
-  if (reviewPipeline) {
-    const labelRouting: GithubLabelRouting = {
-      mode: 'review',
-      trigger: labelName,
-      labels: pullRequest.labels,
-      requestedAt: pullRequest.updated_at,
-      actor: sender.login,
-    };
-    const conflict = checkGithubLabelRouting(labelRouting);
-    if (conflict) return conflict;
-    const work = workPayloadFromGithub({
+  if (reviewPipeline !== undefined || labelName === UNIFIED_REVIEW_LABEL) {
+    return buildReviewRequestDecision({
+      repo: repository.full_name,
+      issue: pullRequest.number,
+      deliveryId,
       title: pullRequest.title,
       body: pullRequest.body,
-      pipeline: reviewPipeline,
-      repo: repository.full_name,
       actor: sender.login,
+      labels: pullRequest.labels ?? [],
+      userLogin: pullRequest.user?.login,
+      headRef: pullRequest.head?.ref,
+      requestedPipeline: reviewPipeline,
+      labelRouting: {
+        mode: 'review',
+        trigger: labelName,
+        labels: pullRequest.labels,
+        requestedAt: pullRequest.updated_at,
+        actor: sender.login,
+      },
     });
-    return buildRequestDecision(
-      repository.full_name,
-      pullRequest.number,
-      deliveryId,
-      reviewPipeline,
-      { mode: 'review', ...crossRepoParams(pullRequest.labels ?? []) },
-      work,
-      undefined,
-      labelRouting,
-    );
   }
 
   return ignore('no-trigger-label');
@@ -361,6 +498,31 @@ function interpretIssueCommentEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
   if (action !== 'created') return ignore('unhandled-action');
+
+  const isUnifiedReviewCommand =
+    issue.pull_request !== undefined &&
+    matchReplyTrigger(comment.body, [UNIFIED_REVIEW_COMMAND]) ===
+      UNIFIED_REVIEW_COMMAND;
+
+  if (isUnifiedReviewCommand) {
+    if (
+      comment.user?.type === 'Bot' ||
+      (comment.author_association !== 'OWNER' &&
+        comment.author_association !== 'MEMBER')
+    ) {
+      return ignore('untrusted-author');
+    }
+    return buildReviewRequestDecision({
+      repo: repository.full_name,
+      issue: issue.number,
+      deliveryId,
+      title: issue.title,
+      body: issue.body,
+      actor: sender.login,
+      labels: issue.labels,
+      userLogin: issue.user?.login,
+    });
+  }
 
   const pipeline = matchReplyCommand(comment.body);
   if (!pipeline) return ignore('no-reply-command');

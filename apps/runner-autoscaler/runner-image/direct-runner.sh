@@ -1575,11 +1575,37 @@ fi
 # task decision. Keep this narrow and only classify unsuccessful outcomes.
 # A published deliverable has already settled the outcome above, so work the
 # agent finished and pushed is never reclassified. A report is its message, so
-# a provider failure in that message is not a report.
+# only an anchored CLI limit response at the start of that message or a
+# structured provider failure event reclassifies it; ordinary report prose
+# discussing quota errors stays a report.
+is_provider_limit_message() {
+  local text="$1"
+  [[ "$text" == "You've hit your weekly limit"* ]] ||
+    [[ "$text" == "You've hit your usage limit"* ]] ||
+    [[ "$text" == "Credit balance is too low"* ]] ||
+    { [[ "$text" == "API Error: 429 "* ]] && is_provider_limit_failure "$text"; }
+}
+is_provider_limit_failure() {
+  local text="$1"
+  [[ "$text" == *"You've hit your weekly limit"* ]] ||
+    [[ "$text" == *"You've hit your usage limit"* ]] ||
+    [[ "$text" == *"usage_limit_reached"* ]] ||
+    [[ "$text" == *"insufficient_quota"* ]] ||
+    [[ "$text" == *"exceeded your current quota"* ]] ||
+    [[ "$text" == *"credit balance is too low"* ]] ||
+    [[ "$text" == *"Credit balance is too low"* ]] ||
+    [[ "$text" == *"monthly spend limit"* ]] ||
+    [[ "$text" == *"ResourceExhausted"* ]] ||
+    [[ "$text" == *"RESOURCE_EXHAUSTED"* ]]
+}
 if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
-  if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
-    [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
+  if is_provider_limit_message "$AGENT_MESSAGE" ||
+    is_provider_limit_failure "$PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
+    if [ -z "$AGENT_MESSAGE" ] && [ -n "$PROVIDER_FAILURES" ]; then
+      AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+      AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+    fi
   elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
     # Distinct from the weekly quota window: the control plane holds this
     # provider for one bounded probe instead of a reported reset, and only an
