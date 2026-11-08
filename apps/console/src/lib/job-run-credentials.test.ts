@@ -150,7 +150,7 @@ it('keeps ordinary Goose profiles on installation credentials', async () => {
   expect(credential).not.toHaveBeenCalled();
 });
 
-it('uses leased Codex auth for the deployed eval profile with repository App checkout and no job secrets', async () => {
+it('uses leased Codex auth for the deployed eval profile with repository App checkout and only its Garage rclone file', async () => {
   const config = parseYaml(
     readFileSync(
       path.join(import.meta.dirname, '../../apphosting.yaml'),
@@ -170,7 +170,18 @@ it('uses leased Codex auth for the deployed eval profile with repository App che
     workId,
     definition: { repository: 'jlapenna/agent-lcars', name: 'skill-evals' },
     profile,
+    secretSnapshot: {
+      credentialSet: { name: 'skill-evals', revision: 2 },
+      versions: { 'skill-evals-garage-rclone': '1' },
+    },
   });
+  expect(profile.credentialSet).toEqual({ name: 'skill-evals', revision: 2 });
+  // The set has no GitHub binding, so checkout keeps the repository App.
+  credential.mockResolvedValue(undefined);
+  context.jobCredentials!.deliver = vi.fn(async () => ({
+    environment: {},
+    files: { 'garage-rclone': 'fixture-rclone-profile' },
+  }));
   context.store.readTask = vi.fn(async () => ({
     task: { work: { spec: { target: { repo: 'jlapenna/agent-lcars' } } } },
   })) as typeof context.store.readTask;
@@ -186,9 +197,11 @@ it('uses leased Codex auth for the deployed eval profile with repository App che
 
   const delivered = await request('job-secrets');
   expect(delivered.status).toBe(200);
-  expect(delivered.body).toEqual({ environment: {}, files: {} });
-  expect(context.jobCredentials!.deliver).not.toHaveBeenCalled();
-  expect(credential).not.toHaveBeenCalled();
+  expect(delivered.body).toEqual({
+    environment: {},
+    files: { 'garage-rclone': 'fixture-rclone-profile' },
+  });
+  expect(context.jobCredentials!.deliver).toHaveBeenCalledTimes(1);
   const checkout = await request();
   expect(checkout.status).toBe(200);
   expect(checkout.body.token).toBe('fixture-app-token');
