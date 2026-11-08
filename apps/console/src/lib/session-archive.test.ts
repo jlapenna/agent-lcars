@@ -324,7 +324,7 @@ describe('toSessionRow', () => {
 describe('getSessionArchive', () => {
   afterEach(() => vi.resetAllMocks());
 
-  it('passes activeSince/source/issueNumber/limit through to the store', async () => {
+  it('requests exhaustive sessions with the archive window and source/issue filters', async () => {
     (listSessionDocs as Mock).mockResolvedValue([]);
 
     await getSessionArchive({ days: 7, source: 'cli', issueNumber: 42 });
@@ -334,7 +334,7 @@ describe('getSessionArchive', () => {
       expect.objectContaining({
         source: 'cli',
         issueNumber: 42,
-        limit: 200,
+        exhaustive: true,
       }),
     );
   });
@@ -460,7 +460,7 @@ describe('costs archive selection', () => {
       undefined,
       expect.objectContaining({
         activeSince: '2026-07-10T10:00:00.000Z',
-        limit: 200,
+        exhaustive: true,
       }),
     );
   });
@@ -503,17 +503,46 @@ describe('costs archive selection', () => {
     expect(spendStore.readGithubAnchorProjection).toHaveBeenCalledTimes(1);
     expect(result.warnings).toHaveLength(1);
   });
-  it('flags the pre-repository session ceiling, even if the selected subset is empty', async () => {
-    vi.mocked(listSessionDocs).mockResolvedValue(
-      Array.from({ length: 200 }, () => cliDoc()),
-    );
+  it('includes matching sessions beyond the former ceiling in rows and totals', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue([
+      ...Array.from({ length: 200 }, (_, index) =>
+        cliDoc({ sessionId: `other-${index}`, totalCostUsd: 100 }),
+      ),
+      ...Array.from({ length: 25 }, (_, index) =>
+        agentDoc({
+          sessionId: `selected-${index}`,
+          issueNumber: 42,
+          totalCostUsd: 2,
+          repo: { owner: 'other', name: 'repo' },
+        }),
+      ),
+    ]);
     const result = await getSessionArchive(
       { days: 14, repo: { owner: 'other', name: 'repo' } },
       { includeSpend: true },
     );
-    expect(result.spend?.coverageLimited).toBe(true);
-    expect(result.spend?.totals.sessions).toBe(0);
-    expect(result.warnings[0]).toContain('Session limit reached');
+    expect(result.rows).toHaveLength(25);
+    expect(result.rows.at(-1)?.sessionId).toBe('selected-24');
+    expect(result.spend?.coverageLimited).toBe(false);
+    expect(result.spend?.totals.sessions).toBe(25);
+    expect(result.spend?.totals.costUsd).toBe(50);
+    expect(result.ledger.byIssue[0]?.costUsd).toBe(50);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('does not mark a complete 200-session archive as partial', async () => {
+    vi.mocked(listSessionDocs).mockResolvedValue(
+      Array.from({ length: 200 }, (_, index) =>
+        cliDoc({ sessionId: `${index}` }),
+      ),
+    );
+    const result = await getSessionArchive(
+      { days: 14 },
+      { includeSpend: true },
+    );
+    expect(result.rows).toHaveLength(200);
+    expect(result.spend?.coverageLimited).toBe(false);
+    expect(result.warnings).toEqual([]);
   });
   it('keeps a failed archive incomplete rather than treating it as zero known spend', async () => {
     vi.mocked(listSessionDocs).mockRejectedValue(new Error('unavailable'));

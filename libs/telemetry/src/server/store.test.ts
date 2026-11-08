@@ -261,6 +261,28 @@ describe('listSessionDocs', () => {
     expect(await listSessionDocs(firestore, { limit: 5 })).toHaveLength(5);
   });
 
+  it('retains every streamed archive match beyond 200 in stable activity order', async () => {
+    const records = Array.from({ length: 1001 }, (_, index) => ({
+      ...cliSession,
+      sessionId: `session-${index}`,
+      lastActivityAt: new Date(
+        Date.parse(cliSession.lastActivityAt) + Math.floor(index / 2) * 1000,
+      ).toISOString(),
+    }));
+    const docs = await listSessionDocs(
+      streamingFirestore({ [SESSIONS_COLLECTION]: records }),
+      { activeSince: cliSession.lastActivityAt, exhaustive: true, limit: 5 },
+    );
+    expect(docs).toHaveLength(1001);
+    expect(new Set(docs.map((doc) => doc.sessionId)).size).toBe(1001);
+    expect(docs.slice(0, 3).map((doc) => doc.sessionId)).toEqual([
+      'session-1000',
+      'session-998',
+      'session-999',
+    ]);
+    expect(docs.at(-1)?.sessionId).toBe('session-1');
+  });
+
   it('streams a large unordered match set into the bounded newest page', async () => {
     const records = Array.from({ length: 1001 }, (_, i) => ({
       id: `session-${i}`,
