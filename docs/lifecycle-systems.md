@@ -88,11 +88,25 @@ Fallback is opt in: Work `spec.fallbackPipelines` names ordered alternatives;
 reply and redispatch may override the list for one request (`[]` disables it).
 Omission preserves the existing provider and label selection. New work's picker
 and `lcars work create/redispatch --fallback-pipelines codex,opencode` expose the
-same contract; `--fallback-pipelines none` disables an inherited list.
+same contract; `--fallback-pipelines none` disables an inherited list. GitHub
+pull-request review runs admitted through `pr-review-routing.ts` populate
+`spec.fallbackPipelines` automatically under principal `svc:github-pr-review`
+(`codex` PR -> `claude` with `['agy']`; `claude` PR -> `codex` with `['agy']`;
+`agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
+`review:codex` is requested; `opencode`/human PR -> `claude` with
+`['codex', 'agy']`).
 
 Admission intersects the list with the authenticated principal's pipeline
 grant. A failed `provider-limit` report can atomically settle its attempt,
 retain the limited provider's cooldown and mint a fresh authorized successor.
+`direct-runner.sh` classifies `provider-limit` from anchored CLI limit banners
+at the start of `$AGENT_MESSAGE` (`You've hit your weekly limit`,
+`You've hit your usage limit`, `Credit balance is too low`, `API Error: 429`
+quota errors) and from structured provider failure events in
+`$PROVIDER_FAILURES` (`usage_limit_reached`, `insufficient_quota`,
+`exceeded your current quota`, `credit balance is too low`,
+`monthly spend limit`, `ResourceExhausted`, `RESOURCE_EXHAUSTED`), keeping
+ordinary `report` prose distinct from provider quota stops.
 It prefers an available authorized alternative. When all remaining alternatives
 are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
