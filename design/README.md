@@ -5,7 +5,8 @@ directly (they load bundled fonts from `assets/fonts/` with no build step).
 
 `assets/icons/app-icon.svg` is the installed-app icon. Its glyph stays inside
 the central 80% maskable safe zone. Re-render `apps/console/public/icon-192.png`,
-`icon-512.png` and `apple-touch-icon.png` (180px) from it when it changes.
+`icon-512.png`, `apple-touch-icon.png` (180px) and `favicon.ico` (16/32/48px)
+from it when it changes.
 
 `fleet-console.html` is the layout target for the console: its elbow rail,
 header, workspace frame, panels and tables are what the routes are built to,
