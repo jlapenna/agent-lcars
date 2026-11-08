@@ -155,7 +155,8 @@ redact_runner_secrets() {
     "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${HINDSIGHT_API_TOKEN:-}")
   for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
     "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}" \
-    "${HINDSIGHT_TOKEN_FILE:-/run/secrets/hindsight-api-token}"; do
+    "${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}" \
+    "/run/secrets/hindsight-api-token"; do
     if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
   done
   if [ -n "${CODEX_AUTH_FILE:-}" ] && [ -r "$CODEX_AUTH_FILE" ]; then

@@ -22,7 +22,10 @@ hindsight_bootstrap() {
     return 0
   fi
 
-  local token_file="${HINDSIGHT_TOKEN_FILE:-/run/secrets/hindsight-api-token}"
+  local token_file="${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}"
+  if [ ! -f "$token_file" ] && [ -z "${HINDSIGHT_TOKEN_FILE:-}" ] && [ -f /run/secrets/hindsight-api-token ]; then
+    token_file="/run/secrets/hindsight-api-token"
+  fi
   local token=""
   if [ -n "$token_file" ] && [ -f "$token_file" ] && [ -r "$token_file" ]; then
     token="$(tr -d '\r\n' <"$token_file")"
