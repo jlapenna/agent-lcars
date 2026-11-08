@@ -944,7 +944,12 @@ defined in `libs/work/README.md` and the generated Work API contract.
 non-`secrets.admin` access gate for `svc:production-verifier`), `/sessions`,
 `/sessions/31686b29-9dc4-4f89-b29c-c038602de746`, `/costs`, `/settings`,
 `/task/jlapenna/homelab/3200` (verifying `FE-SB-3a` requested/effective provider
-handoff provenance), and `/task/jlapenna/agent-lcars/3133`.
+handoff provenance), and `/task/jlapenna/agent-lcars/3133`. Live `secrets.admin`
+write mutations were also qualified on `2026-11-08` against
+`https://lcars.jlapenna.net/api/work/v1/job-secrets` (`register`, `upload`,
+`promote`, `sets` publish, and `grants` upsert for `skill-evals-garage-rclone`
+version `1`, `skill-evals` credential-set revision `2`, and nine repository
+grants).
 
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
@@ -958,9 +963,9 @@ their behavior is owned by the corresponding destination requirements above.
 R2 now tracks live qualification of mutating journeys beyond the read-only
 route and telemetry qualification recorded in §9. Existing IDs are not reused.
 
-| #   | Remaining work                                                                                       | Acceptance boundary                                                                                                          | Priority |
-| --- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R2  | Qualify mutating production journeys in §9 (including real GitHub merge/rebase and secrets.admin UI) | Record live evidence separately from the shipped hermetic suite; read-only route qualification does not prove mutating paths | P0       |
+| #   | Remaining work                                                      | Acceptance boundary                                                                                                          | Priority |
+| --- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Qualify live GitHub merge/rebase mutating production journeys in §9 | Record live evidence separately from the shipped hermetic suite; read-only route qualification does not prove mutating paths | P0       |
 
 ## 11. Success metrics
 
