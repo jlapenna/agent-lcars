@@ -13,9 +13,9 @@ if mkdir "$state" 2>/dev/null; then
   fi
   set -- "$@" -- --ablation none --max-cost-usd 12 -j 2
   if command -v repo-skill-evals >/dev/null 2>&1; then
-    if repo-skill-evals "$@" >"$state/output.log" 2>&1; then status=0; else status=$?; fi
+    if EVAL_HISTORY_REMOTE=garage:eval-history EVAL_HISTORY_RCLONE_CONFIG="$LCARS_JOB_SECRET_FILES_DIR/garage-rclone" repo-skill-evals "$@" >"$state/output.log" 2>&1; then status=0; else status=$?; fi
   else
-    if node /opt/repo-tools/bin/skill-evals.mjs "$@" >"$state/output.log" 2>&1; then status=0; else status=$?; fi
+    if EVAL_HISTORY_REMOTE=garage:eval-history EVAL_HISTORY_RCLONE_CONFIG="$LCARS_JOB_SECRET_FILES_DIR/garage-rclone" node /opt/repo-tools/bin/skill-evals.mjs "$@" >"$state/output.log" 2>&1; then status=0; else status=$?; fi
   fi
   printf '%s\n' "$status" >"$state/exit"
 else
