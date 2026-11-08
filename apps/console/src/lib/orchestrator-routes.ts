@@ -1,6 +1,8 @@
-import type {
-  IssueReference,
-  TriageAnchor,
+import {
+  type AgentPipeline,
+  isDispatchPipeline,
+  type IssueReference,
+  type TriageAnchor,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
@@ -26,10 +28,13 @@ import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
 import { wakeDeliveryMonitor } from '@/lib/orchestrator-dispatch';
 import {
   githubAnchorClosureFromDelivery,
+  type IngestDecision,
   type IngestResult,
   interpretDelivery,
 } from '@/lib/orchestrator-ingest';
+import { selectCrossModelReviewer } from '@/lib/pr-review-routing';
 import { attemptTaggedReplyResume } from '@/lib/tagged-reply-resume';
+import { workPayloadFromGithub } from '@/lib/work-from-github';
 
 /**
  * Pure-ish HTTP handlers for the two control-plane routes, kept out of
@@ -326,6 +331,86 @@ async function handleIgnoredDelivery(
   };
 }
 
+async function resolveAuthorPipelineFromStore(
+  deps: OrchestratorRouteDeps,
+  interpreted: IngestDecision,
+): Promise<AgentPipeline | undefined> {
+  const claimRunId = interpreted.reviewContext?.claimRunId;
+  if (claimRunId !== undefined) {
+    const claimedRun = await deps.store.readRun(claimRunId);
+    if (claimedRun !== undefined && isDispatchPipeline(claimedRun.pipeline)) {
+      return claimedRun.pipeline;
+    }
+  }
+  const runs = await deps.store.listRuns(interpreted.taskId);
+  let newestImplementRun: Run | undefined;
+  for (const run of runs) {
+    if (run.params?.['mode'] !== 'implement') continue;
+    if (
+      newestImplementRun === undefined ||
+      run.createdAt > newestImplementRun.createdAt
+    ) {
+      newestImplementRun = run;
+    }
+  }
+  if (
+    newestImplementRun !== undefined &&
+    isDispatchPipeline(newestImplementRun.pipeline)
+  ) {
+    return newestImplementRun.pipeline;
+  }
+  return undefined;
+}
+
+async function resolveReviewDecisionFromStore(
+  deps: OrchestratorRouteDeps,
+  interpreted: IngestDecision,
+): Promise<IngestDecision> {
+  if (
+    isWorkAnchor(interpreted.taskId) ||
+    interpreted.params['mode'] !== 'review' ||
+    interpreted.reviewContext === undefined
+  ) {
+    return interpreted;
+  }
+  const authorPipelineFromStore = await resolveAuthorPipelineFromStore(
+    deps,
+    interpreted,
+  );
+  if (
+    authorPipelineFromStore === undefined ||
+    authorPipelineFromStore === interpreted.reviewContext.authorPipeline
+  ) {
+    return interpreted;
+  }
+  const selection = selectCrossModelReviewer({
+    repo: interpreted.taskId.repo,
+    authorPipeline: authorPipelineFromStore,
+    requestedPipeline: interpreted.reviewContext.requestedPipeline,
+  });
+  const work = workPayloadFromGithub({
+    title: interpreted.reviewContext.title,
+    body: interpreted.reviewContext.body,
+    pipeline: selection.pipeline,
+    repo: interpreted.taskId.repo,
+    actor: interpreted.reviewContext.actor,
+  });
+  const labelRouting =
+    interpreted.labelRouting === undefined
+      ? undefined
+      : {
+          ...interpreted.labelRouting,
+          ...(selection.crossModelOverride ? { crossModelOverride: true } : {}),
+        };
+  return {
+    ...interpreted,
+    pipeline: selection.pipeline,
+    work,
+    fallbackPipelines: selection.fallbackPipelines,
+    ...(labelRouting === undefined ? {} : { labelRouting }),
+  };
+}
+
 /** The durable decision for a delivery that names work: a routing-label
  * conflict, a tagged-reply resume, or ordinary admission. Returns the
  * response body only; the caller owns the single projection refresh. */
@@ -373,14 +458,19 @@ async function decideDelivery(
     // guard), so no second run is ever created.
   }
 
+  const resolvedDecision = await resolveReviewDecisionFromStore(
+    deps,
+    interpreted,
+  );
+
   // The first label-triggered run stays byte-for-byte on its existing
   // prompt path. On a later label request, carry only the previous run's
   // timestamp; the native runtime uses it to expose a bounded,
   // author-attributed comment window in the brief.
   const params = await labelRedispatchParams(deps, {
     event: input.event,
-    taskId: interpreted.taskId,
-    params: interpreted.params,
+    taskId: resolvedDecision.taskId,
+    params: resolvedDecision.params,
   });
 
   const projection = githubAnchorProjectionFromDelivery({
@@ -392,16 +482,19 @@ async function decideDelivery(
     ...(projection === undefined
       ? {}
       : { issue: issueFromGithubProjection(projection) }),
-    anchor: interpreted.taskId,
-    requestId: interpreted.requestId,
+    anchor: resolvedDecision.taskId,
+    requestId: resolvedDecision.requestId,
     params,
-    work: interpreted.work,
-    ...(interpreted.labelRouting === undefined
+    work: resolvedDecision.work,
+    ...(resolvedDecision.labelRouting === undefined
       ? {}
-      : { labelRouting: interpreted.labelRouting }),
-    ...(interpreted.requestBinding === undefined
+      : { labelRouting: resolvedDecision.labelRouting }),
+    ...(resolvedDecision.fallbackPipelines === undefined
       ? {}
-      : { requestBinding: interpreted.requestBinding }),
+      : { fallbackPipelines: resolvedDecision.fallbackPipelines }),
+    ...(resolvedDecision.requestBinding === undefined
+      ? {}
+      : { requestBinding: resolvedDecision.requestBinding }),
   });
 
   switch (outcome.kind) {

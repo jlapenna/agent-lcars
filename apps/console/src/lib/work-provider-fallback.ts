@@ -17,6 +17,11 @@ import { isControlPlaneRepository } from './deployment';
 import { repositoryForbiddenReason } from './work-authorization';
 import { grantForPrincipal, type WorkGrant, workGrants } from './work-grants';
 
+/** Synthetic principal recorded on signed GitHub webhook PR review admissions
+ * so quota/cooldown fallback can re-verify repository admission andreview-mode
+ * scope without requiring an operator Work grant. */
+export const GITHUB_PR_REVIEW_PRINCIPAL = 'svc:github-pr-review';
+
 /** A trusted ingress supplies identity; callers supply only ordered choices. */
 export function authorizeProviderFallback(
   principal: {
@@ -44,6 +49,22 @@ export function authorizeProviderFallback(
   };
 }
 
+export function authorizeGithubReviewProviderFallback(
+  repository: string,
+  pipeline: string,
+  alternatives: readonly string[] | undefined,
+): ProviderFallbackRequest | undefined {
+  return authorizeProviderFallback(
+    {
+      principal: GITHUB_PR_REVIEW_PRINCIPAL,
+      pipelines: PIPELINES,
+      sourceRepository: repository,
+    },
+    pipeline,
+    alternatives,
+  );
+}
+
 /** Re-resolve authority for each decision, including scope/repository removal.
  * The original policy is an upper bound, never a grant for a future attempt. */
 export function currentFallbackPipelines(
@@ -54,8 +75,6 @@ export function currentFallbackPipelines(
 ): readonly string[] {
   const policy = run.providerFallback;
   if (policy === undefined) return [];
-  const grant = grantForPrincipal(policy.principal, grants);
-  if (grant === undefined || !grant.scopes.includes('work.operator')) return [];
   const payload = workPayloadSchema.safeParse(task.work);
   if (!payload.success) return [];
   const repository = payload.data.spec.target.repo;
@@ -65,6 +84,19 @@ export function currentFallbackPipelines(
     (!isWorkAnchor(task.task) && task.task.repo !== repository)
   )
     return [];
+  if (policy.principal === GITHUB_PR_REVIEW_PRINCIPAL) {
+    if (
+      run.params?.['mode'] !== 'review' ||
+      payload.data.origin.channel !== 'github' ||
+      isWorkAnchor(task.task)
+    )
+      return [];
+    return PIPELINES.filter((pipeline) =>
+      policy.allowedPipelines.includes(pipeline),
+    );
+  }
+  const grant = grantForPrincipal(policy.principal, grants);
+  if (grant === undefined || !grant.scopes.includes('work.operator')) return [];
   return grant.pipelines.filter((pipeline) =>
     policy.allowedPipelines.includes(pipeline),
   );

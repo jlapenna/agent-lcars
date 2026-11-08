@@ -2459,6 +2459,13 @@ unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
 [ "$rc" -ne 0 ] || fail "quota: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "quota: wrong failure classification"
 
+export FAKE_GH_NO_MATCH=1
+export FAKE_CLAUDE_STDOUT="API Error: 429 {\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You have exceeded your current quota, please check your plan and billing details.\"}}"
+run_scenario provider-insufficient-quota
+unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
+[ "$rc" -ne 0 ] || fail "insufficient-quota: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "insufficient-quota: wrong failure classification"
+
 # #2537: a provider that stops on structured stream events leaves no final
 # message, so an empty LAST_MESSAGE_FILE must not degrade the report to a
 # generic agent failure, and it must stay distinct from the weekly quota.

@@ -23,13 +23,22 @@ state remain their respective artifact facts.
   `routing-label-conflict`, the namespace, sorted conflicting labels, and
   explicit maintainer resolution guidance. Immutable Work admission remains
   a second fence; neither gate self-heals intent by rewriting labels.
-- `review:*` (pull requests only; declared fleet-wide since #1312 -- #567
-  introduced it on Agent LCARS alone, while the native verifier's
-  `MODE=review` support was already fleet-wide) asks an agent to leave a
-  review on the diff instead of taking it over -- no commits pushed. Same one-of-four-and-only-within-its-own-namespace
-  contract as `agent:*`, evaluated independently: a PR may carry an
-  `agent:*` label, a `review:*` label, both, or neither, and each drives
-  its own dispatch mode when applied.
+- `review:*` and `review` / `/review` (pull requests only; declared fleet-wide
+  since #1312 -- #567 introduced it on Agent LCARS alone, while the native
+  verifier's `MODE=review` support was already fleet-wide) ask an agent to
+  leave a review on the diff instead of taking it over -- no commits pushed.
+  Same one-choice-within-its-own-namespace contract as `agent:*`, evaluated
+  independently: a PR may carry an `agent:*` label, a `review:*` (or `review`)
+  label, both, or neither, and each drives its own dispatch mode when applied.
+  Ready-for-review pull requests (`opened` with `draft: false` or
+  `ready_for_review`), the unified `review` label, the `/review` PR comment
+  command, and `review:*` labels all route through unified cross-model review
+  selection (`pr-review-routing.ts`): Codex PRs are reviewed by Claude with
+  Antigravity (`agy`) quota fallback, Claude PRs are reviewed by Codex with
+  Antigravity (`agy`) quota fallback, Antigravity PRs are reviewed by Claude
+  with Codex fallback, and a same-model `review:<pipeline>` label on an
+  agent-authored PR is redirected to the opposite model so an agent never
+  reviews its own PR.
 - `agent-option:*` modifies an agent run without selecting the executor.
   `agent-option:cross-repo` (#1993) grants the run one GitHub token per
   fleet owner (every owner among the watched-repositories configuration),

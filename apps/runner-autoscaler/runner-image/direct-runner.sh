@@ -1576,10 +1576,27 @@ fi
 # A published deliverable has already settled the outcome above, so work the
 # agent finished and pushed is never reclassified. A report is its message, so
 # a provider failure in that message is not a report.
+is_provider_limit_text() {
+  local text="$1"
+  [[ "$text" == "You've hit your weekly limit"* ]] ||
+    [[ "$text" == *"You've hit your weekly limit"* ]] ||
+    [[ "$text" == *"You've hit your usage limit"* ]] ||
+    [[ "$text" == *"usage_limit_reached"* ]] ||
+    [[ "$text" == *"insufficient_quota"* ]] ||
+    [[ "$text" == *"exceeded your current quota"* ]] ||
+    [[ "$text" == *"credit balance is too low"* ]] ||
+    [[ "$text" == *"monthly spend limit"* ]] ||
+    [[ "$text" == *"ResourceExhausted"* ]] ||
+    [[ "$text" == *"RESOURCE_EXHAUSTED"* ]]
+}
 if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
-  if [[ "$AGENT_MESSAGE" == "You've hit your weekly limit"* ]] ||
-    [[ "$PROVIDER_FAILURES" == *"You've hit your weekly limit"* ]]; then
+  if is_provider_limit_text "$AGENT_MESSAGE" ||
+    is_provider_limit_text "$PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
+    if [ -z "$AGENT_MESSAGE" ] && [ -n "$PROVIDER_FAILURES" ]; then
+      AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+      AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+    fi
   elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
     # Distinct from the weekly quota window: the control plane holds this
     # provider for one bounded probe instead of a reported reset, and only an
