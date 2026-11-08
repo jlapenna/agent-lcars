@@ -47,4 +47,11 @@ describe('published protocol CI label contract', () => {
       expect(repositoriesDeclaring(label).length).toBeGreaterThan(0);
     },
   );
+
+  it('declares the unified review label on every repository that supports PR review labels', () => {
+    expect(manifest.labels.review).toBeDefined();
+    expect(repositoriesDeclaring('review')).toEqual(
+      repositoriesDeclaring('review:claude'),
+    );
+  });
 });
