@@ -3,7 +3,7 @@
 - **Status:** Product specification of record for the agent fleet control
   plane. Originally written from `main` at `608500a`; requirement statuses,
   state model, runtime, worker contract, published interfaces, and roadmap
-  were reviewed against `f88533f5` (2026-11-08). Part 1 is
+  were reviewed against `7d379e44` (2026-11-08). Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -334,8 +334,11 @@ executor is working an issue; a human assignee owns it regardless.
   human assignees, before starting work on an anchor. Dispatched fleet runs are single-flight per task, so admission
   refuses a second run (FL-AD-1). Interactive and cloud sessions run
   `lcars work owner` as the read-only `work-reader` identity and do not start
-  when the verdict names someone else. Partial: this is repository guidance,
-  not enforced, and the session read's completeness fix is in flight.
+  when the verdict names someone else. The repository-scoped Firestore CLI
+  session query (`sessions_source_repo_last_activity`, #2502 / #2575 / #2576)
+  is shipped and returns `complete: true` in production. Partial: interactive
+  and cloud session preflight remains repository guidance rather than a
+  server-enforced pre-edit gate.
 - **FL-OWN-4 [Shipped]** Nothing outside Console establishes, refreshes, or
   expires ownership: takeover or "implementing this now" comments, occupied
   local worktrees, draft pull requests, and elapsed time since assignment are
@@ -559,9 +562,11 @@ consumed by every dispatched run in every member repository.
   `verification-failed`, which is distinct from `no-deliverable`.
 - **FL-WP-11 [Partial] Runtime enforcement.** Worker-policy and review hooks
   live in `packages/fleet-tools` (see
-  [`worker-behavior-enforcement.md`](../worker-behavior-enforcement.md)). They
-  exist but are **not enabled in production**, and no provider has graduated
-  to them. See R2.
+  [`worker-behavior-enforcement.md`](../worker-behavior-enforcement.md)).
+  Policy-enabled member-repository dispatches are proven for Claude Code,
+  Codex, and OpenCode on AMD64 and Codex on ARM64 (#2956), while standing
+  production activation on the single executor remains off until runner-image
+  publication qualifies every provider automatically. See R2.
 - **FL-WP-12 [Shipped] Restricted host investigation (`lcars investigate`).**
   When a dispatched worker needs read-only Homelab host, systemd, pod, or
   endpoint facts to diagnose an issue without parking for a human, it calls
@@ -799,7 +804,7 @@ consumed by every dispatched run in every member repository.
 | #   | Item                                                                                                                                 | Why                                                                                                                               | Priority |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
 | R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (shipped, #2210; part 1 FE-IN-1)        | Native parks now appear in the Inbox beside GitHub decisions                                                                      | P0       |
-| R2  | Graduate worker-policy enforcement (FL-WP-11), provider by provider, behind a measured rollout                                       | The protocol's hard limits are currently honor-system at runtime                                                                  | P0       |
+| R2  | Enable standing worker-policy enforcement (FL-WP-11) once runner-image publication qualifies every provider automatically            | AMD64 Claude/Codex/OpenCode and ARM64 Codex dispatches are proven (#2956), but standing production selection remains off          | P0       |
 | R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline (shipped at 15 minutes, #2264)                            | A failed launch no longer stalls a task for about 2h                                                                              | P1       |
 | R4  | A priority field on runs (`urgent`, `normal`, `background`), honored inside provider-fair selection (FL-CL-5, shipped, #2324)        | Scheduled maintenance work and urgent fixes no longer share one FIFO                                                              | P1       |
 | R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                          | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
@@ -808,8 +813,9 @@ consumed by every dispatched run in every member repository.
 
 R7's explicit opt-in source contract is documented in
 [Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
-[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) tracks delivery and
-real provider-limit qualification separately from local mechanism tests.
+[#2198](https://github.com/jlapenna/agent-lcars/issues/2198) delivered the
+mechanism and serving proof; natural production `provider-limit` reroute
+observation remains separate from local mechanism tests.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
