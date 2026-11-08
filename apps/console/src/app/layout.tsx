@@ -8,11 +8,12 @@ import {
   MantineColorScheme,
   mantineHtmlProps,
 } from '@mantine/core';
-import type { Viewport } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { cookies, headers } from 'next/headers';
 import { Suspense } from 'react';
 
 import { auth } from '../auth';
+import { APP_GROUND } from '../lib/app-ground';
 import { consoleDescription } from '../lib/deployment';
 import { loadShellIdentity } from '../lib/shell-readouts';
 import { ConsoleNavigationProvider } from './console-navigation-context';
@@ -28,11 +29,16 @@ export const viewport: Viewport = {
   // own auto-darkening on top of our own colors, inverting some elements
   // against their non-inverted backgrounds (#2815).
   colorScheme: 'light dark',
+  // The installed app's status bar and task switcher take the console ground.
+  themeColor: APP_GROUND,
 };
 
-export const metadata = {
+export const metadata: Metadata = {
   title: 'Agent LCARS',
   description: consoleDescription(),
+  applicationName: 'Agent LCARS',
+  appleWebApp: { capable: true, title: 'LCARS', statusBarStyle: 'black' },
+  icons: { apple: '/apple-touch-icon.png' },
 };
 
 export default function RootLayout({

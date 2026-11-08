@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed ground; the glyph stays inside the 80% maskable safe zone. -->
+  <rect width="512" height="512" fill="#060709"/>
+  <path fill="#ff9f45" d="M192 128H384V176H240A32 32 0 0 0 208 208V384H128V192A64 64 0 0 1 192 128Z"/>
+  <rect x="232" y="232" width="152" height="40" fill="#4fb8c4"/>
+  <rect x="232" y="344" width="72" height="40" fill="#6c8fe0"/>
+  <rect x="312" y="344" width="32" height="40" fill="#b15fc7"/>
+  <rect x="352" y="344" width="32" height="40" fill="#e0b84b"/>
+</svg>

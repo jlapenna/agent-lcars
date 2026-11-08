@@ -6,10 +6,11 @@ export const config = {
      * Match all request paths EXCEPT:
      * - _next/static (static files)
      * - _next/image (image optimization)
-     * - static assets (.svg, .png, .jpg, etc)
+     * - static assets (.svg, .png, .jpg, etc) and the web app manifest,
+     *   which browsers fetch without credentials when installing the app
      * - /api/auth (Auth.js endpoints — must be accessible unauthenticated)
      */
-    '/((?!_next/static|_next/image|api/auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt)$).*)',
+    '/((?!_next/static|_next/image|api/auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|webmanifest)$).*)',
   ],
 };
 
