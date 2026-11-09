@@ -79,6 +79,37 @@ describe('detectPullRequestAuthorPipeline', () => {
     ).toBe('opencode');
   });
 
+  it('detects the Claude Code PR description footer so Claude PRs get a Codex review', () => {
+    const body =
+      '## Fix\n\n- change\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_017WYsJhMBpSzbmYeqBJ9e7q\n';
+    const author = detectPullRequestAuthorPipeline({
+      userLogin: 'jlapenna',
+      body,
+    });
+    expect(author).toBe('claude');
+    expect(
+      selectCrossModelReviewer({
+        repo: 'jlapenna/agent-lcars',
+        authorPipeline: author,
+      }),
+    ).toMatchObject({ pipeline: 'codex', fallbackPipelines: ['agy'] });
+    expect(
+      detectPullRequestAuthorPipeline({
+        userLogin: 'jlapenna',
+        body: 'Summary.\n\nhttps://claude.ai/code/session_01ABC',
+      }),
+    ).toBe('claude');
+  });
+
+  it('does not treat an inline Claude session link as Claude authorship', () => {
+    expect(
+      detectPullRequestAuthorPipeline({
+        userLogin: 'jlapenna',
+        body: 'Follow-up to the work in https://claude.ai/code/session_01ABC.',
+      }),
+    ).toBeUndefined();
+  });
+
   it('detects authoring pipeline from head branch prefix', () => {
     expect(
       detectPullRequestAuthorPipeline({
