@@ -1254,6 +1254,8 @@ elif [ "$PIPELINE" = "agy" ]; then
     shift
     remaining=$((AGY_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
+    # Provider stop records are read from this round's stderr only.
+    AGY_ROUND_STDERR_OFFSET="$(stat -c %s "$PROVIDER_OUTPUT_FILE" 2>/dev/null || echo 0)"
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$AGY_BIN" --dangerously-skip-permissions \
       "$@" -p "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
@@ -1589,6 +1591,23 @@ AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || 
 # the only honest provider cause for a round that stopped before its final
 # message (#2537); they are never task or tool output, so quoted text in a
 # transcript cannot forge them.
+# Antigravity reports a provider stop as one structured stderr line,
+# `AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","short_error":"RESOURCE_EXHAUSTED
+# (code 429): Individual quota reached. ...",...}`, and exits non-zero (3).
+# Retain only well-formed records from the final round, never free stderr text,
+# so prose or tool output that merely quotes a quota phrase is not a provider
+# stop. Read here, after finalization, not right after the round: the stderr
+# tee is a process substitution this script does not wait on.
+if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_FILE:-}" ]; then
+  AGY_FAILURE_EVENTS="$RUNNER_TEMP/agy-failure-events.txt"
+  tail -c "+$((${AGY_ROUND_STDERR_OFFSET:-0} + 1))" "$PROVIDER_OUTPUT_FILE" 2>/dev/null |
+    sed -n 's/^AGY_ERROR: //p' |
+    jq -Rr 'fromjson? | objects | select((.status | type) == "string")
+      | "\(.status): \(.short_error // "" | tostring)"' > "$AGY_FAILURE_EVENTS" 2>/dev/null || true
+  if [ -s "$AGY_FAILURE_EVENTS" ]; then
+    PROVIDER_FAILURE_FILE="$AGY_FAILURE_EVENTS"
+  fi
+fi
 PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # A report's message is its deliverable: send it whole, or refuse it when it
 # is blank or overflows the message contract (never a truncated tail).
@@ -1612,7 +1631,11 @@ is_provider_limit_message() {
   [[ "$text" == "You've hit your weekly limit"* ]] ||
     [[ "$text" == "You've hit your usage limit"* ]] ||
     [[ "$text" == "Credit balance is too low"* ]] ||
-    { [[ "$text" == "API Error: 429 "* ]] && is_provider_limit_failure "$text"; }
+    [[ "$text" == "You've hit your monthly spend limit"* ]] ||
+    [[ "$text" == "You've hit your channel's monthly spend limit"* ]] ||
+    # Claude Code prints an API refusal as `API Error: <status> <body>`; an
+    # organization spend cap arrives as a 400, not a 429.
+    { [[ "$text" =~ ^API\ Error:\ 4[0-9][0-9]\  ]] && is_provider_limit_failure "$text"; }
 }
 is_provider_limit_failure() {
   local text="$1"
@@ -1624,6 +1647,8 @@ is_provider_limit_failure() {
     [[ "$text" == *"credit balance is too low"* ]] ||
     [[ "$text" == *"Credit balance is too low"* ]] ||
     [[ "$text" == *"monthly spend limit"* ]] ||
+    [[ "$text" == *"service_spend_limit_reached"* ]] ||
+    [[ "$text" == *"org_spend_cap_reached"* ]] ||
     [[ "$text" == *"ResourceExhausted"* ]] ||
     [[ "$text" == *"RESOURCE_EXHAUSTED"* ]]
 }
