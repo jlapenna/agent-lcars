@@ -87,6 +87,7 @@ export async function maintainRepositoryJobs(
         () => createDispatchTokenProvider(process.env, { contents: 'read' }),
         deadline,
         (definition) => jobs.automaticActivation(definition),
+        (principal, definition) => jobs.authorizes(definition, principal),
       ))(),
     tick(),
   ]);

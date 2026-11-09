@@ -89,10 +89,10 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                     | This deployment                                                                                                                                                                   |
-| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor/scheduler, and the read-only `svc:work-reader`: `claude`, `codex`, `opencode`, `agy` |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                                |
+| Value                    | Env var                     | This deployment                                                                                                                                                                                     |
+| ------------------------ | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor, `svc:job-scheduler` ticker, and the read-only `svc:work-reader`: `claude`, `codex`, `opencode`, `agy` |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                                                  |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
 enter the durable queue even when the fleet is full. QueueExecutor reserves
@@ -108,22 +108,31 @@ QueueExecutor, regardless of its provider or whether it came from GitHub, the
 console, a Work API GitHub-anchor dispatch, native Work, a schedule tick, or
 redispatch. Callers and work specifications never choose a route.
 
-The autoscaler's own identity needs its own grant row in
-`AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. It receives
-`work.executor` to claim queued runs and the separately checked `work.cron`
-scope to call `POST /schedules/tick` (or delegates `work.cron` to the dedicated
-`svc:job-scheduler` principal once `LCARS_SCHEDULER_CREDENTIALS` is mounted on
-the autoscaler, separating repository-job automatic activation from the
-runner-mounted `telemetry-writer.json` key per `#3217`); neither scope implies
-`work.operator`:
+The autoscaler's identities need their own grant rows in
+`AGENT_LCARS_WORK_GRANTS`, distinct from an operator's. The executor
+(`svc:telemetry-writer`, whose key is mounted into runner pods) receives only
+`work.executor` to claim queued runs. The schedule and maintenance ticker
+authenticates with the dedicated `job-scheduler` key
+(`LCARS_SCHEDULER_CREDENTIALS`, never runner-mounted) and its
+`svc:job-scheduler` grant holds the separately checked `work.cron` scope for
+`goose`, which also makes it the repository-job automation principal
+(`#3217`). Neither scope implies `work.operator`:
 
 ```json
-{
-  "principal": "svc:telemetry-writer",
-  "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
-  "pipelines": ["claude", "codex", "opencode", "agy", "goose"],
-  "scopes": ["work.executor", "work.cron"]
-}
+[
+  {
+    "principal": "svc:telemetry-writer",
+    "subjects": ["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],
+    "pipelines": ["claude", "codex", "opencode", "agy", "goose"],
+    "scopes": ["work.executor"]
+  },
+  {
+    "principal": "svc:job-scheduler",
+    "subjects": ["job-scheduler@agent-lcars.iam.gserviceaccount.com"],
+    "pipelines": ["goose"],
+    "scopes": ["work.cron"]
+  }
+]
 ```
 
 `runs-router.ts`'s `claim` route requires `work.executor`, never

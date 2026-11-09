@@ -39,8 +39,11 @@ it are admitted and nothing is backfilled.
 
 Automatic activation is attributed to the scheduler: the single
 `AGENT_LCARS_WORK_GRANTS` entry holding `work.cron` for the `goose` pipeline
-(the principal that drives the maintenance tick). Zero or several such grants
-disable automatic activation. Scheduled admission re-checks that principal's
+(today `svc:job-scheduler`, the principal that drives the maintenance tick).
+Zero or several such grants disable automatic activation. When that principal
+moves, catalog refresh re-attributes an enabled, unchanged job whose recorded
+principal no longer authorizes it to the new automation principal, keeping its
+activation floor, if the profile admits the new one. Scheduled admission re-checks that principal's
 current grant and the profile, exactly as it does for an operator's enablement;
 removing the grant stops its schedules. The built-in `repository` profile admits
 it; a specialized profile admits automatic activation only when its `principals`

@@ -106,18 +106,16 @@ env:
   # global cutover below does. svc:telemetry-writer
   # is the runner-autoscaler's queue executor claim identity
   # (native-work-items sub-project 4,
-  # #1502): scoped to work.executor and work.cron, never work.operator --
-  # see docs/deployment-boundary.md's work-grants table. Those separate
-  # grants make it the sole server-side claim capability source for every
-  # direct runner and the server-owned schedule ticker identity.
+  # #1502): scoped to work.executor only, never work.operator -- see
+  # docs/deployment-boundary.md's work-grants table. That grant makes it the
+  # sole server-side claim capability source for every direct runner.
   #
-  # svc:job-scheduler (#3217) is the dedicated scheduler identity whose key the
-  # runner-autoscaler ticker uses (LCARS_SCHEDULER_CREDENTIALS) and runner
-  # pods never mount. Transitional: it holds work.cron (not pipeline-gated) so
-  # ticks succeed under either key while the Homelab mount rolls out, but not
-  # the goose pipeline, so svc:telemetry-writer remains the single goose
-  # work.cron grant that jobAutomationPrincipal resolves. The follow-up
-  # cutover moves goose work.cron and the job profile principals here.
+  # svc:job-scheduler (#3217) is the server-owned schedule and maintenance
+  # ticker identity: the runner-autoscaler ticker authenticates with its key
+  # (LCARS_SCHEDULER_CREDENTIALS), which runner pods never mount. As the one
+  # grant holding work.cron for goose it is also the repository-job
+  # automation principal (jobAutomationPrincipal), so only it, not the
+  # runner-mounted executor key, can admit jobs under a profile that lists it.
   #
   # The Firebase App Hosting default compute service account is Sprinkles'
   # current ambient backend identity. Its ID token's raw `email` is the
@@ -132,7 +130,7 @@ env:
   # work.operator; only the maintainer's Google account may impersonate it
   # (infra/terraform/main.tf, work_reader_token_creator).
   - variable: AGENT_LCARS_WORK_GRANTS
-    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.operator","secrets.admin"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.executor","work.cron"]},{"principal":"svc:job-scheduler","subjects":["job-scheduler@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude"],"scopes":["work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.operator"]},{"principal":"svc:job-secret-operator","subjects":["job-secret-operator@agent-lcars.iam.gserviceaccount.com"],"pipelines":["goose"],"scopes":["secrets.admin"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.reader","costs.reader"]},{"principal":"svc:linear","subjects":["linear-webhook-adapter"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"],"channel":"linear"}]'
+    value: '[{"principal":"user:jlapenna","subjects":["github:jlapenna"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.operator","secrets.admin"]},{"principal":"workflow:work-create","subjects":["codex-agent@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"]},{"principal":"workflow:member-automation","subjects":["github-actions:jlapenna/agent-lcars","github-actions:supersprinklesracing/sprinkles","github-actions:jlapenna/homelab","github-actions:supersprinklesracing/www","github-actions:supersprinklesracing/girosf","github-actions:jlapenna/nx-cache-server","github-actions:jlapenna/sync-padd"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"]},{"principal":"svc:telemetry-writer","subjects":["telemetry-writer@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.executor"]},{"principal":"svc:job-scheduler","subjects":["job-scheduler@agent-lcars.iam.gserviceaccount.com"],"pipelines":["goose"],"scopes":["work.cron"]},{"principal":"svc:firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com","subjects":["firebase-app-hosting-compute@supersprinklesracing.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"],"channel":"slack"},{"principal":"svc:production-verifier","subjects":["github:agent-lcars-production-verifier"],"pipelines":["claude","codex","opencode","agy","goose"],"scopes":["work.operator"]},{"principal":"svc:job-secret-operator","subjects":["job-secret-operator@agent-lcars.iam.gserviceaccount.com"],"pipelines":["goose"],"scopes":["secrets.admin"]},{"principal":"svc:work-reader","subjects":["work-reader@agent-lcars.iam.gserviceaccount.com"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.reader","costs.reader"]},{"principal":"svc:linear","subjects":["linear-webhook-adapter"],"pipelines":["claude","codex","opencode","agy"],"scopes":["work.operator"],"channel":"linear"}]'
     availability:
       - RUNTIME
 
@@ -163,7 +161,7 @@ env:
   # read-only `gh issue list` on the findings repository works; a recipe input
   # cannot select it.
   - variable: AGENT_LCARS_JOB_PROFILES
-    value: '[{"name":"homelab-security-audit","repositories":["jlapenna/jclaw"],"principals":["user:jlapenna","svc:production-verifier"],"crossRepo":true,"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"subnet":"192.168.68.0/24","findingsRepository":"jlapenna/homelab","mode":"report"}]},{"name":"skill-evals","repositories":["jlapenna/agent-lcars","jlapenna/homelab","supersprinklesracing/sprinkles","supersprinklesracing/www","jlapenna/labels","jlapenna/jclaw","jlapenna/homegit","jlapenna/home-assistant-config","jlapenna/sparkstack-registry"],"principals":["user:jlapenna","svc:production-verifier","svc:telemetry-writer"],"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"mode":"report"}],"providerAuth":"codex","credentialSet":{"name":"skill-evals","revision":2},"resultFile":"/tmp/skill-evals/report/result.json"},{"name":"dev-personal-github","repositories":["jlapenna/dev"],"principals":["user:jlapenna"],"credentialSet":{"name":"dev-personal-github","revision":1},"gitIdentity":{"name":"Joe LaPenna","email":"45910+jlapenna@users.noreply.github.com"},"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"mode":"report"}]}]'
+    value: '[{"name":"homelab-security-audit","repositories":["jlapenna/jclaw"],"principals":["user:jlapenna","svc:production-verifier"],"crossRepo":true,"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"subnet":"192.168.68.0/24","findingsRepository":"jlapenna/homelab","mode":"report"}]},{"name":"skill-evals","repositories":["jlapenna/agent-lcars","jlapenna/homelab","supersprinklesracing/sprinkles","supersprinklesracing/www","jlapenna/labels","jlapenna/jclaw","jlapenna/homegit","jlapenna/home-assistant-config","jlapenna/sparkstack-registry"],"principals":["user:jlapenna","svc:production-verifier","svc:job-scheduler"],"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"mode":"report"}],"providerAuth":"codex","credentialSet":{"name":"skill-evals","revision":2},"resultFile":"/tmp/skill-evals/report/result.json"},{"name":"dev-personal-github","repositories":["jlapenna/dev"],"principals":["user:jlapenna"],"credentialSet":{"name":"dev-personal-github","revision":1},"gitIdentity":{"name":"Joe LaPenna","email":"45910+jlapenna@users.noreply.github.com"},"allocation":{"cpu":2,"memory":"6Gi","storage":"24Gi"},"inputSets":[{"mode":"report"}]}]'
     availability:
       - RUNTIME
 

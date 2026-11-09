@@ -68,6 +68,15 @@ export class RepositoryJobs {
       profileName,
     );
   }
+  /** Whether `principal` may enable `definition` under its own profile. */
+  authorizes(definition: JobDefinition, principal: string): boolean {
+    try {
+      this.authorize(definition, principal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   availableProfiles(definition: JobDefinition, principal: string): string[] {
     return [
       ...new Set(['repository', ...this.deps.profiles().map((p) => p.name)]),
