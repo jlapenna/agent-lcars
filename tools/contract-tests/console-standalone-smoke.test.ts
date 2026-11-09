@@ -129,6 +129,11 @@ async function fixture(kind: string) {
   };
 }
 
+// Each test runs the self-bounded smoke script (30s shared startup budget, 1s
+// readiness polls, a second boot after a proved port collision) under run()'s
+// 40s exec timeout, so every test needs at least that budget: 45_000 leaves
+// room for fixture setup/teardown. Vitest's 5s default timed out the collision
+// retry on busy CI runners before the script's own bound could report (#3265).
 describe.concurrent('owned standalone smoke boot and response', () => {
   it('boots the isolated child and probes the invalid webhook signature', async () => {
     const f = await fixture('normal');
@@ -146,7 +151,7 @@ describe.concurrent('owned standalone smoke boot and response', () => {
     } finally {
       await f.dispose();
     }
-  });
+  }, 45_000);
   it('retries a proved occupied port without accepting or killing the foreign401 listener', async () => {
     const f = await fixture('collision-once');
     try {
@@ -168,7 +173,7 @@ describe.concurrent('owned standalone smoke boot and response', () => {
     } finally {
       await f.dispose();
     }
-  });
+  }, 45_000);
   it('bounds repeated occupied candidates instead of weakening the boot gate', async () => {
     const f = await fixture('collision-always');
     try {
@@ -178,7 +183,7 @@ describe.concurrent('owned standalone smoke boot and response', () => {
     } finally {
       await f.dispose();
     }
-  }, 20_000);
+  }, 45_000);
   it('does not retry a non-bind startup failure', async () => {
     const f = await fixture('startup-error');
     try {
@@ -188,7 +193,7 @@ describe.concurrent('owned standalone smoke boot and response', () => {
     } finally {
       await f.dispose();
     }
-  });
+  }, 45_000);
   it('cannot pass on401 before its child reports readiness', async () => {
     const f = await fixture('no-readiness');
     try {
