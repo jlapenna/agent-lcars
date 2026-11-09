@@ -2757,6 +2757,7 @@ echo "scenario hindsight-per-repo-bootstrap: OK"
   fail "a scenario started the retired live polling sidecar (runner sidecar)"
 # Exact-reference verification is part of this required runner contract gate.
 bash "$(dirname "$0")/runtime/verify-outcome.test.sh"
+bash "$(dirname "$0")/runtime/hindsight-bootstrap.test.sh"
 
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/provider-process.test.mjs"
 "$real_node" --test "$repo_root/apps/runner-autoscaler/runner-image/runtime/goose-executor.test.mjs"
