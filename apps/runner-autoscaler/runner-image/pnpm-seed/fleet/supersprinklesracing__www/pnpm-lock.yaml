@@ -11,6 +11,7 @@ overrides:
   uuid@<11.1.1: ^11.1.1
   zod@<4.6.6: 4.6.7
   minimatch@>=7.0.0 <11.0.1: 11.0.5
+  nx>minimatch: 10.2.5
   lighthouse@12.6.1: ^13.6.0
 
 importers:
@@ -34,8 +35,8 @@ importers:
         specifier: ^4.13.0
         version: 4.14.0(playwright-core@1.65.0)
       '@jlapenna/repo-tools':
-        specifier: github:jlapenna/repo-tools#v4.7.2
-        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf(eslint@10.14.0(supports-color@8.1.1))(nx@24.0.3)(supports-color@8.1.1)(typescript@6.0.3)
+        specifier: github:jlapenna/repo-tools#v4.7.3
+        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27(eslint@10.14.0(supports-color@8.1.1))(nx@24.0.3)(supports-color@8.1.1)(typescript@6.0.3)
       '@lhci/cli':
         specifier: ^0.16.0
         version: 0.16.0(@types/node@26.6.6)(supports-color@8.1.1)
@@ -581,9 +582,9 @@ packages:
     resolution: {integrity: sha512-n5H8QLDJ47QqbCNn5SuFjCRDrOLEZ0h8vAHCK5RL9Ls7Xa8AQLa/YxAc9UjFqoEDM48muwtBGjtMY5cr0PLDCw==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf':
-    resolution: {gitHosted: true, integrity: sha512-YC3f2NSMRLCTJz3ZMTDmeEpBGoCrTTkAEUATplO601Yfv5jGVICNOnyO/XrZ2fKZ20bBXO+H5FGX9B28tHdjEQ==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf}
-    version: 0.0.0
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27':
+    resolution: {gitHosted: true, integrity: sha512-CEzQPSdE/Q2lk2AH52tnnPeWD9Y32KCfMrqFZUVW35yFZnBkLl+N41GFva5vZ/K37ETdsfb5V/0Ke/R3+Igigw==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27}
+    version: 4.7.3
     engines: {node: '>=24.22.1 <25 || >=26.12.1 <27', pnpm: 11.28.11}
     hasBin: true
 
@@ -640,8 +641,8 @@ packages:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2 || 2.0.0-beta.3
 
-  '@nx/devkit@24.0.4':
-    resolution: {integrity: sha512-g42KgT36Ecs9mtvPbIRkUOi0pg3Nbs5U5n8BnD0Apn0DieaFUo/ytWjsQPn2SfRq76GcZmAnMSYrbS0KX37TvQ==}
+  '@nx/devkit@24.0.5':
+    resolution: {integrity: sha512-mXDYdlPQi3f3OukZsqqmwKO0Gkv9k+r1I6jctF5QXaYB7o5JT7n9wYO30CKQ938k9t8WPfaWRU4kioaoWX3uDw==}
     peerDependencies:
       nx: '>= 23 <= 25 || ^24.0.0-0'
 
@@ -2321,6 +2322,10 @@ packages:
     resolution: {integrity: sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==}
     engines: {node: '>=6'}
 
+  minimatch@10.2.5:
+    resolution: {integrity: sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==}
+    engines: {node: 18 || 20 || >=22}
+
   minimatch@11.0.5:
     resolution: {integrity: sha512-snPlVppFcYWfLLFQGhDxUyBcHNtMlWmn3jtj7pEaO+DP8pqL0IvAzXhMYmn1z9ASNtgmwLBdFxSf4tMUB0OTKA==}
     engines: {node: 20 || >=22}
@@ -3970,11 +3975,11 @@ snapshots:
 
   '@jest/diff-sequences@30.0.1': {}
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf(eslint@10.14.0(supports-color@8.1.1))(nx@24.0.3)(supports-color@8.1.1)(typescript@6.0.3)':
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27(eslint@10.14.0(supports-color@8.1.1))(nx@24.0.3)(supports-color@8.1.1)(typescript@6.0.3)':
     dependencies:
       '@agentclientprotocol/sdk': 2.4.0(@modelcontextprotocol/server@2.4.0)(zod@4.6.7)
       '@modelcontextprotocol/server': 2.4.0
-      '@nx/devkit': 24.0.4(nx@24.0.3)
+      '@nx/devkit': 24.0.5(nx@24.0.3)
       '@typescript-eslint/utils': 8.72.1(eslint@10.14.0(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
       yaml: 2.9.1
       zod: 4.6.7
@@ -4079,7 +4084,7 @@ snapshots:
       '@tybys/wasm-util': 0.10.4
     optional: true
 
-  '@nx/devkit@24.0.4(nx@24.0.3)':
+  '@nx/devkit@24.0.5(nx@24.0.3)':
     dependencies:
       ejs: 5.0.1
       minimatch: 11.0.5
@@ -5743,6 +5748,10 @@ snapshots:
 
   mimic-fn@2.1.0: {}
 
+  minimatch@10.2.5:
+    dependencies:
+      brace-expansion: 5.0.12
+
   minimatch@11.0.5:
     dependencies:
       '@isaacs/nonrecursive-glob-match': 1.1.0
@@ -5862,7 +5871,7 @@ snapshots:
       lines-and-columns: 2.0.3
       log-symbols: 4.1.0
       mimic-fn: 2.1.0
-      minimatch: 11.0.5
+      minimatch: 10.2.5
       minimist: 1.2.8
       npm-run-path: 4.0.1
       once: 1.4.0
