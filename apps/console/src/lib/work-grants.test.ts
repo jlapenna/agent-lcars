@@ -174,6 +174,37 @@ describe('grant scopes', () => {
     ).toEqual(['svc:work-reader']);
   });
 
+  it('commits one goose work.cron grant and keeps the scheduler identity cron-only (#3217)', () => {
+    const config = parseYaml(
+      readFileSync(
+        path.join(import.meta.dirname, '../../apphosting.yaml'),
+        'utf8',
+      ),
+    ) as { env: { variable: string; value?: string }[] };
+    const grants = parseWorkGrants(
+      config.env.find((entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS')
+        ?.value,
+    );
+    // jobAutomationPrincipal disables automatic activation (and schedule
+    // admission under the automation principal) unless exactly one grant
+    // holds work.cron for goose.
+    expect(
+      grants.filter(
+        (grant) =>
+          grant.scopes.includes('work.cron') &&
+          grant.pipelines.includes('goose'),
+      ),
+    ).toHaveLength(1);
+    // The scheduler key is never runner-mounted; it must not gain claim or
+    // operator authority.
+    expect(
+      resolvePrincipal(
+        'job-scheduler@agent-lcars.iam.gserviceaccount.com',
+        grants,
+      ),
+    ).toMatchObject({ principal: 'svc:job-scheduler', scopes: ['work.cron'] });
+  });
+
   it('rejects an explicit empty scopes list as a config error', () => {
     expect(() =>
       parseWorkGrants(
