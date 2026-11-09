@@ -8,17 +8,33 @@
 # (or supplied via HINDSIGHT_API_TOKEN) and HINDSIGHT_DISABLED is not set, this
 # helper writes a mode-0600 ~/.hindsight/coding-agent.json bound to the target
 # repository's isolated memory bank (`agent-lcars::<repo>`).
+#
+# Every call reports its outcome as exactly one stderr line (#3269), never the
+# token:
+#   hindsight: enabled bank=<bank> api=<url>
+#   hindsight: disabled reason=<explicit|no-token|no-repo|config-error>
+# `explicit` is an intended disable (HINDSIGHT_DISABLED); `no-token` means no
+# readable token was mounted or supplied, `no-repo` that TARGET_REPO named no
+# repository, and `config-error` that the config could not be written. The
+# QueueExecutor's launch metric reports whether the token was configured.
+
+hindsight_report() {
+  printf 'hindsight: %s\n' "$*" >&2
+}
 
 write_disabled_hindsight_config() {
   local hindsight_dir="$HOME/.hindsight"
   local config_file="${HINDSIGHT_CONFIG:-$hindsight_dir/coding-agent.json}"
-  mkdir -m 700 -p "$(dirname "$config_file")"
-  (umask 077; printf '{"disabled":true}\n' >"$config_file")
+  # Best effort: the image already ships a disabled config, and an unwritable
+  # home must not abort a dispatch that runs under errexit.
+  mkdir -m 700 -p "$(dirname "$config_file")" 2>/dev/null || true
+  (umask 077; printf '{"disabled":true}\n' >"$config_file") 2>/dev/null || true
 }
 
 hindsight_bootstrap() {
   if [ "${HINDSIGHT_DISABLED:-}" = "true" ] || [ "${HINDSIGHT_DISABLED:-}" = "1" ]; then
     write_disabled_hindsight_config
+    hindsight_report "disabled reason=explicit"
     return 0
   fi
 
@@ -33,14 +49,17 @@ hindsight_bootstrap() {
     token="$(printf '%s' "$HINDSIGHT_API_TOKEN" | tr -d '\r\n')"
   fi
 
-  if [ -z "$token" ] || [ -z "${TARGET_REPO:-}" ]; then
+  if [ -z "$token" ]; then
     write_disabled_hindsight_config
+    hindsight_report "disabled reason=no-token"
     return 0
   fi
 
-  local repo_slug="${TARGET_REPO#*/}"
+  local repo_slug="${TARGET_REPO:-}"
+  repo_slug="${repo_slug#*/}"
   if [ -z "$repo_slug" ]; then
     write_disabled_hindsight_config
+    hindsight_report "disabled reason=no-repo"
     return 0
   fi
 
@@ -50,8 +69,7 @@ hindsight_bootstrap() {
   local config_file="${HINDSIGHT_CONFIG:-$hindsight_dir/coding-agent.json}"
   local tmp_file="$config_file.$$"
 
-  mkdir -m 700 -p "$(dirname "$config_file")"
-  if ! (
+  if ! mkdir -m 700 -p "$(dirname "$config_file")" 2>/dev/null || ! (
     umask 077
     HINDSIGHT_BOOTSTRAP_TOKEN="$token" jq -n \
       --arg apiUrl "$api_url" \
@@ -91,8 +109,15 @@ hindsight_bootstrap() {
     rm -f -- "$tmp_file"
     echo "::warning::Hindsight coding-agent config generation failed; continuing with memory disabled" >&2
     write_disabled_hindsight_config
+    hindsight_report "disabled reason=config-error"
     return 0
   fi
-  mv -f -- "$tmp_file" "$config_file"
+  if ! mv -f -- "$tmp_file" "$config_file"; then
+    rm -f -- "$tmp_file"
+    write_disabled_hindsight_config
+    hindsight_report "disabled reason=config-error"
+    return 0
+  fi
+  hindsight_report "enabled bank=$bank_id api=$api_url"
   return 0
 }

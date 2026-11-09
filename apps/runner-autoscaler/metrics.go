@@ -39,6 +39,10 @@ var (
 		Name: "github_runner_autoscaler_queue_executor_launches_total",
 		Help: "Direct-runner launch attempts after a successful claim, by outcome: success or error.",
 	}, []string{"outcome"})
+	queueExecutorMemoryLaunchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_memory_launches_total",
+		Help: "New direct-runner Jobs by provider pipeline and Hindsight memory credential state at launch: configured (token key present), isolated (goose; no token mounted by design), no_token (memory expected but the credential Secret lacks a nonempty hindsight-api-token), or unknown (Secret read failed). Never reads or exports the token value.",
+	}, []string{"pipeline", "memory"})
 	scheduleTicksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_schedule_ticks_total",
 		Help: "Server-owned Work API schedule tick attempts by outcome.",
@@ -108,6 +112,7 @@ func registerMetrics() {
 			queueExecutorPollsTotal,
 			queueExecutorClaimsTotal,
 			queueExecutorLaunchesTotal,
+			queueExecutorMemoryLaunchesTotal,
 			scheduleTicksTotal,
 			maintenanceTicksTotal,
 			maintenanceLastSuccessTimestamp,

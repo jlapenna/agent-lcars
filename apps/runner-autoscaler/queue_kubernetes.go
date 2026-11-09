@@ -650,11 +650,33 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 	if job.Spec.Suspend == nil || !*job.Spec.Suspend || queueJobAttempted(job) {
 		return nil
 	}
+	queueExecutorMemoryLaunchesTotal.WithLabelValues(l.pipeline, q.memoryState(ctx, l.pipeline)).Inc()
 	secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: job.Name, Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte(l.runToken)}}
 	if _, err = q.client.CoreV1().Secrets(q.config.Namespace).Create(ctx, secret, meta.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("creating queue run credential: %w", err)
 	}
 	return q.resume(ctx, job)
+}
+
+// memoryState classifies the Hindsight credential a new worker will receive
+// (#3269). Workers mount hindsight-api-token as an optional key, so a missing
+// key silently disables per-repo memory; this makes that state a launch
+// metric. Only key presence is read, never the value.
+func (q *kubernetesQueue) memoryState(ctx context.Context, pipeline string) string {
+	if pipeline == "goose" {
+		return "isolated"
+	}
+	secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, q.config.CredentialsSecret, meta.GetOptions{})
+	if err != nil {
+		// The label is the signal; startup preflight already fails loudly when
+		// the Secret is unreadable.
+		return "unknown"
+	}
+	// The worker bootstrap strips CR/LF before using the token; match it.
+	if strings.Trim(string(secret.Data["hindsight-api-token"]), "\r\n") == "" {
+		return "no_token"
+	}
+	return "configured"
 }
 func (q *kubernetesQueue) resume(ctx context.Context, job *batch.Job) error {
 	ctx, cancel := context.WithTimeout(ctx, queueStartupRecoveryTimeout)

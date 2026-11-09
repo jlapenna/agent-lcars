@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"io"
 	"log/slog"
 	"os"
@@ -422,5 +423,47 @@ func assertWorkerPolicyBootstrap(t *testing.T, job *batch.Job, provider, selecti
 		if (invocationErr == nil) != selected {
 			t.Fatal("bootstrap setup invocation did not match emitted Job selection")
 		}
+	}
+}
+func TestKubernetesLaunchRecordsMemoryState(t *testing.T) {
+	cases := []struct {
+		name, pipeline, want string
+		data                 map[string][]byte
+		noSecret             bool
+	}{
+		{name: "configured", pipeline: "claude", want: "configured", data: map[string][]byte{"hindsight-api-token": []byte("t")}},
+		{name: "no token", pipeline: "codex", want: "no_token", data: map[string][]byte{"telemetry-writer.json": []byte("{}")}},
+		{name: "empty token", pipeline: "agy", want: "no_token", data: map[string][]byte{"hindsight-api-token": {}}},
+		{name: "newline-only token", pipeline: "claude", want: "no_token", data: map[string][]byte{"hindsight-api-token": []byte("\r\n")}},
+		{name: "secret unreadable", pipeline: "opencode", want: "unknown", noSecret: true},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var objects []runtime.Object
+			if !tc.noSecret {
+				objects = append(objects, &core.Secret{ObjectMeta: meta.ObjectMeta{Name: "credentials", Namespace: "lcars-work"}, Data: tc.data})
+			}
+			q, _ := kubeQueueFixture(objects...)
+			counter := queueExecutorMemoryLaunchesTotal.WithLabelValues(tc.pipeline, tc.want)
+			before := testutil.ToFloat64(counter)
+			l := directRunnerLaunch{runID: fmt.Sprintf("work:memory/r%d", i), runToken: "secret-run-token", pipeline: tc.pipeline, consoleURL: "https://console.example.com"}
+			for range 2 {
+				if err := q.launch(context.Background(), l); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := testutil.ToFloat64(counter) - before; got != 1 {
+				t.Fatalf("memory=%s launches = %v, want exactly 1 for one new Job", tc.want, got)
+			}
+		})
+	}
+}
+func TestMemoryStateIsolatesGooseWithoutReadingSecret(t *testing.T) {
+	q, c := kubeQueueFixture()
+	if got := q.memoryState(context.Background(), "goose"); got != "isolated" {
+		t.Fatalf("goose memory state = %q, want isolated", got)
+	}
+	if len(c.Actions()) != 0 {
+		t.Fatalf("goose memory state read the API: %v", c.Actions())
 	}
 }
