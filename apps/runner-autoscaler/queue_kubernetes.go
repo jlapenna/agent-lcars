@@ -672,7 +672,8 @@ func (q *kubernetesQueue) memoryState(ctx context.Context, pipeline string) stri
 		// the Secret is unreadable.
 		return "unknown"
 	}
-	if len(secret.Data["hindsight-api-token"]) == 0 {
+	// The worker bootstrap strips CR/LF before using the token; match it.
+	if strings.Trim(string(secret.Data["hindsight-api-token"]), "\r\n") == "" {
 		return "no_token"
 	}
 	return "configured"

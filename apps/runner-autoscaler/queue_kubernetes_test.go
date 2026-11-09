@@ -434,6 +434,7 @@ func TestKubernetesLaunchRecordsMemoryState(t *testing.T) {
 		{name: "configured", pipeline: "claude", want: "configured", data: map[string][]byte{"hindsight-api-token": []byte("t")}},
 		{name: "no token", pipeline: "codex", want: "no_token", data: map[string][]byte{"telemetry-writer.json": []byte("{}")}},
 		{name: "empty token", pipeline: "agy", want: "no_token", data: map[string][]byte{"hindsight-api-token": {}}},
+		{name: "newline-only token", pipeline: "claude", want: "no_token", data: map[string][]byte{"hindsight-api-token": []byte("\r\n")}},
 		{name: "secret unreadable", pipeline: "opencode", want: "unknown", noSecret: true},
 	}
 	for i, tc := range cases {
