@@ -72,5 +72,5 @@ overrides:
   'minimatch@>=7.0.0 <11.0.1': 11.0.5
   # nx calls minimatch.makeRe, which minimatch 11 removed; keep its pinned 10.x
   # until Nx moves to 11 (jlapenna/repo-tools#229, nrwl/nx#37727).
-  'nx>minimatch': 10.2.5
+  'nx>minimatch': 11.0.1
   'glob@>=9.0.0 <=14.0.1': 14.0.4
