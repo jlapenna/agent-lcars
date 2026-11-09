@@ -601,6 +601,23 @@ if [ "${FAKE_CODEX_CAPACITY:-}" = "1" ]; then
   echo '{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}'
   exit 1
 fi
+# Verbatim from an exhausted Codex account (agent-lcars#3278/r1): the CLI
+# prints its banner on stderr, with a typographic apostrophe, before any
+# JSON failure event, then exits 1.
+if [ "${FAKE_CODEX_STDERR_USAGE_LIMIT:-}" = "1" ]; then
+  echo 'You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM.' >&2
+  echo 'Reading additional input from stdin...' >&2
+  exit 1
+fi
+if [ "${FAKE_CODEX_USAGE_LIMIT_EVENT:-}" = "1" ]; then
+  echo '{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}'
+  echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_STDERR_LIMIT_PROSE:-}" = "1" ]; then
+  echo 'warning: a tool said You’ve hit your usage limit' >&2
+  exit 1
+fi
 if [ "${FAKE_CODEX_CAPACITY_IN_TOOL_OUTPUT:-}" = "1" ]; then
   echo '{"type":"item.completed","item":{"id":"item_31","type":"command_output","output":"Selected model is at capacity. Please try a different model."}}'
   exit 1
@@ -2536,6 +2553,27 @@ run_scenario agy-quota-prose-stderr agy
 [ "$rc" -ne 0 ] || fail "agy quota prose: expected failure"
 jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agy quota prose: free stderr text forged a provider stop"
 unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_AGY_STDERR FAKE_BRIEF_NO_RESUME
+
+# Codex out of credits: the stderr banner (no JSON event) and the same banner
+# as a structured event are both provider limits, despite the typographic
+# apostrophe. A stderr line that only mentions the phrase is not.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1
+run_scenario codex-stderr-usage-limit codex
+unset FAKE_CODEX_STDERR_USAGE_LIMIT
+[ "$rc" -ne 0 ] || fail "codex stderr usage limit: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
+jq -e '.message | contains("try again at Nov 11th")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: provider cause not retained"
+export FAKE_CODEX_USAGE_LIMIT_EVENT=1
+run_scenario codex-usage-limit-event codex
+unset FAKE_CODEX_USAGE_LIMIT_EVENT
+[ "$rc" -ne 0 ] || fail "codex usage limit event: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
+export FAKE_CODEX_STDERR_LIMIT_PROSE=1
+run_scenario codex-stderr-limit-prose codex
+unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH
+[ "$rc" -ne 0 ] || fail "codex stderr limit prose: expected failure"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr limit prose: unanchored stderr text forged a provider stop"
+echo "scenario codex-usage-limit: OK"
 
 # #2537: a provider that stops on structured stream events leaves no final
 # message, so an empty LAST_MESSAGE_FILE must not degrade the report to a

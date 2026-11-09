@@ -1172,6 +1172,18 @@ CURLCFG
   if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
     PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
     tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+  elif [ -z "$CODEX_AUTH_FAILURE" ] && [ "$AGENT_EXIT" -ne 0 ]; then
+    # An exhausted account can stop Codex before it emits any JSON event: the
+    # CLI prints its own banner on stderr ("You’ve hit your usage limit. Visit
+    # https://chatgpt.com/settings/usage ... try again at <date>.") and exits
+    # 1. Retain only lines that begin with that banner, so stderr text that
+    # merely mentions a limit is not a provider stop.
+    CODEX_STDERR_LIMITS="$RUNNER_TEMP/codex-stderr-limits.txt"
+    grep -E "^You(’|')ve hit your (usage|weekly) limit" "$CODEX_STDERR" 2>/dev/null |
+      tail -c 4096 > "$CODEX_STDERR_LIMITS" || true
+    if [ -s "$CODEX_STDERR_LIMITS" ]; then
+      PROVIDER_FAILURE_FILE="$CODEX_STDERR_LIMITS"
+    fi
   fi
   # Codex streams JSON events on stdout: keep the structured failures already
   # extracted from them, then its free-form stderr. Redact both now, while
@@ -1626,8 +1638,10 @@ fi
 # only an anchored CLI limit response at the start of that message or a
 # structured provider failure event reclassifies it; ordinary report prose
 # discussing quota errors stays a report.
+# Codex writes its banners with a typographic apostrophe (You’ve), Claude
+# with an ASCII one; compare both forms.
 is_provider_limit_message() {
-  local text="$1"
+  local text="${1//’/\'}"
   [[ "$text" == "You've hit your weekly limit"* ]] ||
     [[ "$text" == "You've hit your usage limit"* ]] ||
     [[ "$text" == "Credit balance is too low"* ]] ||
@@ -1638,7 +1652,7 @@ is_provider_limit_message() {
     { [[ "$text" =~ ^API\ Error:\ 4[0-9][0-9]\  ]] && is_provider_limit_failure "$text"; }
 }
 is_provider_limit_failure() {
-  local text="$1"
+  local text="${1//’/\'}"
   [[ "$text" == *"You've hit your weekly limit"* ]] ||
     [[ "$text" == *"You've hit your usage limit"* ]] ||
     [[ "$text" == *"usage_limit_reached"* ]] ||
