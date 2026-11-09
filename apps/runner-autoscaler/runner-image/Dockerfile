@@ -756,6 +756,8 @@ RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skil
 # and execute its version command while building: a package that no longer
 # provides the expected executable must fail publication, not a claimed run.
 RUN npm install -g @anthropic-ai/claude-code && claude --version
+RUN npm install -g @vectorize-io/hindsight-coding-agents@0.8.5 && \
+    test -x /usr/local/bin/hindsight-coding-agents
 
 # The retained Actions Node runtime carries npm independently of NodeSource.
 # Repair both node-tar copies after the image's global npm installs so CVE-2026-59873
@@ -785,6 +787,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/opencode/context-lifecycle.js \
     /home/runner/.config/opencode/context-lifecycle.js
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/agents/opencode/hindsight.js \
+    /home/runner/.config/opencode/hindsight.js
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/opencode-litellm-proxy.mjs \
     /usr/local/lib/agent-lcars/opencode-litellm-proxy.mjs
@@ -872,6 +877,19 @@ RUN codex plugin marketplace add /opt/repo-tools && \
     codex plugin add repo-tools@repo-tools
 RUN claude plugin marketplace add /opt/repo-tools && \
     claude plugin install repo-tools@repo-tools
+
+# Stage the Hindsight coding-agent runtime and register hooks/MCP/skills for
+# Claude Code, Codex and Antigravity; OpenCode loads ~/.hindsight/coding-agents
+# through /home/runner/.config/opencode/hindsight.js. Leave coding-agent.json
+# disabled without a token in the published image; runtime/hindsight-bootstrap.sh
+# enables per-repo agent-lcars::<repo> memory when HINDSIGHT_API_TOKEN is mounted.
+RUN hindsight-coding-agents install claude-code codex antigravity-cli \
+      --server self-hosted --api-url https://memory.lan.jlapenna.net </dev/null && \
+    mkdir -p /home/runner/.gemini/antigravity-cli/skills && \
+    cp -R /home/runner/.gemini/config/skills/hindsight-coding-agent \
+      /home/runner/.gemini/antigravity-cli/skills/hindsight-coding-agent && \
+    install -d -m 0700 /home/runner/.hindsight && \
+    (umask 077; printf '{"disabled":true}\n' > /home/runner/.hindsight/coding-agent.json)
 
 # Corepack's downloaded package-manager cache is per-user. The root-side
 # `pnpm --version` smoke above proves installation but warms only /root;

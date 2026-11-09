@@ -19,6 +19,7 @@ home="$tmp/home"
 bin="$tmp/bin"
 mkdir -p "$lib/runtime" "$lib/agents/shared" "$home" "$bin" "$tmp/corepack" \
   "$tmp/externals/node24/bin" "$tmp/archive"
+ln -sf "$(command -v node)" "$bin/node"
 cp "$here/externals-health.sh" "$here/toolchain-health.sh" "$here/verify-image-invariants.sh" "$lib/"
 # The dedicated package-bin tests and real image build exercise this checker.
 # This gate fixture tests aggregation and failure propagation only.
@@ -48,6 +49,18 @@ write_exe "$bin/java" "echo 'openjdk version \"21.0.8\" 2025-07-15' >&2"
 write_exe "$bin/opencode" '[ "$1 $2" = "run --help" ] && echo "      --auto   auto-approve permissions"; exit 0'
 write_exe "$bin/agy" '[ "$1" = "--version" ] && echo "1.5.1"; exit 0'
 write_exe "$bin/lcars" 'exit 0'
+write_exe "$bin/hindsight-coding-agents" 'exit 0'
+mkdir -p "$home/.hindsight/coding-agents/dist" "$home/.config/opencode" \
+  "$home/.claude/skills/hindsight-coding-agent" \
+  "$home/.agents/skills/hindsight-coding-agent" \
+  "$home/.gemini/antigravity-cli/skills/hindsight-coding-agent"
+chmod 700 "$home/.hindsight"
+(umask 077; printf '{"disabled":true}\n' > "$home/.hindsight/coding-agent.json")
+: > "$home/.hindsight/coding-agents/dist/index.js"
+: > "$home/.claude/skills/hindsight-coding-agent/SKILL.md"
+: > "$home/.agents/skills/hindsight-coding-agent/SKILL.md"
+: > "$home/.gemini/antigravity-cli/skills/hindsight-coding-agent/SKILL.md"
+cp "$repo_root/agents/opencode/hindsight.js" "$home/.config/opencode/hindsight.js"
 # Real SQLite/schema behavior is tested by the image's two build layers.
 write_exe "$lib/check-opencode-store.sh" 'exit 0'
 
@@ -62,6 +75,7 @@ gate() {
     AGENT_LCARS_OPENCODE="$bin/opencode" \
     AGENT_LCARS_AGY="$bin/agy" \
     AGENT_LCARS_LCARS="$bin/lcars" \
+    AGENT_LCARS_HINDSIGHT_CLI="$bin/hindsight-coding-agents" \
     AGENT_LCARS_ARCHIVE_CACHE="$tmp/archive" \
     bash "$lib/verify-image-invariants.sh" >"$tmp/out" 2>&1
 }
@@ -119,6 +133,11 @@ write_exe "$bin/java" "echo 'openjdk version \"21.0.8\" 2025-07-15' >&2"
 mkdir -p "$home/.codex" && : > "$home/.codex/auth.json"
 expect_failure "baked codex auth" "image carries no Codex authentication"
 rm -f "$home/.codex/auth.json"
+
+printf '{"apiToken":"secret","disabled":false}\n' > "$home/.hindsight/coding-agent.json"
+expect_failure "baked hindsight token" "image carries disabled Hindsight config with no baked token"
+printf '{"disabled":true}\n' > "$home/.hindsight/coding-agent.json"
+chmod 600 "$home/.hindsight/coding-agent.json"
 
 rmdir "$tmp/archive"
 expect_failure "archive cache" "action-archive cache is baked"

@@ -187,11 +187,18 @@ func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
 			}
 			keys := map[string]bool{}
 			volatile := false
+			hindsightOptional := false
 			for _, v := range p.Volumes {
 				if v.HostPath != nil {
 					t.Fatal("host file dependency")
 				}
 				if v.Secret != nil {
+					if v.Name == "credentials" && v.Secret.Optional != nil && *v.Secret.Optional {
+						t.Fatal("required credentials volume must not be optional")
+					}
+					if v.Name == "hindsight-credentials" {
+						hindsightOptional = v.Secret.Optional != nil && *v.Secret.Optional && v.Secret.SecretName == q.config.CredentialsSecret
+					}
 					for _, item := range v.Secret.Items {
 						keys[item.Key] = true
 					}
@@ -200,7 +207,19 @@ func TestKubernetesLaunchProviderIsolationAndSingleAttempt(t *testing.T) {
 					volatile = v.EmptyDir != nil && v.EmptyDir.Medium == core.StorageMediumMemory
 				}
 			}
-			if !keys["telemetry-writer.json"] || keys["claude-code-oauth-token"] != (provider == "claude") || keys["opencode-llm-api-key"] != (provider == "opencode") || keys["antigravity-oauth-token"] != (provider == "agy") || volatile != (provider == "codex") {
+			hindsightMount := false
+			for _, m := range p.Containers[0].VolumeMounts {
+				if m.Name == "hindsight-credentials" && m.MountPath == directRunnerHindsightMountPath && m.ReadOnly {
+					hindsightMount = true
+				}
+			}
+			hindsightEnv := false
+			for _, env := range p.Containers[0].Env {
+				if env.Name == "HINDSIGHT_TOKEN_FILE" && env.Value == directRunnerHindsightTokenPath {
+					hindsightEnv = true
+				}
+			}
+			if !keys["telemetry-writer.json"] || !keys["hindsight-api-token"] || !hindsightOptional || !hindsightMount || !hindsightEnv || keys["claude-code-oauth-token"] != (provider == "claude") || keys["opencode-llm-api-key"] != (provider == "opencode") || keys["antigravity-oauth-token"] != (provider == "agy") || volatile != (provider == "codex") {
 				t.Fatal("provider isolation violated")
 			}
 			secret, _ := c.CoreV1().Secrets(q.config.Namespace).Get(ctx, j.Name, meta.GetOptions{})

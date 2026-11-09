@@ -38,6 +38,9 @@ const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 // which its exit report must repeat (see directRunnerLaunch.runner).
 const queueRunnerAnnotation = "agent-lcars.claimed-by"
 
+const directRunnerHindsightMountPath = "/run/hindsight"
+const directRunnerHindsightTokenPath = "/run/hindsight/hindsight-api-token"
+
 type queueToleration struct {
 	Key      string                  `yaml:"key"`
 	Operator core.TolerationOperator `yaml:"operator"`
@@ -550,6 +553,11 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
 	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
 	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
+	if l.pipeline != "goose" {
+		env = append(env, core.EnvVar{Name: "HINDSIGHT_TOKEN_FILE", Value: directRunnerHindsightTokenPath})
+		volumes = append(volumes, core.Volume{Name: "hindsight-credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: []core.KeyToPath{{Key: "hindsight-api-token", Path: "hindsight-api-token"}}, DefaultMode: &mode, Optional: &yes}}})
+		mounts = append(mounts, core.VolumeMount{Name: "hindsight-credentials", MountPath: directRunnerHindsightMountPath, ReadOnly: true})
+	}
 	if l.pipeline == "codex" {
 		env = append(env, core.EnvVar{Name: "LCARS_CODEX_VOLATILE_DIR", Value: directRunnerCodexVolatileMountPath})
 		size := resource.MustParse("64Mi")

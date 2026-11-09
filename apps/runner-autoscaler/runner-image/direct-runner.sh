@@ -46,6 +46,8 @@ source "${WORKER_POLICY_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/worker-policy-boo
 CODEX_HOOK_ARGS=()
 # shellcheck source=runtime/hook-telemetry-bootstrap.sh
 source "${HOOK_TELEMETRY_HELPER:-$RUNTIME_HELPERS_DIR/hook-telemetry-bootstrap.sh}"
+# shellcheck source=runtime/hindsight-bootstrap.sh
+source "${HINDSIGHT_BOOTSTRAP_HELPER:-$RUNTIME_HELPERS_DIR/hindsight-bootstrap.sh}"
 # This supervisor observes successful OS spawn, not a bootstrap heartbeat.
 PROVIDER_PROCESS_NODE="${PROVIDER_PROCESS_NODE:-/usr/bin/node}"
 PROVIDER_PROCESS_HELPER="${PROVIDER_PROCESS_HELPER:-$RUNTIME_HELPERS_DIR/provider-process.mjs}"
@@ -150,9 +152,11 @@ PROVIDER_OUTPUT_FILE="$RUNNER_TEMP/provider-output.log"
 redact_runner_secrets() {
   local text secret file
   local -a secrets=("${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}"
-    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}")
+    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${HINDSIGHT_API_TOKEN:-}")
   for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
-    "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}"; do
+    "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}" \
+    "${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}" \
+    "/run/secrets/hindsight-api-token"; do
     if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
   done
   if [ -n "${CODEX_AUTH_FILE:-}" ] && [ -r "$CODEX_AUTH_FILE" ]; then
@@ -632,6 +636,7 @@ set -a
 # shellcheck source=/dev/null
 source "$RUNTIME_ENV"
 set +a
+hindsight_bootstrap
 
 # A native Work item has no GitHub issue thread on which to leave a terminal
 # park/no-op.  The provider gets one private, per-run file instead.  It is an
@@ -929,7 +934,7 @@ if [ "$PIPELINE" = "claude" ]; then
     [ "$remaining" -gt 0 ] || return 124
     timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" claude --dangerously-skip-permissions \
-      --allowedTools "Bash,Edit,Write,MultiEdit" \
+      --allowedTools "Bash,Edit,Write,MultiEdit,mcp__hindsight__*" \
       --disallowedTools "ScheduleWakeup,SendMessage,Monitor" \
       "$@" --print "$prompt" 2> >(tee -a "$PROVIDER_OUTPUT_FILE" >&2) | tee "$LAST_MESSAGE_FILE"
     return "${PIPESTATUS[0]}"

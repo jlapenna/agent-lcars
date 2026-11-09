@@ -4,7 +4,8 @@
   "plugin": [
     "./lcars-session.js",
     "./context-lifecycle.js",
-    "./lcars-telemetry.js"
+    "./lcars-telemetry.js",
+    "./hindsight.js"
   ],
   "skills": ["/opt/repo-tools/plugins/repo-tools/skills"],
   "permission": {

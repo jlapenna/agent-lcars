@@ -51,6 +51,7 @@ it.each([
       'context-lifecycle.js',
       'lcars-session.js',
       'lcars-telemetry.js',
+      'hindsight.js',
       'package.json',
       'package-lock.json',
     ])
@@ -185,6 +186,7 @@ response.resume();response.on('end',resolve);
         'context-lifecycle.js',
         'lcars-session.js',
         'lcars-telemetry.js',
+        'hindsight.js',
       ])
         writeFileSync(join(project, 'agents/opencode', file), '{}');
       writeFileSync(

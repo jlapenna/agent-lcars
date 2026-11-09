@@ -27,6 +27,7 @@ class ContinuationExitTest(unittest.TestCase):
             "context-lifecycle.js",
             "lcars-session.js",
             "lcars-telemetry.js",
+            "hindsight.js",
             "package.json",
             "package-lock.json",
         ]:

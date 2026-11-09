@@ -38,7 +38,7 @@ func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 			}
 		}
 	}
-	if !found["goose-config.yaml"] || !found["goose-environment.json"] || found["claude-code-oauth-token"] || found["opencode-llm-api-key"] {
+	if !found["goose-config.yaml"] || !found["goose-environment.json"] || found["claude-code-oauth-token"] || found["opencode-llm-api-key"] || found["hindsight-api-token"] {
 		t.Fatal("wrong provider credentials projected")
 	}
 	// The recipe deadline is on the Pod only: queue wait never consumes it.
