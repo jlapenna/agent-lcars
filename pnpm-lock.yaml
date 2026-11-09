@@ -131,8 +131,8 @@ importers:
         specifier: ^8.0.1
         version: 8.0.3(supports-color@7.2.0)
       '@jlapenna/repo-tools':
-        specifier: github:jlapenna/repo-tools#v4.7.2
-        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf(eslint@10.14.0(supports-color@7.2.0))(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))(supports-color@7.2.0)(typescript@6.0.3)
+        specifier: github:jlapenna/repo-tools#v4.7.3
+        version: https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27(eslint@10.14.0(supports-color@7.2.0))(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))(supports-color@7.2.0)(typescript@6.0.3)
       '@naxodev/gonx':
         specifier: 4.1.2
         version: 4.1.2(@nx/devkit@24.0.5(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24))))(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))
@@ -1770,9 +1770,9 @@ packages:
       vitest:
         optional: true
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf':
-    resolution: {gitHosted: true, integrity: sha512-YC3f2NSMRLCTJz3ZMTDmeEpBGoCrTTkAEUATplO601Yfv5jGVICNOnyO/XrZ2fKZ20bBXO+H5FGX9B28tHdjEQ==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf}
-    version: 0.0.0
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27':
+    resolution: {gitHosted: true, integrity: sha512-CEzQPSdE/Q2lk2AH52tnnPeWD9Y32KCfMrqFZUVW35yFZnBkLl+N41GFva5vZ/K37ETdsfb5V/0Ke/R3+Igigw==, tarball: https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27}
+    version: 4.7.3
     engines: {node: '>=24.22.1 <25 || >=26.12.1 <27', pnpm: 11.28.11}
     hasBin: true
 
@@ -2076,11 +2076,6 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
-
-  '@nx/devkit@24.0.4':
-    resolution: {integrity: sha512-g42KgT36Ecs9mtvPbIRkUOi0pg3Nbs5U5n8BnD0Apn0DieaFUo/ytWjsQPn2SfRq76GcZmAnMSYrbS0KX37TvQ==}
-    peerDependencies:
-      nx: '>= 23 <= 25 || ^24.0.0-0'
 
   '@nx/devkit@24.0.5':
     resolution: {integrity: sha512-mXDYdlPQi3f3OukZsqqmwKO0Gkv9k+r1I6jctF5QXaYB7o5JT7n9wYO30CKQ938k9t8WPfaWRU4kioaoWX3uDw==}
@@ -9203,11 +9198,11 @@ snapshots:
       '@testing-library/react': 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       vitest: 5.1.0(@opentelemetry/api@1.9.1)(@types/node@26.6.6)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0)(vite@8.3.6(@types/node@26.6.6)(esbuild@0.28.2)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
-  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/87ea7728ac1ea109cdb05a5dd2a9c18ea760ffaf(eslint@10.14.0(supports-color@7.2.0))(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))(supports-color@7.2.0)(typescript@6.0.3)':
+  '@jlapenna/repo-tools@https://codeload.github.com/jlapenna/repo-tools/tar.gz/11acb68af81e92fafb31656c51b228ecd746ad27(eslint@10.14.0(supports-color@7.2.0))(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))(supports-color@7.2.0)(typescript@6.0.3)':
     dependencies:
       '@agentclientprotocol/sdk': 2.4.0(@modelcontextprotocol/server@2.4.0)(zod@4.6.7)
       '@modelcontextprotocol/server': 2.4.0
-      '@nx/devkit': 24.0.4(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))
+      '@nx/devkit': 24.0.5(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))
       '@typescript-eslint/utils': 8.72.1(eslint@10.14.0(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
       yaml: 2.9.1
       zod: 4.6.7
@@ -9476,15 +9471,6 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
-
-  '@nx/devkit@24.0.4(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))':
-    dependencies:
-      ejs: 5.0.1
-      minimatch: 11.0.5
-      nx: 24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24))
-      semver: 7.8.5
-      tslib: 2.9.1
-      yargs-parser: 21.1.1
 
   '@nx/devkit@24.0.5(nx@24.0.5(@swc-node/register@1.12.1(@swc/core@1.16.22(@swc/helpers@0.5.24))(@swc/types@0.1.28)(supports-color@7.2.0)(typescript@6.0.3))(@swc/core@1.16.22(@swc/helpers@0.5.24)))':
     dependencies:
