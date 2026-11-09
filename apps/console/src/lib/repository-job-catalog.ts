@@ -14,6 +14,13 @@ import type { CatalogJob, JobStore } from './repository-job-store';
  * the definition's execution profile does not admit automatic activation. */
 export type JobActivation = (definition: JobDefinition) => string | undefined;
 
+/** Whether `principal` still authorizes `definition` under its execution
+ * profile, exactly as an enabling operator is checked. */
+export type JobAuthorization = (
+  principal: string,
+  definition: JobDefinition,
+) => boolean;
+
 /** Null when no operator veto stands. A record written before automatic
  * activation has no `vetoedBy`. One that was enabled and is now disabled
  * without a source error was either an operator disable or a digest change
@@ -33,6 +40,7 @@ export async function refreshJobCatalog(
   tokens: DispatchTokenProvider,
   now: Date,
   activate: JobActivation,
+  authorizes?: JobAuthorization,
 ): Promise<void> {
   const existing = (await store.list()).filter(
     (job) => job.repository === repository,
@@ -168,11 +176,22 @@ export async function refreshJobCatalog(
           !row.error &&
           current.definition?.digest === row.definition?.digest,
         );
+        // An enabled, unchanged job whose principal no longer authorizes it
+        // (the scheduler principal moved, #3217, or a grant was narrowed)
+        // re-attributes to the current automation principal when the profile
+        // admits it. It keeps its floor: nothing is backfilled or skipped.
+        const reattribute =
+          unchanged &&
+          row.definition !== undefined &&
+          authorizes !== undefined &&
+          current?.enabledBy !== undefined &&
+          !authorizes(current.enabledBy, row.definition);
         // A merged, authorized definition activates at this observation
         // unless the operator vetoed the job. The new floor admits only
         // schedule slots after now, so activation never backfills.
-        const activatedBy =
-          unchanged || vetoedBy !== null || !row.definition || row.error
+        const activatedBy = reattribute
+          ? activate(row.definition!)
+          : unchanged || vetoedBy !== null || !row.definition || row.error
             ? undefined
             : activate(row.definition);
         return {
@@ -185,7 +204,12 @@ export async function refreshJobCatalog(
             enabled: unchanged || activatedBy !== undefined,
             ...(activatedBy === undefined
               ? {}
-              : { enabledBy: activatedBy, activationFloor: now.toISOString() }),
+              : reattribute
+                ? { enabledBy: activatedBy }
+                : {
+                    enabledBy: activatedBy,
+                    activationFloor: now.toISOString(),
+                  }),
           },
         };
       });
@@ -246,6 +270,7 @@ export async function refreshJobCatalogs(
   tokens: () => DispatchTokenProvider,
   deadline: number,
   activate: JobActivation,
+  authorizes?: JobAuthorization,
 ): Promise<void> {
   const refreshed = await store.sourceRefreshes();
   // Repositories with an enabled job come first so their catalogs stay
@@ -282,6 +307,7 @@ export async function refreshJobCatalogs(
             tokens(),
             new Date(),
             activate,
+            authorizes,
           );
         } catch (error) {
           logger.error(

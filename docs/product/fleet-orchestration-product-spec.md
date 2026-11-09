@@ -66,7 +66,8 @@ The core promises:
 | GitHub App (fleet)    | `agent-lcars[bot]`; claim assignee `agent-lcars-bot`                                   | Webhooks into the console; claim, react, comment, and monitor ready PR delivery                                          |
 | Linear integration    | `svc:linear` (HMAC webhook + Linear API key)                                           | Linear webhooks into the console; updates Linear workflow state and posts outcome comments                               |
 | Claude App            | `claude[bot]`                                                                          | Authors Claude pipeline deliverables                                                                                     |
-| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                                    | Claims runs, launches Kubernetes Jobs, reports placements and exits, ticks schedules/maintenance                         |
+| QueueExecutor         | Grant with `work.executor` (`svc:telemetry-writer`)                                    | Claims runs, launches Kubernetes Jobs, reports placements and exits                                                      |
+| Job scheduler         | Grant with `work.cron` for `goose` (`svc:job-scheduler`); key never runner-mounted     | Ticks schedules/maintenance; the repository-job automation principal                                                     |
 | Dispatched worker     | Per-run token plus its own App token (and optional job-secret grant)                   | Brief/recipe, checkout token, job secrets, heartbeat, introspect, complete                                               |
 | Internal work drivers | `svc:fleet-triage`, `svc:inbox-summary`, `svc:handoff-summary`, `svc:github-pr-review` | Event-driven issue triage, model-generated Inbox/handoff summaries, and cross-model GitHub PR review with quota fallback |
 | Member automation     | `workflow:member-automation` (GitHub Actions OIDC, 7 repositories)                     | `POST /dispatches/github` from member repositories                                                                       |
@@ -543,8 +544,9 @@ executor is working an issue; a human assignee owns it regardless.
 
 ### 6.5 Schedules, repository-owned Goose jobs, and the maintenance clock
 
-- **FL-SC-1 [Shipped]** The executor calls `POST /maintenance/tick` and
-  `POST /schedules/tick` every 5 minutes, using the `work.cron` scope. The
+- **FL-SC-1 [Shipped]** The autoscaler's ticker calls `POST /maintenance/tick`
+  and `POST /schedules/tick` every 5 minutes as `svc:job-scheduler`, whose
+  dedicated key is never runner-mounted, using the `work.cron` scope (#3217). The
   maintenance tick sweeps expired leases, executes a bounded summary pass,
   evaluates job-credential health (`jobCredentials`), notifies closed-tab
   Inbox Web Push subscribers, and drains the outbox. The schedule tick

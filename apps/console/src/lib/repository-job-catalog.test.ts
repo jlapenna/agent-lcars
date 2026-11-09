@@ -362,6 +362,67 @@ it('leaves invalid and unauthorized definitions visible and disabled', async () 
   expect(store.rows.get(jobKey('owner/jobs', 'audit'))?.enabled).toBe(false);
 });
 
+it('re-attributes an unchanged job to the moved automation principal at its original floor', async () => {
+  const store = new MemoryJobStore();
+  const id = jobKey('owner/jobs', 'audit');
+  let scheduler = 'svc:telemetry-writer';
+  let principals = ['user:joe', scheduler];
+  const jobs = new RepositoryJobs({
+    store,
+    runtime: {} as never,
+    profiles: () => [
+      {
+        name: 'audit',
+        repositories: ['owner/jobs'],
+        principals,
+        allocation,
+        inputSets: [{}],
+      },
+    ],
+    granted: () => true,
+    automationPrincipal: () => scheduler,
+    now: () => new Date(),
+  });
+  const refresh = async (at: string) => {
+    vi.stubGlobal('fetch', github({ 'owner/jobs': { audit: catalogFiles() } }));
+    await refreshJobCatalog(
+      store,
+      'owner/jobs',
+      tokens(),
+      new Date(at),
+      (definition) => jobs.automaticActivation(definition),
+      (principal, definition) => jobs.authorizes(definition, principal),
+    );
+    return store.rows.get(id)!;
+  };
+  expect(await refresh('2026-10-27T12:00:00.000Z')).toMatchObject({
+    enabled: true,
+    enabledBy: 'svc:telemetry-writer',
+    activationFloor: '2026-10-27T12:00:00.000Z',
+  });
+  // #3217: the profile and the goose work.cron grant move to the scheduler.
+  scheduler = 'svc:job-scheduler';
+  principals = ['user:joe', scheduler];
+  expect(await refresh('2026-10-27T12:05:00.000Z')).toMatchObject({
+    enabled: true,
+    enabledBy: 'svc:job-scheduler',
+    activationFloor: '2026-10-27T12:00:00.000Z',
+  });
+  // A still-authorized principal is never replaced.
+  scheduler = 'svc:other';
+  principals = ['user:joe', 'svc:job-scheduler', scheduler];
+  expect((await refresh('2026-10-27T12:10:00.000Z')).enabledBy).toBe(
+    'svc:job-scheduler',
+  );
+  // When the profile no longer admits automation, the record is left for an
+  // operator; admission keeps failing closed under the stale principal.
+  principals = ['user:joe'];
+  expect(await refresh('2026-10-27T12:15:00.000Z')).toMatchObject({
+    enabled: true,
+    enabledBy: 'svc:job-scheduler',
+  });
+});
+
 it('refreshes oldest repositories first within a bounded batch and advances on the next tick', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-27T12:00:00Z'));

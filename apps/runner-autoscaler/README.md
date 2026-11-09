@@ -345,8 +345,10 @@ minutes. By default it reuses the queue executor's Google ID-token source and
 Work API audience (`GOOGLE_APPLICATION_CREDENTIALS`); setting
 `LCARS_SCHEDULER_CREDENTIALS` points the schedule and maintenance ticker at a
 dedicated service-account key (`job-scheduler@agent-lcars.iam.gserviceaccount.com`)
-so the `work.cron` scope and repository-job automatic activation (`#3217`) can
-be separated from the runner-mounted `telemetry-writer.json` executor key. When
+so the `work.cron` scope and repository-job automatic activation (`#3217`) stay
+separate from the runner-mounted `telemetry-writer.json` executor key. Production
+sets it; the Console grants `work.cron` only to `svc:job-scheduler`, so an
+unset variable makes the Work API refuse ticks. When
 `LCARS_SCHEDULER_CREDENTIALS` is set to a distinct path, an unreadable or
 missing file fails closed for the schedule ticker without falling back to the
 executor identity. `work.executor` alone cannot mint schedules, and `work.cron`
