@@ -1595,8 +1595,9 @@ AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || 
 # `AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","short_error":"RESOURCE_EXHAUSTED
 # (code 429): Individual quota reached. ...",...}`, and exits non-zero (3).
 # Retain only well-formed records from the final round, never free stderr text,
-# so prose or tool output quoting a quota phrase cannot forge a provider stop.
-# Read here, not right after the round, so the stderr tee has flushed.
+# so prose or tool output that merely quotes a quota phrase is not a provider
+# stop. Read here, after finalization, not right after the round: the stderr
+# tee is a process substitution this script does not wait on.
 if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_FILE:-}" ]; then
   AGY_FAILURE_EVENTS="$RUNNER_TEMP/agy-failure-events.txt"
   tail -c "+$((${AGY_ROUND_STDERR_OFFSET:-0} + 1))" "$PROVIDER_OUTPUT_FILE" 2>/dev/null |
