@@ -16,6 +16,11 @@ export async function jobsApi<T>(path: string, body?: unknown): Promise<T> {
           body: JSON.stringify(body),
         }),
   });
+  if (response.status === 401) {
+    // The session lapsed (or AUTH_SECRET rotated) while the page stayed open.
+    window.location.assign('/login');
+    throw new Error('Sign in again to manage jobs');
+  }
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? 'Job operation failed');
   return result as T;
