@@ -756,8 +756,11 @@ RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skil
 # and execute its version command while building: a package that no longer
 # provides the expected executable must fail publication, not a claimed run.
 RUN npm install -g @anthropic-ai/claude-code && claude --version
+# NodeSource's system npm uses the /usr global prefix, so package binaries land
+# in /usr/bin (not /usr/local/bin, where this image's hand-installed CLIs live).
 RUN npm install -g @vectorize-io/hindsight-coding-agents@0.8.5 && \
-    test -x /usr/local/bin/hindsight-coding-agents
+    test "$(npm prefix -g)" = /usr && \
+    test -x /usr/bin/hindsight-coding-agents
 
 # The retained Actions Node runtime carries npm independently of NodeSource.
 # Repair both node-tar copies after the image's global npm installs so CVE-2026-59873
