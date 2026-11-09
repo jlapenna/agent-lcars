@@ -52,9 +52,14 @@ function detectAuthorFromBody(
   body: string | null | undefined,
 ): AgentPipeline | undefined {
   if (!body) return undefined;
+  // Commit trailers (`Claude-Session:`, `Co-Authored-By: Claude`) and the
+  // footer Claude Code writes into PR descriptions: a "Generated with
+  // [Claude Code]" line and the session URL on a line of its own.
   if (
     /\bClaude-Session:\s*https?:\/\/claude\.ai\/code\/session_/iu.test(body) ||
-    /Co-Authored-By:\s*Claude\b/iu.test(body)
+    /Co-Authored-By:\s*Claude\b/iu.test(body) ||
+    /Generated with \[Claude Code\]/iu.test(body) ||
+    /^\s*https?:\/\/claude\.ai\/code\/session_\S+\s*$/imu.test(body)
   ) {
     return 'claude';
   }

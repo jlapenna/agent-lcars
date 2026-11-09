@@ -181,7 +181,10 @@ The core promises:
   `Run.pipeline` from the PR's `<!-- attempt-claim:g<n>:<runId> -->` marker (or
   the latest prior `implement` run on the task) before falling back to static PR
   signals (`agent:*` label, `claude[bot]` login, `Claude-Session:` /
-  `Co-Authored-By:` trailers, branch prefix, or `agent-lcars[bot]` login), so
+  `Co-Authored-By:` trailers, the Claude Code PR-description footer
+  (`Generated with [Claude Code]` or a standalone
+  `https://claude.ai/code/session_…` line), branch prefix, or
+  `agent-lcars[bot]` login), so
   `codex`, `agy`, and `opencode` PRs that share `agent-lcars[bot]` are
   distinguished accurately. Reviews route to an opposite model with quota
   fallback (`codex` PR -> `claude` with fallback `['agy']`; `claude` PR ->
@@ -851,7 +854,10 @@ R7's explicit opt-in source contract is documented in
 [Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
 [#2198](https://github.com/jlapenna/agent-lcars/issues/2198) delivered the
 mechanism and serving proof; natural production `provider-limit` reroute
-observation remains separate from local mechanism tests.
+observation remains separate from local mechanism tests. The FL-IN-10 review
+fallback is in the same state: the maintainer skipped a forced-quota drill on
+2026-11-09, so a production `provider-limit` reroute of a review run stays an
+open acceptance gap until one occurs naturally.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
