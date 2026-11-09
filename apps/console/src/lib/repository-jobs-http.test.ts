@@ -108,6 +108,16 @@ function request(path: string, body: unknown) {
     body: JSON.stringify(body),
   });
 }
+it('asks an unauthenticated caller to sign in instead of reporting a grant', async () => {
+  const response = await repositoryJobsHttp(
+    new Request(
+      `https://console.example/api/work/v1/jobs/${'b'.repeat(64)}/profiles`,
+    ),
+    undefined,
+  );
+  expect(response.status).toBe(401);
+  expect(await response.json()).toEqual({ error: 'Sign in required' });
+});
 it.each(['invoke', 'enable'])(
   'rejects cross-repository hashed %s despite a shared grant',
   async (operation) => {

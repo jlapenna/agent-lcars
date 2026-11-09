@@ -44,3 +44,23 @@ it('keeps a newer registry refresh when the initial request resolves late', asyn
   expect(screen.getByText('2 registered')).toBeInTheDocument();
   expect(screen.queryByText('Old job')).not.toBeInTheDocument();
 });
+
+it('sends a signed-out browser to sign in instead of showing a grant error', async () => {
+  const assign = vi.fn();
+  vi.stubGlobal('location', { ...window.location, assign });
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Sign in required' }), {
+        status: 401,
+      }),
+    ),
+  );
+  render(
+    <MantineProvider>
+      <JobsPanel repositories={['owner/repo']} />
+    </MantineProvider>,
+  );
+  await screen.findByText('Sign in again to manage jobs');
+  expect(assign).toHaveBeenCalledWith('/login');
+});

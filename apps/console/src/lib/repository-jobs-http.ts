@@ -17,8 +17,13 @@ export async function repositoryJobsHttp(
   request: Request,
   principal: WorkPrincipal | undefined,
 ): Promise<Response> {
+  // An unauthenticated caller (e.g. a browser whose session cookie no longer
+  // decrypts after an AUTH_SECRET rotation) must be told to sign in again,
+  // not that it lacks a grant: the console redirects a 401 to /login.
+  if (principal === undefined)
+    return Response.json({ error: 'Sign in required' }, { status: 401 });
   if (
-    !principal?.scopes.has('work.operator') ||
+    !principal.scopes.has('work.operator') ||
     !principal.pipelines.includes('goose')
   )
     return Response.json(
