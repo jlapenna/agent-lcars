@@ -103,11 +103,12 @@ retain the limited provider's cooldown and mint a fresh authorized successor.
 at the start of `$AGENT_MESSAGE` (`You've hit your weekly limit`,
 `You've hit your usage limit`, `Credit balance is too low`, `You've hit your monthly spend limit`,
 `API Error: 4xx` quota errors such as an organization spend cap) and from structured provider failure events in
-`$PROVIDER_FAILURES` (Codex stream errors and Antigravity's `AGY_ERROR:` stderr
+`$PROVIDER_FAILURES` (Codex stream errors, Codex's own stderr lines that begin with its
+`You’ve hit your usage limit` / `weekly limit` banner, and Antigravity's `AGY_ERROR:` stderr
 records: `usage_limit_reached`, `insufficient_quota`,
 `exceeded your current quota`, `credit balance is too low`,
 `monthly spend limit`, `service_spend_limit_reached`, `org_spend_cap_reached`,
-`ResourceExhausted`, `RESOURCE_EXHAUSTED`), keeping ordinary `report` prose distinct from provider quota stops.
+`ResourceExhausted`, `RESOURCE_EXHAUSTED`; a typographic `’` matches as `'`), keeping ordinary `report` prose distinct from provider quota stops.
 It prefers an available authorized alternative. When all remaining alternatives
 are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
