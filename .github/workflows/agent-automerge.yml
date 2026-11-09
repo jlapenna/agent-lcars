@@ -60,11 +60,14 @@ permissions:
   pull-requests: write
   statuses: read
 
-# Multiple pull-request-target events for the same PR need only the most recent
-# auto-merge evaluation. Push, workflow_run, schedule, and dispatch
-# reconciliation use their own run IDs, so they never cancel an event-driven arm.
+# Pull-request-target events for one agent-authored PR supersede each other.
+# Every other run keeps its own run ID, including events on PRs by other
+# authors such as Renovate: a superseded run's jobs stay on the PR head as
+# cancelled check runs, and Renovate treats a cancelled check run as pending,
+# so it would never automerge that PR. Push, workflow_run, schedule, and
+# dispatch reconciliation never cancel an event-driven arm.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && contains(fromJSON(vars.AGENT_BOT_LOGINS), github.event.pull_request.user.login) && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
 
 jobs:

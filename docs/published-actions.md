@@ -120,6 +120,12 @@ emit both events. A late thread resolution, a late arm, mergeability still
 emits nothing subscribable, so keep at most a daily `schedule` backstop plus
 `workflow_dispatch` for manual repair. Pass no restore-chain inputs.
 
+The caller's workflow-level concurrency may supersede `pull_request_target`
+runs only for PRs whose author is in `AGENT_BOT_LOGINS`; every other run keeps
+a group unique to its run ID. A superseded run leaves cancelled check runs on
+the PR head, and Renovate's own automerge treats any cancelled check run as
+pending, so per-PR cancellation on a Renovate PR blocks its merge indefinitely.
+
 ## Not consumer surfaces
 
 | Tier     | Names                              |
