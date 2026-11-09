@@ -134,6 +134,10 @@
         {
           "serviceAccount": "telemetry-writer@agent-lcars.iam.gserviceaccount.com",
           "reason": "The host writer credential (Secret Manager AGENT_TELEMETRY_WRITER_KEY_JSON) is consumed by the homelab telemetry watcher outside GitHub Actions, which has no OIDC identity to federate. Every other fleet identity authenticates over WIF and must hold no key."
+        },
+        {
+          "serviceAccount": "job-scheduler@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The dedicated Work scheduler credential (#3217; Homelab vault agent_lcars_scheduler_key_json, mounted as LCARS_SCHEDULER_CREDENTIALS) is consumed only by the homelab runner-autoscaler's schedule and maintenance ticker, which runs outside GitHub Actions and has no OIDC identity to federate. It is never mounted into runner pods, so the work.cron and repository-job automation authority stays off the executor key."
         }
       ]
     },
