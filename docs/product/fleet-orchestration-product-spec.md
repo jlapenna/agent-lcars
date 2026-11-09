@@ -521,12 +521,13 @@ executor is working an issue; a human assignee owns it regardless.
   [lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback)).
   `direct-runner.sh` classifies `provider-limit` from anchored CLI limit
   banners at the start of `$AGENT_MESSAGE` (`You've hit your weekly limit`,
-  `You've hit your usage limit`, `Credit balance is too low`, `API Error: 429`
-  quota errors) and from structured provider failure events in
-  `$PROVIDER_FAILURES` (`usage_limit_reached`, `insufficient_quota`,
+  `You've hit your usage limit`, `Credit balance is too low`, `You've hit your monthly spend limit`,
+  `API Error: 4xx` quota errors such as an organization spend cap) and from structured provider failure events in
+  `$PROVIDER_FAILURES` (Codex stream errors and Antigravity's `AGY_ERROR:` stderr
+  records: `usage_limit_reached`, `insufficient_quota`,
   `exceeded your current quota`, `credit balance is too low`,
-  `monthly spend limit`, `ResourceExhausted`, `RESOURCE_EXHAUSTED`), keeping
-  ordinary `report` prose distinct from provider quota stops. GitHub PR review
+  `monthly spend limit`, `service_spend_limit_reached`, `org_spend_cap_reached`,
+  `ResourceExhausted`, `RESOURCE_EXHAUSTED`), keeping ordinary `report` prose distinct from provider quota stops. GitHub PR review
   runs admitted under `svc:github-pr-review` automatically carry cross-model
   `fallbackPipelines` (e.g. `['agy']` for `codex`/`claude` reviews).
   Real provider-limit qualification is tracked under R7.

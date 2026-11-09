@@ -69,7 +69,7 @@ cat >> "$baked/runtime/worker-completion.sh" <<'FAKE'
 monotonic_seconds() {
   local value deadline scenario provider
   value="$(fixture_production_monotonic_seconds)" || return $?
-  deadline="${CLAUDE_DEADLINE:-${CODEX_DEADLINE:-${OPENCODE_DEADLINE:-}}}"
+  deadline="${CLAUDE_DEADLINE:-${CODEX_DEADLINE:-${OPENCODE_DEADLINE:-${AGY_DEADLINE:-}}}}"
   scenario="${FIXTURE_SCENARIO:?}"
   provider="${FAKE_PIPELINE:?}"
   # Clock diagnostics must not launch another process inside the deadline
@@ -77,7 +77,7 @@ monotonic_seconds() {
   # append order, rather than another clock sample, relates these readings
   # to the timeout/workload receipts below.
   [[ "$scenario" =~ ^[a-z0-9-]{1,96}$ ]] || return 1
-  case "$provider" in claude|codex|opencode) ;; *) return 1 ;; esac
+  case "$provider" in claude|codex|opencode|agy) ;; *) return 1 ;; esac
   [[ "$value" =~ ^[0-9]+$ ]] || return 1
   if [ -z "$deadline" ]; then
     deadline=null
@@ -109,7 +109,7 @@ def receipt(event, **facts):
     provider = os.environ["FAKE_PIPELINE"]
     if not re.fullmatch(r"[a-z0-9-]{1,96}", scenario):
         raise ValueError("invalid fixture identity")
-    if provider not in ("claude", "codex", "opencode"):
+    if provider not in ("claude", "codex", "opencode", "agy"):
         raise ValueError("invalid fixture provider")
     row = dict(scenario=scenario, provider=provider, event=event,
                observedMonotonicNs=time.monotonic_ns(), **facts)
@@ -525,6 +525,20 @@ exit "${FAKE_WORKER_EXIT:-0}"
 FAKE
   chmod +x "$bindir/claude"
 
+  # Antigravity: FAKE_AGY_STDERR is written to the CLI's own stderr, exactly
+  # where the real CLI prints its `AGY_ERROR: {json}` provider stop record.
+  cat > "$bindir/agy" <<'FAKE'
+#!/usr/bin/env bash
+if [ -n "${FAKE_AGY_STDERR:-}" ]; then
+  printf '%s\n' "$FAKE_AGY_STDERR" >&2
+fi
+if [ -n "${FAKE_AGY_STDOUT:-}" ]; then
+  printf '%s' "$FAKE_AGY_STDOUT"
+fi
+exit "${FAKE_WORKER_EXIT:-0}"
+FAKE
+  chmod +x "$bindir/agy"
+
   cat > "$bindir/codex" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
@@ -904,6 +918,10 @@ run_scenario() {
     printf '%s' "$FAKE_CLAUDE_OAUTH_TOKEN" > "$dir/claude-code-oauth-token"
     export CLAUDE_TOKEN_FILE="$dir/claude-code-oauth-token"
   fi
+
+  printf '%s' 'fake-antigravity-oauth-token' > "$dir/antigravity-oauth-token"
+  export AGY_TOKEN_FILE="$dir/antigravity-oauth-token"
+  export AGY_BIN="$dir/bin/agy"
 
   printf '%s' 'fake-opencode-llm-key' > "$dir/opencode-llm-api-key"
   export OPENCODE_TOKEN_FILE="$dir/opencode-llm-api-key"
@@ -2484,6 +2502,40 @@ run_scenario provider-insufficient-quota
 unset FAKE_GH_NO_MATCH FAKE_CLAUDE_STDOUT
 [ "$rc" -ne 0 ] || fail "insufficient-quota: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "insufficient-quota: wrong failure classification"
+
+# Claude Code's own spend-cap line, and an organization spend cap refused as
+# an API 400 rather than a 429, are both provider stops.
+export FAKE_GH_NO_MATCH=1 FAKE_WORKER_EXIT=1
+export FAKE_CLAUDE_STDOUT="You've hit your monthly spend limit."
+run_scenario claude-monthly-spend-limit
+[ "$rc" -ne 0 ] || fail "claude spend limit: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "claude spend limit: wrong failure classification"
+export FAKE_CLAUDE_STDOUT='API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This organization has reached its monthly spend limit."}}'
+run_scenario claude-org-spend-limit-400
+[ "$rc" -ne 0 ] || fail "claude org spend 400: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "claude org spend 400: wrong failure classification"
+# An ordinary 400 is not a quota stop.
+export FAKE_CLAUDE_STDOUT='API Error: 400 duplicate tool_use ID in conversation history.'
+run_scenario claude-ordinary-400
+[ "$rc" -ne 0 ] || fail "claude ordinary 400: expected failure"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "claude ordinary 400: misclassified as a provider stop"
+unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_CLAUDE_STDOUT
+
+# Antigravity's structured stop record, verbatim from agy under an exhausted
+# quota (exit 3, nothing on stdout), is a provider limit.
+export FAKE_GH_NO_MATCH=1 FAKE_WORKER_EXIT=3 FAKE_BRIEF_NO_RESUME=1
+export FAKE_AGY_STDERR='error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 115h52m50s.
+AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 115h52m50s.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true,"error_id":"a0e2f4a0-4579-44cd-930a-0c67998ef049-2"}'
+run_scenario agy-resource-exhausted agy
+[ "$rc" -ne 0 ] || fail "agy quota: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agy quota: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
+jq -e '.message | contains("Individual quota reached")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agy quota: provider cause not retained"
+# The same phrase as free stderr text is not a structured provider stop.
+export FAKE_AGY_STDERR='tool output: RESOURCE_EXHAUSTED (code 429): Individual quota reached.'
+run_scenario agy-quota-prose-stderr agy
+[ "$rc" -ne 0 ] || fail "agy quota prose: expected failure"
+jq -e '.outcome == "agent-failed"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "agy quota prose: free stderr text forged a provider stop"
+unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_AGY_STDERR FAKE_BRIEF_NO_RESUME
 
 # #2537: a provider that stops on structured stream events leaves no final
 # message, so an empty LAST_MESSAGE_FILE must not degrade the report to a
