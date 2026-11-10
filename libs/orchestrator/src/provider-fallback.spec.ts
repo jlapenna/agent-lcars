@@ -623,6 +623,129 @@ function runFallbackContract(
       expect(await f.store.listRuns(TASK)).toHaveLength(3);
       expect(await f.store.readActiveRun(TASK)).toBeUndefined();
     });
+    it('parks an exhausted review as waiting for quota, then runs a fresh round when it is due (#3300)', async () => {
+      const f = fixture();
+      const review = { mode: 'review' };
+      const first = await f.request({
+        alternatives: ['codex'],
+        params: review,
+      });
+      await f.limit(first);
+      const second = await f.store.readActiveRun(TASK);
+      expect(second?.pipeline).toBe('codex');
+      await f.limit(second!);
+      const waiting = await f.store.readActiveRun(TASK);
+      // Policy order: the original provider, deferred past the bounded wait.
+      expect(waiting).toMatchObject({
+        pipeline: 'claude',
+        state: 'pending',
+        params: review,
+        queue: { state: 'queued', deferredUntil: '2026-10-10T02:15:00.000Z' },
+        providerFallback: {
+          attemptedPipelines: ['claude'],
+          originalRunId: first.runId,
+          fromRunId: second!.runId,
+          providerWait: {
+            attempt: 1,
+            afterRunId: second!.runId,
+            retryAt: '2026-10-10T02:15:00.000Z',
+          },
+        },
+      });
+      expect((await f.store.readRun(second!.runId))?.result?.summary).toBe(
+        'provider-limit',
+      );
+      // Not claimable before its retry time; claimable once due.
+      const claim = (now: string) =>
+        f.store.claimQueuedRun({
+          pipelines: PIPELINES,
+          now,
+          claimedBy: 'runner',
+          claimedBySubject: 'runner',
+          tokenHash: 'a'.repeat(64),
+        });
+      expect(await claim('2026-10-10T02:14:00.000Z')).toBeUndefined();
+      expect((await claim('2026-10-10T02:16:00.000Z'))?.runId).toBe(
+        waiting!.runId,
+      );
+    });
+    it('waits until a later provider-reported reset', async () => {
+      const f = fixture();
+      const first = await f.request({
+        pipeline: 'codex',
+        alternatives: ['claude'],
+        params: { mode: 'review' },
+      });
+      await f.limit(first);
+      const second = await f.store.readActiveRun(TASK);
+      expect(second?.pipeline).toBe('claude');
+      await f.orchestrator.report(second!.runId, {
+        ok: false,
+        summary: 'provider-limit',
+        message: "You've hit your limit · resets 9pm (UTC)",
+      });
+      expect(await f.store.readActiveRun(TASK)).toMatchObject({
+        pipeline: 'codex',
+        providerFallback: {
+          providerWait: { attempt: 1, retryAt: '2026-10-10T21:00:00.000Z' },
+        },
+      });
+    });
+    it('doubles the quota wait and settles a review as failed after the bounded waits', async () => {
+      const f = fixture();
+      let run = await f.request({
+        alternatives: [],
+        params: { mode: 'review' },
+      });
+      // No alternatives: the fallback policy is absent, so it fails at once.
+      await f.limit(run);
+      expect(await f.store.readActiveRun(TASK)).toBeUndefined();
+      const reviewTask = { repo: 'octo/example', issue: 3300 };
+      run = await f.request({
+        task: reviewTask,
+        alternatives: ['codex'],
+        params: { mode: 'review' },
+      });
+      const waits: number[] = [];
+      const attempts: number[] = [];
+      for (let step = 0; step < 40; step++) {
+        await f.limit(run);
+        const next = await f.store.readActiveRun(reviewTask);
+        if (next === undefined) break;
+        const wait = next.providerFallback?.providerWait;
+        if (wait?.afterRunId === run.runId) {
+          const failedAt = (await f.store.readRun(run.runId))!.updatedAt;
+          waits.push(
+            (Date.parse(wait.retryAt) - Date.parse(failedAt)) / 60_000,
+          );
+          attempts.push(wait.attempt);
+        }
+        f.advanceMinutes(7 * 60);
+        run = next;
+      }
+      // Minutes: doubling from 15, capped at six hours, seven waits.
+      expect(waits).toEqual([15, 30, 60, 120, 240, 360, 360]);
+      expect(attempts).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      expect(await f.store.readActiveRun(reviewTask)).toBeUndefined();
+    });
+    it('fails an exhausted review whose fallback authority was withdrawn', async () => {
+      const f = fixture();
+      const first = await f.request({
+        alternatives: ['codex'],
+        params: { mode: 'review' },
+      });
+      await f.limit(first);
+      f.revoke([]);
+      await f.limit((await f.store.readActiveRun(TASK))!);
+      expect(await f.store.readActiveRun(TASK)).toBeUndefined();
+    });
+    it('keeps failing non-review work when every alternative is exhausted', async () => {
+      const f = fixture();
+      const first = await f.request({ alternatives: ['codex'] });
+      await f.limit(first);
+      await f.limit((await f.store.readActiveRun(TASK))!);
+      expect(await f.store.readActiveRun(TASK)).toBeUndefined();
+    });
     it.each([
       { ok: false, summary: 'verification-failed' },
       { ok: true, summary: 'done' },

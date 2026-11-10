@@ -403,6 +403,9 @@ export type CredentialWriteReceipt = z.infer<
   typeof credentialWriteReceiptSchema
 >;
 
+/** Quota waits per review before it settles as an ordinary failure. */
+export const MAX_PROVIDER_WAITS = 7;
+
 /** Server-authorized request policy, never accepted as a raw caller identity. */
 const uniquePipelineList = z
   .array(z.string().min(1).max(128))
@@ -423,6 +426,15 @@ export const providerFallbackSchema = z
         reason: z.enum(['provider-limit', 'provider-cooldown']),
         failureRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
         limitedPipeline: z.string().min(1).max(128),
+      })
+      .optional(),
+    /** Every authorized provider stopped on its limit; this review waits for
+     * quota instead of failing. Bounded by `MAX_PROVIDER_WAITS`. */
+    providerWait: z
+      .strictObject({
+        attempt: z.number().int().min(1).max(MAX_PROVIDER_WAITS),
+        afterRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
+        retryAt: isoUtc,
       })
       .optional(),
   })

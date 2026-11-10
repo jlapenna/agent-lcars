@@ -5,6 +5,7 @@ import {
   isWorkAnchor,
   type LeasedOutboxEntry,
   MAX_AUTO_RETRIES,
+  MAX_PROVIDER_WAITS,
   type Orchestrator,
   type OrchestratorStore,
   OUTBOX_LEASE_MS,
@@ -1159,7 +1160,12 @@ export function outcomeCommentBody(
       } else if (run.result?.summary !== undefined) {
         lines.push(run.result.summary);
       }
-      if (fallbackSuccessor !== undefined) {
+      const wait = fallbackSuccessor?.providerFallback?.providerWait;
+      if (fallbackSuccessor !== undefined && wait?.afterRunId === run.runId) {
+        lines.push(
+          `Every authorized provider has stopped on its limit. This review is waiting for provider quota and retries automatically as run ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} at ${wait.retryAt} (wait ${wait.attempt} of ${MAX_PROVIDER_WAITS}); no re-request is needed. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+        );
+      } else if (fallbackSuccessor !== undefined) {
         lines.push(
           `A fresh fallback attempt ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} was created after this provider limit. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
         );

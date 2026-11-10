@@ -631,6 +631,40 @@ describe.each([
 });
 
 describe('outcomeCommentBody', () => {
+  it('says an exhausted review is waiting for quota and when it retries (#3300)', () => {
+    const limited = run({
+      runId: `${TASK.repo}#${TASK.issue}/r2`,
+      pipeline: 'codex',
+      result: { ok: false, summary: 'provider-limit' },
+    });
+    const waiting = run({
+      runId: `${TASK.repo}#${TASK.issue}/r3`,
+      state: 'pending',
+      providerFallback: {
+        principal: 'github:pr-review',
+        allowedPipelines: ['codex'],
+        attemptedPipelines: ['claude'],
+        originalRunId: `${TASK.repo}#${TASK.issue}/r1`,
+        fromRunId: limited.runId,
+        trigger: {
+          reason: 'provider-limit',
+          failureRunId: limited.runId,
+          limitedPipeline: 'codex',
+        },
+        providerWait: {
+          attempt: 1,
+          afterRunId: limited.runId,
+          retryAt: '2026-11-11T06:48:00.000Z',
+        },
+      },
+    });
+    const body = outcomeCommentBody(limited, waiting);
+    expect(body).toContain(
+      `waiting for provider quota and retries automatically as run ${waiting.runId} on claude at 2026-11-11T06:48:00.000Z (wait 1 of 7)`,
+    );
+    expect(body).not.toContain('re-request manually');
+    expect(body).not.toContain('fresh fallback attempt');
+  });
   it('identifies a created fresh fallback instead of requesting a manual retry', () => {
     const original = run({ result: { ok: false, summary: 'provider-limit' } });
     const successor = run({
