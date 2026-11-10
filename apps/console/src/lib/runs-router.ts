@@ -456,6 +456,10 @@ export const runsRouter = os.router({
         runId: claimed.runId,
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
+        ...(claimed.pipeline === 'goose' &&
+        claimed.params?.['providerAuth'] === 'claude'
+          ? { providerAuth: 'claude' as const }
+          : {}),
         token,
         expiresAt: claimed.leaseExpiresAt,
         ...(claimed.queue?.startupPlacement === undefined

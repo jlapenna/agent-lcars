@@ -21,10 +21,13 @@ import (
 // callback once a claim succeeds -- what a direct-mode worker needs, nothing
 // more. It is never logged whole (runToken is a live credential).
 type directRunnerLaunch struct {
-	runID      string
-	runToken   string
-	pipeline   string
-	consoleURL string
+	runID    string
+	runToken string
+	pipeline string
+	// providerAuth is a goose recipe's admitted tool harness ("claude" or
+	// empty). It selects the one extra provider credential the worker gets.
+	providerAuth string
+	consoleURL   string
 	// runner is the name this executor claimed the run under. The Work API
 	// accepts the run's exit report only under that same name, so the
 	// Kubernetes queue records it on the Job: a restarted executor (whose
@@ -70,6 +73,7 @@ type claimResponse struct {
 	RunID          string `json:"runId"`
 	WorkID         string `json:"workId"`
 	Pipeline       string `json:"pipeline"`
+	ProviderAuth   string `json:"providerAuth"`
 	Token          string `json:"token"`
 	ExpiresAt      string `json:"expiresAt"`
 }
@@ -183,11 +187,12 @@ func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	}
 	queueExecutorClaimsTotal.WithLabelValues(claimed.Pipeline).Inc()
 	err = reservation.launch(directRunnerLaunch{
-		runID:      claimed.RunID,
-		runToken:   claimed.Token,
-		pipeline:   claimed.Pipeline,
-		consoleURL: cfg.consoleURL,
-		runner:     cfg.runnerName,
+		runID:        claimed.RunID,
+		runToken:     claimed.Token,
+		pipeline:     claimed.Pipeline,
+		providerAuth: claimed.ProviderAuth,
+		consoleURL:   cfg.consoleURL,
+		runner:       cfg.runnerName,
 	})
 	if err != nil {
 		return queuePollOutcomeLaunchErr, err

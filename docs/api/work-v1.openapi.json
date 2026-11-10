@@ -13809,6 +13809,10 @@
                     "pipeline": {
                       "type": "string"
                     },
+                    "providerAuth": {
+                      "type": "string",
+                      "const": "claude"
+                    },
                     "token": {
                       "type": "string"
                     },

@@ -467,3 +467,51 @@ func TestMemoryStateIsolatesGooseWithoutReadingSecret(t *testing.T) {
 		t.Fatalf("goose memory state read the API: %v", c.Actions())
 	}
 }
+
+func TestQueueJobProjectsClaudeTokenOnlyForClaudeRecipes(t *testing.T) {
+	q, _ := kubeQueueFixture(queueReadyNode())
+	allocation := map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
+	q.config.Requests, q.config.Limits = allocation, allocation
+	keys := func(job *batch.Job) []string {
+		var out []string
+		for _, volume := range job.Spec.Template.Spec.Volumes {
+			if volume.Name == "credentials" {
+				for _, item := range volume.Secret.Items {
+					out = append(out, item.Key)
+				}
+			}
+		}
+		return out
+	}
+	has := func(list []string, key string) bool {
+		for _, entry := range list {
+			if entry == key {
+				return true
+			}
+		}
+		return false
+	}
+	plain, err := q.job(directRunnerLaunch{runID: "work:recipe/r1", pipeline: "goose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has(keys(plain), "claude-code-oauth-token") {
+		t.Fatalf("a recipe without a Claude harness received the Claude token: %v", keys(plain))
+	}
+	claude, err := q.job(directRunnerLaunch{runID: "work:recipe/r2", pipeline: "goose", providerAuth: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(claude); !has(got, "claude-code-oauth-token") || !has(got, "goose-config.yaml") {
+		t.Fatalf("Claude recipe credential items = %v", got)
+	}
+	for _, launch := range []directRunnerLaunch{
+		{runID: "work:native/r1", pipeline: "codex", providerAuth: "claude"},
+		{runID: "work:recipe/r3", pipeline: "goose", providerAuth: "codex"},
+		{runID: "work:recipe/r4", pipeline: "goose", providerAuth: "opencode"},
+	} {
+		if _, err := q.job(launch); err == nil {
+			t.Fatalf("launch %+v must be refused", launch)
+		}
+	}
+}
