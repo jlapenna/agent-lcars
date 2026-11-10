@@ -1106,9 +1106,9 @@ export const runClaimResponseSchema = z.strictObject({
   /** Present for native Work anchors only. */
   workId: workIdSchema.optional(),
   pipeline: z.string(),
-  /** A goose recipe whose admitted profile runs its tools on Claude; the
-   * executor projects the Claude credential only into that worker. */
-  providerAuth: z.literal('claude').optional(),
+  /** A goose recipe whose admitted profile runs its tools on Claude or
+   * Antigravity; the executor projects that credential only into that worker. */
+  providerAuth: z.enum(['claude', 'agy']).optional(),
   token: z.string(),
   expiresAt: z.string(),
 });

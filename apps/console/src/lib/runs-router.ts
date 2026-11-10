@@ -457,8 +457,9 @@ export const runsRouter = os.router({
         ...('workId' in claimed.task ? { workId: claimed.task.workId } : {}),
         pipeline: claimed.pipeline,
         ...(claimed.pipeline === 'goose' &&
-        claimed.params?.['providerAuth'] === 'claude'
-          ? { providerAuth: 'claude' as const }
+        (claimed.params?.['providerAuth'] === 'claude' ||
+          claimed.params?.['providerAuth'] === 'agy')
+          ? { providerAuth: claimed.params['providerAuth'] }
           : {}),
         token,
         expiresAt: claimed.leaseExpiresAt,

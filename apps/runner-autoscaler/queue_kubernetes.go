@@ -511,7 +511,7 @@ func queueResources(values map[string]string) core.ResourceList {
 }
 func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	var providerKey string
-	if l.providerAuth != "" && (l.pipeline != "goose" || l.providerAuth != "claude") {
+	if l.providerAuth != "" && (l.pipeline != "goose" || (l.providerAuth != "claude" && l.providerAuth != "agy")) {
 		return nil, fmt.Errorf("unsupported provider auth %q for pipeline %q", l.providerAuth, l.pipeline)
 	}
 	switch l.pipeline {
@@ -530,10 +530,13 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 				return nil, fmt.Errorf("goose requests and limits must match within the direct-agent ceiling")
 			}
 		}
-		// Only a recipe admitted under a Claude-harness profile receives the
-		// Claude subscription token; other recipes get no provider credential.
-		if l.providerAuth == "claude" {
+		// Only a recipe admitted under a Claude- or Antigravity-harness profile
+		// receives that harness's token; other recipes get no provider credential.
+		switch l.providerAuth {
+		case "claude":
 			providerKey = "claude-code-oauth-token"
+		case "agy":
+			providerKey = "antigravity-oauth-token"
 		}
 	default:
 		return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", l.pipeline)

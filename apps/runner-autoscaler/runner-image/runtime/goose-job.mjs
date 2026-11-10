@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { agyJobAuth } from './agy-job-auth.mjs';
 import { claudeJobAuth } from './claude-job-auth.mjs';
 import { codexJobAuth } from './codex-job-auth.mjs';
 import { loadGooseEnvironment } from './goose-environment.mjs';
@@ -51,6 +52,7 @@ let secretHome;
 let timeout;
 let codexAuth;
 let claudeAuth;
+let agyAuth;
 try {
   const brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
@@ -127,6 +129,11 @@ try {
   }
   if (brief.profile?.providerAuth === 'claude')
     claudeAuth = await claudeJobAuth({ environment });
+  if (brief.profile?.providerAuth === 'agy')
+    agyAuth = await agyJobAuth({
+      environment,
+      model: brief.profile.providerModel,
+    });
   const execute = gooseExecutor({
     workingDirectory,
     environment,
@@ -150,6 +157,7 @@ try {
 } finally {
   clearTimeout(timeout);
   claudeAuth?.close();
+  await agyAuth?.close();
   if (codexAuth) {
     try {
       if (!codexAuth.persistenceAttempted) await codexAuth.persist();

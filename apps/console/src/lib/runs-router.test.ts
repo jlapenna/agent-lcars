@@ -697,10 +697,11 @@ describe('claim', () => {
 
   it.each([
     ['claude', { mode: 'recipe', providerAuth: 'claude' }, 'claude'],
+    ['agy', { mode: 'recipe', providerAuth: 'agy' }, 'agy'],
     ['codex', { mode: 'recipe', providerAuth: 'codex' }, undefined],
     ['none', { mode: 'recipe' }, undefined],
   ])(
-    'names only a Claude recipe harness to the executor (%s)',
+    'names only a token-projected recipe harness to the executor (%s)',
     async (_name, params, expected) => {
       const { store, orchestrator, now } = fixture();
       await seedQueuedRun(store, orchestrator, {
