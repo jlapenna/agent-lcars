@@ -420,7 +420,7 @@ describe('agent-lcars Server Actions', () => {
       expect(dispatchUnstickPrsLib).toHaveBeenCalledWith(
         'PR #123 stuck',
         DEFAULT_REPO,
-        'jlapenna',
+        { login: 'jlapenna', githubToken: 'operator-token' },
       );
     });
 
@@ -479,7 +479,7 @@ describe('agent-lcars Server Actions', () => {
           owner: DEFAULT_REPO.owner,
           name: DEFAULT_REPO.name,
         }),
-        'jlapenna',
+        { login: 'jlapenna', githubToken: 'operator-token' },
       );
     });
   });

@@ -1293,7 +1293,7 @@ describe('approveAndMergePr', () => {
 });
 
 describe('dispatchUnstickPrs', () => {
-  it('creates an audit anchor and admits the runbook through Work directly', async () => {
+  it('creates the audit anchor as the operator and admits the runbook through Work directly', async () => {
     const listForRepo = vi.fn().mockResolvedValue({ data: [] });
     const create = vi.fn().mockResolvedValue({
       data: {
@@ -1302,15 +1302,24 @@ describe('dispatchUnstickPrs', () => {
         body: 'Unstick the queue.',
       },
     });
+    // Reading the existing anchor stays on the App; the operator authors
+    // the new anchor carrying their context.
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { listForRepo, create } },
+      rest: { issues: { listForRepo } },
+    });
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { create } },
     });
     const { store } = fixtureOrchestratorRuntime();
 
-    await dispatchUnstickPrs('  PR #123 stuck  ', DEFAULT_REPO, 'jlapenna');
+    await dispatchUnstickPrs('  PR #123 stuck  ', DEFAULT_REPO, OPERATOR);
 
+    expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
     expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({ labels: ['automation:unstick-prs'] }),
+      expect.objectContaining({
+        labels: ['automation:unstick-prs'],
+        body: expect.stringContaining('Context: PR #123 stuck'),
+      }),
     );
     const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 88 });
     expect(runs).toHaveLength(1);
@@ -1323,24 +1332,73 @@ describe('dispatchUnstickPrs', () => {
     );
   });
 
-  it('reuses an open audit anchor without a repository workflow', async () => {
+  it('re-dispatches an open audit anchor with a marked operator comment', async () => {
     const listForRepo = vi.fn().mockResolvedValue({
       data: [{ number: 88, title: 'Unstick', body: 'Existing anchor' }],
     });
-    const createComment = vi.fn().mockResolvedValue({});
+    const createComment = vi.fn().mockResolvedValue({ data: {} });
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { listForRepo, createComment } },
+      rest: { issues: { listForRepo } },
+    });
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { createComment } },
     });
     fixtureOrchestratorRuntime();
 
-    await dispatchUnstickPrs(undefined, DEFAULT_REPO, 'jlapenna');
+    await dispatchUnstickPrs(undefined, DEFAULT_REPO, OPERATOR);
 
     expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({
         issue_number: 88,
-        body: 'Re-dispatched by @jlapenna. Context: (none)',
+        body: withConsoleReplyMarker(
+          'Re-dispatched from Agent LCARS. Context: (none)',
+        ),
       }),
     );
+  });
+
+  it('asks for a fresh sign-in before any side effect without an operator token', async () => {
+    (createGithubUserClient as Mock).mockClear();
+    const listForRepo = vi.fn();
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { listForRepo } },
+    });
+    const { store } = fixtureOrchestratorRuntime();
+
+    await expect(
+      dispatchUnstickPrs('stuck', DEFAULT_REPO, {
+        login: 'jlapenna',
+        githubToken: '',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message: expect.stringMatching(/sign in again/),
+    });
+    expect(listForRepo).not.toHaveBeenCalled();
+    expect(createGithubUserClient).not.toHaveBeenCalled();
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 88 }),
+    ).toHaveLength(0);
+  });
+
+  it('admits nothing when GitHub rejects the operator token for a new anchor', async () => {
+    const listForRepo = vi.fn().mockResolvedValue({ data: [] });
+    const create = vi
+      .fn()
+      .mockRejectedValue(
+        Object.assign(new Error('Bad credentials'), { status: 401 }),
+      );
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { listForRepo } },
+    });
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { create } },
+    });
+    fixtureOrchestratorRuntime();
+
+    await expect(
+      dispatchUnstickPrs('stuck', DEFAULT_REPO, OPERATOR),
+    ).rejects.toMatchObject({ statusCode: 401 });
   });
 });
 
