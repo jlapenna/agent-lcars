@@ -60,10 +60,10 @@ function occurrenceComparison(
   ]);
 }
 
-/** The evaluator's own structured verdict that its provider ran out of quota
- * or hit a rate limit; never inferred from free-text reports. */
 /** Fallbacks one provider-limited occurrence may chain through. */
 const MAX_FALLBACKS = 2;
+/** The evaluator's own structured verdict that its provider ran out of quota
+ * or hit a rate limit; never inferred from free-text reports. */
 function stoppedOnProviderLimit(occurrence: JobOccurrence): boolean {
   const result = occurrence.artifact?.artifacts['result.json'];
   return (
