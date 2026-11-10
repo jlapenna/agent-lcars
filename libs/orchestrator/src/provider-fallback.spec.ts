@@ -669,27 +669,38 @@ function runFallbackContract(
         waiting!.runId,
       );
     });
-    it('waits until a later provider-reported reset', async () => {
+    it('holds the retried provider through its reported reset after the wait is due', async () => {
       const f = fixture();
       const first = await f.request({
-        pipeline: 'codex',
-        alternatives: ['claude'],
+        alternatives: ['codex'],
         params: { mode: 'review' },
       });
-      await f.limit(first);
-      const second = await f.store.readActiveRun(TASK);
-      expect(second?.pipeline).toBe('claude');
-      await f.orchestrator.report(second!.runId, {
+      await f.orchestrator.report(first.runId, {
         ok: false,
         summary: 'provider-limit',
         message: "You've hit your limit · resets 9pm (UTC)",
       });
-      expect(await f.store.readActiveRun(TASK)).toMatchObject({
-        pipeline: 'codex',
+      await f.limit((await f.store.readActiveRun(TASK))!);
+      const waiting = await f.store.readActiveRun(TASK);
+      expect(waiting).toMatchObject({
+        pipeline: 'claude',
         providerFallback: {
-          providerWait: { attempt: 1, retryAt: '2026-10-10T21:00:00.000Z' },
+          providerWait: { attempt: 1, retryAt: '2026-10-10T02:15:00.000Z' },
         },
       });
+      const claim = (now: string) =>
+        f.store.claimQueuedRun({
+          pipelines: ['claude'],
+          now,
+          claimedBy: 'runner',
+          claimedBySubject: 'runner',
+          tokenHash: 'b'.repeat(64),
+        });
+      // Due, but claude is still cooling until its reported reset.
+      expect(await claim('2026-10-10T02:20:00.000Z')).toBeUndefined();
+      expect((await claim('2026-10-10T21:01:00.000Z'))?.runId).toBe(
+        waiting!.runId,
+      );
     });
     it('doubles the quota wait and settles a review as failed after the bounded waits', async () => {
       const f = fixture();

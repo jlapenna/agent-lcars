@@ -1133,13 +1133,18 @@ export function outcomeCommentBody(
 ): string {
   switch (run.state) {
     case 'finished': {
-      const lines = run.result?.ok
-        ? [
-            run.delivery === undefined
-              ? `✅ Run ${run.runId} finished.`
-              : `⏳ Run ${run.runId} released implementation execution; delivery ownership remains ${run.delivery.state}.`,
-          ]
-        : [`❌ Run ${run.runId} failed.`];
+      const wait = fallbackSuccessor?.providerFallback?.providerWait;
+      const waiting =
+        fallbackSuccessor !== undefined && wait?.afterRunId === run.runId;
+      const lines = waiting
+        ? [`⏳ Run ${run.runId} stopped on a provider limit.`]
+        : run.result?.ok
+          ? [
+              run.delivery === undefined
+                ? `✅ Run ${run.runId} finished.`
+                : `⏳ Run ${run.runId} released implementation execution; delivery ownership remains ${run.delivery.state}.`,
+            ]
+          : [`❌ Run ${run.runId} failed.`];
       if (run.result?.ok && run.result.ref !== undefined) {
         lines.push(run.result.ref, ...(run.result.relatedRefs ?? []));
       }
@@ -1160,10 +1165,9 @@ export function outcomeCommentBody(
       } else if (run.result?.summary !== undefined) {
         lines.push(run.result.summary);
       }
-      const wait = fallbackSuccessor?.providerFallback?.providerWait;
-      if (fallbackSuccessor !== undefined && wait?.afterRunId === run.runId) {
+      if (waiting && wait !== undefined) {
         lines.push(
-          `Every authorized provider has stopped on its limit. This review is waiting for provider quota and retries automatically as run ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} at ${wait.retryAt} (wait ${wait.attempt} of ${MAX_PROVIDER_WAITS}); no re-request is needed. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
+          `Every authorized provider is out of quota or capacity. This review is waiting for provider quota and retries automatically as run ${fallbackSuccessor.runId} on ${fallbackSuccessor.pipeline} no earlier than ${wait.retryAt} (wait ${wait.attempt} of ${MAX_PROVIDER_WAITS}); no re-request is needed. Original intent: ${fallbackSuccessor.providerFallback?.originalRunId}.`,
         );
       } else if (fallbackSuccessor !== undefined) {
         lines.push(

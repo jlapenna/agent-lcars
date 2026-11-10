@@ -660,8 +660,10 @@ describe('outcomeCommentBody', () => {
     });
     const body = outcomeCommentBody(limited, waiting);
     expect(body).toContain(
-      `waiting for provider quota and retries automatically as run ${waiting.runId} on claude at 2026-11-11T06:48:00.000Z (wait 1 of 7)`,
+      `waiting for provider quota and retries automatically as run ${waiting.runId} on claude no earlier than 2026-11-11T06:48:00.000Z (wait 1 of 7)`,
     );
+    expect(body).toMatch(/^⏳ Run \S+ stopped on a provider limit\./u);
+    expect(body).not.toContain('failed.');
     expect(body).not.toContain('re-request manually');
     expect(body).not.toContain('fresh fallback attempt');
   });

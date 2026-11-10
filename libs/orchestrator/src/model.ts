@@ -428,11 +428,13 @@ export const providerFallbackSchema = z
         limitedPipeline: z.string().min(1).max(128),
       })
       .optional(),
-    /** Every authorized provider stopped on its limit; this review waits for
-     * quota instead of failing. Bounded by `MAX_PROVIDER_WAITS`. */
+    /** Every authorized provider stopped on its limit or capacity; this
+     * review waits instead of failing. The decision bounds `attempt` by
+     * `MAX_PROVIDER_WAITS`; the schema does not, so lowering it cannot make
+     * stored runs unreadable. */
     providerWait: z
       .strictObject({
-        attempt: z.number().int().min(1).max(MAX_PROVIDER_WAITS),
+        attempt: z.number().int().min(1),
         afterRunId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
         retryAt: isoUtc,
       })

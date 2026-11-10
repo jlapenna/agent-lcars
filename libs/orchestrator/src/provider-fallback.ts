@@ -8,6 +8,7 @@ import {
   requestRun,
 } from './decide';
 import {
+  isWorkAnchor,
   MAX_PROVIDER_WAITS,
   type Run,
   RUN_ID_MAX_LENGTH,
@@ -15,14 +16,13 @@ import {
   type Task,
 } from './model';
 import {
-  type ProviderCooldown,
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
 
 /** First quota wait; each later wait doubles it up to the cap. Bounded so a
  * wait never invents a long provider reset (#2537): MAX_PROVIDER_WAITS waits
- * span about 20 hours, enough for a daily quota to reset. */
+ * defer about 20 hours in all, enough for a daily quota to reset. */
 export const PROVIDER_WAIT_BASE_MS = 15 * 60_000;
 export const PROVIDER_WAIT_MAX_MS = 6 * 60 * 60_000;
 
@@ -146,8 +146,7 @@ export function settleProviderFallback(input: {
 }): Decision | Refusal {
   const { settled } = input;
   const previous = decidedRun(settled);
-  const cooldown = providerCooldownForRun(previous);
-  if (cooldown === undefined) return settled;
+  if (providerCooldownForRun(previous) === undefined) return settled;
   // Temporary occupancy/cooldown must not erase the user's remaining intent.
   // Prefer an available alternative; otherwise queue the first still-authorized
   // unattempted provider. Its ordinary claim retains the same capacity/cooldown
@@ -167,7 +166,6 @@ export function settleProviderFallback(input: {
     return waitForProvider({
       now: input.now,
       settled,
-      cooldown,
       authorizedPipelines: input.authorizedPipelines,
     });
   return successor({
@@ -179,40 +177,40 @@ export function settleProviderFallback(input: {
   });
 }
 
-/** When every authorized provider of a PR review has stopped on its limit,
- * the review waits for quota instead of failing (#3300): a deferred successor
- * on the round's first provider. The retry time is the provider's reported
- * reset when the runner preserved one, and never
- * earlier than a bounded, doubling wait. Other work keeps settling as failed. */
+/** When every authorized provider of a GitHub PR review has stopped on its
+ * limit or capacity, the review waits instead of failing (#3300): a deferred
+ * successor on the round's first provider, the one the request was admitted
+ * on. That retries the same request; it grants nothing new. The deferral is a
+ * bounded, doubling wait. The claim fence still holds the retried provider
+ * through its own cooldown, including a provider-reported reset, and the
+ * queued-cooldown reroute can move the due run to a free alternative.
+ * Native Work and non-review runs keep settling as failed. */
 function waitForProvider(input: {
   now: string;
   settled: Decision;
-  cooldown: ProviderCooldown;
   authorizedPipelines: readonly string[];
 }): Decision | Refusal {
   const previous = decidedRun(input.settled);
   const policy = previous.providerFallback;
-  if (policy === undefined || previous.params?.['mode'] !== 'review')
+  if (
+    policy === undefined ||
+    isWorkAnchor(previous.task) ||
+    previous.params?.['mode'] !== 'review'
+  )
     return input.settled;
   const attempt = (policy.providerWait?.attempt ?? 0) + 1;
   if (attempt > MAX_PROVIDER_WAITS) return input.settled;
   // Current authority must still back the fallback policy (repository and
-  // review scope); an empty list means it was withdrawn. The wait then retries
-  // the round's first provider: the one this request was admitted on, or the
-  // authorized alternative an earlier wait chose. That is the same request
-  // again, not a new grant.
+  // review scope); an empty list means it was withdrawn.
   if (input.authorizedPipelines.length === 0) return input.settled;
   const pipeline = policy.attemptedPipelines[0];
   if (pipeline === undefined) return input.settled;
-  const wait = Math.min(
-    PROVIDER_WAIT_BASE_MS * 2 ** (attempt - 1),
-    PROVIDER_WAIT_MAX_MS,
-  );
   const retryAt = new Date(
-    Math.max(
-      Date.parse(input.now) + wait,
-      Date.parse(input.cooldown.expiresAt),
-    ),
+    Date.parse(input.now) +
+      Math.min(
+        PROVIDER_WAIT_BASE_MS * 2 ** (attempt - 1),
+        PROVIDER_WAIT_MAX_MS,
+      ),
   ).toISOString();
   return successor({
     now: input.now,
