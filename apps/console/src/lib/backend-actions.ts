@@ -8,9 +8,17 @@ import {
 import { logger } from '@agent-lcars/logging';
 import { storedWorkPayloadSchema, workPayloadSchema } from '@agent-lcars/work';
 
+import {
+  stripConsoleReplyMarker,
+  withConsoleReplyMarker,
+} from './console-reply-marker';
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
-import { getGithubClient, type WatchedRepo } from './github-client';
+import {
+  createGithubUserClient,
+  getGithubClient,
+  type WatchedRepo,
+} from './github-client';
 import { admitGithubWork } from './github-work-admission';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
@@ -126,6 +134,9 @@ export async function clearNeedsHumanLabel(
  * non-error outcome for a comment on an item no agent owns - the case that
  * used to be indistinguishable from a real handoff (#1869).
  */
+const GITHUB_SIGN_IN_AGAIN =
+  'GitHub authorization failed. Sign out and sign in again, then retry.';
+
 export interface PostCommentResult {
   url: string;
   retryCommentId?: number;
@@ -141,18 +152,37 @@ export interface AssignPipelineResult {
   warning?: AssignPipelineWarning;
 }
 
+/** The signed-in console operator a reply is posted as. */
+export interface CommentActor {
+  login: string;
+  /** The operator's GitHub user token from the server-side session. */
+  githubToken: string;
+}
+
+/**
+ * Posts a console reply as the signed-in operator, not as the GitHub App.
+ * Agents read comment authorship as authority: a bot-authored "close this"
+ * cannot record an owner decision, so a reply posted with the App token was
+ * ignored even though a maintainer typed it (jlapenna/homelab#2725). Only the
+ * comment itself uses the operator's token; label reads and dispatch keep the
+ * App client, whose permissions they were designed around.
+ */
 export async function postComment(
   repo: WatchedRepo,
   issueNumber: number,
   body: string,
-  actorLogin: string,
+  actor: CommentActor,
   assignedPipeline?: Pipeline,
 ): Promise<PostCommentResult> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
   }
-  if (!actorLogin.trim()) {
+  const actorLogin = actor.login.trim();
+  if (!actorLogin) {
     throw new ActionError('Comment actor is required', 400);
+  }
+  if (!actor.githubToken) {
+    throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
   }
   // Validate an explicit dispatch choice before creating any GitHub-side
   // comment. The UI only supplies canonical selections, but Server Action
@@ -160,13 +190,28 @@ export async function postComment(
   if (assignedPipeline !== undefined) {
     requireAgentIntegration(repo, assignedPipeline);
   }
-  const octokit = getGithubClient();
-  const { data } = await octokit.rest.issues.createComment({
-    owner: repo.owner,
-    repo: repo.name,
-    issue_number: issueNumber,
-    body,
-  });
+  const { data } = await createGithubUserClient(actor.githubToken)
+    .rest.issues.createComment({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+      // Marked so the issue_comment webhook does not dispatch it again; the
+      // console decides below whether this reply hands off to an agent.
+      body: withConsoleReplyMarker(body),
+    })
+    .catch((error: unknown) => {
+      // GitHub rejected the operator's own token; retrying with it cannot
+      // succeed, so ask for a fresh sign-in instead of surfacing a bare 401.
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        error.status === 401
+      ) {
+        throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
+      }
+      throw error;
+    });
   const result = await dispatchPostedReply(
     repo,
     issueNumber,
@@ -213,7 +258,7 @@ export async function retryPostedComment(
   return dispatchPostedReply(
     repo,
     issueNumber,
-    comment.body,
+    stripConsoleReplyMarker(comment.body),
     actorLogin,
     pipeline,
   );

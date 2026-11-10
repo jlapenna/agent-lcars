@@ -493,3 +493,37 @@ describe('repoDisplayName', () => {
     expect(repoDisplayName({ owner: 'a', name: 'b', alias: '' })).toBe('a/b');
   });
 });
+
+describe('createGithubUserClient', () => {
+  const BASE_URL_ENV_KEY = 'AGENT_CONSOLE_GITHUB_API_BASE_URL';
+
+  beforeEach(() => {
+    vi.resetModules();
+    octokitConstructorSpy.mockClear();
+  });
+
+  afterEach(() => {
+    delete process.env[BASE_URL_ENV_KEY];
+  });
+
+  it('authenticates as the operator against api.github.com in production', async () => {
+    const { createGithubUserClient } = await freshGithubClientModule();
+
+    createGithubUserClient('operator-token');
+
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    expect(options.auth).toBe('operator-token');
+    expect(options.baseUrl).toBeUndefined();
+  });
+
+  it('follows the E2E fixture base URL like the App client', async () => {
+    process.env[BASE_URL_ENV_KEY] = 'http://localhost:4200/api/e2e/github';
+    const { createGithubUserClient } = await freshGithubClientModule();
+
+    createGithubUserClient('operator-token');
+
+    const options = octokitConstructorSpy.mock.calls[0][0];
+    expect(options.auth).toBe('operator-token');
+    expect(options.baseUrl).toBe('http://localhost:4200/api/e2e/github');
+  });
+});

@@ -4,7 +4,7 @@ import { revalidatePath, updateTag } from 'next/cache';
 
 import { createAdminAction } from '@/lib/auth-guards';
 
-import { auth } from '../auth';
+import { auth, githubAccessTokenFor } from '../auth';
 import {
   ActionError,
   approveAndMergePr,
@@ -110,7 +110,11 @@ export async function replyToItem(
       resolveWatchedRepo(repo),
       number,
       body,
-      session.user.login,
+      {
+        login: session.user.login,
+        // An empty token is rejected by postComment with a sign-in prompt.
+        githubToken: githubAccessTokenFor(session) ?? '',
+      },
       assignedPipeline,
     );
     revalidateDashboard();

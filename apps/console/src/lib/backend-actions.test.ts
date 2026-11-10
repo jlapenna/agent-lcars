@@ -34,8 +34,9 @@ import {
   updateIssueContent,
   updatePrBranch,
 } from './backend-actions';
+import { withConsoleReplyMarker } from './console-reply-marker';
 import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
-import { getGithubClient } from './github-client';
+import { createGithubUserClient, getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -68,6 +69,7 @@ vi.mock('./github-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./github-client')>();
   return {
     ...actual,
+    createGithubUserClient: vi.fn(),
     getGithubClient: vi.fn(),
     getWatchedRepos: vi.fn(() => [DEFAULT_REPO]),
   };
@@ -393,6 +395,8 @@ describe('clearNeedsHumanLabel', () => {
   });
 });
 
+const OPERATOR = { login: 'jlapenna', githubToken: 'operator-token' };
+
 describe('postComment (direct Work admission)', () => {
   function mockOctokit(
     currentLabels = ['agent:codex'],
@@ -408,9 +412,11 @@ describe('postComment (direct Work admission)', () => {
         html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
       },
     });
+    // The posted reply as GitHub returns it: marked by postComment, so a
+    // retry must hand the agent the text without the hidden marker.
     const getComment = vi.fn().mockResolvedValue({
       data: {
-        body: 'Please investigate',
+        body: withConsoleReplyMarker('Please investigate'),
         issue_url: `https://api.github.com/repos/${DEFAULT_REPO_KEY}/issues/2709`,
       },
     });
@@ -429,9 +435,14 @@ describe('postComment (direct Work admission)', () => {
           : {}),
       },
     });
+    // The comment is the operator's own write; every other call stays on
+    // the App client. Splitting the mocks proves which identity posts it.
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { createComment } },
+    });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
-        issues: { createComment, getComment, get, removeLabel, setLabels },
+        issues: { getComment, get, removeLabel, setLabels },
       },
     });
     return { createComment, getComment, get, removeLabel, setLabels };
@@ -441,18 +452,56 @@ describe('postComment (direct Work admission)', () => {
     const { createComment } = mockOctokit();
 
     await expect(
-      postComment(DEFAULT_REPO, 2709, '   ', 'jlapenna'),
+      postComment(DEFAULT_REPO, 2709, '   ', OPERATOR),
     ).rejects.toThrow('Comment body is required');
     expect(createComment).not.toHaveBeenCalled();
+  });
+
+  it('posts the comment as the signed-in operator, not the GitHub App', async () => {
+    const { createComment } = mockOctokit();
+
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR);
+
+    expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
+    expect(createComment).toHaveBeenCalledOnce();
+  });
+
+  it('asks for a fresh sign-in when the operator has no GitHub token', async () => {
+    const { createComment } = mockOctokit();
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', {
+        login: 'jlapenna',
+        githubToken: '',
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message: expect.stringMatching(/sign in again/),
+    });
+    expect(createComment).not.toHaveBeenCalled();
+  });
+
+  it('asks for a fresh sign-in when GitHub rejects the operator token', async () => {
+    const { createComment } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Bad credentials'), { status: 401 }),
+    );
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message: expect.stringMatching(/sign in again/),
+    });
   });
 
   it('posts plain text when no agent label is present', async () => {
     const { createComment } = mockOctokit();
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR);
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2' }),
+      expect.objectContaining({ body: withConsoleReplyMarker('Use option 2') }),
     );
   });
 
@@ -470,10 +519,10 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'Use option 2', 'jlapenna', 'codex');
+    await postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR, 'codex');
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2' }),
+      expect.objectContaining({ body: withConsoleReplyMarker('Use option 2') }),
     );
     const runs = await store.listRuns(taskId);
     expect(runs.at(-1)?.params).toEqual({
@@ -502,7 +551,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'Please address this',
-      'jlapenna',
+      OPERATOR,
       'codex',
     );
 
@@ -533,13 +582,15 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       "You don't need a human for this",
-      'jlapenna',
+      OPERATOR,
       'claude',
     );
 
     expect(result.dispatched).toBe(true);
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: "You don't need a human for this" }),
+      expect.objectContaining({
+        body: withConsoleReplyMarker("You don't need a human for this"),
+      }),
     );
     expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
       mode: 'implement',
@@ -561,13 +612,7 @@ describe('postComment (direct Work admission)', () => {
     setLabels.mockRejectedValueOnce(new Error('GitHub unavailable'));
 
     await expect(
-      postComment(
-        DEFAULT_REPO,
-        2709,
-        'Please investigate',
-        'jlapenna',
-        'claude',
-      ),
+      postComment(DEFAULT_REPO, 2709, 'Please investigate', OPERATOR, 'claude'),
     ).resolves.toEqual({
       url: expect.any(String),
       dispatched: true,
@@ -585,13 +630,7 @@ describe('postComment (direct Work admission)', () => {
     get.mockRejectedValueOnce(new Error('GitHub unavailable'));
 
     await expect(
-      postComment(
-        DEFAULT_REPO,
-        2709,
-        'Please investigate',
-        'jlapenna',
-        'claude',
-      ),
+      postComment(DEFAULT_REPO, 2709, 'Please investigate', OPERATOR, 'claude'),
     ).resolves.toEqual({
       url: expect.any(String),
       dispatched: false,
@@ -624,7 +663,7 @@ describe('postComment (direct Work admission)', () => {
         DEFAULT_REPO,
         2709,
         'Please investigate',
-        'jlapenna',
+        OPERATOR,
         'codex',
       );
       expect(posted).toMatchObject({ dispatched: false, retryCommentId: 123 });
@@ -663,7 +702,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'Please investigate',
-      'jlapenna',
+      OPERATOR,
       'codex',
     );
     await expect(
@@ -717,7 +756,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'just a note',
-      'jlapenna',
+      OPERATOR,
     );
 
     expect(result.dispatched).toBe(false);
@@ -730,7 +769,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'a note',
-      'jlapenna',
+      OPERATOR,
       'claude',
     );
 
@@ -741,7 +780,7 @@ describe('postComment (direct Work admission)', () => {
   it('leaves needs-human on a plain comment with no assignment', async () => {
     const { removeLabel } = mockOctokit();
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'hi', OPERATOR);
 
     expect(removeLabel).not.toHaveBeenCalled();
   });
@@ -777,7 +816,7 @@ describe('postComment (direct Work admission)', () => {
         DEFAULT_REPO,
         2709,
         'Continue the work',
-        'jlapenna',
+        OPERATOR,
         'opencode',
       ),
     ).resolves.toMatchObject({ dispatched: true });
@@ -808,7 +847,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'A human-only note',
-      'jlapenna',
+      OPERATOR,
       'codex',
     );
 
@@ -835,7 +874,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'A human-only note',
-      'jlapenna',
+      OPERATOR,
       'codex',
     );
 
@@ -861,7 +900,7 @@ describe('postComment (direct Work admission)', () => {
       DEFAULT_REPO,
       2709,
       'A human-only note',
-      'jlapenna',
+      OPERATOR,
       'claude',
     );
 
@@ -884,7 +923,7 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'A human-only note', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'A human-only note', OPERATOR);
 
     expect(await store.listRuns(taskId)).toHaveLength(1);
     expect(removeLabel).not.toHaveBeenCalled();
@@ -903,7 +942,7 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex');
+    await postComment(DEFAULT_REPO, 2709, 'hi', OPERATOR, 'codex');
 
     expect(removeLabel).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'status:needs-human' }),
@@ -927,7 +966,7 @@ describe('postComment (direct Work admission)', () => {
     if ('refused' in seeded) throw new Error('seed request was refused');
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex');
+    await postComment(DEFAULT_REPO, 2709, 'hi', OPERATOR, 'codex');
 
     expect((await store.listRuns(taskId)).at(-1)).toMatchObject({
       params: { mode: 'reply', crossRepo: 'true' },
@@ -951,7 +990,7 @@ describe('postComment (direct Work admission)', () => {
     );
 
     await expect(
-      postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna', 'codex'),
+      postComment(DEFAULT_REPO, 2709, 'hi', OPERATOR, 'codex'),
     ).resolves.toEqual({
       url: expect.any(String),
       dispatched: true,
@@ -982,7 +1021,7 @@ describe('postComment (direct Work admission)', () => {
     const { orchestrator } = fixtureOrchestratorRuntime();
     const sweepSpy = vi.spyOn(orchestrator, 'sweepExpired');
 
-    await postComment(DEFAULT_REPO, 2709, 'hi', 'jlapenna');
+    await postComment(DEFAULT_REPO, 2709, 'hi', OPERATOR);
 
     expect(sweepSpy).not.toHaveBeenCalled();
   });

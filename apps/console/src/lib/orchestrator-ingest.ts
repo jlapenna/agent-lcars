@@ -17,6 +17,7 @@ import { matchReplyTrigger } from '@/lib/reply-trigger';
 import { hasCrossRepoOption, repoKey } from '@/lib/watched-repo';
 import { getWatchedRepos } from '@/lib/watched-repos-config';
 
+import { isConsoleReply } from './console-reply-marker';
 import {
   checkGithubLabelRouting,
   type GithubLabelRouting,
@@ -501,6 +502,10 @@ function interpretIssueCommentEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
   if (action !== 'created') return ignore('unhandled-action');
+  // The console posted this reply as the operator and already decided its
+  // dispatch (backend-actions.ts postComment); admitting it here would run
+  // the same reply twice.
+  if (isConsoleReply(comment.body)) return ignore('console-reply');
 
   const isUnifiedReviewCommand =
     issue.pull_request !== undefined &&
