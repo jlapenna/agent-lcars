@@ -866,9 +866,11 @@ limit and settled `provider-limit`. That minted the Antigravity (`agy`)
 successor `#69/r2`, and the Codex cooldown sent
 `supersprinklesracing/sprinkles#6451` straight to `agy`. Both `agy` runs
 settled `provider-limit` on Antigravity's own quota, and the chain stopped
-there because it excluded the authoring model. The authoring model is now the
-last fallback, so those reviews reach Claude. A fallback reviewer that
-completes a review is still to be observed.
+there because it excluded the authoring model. #3290 made the authoring
+model the last fallback. The whole chain has since completed in production:
+Claude-authored `jlapenna/agent-lcars#3292` went Codex (`r1`), then `agy`
+(`r2`, `provider-limit`), then Claude (`r3`), which finished and posted the
+review on 2026-11-10.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
