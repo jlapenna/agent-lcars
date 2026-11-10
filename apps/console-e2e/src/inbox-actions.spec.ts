@@ -629,7 +629,7 @@ test.describe('Inbox authorized action journeys', () => {
     const configuration = rejected
       ? { reject: { method: 'POST', path: pathFor('issues'), message } }
       : {};
-    const expectedEffectsCount = rejected ? 1 : 3;
+    const expectedEffectsCount = rejected ? 1 : 4;
     const expectedClaims = rejected ? [] : claimEffects(9012);
     const admission = rejected
       ? { task: undefined, run: undefined }
@@ -670,16 +670,27 @@ test.describe('Inbox authorized action journeys', () => {
       await expect(page.getByText(message, { exact: true })).toBeVisible();
       const effects = await journal(request);
       expect(effects).toHaveLength(expectedEffectsCount);
-      expect(effects.slice(1)).toEqual(expectedClaims);
       expect(effects[0]).toMatchObject({
         method: 'POST',
         path: pathFor('issues'),
         rejected,
         body: { labels: ['automation:unstick-prs'] },
       });
-      expect(effects[0].body?.['body']).toContain(
-        'Context: #9002: diagnose the failed E2E check only',
-      );
+      if (!rejected) {
+        // The App creates the audit anchor; the operator's context is their
+        // own marked comment, posted before the runbook is admitted.
+        expect(effects[1]).toEqual({
+          method: 'POST',
+          path: pathFor('issues/9012/comments'),
+          body: {
+            body: consoleReply(
+              'Context: #9002: diagnose the failed E2E check only',
+            ),
+          },
+          rejected: false,
+        });
+      }
+      expect(effects.slice(rejected ? 1 : 2)).toEqual(expectedClaims);
       await expect.poll(() => readTaskAdmission(9012)).toMatchObject(admission);
       expect(
         (await readTaskAdmission(E2E_ITEM_NUMBERS.runFailed)).run,

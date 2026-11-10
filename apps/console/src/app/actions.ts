@@ -266,11 +266,10 @@ export async function dispatchUnstickPrs(
     }
     // resolveWatchedRepo: never forward a client-supplied repo unvalidated
     // (see its doc comment) - unknown repos throw instead of dispatching.
-    await dispatchUnstickPrsLib(
-      context,
-      resolveWatchedRepo(repo),
-      session.user.login,
-    );
+    await dispatchUnstickPrsLib(context, resolveWatchedRepo(repo), {
+      login: session.user.login,
+      githubToken: githubAccessTokenFor(session) ?? '',
+    });
     return { ok: true };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };

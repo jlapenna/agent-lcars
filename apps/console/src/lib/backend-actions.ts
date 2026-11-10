@@ -168,29 +168,18 @@ function requireOperatorToken(actor: CommentActor): void {
 }
 
 /**
- * Creates an operator-typed comment as the signed-in operator. Agents read
- * comment authorship as authority, so text a maintainer typed must never be
- * attributed to the App (jlapenna/homelab#2725). The hidden console marker
- * keeps the issue_comment webhook from dispatching it a second time: the
- * console action that posted it already decided whether it hands off.
+ * Runs one GitHub write as the signed-in operator. Agents read authorship as
+ * authority, so text a maintainer typed must never be attributed to the App
+ * (jlapenna/homelab#2725). A rejected token asks for a fresh sign-in instead
+ * of surfacing a bare 401: retrying with it cannot succeed.
  */
-async function postOperatorComment(
-  repo: WatchedRepo,
-  issueNumber: number,
-  body: string,
+async function asOperator<T>(
   actor: CommentActor,
-): Promise<{ id: number; html_url: string }> {
+  write: (octokit: ReturnType<typeof createGithubUserClient>) => Promise<T>,
+): Promise<T> {
   requireOperatorToken(actor);
-  const { data } = await createGithubUserClient(actor.githubToken)
-    .rest.issues.createComment({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      body: withConsoleReplyMarker(body),
-    })
-    .catch((error: unknown) => {
-      // GitHub rejected the operator's own token; retrying with it cannot
-      // succeed, so ask for a fresh sign-in instead of surfacing a bare 401.
+  return write(createGithubUserClient(actor.githubToken)).catch(
+    (error: unknown) => {
       if (
         typeof error === 'object' &&
         error !== null &&
@@ -200,7 +189,30 @@ async function postOperatorComment(
         throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
       }
       throw error;
-    });
+    },
+  );
+}
+
+/**
+ * Creates an operator-typed comment as the signed-in operator. The hidden
+ * console marker keeps the issue_comment webhook from dispatching it a
+ * second time: the console action that posted it already decided whether it
+ * hands off.
+ */
+async function postOperatorComment(
+  repo: WatchedRepo,
+  issueNumber: number,
+  body: string,
+  actor: CommentActor,
+): Promise<{ id: number; html_url: string }> {
+  const { data } = await asOperator(actor, (octokit) =>
+    octokit.rest.issues.createComment({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+      body: withConsoleReplyMarker(body),
+    }),
+  );
   return data;
 }
 
@@ -656,12 +668,16 @@ const DISPATCH_CALLER_ID_PATTERN =
 export async function dispatchUnstickPrs(
   context: string | undefined,
   repo: WatchedRepo,
-  actorLogin?: string,
+  actor: CommentActor,
 ): Promise<void> {
   const targetRepo = repo;
-  if (!actorLogin?.trim()) {
+  const actorLogin = actor.login.trim();
+  if (!actorLogin) {
     throw new ActionError('Unstick actor is required', 400);
   }
+  // Operator-typed context below is posted as the operator; fail before any
+  // GitHub or orchestrator side effect when it cannot be.
+  requireOperatorToken(actor);
   const octokit = getGithubClient();
   const trimmedContext = context?.trim();
   const { data: openAnchors } = await octokit.rest.issues.listForRepo({
@@ -672,25 +688,38 @@ export async function dispatchUnstickPrs(
     per_page: 1,
   });
   let anchor = openAnchors.find((item) => item.pull_request === undefined);
-  if (anchor) {
-    await octokit.rest.issues.createComment({
-      owner: targetRepo.owner,
-      repo: targetRepo.name,
-      issue_number: anchor.number,
-      body: `Re-dispatched by @${actorLogin}. Context: ${trimmedContext || '(none)'}`,
-    });
-  } else {
+  // The audit anchor is a system container, so the App creates it: an
+  // App-authored anchor stays in the queue whether or not the best-effort
+  // fleet claim lands (github-anchor-selector.ts). Everything the operator
+  // typed goes up as their own marked comment, so agents read it as theirs
+  // and the issue_comment webhook does not dispatch it again; this action
+  // admits the runbook below.
+  if (!anchor) {
     const { data: created } = await octokit.rest.issues.create({
       owner: targetRepo.owner,
       repo: targetRepo.name,
       title: `playbook: unstick stuck PRs (${new Date().toISOString().slice(0, 10)})`,
       labels: ['automation:unstick-prs'],
       body:
-        `Dispatched by @${actorLogin} through the Agent LCARS Work API.\n\n` +
-        `Context: ${trimmedContext || '(none)'}\n\n` +
+        `Dispatched by @${actorLogin} through Agent LCARS.\n\n` +
         'Execute the unsticking-stuck-prs runbook and keep the per-PR summary here.',
     });
     anchor = created;
+    if (trimmedContext) {
+      await postOperatorComment(
+        targetRepo,
+        anchor.number,
+        `Context: ${trimmedContext}`,
+        actor,
+      );
+    }
+  } else {
+    await postOperatorComment(
+      targetRepo,
+      anchor.number,
+      `Re-dispatched from Agent LCARS. Context: ${trimmedContext || '(none)'}`,
+      actor,
+    );
   }
   const description =
     anchor.body?.trim() || 'Unstick the current pull-request queue.';
