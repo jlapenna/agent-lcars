@@ -20,6 +20,7 @@ import {
   type WatchedRepo,
 } from './github-client';
 import { admitGithubWork } from './github-work-admission';
+import { recordOperatorComment } from './operator-comment-observability';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import {
@@ -163,6 +164,7 @@ export interface CommentActor {
  *  the write fall back to the GitHub App identity. */
 function requireOperatorToken(actor: CommentActor): void {
   if (!actor.githubToken) {
+    recordOperatorComment('missing_token');
     throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
   }
 }
@@ -205,15 +207,26 @@ async function postOperatorComment(
   body: string,
   actor: CommentActor,
 ): Promise<{ id: number; html_url: string }> {
-  const { data } = await asOperator(actor, (octokit) =>
-    octokit.rest.issues.createComment({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      body: withConsoleReplyMarker(body),
-    }),
-  );
-  return data;
+  requireOperatorToken(actor);
+  try {
+    const { data } = await asOperator(actor, (octokit) =>
+      octokit.rest.issues.createComment({
+        owner: repo.owner,
+        repo: repo.name,
+        issue_number: issueNumber,
+        body: withConsoleReplyMarker(body),
+      }),
+    );
+    recordOperatorComment('posted');
+    return data;
+  } catch (error) {
+    recordOperatorComment(
+      error instanceof ActionError && error.statusCode === 401
+        ? 'rejected_token'
+        : 'failed',
+    );
+    throw error;
+  }
 }
 
 /**

@@ -37,6 +37,7 @@ import {
 import { withConsoleReplyMarker } from './console-reply-marker';
 import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { createGithubUserClient, getGithubClient } from './github-client';
+import { recordOperatorComment } from './operator-comment-observability';
 import { drainOutbox } from './orchestrator-dispatch';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -75,6 +76,10 @@ vi.mock('./github-client', async (importOriginal) => {
   };
 });
 
+vi.mock('./operator-comment-observability', () => ({
+  recordOperatorComment: vi.fn(),
+}));
+
 vi.mock('./orchestrator-runtime', () => ({
   createOrchestratorRuntime: vi.fn(),
 }));
@@ -82,6 +87,7 @@ vi.mock('./orchestrator-runtime', () => ({
 beforeEach(() => {
   configureTestWatchedRepos([TEST_HOME_REPOSITORY, DEFAULT_REPO]);
   (createOrchestratorRuntime as Mock).mockReset();
+  (recordOperatorComment as Mock).mockClear();
   refreshCurrentGithubAnchorProjection.mockReset();
 });
 
@@ -464,6 +470,7 @@ describe('postComment (direct Work admission)', () => {
 
     expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
     expect(createComment).toHaveBeenCalledOnce();
+    expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith('posted');
   });
 
   it('asks for a fresh sign-in when the operator has no GitHub token', async () => {
@@ -479,6 +486,9 @@ describe('postComment (direct Work admission)', () => {
       message: expect.stringMatching(/sign in again/),
     });
     expect(createComment).not.toHaveBeenCalled();
+    expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith(
+      'missing_token',
+    );
   });
 
   it('asks for a fresh sign-in when GitHub rejects the operator token', async () => {
@@ -493,6 +503,21 @@ describe('postComment (direct Work admission)', () => {
       statusCode: 401,
       message: expect.stringMatching(/sign in again/),
     });
+    expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith(
+      'rejected_token',
+    );
+  });
+
+  it('records other GitHub write failures without hiding them', async () => {
+    const { createComment } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Server Error'), { status: 502 }),
+    );
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR),
+    ).rejects.toThrow('Server Error');
+    expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith('failed');
   });
 
   it('posts plain text when no agent label is present', async () => {
