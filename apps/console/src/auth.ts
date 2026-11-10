@@ -64,21 +64,31 @@ async function attachServerGithubAccessToken(
     secret: required('AUTH_SECRET'),
     secureCookie,
   });
-  if (typeof token?.githubAccessToken === 'string') {
-    Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN, {
-      configurable: false,
-      enumerable: false,
-      value: token.githubAccessToken,
-      writable: false,
-    });
-  }
+  return typeof token?.githubAccessToken === 'string'
+    ? withServerGithubAccessToken(session, token.githubAccessToken)
+    : session;
+}
+
+/** The placeholder user token carried by hermetic E2E sessions only. */
+export const E2E_FIXTURE_GITHUB_USER_TOKEN = 'e2e-fixture-user-token';
+
+function withServerGithubAccessToken(
+  session: Session,
+  accessToken: string,
+): Session {
+  Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN, {
+    configurable: false,
+    enumerable: false,
+    value: accessToken,
+    writable: false,
+  });
   return session;
 }
 
 const nextAuth = NextAuth({
   providers: [
     GitHub({
-      // Quick Tasks are created with the operator's token so GitHub records
+      // Quick Tasks and console replies use the operator's token so GitHub records
       // the signed-in human as the author. `repo` is required because the
       // watched repository set includes private repositories.
       authorization: { params: { scope: 'repo read:user user:email' } },
@@ -134,7 +144,14 @@ async function testSession(): Promise<Session | null | undefined> {
   if (!isE2eTesting() || isOnGoogleCloud()) return undefined;
   const user = (await headers()).get('x-e2e-auth-user');
   if (!user) return undefined;
-  return user === 'unauthed' ? null : getMockSession(user);
+  if (user === 'unauthed') return null;
+  // Operator-attributed writes (console replies) require a user token. The
+  // hermetic suite routes every GitHub call to its fixture API, which never
+  // inspects credentials, so a placeholder stands in for the OAuth token.
+  return withServerGithubAccessToken(
+    await getMockSession(user),
+    E2E_FIXTURE_GITHUB_USER_TOKEN,
+  );
 }
 
 export const auth: typeof nextAuth.auth = (async (

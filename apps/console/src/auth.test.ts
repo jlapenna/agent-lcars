@@ -22,7 +22,11 @@ vi.mock('next-auth', () => ({
 vi.mock('next/headers', () => ({ headers: mocks.headers }));
 vi.mock('next-auth/jwt', () => ({ getToken: mocks.getToken }));
 
-import { auth, githubAccessTokenFor } from './auth';
+import {
+  auth,
+  E2E_FIXTURE_GITHUB_USER_TOKEN,
+  githubAccessTokenFor,
+} from './auth';
 import { createAdminAction } from './lib/auth-guards';
 import { consoleLandingPath } from './lib/console-access';
 import { authenticateWorkRequest, type WorkAuthDeps } from './lib/work-auth';
@@ -141,14 +145,16 @@ describe('console OAuth admission and authority', () => {
 });
 
 describe('hermetic session adapter', () => {
-  it('injects a truthful non-admin identity without an OAuth token', async () => {
+  it('injects a truthful non-admin identity with only the fixture user token', async () => {
     vi.stubEnv('E2E_TESTING', 'true');
     mocks.headers.mockResolvedValue(
       new Headers({ 'x-e2e-auth-user': 'operator' }),
     );
     const injected = await auth();
     expect(injected?.user).toMatchObject({ login: 'operator', isAdmin: false });
-    expect(injected && githubAccessTokenFor(injected)).toBeUndefined();
+    expect(injected && githubAccessTokenFor(injected)).toBe(
+      E2E_FIXTURE_GITHUB_USER_TOKEN,
+    );
     mocks.headers.mockResolvedValue(
       new Headers({ 'x-e2e-auth-user': 'e2e-agent-lcars-admin' }),
     );

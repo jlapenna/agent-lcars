@@ -93,7 +93,10 @@ vi.mock('@/lib/auth-guards', () => ({
     },
 }));
 
-vi.mock('../auth', () => ({ auth: vi.fn() }));
+vi.mock('../auth', () => ({
+  auth: vi.fn(),
+  githubAccessTokenFor: vi.fn(() => 'operator-token'),
+}));
 
 const DEFAULT_REPO = {
   owner: 'supersprinklesracing',
@@ -384,7 +387,7 @@ describe('agent-lcars Server Actions', () => {
         DEFAULT_REPO,
         42,
         'hi',
-        'jlapenna',
+        { login: 'jlapenna', githubToken: 'operator-token' },
         'codex',
       );
     });
