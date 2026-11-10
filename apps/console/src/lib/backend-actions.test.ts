@@ -1531,6 +1531,30 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     ).toHaveLength(1);
   });
 
+  it('leaves needs-human and admission untouched when GitHub rejects the note token', async () => {
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const { createComment, removeLabel } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Bad credentials'), { status: 401 }),
+    );
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-stale-token',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await expect(
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR, 'retry'),
+    ).rejects.toMatchObject({ statusCode: 401 });
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(1);
+  });
+
   it('retries without a note even when the session has no operator token', async () => {
     const { orchestrator, store } = fixtureOrchestratorRuntime();
     mockOctokit();

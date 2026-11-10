@@ -761,16 +761,17 @@ export async function retriggerIssue(
   }
   const existingWork = parsedWork.data;
 
-  await clearNeedsHumanLabel(repo, issueNumber);
-
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
-  // as part of the thread. It is posted as the operator with the console
-  // marker, so even a note mentioning the pipeline (`@claude`) is not
-  // dispatched again by the issue_comment webhook; this action admits the
-  // retry below.
+  // as part of the thread, and before clearing needs-human so a rejected
+  // operator token leaves the task untouched. It is posted as the operator
+  // with the console marker, so even a note mentioning the pipeline
+  // (`@claude`) is not dispatched again by the issue_comment webhook; this
+  // action admits the retry below.
   if (trimmedNote) {
     await postOperatorComment(repo, issueNumber, trimmedNote, actor);
   }
+
+  await clearNeedsHumanLabel(repo, issueNumber);
 
   // Deliberately does not re-read GitHub for `agent-option:cross-repo`
   // (unlike `assignPipeline`/`postComment`, both of which already
