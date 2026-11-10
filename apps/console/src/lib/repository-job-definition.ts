@@ -142,6 +142,10 @@ export const jobProfileSchema = z
     // through its existing leased broker; Claude uses the executor-projected
     // subscription token. Neither is copied into a job credential set.
     providerAuth: z.enum(['codex', 'claude']).optional(),
+    // When an occurrence under this profile stops on a provider limit (its
+    // evaluator reports partialReason "provider-limit"), LCARS re-admits it
+    // once under this profile, e.g. the same recipe on another harness.
+    fallbackProfile: name.optional(),
     // Trusted output transport, independent of the model's final text. Deploy
     // runner support before activating this on a production profile.
     resultFile: z
