@@ -100,6 +100,21 @@ const nextConfig = {
   // `dynamic = 'force-dynamic'` segment config, which is why each page is
   // now a thin shell around a streamed content component.
   cacheComponents: true,
+  // Cache Components without Partial Prefetching is the legacy migration
+  // pairing, and `next build` says so on every Console build: "cacheComponents
+  // is enabled without a corresponding partialPrefetching option". Neither
+  // option implies the other - Next only turns partial prefetching on when the
+  // config sets it (or `__NEXT_PARTIAL_PREFETCHING`), so leaving it unset has
+  // silently kept whole-route prefetch.
+  //
+  // It matters here because the Console's primary journeys are navigations
+  // between streamed routes from the nav rail - Bridge, Inbox, Agents, Work,
+  // Sessions, Costs and Shuttlebay. Whole-route prefetch re-requests an entire
+  // destination route's RSC payload; partial prefetching fetches the segments
+  // that changed, so a rail click reuses the cached static shell and pays for
+  // the dynamic part instead. Both features ship enabled-together in the next
+  // major, so this is the direction the framework moves regardless.
+  partialPrefetching: true,
   // Without this, Next.js infers the file-tracing root from the nearest
   // lockfile it finds walking up from this dir — ambiguous whenever more
   // than one is visible (e.g. a git worktree nested under the primary
