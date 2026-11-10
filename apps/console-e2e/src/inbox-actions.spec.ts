@@ -21,6 +21,10 @@ const REPOSITORY = 'supersprinklesracing/sprinkles';
 const REPO_QUERY = encodeURIComponent(REPOSITORY);
 const GITHUB = '/api/e2e/github';
 const pathFor = (suffix: string) => `repos/${REPOSITORY}/${suffix}`;
+// Console replies carry a hidden marker so the issue_comment webhook does not
+// dispatch them again (apps/console/src/lib/console-reply-marker.ts).
+const consoleReply = (text: string) =>
+  `${text}\n\n<!-- agent-lcars:console-reply -->`;
 interface Mutation {
   method: string;
   path: string;
@@ -218,7 +222,7 @@ test.describe('Inbox authorized action journeys', () => {
       {
         method: 'POST',
         path: pathFor(`issues/${number}/comments`),
-        body: { body: 'Keep the human decision open.' },
+        body: { body: consoleReply('Keep the human decision open.') },
         rejected: false,
       },
     ]);
@@ -263,8 +267,8 @@ test.describe('Inbox authorized action journeys', () => {
         .filter(({ path }) => path.endsWith('/comments'))
         .map(({ body }) => body),
     ).toEqual([
-      { body: 'Keep the human decision open.' },
-      { body: 'Use a 30-day retention window.' },
+      { body: consoleReply('Keep the human decision open.') },
+      { body: consoleReply('Use a 30-day retention window.') },
     ]);
     expect(mutations.filter(({ path }) => path.endsWith('/labels'))).toEqual([
       {
@@ -284,13 +288,13 @@ test.describe('Inbox authorized action journeys', () => {
       {
         method: 'POST',
         path: pathFor(`issues/${number}/comments`),
-        body: { body: 'Keep the human decision open.' },
+        body: { body: consoleReply('Keep the human decision open.') },
         rejected: false,
       },
       {
         method: 'POST',
         path: pathFor(`issues/${number}/comments`),
-        body: { body: 'Use a 30-day retention window.' },
+        body: { body: consoleReply('Use a 30-day retention window.') },
         rejected: false,
       },
       ...claimEffects(number),
@@ -364,7 +368,7 @@ test.describe('Inbox authorized action journeys', () => {
       {
         method: 'POST',
         path: pathFor(`issues/${number}/comments`),
-        body: { body: 'Choose 90 days.' },
+        body: { body: consoleReply('Choose 90 days.') },
         rejected: false,
       },
       ...claimEffects(number),
@@ -407,7 +411,7 @@ test.describe('Inbox authorized action journeys', () => {
       {
         method: 'POST',
         path: pathFor(`issues/${number}/comments`),
-        body: { body: 'Retain this rejected reply.' },
+        body: { body: consoleReply('Retain this rejected reply.') },
         rejected: true,
       },
     ]);

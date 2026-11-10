@@ -34,6 +34,7 @@ import {
   updateIssueContent,
   updatePrBranch,
 } from './backend-actions';
+import { withConsoleReplyMarker } from './console-reply-marker';
 import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { createGithubUserClient, getGithubClient } from './github-client';
 import { drainOutbox } from './orchestrator-dispatch';
@@ -411,9 +412,11 @@ describe('postComment (direct Work admission)', () => {
         html_url: 'https://github.com/o/r/issues/1#issuecomment-1',
       },
     });
+    // The posted reply as GitHub returns it: marked by postComment, so a
+    // retry must hand the agent the text without the hidden marker.
     const getComment = vi.fn().mockResolvedValue({
       data: {
-        body: 'Please investigate',
+        body: withConsoleReplyMarker('Please investigate'),
         issue_url: `https://api.github.com/repos/${DEFAULT_REPO_KEY}/issues/2709`,
       },
     });
@@ -498,7 +501,7 @@ describe('postComment (direct Work admission)', () => {
     await postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR);
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2' }),
+      expect.objectContaining({ body: withConsoleReplyMarker('Use option 2') }),
     );
   });
 
@@ -519,7 +522,7 @@ describe('postComment (direct Work admission)', () => {
     await postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR, 'codex');
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'Use option 2' }),
+      expect.objectContaining({ body: withConsoleReplyMarker('Use option 2') }),
     );
     const runs = await store.listRuns(taskId);
     expect(runs.at(-1)?.params).toEqual({
@@ -585,7 +588,9 @@ describe('postComment (direct Work admission)', () => {
 
     expect(result.dispatched).toBe(true);
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: "You don't need a human for this" }),
+      expect.objectContaining({
+        body: withConsoleReplyMarker("You don't need a human for this"),
+      }),
     );
     expect((await store.listRuns(taskId)).at(-1)?.params).toEqual({
       mode: 'implement',

@@ -8,6 +8,10 @@ import {
 import { logger } from '@agent-lcars/logging';
 import { storedWorkPayloadSchema, workPayloadSchema } from '@agent-lcars/work';
 
+import {
+  stripConsoleReplyMarker,
+  withConsoleReplyMarker,
+} from './console-reply-marker';
 import { refreshCurrentGithubAnchorProjection } from './github-anchor-refresh';
 import { REPO_HEADER } from './github-app-tokens';
 import {
@@ -191,7 +195,9 @@ export async function postComment(
       owner: repo.owner,
       repo: repo.name,
       issue_number: issueNumber,
-      body,
+      // Marked so the issue_comment webhook does not dispatch it again; the
+      // console decides below whether this reply hands off to an agent.
+      body: withConsoleReplyMarker(body),
     })
     .catch((error: unknown) => {
       // GitHub rejected the operator's own token; retrying with it cannot
@@ -252,7 +258,7 @@ export async function retryPostedComment(
   return dispatchPostedReply(
     repo,
     issueNumber,
-    comment.body,
+    stripConsoleReplyMarker(comment.body),
     actorLogin,
     pipeline,
   );

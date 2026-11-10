@@ -1,6 +1,7 @@
 import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { withConsoleReplyMarker } from './console-reply-marker';
 import { type IngestResult, interpretDelivery } from './orchestrator-ingest';
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
@@ -1372,6 +1373,38 @@ describe('unified cross-model PR review intake', () => {
       },
     });
   });
+
+  it.each([
+    ['an agent mention on an issue', '@claude please fix it', undefined],
+    [
+      'a /review command on a pull request',
+      '/review',
+      { url: 'https://api.github.com/repos/jlapenna/agent-lcars/pulls/84' },
+    ],
+  ])(
+    'ignores a console reply carrying %s; the console already decided its dispatch',
+    (_case, text, pullRequest) => {
+      const result = interpretDelivery({
+        event: 'issue_comment',
+        deliveryId: DELIVERY_ID,
+        payload: issueCommentPayload({
+          issue: {
+            state: 'open',
+            number: 84,
+            title: 'Issue title',
+            body: 'Issue body',
+            ...(pullRequest ? { pull_request: pullRequest } : {}),
+            labels: [{ name: 'agent:claude' }],
+          },
+          comment: {
+            body: withConsoleReplyMarker(text),
+            author_association: 'OWNER',
+          },
+        }),
+      });
+      expect(result).toEqual({ kind: 'ignore', reason: 'console-reply' });
+    },
+  );
 
   it('supports /review comment command on pull requests', () => {
     const result = interpretDelivery({
