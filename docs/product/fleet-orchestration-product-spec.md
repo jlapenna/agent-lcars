@@ -854,11 +854,14 @@ consumed by every dispatched run in every member repository.
 R7's explicit opt-in source contract is documented in
 [Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
 [#2198](https://github.com/jlapenna/agent-lcars/issues/2198) delivered the
-mechanism and serving proof; natural production `provider-limit` reroute
-observation remains separate from local mechanism tests. The FL-IN-10 review
-fallback is in the same state: the maintainer skipped a forced-quota drill on
-2026-11-09, so a production `provider-limit` reroute of a review run stays an
-open acceptance gap until one occurs naturally.
+mechanism and serving proof. The FL-IN-10 review fallback was observed in
+production without a drill (the maintainer skipped one on 2026-11-09). On
+2026-11-10, Codex review `jlapenna/home-assistant-config#69/r1` hit its usage
+limit and settled `provider-limit`. That minted the Antigravity (`agy`)
+successor `#69/r2`, and the Codex cooldown sent
+`supersprinklesracing/sprinkles#6451` straight to `agy`. Both `agy` runs
+settled `provider-limit` on Antigravity's own quota, so the rest of the chain
+is still unobserved: a fallback reviewer that completes a review.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
