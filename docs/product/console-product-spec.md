@@ -951,6 +951,21 @@ write mutations were also qualified on `2026-11-08` against
 version `1`, `skill-evals` credential-set revision `2`, and nine repository
 grants).
 
+**Live skill-evals execution (2026-11-10, #3217, #3286):** `svc:production-verifier`
+invoked `jlapenna/labels` `skill-evals` from `/api/work/v1/jobs/invoke` with
+profile `skill-evals-claude` (occurrence `5c6f55be…`, Work
+`01M726P3B7XQRQAVPZG31YVFAY`). The k3s Pod ran on runner image
+`homelab-runner@sha256:df91ebf8…` (source `8d64047f`) with requests equal to
+limits at 2 CPU / 6 GiB / 24 GiB, only `claude-code-oauth-token` projected,
+peak samples of 118 MiB memory and 2.5 MB ephemeral storage, and a normal Job
+completion (no OOM or eviction). The Claude harness ran both `labels-dev`
+cases in 20 s (runner `claude`, `partial: false`, list-price estimate $0.08);
+both failed their `criteria` grader, which is a skill-quality finding
+reported as designed, not an execution failure. The record reached Garage
+`eval-history` as `b0326c5e-836f-4f9d-80b2-01e6d76ac9ce` with 14 artifacts
+(report, results, traces, and runner log), confirmed with
+`repo-eval-history remote-find` and `fetch`.
+
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
 production verification).
