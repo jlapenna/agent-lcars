@@ -966,6 +966,16 @@ reported as designed, not an execution failure. The record reached Garage
 (report, results, traces, and runner log), confirmed with
 `repo-eval-history remote-find` and `fetch`.
 
+**Live provider-limit fallback (2026-11-10, #3286):** While Codex was at its
+usage limit, `svc:production-verifier` invoked the same job on the default
+`skill-evals` profile (occurrence `0d064df7…`). The Codex runner stopped after
+2 s with `partial: true` and `partialReason: "provider-limit"`, recorded in
+Garage as `c60bc6c0-466f-4343-817c-b3b09bed5461` (`partial`). Reconcile then
+reserved exactly one fallback, occurrence `f3742191…` with `fallbackOf`
+`0d064df7…` and profile `skill-evals-claude`, which ran both cases on Claude
+with no run errors (`partial: false`, 23 s, $0.08) and recorded Garage
+`8a157e39-e964-4f89-b993-293af83ef413`. No further fallback was chained.
+
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
 production verification).
