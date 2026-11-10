@@ -41,6 +41,36 @@ export interface RepositoryJobsDeps {
 }
 export class RepositoryJobBusyError extends Error {}
 
+/** Results are comparable only under the same inputs, result contract,
+ * parameters, provider harness and credentials. */
+function occurrenceComparison(
+  definition: JobDefinition,
+  parameters: Record<string, string>,
+  profile: JobProfile,
+): string {
+  return jobDigest([
+    definition.job.inputs,
+    definition.job.result,
+    parameters,
+    ...(profile.providerAuth ? [profile.providerAuth] : []),
+    ...(profile.credentialSet || profile.gitIdentity
+      ? [profile.credentialSet ?? null, profile.gitIdentity ?? null]
+      : []),
+  ]);
+}
+
+/** The evaluator's own structured verdict that its provider ran out of quota
+ * or hit a rate limit; never inferred from free-text reports. */
+function stoppedOnProviderLimit(occurrence: JobOccurrence): boolean {
+  const result = occurrence.artifact?.artifacts['result.json'];
+  return (
+    typeof result === 'object' &&
+    result !== null &&
+    'partialReason' in result &&
+    result.partialReason === 'provider-limit'
+  );
+}
+
 export class RepositoryJobs {
   constructor(readonly deps: RepositoryJobsDeps) {}
   authorize(
@@ -207,15 +237,11 @@ export class RepositoryJobs {
             slot.getTime() <= Date.parse(job.activationFloor))
         )
           throw new Error('Schedule occurrence not eligible');
-        const comparison = jobDigest([
-          job.definition.job.inputs,
-          job.definition.job.result,
+        const comparison = occurrenceComparison(
+          job.definition,
           parameters,
-          ...(profile.providerAuth ? [profile.providerAuth] : []),
-          ...(profile.credentialSet || profile.gitIdentity
-            ? [profile.credentialSet ?? null, profile.gitIdentity ?? null]
-            : []),
-        ]);
+          profile,
+        );
         const occurrence: JobOccurrence = {
           id: occurrenceId,
           jobId: id,
@@ -392,6 +418,7 @@ export class RepositoryJobs {
         RETIREMENT_BACKSTOP_MS
     )
       return;
+    const fallback = await this.reserveFallback(job, occurrence);
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;
@@ -400,6 +427,18 @@ export class RepositoryJobs {
         run.result?.ok &&
         saved.artifact?.successful &&
         run.result.ref === `job-result:${saved.artifact.digest}`;
+      if (!success && fallback) {
+        // Settle this occurrence and hand the job to its already-reserved
+        // fallback in one write, so no tick can admit another slot between.
+        return {
+          job: { ...rest, active: fallback, latest: fallback },
+          occurrence: {
+            ...saved,
+            successful: false,
+            reconciledAt: this.deps.now().toISOString(),
+          },
+        };
+      }
       return {
         job: {
           ...rest,
@@ -419,6 +458,80 @@ export class RepositoryJobs {
         },
       };
     });
+  }
+  /** Reserve (idempotently) the one re-run of a provider-limited occurrence
+   * under its profile's fallbackProfile. Returns the fallback occurrence id,
+   * or undefined when none applies or the fallback cannot be admitted (the
+   * original then settles as an ordinary failure). */
+  async reserveFallback(
+    job: CatalogJob,
+    occurrence: JobOccurrence,
+  ): Promise<string | undefined> {
+    const fallbackProfile =
+      'credentials' in occurrence.profile
+        ? undefined
+        : occurrence.profile.fallbackProfile;
+    if (
+      !fallbackProfile ||
+      occurrence.fallbackOf !== undefined ||
+      occurrence.artifact?.successful ||
+      !stoppedOnProviderLimit(occurrence)
+    )
+      return undefined;
+    const id = jobDigest([occurrence.id, 'fallback', fallbackProfile]);
+    try {
+      const reserved = await this.deps.store.mutate(
+        job.id,
+        id,
+        async (current, existing) => {
+          if (existing) return { occurrence: existing };
+          if (!current || current.active !== occurrence.id) return {};
+          const profile = this.authorize(
+            occurrence.definition,
+            occurrence.principal,
+            fallbackProfile,
+          );
+          const comparison = occurrenceComparison(
+            occurrence.definition,
+            occurrence.parameters,
+            profile,
+          );
+          const fallback: JobOccurrence = {
+            id,
+            jobId: occurrence.jobId,
+            workId: await slotItemId(id, this.deps.now()),
+            requestDigest: jobDigest([occurrence.requestDigest, id]),
+            principal: occurrence.principal,
+            trigger: occurrence.trigger,
+            fallbackOf: occurrence.id,
+            createdAt: this.deps.now().toISOString(),
+            skipped: false,
+            definition: occurrence.definition,
+            profile,
+            comparison,
+            parameters: occurrence.parameters,
+            ...(occurrence.definition.job.state.previousSuccessfulResult &&
+            current.baseline?.comparison === comparison
+              ? { baselineOccurrence: current.baseline.occurrence }
+              : {}),
+          };
+          if (profile.credentialSet) {
+            if (!this.deps.secrets)
+              throw new Error('Secret store not configured');
+            try {
+              fallback.secretSnapshot = await this.deps.secrets.pin(fallback);
+            } catch (error) {
+              await this.deps.secrets.refused(fallback, 'admission');
+              throw error;
+            }
+          }
+          return { occurrence: fallback };
+        },
+      );
+      return reserved.occurrence?.id;
+    } catch {
+      return undefined;
+    }
   }
   async tick(deadline = Number.POSITIVE_INFINITY): Promise<string[]> {
     const failures: string[] = [];

@@ -999,3 +999,124 @@ it('pins provider auth into the admitted recipe run and revokes it with the prof
   delete f.profile.providerAuth;
   expect(() => f.jobs.authorizeOccurrence(occurrence)).toThrow();
 });
+
+describe('provider-limit fallback', () => {
+  async function settle(
+    f: ReturnType<typeof fixture>,
+    jobs: RepositoryJobs,
+    occurrence: { id: string; workId: string },
+    data: Record<string, unknown>,
+  ) {
+    const run = (await f.native.listRuns({ workId: occurrence.workId }))[0]!;
+    const artifact = validateJobResult(f.definition, {
+      report: 'Evaluator report',
+      complete: false,
+      data,
+    });
+    const saved = (await f.store.readOccurrence(occurrence.id))!;
+    await jobs.stage(saved, artifact);
+    await f.orchestrator.report(run.runId, {
+      ok: true,
+      ref: `job-result:${artifact.digest}`,
+    });
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+  }
+  function withFallback(f: ReturnType<typeof fixture>) {
+    f.profile.providerAuth = 'codex';
+    f.profile.fallbackProfile = 'audit-claude';
+    const claude: JobProfile = {
+      ...f.profile,
+      name: 'audit-claude',
+      providerAuth: 'claude',
+    };
+    delete claude.fallbackProfile;
+    return new RepositoryJobs({
+      ...f.jobs.deps,
+      profiles: () => [f.profile, claude],
+    });
+  }
+
+  it('re-admits a provider-limited occurrence once under the fallback profile', async () => {
+    const f = fixture();
+    const jobs = withFallback(f);
+    const original = await jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    await settle(f, jobs, original, {
+      runner: 'codex',
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    const job = f.store.jobs.get(f.id)!;
+    expect(job.active).toBeDefined();
+    expect(job.active).not.toBe(original.id);
+    expect(job.latest).toBe(job.active);
+    expect((await f.store.readOccurrence(original.id))?.successful).toBe(false);
+    const fallback = (await f.store.readOccurrence(job.active!))!;
+    expect(fallback).toMatchObject({
+      fallbackOf: original.id,
+      trigger: 'manual',
+      principal: 'user:joe',
+      profile: { name: 'audit-claude', providerAuth: 'claude' },
+    });
+    expect(fallback.comparison).not.toBe(original.comparison);
+
+    // The next tick mints the fallback's Work with the Claude harness.
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+    const runs = await f.native.listRuns({ workId: fallback.workId });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.params).toMatchObject({ providerAuth: 'claude' });
+
+    // A fallback that also hits a provider limit settles; it never chains.
+    await settle(f, jobs, fallback, {
+      runner: 'claude',
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect((await f.store.readOccurrence(fallback.id))?.successful).toBe(false);
+  });
+
+  it.each([
+    [
+      'grading error',
+      { partial: true, partialReason: 'provider or grading error' },
+    ],
+    ['failed grades', { partial: false, exit: 1 }],
+  ])('does not fall back on %s', async (_name, data) => {
+    const f = fixture();
+    const jobs = withFallback(f);
+    const original = await jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    await settle(f, jobs, original, data);
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.occurrences.size).toBe(1);
+  });
+
+  it('settles as an ordinary failure when the fallback profile is not authorized', async () => {
+    const f = fixture();
+    f.profile.fallbackProfile = 'missing-profile';
+    const original = await f.jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    await settle(f, f.jobs, original, {
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.occurrences.size).toBe(1);
+  });
+});

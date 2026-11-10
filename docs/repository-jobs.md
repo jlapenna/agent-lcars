@@ -390,5 +390,20 @@ transport and credential sets are unchanged.
 principals, 2 CPU / 6Gi / 24Gi allocation and `skill-evals` credential set.
 Pick it in **Run now** when Codex is out of quota. Its credential-set grants
 are keyed by profile name, so each repository needs its own
-`skill-evals-claude` grant. Scheduled occurrences keep the job's declared
-profile; automatic provider fallback is tracked in #3286.
+`skill-evals-claude` grant.
+
+### Provider-limit fallback
+
+A profile may name a `fallbackProfile`. When an occurrence under it settles
+unsuccessfully and its `result.json` carries the evaluator's structured
+`partialReason: "provider-limit"` (repo-tools reports a Codex usage-limit,
+rate-limit or quota stop that way; free-text reports are never parsed),
+reconcile reserves exactly one re-run of the same definition, parameters,
+trigger and principal under the fallback profile. It records `fallbackOf` on
+the new occurrence and hands the job's active slot to it in the same write that
+settles the original. The fallback is authorized and credential-pinned like
+any admission; if it cannot be admitted the original settles as an ordinary
+failure. A fallback occurrence never falls back again, and the result
+comparison includes its provider, so baselines stay per harness.
+`skill-evals` falls back to `skill-evals-claude`, so a scheduled weekly run
+that hits the Codex quota re-runs on Claude without an operator.
