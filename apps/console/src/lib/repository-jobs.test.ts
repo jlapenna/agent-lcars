@@ -261,11 +261,9 @@ describe('production repository job admission', () => {
     const agy = {
       ...f.profile,
       providerAuth: 'agy' as const,
-      providerModel: 'gemini-4-argon-medium',
+      providerModel: 'gemini-4-argon',
     };
-    expect(jobProfileSchema.parse(agy).providerModel).toBe(
-      'gemini-4-argon-medium',
-    );
+    expect(jobProfileSchema.parse(agy).providerModel).toBe('gemini-4-argon');
     const { providerModel: _model, ...withoutModel } = agy;
     expect(() => jobProfileSchema.parse(withoutModel)).toThrow();
     expect(() =>
@@ -1114,7 +1112,7 @@ describe('provider-limit fallback', () => {
       ...f.profile,
       name: 'audit-agy',
       providerAuth: 'agy',
-      providerModel: 'gemini-4-argon-medium',
+      providerModel: 'gemini-4-argon',
       // A cycle back to the original profile must not re-run it.
       fallbackProfile: f.profile.name,
     };
@@ -1150,7 +1148,7 @@ describe('provider-limit fallback', () => {
       profile: {
         name: 'audit-agy',
         providerAuth: 'agy',
-        providerModel: 'gemini-4-argon-medium',
+        providerModel: 'gemini-4-argon',
       },
     });
     await jobs.reconcile(f.store.jobs.get(f.id)!);
@@ -1175,7 +1173,7 @@ describe('provider-limit fallback', () => {
       ...f.profile,
       name: 'audit-agy',
       providerAuth: 'agy',
-      providerModel: 'gemini-4-argon-medium',
+      providerModel: 'gemini-4-argon',
     };
     delete agy.fallbackProfile;
     const jobs = new RepositoryJobs({

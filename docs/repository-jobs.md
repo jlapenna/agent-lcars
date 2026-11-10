@@ -402,8 +402,12 @@ private native login directory, the same layout `direct-runner.sh` uses for
 `agy` runs, so Antigravity can rotate it in place. It exports
 `REPO_EVAL_ANTIGRAVITY_AUTH_DIR`, `REPO_SKILL_EVALS_RUNNER=antigravity` and
 `REPO_SKILL_EVALS_MODEL`, and removes all of them on exit. `skill-evals-agy`
-is the Antigravity twin of `skill-evals`, on `gemini-4-argon-medium`, the
-model repo-tools #222 qualified. It needs its own per-repository grants.
+is the Antigravity twin of `skill-evals`, on `gemini-4-argon` at Antigravity's
+default `medium` thought level. `providerModel` must be a value of the ACP
+session's stable `model` config option (a model family such as
+`gemini-4-argon`), not a per-thought-level id such as `gemini-4-argon-medium`
+from the unstable model list: repo-skill-evals refuses any other value before
+inference. It needs its own per-repository grants.
 
 ### Provider-limit fallback
 

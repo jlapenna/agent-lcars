@@ -22,7 +22,7 @@ test('Antigravity recipe harness provisions a private native login, evaluator ru
     const environment = {};
     const auth = await agyJobAuth({
       environment,
-      model: 'gemini-4-argon-medium',
+      model: 'gemini-4-argon',
       tokenFile,
       root,
     });
@@ -38,7 +38,7 @@ test('Antigravity recipe harness provisions a private native login, evaluator ru
       0o600,
     );
     assert.equal(environment.REPO_SKILL_EVALS_RUNNER, 'antigravity');
-    assert.equal(environment.REPO_SKILL_EVALS_MODEL, 'gemini-4-argon-medium');
+    assert.equal(environment.REPO_SKILL_EVALS_MODEL, 'gemini-4-argon');
     await auth.close();
     assert.deepEqual(environment, {});
     assert.deepEqual(await readdir(root), ['antigravity-oauth-token']);
