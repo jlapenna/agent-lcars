@@ -7,6 +7,7 @@ import {
   formatCompactRelativeTime,
   formatRelativeTime,
 } from './format';
+import { subscribeToTick } from './shared-tick';
 
 // Matches refresh-button.tsx's cadence for its "Updated Xm ago" label - one
 // shared rhythm keeps every visible age on the page moving together.
@@ -42,11 +43,16 @@ export function RelativeTime({
   const [title, setTitle] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    const update = () => setLabel(formatFor(variant, iso));
+    // `setLabel` with an unchanged string is a no-op for React, so a tick only
+    // costs a render when the label actually aged across a unit boundary.
+    const update = () =>
+      setLabel((previous) => {
+        const next = formatFor(variant, iso);
+        return next === previous ? previous : next;
+      });
     update();
     setTitle(formatAbsoluteLocal(iso));
-    const id = setInterval(update, TICK_MS);
-    return () => clearInterval(id);
+    return subscribeToTick(TICK_MS, update);
   }, [iso, variant]);
 
   return (
