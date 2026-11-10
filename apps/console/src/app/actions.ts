@@ -233,9 +233,21 @@ export async function retriggerIssue(
   callerId: string,
   note?: string,
 ): Promise<ActionResult> {
-  await requireAdmin();
+  const session = await requireAdmin();
   try {
-    await retriggerIssueLib(resolveWatchedRepo(repo), number, callerId, note);
+    if (!session.user.login) {
+      throw new ActionError('Authenticated GitHub login is required', 401);
+    }
+    await retriggerIssueLib(
+      resolveWatchedRepo(repo),
+      number,
+      callerId,
+      {
+        login: session.user.login,
+        githubToken: githubAccessTokenFor(session) ?? '',
+      },
+      note,
+    );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {

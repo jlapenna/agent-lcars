@@ -1359,8 +1359,13 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const get = vi.fn().mockResolvedValue({
       data: { title: 'Issue title', body: 'Issue body' },
     });
+    // A steering note is the operator's own write; label and issue reads
+    // stay on the App client.
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { createComment } },
+    });
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { removeLabel, createComment, get } },
+      rest: { issues: { removeLabel, get } },
     });
     return { removeLabel, createComment, get };
   }
@@ -1370,7 +1375,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     mockOctokit();
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR),
     ).rejects.toThrow('No authoritative Work is recorded for this task');
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
@@ -1392,7 +1397,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     // own request below - only the pipeline history should matter here.
     await orchestrator.report(seeded.run.runId, { ok: true });
 
-    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID);
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR);
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
     );
@@ -1410,7 +1415,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     });
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID),
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR),
     ).rejects.toThrow(
       new ActionError('A run is already active for this task', 409),
     );
@@ -1432,11 +1437,14 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
+      OPERATOR,
       'try a different approach',
     );
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'try a different approach' }),
+      expect.objectContaining({
+        body: withConsoleReplyMarker('try a different approach'),
+      }),
     );
     expect(calls.some((call) => call.url.includes('/actions/workflows/'))).toBe(
       false,
@@ -1459,13 +1467,111 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       DEFAULT_REPO,
       2709,
       DISPATCH_ID,
+      OPERATOR,
       'This is working now.\n\n@agent',
     );
 
     expect(createComment).toHaveBeenCalledWith(
-      expect.objectContaining({ body: 'This is working now.\n\n@agent' }),
+      expect.objectContaining({
+        body: withConsoleReplyMarker('This is working now.\n\n@agent'),
+      }),
     );
     expect(result).toBeUndefined();
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(2);
+  });
+
+  it('posts the steering note as the signed-in operator', async () => {
+    const { orchestrator } = fixtureOrchestratorRuntime();
+    const { createComment } = mockOctokit();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-operator-note',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR, 'retry');
+
+    expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
+    expect(createComment).toHaveBeenCalledOnce();
+  });
+
+  it('asks for a fresh sign-in before any side effect when a note has no operator token', async () => {
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const { createComment, removeLabel } = mockOctokit();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-no-token',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await expect(
+      retriggerIssue(
+        DEFAULT_REPO,
+        2709,
+        DISPATCH_ID,
+        { login: 'jlapenna', githubToken: '' },
+        'retry',
+      ),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message: expect.stringMatching(/sign in again/),
+    });
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(createComment).not.toHaveBeenCalled();
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(1);
+  });
+
+  it('leaves needs-human and admission untouched when GitHub rejects the note token', async () => {
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const { createComment, removeLabel } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Bad credentials'), { status: 401 }),
+    );
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-stale-token',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await expect(
+      retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, OPERATOR, 'retry'),
+    ).rejects.toMatchObject({ statusCode: 401 });
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toHaveLength(1);
+  });
+
+  it('retries without a note even when the session has no operator token', async () => {
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    mockOctokit();
+    const seeded = await orchestrator.request({
+      taskId: { repo: DEFAULT_REPO_KEY, issue: 2709 },
+      requestId: 'seed-no-note',
+      pipeline: 'claude',
+      work: testWork('claude'),
+    });
+    if ('refused' in seeded) throw new Error('seed request was refused');
+    await orchestrator.report(seeded.run.runId, { ok: true });
+
+    await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, {
+      login: 'jlapenna',
+      githubToken: '',
+    });
+
     expect(
       await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
     ).toHaveLength(2);
@@ -1476,7 +1582,7 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
     const requestSpy = vi.spyOn(orchestrator, 'request');
 
     await expect(
-      retriggerIssue(DEFAULT_REPO, 2709, 'not-a-uuid'),
+      retriggerIssue(DEFAULT_REPO, 2709, 'not-a-uuid', OPERATOR),
     ).rejects.toThrow('A valid dispatch caller ID is required');
     expect(requestSpy).not.toHaveBeenCalled();
   });
@@ -1517,7 +1623,13 @@ describe('retriggerIssue (orchestrator dispatch, #1183)', () => {
       );
       const requestSpy = vi.spyOn(orchestrator, 'request');
 
-      await retriggerIssue(DEFAULT_REPO, 2709, DISPATCH_ID, undefined);
+      await retriggerIssue(
+        DEFAULT_REPO,
+        2709,
+        DISPATCH_ID,
+        OPERATOR,
+        undefined,
+      );
 
       expect(get).not.toHaveBeenCalled();
       expect(requestSpy).toHaveBeenCalledWith(

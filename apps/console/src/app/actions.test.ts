@@ -404,6 +404,7 @@ describe('agent-lcars Server Actions', () => {
         DEFAULT_REPO,
         42,
         DISPATCH_ID,
+        { login: 'jlapenna', githubToken: 'operator-token' },
         'try again',
       );
     });
