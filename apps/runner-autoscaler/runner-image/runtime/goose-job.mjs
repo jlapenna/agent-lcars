@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { claudeJobAuth } from './claude-job-auth.mjs';
 import { codexJobAuth } from './codex-job-auth.mjs';
 import { loadGooseEnvironment } from './goose-environment.mjs';
 import {
@@ -49,6 +50,7 @@ let home;
 let secretHome;
 let timeout;
 let codexAuth;
+let claudeAuth;
 try {
   const brief = await call('recipe');
   await cgroupAllocation(brief.definition.job.execution.resources);
@@ -123,6 +125,8 @@ try {
         }),
     });
   }
+  if (brief.profile?.providerAuth === 'claude')
+    claudeAuth = await claudeJobAuth({ environment });
   const execute = gooseExecutor({
     workingDirectory,
     environment,
@@ -145,6 +149,7 @@ try {
   process.exitCode = 1;
 } finally {
   clearTimeout(timeout);
+  claudeAuth?.close();
   if (codexAuth) {
     try {
       if (!codexAuth.persistenceAttempted) await codexAuth.persist();

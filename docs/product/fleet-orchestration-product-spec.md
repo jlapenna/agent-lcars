@@ -494,9 +494,10 @@ executor is working an issue; a human assignee owns it regardless.
     persisted back through `PUT /runs/{id}/codex-auth`.
   - OpenCode: a LiteLLM virtual key.
   - Antigravity: an OAuth token from a projected file (`AGY_AUTH_JSON_FILE`).
-  - Goose recipes: LiteLLM virtual key by default, or leased Codex auth when
+  - Goose recipes: LiteLLM virtual key by default, leased Codex auth when
     the selected operator profile (`AGENT_LCARS_JOB_PROFILES`) sets
-    `providerAuth: "codex"`, plus any granted per-job secret bindings
+    `providerAuth: "codex"`, or the projected Claude subscription token when
+    it sets `providerAuth: "claude"` (#3286), plus any granted per-job secret bindings
     (`environment` and `/dev/shm` `files`) resolved from
     `/runs/{id}/job-secrets`.
 

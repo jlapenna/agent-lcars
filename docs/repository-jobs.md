@@ -373,3 +373,22 @@ on exit. `REPO_SKILL_EVALS_RUNNER=codex` selects the shared evaluator backend;
 normal repository App checkout and the job allocation remain unchanged.
 The profile must only be activated after the matching broker deployment and
 worker image (including the updated repo-tools backend) are both verified.
+
+### Claude tools inside recipes
+
+A profile can instead set `providerAuth: "claude"` so a recipe's tools run
+on the Claude CLI (#3286). Admission pins it into the occurrence and Run like
+Codex. The claim response names it, and the Kubernetes executor then projects
+the credential Secret's `claude-code-oauth-token` read-only under
+`/run/secrets` into that one worker; recipes under any other profile receive
+no Claude credential, and the executor refuses any other recipe provider value.
+`goose-job.mjs` exports it as `CLAUDE_CODE_OAUTH_TOKEN` with
+`REPO_SKILL_EVALS_RUNNER=claude` and clears both on exit. Allocation, result
+transport and credential sets are unchanged.
+
+`skill-evals-claude` is the Claude twin of `skill-evals`: same repositories,
+principals, 2 CPU / 6Gi / 24Gi allocation and `skill-evals` credential set.
+Pick it in **Run now** when Codex is out of quota. Its credential-set grants
+are keyed by profile name, so each repository needs its own
+`skill-evals-claude` grant. Scheduled occurrences keep the job's declared
+profile; automatic provider fallback is tracked in #3286.

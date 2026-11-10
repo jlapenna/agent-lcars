@@ -138,9 +138,10 @@ export const jobProfileSchema = z
     // Reuse ordinary watched-repository credentials only by operator opt-in.
     crossRepo: z.boolean().optional(),
     credentialSet: credentialSetReferenceSchema.optional(),
-    // Provider state is restored through its existing leased broker, never
-    // copied into an immutable job credential set.
-    providerAuth: z.literal('codex').optional(),
+    // The harness a recipe's provider tools run on. Codex state is restored
+    // through its existing leased broker; Claude uses the executor-projected
+    // subscription token. Neither is copied into a job credential set.
+    providerAuth: z.enum(['codex', 'claude']).optional(),
     // Trusted output transport, independent of the model's final text. Deploy
     // runner support before activating this on a production profile.
     resultFile: z

@@ -695,6 +695,39 @@ describe('claim', () => {
     });
   });
 
+  it.each([
+    ['claude', { mode: 'recipe', providerAuth: 'claude' }, 'claude'],
+    ['codex', { mode: 'recipe', providerAuth: 'codex' }, undefined],
+    ['none', { mode: 'recipe' }, undefined],
+  ])(
+    'names only a Claude recipe harness to the executor (%s)',
+    async (_name, params, expected) => {
+      const { store, orchestrator, now } = fixture();
+      await seedQueuedRun(store, orchestrator, {
+        workId: wid(`recipe-${_name}`),
+        pipeline: 'goose',
+        now: NOW,
+        params,
+      });
+      const response = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          principal: executorPrincipal(['goose']),
+        },
+        'POST',
+        '/runs/claim',
+        { runner: 'executor' },
+      );
+      expect(response.status).toBe(200);
+      expect((response.json as { providerAuth?: string }).providerAuth).toBe(
+        expected,
+      );
+    },
+  );
+
   it('refuses a request with no principal', async () => {
     const { store, orchestrator, now } = fixture();
     const r = await call(
