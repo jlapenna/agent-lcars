@@ -675,8 +675,8 @@ export async function dispatchUnstickPrs(
   if (!actorLogin) {
     throw new ActionError('Unstick actor is required', 400);
   }
-  // Both branches below write operator-typed context, so fail before any
-  // GitHub or orchestrator side effect when it cannot be posted as them.
+  // Operator-typed context below is posted as the operator; fail before any
+  // GitHub or orchestrator side effect when it cannot be.
   requireOperatorToken(actor);
   const octokit = getGithubClient();
   const trimmedContext = context?.trim();
@@ -688,31 +688,38 @@ export async function dispatchUnstickPrs(
     per_page: 1,
   });
   let anchor = openAnchors.find((item) => item.pull_request === undefined);
-  // The operator authors both the re-dispatch comment and a new audit
-  // anchor; GitHub records who asked, so the text no longer names them. Only
-  // `agent:*` labels trigger issues-webhook admission, so a human-created
-  // `automation:unstick-prs` anchor is admitted solely below.
-  if (anchor) {
+  // The audit anchor is a system container, so the App creates it: an
+  // App-authored anchor stays in the queue whether or not the best-effort
+  // fleet claim lands (github-anchor-selector.ts). Everything the operator
+  // typed goes up as their own marked comment, so agents read it as theirs
+  // and the issue_comment webhook does not dispatch it again; this action
+  // admits the runbook below.
+  if (!anchor) {
+    const { data: created } = await octokit.rest.issues.create({
+      owner: targetRepo.owner,
+      repo: targetRepo.name,
+      title: `playbook: unstick stuck PRs (${new Date().toISOString().slice(0, 10)})`,
+      labels: ['automation:unstick-prs'],
+      body:
+        `Dispatched by @${actorLogin} through Agent LCARS.\n\n` +
+        'Execute the unsticking-stuck-prs runbook and keep the per-PR summary here.',
+    });
+    anchor = created;
+    if (trimmedContext) {
+      await postOperatorComment(
+        targetRepo,
+        anchor.number,
+        `Context: ${trimmedContext}`,
+        actor,
+      );
+    }
+  } else {
     await postOperatorComment(
       targetRepo,
       anchor.number,
       `Re-dispatched from Agent LCARS. Context: ${trimmedContext || '(none)'}`,
       actor,
     );
-  } else {
-    const { data: created } = await asOperator(actor, (userOctokit) =>
-      userOctokit.rest.issues.create({
-        owner: targetRepo.owner,
-        repo: targetRepo.name,
-        title: `playbook: unstick stuck PRs (${new Date().toISOString().slice(0, 10)})`,
-        labels: ['automation:unstick-prs'],
-        body:
-          'Dispatched from Agent LCARS.\n\n' +
-          `Context: ${trimmedContext || '(none)'}\n\n` +
-          'Execute the unsticking-stuck-prs runbook and keep the per-PR summary here.',
-      }),
-    );
-    anchor = created;
   }
   const description =
     anchor.body?.trim() || 'Unstick the current pull-request queue.';

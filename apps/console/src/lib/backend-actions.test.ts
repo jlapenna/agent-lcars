@@ -1293,7 +1293,7 @@ describe('approveAndMergePr', () => {
 });
 
 describe('dispatchUnstickPrs', () => {
-  it('creates the audit anchor as the operator and admits the runbook through Work directly', async () => {
+  it('creates an App-authored audit anchor, posts the context as the operator, and admits the runbook', async () => {
     const listForRepo = vi.fn().mockResolvedValue({ data: [] });
     const create = vi.fn().mockResolvedValue({
       data: {
@@ -1302,23 +1302,27 @@ describe('dispatchUnstickPrs', () => {
         body: 'Unstick the queue.',
       },
     });
-    // Reading the existing anchor stays on the App; the operator authors
-    // the new anchor carrying their context.
+    const createComment = vi.fn().mockResolvedValue({ data: {} });
+    // The anchor is a system container on the App, which keeps it in the
+    // queue; only the operator's own words go up under their identity.
     (getGithubClient as Mock).mockReturnValue({
-      rest: { issues: { listForRepo } },
+      rest: { issues: { listForRepo, create } },
     });
     (createGithubUserClient as Mock).mockReturnValue({
-      rest: { issues: { create } },
+      rest: { issues: { createComment } },
     });
     const { store } = fixtureOrchestratorRuntime();
 
     await dispatchUnstickPrs('  PR #123 stuck  ', DEFAULT_REPO, OPERATOR);
 
-    expect(createGithubUserClient).toHaveBeenCalledWith('operator-token');
     expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ labels: ['automation:unstick-prs'] }),
+    );
+    expect(create.mock.calls[0]?.[0].body).not.toContain('PR #123 stuck');
+    expect(createComment).toHaveBeenCalledWith(
       expect.objectContaining({
-        labels: ['automation:unstick-prs'],
-        body: expect.stringContaining('Context: PR #123 stuck'),
+        issue_number: 88,
+        body: withConsoleReplyMarker('Context: PR #123 stuck'),
       }),
     );
     const runs = await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 88 });
@@ -1330,6 +1334,26 @@ describe('dispatchUnstickPrs', () => {
         context: 'PR #123 stuck',
       }),
     );
+  });
+
+  it('creates the anchor without an operator comment when no context was given', async () => {
+    const listForRepo = vi.fn().mockResolvedValue({ data: [] });
+    const create = vi.fn().mockResolvedValue({
+      data: { number: 88, title: 'Unstick', body: 'Unstick the queue.' },
+    });
+    const createComment = vi.fn();
+    (getGithubClient as Mock).mockReturnValue({
+      rest: { issues: { listForRepo, create } },
+    });
+    (createGithubUserClient as Mock).mockReturnValue({
+      rest: { issues: { createComment } },
+    });
+    fixtureOrchestratorRuntime();
+
+    await dispatchUnstickPrs('   ', DEFAULT_REPO, OPERATOR);
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(createComment).not.toHaveBeenCalled();
   });
 
   it('re-dispatches an open audit anchor with a marked operator comment', async () => {
@@ -1381,9 +1405,11 @@ describe('dispatchUnstickPrs', () => {
     ).toHaveLength(0);
   });
 
-  it('admits nothing when GitHub rejects the operator token for a new anchor', async () => {
-    const listForRepo = vi.fn().mockResolvedValue({ data: [] });
-    const create = vi
+  it('admits nothing when GitHub rejects the operator token', async () => {
+    const listForRepo = vi.fn().mockResolvedValue({
+      data: [{ number: 88, title: 'Unstick', body: 'Existing anchor' }],
+    });
+    const createComment = vi
       .fn()
       .mockRejectedValue(
         Object.assign(new Error('Bad credentials'), { status: 401 }),
@@ -1392,13 +1418,16 @@ describe('dispatchUnstickPrs', () => {
       rest: { issues: { listForRepo } },
     });
     (createGithubUserClient as Mock).mockReturnValue({
-      rest: { issues: { create } },
+      rest: { issues: { createComment } },
     });
-    fixtureOrchestratorRuntime();
+    const { store } = fixtureOrchestratorRuntime();
 
     await expect(
       dispatchUnstickPrs('stuck', DEFAULT_REPO, OPERATOR),
     ).rejects.toMatchObject({ statusCode: 401 });
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 88 }),
+    ).toHaveLength(0);
   });
 });
 
