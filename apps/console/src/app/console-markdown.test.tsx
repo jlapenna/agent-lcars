@@ -13,6 +13,20 @@ describe('ConsoleMarkdown', () => {
     expect(container.textContent?.trim()).toBe('close it');
   });
 
+  it('keeps text between two comments on one line', () => {
+    const { container } = render(
+      <ConsoleMarkdown>{'<!-- a --> keep me <!-- b -->'}</ConsoleMarkdown>,
+    );
+    expect(container.textContent).toContain('keep me');
+  });
+
+  it('hides a multi-line comment and keeps what follows', () => {
+    const { container } = render(
+      <ConsoleMarkdown>{'<!-- a\nb -->\nafter'}</ConsoleMarkdown>,
+    );
+    expect(container.textContent?.trim()).toBe('after');
+  });
+
   it('keeps a comment quoted as code', () => {
     const { container } = render(
       <ConsoleMarkdown>{'Use `<!-- marker -->` here.'}</ConsoleMarkdown>,

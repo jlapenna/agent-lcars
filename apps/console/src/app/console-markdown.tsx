@@ -7,7 +7,9 @@ interface MdastNode {
   children?: MdastNode[];
 }
 
-const HTML_COMMENT = /^\s*<!--[\s\S]*?-->\s*$/u;
+// Exactly one comment: a line that opens with a comment parses as a single
+// html block, so `<!-- a --> text <!-- b -->` must not match and hide `text`.
+const HTML_COMMENT = /^\s*<!--(?:(?!-->)[\s\S])*-->\s*$/u;
 
 /**
  * Drops raw-HTML nodes that are only an HTML comment. GitHub hides them, but
