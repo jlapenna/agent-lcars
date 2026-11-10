@@ -486,6 +486,16 @@ export class RepositoryJobs {
         async (current, existing) => {
           if (existing) return { occurrence: existing };
           if (!current || current.active !== occurrence.id) return {};
+          // Same gates as admission: an operator disable/veto, a source error,
+          // a changed definition or a stale catalog stops the fallback, and
+          // the original then settles as an ordinary failure.
+          if (
+            !current.enabled ||
+            current.error ||
+            current.definition?.digest !== occurrence.definition.digest ||
+            this.deps.now().getTime() - Date.parse(current.refreshedAt) > 600000
+          )
+            return {};
           const profile = this.authorize(
             occurrence.definition,
             occurrence.principal,

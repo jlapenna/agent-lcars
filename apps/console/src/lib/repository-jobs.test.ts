@@ -1102,6 +1102,29 @@ describe('provider-limit fallback', () => {
     expect(f.store.occurrences.size).toBe(1);
   });
 
+  it.each([
+    ['disabled by an operator', { enabled: false, vetoedBy: 'user:joe' }],
+    ['source error', { error: 'Source unavailable' }],
+    ['stale catalog', { refreshedAt: '2026-10-27T05:00:00.000Z' }],
+  ])('does not fall back when the job is %s', async (_name, change) => {
+    const f = fixture();
+    const jobs = withFallback(f);
+    const original = await jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    Object.assign(f.store.jobs.get(f.id)!, change);
+    await settle(f, jobs, original, {
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.occurrences.size).toBe(1);
+  });
+
   it('settles as an ordinary failure when the fallback profile is not authorized', async () => {
     const f = fixture();
     f.profile.fallbackProfile = 'missing-profile';
