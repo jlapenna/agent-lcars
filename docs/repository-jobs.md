@@ -392,18 +392,36 @@ Pick it in **Run now** when Codex is out of quota. Its credential-set grants
 are keyed by profile name, so each repository needs its own
 `skill-evals-claude` grant.
 
+### Antigravity tools inside recipes
+
+`providerAuth: "agy"` runs a recipe's tools on the Antigravity CLI. The
+profile must also name `providerModel` (Antigravity has no unattended default;
+the model joins the result comparison). The executor projects only
+`antigravity-oauth-token` into that worker. `agy-job-auth.mjs` copies it into a
+private native login directory, the same layout `direct-runner.sh` uses for
+`agy` runs, so Antigravity can rotate it in place. It exports
+`REPO_EVAL_ANTIGRAVITY_AUTH_DIR`, `REPO_SKILL_EVALS_RUNNER=antigravity` and
+`REPO_SKILL_EVALS_MODEL`, and removes all of them on exit. `skill-evals-agy`
+is the Antigravity twin of `skill-evals`, on `gemini-4-argon-medium`, the
+model repo-tools #222 qualified. It needs its own per-repository grants.
+
 ### Provider-limit fallback
 
 A profile may name a `fallbackProfile`. When an occurrence under it settles
 unsuccessfully and its `result.json` carries the evaluator's structured
 `partialReason: "provider-limit"` (repo-tools reports a Codex usage-limit,
 rate-limit or quota stop that way; free-text reports are never parsed),
-reconcile reserves exactly one re-run of the same definition, parameters,
+reconcile reserves a re-run of the same definition, parameters,
 trigger and principal under the fallback profile. It records `fallbackOf` on
 the new occurrence and hands the job's active slot to it in the same write that
 settles the original. The fallback is authorized and credential-pinned like
 any admission; if it cannot be admitted the original settles as an ordinary
-failure. A fallback occurrence never falls back again, and the result
-comparison includes its provider, so baselines stay per harness.
-`skill-evals` falls back to `skill-evals-claude`, so a scheduled weekly run
-that hits the Codex quota re-runs on Claude without an operator.
+failure. A fallback follows its own profile's `fallbackProfile` at most twice
+per original occurrence and never to a profile the chain already ran under
+(`fallbackProfiles` records them); a fallback recorded before chaining never
+falls back again. The result comparison includes its provider and model, so
+baselines stay per harness. `skill-evals` falls back to `skill-evals-claude`,
+which falls back to `skill-evals-agy`, so a scheduled weekly run that hits the
+Codex quota re-runs on Claude, and then on Antigravity if Claude is also out,
+without an operator. repo-tools reports Claude and Antigravity quota stops as
+`provider-limit` too.

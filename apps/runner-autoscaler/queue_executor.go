@@ -24,8 +24,8 @@ type directRunnerLaunch struct {
 	runID    string
 	runToken string
 	pipeline string
-	// providerAuth is a goose recipe's admitted tool harness ("claude" or
-	// empty). It selects the one extra provider credential the worker gets.
+	// providerAuth is a goose recipe's admitted tool harness ("claude", "agy"
+	// or empty). It selects the one extra provider credential the worker gets.
 	providerAuth string
 	consoleURL   string
 	// runner is the name this executor claimed the run under. The Work API

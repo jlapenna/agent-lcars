@@ -68,8 +68,11 @@ export const jobOccurrenceSchema = z.strictObject({
   principal: z.string(),
   trigger: z.enum(['manual', 'schedule']),
   /** The provider-limited occurrence this one re-runs under its profile's
-   * fallbackProfile. A fallback occurrence never falls back again. */
+   * fallbackProfile. */
   fallbackOf: hash.optional(),
+  /** Profiles the earlier attempts of this chain ran under, oldest first. A
+   * fallback without it (recorded before chaining) never falls back again. */
+  fallbackProfiles: z.array(z.string().min(1).max(128)).max(4).optional(),
   skipped: z.boolean(),
   definition: jobDefinitionSchema,
   profile: storedJobProfileSchema,

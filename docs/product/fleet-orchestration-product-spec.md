@@ -501,7 +501,9 @@ executor is working an issue; a human assignee owns it regardless.
   - Goose recipes: LiteLLM virtual key by default, leased Codex auth when
     the selected operator profile (`AGENT_LCARS_JOB_PROFILES`) sets
     `providerAuth: "codex"`, or the projected Claude subscription token when
-    it sets `providerAuth: "claude"` (#3286), plus any granted per-job secret bindings
+    it sets `providerAuth: "claude"` (#3286), or the projected Antigravity token
+    with a required `providerModel` when it sets `providerAuth: "agy"`, plus any
+    granted per-job secret bindings
     (`environment` and `/dev/shm` `files`) resolved from
     `/runs/{id}/job-secrets`.
 

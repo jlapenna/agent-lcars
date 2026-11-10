@@ -468,7 +468,7 @@ func TestMemoryStateIsolatesGooseWithoutReadingSecret(t *testing.T) {
 	}
 }
 
-func TestQueueJobProjectsClaudeTokenOnlyForClaudeRecipes(t *testing.T) {
+func TestQueueJobProjectsProviderTokenOnlyForItsRecipeHarness(t *testing.T) {
 	q, _ := kubeQueueFixture(queueReadyNode())
 	allocation := map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"}
 	q.config.Requests, q.config.Limits = allocation, allocation
@@ -495,18 +495,26 @@ func TestQueueJobProjectsClaudeTokenOnlyForClaudeRecipes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has(keys(plain), "claude-code-oauth-token") {
-		t.Fatalf("a recipe without a Claude harness received the Claude token: %v", keys(plain))
+	if has(keys(plain), "claude-code-oauth-token") || has(keys(plain), "antigravity-oauth-token") {
+		t.Fatalf("a recipe without a provider harness received a provider token: %v", keys(plain))
 	}
 	claude, err := q.job(directRunnerLaunch{runID: "work:recipe/r2", pipeline: "goose", providerAuth: "claude"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := keys(claude); !has(got, "claude-code-oauth-token") || !has(got, "goose-config.yaml") {
+	if got := keys(claude); !has(got, "claude-code-oauth-token") || !has(got, "goose-config.yaml") || has(got, "antigravity-oauth-token") {
 		t.Fatalf("Claude recipe credential items = %v", got)
+	}
+	agy, err := q.job(directRunnerLaunch{runID: "work:recipe/r5", pipeline: "goose", providerAuth: "agy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(agy); !has(got, "antigravity-oauth-token") || !has(got, "goose-config.yaml") || has(got, "claude-code-oauth-token") {
+		t.Fatalf("Antigravity recipe credential items = %v", got)
 	}
 	for _, launch := range []directRunnerLaunch{
 		{runID: "work:native/r1", pipeline: "codex", providerAuth: "claude"},
+		{runID: "work:native/r2", pipeline: "agy", providerAuth: "agy"},
 		{runID: "work:recipe/r3", pipeline: "goose", providerAuth: "codex"},
 		{runID: "work:recipe/r4", pipeline: "goose", providerAuth: "opencode"},
 	} {

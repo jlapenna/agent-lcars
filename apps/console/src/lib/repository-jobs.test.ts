@@ -256,6 +256,25 @@ describe('production repository job admission', () => {
       );
     },
   );
+  it('requires a model exactly for the Antigravity harness', () => {
+    const f = fixture([]);
+    const agy = {
+      ...f.profile,
+      providerAuth: 'agy' as const,
+      providerModel: 'gemini-4-argon-medium',
+    };
+    expect(jobProfileSchema.parse(agy).providerModel).toBe(
+      'gemini-4-argon-medium',
+    );
+    const { providerModel: _model, ...withoutModel } = agy;
+    expect(() => jobProfileSchema.parse(withoutModel)).toThrow();
+    expect(() =>
+      jobProfileSchema.parse({ ...agy, providerAuth: 'claude' }),
+    ).toThrow();
+    expect(() =>
+      jobProfileSchema.parse({ ...agy, providerModel: 'bad model' }),
+    ).toThrow();
+  });
   it('accepts operator-owned result files without changing existing profiles', () => {
     const f = fixture([]);
     expect(jobProfileSchema.parse(f.profile)).toEqual(f.profile);
@@ -1071,7 +1090,7 @@ describe('provider-limit fallback', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]!.params).toMatchObject({ providerAuth: 'claude' });
 
-    // A fallback that also hits a provider limit settles; it never chains.
+    // A fallback whose profile declares no further fallback settles.
     await settle(f, jobs, fallback, {
       runner: 'claude',
       partial: true,
@@ -1079,6 +1098,113 @@ describe('provider-limit fallback', () => {
     });
     expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
     expect((await f.store.readOccurrence(fallback.id))?.successful).toBe(false);
+  });
+
+  it('chains through declared fallbacks at most twice and never revisits a profile', async () => {
+    const f = fixture();
+    f.profile.providerAuth = 'codex';
+    f.profile.fallbackProfile = 'audit-claude';
+    const claude: JobProfile = {
+      ...f.profile,
+      name: 'audit-claude',
+      providerAuth: 'claude',
+      fallbackProfile: 'audit-agy',
+    };
+    const agy: JobProfile = {
+      ...f.profile,
+      name: 'audit-agy',
+      providerAuth: 'agy',
+      providerModel: 'gemini-4-argon-medium',
+      // A cycle back to the original profile must not re-run it.
+      fallbackProfile: f.profile.name,
+    };
+    const jobs = new RepositoryJobs({
+      ...f.jobs.deps,
+      profiles: () => [f.profile, claude, agy],
+    });
+    const original = await jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    const limited = { partial: true, partialReason: 'provider-limit' };
+    await settle(f, jobs, original, { runner: 'codex', ...limited });
+    const second = (await f.store.readOccurrence(
+      f.store.jobs.get(f.id)!.active!,
+    ))!;
+    expect(second).toMatchObject({
+      fallbackOf: original.id,
+      fallbackProfiles: [f.profile.name],
+      profile: { name: 'audit-claude' },
+    });
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+    await settle(f, jobs, second, { runner: 'claude', ...limited });
+    const third = (await f.store.readOccurrence(
+      f.store.jobs.get(f.id)!.active!,
+    ))!;
+    expect(third).toMatchObject({
+      fallbackOf: second.id,
+      fallbackProfiles: [f.profile.name, 'audit-claude'],
+      profile: {
+        name: 'audit-agy',
+        providerAuth: 'agy',
+        providerModel: 'gemini-4-argon-medium',
+      },
+    });
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+    const runs = await f.native.listRuns({ workId: third.workId });
+    expect(runs[0]!.params).toMatchObject({ providerAuth: 'agy' });
+    await settle(f, jobs, third, { runner: 'antigravity', ...limited });
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.occurrences.size).toBe(3);
+  });
+
+  it('does not chain a fallback recorded before chaining existed', async () => {
+    const f = fixture();
+    f.profile.providerAuth = 'codex';
+    f.profile.fallbackProfile = 'audit-claude';
+    const claude: JobProfile = {
+      ...f.profile,
+      name: 'audit-claude',
+      providerAuth: 'claude',
+      fallbackProfile: 'audit-agy',
+    };
+    const agy: JobProfile = {
+      ...f.profile,
+      name: 'audit-agy',
+      providerAuth: 'agy',
+      providerModel: 'gemini-4-argon-medium',
+    };
+    delete agy.fallbackProfile;
+    const jobs = new RepositoryJobs({
+      ...f.jobs.deps,
+      profiles: () => [f.profile, claude, agy],
+    });
+    const original = await jobs.admit(
+      f.id,
+      'manual-1',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    await settle(f, jobs, original, {
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    const fallback = (await f.store.readOccurrence(
+      f.store.jobs.get(f.id)!.active!,
+    ))!;
+    delete fallback.fallbackProfiles;
+    f.store.occurrences.set(fallback.id, fallback);
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+    await settle(f, jobs, fallback, {
+      partial: true,
+      partialReason: 'provider-limit',
+    });
+    expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
+    expect(f.store.occurrences.size).toBe(2);
   });
 
   it.each([

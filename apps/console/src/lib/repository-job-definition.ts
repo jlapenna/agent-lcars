@@ -139,12 +139,19 @@ export const jobProfileSchema = z
     crossRepo: z.boolean().optional(),
     credentialSet: credentialSetReferenceSchema.optional(),
     // The harness a recipe's provider tools run on. Codex state is restored
-    // through its existing leased broker; Claude uses the executor-projected
-    // subscription token. Neither is copied into a job credential set.
-    providerAuth: z.enum(['codex', 'claude']).optional(),
+    // through its existing leased broker; Claude and Antigravity (agy) use
+    // executor-projected OAuth tokens. None is copied into a job credential set.
+    providerAuth: z.enum(['codex', 'claude', 'agy']).optional(),
+    // The model a harness without its own default runs (required for agy).
+    providerModel: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}$/u)
+      .optional(),
     // When an occurrence under this profile stops on a provider limit (its
     // evaluator reports partialReason "provider-limit"), LCARS re-admits it
-    // once under this profile, e.g. the same recipe on another harness.
+    // under this profile, e.g. the same recipe on another harness. A fallback
+    // follows its own profile's fallbackProfile at most twice in total and
+    // never returns to a profile the original already ran under.
     fallbackProfile: name.optional(),
     // Trusted output transport, independent of the model's final text. Deploy
     // runner support before activating this on a production profile.
@@ -167,6 +174,12 @@ export const jobProfileSchema = z
   .refine(
     (profile) => !(profile.credentialSet && profile.crossRepo),
     'Credential sets cannot be combined with crossRepo',
+  )
+  .refine(
+    (profile) =>
+      (profile.providerAuth === 'agy') ===
+      (profile.providerModel !== undefined),
+    'providerModel is required for, and only valid with, providerAuth agy',
   );
 export type JobProfile = z.infer<typeof jobProfileSchema>;
 

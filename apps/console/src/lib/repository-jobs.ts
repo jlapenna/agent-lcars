@@ -53,6 +53,7 @@ function occurrenceComparison(
     definition.job.result,
     parameters,
     ...(profile.providerAuth ? [profile.providerAuth] : []),
+    ...(profile.providerModel ? [profile.providerModel] : []),
     ...(profile.credentialSet || profile.gitIdentity
       ? [profile.credentialSet ?? null, profile.gitIdentity ?? null]
       : []),
@@ -61,6 +62,8 @@ function occurrenceComparison(
 
 /** The evaluator's own structured verdict that its provider ran out of quota
  * or hit a rate limit; never inferred from free-text reports. */
+/** Fallbacks one provider-limited occurrence may chain through. */
+const MAX_FALLBACKS = 2;
 function stoppedOnProviderLimit(occurrence: JobOccurrence): boolean {
   const result = occurrence.artifact?.artifacts['result.json'];
   return (
@@ -459,7 +462,7 @@ export class RepositoryJobs {
       };
     });
   }
-  /** Reserve (idempotently) the one re-run of a provider-limited occurrence
+  /** Reserve (idempotently) the re-run of a provider-limited occurrence
    * under its profile's fallbackProfile. Returns the fallback occurrence id,
    * or undefined when none applies or the fallback cannot be admitted (the
    * original then settles as an ordinary failure). */
@@ -471,9 +474,19 @@ export class RepositoryJobs {
       'credentials' in occurrence.profile
         ? undefined
         : occurrence.profile.fallbackProfile;
+    // Profiles this chain has already run under, including this attempt.
+    const tried =
+      occurrence.fallbackOf === undefined
+        ? [occurrence.profile.name]
+        : occurrence.fallbackProfiles && [
+            ...occurrence.fallbackProfiles,
+            occurrence.profile.name,
+          ];
     if (
       !fallbackProfile ||
-      occurrence.fallbackOf !== undefined ||
+      !tried ||
+      tried.length > MAX_FALLBACKS ||
+      tried.includes(fallbackProfile) ||
       occurrence.artifact?.successful ||
       !stoppedOnProviderLimit(occurrence)
     )
@@ -514,6 +527,7 @@ export class RepositoryJobs {
             principal: occurrence.principal,
             trigger: occurrence.trigger,
             fallbackOf: occurrence.id,
+            fallbackProfiles: tried,
             createdAt: this.deps.now().toISOString(),
             skipped: false,
             definition: occurrence.definition,
