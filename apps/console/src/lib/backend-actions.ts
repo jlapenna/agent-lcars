@@ -159,6 +159,51 @@ export interface CommentActor {
   githubToken: string;
 }
 
+/** A missing operator token asks for a fresh sign-in rather than letting
+ *  the write fall back to the GitHub App identity. */
+function requireOperatorToken(actor: CommentActor): void {
+  if (!actor.githubToken) {
+    throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
+  }
+}
+
+/**
+ * Creates an operator-typed comment as the signed-in operator. Agents read
+ * comment authorship as authority, so text a maintainer typed must never be
+ * attributed to the App (jlapenna/homelab#2725). The hidden console marker
+ * keeps the issue_comment webhook from dispatching it a second time: the
+ * console action that posted it already decided whether it hands off.
+ */
+async function postOperatorComment(
+  repo: WatchedRepo,
+  issueNumber: number,
+  body: string,
+  actor: CommentActor,
+): Promise<{ id: number; html_url: string }> {
+  requireOperatorToken(actor);
+  const { data } = await createGithubUserClient(actor.githubToken)
+    .rest.issues.createComment({
+      owner: repo.owner,
+      repo: repo.name,
+      issue_number: issueNumber,
+      body: withConsoleReplyMarker(body),
+    })
+    .catch((error: unknown) => {
+      // GitHub rejected the operator's own token; retrying with it cannot
+      // succeed, so ask for a fresh sign-in instead of surfacing a bare 401.
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        error.status === 401
+      ) {
+        throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
+      }
+      throw error;
+    });
+  return data;
+}
+
 /**
  * Posts a console reply as the signed-in operator, not as the GitHub App.
  * Agents read comment authorship as authority: a bot-authored "close this"
@@ -181,37 +226,14 @@ export async function postComment(
   if (!actorLogin) {
     throw new ActionError('Comment actor is required', 400);
   }
-  if (!actor.githubToken) {
-    throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
-  }
+  requireOperatorToken(actor);
   // Validate an explicit dispatch choice before creating any GitHub-side
   // comment. The UI only supplies canonical selections, but Server Action
   // arguments are still untrusted at the network boundary.
   if (assignedPipeline !== undefined) {
     requireAgentIntegration(repo, assignedPipeline);
   }
-  const { data } = await createGithubUserClient(actor.githubToken)
-    .rest.issues.createComment({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      // Marked so the issue_comment webhook does not dispatch it again; the
-      // console decides below whether this reply hands off to an agent.
-      body: withConsoleReplyMarker(body),
-    })
-    .catch((error: unknown) => {
-      // GitHub rejected the operator's own token; retrying with it cannot
-      // succeed, so ask for a fresh sign-in instead of surfacing a bare 401.
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error &&
-        error.status === 401
-      ) {
-        throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
-      }
-      throw error;
-    });
+  const data = await postOperatorComment(repo, issueNumber, body, actor);
   const result = await dispatchPostedReply(
     repo,
     issueNumber,
@@ -712,11 +734,16 @@ export async function retriggerIssue(
   repo: WatchedRepo,
   issueNumber: number,
   callerId: string,
+  actor: CommentActor,
   note?: string,
 ): Promise<void> {
   if (!DISPATCH_CALLER_ID_PATTERN.test(callerId)) {
     throw new ActionError('A valid dispatch caller ID is required', 400);
   }
+  const trimmedNote = note?.trim();
+  // Fail before any GitHub or orchestrator side effect when the steering
+  // note cannot be posted as the operator.
+  if (trimmedNote) requireOperatorToken(actor);
 
   const runtime = createOrchestratorRuntime();
   const { store } = runtime;
@@ -737,18 +764,12 @@ export async function retriggerIssue(
   await clearNeedsHumanLabel(repo, issueNumber);
 
   // A steering note goes up BEFORE the retrigger so the fresh run reads it
-  // as part of the thread. Deliberately NOT run through ensureMention: a
-  // comment already containing the pipeline's own mention dispatches a run
-  // through the direct reply path, so dispatching here would double-run it.
-  const trimmedNote = note?.trim();
+  // as part of the thread. It is posted as the operator with the console
+  // marker, so even a note mentioning the pipeline (`@claude`) is not
+  // dispatched again by the issue_comment webhook; this action admits the
+  // retry below.
   if (trimmedNote) {
-    const octokit = getGithubClient();
-    await octokit.rest.issues.createComment({
-      owner: repo.owner,
-      repo: repo.name,
-      issue_number: issueNumber,
-      body: trimmedNote,
-    });
+    await postOperatorComment(repo, issueNumber, trimmedNote, actor);
   }
 
   // Deliberately does not re-read GitHub for `agent-option:cross-repo`
