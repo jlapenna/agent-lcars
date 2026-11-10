@@ -187,11 +187,15 @@ The core promises:
   `agent-lcars[bot]` login), so
   `codex`, `agy`, and `opencode` PRs that share `agent-lcars[bot]` are
   distinguished accurately. Reviews route to an opposite model with quota
-  fallback (`codex` PR -> `claude` with fallback `['agy']`; `claude` PR ->
-  `codex` with fallback `['agy']`; `agy` PR -> `claude` with fallback
-  `['codex']`, or `codex` with `['claude']` when `review:codex` is requested;
-  `opencode` PR -> `claude` with fallback `['codex', 'agy']`; human/unknown PR
-  -> requested pipeline or `claude` with fallback `['codex', 'agy']`). Same-model
+  fallback (`codex` PR -> `claude` with fallback `['agy', 'codex']`; `claude`
+  PR -> `codex` with fallback `['agy', 'claude']`; `agy` PR -> `claude` with
+  fallback `['codex', 'agy']`, or `codex` with `['claude', 'agy']` when
+  `review:codex` is requested; `opencode` PR -> `claude` with fallback
+  `['codex', 'agy', 'opencode']`; human/unknown PR -> requested pipeline or
+  `claude` with fallback `['codex', 'agy']`). The authoring model is always the
+  last fallback: fallback only advances on a provider limit or cooldown, so a
+  PR is reviewed by its own model only when every opposite model is out of
+  quota, because a same-model review beats no review. Same-model
   `review:<pipeline>` labels on agent-authored PRs override to the opposite
   model (`crossModelOverride: true`) so `updateTaskWork` replaces any prior task
   `WorkSpec.pipeline` before minting the review run.
@@ -861,8 +865,10 @@ production without a drill (the maintainer skipped one on 2026-11-09). On
 limit and settled `provider-limit`. That minted the Antigravity (`agy`)
 successor `#69/r2`, and the Codex cooldown sent
 `supersprinklesracing/sprinkles#6451` straight to `agy`. Both `agy` runs
-settled `provider-limit` on Antigravity's own quota, so the rest of the chain
-is still unobserved: a fallback reviewer that completes a review.
+settled `provider-limit` on Antigravity's own quota, and the chain stopped
+there because it excluded the authoring model. The authoring model is now the
+last fallback, so those reviews reach Claude. A fallback reviewer that
+completes a review is still to be observed.
 
 R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled

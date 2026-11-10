@@ -92,7 +92,10 @@ describe('detectPullRequestAuthorPipeline', () => {
         repo: 'jlapenna/agent-lcars',
         authorPipeline: author,
       }),
-    ).toMatchObject({ pipeline: 'codex', fallbackPipelines: ['agy'] });
+    ).toMatchObject({
+      pipeline: 'codex',
+      fallbackPipelines: ['agy', 'claude'],
+    });
     expect(
       detectPullRequestAuthorPipeline({
         userLogin: 'jlapenna',
@@ -152,7 +155,7 @@ describe('isAutomatedReviewExcludedAuthor', () => {
 });
 
 describe('selectCrossModelReviewer', () => {
-  it('routes Codex PRs to Claude with Antigravity quota fallback', () => {
+  it('routes Codex PRs to Claude, falling back to Antigravity then Codex', () => {
     expect(
       selectCrossModelReviewer({
         repo: REPO,
@@ -160,12 +163,12 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'claude',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'codex'],
       crossModelOverride: false,
     });
   });
 
-  it('routes Claude PRs to Codex with Antigravity quota fallback', () => {
+  it('routes Claude PRs to Codex, falling back to Antigravity then Claude', () => {
     expect(
       selectCrossModelReviewer({
         repo: REPO,
@@ -173,7 +176,7 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'codex',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'claude'],
       crossModelOverride: false,
     });
   });
@@ -186,7 +189,7 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'claude',
-      fallbackPipelines: ['codex'],
+      fallbackPipelines: ['codex', 'agy'],
       crossModelOverride: false,
     });
     expect(
@@ -197,7 +200,7 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'codex',
-      fallbackPipelines: ['claude'],
+      fallbackPipelines: ['claude', 'agy'],
       crossModelOverride: false,
     });
   });
@@ -211,7 +214,7 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'claude',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'codex'],
       crossModelOverride: true,
     });
     expect(
@@ -222,8 +225,22 @@ describe('selectCrossModelReviewer', () => {
       }),
     ).toEqual({
       pipeline: 'codex',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'claude'],
       crossModelOverride: true,
+    });
+  });
+
+  it('adds the authoring model last only when the repository supports it', () => {
+    expect(
+      selectCrossModelReviewer({
+        repo: REPO,
+        authorPipeline: 'claude',
+        supportedPipelines: ['codex', 'agy'],
+      }),
+    ).toEqual({
+      pipeline: 'codex',
+      fallbackPipelines: ['agy'],
+      crossModelOverride: false,
     });
   });
 
