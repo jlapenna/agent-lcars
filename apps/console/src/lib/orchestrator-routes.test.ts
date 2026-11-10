@@ -1620,7 +1620,7 @@ it('starts independent maintenance and waits for credential observations before 
 });
 
 describe('handleWebhookDelivery cross-model PR review and quota fallback', () => {
-  it('routes a Codex PR to Claude review and automatically falls back to Antigravity on provider-limit', async () => {
+  it('routes a Codex PR to Claude review and falls back to Antigravity, then Codex, on provider-limit', async () => {
     const { deps, store } = fixture(
       (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
     );
@@ -1656,7 +1656,7 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
       params: { mode: 'review' },
       providerFallback: {
         principal: 'svc:github-pr-review',
-        allowedPipelines: ['agy'],
+        allowedPipelines: ['agy', 'codex'],
       },
     });
 
@@ -1670,6 +1670,24 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
           runId: `${REPO}#90/r2`,
           pipeline: 'agy',
           params: { mode: 'review' },
+        }),
+      ],
+    });
+
+    // With every opposite model limited, the authoring model reviews last.
+    const agySettled = await deps.orchestrator.report(`${REPO}#90/r2`, {
+      ok: false,
+      summary: 'provider-limit',
+    });
+    expect(agySettled).toMatchObject({
+      additionalRuns: [
+        expect.objectContaining({
+          runId: `${REPO}#90/r3`,
+          pipeline: 'codex',
+          params: { mode: 'review' },
+          providerFallback: expect.objectContaining({
+            attemptedPipelines: ['claude', 'agy', 'codex'],
+          }),
         }),
       ],
     });
@@ -1729,7 +1747,7 @@ describe('handleWebhookDelivery cross-model PR review and quota fallback', () =>
       params: { mode: 'review' },
       providerFallback: {
         principal: 'svc:github-pr-review',
-        allowedPipelines: ['codex'],
+        allowedPipelines: ['codex', 'agy'],
       },
     });
   });

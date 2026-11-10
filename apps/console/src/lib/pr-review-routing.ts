@@ -161,13 +161,16 @@ function defaultCrossModelOrder(
 /**
  * Selects the primary reviewer pipeline and ordered quota-fallback pipelines
  * for a pull request:
- * - Codex PRs are reviewed by Claude with Antigravity (`agy`) as fallback.
- * - Claude PRs are reviewed by Codex with Antigravity (`agy`) as fallback.
- * - Antigravity (`agy`) PRs are reviewed by Claude with Codex as fallback
- *   (or Codex with Claude as fallback when explicitly requested).
+ * - Codex PRs are reviewed by Claude, then Antigravity (`agy`), then Codex.
+ * - Claude PRs are reviewed by Codex, then Antigravity (`agy`), then Claude.
+ * - Antigravity (`agy`) PRs are reviewed by Claude, then Codex, then `agy`
+ *   (Codex first when explicitly requested).
  * - If an explicit `review:<pipeline>` label names the same pipeline that
  *   authored the PR, `crossModelOverride` redirects the review to the opposite
- *   model so an agent never reviews its own PR.
+ *   model, so an agent never reviews its own PR first.
+ * - The authoring model is always the last fallback. Fallback only advances on
+ *   a provider limit or cooldown, so it reviews its own PR only when every
+ *   opposite model is out of quota: a same-model review beats no review.
  */
 export function selectCrossModelReviewer(input: {
   repo: string;
@@ -224,6 +227,16 @@ export function selectCrossModelReviewer(input: {
     supportedCandidates.length > 0
       ? supportedCandidates
       : [effectiveRequested ?? baseOrder[0] ?? 'claude'];
+
+  const author = input.authorPipeline;
+  if (
+    author !== undefined &&
+    supportedSet.has(author) &&
+    author !== primary &&
+    !fallbackPipelines.includes(author)
+  ) {
+    fallbackPipelines.push(author);
+  }
 
   return {
     pipeline: primary,

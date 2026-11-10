@@ -1210,7 +1210,7 @@ describe('unified cross-model PR review intake', () => {
       taskId: { repo: REPO, issue: 77 },
       pipeline: 'claude',
       params: { mode: 'review' },
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'codex'],
       reviewContext: {
         authorPipeline: 'codex',
         claimRunId: 'jlapenna/agent-lcars#42/r1',
@@ -1243,7 +1243,7 @@ describe('unified cross-model PR review intake', () => {
       taskId: { repo: REPO, issue: 78 },
       pipeline: 'codex',
       params: { mode: 'review' },
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'claude'],
       reviewContext: {
         authorPipeline: 'claude',
       },
@@ -1275,7 +1275,7 @@ describe('unified cross-model PR review intake', () => {
       taskId: { repo: REPO, issue: 79 },
       pipeline: 'claude',
       params: { mode: 'review' },
-      fallbackPipelines: ['codex'],
+      fallbackPipelines: ['codex', 'agy'],
       reviewContext: {
         authorPipeline: 'agy',
       },
@@ -1343,7 +1343,7 @@ describe('unified cross-model PR review intake', () => {
     expect(unified).toMatchObject({
       kind: 'request',
       pipeline: 'claude',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'codex'],
       params: { mode: 'review' },
     });
 
@@ -1365,7 +1365,7 @@ describe('unified cross-model PR review intake', () => {
     expect(redirected).toMatchObject({
       kind: 'request',
       pipeline: 'claude',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'codex'],
       labelRouting: {
         mode: 'review',
         trigger: 'review:codex',
@@ -1432,7 +1432,7 @@ describe('unified cross-model PR review intake', () => {
       kind: 'request',
       taskId: { repo: REPO, issue: 84 },
       pipeline: 'codex',
-      fallbackPipelines: ['agy'],
+      fallbackPipelines: ['agy', 'claude'],
       params: { mode: 'review' },
     });
   });

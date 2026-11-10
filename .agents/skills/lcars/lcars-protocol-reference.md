@@ -18,7 +18,8 @@ enough.
   `review:opencode`/`review:agy` label on a PR, or a `/review` PR comment by an
   `OWNER` or `MEMBER` requests mode `review`, routed by
   `apps/console/src/lib/pr-review-routing.ts` to an opposite model with quota
-  `fallbackPipelines` under principal `svc:github-pr-review`. Label routing validates the full
+  `fallbackPipelines` (the authoring model last) under principal
+  `svc:github-pr-review`. Label routing validates the full
   delivered anchor label snapshot against the canonical pipeline registry;
   multiple choices within the triggering namespace produce an actionable
   `routing-label-conflict` refusal before admission. Missing/inconsistent
