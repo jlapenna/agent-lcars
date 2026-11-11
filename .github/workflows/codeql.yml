@@ -32,3 +32,18 @@ jobs:
       security-events: write
     with:
       languages: javascript-typescript
+      # Test sources are excluded from analysis. The capped ubuntu-slim lane
+      # (1 CPU, 15-minute hard maximum) ran the full default-branch analysis
+      # in 13-15.2 minutes in November 2026, about 10.4 of them evaluating
+      # queries single-threaded, and roughly half those push runs were
+      # killed at the cap. Suffix-named tests (*.test.*, *.spec.*) were 51%
+      # of the analysed JS/TS lines, so leaving them out roughly halves the
+      # database the queries run over. Tests do not ship, and no open alert
+      # was in a test file when this was set. PR runs are unaffected in
+      # kind: they still use the cached overlay base plus diff-informed
+      # analysis.
+      config: |
+        paths-ignore:
+          - '**/*.test.*'
+          - '**/*.spec.*'
+          - 'apps/console-e2e/**'
