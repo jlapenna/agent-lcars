@@ -687,6 +687,44 @@ describe('durable lifecycle metric accounting', () => {
       'lcars_product_measurement_unknown_window{pipeline="claude",measurement="provider_start"} 1\n',
     );
   });
+  it('counts provider waits separately and keeps them out of queue age (#3300)', () => {
+    const waiting = run({
+      runId: 'private/repo#43/r3',
+      createdAt: '2026-10-10T06:00:00.000Z',
+      queue: { state: 'queued', deferredUntil: '2026-10-10T14:00:00.000Z' },
+      providerFallback: {
+        principal: 'svc:github-pr-review',
+        allowedPipelines: ['codex'],
+        attemptedPipelines: ['claude'],
+        originalRunId: 'private/repo#43/r1',
+        fromRunId: 'private/repo#43/r2',
+        trigger: {
+          reason: 'provider-limit',
+          failureRunId: 'private/repo#43/r2',
+          limitedPipeline: 'codex',
+        },
+        providerWait: {
+          attempt: 3,
+          afterRunId: 'private/repo#43/r2',
+          retryAt: '2026-10-10T14:00:00.000Z',
+        },
+      },
+    });
+    const text = snapshot([run(), waiting]);
+    expect(text).toContain(
+      'lcars_product_provider_wait_runs{pipeline="claude"} 1\n',
+    );
+    // Twenty minutes for the ordinary run, not six hours for the waiting one.
+    expect(text).toContain(
+      'lcars_product_oldest_queued_seconds{pipeline="claude"} 1200\n',
+    );
+    // Once due, it is ordinary queued work again.
+    expect(
+      snapshot([
+        { ...waiting, queue: { state: 'queued', deferredUntil: createdAt } },
+      ]),
+    ).toContain('lcars_product_provider_wait_runs{pipeline="claude"} 0\n');
+  });
   it('excludes capacity waits from silent loss and separates automatic retry admissions', () => {
     const expired = '2026-10-10T11:00:00.000Z';
     const queued = run({ leaseExpiresAt: expired });

@@ -8,6 +8,8 @@ import {
   requestRun,
 } from './decide';
 import {
+  isWorkAnchor,
+  MAX_PROVIDER_WAITS,
   type Run,
   RUN_ID_MAX_LENGTH,
   type RunResult,
@@ -17,6 +19,12 @@ import {
   providerCooldownForRun,
   providerIsCoolingDown,
 } from './provider-cooldown';
+
+/** First quota wait; each later wait doubles it up to the cap. Bounded so a
+ * wait never invents a long provider reset (#2537): MAX_PROVIDER_WAITS waits
+ * defer about 20 hours in all, enough for a daily quota to reset. */
+export const PROVIDER_WAIT_BASE_MS = 15 * 60_000;
+export const PROVIDER_WAIT_MAX_MS = 6 * 60 * 60_000;
 
 /** Policy order is preserved; current authority and availability only narrow it. */
 export function selectFallbackPipeline(
@@ -52,6 +60,7 @@ function successor(input: {
   pipeline: string;
   reason: 'provider-limit' | 'provider-cooldown';
   failureRunId: string;
+  wait?: { attempt: number; retryAt: string };
 }): Decision | Refusal {
   const previous = decidedRun(input.settled);
   const policy = previous.providerFallback;
@@ -70,7 +79,20 @@ function successor(input: {
     ...(params === undefined ? {} : { params }),
     providerFallback: {
       ...policy,
-      attemptedPipelines: [...policy.attemptedPipelines, input.pipeline],
+      // A wait starts a fresh round: after it, every authorized provider may
+      // be tried again in policy order.
+      attemptedPipelines:
+        input.wait === undefined
+          ? [...policy.attemptedPipelines, input.pipeline]
+          : [input.pipeline],
+      ...(input.wait === undefined
+        ? {}
+        : {
+            providerWait: {
+              ...input.wait,
+              afterRunId: previous.runId,
+            },
+          }),
       fromRunId: previous.runId,
       trigger: {
         reason: input.reason,
@@ -80,10 +102,20 @@ function successor(input: {
     },
   });
   if (isRefusal(next)) return next;
+  const run = decidedRun(next);
   return {
     task: next.task,
     run: previous,
-    additionalRuns: [decidedRun(next)],
+    // A waiting review is queued at once, deferred to its retry time: queued
+    // waits never expire their lease, and claims skip it until then.
+    additionalRuns: [
+      input.wait === undefined
+        ? run
+        : {
+            ...run,
+            queue: { state: 'queued', deferredUntil: input.wait.retryAt },
+          },
+    ],
     outbox: [...input.settled.outbox, ...next.outbox],
   };
 }
@@ -130,13 +162,63 @@ export function settleProviderFallback(input: {
       input.authorizedPipelines,
       input.authorizedPipelines,
     );
-  if (pipeline === undefined) return settled;
+  if (pipeline === undefined)
+    return waitForProvider({
+      now: input.now,
+      settled,
+      authorizedPipelines: input.authorizedPipelines,
+    });
   return successor({
     now: input.now,
     settled,
     pipeline,
     reason: 'provider-limit',
     failureRunId: previous.runId,
+  });
+}
+
+/** When every authorized provider of a GitHub PR review has stopped on its
+ * limit or capacity, the review waits instead of failing (#3300): a deferred
+ * successor on the round's first provider, the one the request was admitted
+ * on. That retries the same request; it grants nothing new. The deferral is a
+ * bounded, doubling wait. The claim fence still holds the retried provider
+ * through its own cooldown, including a provider-reported reset, and the
+ * queued-cooldown reroute can move the due run to a free alternative.
+ * Native Work and non-review runs keep settling as failed. */
+function waitForProvider(input: {
+  now: string;
+  settled: Decision;
+  authorizedPipelines: readonly string[];
+}): Decision | Refusal {
+  const previous = decidedRun(input.settled);
+  const policy = previous.providerFallback;
+  if (
+    policy === undefined ||
+    isWorkAnchor(previous.task) ||
+    previous.params?.['mode'] !== 'review'
+  )
+    return input.settled;
+  const attempt = (policy.providerWait?.attempt ?? 0) + 1;
+  if (attempt > MAX_PROVIDER_WAITS) return input.settled;
+  // Current authority must still back the fallback policy (repository and
+  // review scope); an empty list means it was withdrawn.
+  if (input.authorizedPipelines.length === 0) return input.settled;
+  const pipeline = policy.attemptedPipelines[0];
+  if (pipeline === undefined) return input.settled;
+  const retryAt = new Date(
+    Date.parse(input.now) +
+      Math.min(
+        PROVIDER_WAIT_BASE_MS * 2 ** (attempt - 1),
+        PROVIDER_WAIT_MAX_MS,
+      ),
+  ).toISOString();
+  return successor({
+    now: input.now,
+    settled: input.settled,
+    pipeline,
+    reason: 'provider-limit',
+    failureRunId: previous.runId,
+    wait: { attempt, retryAt },
   });
 }
 

@@ -61,7 +61,10 @@ const HELP = {
   live_runs: 'Currently live run identities by queue state.',
   silent_loss_runs:
     'Non-queued live runs with leases overdue beyond the recovery interval.',
-  oldest_queued_seconds: 'Oldest queued run age since admission in seconds.',
+  provider_wait_runs:
+    'Queued reviews deferred while every authorized provider is out of quota or capacity.',
+  oldest_queued_seconds:
+    'Oldest queued run age since admission in seconds, excluding provider waits.',
   latency_window_samples:
     'Known rolling-hour latency samples at or below upper_bound_seconds; a gauge, not a histogram.',
   latency_window_observations:
@@ -379,11 +382,22 @@ export function lifecycleMetricSnapshot(
         { pipeline },
       );
       const queued = live.filter((run) => run.queue?.state === 'queued');
+      // A review waiting out provider quota (#3300) is a deliberate sleep,
+      // not a stuck queue: count it separately, keep it out of queue age.
+      const providerWaiting = queued.filter(
+        (run) =>
+          run.providerFallback?.providerWait !== undefined &&
+          run.queue?.deferredUntil !== undefined &&
+          Date.parse(run.queue.deferredUntil) > now,
+      );
+      gauge('provider_wait_runs', providerWaiting.length, { pipeline });
       gauge(
         'oldest_queued_seconds',
         Math.max(
           0,
-          ...queued.map((run) => (now - Date.parse(run.createdAt)) / 1_000),
+          ...queued
+            .filter((run) => !providerWaiting.includes(run))
+            .map((run) => (now - Date.parse(run.createdAt)) / 1_000),
         ),
         { pipeline },
       );
