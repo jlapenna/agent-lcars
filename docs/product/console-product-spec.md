@@ -989,7 +989,11 @@ the job declares quota billing (#3309, repo-tools #242). The third ran
 inference, but Antigravity's individual quota was exhausted (reset about 64 h
 later). Antigravity returns that as an ordinary reply, which was graded and
 settled `provider or grading error`; repo-tools #243 settles it as
-`provider-limit`. A scored Antigravity result awaits the quota reset.
+`provider-limit`. A fourth run on the runner image that carries #243 (Work
+`01M75X10SEEM6XYW4ESB1T8MBJ`, Garage `74955a0b-9418-41d7-aa00-c367ed01e838`)
+settled `partial: provider-limit` with no score, in the same 2 CPU / 6 GiB /
+24 GiB Pod and with no fallback profile. A scored Antigravity result awaits the
+quota reset.
 
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
