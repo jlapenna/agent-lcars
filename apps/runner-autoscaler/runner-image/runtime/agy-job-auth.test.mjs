@@ -39,6 +39,7 @@ test('Antigravity recipe harness provisions a private native login, evaluator ru
     );
     assert.equal(environment.REPO_SKILL_EVALS_RUNNER, 'antigravity');
     assert.equal(environment.REPO_SKILL_EVALS_MODEL, 'gemini-4-argon');
+    assert.equal(environment.REPO_SKILL_EVALS_QUOTA_BILLED, '1');
     await auth.close();
     assert.deepEqual(environment, {});
     assert.deepEqual(await readdir(root), ['antigravity-oauth-token']);
