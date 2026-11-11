@@ -400,8 +400,12 @@ the model joins the result comparison). The executor projects only
 `antigravity-oauth-token` into that worker. `agy-job-auth.mjs` copies it into a
 private native login directory, the same layout `direct-runner.sh` uses for
 `agy` runs, so Antigravity can rotate it in place. It exports
-`REPO_EVAL_ANTIGRAVITY_AUTH_DIR`, `REPO_SKILL_EVALS_RUNNER=antigravity` and
-`REPO_SKILL_EVALS_MODEL`, and removes all of them on exit. `skill-evals-agy`
+`REPO_EVAL_ANTIGRAVITY_AUTH_DIR`, `REPO_SKILL_EVALS_RUNNER=antigravity`,
+`REPO_SKILL_EVALS_MODEL` and `REPO_SKILL_EVALS_QUOTA_BILLED=1`, and removes all
+of them on exit. The last tells repo-skill-evals that this login is billed by
+subscription quota: Antigravity reports no USD usage, so the committed
+`--max-cost-usd` cap is ignored rather than stopping after the first prompt,
+and an exhausted quota still settles as `provider-limit`. `skill-evals-agy`
 is the Antigravity twin of `skill-evals`, on `gemini-4-argon` at Antigravity's
 default `medium` thought level. `providerModel` must be a value of the ACP
 session's stable `model` config option (a model family such as

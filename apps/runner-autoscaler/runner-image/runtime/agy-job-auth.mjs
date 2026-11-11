@@ -45,11 +45,16 @@ export async function agyJobAuth({
   // Execution configuration for the shared evaluator, not credentials.
   environment.REPO_SKILL_EVALS_RUNNER = 'antigravity';
   environment.REPO_SKILL_EVALS_MODEL = model;
+  // The OAuth login is billed by subscription quota and Antigravity reports no
+  // USD usage, so the recipe's --max-cost-usd cannot be enforced; an exhausted
+  // quota still settles as provider-limit.
+  environment.REPO_SKILL_EVALS_QUOTA_BILLED = '1';
   return {
     async close() {
       delete environment.REPO_EVAL_ANTIGRAVITY_AUTH_DIR;
       delete environment.REPO_SKILL_EVALS_RUNNER;
       delete environment.REPO_SKILL_EVALS_MODEL;
+      delete environment.REPO_SKILL_EVALS_QUOTA_BILLED;
       await rm(home, { recursive: true, force: true });
     },
   };
