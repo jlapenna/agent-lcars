@@ -27,6 +27,17 @@ on:
         required: false
         type: string
         default: 'none'
+      config:
+        description: >-
+          Optional inline CodeQL configuration YAML passed straight to
+          github/codeql-action/init's `config` input (for example a
+          `paths-ignore` list). Empty means CodeQL's defaults. The job runs
+          on ubuntu-slim's hard 15-minute cap, so a caller whose full
+          default-branch analysis approaches that cap narrows what is
+          analysed here rather than asking for a larger runner.
+        required: false
+        type: string
+        default: ''
 
 permissions: {}
 
@@ -54,5 +65,6 @@ jobs:
         with:
           languages: ${{ inputs.languages }}
           build-mode: ${{ inputs.build-mode }}
+          config: ${{ inputs.config }}
 
       - uses: github/codeql-action/analyze@v4
