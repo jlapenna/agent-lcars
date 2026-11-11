@@ -976,6 +976,21 @@ reserved exactly one fallback, occurrence `f3742191…` with `fallbackOf`
 with no run errors (`partial: false`, 23 s, $0.08) and recorded Garage
 `8a157e39-e964-4f89-b993-293af83ef413`. No further fallback was chained.
 
+**Live Antigravity harness (2026-11-11, #3286):** `skill-evals-agy` on
+`jlapenna/labels` ran three times as `svc:production-verifier`, each with
+`runner: antigravity` and a Garage eval-history record (`9063b4ad…`,
+`616dc66e…`, `15587441-ddce-4c02-99f2-e6e7da07b9e8`). The inspected Pods (first
+and third) requested and were limited to 2 CPU / 6 GiB / 24 GiB and projected
+`antigravity-oauth-token` as their only provider credential; the third peaked
+at 77 MiB / 72 m CPU. The first two exposed configuration faults, each fixed
+before the next: Antigravity's stable ACP model option names families, so the
+profile selects `gemini-4-argon` (#3304), and its ACP reports no USD usage, so
+the job declares quota billing (#3309, repo-tools #242). The third ran
+inference, but Antigravity's individual quota was exhausted (reset about 64 h
+later). Antigravity returns that as an ordinary reply, which was graded and
+settled `provider or grading error`; repo-tools #243 settles it as
+`provider-limit`. A scored Antigravity result awaits the quota reset.
+
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
 production verification).
