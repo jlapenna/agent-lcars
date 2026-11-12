@@ -11,27 +11,22 @@ Section numbers match the main file exactly — cross-references to §8, §10,
 
 ## 8. CI reruns and the bot-push / `action_required` platform fact
 
-- If your own push triggers a failing CI check, you can usually rerun it
-  yourself rather than parking: `GH_TOKEN=$ACTIONS_RERUN_TOKEN gh run rerun
-<run-id> --failed`. Your default token typically cannot rerun workflows;
-  a workflow that wants to grant this exports a dedicated credential as
-  `$ACTIONS_RERUN_TOKEN` for exactly this purpose — check whether your
-  dispatch workflow does. If the variable is empty, the workflow did not
-  grant it: park rather than retrying, because the failure will be an
-  opaque `gh` error rather than a clear permission message.
-- **What that credential deliberately is not:** it is never the workflow's
-  own `GITHUB_TOKEN`. That token carries the job's full
+- If a CI run on the pull request you are working on fails for an
+  infrastructure reason (a runner flap, a runner missing a tool or browser
+  build) rather than because of the code, rerun the failed jobs yourself
+  instead of parking: `gh run rerun <run-id> --failed`. In an Agent LCARS
+  direct run, the `gh` on your `PATH` already carries a short-lived,
+  repository-scoped installation token with `actions: write`, renewed for
+  the whole run; no separate rerun variable is exported, and none is needed.
+  Rerun once per failure. If the rerun fails the same way, or `gh` answers
+  403, park and name the failing job and the error.
+- **What that credential deliberately is not:** it is never the dispatching
+  workflow's own `GITHUB_TOKEN`. That token carries the job's full
   contents/issues/pull-requests write grant — the same class of credential
   a repo's own dispatch control plane uses to admit, complete, and
-  reconcile work (in agent-lcars, `libs/orchestrator`'s Firestore-backed
-  mutex; in a repo whose broker still authenticates a comment-based ledger,
-  that comment) — so handing it to an agent would let agent-authored code
-  rewrite the control plane's own state (agent-lcars#645). It is a
-  separate, independently revocable credential granted the narrowest scope
-  that can still rerun a workflow.
-  Depending on what the platform can express, that scope may still be wider
-  than "rerun only" — treat it as a credential you were given for one
-  purpose, and use it for that purpose.
+  reconcile work — so handing it to an agent would let agent-authored code
+  act as the controller (agent-lcars#645). The run's own token is
+  short-lived and ends with the run.
 - **Platform fact:** GitHub holds the Actions run resulting from a
   bot-authored push (or a PR opened by one) as `action_required` with
   **zero check runs minted**, regardless of billing state or fork status.
