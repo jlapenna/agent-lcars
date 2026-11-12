@@ -52,6 +52,11 @@ export interface GithubWorkAdmissionInput {
   labelRouting?: GithubLabelRouting;
   /** Ordered quota/cooldown fallback pipelines for signed GitHub review intake. */
   fallbackPipelines?: readonly WorkPayload['spec']['pipeline'][];
+  /** The Work's title and description were copied from the anchor's current
+   * GitHub text (webhook deliveries, the unstick runbook). An edit to that
+   * text after first admission is not a new Work request: the stored Work
+   * keeps its own text, and the run's issue snapshot carries the edit. */
+  workMirrorsAnchor?: boolean;
   /** Console reply guard: this is an expectation, never a provider switch. */
   expectedEffectivePipeline?: string;
   /** A retry inherits execution intent; explicit API/reply selections do not. */
@@ -254,11 +259,15 @@ export async function admitGithubWork(
       // Cross-model review on an existing PR task may execute on a different
       // reviewer pipeline than the initial task's pipeline while keeping the
       // stored Work payload immutable.
-      return sameSpec(
-        spec,
+      const candidate =
         labelProviderRequest === undefined && input.params['mode'] !== 'review'
           ? work.spec
-          : { ...work.spec, pipeline: spec.pipeline },
+          : { ...work.spec, pipeline: spec.pipeline };
+      return sameSpec(
+        spec,
+        input.workMirrorsAnchor === true
+          ? { ...candidate, title: spec.title, description: spec.description }
+          : candidate,
       );
     },
   });

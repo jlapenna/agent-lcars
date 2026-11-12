@@ -740,6 +740,7 @@ export async function dispatchUnstickPrs(
   const outcome = await admitGithubWork(runtime, {
     anchor: { repo: repoKey(targetRepo), issue: anchor.number },
     requestId: `console-unstick:${randomUUID()}`,
+    workMirrorsAnchor: true,
     params: {
       mode: 'implement',
       reply:
