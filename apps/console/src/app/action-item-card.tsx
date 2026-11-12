@@ -370,9 +370,11 @@ export function ActionItemCard({
         if (
           result.reauth &&
           beginOperatorReauth({
-            itemKey,
-            body,
-            ...(chosenTarget === undefined ? {} : { target: chosenTarget }),
+            reply: {
+              itemKey,
+              body,
+              ...(chosenTarget === undefined ? {} : { target: chosenTarget }),
+            },
           })
         ) {
           reauthorizingSince.current = Date.now();

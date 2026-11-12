@@ -484,7 +484,7 @@ describe('ActionItemCard', () => {
     beforeEach(() => {
       window.sessionStorage.clear();
       vi.mocked(replyToItem).mockReset();
-      vi.mocked(refreshGithubSignIn).mockReset();
+      vi.mocked(refreshGithubSignIn).mockReset().mockResolvedValue(undefined);
     });
 
     it('re-authorizes with GitHub and keeps the reply instead of showing the sign-out prompt', async () => {

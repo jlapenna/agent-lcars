@@ -29,9 +29,18 @@ export interface PendingReply {
   target?: Pipeline;
 }
 
+/** Text typed into a control whose action was refused (a retrigger note,
+ * unstick-prs context), restored for the operator to send again. */
+export interface PendingDraft {
+  /** Identifies the control instance the text belongs to. */
+  key: string;
+  text: string;
+}
+
 interface StoredReauth {
   at: number;
   reply?: PendingReply;
+  draft?: PendingDraft;
 }
 
 function read(): StoredReauth | undefined {
@@ -62,19 +71,25 @@ function write(value: StoredReauth): boolean {
 }
 
 /**
- * Starts the GitHub re-authorization round trip, remembering `reply` so it is
- * sent on return. Returns false when the caller should show the failure
- * instead: a re-authorization just happened and did not help, or this browser
- * cannot remember the attempt (so nothing would stop a loop).
+ * Starts the GitHub re-authorization round trip, remembering what the
+ * operator typed: a `reply` is sent on return, a `draft` is put back in its
+ * control. Returns false when the caller should show the failure instead: a
+ * re-authorization just happened and did not help, or this browser cannot
+ * remember the attempt (so nothing would stop a loop).
  */
-export function beginOperatorReauth(reply?: PendingReply): boolean {
+export function beginOperatorReauth(
+  pending: { reply?: PendingReply; draft?: PendingDraft } = {},
+): boolean {
   const now = Date.now();
   const prior = read();
   if (prior !== undefined && now - prior.at < LOOP_GUARD_MS) return false;
-  if (!write({ at: now, ...(reply === undefined ? {} : { reply }) })) {
-    return false;
-  }
-  void refreshGithubSignIn(window.location.pathname + window.location.search);
+  if (!write({ at: now, ...pending })) return false;
+  // The action ends in a redirect to GitHub, which Next reports by rejecting
+  // this promise just before it navigates. A real failure leaves the page
+  // where it is, with the operator's text still in place.
+  refreshGithubSignIn(window.location.pathname + window.location.search).catch(
+    () => undefined,
+  );
   return true;
 }
 
@@ -90,9 +105,20 @@ export function takePendingReply(
   if (stored?.reply?.itemKey !== itemKey) return undefined;
   // Keep `at`: it is what stops a second automatic round trip if the resend
   // is refused too.
-  write({ at: stored.at });
+  const { reply: _taken, ...rest } = stored;
+  write(rest);
   return {
     ...stored.reply,
     resend: Date.now() - stored.at < RESEND_WINDOW_MS,
   };
+}
+
+/** Hands back, once, the text typed into the control `key` before the last
+ * re-authorization. It is never sent unprompted. */
+export function takePendingDraft(key: string): string | undefined {
+  const stored = read();
+  if (stored?.draft?.key !== key) return undefined;
+  const { draft, ...rest } = stored;
+  write(rest);
+  return draft.text;
 }

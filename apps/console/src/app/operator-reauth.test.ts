@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { refreshGithubSignIn } from './actions';
-import { beginOperatorReauth, takePendingReply } from './operator-reauth';
+import {
+  beginOperatorReauth,
+  takePendingDraft,
+  takePendingReply,
+} from './operator-reauth';
 
 vi.mock('./actions', () => ({ refreshGithubSignIn: vi.fn() }));
 
@@ -15,7 +19,7 @@ describe('operator re-authorization', () => {
   beforeEach(() => {
     vi.useFakeTimers({ now: new Date('2026-11-12T06:00:00Z') });
     window.sessionStorage.clear();
-    vi.mocked(refreshGithubSignIn).mockReset();
+    vi.mocked(refreshGithubSignIn).mockReset().mockResolvedValue(undefined);
     window.history.replaceState(
       null,
       '',
@@ -36,7 +40,7 @@ describe('operator re-authorization', () => {
   });
 
   it('hands the refused reply back once, to its own item, for resending', () => {
-    beginOperatorReauth(REPLY);
+    beginOperatorReauth({ reply: REPLY });
     vi.advanceTimersByTime(1_500);
 
     expect(takePendingReply('jlapenna/homelab#7')).toBeUndefined();
@@ -45,7 +49,7 @@ describe('operator re-authorization', () => {
   });
 
   it('restores a reply that came back late without sending it unprompted', () => {
-    beginOperatorReauth(REPLY);
+    beginOperatorReauth({ reply: REPLY });
     vi.advanceTimersByTime(10 * 60_000);
 
     expect(takePendingReply(REPLY.itemKey)).toEqual({
@@ -54,17 +58,43 @@ describe('operator re-authorization', () => {
     });
   });
 
+  it('hands typed text back once, to the control it came from, and never sends it', () => {
+    const draft = { key: 'retrigger:jlapenna/homelab#42', text: 'try again' };
+    beginOperatorReauth({ draft });
+
+    expect(takePendingDraft('retrigger:jlapenna/homelab#7')).toBeUndefined();
+    expect(takePendingDraft(draft.key)).toBe('try again');
+    expect(takePendingDraft(draft.key)).toBeUndefined();
+  });
+
+  it('navigates without leaving an unhandled rejection behind', async () => {
+    // Next reports the redirect by rejecting the action's promise.
+    vi.mocked(refreshGithubSignIn).mockRejectedValue(
+      new Error('NEXT_REDIRECT'),
+    );
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      expect(beginOperatorReauth()).toBe(true);
+      await vi.runAllTimersAsync();
+      await Promise.resolve();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+
   it('does not loop when a fresh token is refused too', () => {
-    expect(beginOperatorReauth(REPLY)).toBe(true);
+    expect(beginOperatorReauth({ reply: REPLY })).toBe(true);
     takePendingReply(REPLY.itemKey);
     vi.advanceTimersByTime(5_000);
 
-    expect(beginOperatorReauth(REPLY)).toBe(false);
+    expect(beginOperatorReauth({ reply: REPLY })).toBe(false);
     expect(refreshGithubSignIn).toHaveBeenCalledOnce();
 
     // A later refusal is an ordinary stale token again.
     vi.advanceTimersByTime(3 * 60_000);
-    expect(beginOperatorReauth(REPLY)).toBe(true);
+    expect(beginOperatorReauth({ reply: REPLY })).toBe(true);
   });
 
   it('leaves the failure to the caller when this browser cannot remember the attempt', () => {
@@ -72,7 +102,7 @@ describe('operator re-authorization', () => {
       throw new Error('storage disabled');
     });
 
-    expect(beginOperatorReauth(REPLY)).toBe(false);
+    expect(beginOperatorReauth({ reply: REPLY })).toBe(false);
     expect(refreshGithubSignIn).not.toHaveBeenCalled();
   });
 });
