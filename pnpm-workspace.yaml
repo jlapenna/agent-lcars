@@ -59,7 +59,7 @@ minimumReleaseAgeExclude:
 overrides:
   'piscina@<4.9.4': 4.9.4
   'proxy-addr@<2.0.8': 2.0.8
-  'brace-expansion@>=2 <2.1.6': 2.1.7
+  'brace-expansion@>=2 <2.1.6': 2.1.8
   'fast-uri@<3.1.7': 3.1.9
   'immutable@<5.1.8': 5.1.10
   'source-map-js@<1.2.2': 1.2.2
@@ -69,8 +69,8 @@ overrides:
   'qs@<6.16.1': 6.17.1
   'uuid@<11.1.1': 11.1.1
   'katex@<0.18.2': 0.19.1
-  'minimatch@>=7.0.0 <11.0.1': 11.0.7
+  'minimatch@>=7.0.0 <11.0.1': 11.0.8
   # nx calls minimatch.makeRe, which minimatch 11 removed; keep its pinned 10.x
   # until Nx moves to 11 (jlapenna/repo-tools#229, nrwl/nx#37727).
   'nx>minimatch': 10.2.5
-  'glob@>=9.0.0 <=14.0.1': 14.0.4
+  'glob@>=9.0.0 <=14.0.1': 14.0.5
