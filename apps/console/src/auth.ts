@@ -14,6 +14,7 @@ import GitHub from 'next-auth/providers/github';
 
 import { canSignInToConsole } from './lib/console-access';
 import { isAdminGithubLogin } from './lib/deployment';
+import { recordOperatorTokenIssued } from './lib/operator-comment-observability';
 
 /**
  * Mock session for the E2E test-session adapter (E2E_TESTING=true +
@@ -39,9 +40,13 @@ async function getMockSession(userId: string): Promise<Session> {
 }
 
 const SERVER_GITHUB_ACCESS_TOKEN = Symbol('server-github-access-token');
+const SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT = Symbol(
+  'server-github-access-token-issued-at',
+);
 
 type ServerSession = Session & {
   [SERVER_GITHUB_ACCESS_TOKEN]?: string;
+  [SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT]?: number;
 };
 
 /**
@@ -52,6 +57,17 @@ type ServerSession = Session & {
  */
 export function githubAccessTokenFor(session: Session): string | undefined {
   return (session as ServerSession)[SERVER_GITHUB_ACCESS_TOKEN];
+}
+
+/**
+ * When this session's GitHub token was issued (epoch ms), for sessions signed
+ * in since the console began recording it. GitHub invalidates these tokens
+ * without telling the console, so a rejection reports the token's age.
+ */
+export function githubAccessTokenIssuedAtFor(
+  session: Session,
+): number | undefined {
+  return (session as ServerSession)[SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT];
 }
 
 async function attachServerGithubAccessToken(
@@ -65,7 +81,13 @@ async function attachServerGithubAccessToken(
     secureCookie,
   });
   return typeof token?.githubAccessToken === 'string'
-    ? withServerGithubAccessToken(session, token.githubAccessToken)
+    ? withServerGithubAccessToken(
+        session,
+        token.githubAccessToken,
+        typeof token.githubAccessTokenIssuedAt === 'number'
+          ? token.githubAccessTokenIssuedAt
+          : undefined,
+      )
     : session;
 }
 
@@ -75,6 +97,7 @@ export const E2E_FIXTURE_GITHUB_USER_TOKEN = 'e2e-fixture-user-token';
 function withServerGithubAccessToken(
   session: Session,
   accessToken: string,
+  issuedAt?: number,
 ): Session {
   Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN, {
     configurable: false,
@@ -82,6 +105,14 @@ function withServerGithubAccessToken(
     value: accessToken,
     writable: false,
   });
+  if (issuedAt !== undefined) {
+    Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT, {
+      configurable: false,
+      enumerable: false,
+      value: issuedAt,
+      writable: false,
+    });
+  }
   return session;
 }
 
@@ -117,6 +148,8 @@ const nextAuth = NextAuth({
         // the public session callback; attachServerGithubAccessToken decodes
         // it only for same-process server callers.
         token.githubAccessToken = account.access_token;
+        token.githubAccessTokenIssuedAt = Date.now();
+        recordOperatorTokenIssued(account);
       }
       return token;
     },

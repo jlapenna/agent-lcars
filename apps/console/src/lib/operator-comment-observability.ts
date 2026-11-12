@@ -12,11 +12,64 @@ export type OperatorCommentOutcome =
  * sign-in failures alert instead of only showing a toast. Metadata only: no
  * login, repository, issue or comment text.
  */
-export function recordOperatorComment(outcome: OperatorCommentOutcome): void {
+export function recordOperatorComment(
+  outcome: OperatorCommentOutcome,
+  rejection?: OperatorTokenRejection,
+): void {
   logger.structured(
     outcome === 'posted' ? 'info' : 'warn',
     'LCARS operator comment outcome',
-    { component: 'lcars-operator-comment', outcome },
+    {
+      component: 'lcars-operator-comment',
+      outcome,
+      ...(rejection?.tokenAgeSeconds === undefined
+        ? {}
+        : { tokenAgeSeconds: rejection.tokenAgeSeconds }),
+      ...(rejection?.githubMessage === undefined
+        ? {}
+        : { githubMessage: rejection.githubMessage }),
+    },
+    { enrich: false },
+  );
+}
+
+/**
+ * Why GitHub refused an operator token, as far as the console can see: how
+ * long ago that token was issued and GitHub's own short reason. Neither
+ * identifies the operator or the token.
+ */
+export interface OperatorTokenRejection {
+  tokenAgeSeconds?: number;
+  githubMessage?: string;
+}
+
+/**
+ * One event per GitHub sign-in describing the kind of user token GitHub
+ * issued, never the token: its public type prefix, whether GitHub gave it an
+ * expiry, and whether a refresh token came with it. Together with
+ * `tokenAgeSeconds` on a later rejection this separates a token that expired
+ * on schedule from one GitHub revoked.
+ */
+export function recordOperatorTokenIssued(account: {
+  access_token?: unknown;
+  expires_at?: unknown;
+  refresh_token?: unknown;
+}): void {
+  const token =
+    typeof account.access_token === 'string' ? account.access_token : '';
+  logger.structured(
+    'info',
+    'LCARS operator token issued',
+    {
+      component: 'lcars-operator-token',
+      // GitHub's documented, non-secret token type prefixes (`gho`, `ghu`).
+      tokenKind: /^gh[a-z]_/.exec(token)?.[0].slice(0, 3) ?? 'other',
+      expiresInSeconds:
+        typeof account.expires_at === 'number'
+          ? Math.round(account.expires_at - Date.now() / 1000)
+          : null,
+      refreshable: typeof account.refresh_token === 'string',
+    },
     { enrich: false },
   );
 }

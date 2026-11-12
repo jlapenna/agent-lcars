@@ -2,10 +2,11 @@
 
 import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useState, useTransition } from 'react';
+import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
+import { beginOperatorReauth, takePendingDraft } from './operator-reauth';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
@@ -35,6 +36,17 @@ export function RetriggerButton({
   const [note, setNote] = useState('');
   const [isPending, startTransition] = useTransition();
 
+  // A note typed before GitHub refused the operator's token comes back with
+  // the page, in an open popover, ready to send.
+  const draftKey = `retrigger:${repo.owner}/${repo.name}#${issueNumber}`;
+  const restoreRefusedNote = useEffectEvent(() => {
+    const refused = takePendingDraft(draftKey);
+    if (refused === undefined) return;
+    setNote(refused);
+    setOpened(true);
+  });
+  useEffect(() => restoreRefusedNote(), [draftKey]);
+
   const handleRetrigger = () => {
     setOpened(false);
     startTransition(async () => {
@@ -45,6 +57,16 @@ export function RetriggerButton({
         note.trim() || undefined,
       );
       if (!result.ok) {
+        if (
+          result.reauth &&
+          beginOperatorReauth({ draft: { key: draftKey, text: note } })
+        ) {
+          notifications.show({
+            message: `#${issueNumber}: refreshing your GitHub sign-in. Retrigger again when the page returns; your note is kept.`,
+            loading: true,
+          });
+          return;
+        }
         onError?.(result.message);
         showErrorToast(result.message);
         return;

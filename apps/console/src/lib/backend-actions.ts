@@ -139,6 +139,23 @@ export async function clearNeedsHumanLabel(
 const GITHUB_SIGN_IN_AGAIN =
   'GitHub authorization failed. Sign out and sign in again, then retry.';
 
+/**
+ * The operator's GitHub user token is missing or GitHub refused it. GitHub
+ * invalidates these tokens on its own schedule and the session cannot renew
+ * one itself, so only a fresh GitHub authorization recovers. Callers report
+ * this distinctly so the console can start that authorization for the
+ * operator; the message is what they read if it cannot.
+ */
+export class GithubReauthRequiredError extends ActionError {
+  constructor(
+    /** GitHub's own reason for a refused token; absent for a missing one. */
+    readonly githubMessage?: string,
+  ) {
+    super(GITHUB_SIGN_IN_AGAIN, 401);
+    this.name = 'GithubReauthRequiredError';
+  }
+}
+
 export interface PostCommentResult {
   url: string;
   retryCommentId?: number;
@@ -166,6 +183,8 @@ export interface CommentActor {
   login: string;
   /** The operator's GitHub user token from the server-side session. */
   githubToken: string;
+  /** Epoch ms of the sign-in that issued the token, when the session knows. */
+  githubTokenIssuedAt?: number;
 }
 
 /** A missing operator token asks for a fresh sign-in rather than letting
@@ -173,7 +192,7 @@ export interface CommentActor {
 function requireOperatorToken(actor: CommentActor): void {
   if (!actor.githubToken) {
     recordOperatorComment('missing_token');
-    throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
+    throw new GithubReauthRequiredError();
   }
 }
 
@@ -196,11 +215,19 @@ async function asOperator<T>(
         'status' in error &&
         error.status === 401
       ) {
-        throw new ActionError(GITHUB_SIGN_IN_AGAIN, 401);
+        throw new GithubReauthRequiredError(githubErrorMessage(error));
       }
       throw error;
     },
   );
+}
+
+/** GitHub's short reason for a failed request ("Bad credentials"), bounded
+ *  so an unexpected response body cannot flood a log line. */
+function githubErrorMessage(error: object): string | undefined {
+  const message = (error as { response?: { data?: { message?: unknown } } })
+    .response?.data?.message;
+  return typeof message === 'string' ? message.slice(0, 120) : undefined;
 }
 
 /**
@@ -228,11 +255,22 @@ async function postOperatorComment(
     recordOperatorComment('posted');
     return data;
   } catch (error) {
-    recordOperatorComment(
-      error instanceof ActionError && error.statusCode === 401
-        ? 'rejected_token'
-        : 'failed',
-    );
+    if (error instanceof GithubReauthRequiredError) {
+      recordOperatorComment('rejected_token', {
+        ...(actor.githubTokenIssuedAt === undefined
+          ? {}
+          : {
+              tokenAgeSeconds: Math.round(
+                (Date.now() - actor.githubTokenIssuedAt) / 1000,
+              ),
+            }),
+        ...(error.githubMessage === undefined
+          ? {}
+          : { githubMessage: error.githubMessage }),
+      });
+    } else {
+      recordOperatorComment('failed');
+    }
     throw error;
   }
 }

@@ -20,5 +20,7 @@ declare module 'next-auth/jwt' {
     /** Encrypted inside Auth.js's HTTP-only JWT cookie; never exposed by the
      * public session callback. */
     githubAccessToken?: string;
+    /** Epoch ms of the sign-in that issued `githubAccessToken`. */
+    githubAccessTokenIssuedAt?: number;
   }
 }

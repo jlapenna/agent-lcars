@@ -2,9 +2,10 @@
 
 import { Button, Popover, Stack, Textarea } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
-import { useState, useTransition } from 'react';
+import { useEffect, useEffectEvent, useState, useTransition } from 'react';
 
 import { dispatchUnstickPrs } from './actions';
+import { beginOperatorReauth, takePendingDraft } from './operator-reauth';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -32,6 +33,18 @@ export function UnstickPrsButton({
   const [context, setContext] = useState(defaultContext);
   const [isPending, startTransition] = useTransition();
 
+  // Context typed before GitHub refused the operator's token comes back with
+  // the page, in an open popover, ready to send. `defaultContext` tells the
+  // header button from a queue card's prefilled one.
+  const draftKey = `unstick:${repo.owner}/${repo.name}:${defaultContext}`;
+  const restoreRefusedContext = useEffectEvent(() => {
+    const refused = takePendingDraft(draftKey);
+    if (refused === undefined) return;
+    setContext(refused);
+    setOpened(true);
+  });
+  useEffect(() => restoreRefusedContext(), [draftKey]);
+
   const handleDispatch = () => {
     setOpened(false);
     startTransition(async () => {
@@ -40,6 +53,17 @@ export function UnstickPrsButton({
         repo,
       );
       if (!result.ok) {
+        if (
+          result.reauth &&
+          beginOperatorReauth({ draft: { key: draftKey, text: context } })
+        ) {
+          notifications.show({
+            message:
+              'Refreshing your GitHub sign-in. Run unstick-prs again when the page returns; your context is kept.',
+            loading: true,
+          });
+          return;
+        }
         showErrorToast(result.message);
         return;
       }

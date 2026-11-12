@@ -28,6 +28,7 @@ import {
   clearNeedsHumanLabel,
   closeIssue,
   dispatchUnstickPrs,
+  GithubReauthRequiredError,
   postComment,
   retriggerIssue,
   retryPostedComment,
@@ -515,7 +516,51 @@ describe('postComment (direct Work admission)', () => {
     });
     expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith(
       'rejected_token',
+      {},
     );
+  });
+
+  it('reports a refused or missing operator token as repairable by re-authorization', async () => {
+    const { createComment } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Bad credentials'), { status: 401 }),
+    );
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR),
+    ).rejects.toBeInstanceOf(GithubReauthRequiredError);
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', {
+        login: 'jlapenna',
+        githubToken: '',
+      }),
+    ).rejects.toBeInstanceOf(GithubReauthRequiredError);
+  });
+
+  it('records how old a refused token was and why GitHub refused it', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-12T06:00:00Z') });
+    try {
+      const { createComment } = mockOctokit();
+      createComment.mockRejectedValue(
+        Object.assign(new Error('Bad credentials'), {
+          status: 401,
+          response: { data: { message: 'Bad credentials' } },
+        }),
+      );
+
+      await expect(
+        postComment(DEFAULT_REPO, 2709, 'Use option 2', {
+          ...OPERATOR,
+          githubTokenIssuedAt: Date.parse('2026-11-12T05:00:00Z'),
+        }),
+      ).rejects.toBeInstanceOf(GithubReauthRequiredError);
+      expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith(
+        'rejected_token',
+        { tokenAgeSeconds: 3600, githubMessage: 'Bad credentials' },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('records other GitHub write failures without hiding them', async () => {

@@ -26,6 +26,7 @@ import {
   auth,
   E2E_FIXTURE_GITHUB_USER_TOKEN,
   githubAccessTokenFor,
+  githubAccessTokenIssuedAtFor,
 } from './auth';
 import { createAdminAction } from './lib/auth-guards';
 import { consoleLandingPath } from './lib/console-access';
@@ -115,6 +116,12 @@ describe('console OAuth admission and authority', () => {
       'private-oauth-token',
     );
     expect(JSON.stringify(serverSession)).not.toContain('private-oauth-token');
+    // The sign-in time travels with the token so a later rejection can report
+    // how long GitHub honoured it.
+    expect(token.githubAccessTokenIssuedAt).toEqual(expect.any(Number));
+    expect(serverSession && githubAccessTokenIssuedAtFor(serverSession)).toBe(
+      token.githubAccessTokenIssuedAt,
+    );
     expect(consoleLandingPath(serverSession)).toBe('/work');
     await expect(
       createAdminAction(async () => serverSession)(),

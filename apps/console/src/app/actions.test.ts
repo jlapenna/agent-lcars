@@ -9,7 +9,7 @@ import {
   vi,
 } from 'vitest';
 
-import { auth } from '../auth';
+import { auth, githubAccessTokenIssuedAtFor, signIn } from '../auth';
 import {
   ActionError,
   approveAndMergePr,
@@ -17,6 +17,7 @@ import {
   clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
+  GithubReauthRequiredError,
   postComment,
   retriggerIssue as retriggerIssueLib,
   retryPostedComment,
@@ -36,6 +37,7 @@ import {
   dispatchUnstickPrs,
   mergePr,
   rebasePr,
+  refreshGithubSignIn,
   replyToItem,
   retriggerIssue,
   retryReplyToItem,
@@ -62,8 +64,14 @@ vi.mock('../lib/backend-actions', () => {
       this.name = 'ActionError';
     }
   }
+  class GithubReauthRequiredError extends ActionError {
+    constructor() {
+      super('GitHub authorization failed. Sign out and sign in again.', 401);
+    }
+  }
   return {
     ActionError,
+    GithubReauthRequiredError,
     approveAndMergePr: vi.fn(),
     approveAndRebasePr: vi.fn(),
     clearNeedsHumanLabel: vi.fn(),
@@ -96,6 +104,8 @@ vi.mock('@/lib/auth-guards', () => ({
 vi.mock('../auth', () => ({
   auth: vi.fn(),
   githubAccessTokenFor: vi.fn(() => 'operator-token'),
+  githubAccessTokenIssuedAtFor: vi.fn(),
+  signIn: vi.fn(),
 }));
 
 const DEFAULT_REPO = {
@@ -156,6 +166,44 @@ describe('agent-lcars Server Actions', () => {
       await expect(replyToItem(DEFAULT_REPO, 42, '')).resolves.toEqual({
         ok: false,
         message: 'Comment body is required',
+      });
+    });
+
+    // GitHub invalidates the operator's user token on its own schedule. The
+    // browser repairs that itself, so the failure has to say which kind it is.
+    it.each([
+      ['replyToItem', postComment, () => replyToItem(DEFAULT_REPO, 42, 'hi')],
+      [
+        'retriggerIssue',
+        retriggerIssueLib,
+        () => retriggerIssue(DEFAULT_REPO, 42, DISPATCH_ID, 'note'),
+      ],
+      [
+        'dispatchUnstickPrs',
+        dispatchUnstickPrsLib,
+        () => dispatchUnstickPrs('context', DEFAULT_REPO),
+      ],
+    ] as const)(
+      '%s marks a refused operator token as repairable by re-authorization',
+      async (_name, lib, run) => {
+        (lib as Mock).mockRejectedValue(new GithubReauthRequiredError());
+
+        await expect(run()).resolves.toEqual({
+          ok: false,
+          message: 'GitHub authorization failed. Sign out and sign in again.',
+          reauth: true,
+        });
+      },
+    );
+
+    it('does not offer re-authorization for an unrelated 401', async () => {
+      (postComment as Mock).mockRejectedValue(
+        new ActionError('Authenticated GitHub login is required', 401),
+      );
+
+      await expect(replyToItem(DEFAULT_REPO, 42, 'hi')).resolves.toEqual({
+        ok: false,
+        message: 'Authenticated GitHub login is required',
       });
     });
 
@@ -394,6 +442,24 @@ describe('agent-lcars Server Actions', () => {
       );
     });
 
+    it('replyToItem forwards when the operator token was issued, for rejection telemetry', async () => {
+      (githubAccessTokenIssuedAtFor as Mock).mockReturnValueOnce(
+        1_700_000_000_000,
+      );
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: false,
+      });
+
+      await replyToItem(DEFAULT_REPO, 42, 'hi');
+
+      expect((postComment as Mock).mock.calls[0]?.[3]).toEqual({
+        login: 'jlapenna',
+        githubToken: 'operator-token',
+        githubTokenIssuedAt: 1_700_000_000_000,
+      });
+    });
+
     it('replyToItem forwards a hand-off and explains a requested provider handoff', async () => {
       (postComment as Mock).mockResolvedValue({
         url: 'https://github.test/c',
@@ -487,6 +553,29 @@ describe('agent-lcars Server Actions', () => {
       expect(clearNeedsHumanLabel).toHaveBeenCalledWith(DEFAULT_REPO, 2709);
       expect(revalidatePath).toHaveBeenCalledWith('/');
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
+    });
+  });
+
+  describe('refreshGithubSignIn', () => {
+    it('re-authorizes with GitHub and returns to the page the operator was on', async () => {
+      await refreshGithubSignIn('/inbox?item=jlapenna%2Fhomelab%2342');
+
+      expect(signIn).toHaveBeenCalledWith('github', {
+        redirectTo: '/inbox?item=jlapenna%2Fhomelab%2342',
+      });
+    });
+
+    it.each([
+      'https://evil.example/inbox',
+      '//evil.example/inbox',
+      '/\\evil.example',
+      '/\t/evil.example',
+      'inbox',
+      '',
+    ])('never returns the browser off this console (%j)', async (returnTo) => {
+      await refreshGithubSignIn(returnTo);
+
+      expect(signIn).toHaveBeenCalledWith('github', { redirectTo: '/' });
     });
   });
 
