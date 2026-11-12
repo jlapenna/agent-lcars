@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications';
 import { useState, useTransition } from 'react';
 
 import { dispatchUnstickPrs } from './actions';
+import { beginOperatorReauth } from './operator-reauth';
 import { showErrorToast } from './show-error-toast';
 
 /**
@@ -40,6 +41,14 @@ export function UnstickPrsButton({
         repo,
       );
       if (!result.ok) {
+        if (result.reauth && beginOperatorReauth()) {
+          notifications.show({
+            message:
+              'Refreshing your GitHub sign-in. Run unstick-prs again when the page returns.',
+            loading: true,
+          });
+          return;
+        }
         showErrorToast(result.message);
         return;
       }

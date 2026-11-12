@@ -21,6 +21,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useRef,
   useState,
   useTransition,
 } from 'react';
@@ -49,6 +50,7 @@ import {
 import { githubIssueUrl } from './format';
 import { HumanNeededSummary } from './human-needed-summary';
 import { ItemOverflowMenu } from './item-overflow-menu';
+import { beginOperatorReauth, takePendingReply } from './operator-reauth';
 import {
   actionTypeMeta,
   mergeBlockedReason,
@@ -275,6 +277,10 @@ export function ActionItemCard({
     Pipeline | undefined
   >(supportedAgentPipelines(item.repo)[0]);
   const [isPending, startTransition] = useTransition();
+  // When this card last sent the browser to GitHub to renew the operator's
+  // token (epoch ms). The navigation normally unloads the page; the timestamp
+  // lets the reply work again if it never does.
+  const reauthorizingSince = useRef(0);
   // SSR renders the primary buttons before React has attached their handlers,
   // so a click in that window is silently lost. Keep the confirmation
   // primaries natively disabled until the hydration commit (same pattern as
@@ -328,9 +334,6 @@ export function ActionItemCard({
     matchingAgentPipelines(item.repo, item.labels).length === 0
       ? supportedAgentPipelines(item.repo)
       : [];
-  // The effective target: an existing assignment always wins; otherwise
-  // whatever the maintainer picked for this reply, defaulting to none.
-  const replyPipeline = pipeline ?? chosenReplyTarget;
   // Every pipeline the console understands, regardless of this item's
   // existing assignment - a maintainer can take an already-assigned item on
   // locally too, since doing so touches nothing on GitHub.
@@ -338,20 +341,47 @@ export function ActionItemCard({
   const effectiveLocalAgentPipeline =
     localAgentPipeline ?? localAgentPipelines[0];
 
-  const handleReply = () => {
-    if (!replyBody.trim()) return;
+  /** Sends `body`, handing off to `chosenTarget` when the item has no
+   * assignment of its own. Takes both as arguments, not from state, so a
+   * reply restored after a GitHub re-authorization can be sent in the same
+   * pass that restores it. */
+  const submitReply = (body: string, chosenTarget: Pipeline | undefined) => {
+    if (!body.trim()) return;
+    // The browser is already on its way to GitHub; a second click must not
+    // race it into the "sign out" fallback.
+    if (Date.now() - reauthorizingSince.current < 15_000) return;
     setError(undefined);
     startTransition(async () => {
       const result = await replyToItem(
         item.repo,
         item.number,
-        replyBody,
-        replyPipeline,
+        body,
+        // The effective target: an existing assignment always wins; otherwise
+        // whatever the maintainer picked for this reply, defaulting to none.
+        pipeline ?? chosenTarget,
         // Only the hand-off control's choice may give an unlabeled PR or an
         // already-admitted item to an agent.
-        pipeline === undefined && chosenReplyTarget !== undefined,
+        pipeline === undefined && chosenTarget !== undefined,
       );
       if (!result.ok) {
+        // GitHub refused the operator's token. Renew it and send this reply
+        // again on return, instead of asking for a manual sign-out. The text
+        // stays in the box in case the round trip does not happen.
+        if (
+          result.reauth &&
+          beginOperatorReauth({
+            itemKey,
+            body,
+            ...(chosenTarget === undefined ? {} : { target: chosenTarget }),
+          })
+        ) {
+          reauthorizingSince.current = Date.now();
+          notifications.show({
+            message: `#${item.number}: refreshing your GitHub sign-in, then sending this reply…`,
+            loading: true,
+          });
+          return;
+        }
         setError(result.message);
         return;
       }
@@ -366,6 +396,20 @@ export function ActionItemCard({
       });
     });
   };
+
+  const handleReply = () => submitReply(replyBody, chosenReplyTarget);
+
+  // Back from a GitHub re-authorization that a refused reply started: put the
+  // reply back and send it, so the operator's one click still does the job.
+  const resumeRefusedReply = useEffectEvent(() => {
+    const pending = takePendingReply(itemKey);
+    if (pending === undefined) return;
+    setReplyOpen(true);
+    setReplyBody(pending.body);
+    setChosenReplyTarget(pending.target);
+    if (pending.resend) submitReply(pending.body, pending.target);
+  });
+  useEffect(() => resumeRefusedReply(), [itemKey]);
 
   const handleReplyKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -1,10 +1,16 @@
 'use server';
 
 import { revalidatePath, updateTag } from 'next/cache';
+import type { Session } from 'next-auth';
 
 import { createAdminAction } from '@/lib/auth-guards';
 
-import { auth, githubAccessTokenFor } from '../auth';
+import {
+  auth,
+  githubAccessTokenFor,
+  githubAccessTokenIssuedAtFor,
+  signIn,
+} from '../auth';
 import {
   ActionError,
   approveAndMergePr,
@@ -12,7 +18,9 @@ import {
   assignPipeline as assignPipelineLib,
   clearNeedsHumanLabel,
   closeIssue as closeIssueLib,
+  type CommentActor,
   dispatchUnstickPrs as dispatchUnstickPrsLib,
+  GithubReauthRequiredError,
   postComment,
   retriggerIssue as retriggerIssueLib,
   retryPostedComment,
@@ -21,6 +29,7 @@ import {
 } from '../lib/backend-actions';
 import { AUTHORITATIVE_QUEUE_TAG } from '../lib/cache-tags';
 import { resolveWatchedRepo, type WatchedRepo } from '../lib/github-client';
+import { safeReturnPath } from '../lib/github-reauth';
 import type { Pipeline } from '../lib/primary-action';
 
 // LAN preview goes through the shared test-session adapter inside auth()
@@ -62,8 +71,52 @@ function toUserErrorMessage(error: unknown): string {
 // client in prod. See #2628.
 // `note` is an optional, informational aside on success, distinct from
 // `message`, which is reserved for the failure case.
-export type ActionResult =
-  { ok: true; note?: string } | { ok: false; message: string };
+export type ActionResult = { ok: true; note?: string } | ActionFailure;
+
+/**
+ * `reauth` marks the one failure the browser can repair by itself: GitHub
+ * refused the operator's user token, and a fresh GitHub authorization
+ * (`refreshGithubSignIn`) replaces it without a manual sign-out.
+ */
+export interface ActionFailure {
+  ok: false;
+  message: string;
+  reauth?: true;
+}
+
+function toFailure(error: unknown): ActionFailure {
+  return {
+    ok: false,
+    message: toUserErrorMessage(error),
+    ...(error instanceof GithubReauthRequiredError
+      ? { reauth: true as const }
+      : {}),
+  };
+}
+
+/** The signed-in operator a GitHub write is attributed to. An empty token is
+ * rejected by the write itself with a re-authorization prompt. */
+function operatorFor(session: Session): CommentActor {
+  if (!session.user.login) {
+    throw new ActionError('Authenticated GitHub login is required', 401);
+  }
+  const issuedAt = githubAccessTokenIssuedAtFor(session);
+  return {
+    login: session.user.login,
+    githubToken: githubAccessTokenFor(session) ?? '',
+    ...(issuedAt === undefined ? {} : { githubTokenIssuedAt: issuedAt }),
+  };
+}
+
+/**
+ * Replaces the session's GitHub user token by sending the browser through
+ * GitHub's authorization again. The console is already authorized, so GitHub
+ * returns at once and the operator lands back on `returnTo` with a working
+ * token: no sign-out, and nothing to click.
+ */
+export async function refreshGithubSignIn(returnTo: string): Promise<void> {
+  await signIn('github', { redirectTo: safeReturnPath(returnTo) });
+}
 
 /**
  * Everything a mutation has to invalidate. `revalidatePath` alone would
@@ -93,7 +146,7 @@ export type ReplyResult =
       warning?: true;
       retry?: { commentId: number; pipeline: Pipeline; handoff?: true };
     }
-  | { ok: false; message: string };
+  | ActionFailure;
 
 export async function replyToItem(
   repo: WatchedRepo,
@@ -105,18 +158,11 @@ export async function replyToItem(
 ): Promise<ReplyResult> {
   const session = await requireAdmin();
   try {
-    if (!session.user.login) {
-      throw new ActionError('Authenticated GitHub login is required', 401);
-    }
     const { dispatched, dispatchWarning, retryCommentId } = await postComment(
       resolveWatchedRepo(repo),
       number,
       body,
-      {
-        login: session.user.login,
-        // An empty token is rejected by postComment with a sign-in prompt.
-        githubToken: githubAccessTokenFor(session) ?? '',
-      },
+      operatorFor(session),
       assignedPipeline,
       handoff,
     );
@@ -155,7 +201,7 @@ export async function replyToItem(
                       : 'No agent assigned - posted as a comment only',
     };
   } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
+    return toFailure(error);
   }
 }
 
@@ -254,23 +300,17 @@ export async function retriggerIssue(
 ): Promise<ActionResult> {
   const session = await requireAdmin();
   try {
-    if (!session.user.login) {
-      throw new ActionError('Authenticated GitHub login is required', 401);
-    }
     await retriggerIssueLib(
       resolveWatchedRepo(repo),
       number,
       callerId,
-      {
-        login: session.user.login,
-        githubToken: githubAccessTokenFor(session) ?? '',
-      },
+      operatorFor(session),
       note,
     );
     revalidateDashboard();
     return { ok: true };
   } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
+    return toFailure(error);
   }
 }
 
@@ -280,18 +320,16 @@ export async function dispatchUnstickPrs(
 ): Promise<ActionResult> {
   const session = await requireAdmin();
   try {
-    if (!session.user.login) {
-      throw new ActionError('Authenticated GitHub login is required', 401);
-    }
     // resolveWatchedRepo: never forward a client-supplied repo unvalidated
     // (see its doc comment) - unknown repos throw instead of dispatching.
-    await dispatchUnstickPrsLib(context, resolveWatchedRepo(repo), {
-      login: session.user.login,
-      githubToken: githubAccessTokenFor(session) ?? '',
-    });
+    await dispatchUnstickPrsLib(
+      context,
+      resolveWatchedRepo(repo),
+      operatorFor(session),
+    );
     return { ok: true };
   } catch (error) {
-    return { ok: false, message: toUserErrorMessage(error) };
+    return toFailure(error);
   }
 }
 

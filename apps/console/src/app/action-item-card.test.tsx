@@ -6,7 +6,7 @@ import type { ActionItem } from '../lib/action-items';
 import { localAgentCommand } from '../lib/local-agent-prompt';
 import type { PrimaryAction } from '../lib/primary-action';
 import { ActionItemCard } from './action-item-card';
-import { replyToItem } from './actions';
+import { refreshGithubSignIn, replyToItem } from './actions';
 import { renderCardMarkdown } from './render-card-markdown';
 
 // actions.ts is 'use server' and pulls in auth/firestore/GitHub client -
@@ -20,6 +20,7 @@ vi.mock('./actions', () => ({
   approveAndRebase: vi.fn(),
   replyToItem: vi.fn(),
   dispatchUnstickPrs: vi.fn(),
+  refreshGithubSignIn: vi.fn(),
 }));
 vi.mock('./retrigger-button', () => ({
   // #1183: RetriggerButton no longer takes a `pipeline` prop - the
@@ -466,6 +467,111 @@ describe('ActionItemCard', () => {
       renderCard(makeItem({ labels: [] }), { kind: 'reply' });
 
       expect(screen.getByPlaceholderText('Reply…')).toBeTruthy();
+    });
+  });
+
+  // GitHub invalidates the operator's user token on its own schedule. The
+  // card renews it and finishes the reply; it never asks for a sign-out
+  // unless a fresh token is refused too.
+  describe('reply refused for a stale GitHub token', () => {
+    const REFUSED = {
+      ok: false as const,
+      message:
+        'GitHub authorization failed. Sign out and sign in again, then retry.',
+      reauth: true as const,
+    };
+
+    beforeEach(() => {
+      window.sessionStorage.clear();
+      vi.mocked(replyToItem).mockReset();
+      vi.mocked(refreshGithubSignIn).mockReset();
+    });
+
+    it('re-authorizes with GitHub and keeps the reply instead of showing the sign-out prompt', async () => {
+      vi.mocked(replyToItem).mockResolvedValue(REFUSED);
+      renderCard(makeItem({ kind: 'pr', labels: [] }), { kind: 'reply' });
+
+      fireEvent.click(screen.getByText('@claude'));
+      fireEvent.change(screen.getByPlaceholderText('Reply…'), {
+        target: { value: 'Fix the failing E2E checks' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Reply & dispatch' }));
+
+      await waitFor(() => expect(refreshGithubSignIn).toHaveBeenCalledOnce());
+      expect(screen.queryByText(/Sign out and sign in again/)).toBeNull();
+      expect(
+        (screen.getByPlaceholderText('Reply…') as HTMLInputElement).value,
+      ).toBe('Fix the failing E2E checks');
+    });
+
+    it('sends the refused reply, with its hand-off choice, once back from GitHub', async () => {
+      vi.mocked(replyToItem).mockResolvedValueOnce(REFUSED);
+      const item = makeItem({ kind: 'pr', labels: [] });
+      const first = render(
+        <MantineProvider>
+          <ActionItemCard
+            {...renderCardMarkdown({ item, primaryAction: { kind: 'reply' } })}
+          />
+        </MantineProvider>,
+      );
+      fireEvent.click(screen.getByText('@claude'));
+      fireEvent.change(screen.getByPlaceholderText('Reply…'), {
+        target: { value: 'Fix the failing E2E checks' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Reply & dispatch' }));
+      await waitFor(() => expect(refreshGithubSignIn).toHaveBeenCalledOnce());
+
+      // The round trip is a full navigation: the page loads again.
+      first.unmount();
+      vi.mocked(replyToItem).mockResolvedValue({
+        ok: true,
+        dispatched: true,
+        note: 'Dispatched claude',
+      });
+      renderCard(item, { kind: 'reply' });
+
+      await waitFor(() => expect(replyToItem).toHaveBeenCalledTimes(2));
+      expect(replyToItem).toHaveBeenLastCalledWith(
+        item.repo,
+        item.number,
+        'Fix the failing E2E checks',
+        'claude',
+        true,
+      );
+      // Sent exactly once: a later render of the same card finds nothing.
+      renderCard(item, { kind: 'reply' });
+      await waitFor(() =>
+        expect(screen.getAllByPlaceholderText('Reply…')).toHaveLength(2),
+      );
+      expect(replyToItem).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows the sign-out prompt when a freshly issued token is refused too', async () => {
+      vi.mocked(replyToItem).mockResolvedValue(REFUSED);
+      const item = makeItem({ kind: 'pr', labels: [] });
+      const first = render(
+        <MantineProvider>
+          <ActionItemCard
+            {...renderCardMarkdown({ item, primaryAction: { kind: 'reply' } })}
+          />
+        </MantineProvider>,
+      );
+      fireEvent.change(screen.getByPlaceholderText('Reply…'), {
+        target: { value: 'Close this' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+      await waitFor(() => expect(refreshGithubSignIn).toHaveBeenCalledOnce());
+      first.unmount();
+
+      renderCard(item, { kind: 'reply' });
+
+      expect(
+        await screen.findByText(/Sign out and sign in again/),
+      ).toBeTruthy();
+      expect(refreshGithubSignIn).toHaveBeenCalledOnce();
+      expect(
+        (screen.getByPlaceholderText('Reply…') as HTMLInputElement).value,
+      ).toBe('Close this');
     });
   });
 

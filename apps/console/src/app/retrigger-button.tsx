@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react';
 
 import type { WatchedRepo } from '../lib/watched-repo';
 import { retriggerIssue } from './actions';
+import { beginOperatorReauth } from './operator-reauth';
 import { createRandomId } from './random-id';
 import { showErrorToast } from './show-error-toast';
 
@@ -45,6 +46,13 @@ export function RetriggerButton({
         note.trim() || undefined,
       );
       if (!result.ok) {
+        if (result.reauth && beginOperatorReauth()) {
+          notifications.show({
+            message: `#${issueNumber}: refreshing your GitHub sign-in. Retrigger again when the page returns.`,
+            loading: true,
+          });
+          return;
+        }
         onError?.(result.message);
         showErrorToast(result.message);
         return;
