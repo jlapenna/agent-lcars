@@ -38,6 +38,7 @@ export function RetryReplyDispatch({
                 number,
                 retry.commentId,
                 retry.pipeline,
+                retry.handoff === true,
               );
               setFeedback({
                 ok: result.ok,

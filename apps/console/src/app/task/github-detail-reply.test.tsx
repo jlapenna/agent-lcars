@@ -57,6 +57,7 @@ describe('GitHub detail reply boundary', () => {
         42,
         'Use Firestore.',
         'codex',
+        false,
       ),
     );
     expect(await screen.findByRole('status')).toHaveTextContent(
@@ -102,7 +103,13 @@ describe('GitHub detail reply boundary', () => {
         screen.queryByRole('button', { name: 'Retry dispatch' }),
       ).not.toBeInTheDocument(),
     );
-    expect(retryReplyToItem).toHaveBeenCalledWith(item.repo, 42, 123, 'codex');
+    expect(retryReplyToItem).toHaveBeenCalledWith(
+      item.repo,
+      42,
+      123,
+      'codex',
+      false,
+    );
     expect(replyToItem).toHaveBeenCalledTimes(1);
     expect(
       screen.queryByText('Reply posted, but dispatch failed.'),

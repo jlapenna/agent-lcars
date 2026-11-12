@@ -334,12 +334,15 @@ the work that has stopped, and the work in flight.
   **Approve & Rebase**, **Reply**, or **Open failing check ↗**. The last
   appears only on a `run-failed` item that has a failing check.
 - **FE-IN-3 [Shipped] Reply and hand-off.** "Reply…" opens a text field and a
-  segmented control. On an unassigned issue with no `agent:*` label the
-  choices are _Comment only_ plus each pipeline's reply trigger (`@claude`,
-  `/codex`, `/oc`, `/agy`). Choosing a trigger posts the comment as a reply
-  command, which dispatches that pipeline, and the button then reads "Reply &
-  dispatch". If the comment posts but dispatch fails, **Retry dispatch**
-  re-admits the posted reply (`app/retry-reply-dispatch.tsx`).
+  segmented control. On an issue or PR with no `agent:*` label the choices
+  are _Comment only_ plus each pipeline's reply trigger (`@claude`, `/codex`,
+  `/oc`, `/agy`), and the button then reads "Reply & dispatch". Choosing a
+  trigger on an item with no Work admits it in implement mode and adds the
+  agent label. On an item that already has Work (for example a PR that only
+  had a review run), the reply runs on the admitted agent with the stored
+  Work and adds that agent's label; choosing a different agent posts a plain
+  comment and says so. If the comment posts but dispatch fails, **Retry
+  dispatch** re-admits the posted reply (`app/retry-reply-dispatch.tsx`).
 - **FE-IN-4 [Shipped] Secondary actions:**
   - **Retrigger**, for issues that already have a pipeline assignment, with
     an optional steering note. It goes through server-owned Work admission
