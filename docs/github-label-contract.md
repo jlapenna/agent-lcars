@@ -106,7 +106,8 @@ unambiguous trigger.
 
 Once Work exists, its admitted specification stays immutable. Its title and
 description are copies of the anchor's GitHub text, so a later webhook delivery
-whose only difference is an edited title or body is still admitted: the stored
+or unstick-runbook dispatch whose only difference is an edited title or body is
+still admitted: the stored
 Work keeps its original text, and the run's issue snapshot carries the edit.
 Any other change, such as pipeline, priority or target, is refused with
 `work-spec-mismatch`. An administrator
