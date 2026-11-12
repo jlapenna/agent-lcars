@@ -20,8 +20,11 @@ Section numbers match the main file exactly — cross-references to §8, §10,
   the whole run; no separate rerun variable is exported, and none is needed.
   A run whose job profile supplies its own GitHub credential uses that
   credential's permissions instead.
-  Rerun once per failure. If the rerun fails the same way, or `gh` answers
-  403, park and name the failing job and the error.
+  Rerun once per failure. A rerun that fails the same way is still an
+  execution failure, not a human blocker (§4, §7): report the diagnosis and
+  the next action, and park only when that action needs human access or a
+  maintainer-reserved operation. A 403 from `gh run rerun` is a credential
+  blocker: park and name the job and the error.
 - **What that credential deliberately is not:** it is never the dispatching
   workflow's own `GITHUB_TOKEN`. That token carries the job's full
   contents/issues/pull-requests write grant — the same class of credential
