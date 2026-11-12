@@ -149,11 +149,10 @@ export const ORCHESTRATOR_GITHUB_PERMISSIONS: Record<string, string> = {
  *  is rebuilt with it, so a wrong key here would have failed that proof
  *  in a confusing way. */
 export const DIRECT_RUNNER_PERMISSIONS: Record<string, string> = {
-  // Direct-mode agents use this same short-lived, repository-scoped
-  // installation token as ACTIONS_RERUN_TOKEN (agent-protocol.md §8).
-  // Unlike the hosted dispatch-bootstrap lane, no long-lived PAT crosses
-  // the Docker boundary; actions:write is the narrow extra grant needed
-  // for `gh run rerun --failed` on work the agent itself pushed.
+  // Direct-mode agents rerun failed CI with this same short-lived,
+  // repository-scoped installation token through the runner's `gh` wrapper
+  // (agent-protocol reference §8); no separate rerun token is exported.
+  // actions:write is the narrow extra grant `gh run rerun --failed` needs.
   actions: 'write',
   contents: 'write',
   pull_requests: 'write',

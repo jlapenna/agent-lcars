@@ -358,67 +358,24 @@ secret values cannot be read back, so deleting them is irreversible and
 buys nothing. Remove them by hand once a deploy has run green on the
 variables.
 
-#### Repo secret: `AGENT_CI_RERUN_TOKEN`
+#### Agent CI reruns
 
-One credential deserves its own note, because what it must **not** be is the
-point of it.
+Agents may rerun failed CI on the pull request they are working on
+(`agent-protocol` reference §8). That needs `actions: write`. Direct runs
+get it from their own checkout token: `DIRECT_RUNNER_PERMISSIONS` in
+`apps/console/src/lib/github-app-tokens.ts` mints a repository-scoped App
+installation token that includes `actions: write`, and the runner's `gh`
+wrapper reads the renewed token from disk on every call, so the one-hour
+expiry never cuts a long run off. A Goose job whose profile supplies its
+own GitHub credential gets that credential's permissions instead, which
+may lack `actions: write`. Nothing exports `$ACTIONS_RERUN_TOKEN`. The
+`AGENT_CI_RERUN_TOKEN` repository secret, a classic PAT from the retired
+hosted lane, still exists but is unreferenced.
 
-Agents are allowed to rerun their own failed CI
-(`.agents/skills/agent-protocol/reference/agent-protocol.md` §8). That needs
-`actions: write`, which the token the Claude action vends does not have. The
-obvious source is the workflow's own `GITHUB_TOKEN` — and that is exactly
-what this must never be: it carries the job's full
-contents/issues/pull-requests grant, the workflow's own control-plane
-credential, so handing it to agent code would let that code act as the
-controller
+The credential must never be the dispatching workflow's own
+`GITHUB_TOKEN`: that is the control plane's credential, and handing it to
+agent code would let that code act as the controller
 ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
-
-So this is a **classic PAT at `public_repo` scope, issued from the
-`agent-lcars-bot` machine account** — not the maintainer's. `public_repo` is the
-narrowest classic scope that can rerun a workflow here, and this repository
-is public, so it suffices.
-
-**The machine account is what makes the containment real rather than
-nominal.** `public_repo` grants write across the _token owner's_ accessible
-public repositories. Issued from `agent-lcars-bot` that is effectively this
-repository alone, and the fleet's private repos (`jlapenna/homelab`,
-`supersprinklesracing/sprinkles`) are unreachable — verified: they answer
-`404`, not `403`, so the token cannot even observe that they exist. The same
-scope issued from a maintainer account would have spanned every public
-repository that account can write.
-
-**What it still does not buy.** Classic scopes cannot express "actions:
-write and nothing else": `public_repo` also carries `issues: write` on the
-repositories it does reach, so this token _can_ edit issue comments on
-this one (in the broker era that meant the dispatch ledger itself). The
-boundary is "a separate, attributable, independently revocable
-identity, confined to this public repository" — not "cannot write
-anything here".
-
-Two alternatives were considered and rejected. A **fine-grained** PAT would
-express exactly `Actions: write` and nothing more, but does not work here. A
-minted **App installation token** is genuinely narrow, but expires after an
-hour while an opencode agent step may run for two — the agent would lose the
-capability partway through the runs most likely to need it.
-
-**A consuming private repo cannot copy this verbatim.** `public_repo` grants
-nothing on a private repository, so `jlapenna/homelab` or
-`supersprinklesracing/sprinkles` would each need full `repo` scope. Issue
-those as separate per-repository tokens rather than widening this one: a
-single shared `repo`-scoped PAT would let an agent running here — in a
-public repo — reach private infrastructure it otherwise has no path to.
-
-That residue is not a gap to be closed by better credential hygiene. An
-agent that comments on issues needs `issues: write`, and in the broker era
-the dispatch ledger _was_ an issue comment — the argument that drove moving
-control-plane state somewhere a repository-scoped token cannot reach at
-all, realized today by the hosted orchestrator's Firestore-backed task
-state ([#645](https://github.com/jlapenna/agent-lcars/issues/645) Phase 5).
-
-Fails **loudly, not closed**: each worker warns if the secret is unset, and
-the agent simply cannot rerun. That is deliberate — an empty
-`$ACTIONS_RERUN_TOKEN` produces an opaque `gh` error inside an agent turn,
-which reads as "the agent is stuck" rather than "a secret is missing".
 
 No worker's agent step receives the job token under any name or spelling,
 including via inherited workflow/job-level `env:` — a `workflow-contract.spec.ts`
