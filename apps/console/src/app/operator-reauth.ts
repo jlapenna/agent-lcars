@@ -96,7 +96,8 @@ export function beginOperatorReauth(
 /**
  * Hands back, once, the reply that was refused for `itemKey` before the last
  * re-authorization. `resend` is false when too long has passed to send it
- * unprompted; the text is still restored.
+ * unprompted, or when it could not be removed from storage; the text is
+ * still restored.
  */
 export function takePendingReply(
   itemKey: string,
@@ -106,10 +107,13 @@ export function takePendingReply(
   // Keep `at`: it is what stops a second automatic round trip if the resend
   // is refused too.
   const { reply: _taken, ...rest } = stored;
-  write(rest);
+  // Resending is only safe once the reply is provably gone from storage:
+  // if it cannot be removed, the next mount would read it and post it again.
+  // The text is still handed back so the operator can send it themselves.
+  const consumed = write(rest);
   return {
     ...stored.reply,
-    resend: Date.now() - stored.at < RESEND_WINDOW_MS,
+    resend: consumed && Date.now() - stored.at < RESEND_WINDOW_MS,
   };
 }
 

@@ -84,6 +84,24 @@ describe('operator re-authorization', () => {
     expect(unhandled).not.toHaveBeenCalled();
   });
 
+  it('never resends a reply it could not remove from storage', () => {
+    beginOperatorReauth({ reply: REPLY });
+    // Storage accepted the stash, then stopped accepting writes (quota).
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded');
+    });
+
+    // Every mount still reads the same reply, so none of them may post it.
+    expect(takePendingReply(REPLY.itemKey)).toEqual({
+      ...REPLY,
+      resend: false,
+    });
+    expect(takePendingReply(REPLY.itemKey)).toEqual({
+      ...REPLY,
+      resend: false,
+    });
+  });
+
   it('does not loop when a fresh token is refused too', () => {
     expect(beginOperatorReauth({ reply: REPLY })).toBe(true);
     takePendingReply(REPLY.itemKey);
