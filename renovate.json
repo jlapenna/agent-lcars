@@ -129,6 +129,12 @@
       "rangeStrategy": "bump"
     },
     {
+      "description": "RUNNER_BASE in the runner, control-plane and e2e-runner Dockerfiles must equal the digest Homelab's reviewed mirror inventory pins (jlapenna/homelab registry/pinned-base-mirrors.json). Homelab's publisher builds from an internal mirror of that digest, which is restored by hand from the controller, and refuses to publish when the two differ. A digest or version update here alone therefore stops every runner image publish until Homelab catches up: #3319 did so (jlapenna/homelab#3491), as an earlier bump did before jlapenna/homelab#3415. Never update it here, including as a security PR; change it together with the Homelab inventory and mirror.",
+      "matchManagers": ["dockerfile"],
+      "matchDepNames": ["ghcr.io/actions/actions-runner"],
+      "enabled": false
+    },
+    {
       "description": "Every Node pin moves in one PR: the node base images (dockerfile manager), the copies the Node customManagers entry reads, and package.json engines (node-version datasource). Separate PRs (#3092 images, #3093 deploy-console) let the base image move without its runtime assertions; node-version-pins.test.ts now fails any PR that leaves a copy behind.",
       "matchPackageNames": ["node"],
       "matchDatasources": ["docker", "node-version"],
