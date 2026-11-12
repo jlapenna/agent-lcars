@@ -18,6 +18,8 @@ Section numbers match the main file exactly — cross-references to §8, §10,
   direct run, the `gh` on your `PATH` already carries a short-lived,
   repository-scoped installation token with `actions: write`, renewed for
   the whole run; no separate rerun variable is exported, and none is needed.
+  A run whose job profile supplies its own GitHub credential uses that
+  credential's permissions instead.
   Rerun once per failure. If the rerun fails the same way, or `gh` answers
   403, park and name the failing job and the error.
 - **What that credential deliberately is not:** it is never the dispatching

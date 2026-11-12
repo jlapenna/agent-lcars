@@ -366,9 +366,11 @@ get it from their own checkout token: `DIRECT_RUNNER_PERMISSIONS` in
 `apps/console/src/lib/github-app-tokens.ts` mints a repository-scoped App
 installation token that includes `actions: write`, and the runner's `gh`
 wrapper reads the renewed token from disk on every call, so the one-hour
-expiry never cuts a long run off. No separate rerun secret or
-`$ACTIONS_RERUN_TOKEN` variable exists; the former `AGENT_CI_RERUN_TOKEN`
-classic PAT belonged to the retired hosted lane and is unreferenced.
+expiry never cuts a long run off. A Goose job whose profile supplies its
+own GitHub credential gets that credential's permissions instead, which
+may lack `actions: write`. Nothing exports `$ACTIONS_RERUN_TOKEN`. The
+`AGENT_CI_RERUN_TOKEN` repository secret, a classic PAT from the retired
+hosted lane, still exists but is unreferenced.
 
 The credential must never be the dispatching workflow's own
 `GITHUB_TOKEN`: that is the control plane's credential, and handing it to
