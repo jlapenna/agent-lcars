@@ -715,6 +715,9 @@ RUN npm install -g /opt/agent-tools
 # `docker build` with no --build-arg risks a stale cache hit here too,
 # matching the accepted risk on that manual path already.
 ARG REPO_TOOLS_REF=main
+# Homelab's publish plan compares this label with repo-tools main and rebuilds
+# the image when repo-tools moved, even when no Agent LCARS input changed.
+LABEL io.github.jlapenna.repo-tools.revision="${REPO_TOOLS_REF}"
 # Installed from INSIDE /opt/repo-tools, not via `pnpm --dir`: corepack picks
 # the pnpm version from the current directory's package.json, so `--dir` from
 # this checkout ran Agent LCARS's pnpm against repo-tools' own
