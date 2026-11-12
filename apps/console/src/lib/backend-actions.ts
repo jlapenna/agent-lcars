@@ -153,7 +153,8 @@ export type AssignPipelineWarning =
 export type ReplyDispatchWarning =
   | AssignPipelineWarning
   | 'admitted-pipeline-mismatch'
-  | 'provider-handoff-requested';
+  | 'provider-handoff-requested'
+  | 'provider-handoff-failed';
 
 export interface AssignPipelineResult {
   dispatched: true;
@@ -364,14 +365,20 @@ async function dispatchReplyToUnlabeledTask(
         dispatchWarning: 'admitted-pipeline-mismatch',
       };
     }
-    await asOperator(input.operator, (octokit) =>
-      octokit.rest.issues.addLabels({
-        owner: input.repo.owner,
-        repo: input.repo.name,
-        issue_number: input.issueNumber,
-        labels: [label],
-      }),
-    );
+    try {
+      await asOperator(input.operator, (octokit) =>
+        octokit.rest.issues.addLabels({
+          owner: input.repo.owner,
+          repo: input.repo.name,
+          issue_number: input.issueNumber,
+          labels: [label],
+        }),
+      );
+    } catch {
+      // Retry dispatch has no operator token, so it could never repeat this
+      // write; report it without offering one.
+      return { dispatched: false, dispatchWarning: 'provider-handoff-failed' };
+    }
     return { dispatched: false, dispatchWarning: 'provider-handoff-requested' };
   }
   const outcome = await admitGithubWork(runtime, {
@@ -505,7 +512,15 @@ async function dispatchPostedReply(
         });
         handedBackToAgent = handedOff.dispatched;
         dispatchWarning = handedOff.dispatchWarning;
-        if (handedBackToAgent) await clearNeedsHumanLabel(repo, issueNumber);
+        // The operator's own label is the hand-back, even though its webhook,
+        // not this action, starts the run: nothing on that path clears
+        // needs-human, and a refusal is recorded on the task's history.
+        if (
+          handedBackToAgent ||
+          dispatchWarning === 'provider-handoff-requested'
+        ) {
+          await clearNeedsHumanLabel(repo, issueNumber);
+        }
         return {
           dispatched: handedBackToAgent,
           ...(dispatchWarning === undefined ? {} : { dispatchWarning }),

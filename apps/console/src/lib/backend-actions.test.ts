@@ -887,7 +887,10 @@ describe('postComment (direct Work admission)', () => {
   });
 
   it('applies a different agent label as the operator to request a provider handoff', async () => {
-    const { addLabels, operatorAddLabels } = mockOctokit([], 'pr');
+    const { addLabels, operatorAddLabels, removeLabel } = mockOctokit(
+      ['status:needs-human'],
+      'pr',
+    );
     const { orchestrator, store } = fixtureOrchestratorRuntime();
     const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     const review = await orchestrator.request({
@@ -919,6 +922,47 @@ describe('postComment (direct Work admission)', () => {
       expect.objectContaining({ issue_number: 2709, labels: ['agent:codex'] }),
     );
     expect(addLabels).not.toHaveBeenCalled();
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
+  });
+
+  it('reports a failed operator label write without offering a retry', async () => {
+    const { operatorAddLabels, removeLabel } = mockOctokit(
+      ['status:needs-human'],
+      'pr',
+    );
+    operatorAddLabels.mockRejectedValue(
+      Object.assign(new Error('Forbidden'), { status: 403 }),
+    );
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Fix it',
+      OPERATOR,
+      'codex',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      dispatchWarning: 'provider-handoff-failed',
+    });
+    expect(result.retryCommentId).toBeUndefined();
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
   });
 
   it('keeps a retried hand-off to a different agent a plain comment', async () => {
