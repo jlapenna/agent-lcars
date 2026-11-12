@@ -112,6 +112,7 @@ fi
 # fail here rather than at image-build time.
 if ! grep -Fqx 'RUN npm install -g /opt/agent-tools' "$dockerfile" ||
   ! grep -Fqx 'ARG REPO_TOOLS_REF=main' "$dockerfile" ||
+  ! grep -Fqx 'LABEL io.github.jlapenna.repo-tools.revision="${REPO_TOOLS_REF}"' "$dockerfile" ||
   ! grep -Fqx '    git init /opt/repo-tools && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools remote add origin https://github.com/jlapenna/repo-tools.git && \' "$dockerfile" ||
   ! grep -Fqx '    git -C /opt/repo-tools fetch --depth 1 origin "${REPO_TOOLS_REF}" && \' "$dockerfile" ||

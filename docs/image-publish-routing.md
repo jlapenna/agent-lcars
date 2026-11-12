@@ -33,7 +33,11 @@ The JIT runner receives the selected source SHA as both `CACHE_BUST` and
 `AGENT_LCARS_REF`, plus its required C toolchain packages. It also receives
 repo-tools' current `main` SHA as `REPO_TOOLS_REF`, so that clone's build
 cache invalidates independently whenever repo-tools/main advances, even
-across rebuilds of an unchanged agent-lcars commit. The E2E runner receives
+across rebuilds of an unchanged agent-lcars commit. The image records that
+SHA in its `io.github.jlapenna.repo-tools.revision` label; Homelab's publish
+plan rebuilds `homelab-runner` when repo-tools `main` has moved past it, so a
+repo-tools-only change reaches the runner without an Agent LCARS input change.
+The E2E runner receives
 the matching E2E sandbox reference as `SANDBOX_IMAGE`.
 
 The `homelab-runner` Dockerfile makes its complete pnpm seed proof a mandatory
