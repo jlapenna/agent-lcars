@@ -416,6 +416,28 @@ describe('ActionItemCard', () => {
       expect(screen.getByPlaceholderText('Reply with /oc…')).toBeTruthy();
     });
 
+    it('offers an unlabeled PR to an agent and marks the choice as a hand-off', async () => {
+      vi.mocked(replyToItem).mockResolvedValue({ ok: true });
+      const item = makeItem({ kind: 'pr', labels: [] });
+      renderCard(item, { kind: 'reply' });
+
+      fireEvent.click(screen.getByText('@claude'));
+      fireEvent.change(screen.getByPlaceholderText('Reply…'), {
+        target: { value: 'Fix the failing E2E checks' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Reply & dispatch' }));
+
+      await waitFor(() => {
+        expect(replyToItem).toHaveBeenCalledWith(
+          item.repo,
+          item.number,
+          'Fix the failing E2E checks',
+          'claude',
+          true,
+        );
+      });
+    });
+
     it('uses a review label as the explicit direct-reply assignment', async () => {
       vi.mocked(replyToItem).mockResolvedValue({ ok: true });
       const item = makeItem({
@@ -435,6 +457,7 @@ describe('ActionItemCard', () => {
           item.number,
           'Please address this',
           'codex',
+          false,
         );
       });
     });

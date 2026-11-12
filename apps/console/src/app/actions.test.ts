@@ -325,6 +325,7 @@ describe('agent-lcars Server Actions', () => {
         123,
         'jlapenna',
         'codex',
+        false,
       );
       expect(postComment).not.toHaveBeenCalled();
       expect(updateTag).toHaveBeenCalledWith(AUTHORITATIVE_QUEUE_TAG);
@@ -389,7 +390,33 @@ describe('agent-lcars Server Actions', () => {
         'hi',
         { login: 'jlapenna', githubToken: 'operator-token' },
         'codex',
+        false,
       );
+    });
+
+    it('replyToItem forwards a hand-off and explains a requested provider handoff', async () => {
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://github.test/c',
+        dispatched: false,
+        dispatchWarning: 'provider-handoff-requested',
+      });
+
+      const result = await replyToItem(DEFAULT_REPO, 42, 'hi', 'codex', true);
+
+      expect(postComment).toHaveBeenCalledWith(
+        DEFAULT_REPO,
+        42,
+        'hi',
+        { login: 'jlapenna', githubToken: 'operator-token' },
+        'codex',
+        true,
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        dispatched: false,
+        warning: true,
+        note: expect.stringContaining('codex label applied as you'),
+      });
     });
 
     it('retriggerIssue forwards the note to retriggerIssueLib', async () => {

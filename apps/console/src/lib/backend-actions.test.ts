@@ -428,6 +428,7 @@ describe('postComment (direct Work admission)', () => {
     });
     const removeLabel = vi.fn().mockResolvedValue({});
     const setLabels = vi.fn().mockResolvedValue({});
+    const addLabels = vi.fn().mockResolvedValue({});
     const get = vi.fn().mockResolvedValue({
       data: {
         // `state` matters only to the assign-on-reply path below, which
@@ -443,15 +444,24 @@ describe('postComment (direct Work admission)', () => {
     });
     // The comment is the operator's own write; every other call stays on
     // the App client. Splitting the mocks proves which identity posts it.
+    const operatorAddLabels = vi.fn().mockResolvedValue({});
     (createGithubUserClient as Mock).mockReturnValue({
-      rest: { issues: { createComment } },
+      rest: { issues: { createComment, addLabels: operatorAddLabels } },
     });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
-        issues: { getComment, get, removeLabel, setLabels },
+        issues: { getComment, get, removeLabel, setLabels, addLabels },
       },
     });
-    return { createComment, getComment, get, removeLabel, setLabels };
+    return {
+      createComment,
+      getComment,
+      get,
+      removeLabel,
+      setLabels,
+      addLabels,
+      operatorAddLabels,
+    };
   }
 
   it('rejects a blank body without calling GitHub', async () => {
@@ -800,6 +810,184 @@ describe('postComment (direct Work admission)', () => {
 
     expect(result.dispatched).toBe(false);
     expect(setLabels).not.toHaveBeenCalled();
+  });
+
+  it('assigns an unlabeled pull request when the reply explicitly hands it off', async () => {
+    const { setLabels } = mockOctokit(['status:needs-human'], 'pr');
+    const { store } = fixtureOrchestratorRuntime();
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Fix the failing E2E checks',
+      OPERATOR,
+      'claude',
+      true,
+    );
+
+    expect(result.dispatched).toBe(true);
+    expect(setLabels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: expect.arrayContaining(['agent:claude']),
+      }),
+    );
+    expect(
+      await store.listRuns({ repo: DEFAULT_REPO_KEY, issue: 2709 }),
+    ).toEqual([
+      expect.objectContaining({
+        pipeline: 'claude',
+        params: { mode: 'implement' },
+      }),
+    ]);
+  });
+
+  it('hands a reviewed, unlabeled pull request to its admitted agent with the stored Work', async () => {
+    const { addLabels, removeLabel } = mockOctokit(
+      ['status:needs-human'],
+      'pr',
+    );
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Fix the failing E2E checks',
+      OPERATOR,
+      'claude',
+      true,
+    );
+
+    expect(result).toMatchObject({ dispatched: true });
+    expect(result.dispatchWarning).toBeUndefined();
+    const runs = await store.listRuns(taskId);
+    expect(runs).toHaveLength(2);
+    expect(runs[1]).toMatchObject({
+      pipeline: 'claude',
+      params: { mode: 'reply', reply: 'Fix the failing E2E checks' },
+    });
+    expect((await store.readTask(taskId))?.task.work).toEqual(
+      testWork('claude'),
+    );
+    expect(addLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ issue_number: 2709, labels: ['agent:claude'] }),
+    );
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
+  });
+
+  it('applies a different agent label as the operator to request a provider handoff', async () => {
+    const { addLabels, operatorAddLabels, removeLabel } = mockOctokit(
+      ['status:needs-human'],
+      'pr',
+    );
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Fix it',
+      OPERATOR,
+      'codex',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      dispatchWarning: 'provider-handoff-requested',
+    });
+    // The label webhook, not this action, admits the handoff.
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(operatorAddLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ issue_number: 2709, labels: ['agent:codex'] }),
+    );
+    expect(addLabels).not.toHaveBeenCalled();
+    expect(removeLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'status:needs-human' }),
+    );
+  });
+
+  it('reports a failed operator label write without offering a retry', async () => {
+    const { operatorAddLabels, removeLabel } = mockOctokit(
+      ['status:needs-human'],
+      'pr',
+    );
+    operatorAddLabels.mockRejectedValue(
+      Object.assign(new Error('Forbidden'), { status: 403 }),
+    );
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    const result = await postComment(
+      DEFAULT_REPO,
+      2709,
+      'Fix it',
+      OPERATOR,
+      'codex',
+      true,
+    );
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      dispatchWarning: 'provider-handoff-failed',
+    });
+    expect(result.retryCommentId).toBeUndefined();
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(removeLabel).not.toHaveBeenCalled();
+  });
+
+  it('keeps a retried hand-off to a different agent a plain comment', async () => {
+    const { addLabels, operatorAddLabels } = mockOctokit([], 'pr');
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    await expect(
+      retryPostedComment(DEFAULT_REPO, 2709, 123, 'jlapenna', 'codex', true),
+    ).resolves.toEqual({
+      dispatched: false,
+      dispatchWarning: 'admitted-pipeline-mismatch',
+    });
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(operatorAddLabels).not.toHaveBeenCalled();
+    expect(addLabels).not.toHaveBeenCalled();
   });
 
   it('leaves needs-human on a plain comment with no assignment', async () => {

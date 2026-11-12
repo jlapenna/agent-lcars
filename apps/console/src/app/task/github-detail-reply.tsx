@@ -27,7 +27,6 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
   const assigned = selectedReplyPipeline(item.repo, item.labels, item.kind);
   const targets =
     assigned === undefined &&
-    item.kind === 'issue' &&
     matchingAgentPipelines(item.repo, item.labels).length === 0
       ? supportedAgentPipelines(item.repo)
       : [];
@@ -66,6 +65,7 @@ export function GithubDetailReply({ item }: { item: ActionItem }) {
               item.number,
               text.trim(),
               assigned ?? chosen,
+              assigned === undefined && chosen !== undefined,
             );
             setFeedback({
               ok: result.ok,

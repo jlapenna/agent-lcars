@@ -315,15 +315,16 @@ export function ActionItemCard({
   const replyMention = pipeline
     ? agentIntegration(item.repo, pipeline)?.replyTrigger
     : undefined;
-  // An unassigned open issue can be handed to any supported pipeline, the
+  // An unassigned issue or PR can be handed to any supported pipeline, the
   // same "zero agent labels means never assigned" rule item-overflow-menu.tsx
   // applies to its Assign actions. Offering the choice here is what keeps a
-  // `status:needs-human` item - whose prescribed primary action is `reply` -
-  // from being a dead end (#1869). Two or more agent labels is contradictory
+  // `status:needs-human` item, or a PR whose checks fail after its review -
+  // both prescribe `reply` - from being a dead end (#1869). The server
+  // decides whether the choice can take the reply (an already-admitted item
+  // only takes its own agent). Two or more agent labels is contradictory
   // state with no implicit precedence, so no choice is offered there either.
   const replyTargets =
     pipeline === undefined &&
-    item.kind === 'issue' &&
     matchingAgentPipelines(item.repo, item.labels).length === 0
       ? supportedAgentPipelines(item.repo)
       : [];
@@ -346,6 +347,9 @@ export function ActionItemCard({
         item.number,
         replyBody,
         replyPipeline,
+        // Only the hand-off control's choice may give an unlabeled PR or an
+        // already-admitted item to an agent.
+        pipeline === undefined && chosenReplyTarget !== undefined,
       );
       if (!result.ok) {
         setError(result.message);

@@ -91,7 +91,7 @@ export type ReplyResult =
       dispatched: boolean;
       note: string;
       warning?: true;
-      retry?: { commentId: number; pipeline: Pipeline };
+      retry?: { commentId: number; pipeline: Pipeline; handoff?: true };
     }
   | { ok: false; message: string };
 
@@ -100,6 +100,8 @@ export async function replyToItem(
   number: number,
   body: string,
   assignedPipeline?: Pipeline,
+  /** The operator chose `assignedPipeline` in the reply's hand-off control. */
+  handoff = false,
 ): Promise<ReplyResult> {
   const session = await requireAdmin();
   try {
@@ -116,6 +118,7 @@ export async function replyToItem(
         githubToken: githubAccessTokenFor(session) ?? '',
       },
       assignedPipeline,
+      handoff,
     );
     revalidateDashboard();
     // A reply that dispatched nobody is a success, but not the one the
@@ -126,7 +129,13 @@ export async function replyToItem(
       dispatched,
       ...(dispatchWarning === undefined ? {} : { warning: true as const }),
       ...(retryCommentId !== undefined && assignedPipeline !== undefined
-        ? { retry: { commentId: retryCommentId, pipeline: assignedPipeline } }
+        ? {
+            retry: {
+              commentId: retryCommentId,
+              pipeline: assignedPipeline,
+              ...(handoff ? { handoff: true as const } : {}),
+            },
+          }
         : {}),
       note:
         dispatchWarning === 'assignment-update-failed' && dispatched
@@ -135,9 +144,15 @@ export async function replyToItem(
             ? 'Reply posted and agent dispatched, but the queue may take a moment to refresh.'
             : dispatchWarning === 'dispatch-failed'
               ? 'Reply posted, but dispatch failed. Use Retry dispatch to send the posted reply without posting it again.'
-              : dispatched
-                ? `Dispatched ${assignedPipeline ?? 'agent'}`
-                : 'No agent assigned - posted as a comment only',
+              : dispatchWarning === 'provider-handoff-requested'
+                ? `Reply posted and the ${assignedPipeline ?? 'agent'} label applied as you; LCARS hands this item over once that label is admitted.`
+                : dispatchWarning === 'provider-handoff-failed'
+                  ? `Reply posted, but applying the ${assignedPipeline ?? 'agent'} label as you failed. Add the label on GitHub, or sign in again if your session expired.`
+                  : dispatchWarning === 'admitted-pipeline-mismatch'
+                    ? 'Reply posted as a comment only: this item already ran with a different agent.'
+                    : dispatched
+                      ? `Dispatched ${assignedPipeline ?? 'agent'}`
+                      : 'No agent assigned - posted as a comment only',
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
@@ -149,6 +164,7 @@ export async function retryReplyToItem(
   number: number,
   commentId: number,
   pipeline: Pipeline,
+  handoff = false,
 ): Promise<ActionResult> {
   const session = await requireAdmin();
   try {
@@ -160,6 +176,7 @@ export async function retryReplyToItem(
       commentId,
       session.user.login,
       pipeline,
+      handoff,
     );
     revalidateDashboard();
     if (!result.dispatched) {
@@ -168,7 +185,9 @@ export async function retryReplyToItem(
         message:
           result.dispatchWarning === 'dispatch-failed'
             ? 'Dispatch failed. You can retry without reposting your reply.'
-            : 'The current assignment no longer permits this reply dispatch. Refresh the item to check its assignment.',
+            : result.dispatchWarning === 'admitted-pipeline-mismatch'
+              ? 'This item already ran with a different agent; only that agent can take this reply.'
+              : 'The current assignment no longer permits this reply dispatch. Refresh the item to check its assignment.',
       };
     }
     return {

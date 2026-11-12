@@ -6,6 +6,7 @@ import {
   quickTaskDigest as sharedQuickTaskDigest,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
+import type { Task } from '@agent-lcars/orchestrator';
 import { storedWorkPayloadSchema, workPayloadSchema } from '@agent-lcars/work';
 
 import {
@@ -142,11 +143,18 @@ export interface PostCommentResult {
   url: string;
   retryCommentId?: number;
   dispatched: boolean;
-  dispatchWarning?: AssignPipelineWarning;
+  dispatchWarning?: ReplyDispatchWarning;
 }
 
 export type AssignPipelineWarning =
   'dispatch-failed' | 'assignment-update-failed' | 'projection-refresh-failed';
+
+/** Why a posted reply was not dispatched although the caller chose an agent. */
+export type ReplyDispatchWarning =
+  | AssignPipelineWarning
+  | 'admitted-pipeline-mismatch'
+  | 'provider-handoff-requested'
+  | 'provider-handoff-failed';
 
 export interface AssignPipelineResult {
   dispatched: true;
@@ -243,6 +251,11 @@ export async function postComment(
   body: string,
   actor: CommentActor,
   assignedPipeline?: Pipeline,
+  /** The operator picked `assignedPipeline` in the reply's hand-off choice,
+   * rather than it being the card's current assignment. Only this explicit
+   * choice may give an unlabeled PR or already-admitted item to an agent; a
+   * stale assignment removed after render stays a plain comment. */
+  handoff = false,
 ): Promise<PostCommentResult> {
   if (!body.trim()) {
     throw new ActionError('Comment body is required', 400);
@@ -265,6 +278,8 @@ export async function postComment(
     body,
     actorLogin,
     assignedPipeline,
+    handoff,
+    actor,
   );
   return {
     url: data.html_url,
@@ -282,6 +297,7 @@ export async function retryPostedComment(
   commentId: number,
   actorLogin: string,
   pipeline: Pipeline,
+  handoff = false,
 ): Promise<Omit<PostCommentResult, 'url'>> {
   requireAgentIntegration(repo, pipeline);
   if (!actorLogin.trim())
@@ -308,7 +324,97 @@ export async function retryPostedComment(
     stripConsoleReplyMarker(comment.body),
     actorLogin,
     pipeline,
+    handoff,
   );
+}
+
+/** Hands an explicit console reply on an unlabeled, already admitted anchor
+ * to an agent. The agent its Work names takes the reply at once, and its label
+ * then shows that assignment on GitHub. Any other agent is a provider switch,
+ * which only an administrator's own label can request
+ * (docs/github-label-contract.md), so the operator applies that label as
+ * themselves and the label webhook admits the handoff. The automatic review
+ * stores its reviewer's pipeline, which is deliberately not the PR author's,
+ * so this is the usual case for "fix this PR". */
+async function dispatchReplyToUnlabeledTask(
+  runtime: ReturnType<typeof createOrchestratorRuntime>,
+  input: {
+    repo: WatchedRepo;
+    issueNumber: number;
+    body: string;
+    actorLogin: string;
+    assignedPipeline: Pipeline;
+    currentLabels: string[];
+    task: Task;
+    /** Absent on Retry dispatch, which has no operator token. */
+    operator?: CommentActor;
+  },
+): Promise<Omit<PostCommentResult, 'url'>> {
+  const parsedWork = workPayloadSchema.safeParse(input.task.work);
+  // Recipe and summary Work has no agent handoff to admit.
+  if (!parsedWork.success) return { dispatched: false };
+  const work = parsedWork.data;
+  const effective =
+    input.task.providerRouting?.acceptedGeneration?.pipeline ??
+    work.spec.pipeline;
+  const label = agentIntegration(input.repo, input.assignedPipeline)?.label;
+  if (effective !== input.assignedPipeline) {
+    if (input.operator === undefined || label === undefined) {
+      return {
+        dispatched: false,
+        dispatchWarning: 'admitted-pipeline-mismatch',
+      };
+    }
+    try {
+      await asOperator(input.operator, (octokit) =>
+        octokit.rest.issues.addLabels({
+          owner: input.repo.owner,
+          repo: input.repo.name,
+          issue_number: input.issueNumber,
+          labels: [label],
+        }),
+      );
+    } catch {
+      // Retry dispatch has no operator token, so it could never repeat this
+      // write; report it without offering one.
+      return { dispatched: false, dispatchWarning: 'provider-handoff-failed' };
+    }
+    return { dispatched: false, dispatchWarning: 'provider-handoff-requested' };
+  }
+  const outcome = await admitGithubWork(runtime, {
+    anchor: { repo: repoKey(input.repo), issue: input.issueNumber },
+    requestId: `console-reply:${randomUUID()}`,
+    expectedEffectivePipeline: input.assignedPipeline,
+    params: {
+      mode: 'reply',
+      reply: input.body,
+      replyChannel: 'console',
+      replyPrincipal: `github:${input.actorLogin}`,
+      ...crossRepoParam(input.currentLabels),
+    },
+    work,
+  });
+  if (outcome.kind === 'busy') {
+    throw new ActionError('A run is already active for this task', 409);
+  }
+  if (outcome.kind !== 'accepted') {
+    throw new ActionError(`Reply dispatch was ${outcome.kind}`, 409);
+  }
+  // Admission is durable; the label only projects the new assignment, so
+  // later replies route to this agent without asking again. Its webhook finds
+  // the run just admitted and is refused as busy rather than starting another.
+  if (label === undefined) return { dispatched: true };
+  try {
+    await getGithubClient().rest.issues.addLabels({
+      owner: input.repo.owner,
+      repo: input.repo.name,
+      issue_number: input.issueNumber,
+      labels: [label],
+    });
+  } catch {
+    return { dispatched: true, dispatchWarning: 'assignment-update-failed' };
+  }
+  return { dispatched: true };
 }
 
 async function dispatchPostedReply(
@@ -317,6 +423,8 @@ async function dispatchPostedReply(
   body: string,
   actorLogin: string,
   assignedPipeline?: Pipeline,
+  handoff = false,
+  operator?: CommentActor,
 ): Promise<Omit<PostCommentResult, 'url'>> {
   // The inbox projection's exactly-one canonical agent label is the explicit
   // console intent to hand this comment to an agent. A Task alone is not that
@@ -325,7 +433,7 @@ async function dispatchPostedReply(
   // The immutable Task Work still supplies the authoritative target once the
   // caller has made that explicit choice.
   let handedBackToAgent = false;
-  let dispatchWarning: AssignPipelineWarning | undefined;
+  let dispatchWarning: ReplyDispatchWarning | undefined;
   try {
     const octokit = getGithubClient();
     if (assignedPipeline !== undefined) {
@@ -351,37 +459,68 @@ async function dispatchPostedReply(
       const runtime = createOrchestratorRuntime();
       const taskId = { repo: repoKey(repo), issue: issueNumber };
       const existingTask = await runtime.store.readTask(taskId);
-      // Nothing owns this item yet, and the caller explicitly chose who should.
-      // `derivePrimaryAction` prescribes `reply` for every `status:needs-human`
-      // item, but an item can be needs-human with no `agent:*` label at all -
-      // and before #1869 that reply posted a comment, dispatched nobody, and
-      // still reported success, so the queue kept prescribing the same dead end
-      // (jlapenna/homelab#855). Treat the choice as the handoff it is:
-      // `assignPipeline` labels the issue and admits `mode: 'implement'`. The
-      // comment is already on the thread above, so the agent starts with the
-      // steer that prompted it.
-      //
-      // `existingTask === undefined` is load-bearing, not belt-and-braces: Work
-      // is immutable and written once per anchor, so an already-admitted task
-      // whose label was removed by hand must keep degrading to a plain comment
-      // (the `work.spec.pipeline` check below says the same thing for the
-      // assigned case). Without it `assignPipeline` throws its 409 and a reply
-      // that used to post silently would start failing outright.
+      // No agent label, and the caller explicitly chose who should take this
+      // reply. `derivePrimaryAction` prescribes `reply` for every
+      // `status:needs-human` item, but an item can be needs-human with no
+      // `agent:*` label at all - and before #1869 that reply posted a
+      // comment, dispatched nobody, and still reported success, so the queue
+      // kept prescribing the same dead end (jlapenna/homelab#855). Treat the
+      // choice as the handoff it is. The comment is already on the thread
+      // above, so the agent starts with the steer that prompted it.
       if (
         currentAssignment === undefined &&
-        existingTask === undefined &&
-        !issue.pull_request &&
         matchingAgentPipelines(repo, currentLabels).length === 0
       ) {
-        const assignment = await assignPipeline(
+        // An unlabeled issue with no Work has never been assigned, so any
+        // chosen target is the hand-off. An unlabeled PR or admitted item
+        // needs the explicit `handoff`: a stale card's assignment whose
+        // label was removed after render must stay a plain comment.
+        if (existingTask === undefined && (!issue.pull_request || handoff)) {
+          // First admission: `assignPipeline` labels the issue or PR and
+          // admits `mode: 'implement'`, as the agent label's webhook would.
+          const assignment = await assignPipeline(
+            repo,
+            issueNumber,
+            assignedPipeline,
+            actorLogin,
+            handoff,
+          );
+          handedBackToAgent = assignment.dispatched;
+          dispatchWarning = assignment.warning;
+          await clearNeedsHumanLabel(repo, issueNumber);
+          return {
+            dispatched: handedBackToAgent,
+            ...(dispatchWarning === undefined ? {} : { dispatchWarning }),
+          };
+        }
+        if (existingTask === undefined || !handoff) {
+          return { dispatched: false };
+        }
+        // Already admitted: a PR that so far only had a review run, or an
+        // issue whose agent label was removed by hand. Work is immutable per
+        // anchor, so the reply reuses it, as Retry does, and only the
+        // pipeline it is admitted for can take the reply.
+        const handedOff = await dispatchReplyToUnlabeledTask(runtime, {
           repo,
           issueNumber,
-          assignedPipeline,
+          body,
           actorLogin,
-        );
-        handedBackToAgent = assignment.dispatched;
-        dispatchWarning = assignment.warning;
-        await clearNeedsHumanLabel(repo, issueNumber);
+          assignedPipeline,
+          currentLabels,
+          task: existingTask.task,
+          ...(operator === undefined ? {} : { operator }),
+        });
+        handedBackToAgent = handedOff.dispatched;
+        dispatchWarning = handedOff.dispatchWarning;
+        // The operator's own label is the hand-back, even though its webhook,
+        // not this action, starts the run: nothing on that path clears
+        // needs-human, and a refusal is recorded on the task's history.
+        if (
+          handedBackToAgent ||
+          dispatchWarning === 'provider-handoff-requested'
+        ) {
+          await clearNeedsHumanLabel(repo, issueNumber);
+        }
         return {
           dispatched: handedBackToAgent,
           ...(dispatchWarning === undefined ? {} : { dispatchWarning }),
@@ -845,6 +984,7 @@ export async function assignPipeline(
   issueNumber: number,
   targetPipeline: Pipeline,
   actorLogin: string,
+  allowPullRequest = false,
 ): Promise<AssignPipelineResult> {
   const targetIntegration = requireAgentIntegration(repo, targetPipeline);
   const taskId = { repo: repoKey(repo), issue: issueNumber };
@@ -867,7 +1007,9 @@ export async function assignPipeline(
     repo: repo.name,
     issue_number: issueNumber,
   });
-  if (issue.state !== 'open' || issue.pull_request) {
+  // A reply handoff may admit an open PR the same way its `agent:*` label
+  // webhook admits it; the Assign menu stays issue-only.
+  if (issue.state !== 'open' || (issue.pull_request && !allowPullRequest)) {
     throw new ActionError('Only open issues can be assigned to an agent', 400);
   }
   const labels = issue.labels.map((label) =>
