@@ -1014,6 +1014,36 @@ describe('handleWebhookDelivery', () => {
     });
   });
 
+  it('admits a later label after the anchor body was edited, keeping the stored Work text', async () => {
+    const { deps, store } = fixture();
+    const first = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'first-delivery',
+      payload: labeledIssuePayload(),
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+
+    const second = await handleWebhookDelivery(deps, {
+      event: 'issues',
+      deliveryId: 'label-after-body-edit',
+      payload: labeledIssuePayload({
+        issue: {
+          state: 'open',
+          number: ISSUE.issue,
+          title: 'Issue title (edited)',
+          body: 'Issue body, edited after the first run',
+        },
+      }),
+    });
+
+    expect(second).toMatchObject({ status: 200 });
+    expect(second.body['runId']).not.toBe(first.body['runId']);
+    expect(await store.listRuns(ISSUE)).toHaveLength(2);
+    expect((await store.readTask(ISSUE))?.task.work).toMatchObject({
+      spec: { title: 'Issue title', description: 'Issue body' },
+    });
+  });
+
   it('hands an authorized sole provider label to a fresh queued attempt', async () => {
     const { deps, store, clock } = fixture();
     const first = await handleWebhookDelivery(deps, {

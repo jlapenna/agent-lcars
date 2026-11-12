@@ -104,7 +104,13 @@ a label conflict, although both still share the anchor's busy and immutable
 Work gates. A conflict in the other namespace does not block an otherwise
 unambiguous trigger.
 
-Once Work exists, its admitted specification stays immutable. An administrator
+Once Work exists, its admitted specification stays immutable. Its title and
+description are copies of the anchor's GitHub text, so a later webhook delivery
+or unstick-runbook dispatch whose only difference is an edited title or body is
+still admitted: the stored
+Work keeps its original text, and the run's issue snapshot carries the edit.
+Any other change, such as pipeline, priority or target, is refused with
+`work-spec-mismatch`. An administrator
 (from the existing Console administrator allowlist) may replace the sole
 `agent:*` label to request a different execution provider. The signed delivery
 must carry a source timestamp newer than the last admitted/refused label

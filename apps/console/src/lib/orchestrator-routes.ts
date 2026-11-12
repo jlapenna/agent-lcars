@@ -486,6 +486,7 @@ async function decideDelivery(
     requestId: resolvedDecision.requestId,
     params,
     work: resolvedDecision.work,
+    workMirrorsAnchor: true,
     ...(resolvedDecision.labelRouting === undefined
       ? {}
       : { labelRouting: resolvedDecision.labelRouting }),

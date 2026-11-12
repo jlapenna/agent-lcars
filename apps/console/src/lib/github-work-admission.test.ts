@@ -230,6 +230,88 @@ describe('admitGithubWork', () => {
     expect(runtime.drain).toHaveBeenCalledOnce();
   });
 
+  it('admits a label after the anchor text was edited, keeping the stored Work text', async () => {
+    const runtime = fixture();
+    const first = await admitGithubWork(runtime, {
+      anchor: ANCHOR,
+      requestId: 'review-opened',
+      params: { mode: 'review' },
+      work: work(),
+      workMirrorsAnchor: true,
+    });
+    if (first.kind !== 'accepted') throw new Error('first admission failed');
+    await runtime.orchestrator.report(first.runId, { ok: true });
+    const edited = {
+      ...work(),
+      spec: {
+        ...work().spec,
+        title: 'Unify GitHub work admission (edited)',
+        description: 'The PR body changed after review.',
+      },
+    };
+    const labelRouting = {
+      mode: 'implement' as const,
+      trigger: 'agent:claude',
+      labels: [{ name: 'agent:claude' }],
+      requestedAt: '2026-08-31T00:01:00.000Z',
+      actor: 'jlapenna',
+    };
+
+    await expect(
+      admitGithubWork(runtime, {
+        anchor: ANCHOR,
+        requestId: 'label-unmarked',
+        params: { mode: 'implement' },
+        work: edited,
+        labelRouting,
+      }),
+    ).resolves.toMatchObject({ kind: 'conflict' });
+    const second = await admitGithubWork(runtime, {
+      anchor: ANCHOR,
+      requestId: 'label-applied',
+      params: { mode: 'implement' },
+      work: edited,
+      labelRouting,
+      workMirrorsAnchor: true,
+    });
+
+    expect(second).toMatchObject({ kind: 'accepted' });
+    expect((await runtime.store.readTask(ANCHOR))?.task.work).toMatchObject(
+      work(),
+    );
+  });
+
+  it('still refuses a changed pipeline or priority when the Work mirrors its anchor', async () => {
+    const runtime = fixture();
+    const input = {
+      anchor: ANCHOR,
+      requestId: 'delivery-1',
+      params: { mode: 'implement' },
+      work: work(),
+      workMirrorsAnchor: true,
+    };
+    const first = await admitGithubWork(runtime, input);
+    if (first.kind !== 'accepted') throw new Error('first admission failed');
+    await runtime.orchestrator.report(first.runId, { ok: true });
+
+    for (const changed of [
+      work('codex'),
+      { ...work(), spec: { ...work().spec, priority: 'urgent' as const } },
+    ]) {
+      await expect(
+        admitGithubWork(runtime, {
+          ...input,
+          requestId: `changed-${changed.spec.pipeline}-${String(changed.spec.priority)}`,
+          work: changed,
+        }),
+      ).resolves.toEqual({
+        kind: 'conflict',
+        message: 'GitHub Work specification is immutable once admitted',
+      });
+    }
+    expect(await runtime.store.listRuns(ANCHOR)).toHaveLength(1);
+  });
+
   it('atomically refuses an overlapping first admission with a different immutable spec', async () => {
     const runtime = fixture();
     const request = (requestId: string, pipeline: 'claude' | 'codex') =>
