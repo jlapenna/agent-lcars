@@ -444,8 +444,9 @@ describe('postComment (direct Work admission)', () => {
     });
     // The comment is the operator's own write; every other call stays on
     // the App client. Splitting the mocks proves which identity posts it.
+    const operatorAddLabels = vi.fn().mockResolvedValue({});
     (createGithubUserClient as Mock).mockReturnValue({
-      rest: { issues: { createComment } },
+      rest: { issues: { createComment, addLabels: operatorAddLabels } },
     });
     (getGithubClient as Mock).mockReturnValue({
       rest: {
@@ -459,6 +460,7 @@ describe('postComment (direct Work admission)', () => {
       removeLabel,
       setLabels,
       addLabels,
+      operatorAddLabels,
     };
   }
 
@@ -884,8 +886,8 @@ describe('postComment (direct Work admission)', () => {
     );
   });
 
-  it('keeps a hand-off to a different agent than the admitted one a plain comment', async () => {
-    const { addLabels } = mockOctokit([], 'pr');
+  it('applies a different agent label as the operator to request a provider handoff', async () => {
+    const { addLabels, operatorAddLabels } = mockOctokit([], 'pr');
     const { orchestrator, store } = fixtureOrchestratorRuntime();
     const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
     const review = await orchestrator.request({
@@ -909,9 +911,38 @@ describe('postComment (direct Work admission)', () => {
 
     expect(result).toMatchObject({
       dispatched: false,
+      dispatchWarning: 'provider-handoff-requested',
+    });
+    // The label webhook, not this action, admits the handoff.
+    expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(operatorAddLabels).toHaveBeenCalledWith(
+      expect.objectContaining({ issue_number: 2709, labels: ['agent:codex'] }),
+    );
+    expect(addLabels).not.toHaveBeenCalled();
+  });
+
+  it('keeps a retried hand-off to a different agent a plain comment', async () => {
+    const { addLabels, operatorAddLabels } = mockOctokit([], 'pr');
+    const { orchestrator, store } = fixtureOrchestratorRuntime();
+    const taskId = { repo: DEFAULT_REPO_KEY, issue: 2709 };
+    const review = await orchestrator.request({
+      taskId,
+      requestId: 'seed-review',
+      pipeline: 'claude',
+      params: { mode: 'review' },
+      work: testWork('claude'),
+    });
+    if ('refused' in review) throw new Error('seed request was refused');
+    await orchestrator.report(review.run.runId, { ok: true });
+
+    await expect(
+      retryPostedComment(DEFAULT_REPO, 2709, 123, 'jlapenna', 'codex', true),
+    ).resolves.toEqual({
+      dispatched: false,
       dispatchWarning: 'admitted-pipeline-mismatch',
     });
     expect(await store.listRuns(taskId)).toHaveLength(1);
+    expect(operatorAddLabels).not.toHaveBeenCalled();
     expect(addLabels).not.toHaveBeenCalled();
   });
 

@@ -340,8 +340,10 @@ the work that has stopped, and the work in flight.
   trigger on an item with no Work admits it in implement mode and adds the
   agent label. On an item that already has Work (for example a PR that only
   had a review run), the reply runs on the admitted agent with the stored
-  Work and adds that agent's label; choosing a different agent posts a plain
-  comment and says so. If the comment posts but dispatch fails, **Retry
+  Work and adds that agent's label. Choosing a different agent (the usual
+  case after an automatic cross-model review) applies that agent's label as
+  the signed-in operator, which the label webhook admits as an administrator
+  provider handoff. If the comment posts but dispatch fails, **Retry
   dispatch** re-admits the posted reply (`app/retry-reply-dispatch.tsx`).
 - **FE-IN-4 [Shipped] Secondary actions:**
   - **Retrigger**, for issues that already have a pipeline assignment, with

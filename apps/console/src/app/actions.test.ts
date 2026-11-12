@@ -394,11 +394,11 @@ describe('agent-lcars Server Actions', () => {
       );
     });
 
-    it('replyToItem forwards a hand-off and explains an admitted-agent mismatch', async () => {
+    it('replyToItem forwards a hand-off and explains a requested provider handoff', async () => {
       (postComment as Mock).mockResolvedValue({
         url: 'https://github.test/c',
         dispatched: false,
-        dispatchWarning: 'admitted-pipeline-mismatch',
+        dispatchWarning: 'provider-handoff-requested',
       });
 
       const result = await replyToItem(DEFAULT_REPO, 42, 'hi', 'codex', true);
@@ -415,7 +415,7 @@ describe('agent-lcars Server Actions', () => {
         ok: true,
         dispatched: false,
         warning: true,
-        note: expect.stringContaining('already ran with a different agent'),
+        note: expect.stringContaining('codex label applied as you'),
       });
     });
 

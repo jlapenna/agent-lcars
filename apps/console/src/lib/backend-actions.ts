@@ -151,7 +151,9 @@ export type AssignPipelineWarning =
 
 /** Why a posted reply was not dispatched although the caller chose an agent. */
 export type ReplyDispatchWarning =
-  AssignPipelineWarning | 'admitted-pipeline-mismatch';
+  | AssignPipelineWarning
+  | 'admitted-pipeline-mismatch'
+  | 'provider-handoff-requested';
 
 export interface AssignPipelineResult {
   dispatched: true;
@@ -276,6 +278,7 @@ export async function postComment(
     actorLogin,
     assignedPipeline,
     handoff,
+    actor,
   );
   return {
     url: data.html_url,
@@ -324,10 +327,14 @@ export async function retryPostedComment(
   );
 }
 
-/** Hands an explicit console reply to the agent an unlabeled, already
- * admitted anchor's Work names, then shows that assignment on GitHub. A
- * different choice leaves the reply as a plain comment: switching provider
- * is a label handoff, which only an administrator's own label can request. */
+/** Hands an explicit console reply on an unlabeled, already admitted anchor
+ * to an agent. The agent its Work names takes the reply at once, and its label
+ * then shows that assignment on GitHub. Any other agent is a provider switch,
+ * which only an administrator's own label can request
+ * (docs/github-label-contract.md), so the operator applies that label as
+ * themselves and the label webhook admits the handoff. The automatic review
+ * stores its reviewer's pipeline, which is deliberately not the PR author's,
+ * so this is the usual case for "fix this PR". */
 async function dispatchReplyToUnlabeledTask(
   runtime: ReturnType<typeof createOrchestratorRuntime>,
   input: {
@@ -338,6 +345,8 @@ async function dispatchReplyToUnlabeledTask(
     assignedPipeline: Pipeline;
     currentLabels: string[];
     task: Task;
+    /** Absent on Retry dispatch, which has no operator token. */
+    operator?: CommentActor;
   },
 ): Promise<Omit<PostCommentResult, 'url'>> {
   const parsedWork = workPayloadSchema.safeParse(input.task.work);
@@ -347,8 +356,23 @@ async function dispatchReplyToUnlabeledTask(
   const effective =
     input.task.providerRouting?.acceptedGeneration?.pipeline ??
     work.spec.pipeline;
+  const label = agentIntegration(input.repo, input.assignedPipeline)?.label;
   if (effective !== input.assignedPipeline) {
-    return { dispatched: false, dispatchWarning: 'admitted-pipeline-mismatch' };
+    if (input.operator === undefined || label === undefined) {
+      return {
+        dispatched: false,
+        dispatchWarning: 'admitted-pipeline-mismatch',
+      };
+    }
+    await asOperator(input.operator, (octokit) =>
+      octokit.rest.issues.addLabels({
+        owner: input.repo.owner,
+        repo: input.repo.name,
+        issue_number: input.issueNumber,
+        labels: [label],
+      }),
+    );
+    return { dispatched: false, dispatchWarning: 'provider-handoff-requested' };
   }
   const outcome = await admitGithubWork(runtime, {
     anchor: { repo: repoKey(input.repo), issue: input.issueNumber },
@@ -372,7 +396,6 @@ async function dispatchReplyToUnlabeledTask(
   // Admission is durable; the label only projects the new assignment, so
   // later replies route to this agent without asking again. Its webhook finds
   // the run just admitted and is refused as busy rather than starting another.
-  const label = agentIntegration(input.repo, input.assignedPipeline)?.label;
   if (label === undefined) return { dispatched: true };
   try {
     await getGithubClient().rest.issues.addLabels({
@@ -394,6 +417,7 @@ async function dispatchPostedReply(
   actorLogin: string,
   assignedPipeline?: Pipeline,
   handoff = false,
+  operator?: CommentActor,
 ): Promise<Omit<PostCommentResult, 'url'>> {
   // The inbox projection's exactly-one canonical agent label is the explicit
   // console intent to hand this comment to an agent. A Task alone is not that
@@ -477,6 +501,7 @@ async function dispatchPostedReply(
           assignedPipeline,
           currentLabels,
           task: existingTask.task,
+          ...(operator === undefined ? {} : { operator }),
         });
         handedBackToAgent = handedOff.dispatched;
         dispatchWarning = handedOff.dispatchWarning;

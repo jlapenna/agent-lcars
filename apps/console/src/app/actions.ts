@@ -144,11 +144,13 @@ export async function replyToItem(
             ? 'Reply posted and agent dispatched, but the queue may take a moment to refresh.'
             : dispatchWarning === 'dispatch-failed'
               ? 'Reply posted, but dispatch failed. Use Retry dispatch to send the posted reply without posting it again.'
-              : dispatchWarning === 'admitted-pipeline-mismatch'
-                ? 'Reply posted as a comment only: this item already ran with a different agent. Reply again choosing that agent to dispatch it.'
-                : dispatched
-                  ? `Dispatched ${assignedPipeline ?? 'agent'}`
-                  : 'No agent assigned - posted as a comment only',
+              : dispatchWarning === 'provider-handoff-requested'
+                ? `Reply posted and the ${assignedPipeline ?? 'agent'} label applied as you; LCARS hands this item over once that label is admitted.`
+                : dispatchWarning === 'admitted-pipeline-mismatch'
+                  ? 'Reply posted as a comment only: this item already ran with a different agent.'
+                  : dispatched
+                    ? `Dispatched ${assignedPipeline ?? 'agent'}`
+                    : 'No agent assigned - posted as a comment only',
     };
   } catch (error) {
     return { ok: false, message: toUserErrorMessage(error) };
