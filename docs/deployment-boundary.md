@@ -369,8 +369,8 @@ wrapper reads the renewed token from disk on every call, so the one-hour
 expiry never cuts a long run off. A Goose job whose profile supplies its
 own GitHub credential gets that credential's permissions instead, which
 may lack `actions: write`. Nothing exports `$ACTIONS_RERUN_TOKEN`. The
-`AGENT_CI_RERUN_TOKEN` repository secret, a classic PAT from the retired
-hosted lane, still exists but is unreferenced.
+retired hosted lane's `AGENT_CI_RERUN_TOKEN` repository secret was deleted
+on 2026-11-13.
 
 The credential must never be the dispatching workflow's own
 `GITHUB_TOKEN`: that is the control plane's credential, and handing it to
