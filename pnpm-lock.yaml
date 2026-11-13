@@ -81,7 +81,7 @@ importers:
         version: 8.19.0
       firebase-admin:
         specifier: ^14.0.0
-        version: 14.5.0(supports-color@7.2.0)
+        version: 14.5.1(supports-color@7.2.0)
       google-auth-library:
         specifier: ^11.0.0
         version: 11.3.4(supports-color@7.2.0)
@@ -4500,8 +4500,8 @@ packages:
   find-yarn-workspace-root@2.0.0:
     resolution: {integrity: sha512-1IMnbjt4KzsQfnhnzNd8wUEgXZ44IzZaZmnLYx7D5FZlaHt2gW20Cri8Q+E/t5tIj4+epTBub+2Zxu/vNILzqQ==}
 
-  firebase-admin@14.5.0:
-    resolution: {integrity: sha512-DElmgmaH9aPXu2dWXGQiDoan33UfTnbfAAKaue4fwEZxmpdaNrTk5DmuFn+vVDki2KZ6TiaC0IHRWcEzcDxB3Q==}
+  firebase-admin@14.5.1:
+    resolution: {integrity: sha512-3NSWRREeFCET2tyiOd0ENvRFdagi9voBRGCiNbGSIRbwuMJh2Eh/dcmItNWd82rcqd+fyW5/77/oZOZxC27/sA==}
     engines: {node: '>=22'}
 
   firebase-tools@15.36.0:
@@ -12418,7 +12418,7 @@ snapshots:
     dependencies:
       micromatch: 4.0.8
 
-  firebase-admin@14.5.0(supports-color@7.2.0):
+  firebase-admin@14.5.1(supports-color@7.2.0):
     dependencies:
       '@fastify/busboy': 3.2.5
       '@firebase/database-compat': 2.1.7
