@@ -42,7 +42,7 @@ ARG RUNNER_BASE=ghcr.io/actions/actions-runner@sha256:6d0b2d80d80f143f77dcb676e5
 ARG GO_VERSION=1.27.4
 # The canonical publisher can freeze these indexes across semantic build jobs.
 # Defaults keep ordinary builds and Renovate version ownership unchanged.
-ARG NODE_BUILD_BASE=node:26.13.0-slim
+ARG NODE_BUILD_BASE=node:26.13.1-slim
 # Node 25+ no longer bundles Corepack (neither the node image nor NodeSource's
 # nodejs package), and every pnpm here resolves through it from packageManager.
 ARG COREPACK_VERSION=0.36.0
@@ -420,7 +420,7 @@ RUN AGY_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/agy-versi
 # self-hosting ci.yml's `verify` job surfaced that the image had no C
 # toolchain at all, and this Go app has no separate plain `test` target).
 ARG EXTRA_APT_PACKAGES=""
-ARG NODE_VERSION=26.13.0
+ARG NODE_VERSION=26.13.1
 ARG COREPACK_VERSION
 
 # Playwright's browser stack is deliberately NOT baked here (reverted per
