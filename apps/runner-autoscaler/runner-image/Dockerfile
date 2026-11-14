@@ -310,9 +310,18 @@ ARG GOMEMLIMIT=1GiB
 ARG GO_VERSION
 ARG TARGETOS
 ARG TARGETARCH
-COPY repo-checks.env install-repo-checks.sh /tmp/repo-checks/
+# chezmoi rides along for homegit's `validate` job on the homegit-ci lane
+# (jlapenna/homelab#3510), so that job fetches nothing at run time. It is
+# fetched here, into the /out the final stage already copies, and not by its
+# own instructions there: Homelab's publisher refuses a candidate whose
+# provenance exceeds 2 MiB, every final-stage layer is listed again under
+# each later step, and three added layers cost 90 KB of the 73 KB that was
+# left (publish run 43562186039). This placement adds no layer.
+COPY repo-checks.env install-repo-checks.sh chezmoi-version install-chezmoi-release.sh /tmp/repo-checks/
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
     && bash /tmp/repo-checks/install-repo-checks.sh \
+    && CHEZMOI_VERSION="$(tr -d '\r\n' < /tmp/repo-checks/chezmoi-version)" \
+       CHEZMOI_INSTALL_DIR=/out bash /tmp/repo-checks/install-chezmoi-release.sh \
     && rm -rf /var/lib/apt/lists/*
 COPY actionlint-version /tmp/actionlint-version
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -583,17 +592,6 @@ COPY python-hooks.test.sh /usr/local/lib/agent-lcars/python-hooks.test.sh
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-# chezmoi for homegit's `validate` job on the homegit-ci lane
-# (jlapenna/homelab#3510), so that job fetches nothing at run time. Same
-# reviewed-release path as the runtimes above: exact version, per-architecture
-# SHA-256, and the installer fails the build unless the binary reports that
-# version. Placed late on purpose: adding it earlier would rebuild the apt,
-# Node and browser layers for a tool none of them need.
-COPY chezmoi-version /usr/local/share/agent-lcars-tooling/chezmoi-version
-COPY install-chezmoi-release.sh /usr/local/lib/agent-lcars/install-chezmoi-release.sh
-RUN CHEZMOI_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/chezmoi-version)" \
-    TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-chezmoi-release.sh
 
 # Actions runtime health-check functions consumed by entrypoint.sh.
 # agent-lcars#1330: pre-populate the runner's action-archive cache so job
