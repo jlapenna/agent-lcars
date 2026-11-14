@@ -22,8 +22,22 @@ func validateQueueExecutorEnvironment(cfg OrchestratorConfig) error {
 	if strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")) == "" {
 		return fmt.Errorf("queue executor: GOOGLE_APPLICATION_CREDENTIALS is required for the queue executor")
 	}
-	if strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS")) == "" {
-		return fmt.Errorf("queue executor: LCARS_SCHEDULER_CREDENTIALS is required for the schedule and maintenance ticker")
+	scheduler := strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS"))
+	if runsScheduleTicker(cfg) {
+		if scheduler == "" {
+			return fmt.Errorf("queue executor: LCARS_SCHEDULER_CREDENTIALS is required for the schedule and maintenance ticker")
+		}
+	} else if scheduler != "" {
+		// The schedule ticker belongs to the shared executor. A zone holding
+		// the work.cron key would be a second schedule owner; refuse it.
+		return fmt.Errorf("queue executor: a runtimes_only zone executor runs no schedule ticker; unset LCARS_SCHEDULER_CREDENTIALS")
 	}
 	return validateKubernetesQueueEnvironment(cfg.Kubernetes)
+}
+
+// runsScheduleTicker reports whether this executor owns the schedule and
+// maintenance ticker. Only the shared executor does: a runtimes_only zone
+// executor claims its declared runtimes and nothing else.
+func runsScheduleTicker(cfg OrchestratorConfig) bool {
+	return cfg.Kubernetes == nil || !cfg.Kubernetes.RuntimesOnly
 }

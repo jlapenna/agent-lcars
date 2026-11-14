@@ -339,9 +339,121 @@ A full process restart is required for backend, credentials, topology or
 resource configuration changes. `--check-config` performs the environment
 checks and the read-only Kubernetes preflight described above.
 
+### Declared runtimes and zone executors
+
+`kubernetes.runtimes` declares per-pipeline execution runtimes for the
+[`claw` adapter](../../docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md#claw),
+keyed by claimed pipeline name. When a claim returns a pipeline with an entry,
+the Job is built from that entry alone; every other pipeline keeps the
+direct-runner Job described above, unchanged. Entries come only from this
+trusted configuration file; Work input never selects an image, resource,
+Secret, key or environment value.
+
+```yaml
+kubernetes:
+  namespace: homelab-ops-claw
+  kubeconfig: /run/secrets/queue-kubeconfig
+  service_account: claw-runner
+  max_concurrent: 1
+  node_selector:
+    homelab.jlapenna.net/queue-runner: 'true'
+  runtimes_only: true
+  runtimes:
+    claw-investigator:
+      image: registry.example.com/openclaw@sha256:<64 hex>
+      requests: { cpu: '2', memory: 3Gi, ephemeral-storage: 8Gi }
+      limits: { cpu: '2', memory: 3Gi, ephemeral-storage: 8Gi }
+      active_deadline_seconds: 3300
+      secret_name: claw-investigator
+      items:
+        - { key: investigator-ssh-key, path: ssh/id_ed25519 }
+        - { key: known-hosts, path: ssh/known_hosts }
+        - { key: litellm-api-key, path: env/LITELLM_API_KEY }
+      agent: # optional
+        config_map: claw-investigator-agent
+        items:
+          - { key: config.json, path: config.json }
+          - { key: approvals.json, path: approvals.json }
+          - { key: workspace-AGENTS.md, path: workspace/AGENTS.md }
+      env:
+        - { name: CLAW_AGENT, value: investigator }
+```
+
+Validation refuses to start the executor unless:
+
+- the runtime name matches `^claw-[a-z0-9-]+$`, so it can never shadow a
+  provider pipeline;
+- `image` is pinned by digest (`<repository>@sha256:<64 hex>`);
+- `requests` equal `limits` for `cpu`, `memory` and `ephemeral-storage`, all
+  three present and within 2 CPU / 6 GiB / 40 GiB;
+- `active_deadline_seconds` is at least 360 and strictly below the 7200 s run
+  lease;
+- `secret_name` is a valid Secret name other than `credentials_secret`, with at
+  least one item. Item and agent keys are valid keys. Paths are clean relative
+  paths with no `.` segment and no segment starting with `..` (Kubernetes
+  reserves `..data`). They do not repeat, and none is a parent of another
+  (`ssh` alongside `ssh/id_ed25519`);
+- declared `env` names, and the name after `env/` in each Secret item path
+  (which the launcher exports as a variable), are valid and share one
+  namespace without repeats. An `env/` path has exactly one segment after the
+  prefix. Neither may be `RUNNER_MODE`, `CLAW_TURN_DEADLINE_SECONDS`,
+  `NODE_OPTIONS`, `PATH`, `HOME`, or any `LCARS_*` or `OPENCLAW_*` name.
+
+If the apiserver still refuses a Job spec as invalid, launch settles the claim
+immediately rather than holding it until its placement deadline.
+
+A runtime Job reuses the shared template (suspended single attempt, per-run
+token Secret, non-root pod security context, `ndots:1` DNS, node selector and
+tolerations) and differs only in:
+
+- the container `claw` runs the declared image with `IfNotPresent` and its own
+  entrypoint (no command or args override) and a read-only root filesystem;
+- requests and limits are the runtime's, and the Pod deadline is
+  `active_deadline_seconds`;
+- the environment is exactly `RUNNER_MODE=claw`, `LCARS_RUN_ID`,
+  `LCARS_CONSOLE_URL`, `LCARS_RUN_TOKEN` (from the per-Job run-token Secret),
+  `CLAW_TURN_DEADLINE_SECONDS` (the Pod deadline minus 300 s, so the launcher's
+  outer turn deadline ends first) and the declared `env`;
+- the only Secret material is the declared items of `secret_name`, read-only
+  at `/run/claw-secrets` (the launcher exports items under `env/` as
+  environment variables); the optional `agent` ConfigMap is read-only at
+  `/claw/agent` with mode 0555, so agent tools under `tools/` can run by path
+  (Secret items stay 0440 and are never executable);
+- `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
+  (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
+  `emptyDir`.
+
+No runtime Job receives `telemetry-writer.json`, a provider key, the Hindsight
+token, the Codex volatile volume or `LCARS_WORKER_POLICY_PROVIDERS`. Its memory
+launch metric reads `isolated`, and claim and launch metrics carry the runtime
+name as their `pipeline` label.
+
+**Zone executors.** `runtimes_only: true` makes an executor serve only its
+declared runtimes. It must not set `credentials_secret`, `requests` or
+`limits`, and needs at least one runtime. It does not read
+`LCARS_QUEUE_RUNNER_IMAGE` or `LCARS_WORKER_POLICY_PROVIDERS`, does not require
+the legacy provider keys, and refuses (and settles) any claim for a pipeline
+without a runtime entry. Its environment is `LCARS_CONSOLE_URL`,
+`LCARS_WORK_AUDIENCE` and `GOOGLE_APPLICATION_CREDENTIALS` (the zone executor
+principal's own key, whose `work.executor` grant admits only the zone's
+pipelines). It runs no schedule or maintenance ticker, which belongs to the
+shared executor: `LCARS_SCHEDULER_CREDENTIALS` must be unset, and startup and
+`--check-config` refuse a zone executor that sets it. Preflight
+requires every declared item of each runtime's Secret to be nonempty and every
+declared agent key to exist, which adds ConfigMaps `get` to the controller's
+RBAC when `agent` is used. A shared executor may also declare runtimes; it
+then still requires its legacy keys.
+
+**Capacity.** The claimed pipeline, and so the run's shape, is known only
+after the claim. The pre-claim node-fit check, and the startup free-room
+preflight, therefore use the per-resource maximum over every shape the
+executor serves: the legacy `requests` unless `runtimes_only`, plus every
+runtime's `requests`. `max_concurrent` and the one-pending-placement rule are
+unchanged.
+
 ### Native schedule ticker
 
-The same continuously running process ticks native schedules through
+The shared executor process ticks native schedules through
 `POST /api/work/v1/schedules/tick` once at startup and then every five
 minutes. Required `LCARS_SCHEDULER_CREDENTIALS` points the schedule and
 maintenance ticker at its dedicated service-account key
@@ -354,7 +466,9 @@ closed at runtime without falling back to `GOOGLE_APPLICATION_CREDENTIALS`.
 `work.executor` alone cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule state and admission in the Work API and
 removes GitHub Actions schedule delivery from the ingress path.
 `github_runner_autoscaler_schedule_ticks_total` reports `success` and `error`
-outcomes for operations monitoring.
+outcomes for operations monitoring. A `runtimes_only` zone executor runs no
+ticker and refuses `LCARS_SCHEDULER_CREDENTIALS`
+([zone executors](#declared-runtimes-and-zone-executors)).
 
 The same cadence posts `POST /api/work/v1/maintenance/tick`, which settles
 expired leases and drains the Console's outbox

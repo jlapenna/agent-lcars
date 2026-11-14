@@ -58,11 +58,29 @@ type queueKubernetesConfig struct {
 	Tolerations       []queueToleration `yaml:"tolerations,omitempty"`
 	Requests          map[string]string `yaml:"requests"`
 	Limits            map[string]string `yaml:"limits"`
+	// Runtimes declares per-pipeline execution runtimes (the claw adapter),
+	// keyed by claimed pipeline name. A claimed pipeline with an entry runs
+	// from that entry alone; every other pipeline keeps the legacy
+	// direct-runner Job. See queue_runtimes.go.
+	Runtimes map[string]queueRuntimeConfig `yaml:"runtimes,omitempty"`
+	// RuntimesOnly makes this a zone executor that serves only its declared
+	// runtimes: it needs no legacy credentials_secret, requests, limits,
+	// LCARS_QUEUE_RUNNER_IMAGE or provider keys, and refuses to build a Job
+	// for any pipeline without a runtime entry.
+	RuntimesOnly bool `yaml:"runtimes_only,omitempty"`
 }
 
 func (c *queueKubernetesConfig) validate() error {
-	if c.Namespace == "" || c.CredentialsSecret == "" || c.ServiceAccount == "" || c.MaxConcurrent < 1 || len(c.NodeSelector) == 0 {
+	if c.Namespace == "" || c.ServiceAccount == "" || c.MaxConcurrent < 1 || len(c.NodeSelector) == 0 || (!c.RuntimesOnly && c.CredentialsSecret == "") {
 		return fmt.Errorf("kubernetes requires namespace, credentials_secret, service_account, positive max_concurrent and explicit node_selector")
+	}
+	if c.RuntimesOnly {
+		if c.CredentialsSecret != "" || len(c.Requests) != 0 || len(c.Limits) != 0 {
+			return fmt.Errorf("kubernetes runtimes_only serves only declared runtimes and must not set credentials_secret, requests or limits")
+		}
+		if len(c.Runtimes) == 0 {
+			return fmt.Errorf("kubernetes runtimes_only requires at least one declared runtime")
+		}
 	}
 	for _, t := range c.Tolerations {
 		// Wildcard tolerations would bypass maintenance/readiness gates.
@@ -72,6 +90,14 @@ func (c *queueKubernetesConfig) validate() error {
 		if len(validation.IsQualifiedName(t.Key)) != 0 || len(validation.IsValidLabelValue(t.Value)) != 0 || (t.Operator == core.TolerationOpExists && t.Value != "") {
 			return fmt.Errorf("kubernetes tolerations require a valid key/value and an empty value for Exists")
 		}
+	}
+	for _, name := range c.runtimeNames() {
+		if err := c.Runtimes[name].validate(name, c.CredentialsSecret); err != nil {
+			return err
+		}
+	}
+	if c.RuntimesOnly {
+		return nil
 	}
 	for _, values := range []map[string]string{c.Requests, c.Limits} {
 		for name, value := range values {
@@ -104,12 +130,15 @@ func validateKubernetesQueueEnvironment(c *queueKubernetesConfig) error {
 	if err != nil || console.Host == "" || (console.Scheme != "https" && console.Scheme != "http") {
 		return fmt.Errorf("LCARS_CONSOLE_URL must be an absolute HTTP(S) URL")
 	}
-	_, err = directRunnerImage()
-	if err != nil {
-		return err
-	}
-	if _, err := directRunnerWorkerPolicyProviders(); err != nil {
-		return err
+	// A runtimes-only zone executor launches no direct-runner image and
+	// forwards no worker policy selector, so neither is read.
+	if !c.RuntimesOnly {
+		if _, err := directRunnerImage(); err != nil {
+			return err
+		}
+		if _, err := directRunnerWorkerPolicyProviders(); err != nil {
+			return err
+		}
 	}
 	_, err = queueKubernetesRESTConfig(c)
 	return err
@@ -229,13 +258,14 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	if err != nil {
 		return nil, err
 	}
-	image, err := directRunnerImage()
-	if err != nil {
-		return nil, err
-	}
-	providers, err := directRunnerWorkerPolicyProviders()
-	if err != nil {
-		return nil, err
+	var image, providers string
+	if !c.RuntimesOnly {
+		if image, err = directRunnerImage(); err != nil {
+			return nil, err
+		}
+		if providers, err = directRunnerWorkerPolicyProviders(); err != nil {
+			return nil, err
+		}
 	}
 	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
 		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
@@ -249,13 +279,42 @@ func (q *kubernetesQueue) preflight(ctx context.Context) error {
 	client, c := q.client, q.config
 	// Fail before claiming if credentials or API inventory cannot be read. Do
 	// not include Secret data in diagnostics.
-	secret, err := client.CoreV1().Secrets(c.Namespace).Get(ctx, c.CredentialsSecret, meta.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("reading queue credential Secret: %w", err)
+	// The legacy provider keys are required only when this executor serves
+	// legacy pipelines; a runtimes-only zone executor never reads them.
+	if !c.RuntimesOnly {
+		secret, err := client.CoreV1().Secrets(c.Namespace).Get(ctx, c.CredentialsSecret, meta.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("reading queue credential Secret: %w", err)
+		}
+		for _, key := range []string{"telemetry-writer.json", "claude-code-oauth-token", "opencode-llm-api-key"} {
+			if len(secret.Data[key]) == 0 {
+				return fmt.Errorf("queue credential Secret missing nonempty key %s", key)
+			}
+		}
 	}
-	for _, key := range []string{"telemetry-writer.json", "claude-code-oauth-token", "opencode-llm-api-key"} {
-		if len(secret.Data[key]) == 0 {
-			return fmt.Errorf("queue credential Secret missing nonempty key %s", key)
+	// Every declared runtime's items must exist and be nonempty, so a missing
+	// zone credential fails startup instead of every attempt's Pod.
+	for _, name := range c.runtimeNames() {
+		rt := c.Runtimes[name]
+		secret, err := client.CoreV1().Secrets(c.Namespace).Get(ctx, rt.SecretName, meta.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("reading runtime %s Secret: %w", name, err)
+		}
+		for _, item := range rt.Items {
+			if len(secret.Data[item.Key]) == 0 {
+				return fmt.Errorf("runtime %s Secret missing nonempty key %s", name, item.Key)
+			}
+		}
+		if rt.Agent != nil {
+			agent, err := client.CoreV1().ConfigMaps(c.Namespace).Get(ctx, rt.Agent.ConfigMap, meta.GetOptions{})
+			if err != nil {
+				return fmt.Errorf("reading runtime %s agent ConfigMap: %w", name, err)
+			}
+			for _, item := range rt.Agent.Items {
+				if _, ok := agent.Data[item.Key]; !ok {
+					return fmt.Errorf("runtime %s agent ConfigMap missing key %s", name, item.Key)
+				}
+			}
 		}
 	}
 	if _, err := client.CoreV1().ServiceAccounts(c.Namespace).Get(ctx, c.ServiceAccount, meta.GetOptions{}); err != nil {
@@ -389,7 +448,7 @@ func (q *kubernetesQueue) nodesFit(ctx context.Context, requireFree bool) (bool,
 			remaining.Sub(resource.MustParse("1"))
 			available[core.ResourcePods] = remaining
 		}
-		for name, requested := range queueResources(q.config.Requests) {
+		for name, requested := range q.config.admissionShape() {
 			remaining := available[name]
 			if remaining.Cmp(requested) < 0 {
 				allowed = false
@@ -488,6 +547,8 @@ func (q *kubernetesQueue) reserve(ctx context.Context) (*directRunnerReservation
 	// already-Pending Pods for a free slot every poll. Require only a Ready,
 	// uncordoned, tolerated node whose total allocatable budget fits the shape;
 	// a node with free room satisfies that too, so this is the whole predicate.
+	// The claimed pipeline is unknown until after the claim, so the shape is
+	// the largest of every served shape (queueKubernetesConfig.admissionShape).
 	fits, err := q.nodesFit(ctx, false)
 	if err != nil {
 		return nil, err
@@ -510,71 +571,30 @@ func queueResources(values map[string]string) core.ResourceList {
 	return out
 }
 func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
-	var providerKey string
-	if l.providerAuth != "" && (l.pipeline != "goose" || (l.providerAuth != "claude" && l.providerAuth != "agy")) {
-		return nil, fmt.Errorf("unsupported provider auth %q for pipeline %q", l.providerAuth, l.pipeline)
-	}
-	switch l.pipeline {
-	case "claude":
-		providerKey = "claude-code-oauth-token"
-	case "codex":
-	case "opencode":
-		providerKey = "opencode-llm-api-key"
-	case "agy":
-		providerKey = "antigravity-oauth-token"
-	case "goose":
-		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
-			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
-			limit, limitErr := resource.ParseQuantity(q.config.Limits[name])
-			if requestErr != nil || limitErr != nil || request.Sign() <= 0 || request.Cmp(limit) != 0 || limit.Cmp(resource.MustParse(ceiling)) > 0 {
-				return nil, fmt.Errorf("goose requests and limits must match within the direct-agent ceiling")
-			}
-		}
-		// Only a recipe admitted under a Claude- or Antigravity-harness profile
-		// receives that harness's token; other recipes get no provider credential.
-		switch l.providerAuth {
-		case "claude":
-			providerKey = "claude-code-oauth-token"
-		case "agy":
-			providerKey = "antigravity-oauth-token"
-		}
-	default:
-		return nil, fmt.Errorf("no direct-runner provider adapter for pipeline %q", l.pipeline)
-	}
 	name := queueJobName(l.runID)
-	items := []core.KeyToPath{{Key: "telemetry-writer.json", Path: "telemetry-writer.json"}}
-	if providerKey != "" {
-		items = append(items, core.KeyToPath{Key: providerKey, Path: providerKey})
+	runTokenEnv := core.EnvVar{Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}
+	var shape queueJobShape
+	var err error
+	if rt, ok := q.config.Runtimes[l.pipeline]; ok {
+		shape, err = q.runtimeJobShape(l, rt, runTokenEnv)
+	} else if q.config.RuntimesOnly {
+		err = fmt.Errorf("pipeline %q has no declared runtime on this runtimes-only executor", l.pipeline)
+	} else {
+		shape, err = q.legacyJobShape(l, runTokenEnv)
 	}
-	if l.pipeline == "goose" {
-		items = append(items, core.KeyToPath{Key: "goose-environment.json", Path: "goose-environment.json"}, core.KeyToPath{Key: "goose-config.yaml", Path: "goose-config.yaml"})
+	if err != nil {
+		return nil, err
 	}
 	zero := int32(0)
 	uid := int64(1001)
 	gid := int64(1001)
-	mode := int32(0440)
 	no := false
 	yes := true
 	// The TTL controller is the only finished-Job retention: it removes every
 	// finished Job (and its Pod logs) after queueJobRetentionAge.
 	ttl := int32(queueJobRetentionAge / time.Second)
-	deadline := int64(7200)
 	one := int32(1)
-	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, {Name: "LCARS_RUN_TOKEN", ValueFrom: &core.EnvVarSource{SecretKeyRef: &core.SecretKeySelector{LocalObjectReference: core.LocalObjectReference{Name: name}, Key: "run-token"}}}}
-	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
-	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
-	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
-	if l.pipeline != "goose" {
-		env = append(env, core.EnvVar{Name: "HINDSIGHT_TOKEN_FILE", Value: directRunnerHindsightTokenPath})
-		volumes = append(volumes, core.Volume{Name: "hindsight-credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: []core.KeyToPath{{Key: "hindsight-api-token", Path: "hindsight-api-token"}}, DefaultMode: &mode, Optional: &yes}}})
-		mounts = append(mounts, core.VolumeMount{Name: "hindsight-credentials", MountPath: directRunnerHindsightMountPath, ReadOnly: true})
-	}
-	if l.pipeline == "codex" {
-		env = append(env, core.EnvVar{Name: "LCARS_CODEX_VOLATILE_DIR", Value: directRunnerCodexVolatileMountPath})
-		size := resource.MustParse("64Mi")
-		volumes = append(volumes, core.Volume{Name: "codex-volatile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{Medium: core.StorageMediumMemory, SizeLimit: &size}}})
-		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
-	}
+	deadline := shape.deadline
 	annotations := map[string]string{queueRunAnnotation: l.runID}
 	if l.runToken != "" {
 		annotations[queueClaimAnnotation] = queueClaimFingerprint(l.runToken)
@@ -614,25 +634,92 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 					// stop on a search response before reaching the absolute name.
 					DNSPolicy: core.DNSClusterFirst,
 					DNSConfig: &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
-					Volumes:   volumes,
+					Volumes:   shape.volumes,
 					Containers: []core.Container{{
-						Name: "direct-runner", Image: q.image, ImagePullPolicy: core.PullAlways,
-						Env: env, VolumeMounts: mounts,
-						Resources:       core.ResourceRequirements{Requests: queueResources(q.config.Requests), Limits: queueResources(q.config.Limits)},
+						Name: shape.container, Image: shape.image, ImagePullPolicy: shape.pullPolicy,
+						Env: shape.env, VolumeMounts: shape.mounts,
+						Resources:       core.ResourceRequirements{Requests: queueResources(shape.requests), Limits: queueResources(shape.limits)},
 						SecurityContext: &core.SecurityContext{AllowPrivilegeEscalation: &no, Capabilities: &core.Capabilities{Drop: []core.Capability{"ALL"}}},
 					}},
 				},
 			},
 		},
 	}
-	if l.pipeline == "goose" {
+	if shape.readOnlyRootFilesystem {
+		job.Spec.Template.Spec.Containers[0].SecurityContext.ReadOnlyRootFilesystem = &yes
+	}
+	return job, nil
+}
+
+// legacyJobShape is the direct-runner Job every pipeline without a declared
+// runtime receives: the shared runner image, the legacy credential Secret's
+// writer and provider key, optional Hindsight and the Codex volatile volume.
+func (q *kubernetesQueue) legacyJobShape(l directRunnerLaunch, runTokenEnv core.EnvVar) (queueJobShape, error) {
+	var providerKey string
+	if l.providerAuth != "" && (l.pipeline != "goose" || (l.providerAuth != "claude" && l.providerAuth != "agy")) {
+		return queueJobShape{}, fmt.Errorf("unsupported provider auth %q for pipeline %q", l.providerAuth, l.pipeline)
+	}
+	// The execution limit matches the run lease.
+	deadline := int64(queueRunLeaseSeconds)
+	switch l.pipeline {
+	case "claude":
+		providerKey = "claude-code-oauth-token"
+	case "codex":
+	case "opencode":
+		providerKey = "opencode-llm-api-key"
+	case "agy":
+		providerKey = "antigravity-oauth-token"
+	case "goose":
+		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
+			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
+			limit, limitErr := resource.ParseQuantity(q.config.Limits[name])
+			if requestErr != nil || limitErr != nil || request.Sign() <= 0 || request.Cmp(limit) != 0 || limit.Cmp(resource.MustParse(ceiling)) > 0 {
+				return queueJobShape{}, fmt.Errorf("goose requests and limits must match within the direct-agent ceiling")
+			}
+		}
+		// Only a recipe admitted under a Claude- or Antigravity-harness profile
+		// receives that harness's token; other recipes get no provider credential.
+		switch l.providerAuth {
+		case "claude":
+			providerKey = "claude-code-oauth-token"
+		case "agy":
+			providerKey = "antigravity-oauth-token"
+		}
 		// Recipes time out after at most 45 minutes; the extra five let the
 		// runner report and clean up before the kubelet kills the Pod.
 		deadline = 3000
-		job.Spec.Template.Spec.ActiveDeadlineSeconds = &deadline
+	default:
+		return queueJobShape{}, fmt.Errorf("no direct-runner provider adapter for pipeline %q", l.pipeline)
 	}
-
-	return job, nil
+	items := []core.KeyToPath{{Key: "telemetry-writer.json", Path: "telemetry-writer.json"}}
+	if providerKey != "" {
+		items = append(items, core.KeyToPath{Key: providerKey, Path: providerKey})
+	}
+	if l.pipeline == "goose" {
+		items = append(items, core.KeyToPath{Key: "goose-environment.json", Path: "goose-environment.json"}, core.KeyToPath{Key: "goose-config.yaml", Path: "goose-config.yaml"})
+	}
+	mode := int32(0440)
+	yes := true
+	env := []core.EnvVar{{Name: "RUNNER_MODE", Value: "direct"}, {Name: "LCARS_RUN_ID", Value: l.runID}, {Name: "LCARS_CONSOLE_URL", Value: l.consoleURL}, runTokenEnv}
+	env = append(env, core.EnvVar{Name: "LCARS_WORKER_POLICY_PROVIDERS", Value: q.workerPolicyProviders})
+	volumes := []core.Volume{{Name: "credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: items, DefaultMode: &mode}}}, {Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}}
+	mounts := []core.VolumeMount{{Name: "credentials", MountPath: "/run/secrets", ReadOnly: true}, {Name: "work", MountPath: "/home/runner/_work"}}
+	if l.pipeline != "goose" {
+		env = append(env, core.EnvVar{Name: "HINDSIGHT_TOKEN_FILE", Value: directRunnerHindsightTokenPath})
+		volumes = append(volumes, core.Volume{Name: "hindsight-credentials", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: q.config.CredentialsSecret, Items: []core.KeyToPath{{Key: "hindsight-api-token", Path: "hindsight-api-token"}}, DefaultMode: &mode, Optional: &yes}}})
+		mounts = append(mounts, core.VolumeMount{Name: "hindsight-credentials", MountPath: directRunnerHindsightMountPath, ReadOnly: true})
+	}
+	if l.pipeline == "codex" {
+		env = append(env, core.EnvVar{Name: "LCARS_CODEX_VOLATILE_DIR", Value: directRunnerCodexVolatileMountPath})
+		size := resource.MustParse("64Mi")
+		volumes = append(volumes, core.Volume{Name: "codex-volatile", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{Medium: core.StorageMediumMemory, SizeLimit: &size}}})
+		mounts = append(mounts, core.VolumeMount{Name: "codex-volatile", MountPath: directRunnerCodexVolatileMountPath})
+	}
+	return queueJobShape{
+		container: "direct-runner", image: q.image, pullPolicy: core.PullAlways,
+		env: env, volumes: volumes, mounts: mounts,
+		requests: q.config.Requests, limits: q.config.Limits, deadline: deadline,
+	}, nil
 }
 func ptr[T any](v T) *T { return &v }
 
@@ -647,6 +734,15 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		return err
 	}
 	job, err := q.client.BatchV1().Jobs(q.config.Namespace).Create(ctx, desired, meta.CreateOptions{})
+	if apierrors.IsInvalid(err) {
+		// The apiserver validated and refused this exact spec, so no Job and
+		// no worker exist and a retry would fail identically: settle the claim
+		// now, as above, instead of holding it until its placement deadline.
+		if l.runToken != "" {
+			q.exits.observeTerminated(l.runID, l.runner, queueClaimFingerprint(l.runToken))
+		}
+		return fmt.Errorf("creating queue Job: %w", err)
+	}
 	if err != nil {
 		// A timed-out create may have reached the apiserver. Read the same name,
 		// never choose a new name and accidentally launch a duplicate attempt.
@@ -674,7 +770,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 // key silently disables per-repo memory; this makes that state a launch
 // metric. Only key presence is read, never the value.
 func (q *kubernetesQueue) memoryState(ctx context.Context, pipeline string) string {
-	if pipeline == "goose" {
+	if _, runtime := q.config.Runtimes[pipeline]; pipeline == "goose" || runtime {
 		return "isolated"
 	}
 	secret, err := q.client.CoreV1().Secrets(q.config.Namespace).Get(ctx, q.config.CredentialsSecret, meta.GetOptions{})
