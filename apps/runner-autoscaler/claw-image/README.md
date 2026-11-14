@@ -55,9 +55,11 @@ Each step fails the attempt closed with a `runner-failed` completion:
    under the outer deadline. OpenClaw's stderr is never forwarded, because it
    can echo resolved configuration.
 7. Settle: `report` only when the envelope is `ok`, has a final message and
-   no `toolSummary.unresolvedError`. `agent exec` exits 0 with `ok: true`
-   even when every tool call was denied, so the exit code alone proves
-   nothing.
+   no `toolSummary.unresolvedError`; for evidence operations
+   (`investigate:v1`) at least one tool call is also required. A tool call
+   that failed and was resolved (a probe of a host that is down) is evidence,
+   not a runner failure. `agent exec` exits 0 with `ok: true` even when every
+   tool call was denied, so the exit code alone proves nothing.
 
 ## Normalize an agent config
 
@@ -66,7 +68,7 @@ skills whose binaries are absent), so produce the pinned config with the
 exact image digest the zone will run:
 
 ```sh
-docker run --rm --read-only --tmpfs /work:uid=1000 --tmpfs /tmp:uid=1000 \
+docker run --rm --read-only --tmpfs /work:uid=1001 --tmpfs /tmp:uid=1001 \
   -v "$PWD/config.json:/in.json:ro" --entrypoint sh <claw-runner@digest> -c '
     mkdir -p /work/home /work/s && cp /in.json /work/s/c.json &&
     OPENCLAW_STATE_DIR=/work/s OPENCLAW_CONFIG_PATH=/work/s/c.json \

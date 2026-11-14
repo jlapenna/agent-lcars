@@ -342,3 +342,39 @@ test('cancellation stops the turn process group and still settles', async () => 
   });
   assert.deepEqual(completion(calls), result);
 });
+
+test('an investigation answered without any tool call is not a report', async () => {
+  const envelope = JSON.stringify({ ok: true, final: 'Probably fine.' });
+  const { env, fetchImpl } = await fixture({
+    env: { FAKE_ENVELOPE: envelope },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message: 'Claw turn answered without using any tool.',
+  });
+});
+
+test('a resolved tool failure is evidence, not a runner failure', async () => {
+  const envelope = JSON.stringify({
+    ok: true,
+    final: 'janeway is unreachable: probe transport refused.',
+    toolSummary: { calls: 2, tools: ['exec'], failures: 1 },
+  });
+  const { env, fetchImpl } = await fixture({
+    env: { FAKE_ENVELOPE: envelope },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.equal(result.outcome, 'report');
+});
+
+test('malformed numeric settings fail before any Work API call', async () => {
+  for (const [name, value] of [
+    ['CLAW_TURN_DEADLINE_SECONDS', 'abc'],
+    ['CLAW_HEARTBEAT_INTERVAL_MS', '0'],
+  ]) {
+    const { env, calls, fetchImpl } = await fixture({ env: { [name]: value } });
+    await assert.rejects(main(env, { fetchImpl }), new RegExp(name));
+    assert.equal(calls.length, 0);
+  }
+});

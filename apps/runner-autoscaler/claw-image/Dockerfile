@@ -37,6 +37,12 @@ ENV OPENCLAW_NO_AUTO_UPDATE=1 \
     CLAW_WORK_DIR=/work \
     HOME=/work/home
 
-USER node
+# The zone executor runs claw pods as uid/gid 1001 (the queue Job contract);
+# OpenSSH and Python's getpwuid need a passwd entry for that uid.
+RUN groupadd --gid 1001 claw \
+ && useradd --uid 1001 --gid 1001 --home-dir /work/home --no-create-home \
+      --shell /usr/sbin/nologin claw
+
+USER 1001:1001
 WORKDIR /work
 ENTRYPOINT ["node", "/opt/claw/claw-job.mjs"]

@@ -148,7 +148,16 @@ export function briefMessage(question, brief) {
 // Decide the attempt outcome from the `agent exec --json` envelope. Exit 0 and
 // ok:true are returned even when every tool call was denied, so tool failures
 // are read from toolSummary rather than the exit code.
-export function settle({ code, timedOut, aborted, stdout }) {
+// Operations whose answer must rest on tool evidence: a report with no tool
+// call is an unsupported answer. A tool call that failed and was then
+// resolved (for example a probe of a host that is down) is evidence, not a
+// runner failure; an unresolved tool error still fails the attempt.
+export const EVIDENCE_OPERATIONS = new Set(['investigate:v1']);
+
+export function settle(
+  { code, timedOut, aborted, stdout },
+  { requireTools = false } = {},
+) {
   if (aborted)
     return { outcome: 'runner-failed', message: 'Claw turn was cancelled.' };
   if (timedOut)
@@ -167,6 +176,18 @@ export function settle({ code, timedOut, aborted, stdout }) {
   }
   const final = typeof envelope.final === 'string' ? envelope.final.trim() : '';
   const unresolved = envelope.toolSummary?.unresolvedError;
+  const calls = Number(envelope.toolSummary?.calls ?? 0);
+  if (
+    envelope.ok === true &&
+    final &&
+    !unresolved &&
+    requireTools &&
+    !(calls > 0)
+  )
+    return {
+      outcome: 'runner-failed',
+      message: 'Claw turn answered without using any tool.',
+    };
   if (
     envelope.ok === true &&
     final &&
@@ -335,6 +356,14 @@ export async function prepareState({
   return { stateDir, workspace, configPath, childEnv };
 }
 
+function positiveInteger(env, name, fallback) {
+  if (env[name] === undefined || env[name] === '') return fallback;
+  const value = Number(env[name]);
+  if (!Number.isSafeInteger(value) || value <= 0)
+    throw new ClawFailure(`${name} must be a positive integer`);
+  return value;
+}
+
 export async function main(env = process.env, deps = {}) {
   const controller = new AbortController();
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'])
@@ -351,9 +380,13 @@ export async function main(env = process.env, deps = {}) {
   const agentDir = env.CLAW_AGENT_DIR || '/claw/agent';
   const secretsDir = env.CLAW_SECRETS_DIR || '/run/claw-secrets';
   const workRoot = env.CLAW_WORK_DIR || '/work';
-  const turnDeadlineMs = Number(env.CLAW_TURN_DEADLINE_SECONDS || 2400) * 1000;
-  const heartbeatMs = Number(
-    env.CLAW_HEARTBEAT_INTERVAL_MS || HEARTBEAT_INTERVAL_MS,
+  const started = Date.now();
+  const turnDeadlineMs =
+    positiveInteger(env, 'CLAW_TURN_DEADLINE_SECONDS', 2400) * 1000;
+  const heartbeatMs = positiveInteger(
+    env,
+    'CLAW_HEARTBEAT_INTERVAL_MS',
+    HEARTBEAT_INTERVAL_MS,
   );
 
   // 1. The server's startup fence: no provider work before acknowledgement.
@@ -406,14 +439,18 @@ export async function main(env = process.env, deps = {}) {
         {
           env: childEnv,
           cwd: workspace,
-          timeoutMs: turnDeadlineMs,
+          // The deadline covers setup too: the pod deadline sits a fixed
+          // margin above it, measured from launcher start.
+          timeoutMs: Math.max(1, turnDeadlineMs - (Date.now() - started)),
           signal: controller.signal,
         },
       );
       await call('heartbeat', { providerProcessStarted: true }).catch(
         ignoreHeartbeatFailure,
       );
-      result = settle(await turn);
+      result = settle(await turn, {
+        requireTools: EVIDENCE_OPERATIONS.has(brief.claw.operation),
+      });
     } catch (error) {
       result = {
         outcome: 'runner-failed',
