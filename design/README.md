@@ -8,6 +8,18 @@ the central 80% maskable safe zone. Re-render `apps/console/public/icon-192.png`
 `icon-512.png`, `apple-touch-icon.png` (180px) and `favicon.ico` (16/32/48px)
 from it when it changes.
 
+[`assets/icons/github-avatar.svg`](assets/icons/github-avatar.svg) is the
+transparent GitHub App avatar source: the same glyph geometry and colors as
+`app-icon.svg`, with its background rectangle removed and the view box tightened
+to leave 10% padding on each side (the glyph fills 80% of the square).
+[`assets/icons/github-avatar.png`](assets/icons/github-avatar.png) is its
+512×512 PNG export, ready to upload in the GitHub App's **Display information**
+settings. Regenerate it from the SVG after changing the source, preserving alpha:
+
+```bash
+node -e 'require("sharp")("design/assets/icons/github-avatar.svg").png().toFile("design/assets/icons/github-avatar.png")'
+```
+
 `fleet-console.html` is the layout target for the console: its elbow rail,
 header, workspace frame, panels and tables are what the routes are built to,
 at three widths — desktop (64em and up), tablet (48–64em: compact elbow,
