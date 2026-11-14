@@ -187,23 +187,42 @@ digest), published by the Homelab publisher from the verified distribution
 with its version and SHA-256 recorded and self-update disabled, and registered
 in [image publish routing](../../image-publish-routing.md). The launcher:
 
-1. Materializes the agent's pinned definition into an `emptyDir` workspace.
-2. Runs this under an outer deadline below the lease:
+1. Materializes the agent's pinned definition into an `emptyDir` workspace,
+   and copies its config to a writable path in a fresh `emptyDir` state
+   directory (`OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`).
+2. Runs `openclaw config validate --json` and fails the attempt unless it
+   reports `valid: true`. `agent exec` silently ignores unknown keys, so a
+   typo in the tool policy would otherwise go unnoticed.
+3. Runs `openclaw doctor --fix --non-interactive`. Without it, every
+   config-pinned `agent exec` fails before reaching the model with
+   `Auth profile read requested an uncaptured shared owner` (on
+   2026.10.10-beta.3 and 2026.11.3). Source pins the Doctor-normalized
+   config, so the step changes nothing, and the launcher fails the attempt
+   if it does.
+4. Seeds the host exec approvals from the agent's pinned approvals file with
+   `openclaw approvals set --file`: defaults `security: allowlist`,
+   `ask: off` and `askFallback: deny`, and the agent's allowlist on agent
+   `main`, the agent that `agent exec` runs. These approvals are the
+   enforcement layer; the config only selects tools and cannot widen them.
+5. Runs this under an outer deadline below the lease:
 
    ```sh
-   openclaw agent exec --config <agent config> --message-file <brief> --cwd <workspace> --json
+   openclaw agent exec --config <agent config> --state-dir <state> --message-file <brief> --cwd <workspace> --json
    ```
 
    `--auth-env-only` cannot be combined with `--config` and loads no tool
-   policy, so it is not used: the pinned config is the whole policy, and a
-   config that fails to load fails the run. `--timeout` bounds each model attempt only, so the
-   outer deadline is what bounds the turn. State is the command's own
-   temporary directory, removed on exit.
+   policy, so it is not used. A config that fails to load fails the run.
+   `--timeout` bounds each model attempt only, so the outer deadline is what
+   bounds the turn. The state directory is the Job's `emptyDir`.
 
-3. Completes the attempt from the JSON envelope: the final message and refs,
-   the top-level `error` and `toolSummary`. Exit `2` is a timeout. Exit `1`
-   with a successful result and a cleanup error settles the result and
-   reports the cleanup failure; other exit `1` is a failed attempt.
+6. Completes the attempt from the JSON envelope: `final`, `payloads`, the
+   top-level `error` and `toolSummary`. `agent exec` exits `0` with
+   `ok: true` even when every tool call was denied, so
+   `toolSummary.unresolvedError`, or any tool failure in an operation that
+   needs its tools, settles as a failed attempt rather than a report. Exit
+   `2` is a timeout. Exit `1` with a successful result and a cleanup error
+   settles the result and reports the cleanup failure; other exit `1` is a
+   failed attempt.
 
 The Job keeps every LCARS lifecycle duty: claim, lease, heartbeat, startup
 deadline, cancellation, `lost`. Requests equal limits and must fit one supported
@@ -254,16 +273,18 @@ admitted only from the `alertmanager` channel and, from phase 4, Joe's Slack
 and Console requests. It satisfies `report` and `none`; repairs go through
 Homelab's normal guarded workflows and PRs. `lost` is terminal.
 
-**Gating questions, answered before phase 3a ships:**
+**Gating questions,** answered locally on 2026-11-14 in agent-lcars#3349 (a
+non-root container from the pod base image, capped at 2 CPU / 6 GiB, with both
+OpenClaw versions above):
 
-1. Does `agent exec` on the installed approved runtime enforce a pinned
-   `--config` tool policy headless, including exec of an allowlisted host
-   command and denial of everything else? Prove both with a throwaway Job;
-   a run whose policy fails to load must fail, never fall back to the `coding`
-   defaults.
-2. Is the JSON envelope (`error`, `toolSummary`, result payload) enough to
-   settle `report` intents?
-3. The complete Job envelope for each agent, measured, within a supported lane.
+1. A pinned policy holds headless when launched as above: the allowlisted
+   command ran, other commands returned `exec denied: allowlist miss` with no
+   side effects, file tools were absent, and a malformed config failed the
+   run. The k3s Job proof remains a 3a acceptance item.
+2. The JSON envelope is sufficient, with the `unresolvedError` rule above.
+3. One allow-and-deny turn, including Doctor and approvals, peaked at 1.77 GiB
+   memory in 59 s, with about 3 MB of state. Re-measure with real
+   investigations before fixing each agent's envelope.
 
 ## Channels
 
