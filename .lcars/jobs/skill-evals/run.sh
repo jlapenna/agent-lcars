@@ -11,7 +11,8 @@ if mkdir "$state" 2>/dev/null; then
   if [ -f "$work/baseline.json" ]; then
     set -- "$@" --baseline "$work/baseline.json"
   fi
-  set -- "$@" -- --ablation none --max-cost-usd 12 -j 2
+  # Skill lift: every case is also answered without the skill under the same rubric.
+  set -- "$@" -- --ablation with-without --max-cost-usd 12 -j 2
   if command -v repo-skill-evals >/dev/null 2>&1; then
     if EVAL_HISTORY_REMOTE=garage:eval-history EVAL_HISTORY_RCLONE_CONFIG="$LCARS_JOB_SECRET_FILES_DIR/garage-rclone" repo-skill-evals "$@" >"$state/output.log" 2>&1; then status=0; else status=$?; fi
   else
