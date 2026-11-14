@@ -1,4 +1,6 @@
 import {
+  CLAW_INVESTIGATE_OPERATION,
+  clawInvestigateInputSchema,
   humanNeededActionsSchema,
   issueCommentSchema,
   issueReferenceSchema,
@@ -18,6 +20,7 @@ import {
   jobSecretDeliverySchema,
 } from './job-secrets';
 import {
+  clawWorkSpecSchema,
   fallbackPipelinesSchema,
   PIPELINES,
   storedWorkSpecSchema,
@@ -530,6 +533,45 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
+  /** The one internal-admission route for `claw/investigator` (phase 3a).
+   *  Requires `work.claw.admit` and a grant listing pipeline
+   *  `claw-investigator`; public `create` keeps rejecting the claw shape. */
+  admitClawInvestigation: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/claw/investigations',
+        operationId: 'admitClawInvestigation',
+        summary:
+          'Admit a read-only claw investigation (work.claw.admit required)',
+        description:
+          'Idempotent by `sourceKey`: the same key always names the same ' +
+          'Work item, the same question returns its existing round, and a ' +
+          'new question supersedes a queued one. Without `sourceKey` every ' +
+          'call admits a new item. The report is the settled run message; ' +
+          'outcomes are persisted only, never delivered to a channel.',
+        successStatus: 202,
+        successDescription: 'Admitted, or the existing round for this input.',
+      }),
+    )
+    .errors({
+      FORBIDDEN: {
+        message: 'Principal may not admit claw-investigator work',
+      },
+      CONFLICT: { message: 'Source key names incompatible Work' },
+    })
+    .input(
+      z.strictObject({
+        question: clawInvestigateInputSchema.shape.question,
+        sourceKey: z
+          .string()
+          .min(1)
+          .max(200)
+          .regex(/^[\w.:/#@-]+$/u)
+          .optional(),
+      }),
+    )
+    .output(itemViewSchema),
   get: base
     .meta(
       openapi({
@@ -589,10 +631,14 @@ export const itemsContract = {
         path: '/items/{id}/cancel',
         operationId: 'cancelItem',
         summary: 'Cancel a work item',
+        description:
+          'Requires `work.operator`, except claw work, which only a ' +
+          'principal holding `work.claw.admit` for its pipeline may cancel.',
       }),
     )
     .errors({
       NOT_FOUND: { message: 'No such item' },
+      FORBIDDEN: { message: 'Principal may not cancel this item' },
       CONFLICT: { message: 'Item already settled' },
     })
     .input(z.strictObject({ id: workIdSchema }))
@@ -1174,9 +1220,31 @@ const githubRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
 });
 
+/** A claw run reads its zone, not a repository: its anchor names no
+ * `target_repo`. `claw` carries the admitted operation input the launcher
+ * hands to the agent's single turn. */
+const clawRunBriefSchema = z.strictObject({
+  id: workIdSchema,
+  spec: clawWorkSpecSchema,
+  anchor: z.strictObject({
+    type: z.literal('work'),
+    id: workIdSchema,
+    title: z.string(),
+    body: z.string(),
+    html_url: z.string(),
+  }),
+  ...runBriefSharedSchema,
+  mode: z.literal('claw'),
+  claw: z.strictObject({
+    operation: z.literal(CLAW_INVESTIGATE_OPERATION),
+    input: clawInvestigateInputSchema,
+  }),
+});
+
 export const runBriefSchema = z.union([
   nativeRunBriefSchema,
   githubRunBriefSchema,
+  clawRunBriefSchema,
 ]);
 
 /** `claim` is called by a runner authenticating with its own console

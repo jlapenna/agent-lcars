@@ -11,6 +11,7 @@ export type WorkScope =
   | 'work.reader'
   | 'work.executor'
   | 'work.cron'
+  | 'work.claw.admit'
   | 'work.reaper';
 
 export interface WorkPrincipal {

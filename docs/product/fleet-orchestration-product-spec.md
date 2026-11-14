@@ -808,7 +808,9 @@ consumed by every dispatched run in every member repository.
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
     `work.reader` (tracker ownership and issue-source reads), `costs.reader`
     (aggregate Costs budget readout only), `work.executor`, `work.cron`,
-    `work.admin`, and `secrets.admin` (per-job credential administration,
+    `work.claw.admit` (internal `POST /claw/investigations` admission and
+    cancellation of the claw pipelines the same grant lists), `work.admin`,
+    and `secrets.admin` (per-job credential administration,
     refused for repository-bound OIDC callers)). `work.reaper` is not a
     grantable scope. It is fixed to the `session:expiry` identity.
   - The worker's App token and optional per-job credential grant

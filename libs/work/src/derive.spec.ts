@@ -110,6 +110,32 @@ describe('deriveItemState', () => {
   });
 });
 
+describe('loss policy by pipeline', () => {
+  const revision = {
+    key: 'k',
+    input: { operation: 'investigate:v1', question: 'why?' },
+  };
+  it('a lost read-only claw round stays running while its budget remains', () => {
+    const current = task({ consecutiveLost: 1, desiredRevision: revision });
+    const lost = run(1, 'lost', {
+      pipeline: 'claw-investigator',
+      sourceRevision: revision,
+      revisionAttempt: 1,
+    });
+    expect(deriveItemState(current, [lost])).toBe('running');
+    expect(deriveItemState(current, [{ ...lost, revisionAttempt: 3 }])).toBe(
+      'failed',
+    );
+  });
+  it('a lost effectful recipe is terminal at once', () => {
+    expect(
+      deriveItemState(task({ consecutiveLost: 1 }), [
+        run(1, 'lost', { pipeline: 'goose' }),
+      ]),
+    ).toBe('failed');
+  });
+});
+
 describe('delivery correction loss projection', () => {
   const delivery = {
     runId: `work:${WORK_ID}/r1`,

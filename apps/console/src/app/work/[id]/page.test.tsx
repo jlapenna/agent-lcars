@@ -146,3 +146,50 @@ describe('WorkDetailViewContent', () => {
     expect(screen.getByRole('button', { name: /Reply/i })).toBeInTheDocument();
   });
 });
+
+describe('claw investigation detail', () => {
+  const question = 'Why did the backup alert fire?';
+  const report = 'The backup job hit its two-hour timeout on riker.';
+  const clawItem: ItemView = {
+    id: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+    state: 'done',
+    spec: {
+      title: `Investigate: ${question}`,
+      description: question,
+      pipeline: 'claw-investigator',
+      priority: 'background',
+      operation: 'investigate:v1',
+      sourceKey: 'alert:backup',
+      input: { question },
+    },
+    origin: { principal: 'user:jlapenna', channel: 'console' },
+    createdAt: '2026-11-14T10:00:00.000Z',
+    updatedAt: '2026-11-14T10:05:00.000Z',
+    runs: [
+      {
+        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3H/r1',
+        state: 'finished',
+        pipeline: 'claw-investigator',
+        createdAt: '2026-11-14T10:00:00.000Z',
+        updatedAt: '2026-11-14T10:05:00.000Z',
+        sourceRevision: {
+          key: 'a'.repeat(64),
+          input: { operation: 'investigate:v1', question },
+        },
+        revisionAttempt: 1,
+        result: { ok: true, summary: 'report', message: report },
+      },
+    ],
+    sessions: [],
+  };
+
+  it('shows the report message and offers no coding mutations', () => {
+    renderDetail(clawItem);
+    expect(screen.getByText(report)).toBeInTheDocument();
+    expect(
+      screen.getByText('Claw job · claw-investigator'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reply/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Redispatch/i })).toBeNull();
+  });
+});

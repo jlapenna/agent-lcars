@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  clawWorkSpecSchema,
+  isSourceManagedWork,
   PIPELINES,
   readStoredWorkSpec,
   STORED_PIPELINES,
+  storedClawWorkSpec,
   WORK_DESCRIPTION_MAX,
   workOriginSchema,
   workPayloadSchema,
@@ -163,6 +166,10 @@ describe('readStoredWorkSpec', () => {
         sourceKey: 'octo/example#1',
       }),
     ).toEqual({ title: 'T', pipeline: 'inbox-summary' });
+    expect(readStoredWorkSpec({ ...base, ...clawSpec })).toEqual({
+      title: 'Investigate: why?',
+      pipeline: 'claw-investigator',
+    });
   });
 
   it('names every stored pipeline', () => {
@@ -174,11 +181,54 @@ describe('readStoredWorkSpec', () => {
       'goose',
       'inbox-summary',
       'handoff-summary',
+      'claw-investigator',
     ]);
   });
 
   it('rejects a value matching no stored shape', () => {
     expect(readStoredWorkSpec({ ...base, pipeline: 'claude' })).toBeUndefined();
     expect(readStoredWorkSpec(undefined)).toBeUndefined();
+  });
+});
+
+const clawSpec = {
+  title: 'Investigate: why?',
+  description: 'Why did the backup alert fire?',
+  pipeline: 'claw-investigator',
+  priority: 'background',
+  operation: 'investigate:v1',
+  sourceKey: 'adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+  input: { question: 'Why did the backup alert fire?' },
+};
+
+describe('clawWorkSpecSchema', () => {
+  const origin = { principal: 'user:jlapenna', channel: 'console' };
+
+  it('stores a target-less background investigation', () => {
+    expect(clawWorkSpecSchema.parse(clawSpec)).toEqual(clawSpec);
+    expect(storedClawWorkSpec({ origin, spec: clawSpec })).toEqual(clawSpec);
+  });
+
+  it('is source-managed, so public mutation routes refuse it', () => {
+    expect(isSourceManagedWork({ origin, spec: clawSpec })).toBe(true);
+  });
+
+  it.each([
+    ['a target', { target: { repo: 'octo/example' } }],
+    ['another priority', { priority: 'normal' }],
+    ['another operation', { operation: 'oncall-investigate:v1' }],
+    ['a blank question', { input: { question: '   ' } }],
+    ['an oversized question', { input: { question: 'q'.repeat(4_001) } }],
+    ['extra input', { input: { question: 'q', repo: 'octo/example' } }],
+  ])('rejects %s', (_name, change) => {
+    expect(
+      clawWorkSpecSchema.safeParse({ ...clawSpec, ...change }).success,
+    ).toBe(false);
+  });
+
+  it('is never a public coding spec, and other shapes are never claw', () => {
+    expect(workSpecSchema.safeParse(clawSpec).success).toBe(false);
+    expect(storedClawWorkSpec({ origin, spec })).toBeUndefined();
+    expect(storedClawWorkSpec(undefined)).toBeUndefined();
   });
 });

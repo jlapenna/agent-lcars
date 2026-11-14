@@ -158,6 +158,205 @@ async function call(
   };
 }
 
+const clawAdmitter = {
+  principal: 'user:jlapenna',
+  subject: 'github:jlapenna',
+  scopes: new Set(['work.claw.admit'] as const),
+  pipelines: ['claw-investigator'],
+  via: 'google' as const,
+};
+const clawZoneExecutor = {
+  principal: 'svc:claw-homelab-ops',
+  subject: 'claw-homelab-ops@agent-lcars.iam.gserviceaccount.com',
+  scopes: new Set(['work.executor'] as const),
+  pipelines: ['claw-investigator'],
+  via: 'google' as const,
+};
+
+describe('claw investigation admission', () => {
+  const question = 'Why did the backup alert fire?';
+
+  it('admits a persist-only claw-investigator round idempotently by sourceKey', async () => {
+    const drain = vi.fn(async () => ({ dispatched: [], failed: [] }));
+    const base = context({ principal: clawAdmitter });
+    const ctx = context({
+      principal: clawAdmitter,
+      runtime: { ...base.runtime, drain } as WorkContext['runtime'],
+    });
+    const first = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+      sourceKey: 'alert:backup',
+    });
+    expect(first.status).toBe(202);
+    expect(first.json).toMatchObject({
+      origin: { principal: 'user:jlapenna', channel: 'console' },
+      spec: {
+        pipeline: 'claw-investigator',
+        priority: 'background',
+        operation: 'investigate:v1',
+        sourceKey: 'alert:backup',
+        input: { question },
+        description: question,
+      },
+      state: 'running',
+      runs: [
+        {
+          pipeline: 'claw-investigator',
+          priority: 'background',
+          sourceRevision: {
+            input: { operation: 'investigate:v1', question },
+          },
+        },
+      ],
+    });
+    expect(first.json.origin).not.toHaveProperty('thread');
+    expect(first.json.spec).not.toHaveProperty('target');
+    expect(drain).toHaveBeenCalledTimes(1);
+    const replay = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+      sourceKey: 'alert:backup',
+    });
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(first.json.id);
+    expect(replay.json.runs).toHaveLength(1);
+    const run = await ctx.runtime.store.readRun(first.json.runs[0].runId);
+    expect(run?.params).toEqual({ mode: 'claw' });
+  });
+
+  it('admits a new item for every call without a sourceKey', async () => {
+    const ctx = context({ principal: clawAdmitter });
+    const a = await call(ctx, 'POST', '/claw/investigations', { question });
+    const b = await call(ctx, 'POST', '/claw/investigations', { question });
+    expect([a.status, b.status]).toEqual([202, 202]);
+    expect(a.json.id).not.toBe(b.json.id);
+  });
+
+  it.each([
+    ['an operator without the claw scope', operator, 401],
+    ['the shared executor', executorOnly, 401],
+    ['the claw zone executor', clawZoneExecutor, 401],
+    [
+      'an admitter whose grant omits the pipeline',
+      { ...clawAdmitter, pipelines: ['claude'] },
+      403,
+    ],
+  ] as const)('refuses %s', async (_name, principal, status) => {
+    const ctx = context({ principal });
+    const response = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+    });
+    expect(response.status).toBe(status);
+    expect(await ctx.runtime.store.listNativeTasks(10)).toHaveLength(0);
+  });
+
+  it.each([
+    ['a blank question', { question: '   ' }],
+    ['an oversized question', { question: 'q'.repeat(4_001) }],
+    ['a caller-chosen pipeline', { question, pipeline: 'claude' }],
+    ['a target', { question, target: { repo: 'jlapenna/agent-lcars' } }],
+  ])('rejects %s', async (_name, body) => {
+    const ctx = context({ principal: clawAdmitter });
+    expect((await call(ctx, 'POST', '/claw/investigations', body)).status).toBe(
+      400,
+    );
+  });
+
+  it('keeps public create rejecting the claw shape, even for an admitter with operator scope', async () => {
+    const ctx = context({
+      principal: {
+        ...operator,
+        scopes: new Set(['work.operator', 'work.claw.admit'] as const),
+        pipelines: ['claude', 'claw-investigator'],
+      },
+    });
+    const response = await call(ctx, 'PUT', `/items/${ID}`, {
+      spec: {
+        title: 'Investigate',
+        description: question,
+        pipeline: 'claw-investigator',
+        priority: 'background',
+        operation: 'investigate:v1',
+        sourceKey: 'alert:backup',
+        input: { question },
+      },
+    });
+    expect(response.status).toBe(400);
+    expect(await ctx.runtime.store.readTask({ workId: ID })).toBeUndefined();
+  });
+
+  it('lets its admitter cancel it, settling through LCARS, while update, redispatch and reply stay refused', async () => {
+    const both = {
+      ...operator,
+      scopes: new Set(['work.operator', 'work.claw.admit'] as const),
+      pipelines: ['claude', 'claw-investigator'],
+    };
+    const ctx = context({ principal: both });
+    const admitted = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+    });
+    const id = admitted.json.id as string;
+    expect(
+      (
+        await call(ctx, 'PATCH', `/items/${id}`, {
+          title: 'Changed',
+          description: 'Changed',
+        })
+      ).status,
+    ).toBe(409);
+    expect((await call(ctx, 'POST', `/items/${id}/redispatch`)).status).toBe(
+      409,
+    );
+    expect(
+      (await call(ctx, 'POST', `/items/${id}/reply`, { text: 'more' })).status,
+    ).toBe(403);
+
+    // Neither a plain operator nor the zone executor may cancel claw work.
+    expect(
+      (
+        await call(
+          { ...ctx, principal: operator },
+          'POST',
+          `/items/${id}/cancel`,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await call(
+          { ...ctx, principal: clawZoneExecutor },
+          'POST',
+          `/items/${id}/cancel`,
+        )
+      ).status,
+    ).toBe(401);
+
+    const canceled = await call(
+      { ...ctx, principal: clawAdmitter },
+      'POST',
+      `/items/${id}/cancel`,
+    );
+    expect(canceled.status).toBe(200);
+    expect(canceled.json.state).toBe('canceled');
+    expect(canceled.json.runs[0].state).toBe('canceled');
+    expect(await ctx.runtime.store.listRuns({ workId: id })).toHaveLength(1);
+  });
+
+  it('keeps cancel of other work operator-only and source-managed summaries read-only', async () => {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    expect(
+      (
+        await call(
+          { ...ctx, principal: clawAdmitter },
+          'POST',
+          `/items/${ID}/cancel`,
+        )
+      ).status,
+    ).toBe(401);
+    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
+  });
+});
+
 describe('items routes', () => {
   it.each(['inbox-summary', 'handoff-summary'])(
     'exposes %s history while rejecting coding mutations',

@@ -113,7 +113,9 @@ export function RunsTable({ runs }: { runs: ItemView['runs'] }) {
                   <Text size="xs">
                     {['inbox-summary', 'handoff-summary'].includes(run.pipeline)
                       ? 'Model call'
-                      : 'Queue executor'}{' '}
+                      : run.pipeline.startsWith('claw-')
+                        ? 'Claw job'
+                        : 'Queue executor'}{' '}
                     · {run.pipeline}
                   </Text>
                   {run.queue?.state !== 'queued' && run.queue?.claimedBy && (
