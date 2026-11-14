@@ -189,13 +189,6 @@ function extractIssueReferences(command, dependencies = {}) {
   return [...references.values()];
 }
 
-// Retained for callers that only need the numbers.
-function extractIssueNumbers(command) {
-  return [
-    ...new Set(extractIssueReferences(command).map(({ number }) => number)),
-  ];
-}
-
 function formatIssue({ number, repo }) {
   return repo ? `${repo}#${number}` : `#${number}`;
 }
@@ -380,7 +373,6 @@ if (require.main === module) main();
 module.exports = {
   evaluateIssue,
   isFleetDispatch,
-  extractIssueNumbers,
   extractIssueReferences,
   runHook,
   projectNameFor,

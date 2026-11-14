@@ -1,3 +1,4 @@
+import { AGENT_LABELS } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { isE2eTesting } from '@agent-lcars/util-server';
 import { NextRequest, NextResponse } from 'next/server';
@@ -463,9 +464,7 @@ export async function PUT(
     if (
       !fixtureIssue ||
       agentLabels.length !== 1 ||
-      !['agent:claude', 'agent:codex', 'agent:opencode', 'agent:agy'].includes(
-        agentLabels[0],
-      ) ||
+      !AGENT_LABELS.has(agentLabels[0]) ||
       JSON.stringify(unrelatedLabels) !==
         JSON.stringify(originalNonControlLabels)
     ) {

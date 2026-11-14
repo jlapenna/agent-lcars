@@ -5,40 +5,6 @@
   "projectType": "application",
   "tags": ["platform:server", "scope:console"],
   "targets": {
-    "build": {
-      "executor": "@nx/esbuild:esbuild",
-      "outputs": ["{options.outputPath}"],
-      "defaultConfiguration": "production",
-      "options": {
-        "platform": "node",
-        "outputPath": "apps/telemetry-watcher/dist",
-        "format": ["cjs"],
-        "bundle": true,
-        "thirdParty": true,
-        "main": "apps/telemetry-watcher/src/main.ts",
-        "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
-        "assets": ["apps/telemetry-watcher/src/assets"],
-        "skipTypeCheck": true,
-        "esbuildOptions": {
-          "sourcemap": true,
-          "outExtension": {
-            ".js": ".js"
-          }
-        }
-      },
-      "configurations": {
-        "development": {},
-        "production": {
-          "esbuildOptions": {
-            "sourcemap": false,
-            "outExtension": {
-              ".js": ".js"
-            }
-          },
-          "external": ["@google-cloud/*", "google-gax"]
-        }
-      }
-    },
     "bundle": {
       "executor": "@nx/esbuild:esbuild",
       "outputs": ["{options.outputPath}"],
@@ -138,6 +104,9 @@
         "tsConfig": "apps/telemetry-watcher/tsconfig.build.json",
         "skipTypeCheck": true,
         "esbuildOptions": {
+          "alias": {
+            "abort-controller": "apps/telemetry-watcher/src/lib/native-abort-controller-shim.cjs"
+          },
           "sourcemap": false
         }
       },
@@ -145,6 +114,9 @@
         "development": {},
         "production": {
           "esbuildOptions": {
+            "alias": {
+              "abort-controller": "apps/telemetry-watcher/src/lib/native-abort-controller-shim.cjs"
+            },
             "sourcemap": false
           }
         }

@@ -1,5 +1,5 @@
 version: 1
-description: Weekly scoring of this repository's agent skills with repo-skill-evals (claude plugin eval); report only.
+description: Weekly scoring of this repository's agent skills with repo-skill-evals across configured harnesses; report only.
 triggers:
   manual: true
   schedule:

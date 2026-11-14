@@ -7,10 +7,10 @@ import {
   type FleetSummary,
 } from '../lib/agent-activity';
 import { projectAutoscalerStatuses } from '../lib/autoscaler-status';
-import { AgentActivityPanel } from './agent-activity-panel';
 import { FleetSnapshotBar } from './agents/fleet-snapshot-bar';
 import { FleetChip } from './fleet-status';
 import { LiveDashboard } from './live-dashboard';
+import { RunnerFleetPanel } from './ops-panels';
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock('next/navigation', () => ({
@@ -85,7 +85,7 @@ function view(surface: string, fleet: FleetSummary) {
     <MantineProvider>
       <LiveDashboard />
       {surface === 'Bridge' ? (
-        <AgentActivityPanel activity={activity} cliSessions={[]} />
+        <RunnerFleetPanel chip={<FleetChip fleet={fleet} />} />
       ) : (
         <FleetSnapshotBar
           activity={activity}

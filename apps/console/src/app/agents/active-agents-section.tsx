@@ -1,6 +1,5 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 
-import type { ActionItem } from '../../lib/action-items';
 import type { AgentRun } from '../../lib/agent-activity';
 import type { CliSession } from '../../lib/cli-sessions';
 import type { RunItemRef } from '../agent-activity-panel';
@@ -15,14 +14,12 @@ export function ActiveAgentsSection({
   liveRuns,
   itemsByRunId,
   activeSessions,
-  items: _items,
   sessionsByRunId = {},
   activityFetchedAt,
 }: {
   liveRuns: AgentRun[];
   itemsByRunId: Record<string, RunItemRef>;
   activeSessions: CliSession[];
-  items: ActionItem[];
   /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
    * `indexSessionsByRunId` in run-classification.ts. */
   sessionsByRunId?: Record<string, IssueAgentSessionDoc>;

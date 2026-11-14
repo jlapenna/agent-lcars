@@ -103,15 +103,10 @@ export function BridgeDetail({
                 run={detail.run}
                 item={detail.item}
                 session={detail.session}
-                variant="detail"
               />
             )}
             {detail.kind === 'recentRun' && (
-              <FinishedRunRow
-                run={detail.run}
-                session={detail.session}
-                variant="detail"
-              />
+              <FinishedRunRow run={detail.run} session={detail.session} />
             )}
             {detail.kind === 'session' && (
               <CliSessionRow session={detail.session} variant="detail" />

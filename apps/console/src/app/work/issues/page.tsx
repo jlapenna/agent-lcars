@@ -1,3 +1,4 @@
+import { isDispatchPipeline } from '@agent-lcars/dispatch-contracts';
 import { Anchor, Group, Stack, Text } from '@mantine/core';
 import { redirect } from 'next/navigation';
 import { Suspense } from 'react';
@@ -105,15 +106,7 @@ async function IssuesContent({ query }: { query: Query }) {
                       )
                       .map(({ repo, pipeline }) => ({ repo, pipeline }))
                   : (principal?.pipelines ?? [])
-                      .filter(
-                        (
-                          pipeline,
-                        ): pipeline is
-                          'claude' | 'codex' | 'opencode' | 'agy' =>
-                          ['claude', 'codex', 'opencode', 'agy'].includes(
-                            pipeline,
-                          ),
-                      )
+                      .filter(isDispatchPipeline)
                       .map((pipeline) => ({ repo: reference.repo, pipeline }));
               return (
                 <Group

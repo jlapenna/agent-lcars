@@ -114,7 +114,7 @@ The core promises:
 | Tracker issue dispatch                    | `POST /issues/dispatch` (`lcars work dispatch` or `/work/issues`)                                                                                                      | native + issue ref   | Caller-supplied `requestId`                     |
 | Event-driven issue triage                 | Unassigned open `bug` / `type:bug` issue in a watched GitHub or Linear tracker                                                                                         | `fleet-triage`       | `svc:fleet-triage`, source revision             |
 | Work API                                  | `PUT /items/{ulid}`                                                                                                                                                    | native               | Client ULID (idempotent)                        |
-| Repository Goose job                      | Scheduled slot on `/schedules/tick` or manual `POST /jobs/{owner}/{repo}/{job}/invoke`                                                                                 | `goose` recipe       | Slot ID or caller `requestId`                   |
+| Repository Goose job                      | Scheduled slot on `/maintenance/tick` or manual `POST /jobs/invoke` (`/jobs/{jobId}/invoke`)                                                                           | `goose` recipe       | Slot ID or caller `requestId`                   |
 | Member CI                                 | `POST /dispatches/github[/redispatch]` with GitHub OIDC                                                                                                                | `implement`/`review` | Caller-supplied                                 |
 | Console                                   | New work, Retrigger, Reply & dispatch, Redispatch                                                                                                                      | native or GitHub     | `console-retry:<uuid>`, ULID                    |
 | Schedule                                  | A cron slot, evaluated on `/schedules/tick`                                                                                                                            | native               | Deterministic per-slot ID                       |
@@ -490,8 +490,8 @@ executor is working an issue; a human assignee owns it regardless.
   completion-correction round.
 
 - **FL-EX-6 [Shipped] Credential separation.** The agent never receives
-  `github.token`. It receives its own App token, separate telemetry
-  credentials, and an optional scoped rerun token:
+  `github.token`. It receives its own App token and separate telemetry
+  credentials:
   - Claude: an OAuth token from a projected file.
   - Codex: `auth.json` brokered through `/runs/{id}/codex-auth` under a global
     lease, waiting up to 30 minutes on a 409; refreshed OAuth tokens can be
@@ -570,18 +570,17 @@ executor is working an issue; a human assignee owns it regardless.
   activation.** Repositories declare jobs under `.lcars/jobs/<name>/job.yaml`
   and `recipe.yaml` on `main`. When a job declares a `schedule` and the
   configured scheduler principal holds `work.cron` for that repository and
-  `goose`, `/schedules/tick` activates and updates its schedule automatically.
-  An operator pause (`PATCH /api/work/v1/jobs/{owner}/{repo}/{job}` with
-  `enabled: false`) sets a sticky veto (`operatorDisabledAt`) that persists
-  across future `main` commits until an operator explicitly re-enables the job.
-  Canonical owner: [`repository-jobs.md`](../repository-jobs.md).
+  `goose`, `POST /maintenance/tick` refreshes the catalog and evaluates due
+  slots automatically. An operator pause (`POST /api/work/v1/jobs/{jobId}/enable`
+  with `digest` and `enabled: false`) sets a sticky veto (`vetoedBy`) that
+  persists across future `main` commits until an operator explicitly re-enables
+  the job. Canonical owner: [`repository-jobs.md`](../repository-jobs.md).
 - **FL-JB-2 [Shipped] Single-active-occurrence and baseline advancement.**
-  Scheduled Goose jobs enforce `overlap: skip` through a transactional
-  `activeWorkId` reservation on the job state document. Only a reconciled
-  `ok: true` scheduled run whose `recipe.headSha` matches the run's pinned
-  `headSha` advances `lastSucceededHeadSha`; manual invocations (`POST
-/jobs/{owner}/{repo}/{job}/invoke`) run one-shot without advancing the
-  scheduled baseline.
+  Repository Goose jobs enforce `overlap: skip` through a transactional `active`
+  occurrence reservation on the `orchestrator-jobs` catalog document, and manual
+  invocations (`POST /api/work/v1/jobs/invoke` or `/jobs/{jobId}/invoke`) share
+  that same single-active slot. Reconciled successful occurrences advance the
+  catalog job's comparison-keyed `baseline` (`{ occurrence, comparison }`).
 
 ## 7. Worker contract
 
@@ -894,7 +893,7 @@ variable remains configuration; registry tests do not validate its live value.
 ## 13. Success metrics and SLOs
 
 The SLO targets below are proposed. The
-[provider-process observation contract](../provider-process-measurement.md)
+[provider-process observation contract](../product-lifecycle-metrics.md#provider-process-start-report)
 separates admission, queue, claim, bootstrap heartbeat and successful OS spawn.
 Its server-observed process clock is not a model-start or useful-outcome claim;
 missing historical clocks remain unknown.

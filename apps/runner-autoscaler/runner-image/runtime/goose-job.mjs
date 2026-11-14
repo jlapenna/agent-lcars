@@ -59,8 +59,7 @@ try {
   // Job-specific credentials arrive below from the profile's credential set.
   const environment = await loadGooseEnvironment();
   // GitHub authority is supplied by the shared renewable command wrappers.
-  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RERUN_TOKEN'])
-    delete environment[key];
+  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN']) delete environment[key];
   home = await mkdtemp(join(tmpdir(), 'lcars-goose-profile-'));
   await mkdir(join(home, 'config'), { mode: 0o700 });
   await writeFile(

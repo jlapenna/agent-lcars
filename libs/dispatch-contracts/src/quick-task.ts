@@ -92,9 +92,6 @@ export function quickTaskDigest(
 const QUICK_TASK_MARKER_SOURCE =
   '<!-- agent-lcars:quick-task-request:v1 id=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) digest=([0-9a-f]{64}) -->';
 
-/** Non-global: for testing or matching a single marker. */
-export const QUICK_TASK_MARKER_RE = new RegExp(QUICK_TASK_MARKER_SOURCE, 'u');
-
 /**
  * A fresh global-flagged matcher. Returned as a new object each call rather
  * than shared, because a global regex carries mutable `lastIndex` — a shared
@@ -115,16 +112,6 @@ export function formatQuickTaskMarker({
   digest: string;
 }): string {
   return `<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=${digest} -->`;
-}
-
-/**
- * Recover a marker's request ID and digest.
- */
-export function parseQuickTaskMarker(
-  body: string | undefined | null,
-): { requestId: string; digest: string } | undefined {
-  const match = body?.match(QUICK_TASK_MARKER_RE);
-  return match ? { requestId: match[1], digest: match[2] } : undefined;
 }
 
 /** Parses the complete Quick Task body shape, not merely a marker embedded

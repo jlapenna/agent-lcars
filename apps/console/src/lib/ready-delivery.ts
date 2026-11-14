@@ -2,6 +2,7 @@ import 'server-only';
 
 import {
   formatAttemptId,
+  formatClaimMarker,
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
 import type {
@@ -257,7 +258,7 @@ export async function readyDeliveryBinding(
     pr.number !== number ||
     (!pr.merged && pr.state !== 'open') ||
     pr.draft ||
-    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
+    !pr.body?.includes(formatClaimMarker(attempt))
   )
     throw new Error('Deliverable is not ready and armed');
   if (
@@ -451,7 +452,7 @@ export async function observeGithubDelivery(
   const attempt = formatAttemptId({ generation, intentId: binding.runId });
   if (
     pr.base.ref !== binding.baseRef ||
-    !pr.body?.includes(`<!-- attempt-claim:${attempt} -->`)
+    !pr.body?.includes(formatClaimMarker(attempt))
   )
     throw new Error('Delivery artifact identity changed');
   if (pr.draft || pr.auto_merge?.merge_method !== 'squash')

@@ -1,42 +1,19 @@
-import { ComputeLivenessInput, SessionLiveness } from './types';
+import type { SessionLiveness } from './types';
 
-/** A session is `live` if its transcript was written within this window. */
-const LIVE_THRESHOLD_MS = 2 * 60 * 1000;
-
-/** Read-side windows for displayLiveness, deliberately looser than the
- * watcher's write-side LIVE_THRESHOLD_MS: a doc is only as fresh as the
- * watcher's last write, so the display window absorbs one missed tick. */
+/** Read-side windows for displayLiveness: a stored session doc is only as fresh
+ * as its last hook/finalize write, so the display window absorbs brief gaps
+ * between transcript events before decaying non-terminal states. */
 const DISPLAY_LIVE_THRESHOLD_MS = 5 * 60 * 1000;
 const DISPLAY_IDLE_THRESHOLD_MS = 60 * 60 * 1000;
 const DISPLAY_OBSERVATION_THRESHOLD_MS = 10 * 60 * 1000;
 
 /**
- * Derives liveness from watcher/process signals rather than trusting a raw
- * timestamp comparison alone — a session with a dead process or no watcher
- * heartbeat can't be `live` no matter how recent `lastActivityAt` is.
- */
-export function computeLiveness(input: ComputeLivenessInput): SessionLiveness {
-  if (!input.heartbeatReceived) {
-    return 'stale';
-  }
-  if (!input.processAlive) {
-    return 'ended';
-  }
-  const ageMs = Date.parse(input.now) - Date.parse(input.lastActivityAt);
-  return ageMs <= LIVE_THRESHOLD_MS ? 'live' : 'idle';
-}
-
-/**
  * Liveness to *display* for a stored session doc, recomputed at read time.
  *
- * The stored value is only as trustworthy as the watcher that wrote it: a
- * stopped watcher freezes docs at their last liveness forever, and a watcher
- * whose `/proc` process check can't see the session's process (e.g. sessions
- * running in containers) writes `ended` for sessions that are actively
- * streaming. Recent transcript activity is the one signal that can't lie in
- * either direction, so it wins outright; beyond that, a terminal stored
- * state stands, and a non-terminal one decays with age instead of trusting
- * a possibly-frozen `live`.
+ * Recent transcript activity wins outright; beyond that, a recent live/idle
+ * hook observation stands within `DISPLAY_OBSERVATION_THRESHOLD_MS`, a terminal
+ * stored state stands, and an older non-terminal one decays with age instead of
+ * trusting a frozen `live`.
  */
 export function displayLiveness(
   stored: SessionLiveness,

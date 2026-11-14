@@ -1,12 +1,9 @@
 export type SessionSource = 'cli' | 'issue-agent';
 
 /**
- * Which coding agent produced a session's transcript. `'claude-code'` is the
- * only one with a working {@link TranscriptAdapter} today (see
- * `transcript-adapter.ts`) — the rest name agents phase 2/3 of #3123 are
- * expected to add adapters for, so the watcher's multi-root config
- * (apps/telemetry-watcher) and the console's badge rendering have
- * somewhere to point before those adapters exist.
+ * Which coding agent produced a session's transcript. Adapters exist for
+ * `'claude-code'`, `'codex'`, `'opencode'`, and `'antigravity'`; `'gemini'`
+ * remains reserved in the persisted union for CLI/console badge compatibility.
  */
 export type SessionAgent =
   'claude-code' | 'codex' | 'gemini' | 'antigravity' | 'opencode';
@@ -229,16 +226,6 @@ export interface ReduceTranscriptOptions {
 }
 
 export type SessionLiveness = 'live' | 'idle' | 'ended' | 'stale';
-
-export interface ComputeLivenessInput {
-  lastActivityAt: string;
-  /** Injected rather than read from the clock, for deterministic tests. */
-  now: string;
-  /** Whether the session's process is still alive (per a `/proc` cwd check). */
-  processAlive: boolean;
-  /** Whether the host watcher is sending heartbeats for this session at all. */
-  heartbeatReceived: boolean;
-}
 
 /**
  * Who last wrote this doc and from what evidence (docs/hooks-telemetry-design.md
