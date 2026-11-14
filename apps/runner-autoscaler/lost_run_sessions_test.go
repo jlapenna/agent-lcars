@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // fakeLostRunSessionStore holds session docs in memory and applies
@@ -54,7 +53,6 @@ func (s *fakeLostRunSessionStore) endSessionIf(_ context.Context, id string, dec
 		return false, nil
 	}
 	current.Liveness = "ended"
-	current.UpdateTime = current.UpdateTime.Add(time.Second)
 	s.docs[id] = current
 	s.ended = append(s.ended, id)
 	return true, nil
@@ -68,10 +66,8 @@ func (s *fakeLostRunSessionStore) liveness(id string) string {
 
 const lostRunID = "jlapenna/homelab#2397/r1"
 
-var lostRunWrittenAt = time.Date(2026, 10, 12, 23, 15, 0, 0, time.UTC)
-
 func lostRunDoc(id, runID, liveness string) sessionDocState {
-	return sessionDocState{ID: id, RunID: runID, Liveness: liveness, UpdateTime: lostRunWrittenAt}
+	return sessionDocState{ID: id, RunID: runID, Liveness: liveness}
 }
 
 func newTestLostRunSessionEnder(store lostRunSessionStore) (*lostRunSessionEnder, *bytes.Buffer) {
@@ -131,7 +127,6 @@ func TestLostRunSessionsLeavesDocsChangedSinceTheQuery(t *testing.T) {
 		// A resumed retry took the session over under its own run.
 		"claimed by retry": func(d sessionDocState) sessionDocState {
 			d.RunID = "jlapenna/homelab#2397/r2"
-			d.UpdateTime = d.UpdateTime.Add(time.Minute)
 			return d
 		},
 	}
@@ -268,7 +263,6 @@ func TestLostRunSessionsEndsDocsFlushedAfterTheQuery(t *testing.T) {
 	store.beforeEnd = func(id string, docs map[string]sessionDocState) {
 		d := docs[id]
 		d.Liveness = "idle"
-		d.UpdateTime = d.UpdateTime.Add(time.Minute)
 		docs[id] = d
 	}
 	ender, _ := newTestLostRunSessionEnder(store)

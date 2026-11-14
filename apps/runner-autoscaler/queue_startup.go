@@ -15,12 +15,15 @@ import (
 // (and at --check-config) rather than leave the process running forever as a
 // silent no-op. An absent console URL is named as exactly that condition; any
 // other missing value is an incomplete deployment.
-func validateQueueExecutorEnvironment(resolved resolvedOrchestratorConfig) error {
+func validateQueueExecutorEnvironment(cfg OrchestratorConfig) error {
 	if strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")) == "" {
 		return fmt.Errorf("queue executor: LCARS_CONSOLE_URL is required for the queue executor; this process has nothing else to run")
 	}
 	if strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")) == "" {
 		return fmt.Errorf("queue executor: GOOGLE_APPLICATION_CREDENTIALS is required for the queue executor")
 	}
-	return validateKubernetesQueueEnvironment(resolved.Raw.Kubernetes)
+	if strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS")) == "" {
+		return fmt.Errorf("queue executor: LCARS_SCHEDULER_CREDENTIALS is required for the schedule and maintenance ticker")
+	}
+	return validateKubernetesQueueEnvironment(cfg.Kubernetes)
 }

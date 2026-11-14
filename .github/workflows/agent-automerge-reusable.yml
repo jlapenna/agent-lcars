@@ -298,7 +298,6 @@ jobs:
         env:
           AGENT_BOT_LOGINS: ${{ inputs.bot-logins }}
           APP_LOGIN: ${{ steps.mint-app-token.outputs.app-slug && format('app/{0}', steps.mint-app-token.outputs.app-slug) || '' }}
-          LEGACY_AUTOMERGE_LOGIN: app/github-actions
           GH_TOKEN: ${{ steps.mint-app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
@@ -369,23 +368,9 @@ jobs:
                 continue
               fi
 
-              LEGACY_ACTOR=$(jq -r '.autoMergeRequest.enabledBy.login // "unknown"' <<<"$VIEW")
-              if [ "$LEGACY_ACTOR" != "$LEGACY_AUTOMERGE_LOGIN" ]; then
-                echo "PR #$PR is already armed by $LEGACY_ACTOR; preserving that explicit actor."
-                continue
-              fi
-              echo "Migrating PR #$PR auto-merge from $LEGACY_ACTOR to $APP_LOGIN."
-              if ! gh pr merge "$PR" --repo "$REPO" --disable-auto; then
-                echo "::error::Could not disable legacy auto-merge for agent PR #$PR."
-                FAILED=$((FAILED + 1))
-                continue
-              fi
-              if ! gh pr view "$PR" --repo "$REPO" --json autoMergeRequest \
-                --jq 'if .autoMergeRequest == null then . else error("legacy auto-merge remains armed") end' >/dev/null; then
-                echo "::error::Legacy auto-merge remains armed on agent PR #$PR."
-                FAILED=$((FAILED + 1))
-                continue
-              fi
+              ACTOR=$(jq -r '.autoMergeRequest.enabledBy.login // "unknown"' <<<"$VIEW")
+              echo "PR #$PR is already armed by $ACTOR; preserving that explicit actor."
+              continue
             fi
 
             if ! gh pr merge "$PR" --repo "$REPO" --auto --squash; then

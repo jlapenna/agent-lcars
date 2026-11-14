@@ -31,13 +31,12 @@ const (
 )
 
 // sessionDocState is the part of a `sessions/{id}` document this pass reads.
-// UpdateTime is Firestore's own write time; the transaction re-reads the doc
-// and decides on its current runId and liveness, not on this.
+// The transaction re-reads the doc and decides on its current runId and
+// liveness.
 type sessionDocState struct {
-	ID         string
-	RunID      string
-	Liveness   string
-	UpdateTime time.Time
+	ID       string
+	RunID    string
+	Liveness string
 }
 
 // lostRunSessionStore is the Firestore access this pass needs, so the logic
@@ -117,7 +116,7 @@ type firestoreLostRunSessionStore struct {
 }
 
 func sessionDocStateFrom(snapshot *firestore.DocumentSnapshot) sessionDocState {
-	state := sessionDocState{ID: snapshot.Ref.ID, UpdateTime: snapshot.UpdateTime}
+	state := sessionDocState{ID: snapshot.Ref.ID}
 	if runID, ok := snapshot.Data()["runId"].(string); ok {
 		state.RunID = runID
 	}

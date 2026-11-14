@@ -162,4 +162,26 @@ describe('IAM contract model', () => {
     ).toEqual(['google_service_account.work_reader.name']);
     expect(everyFile).not.toMatch(/work-reader@/);
   });
+
+  it('keeps claude-token-reader off GitHub WIF and narrows telemetry_writer WIF to agent-lcars', () => {
+    const terraformDir = path.join(repoRoot, 'infra/terraform');
+    const everyFile = fs
+      .readdirSync(terraformDir)
+      .filter((file) => file.endsWith('.tf'))
+      .map((file) => fs.readFileSync(path.join(terraformDir, file), 'utf8'))
+      .join('\n');
+
+    expect(
+      everyFile.match(/google_service_account\.claude_token_reader\.\w+/g) ??
+        [],
+    ).toEqual(['google_service_account.claude_token_reader.email']);
+    expect(everyFile).not.toMatch(/claude-token-reader@/);
+
+    expect(
+      everyFile.match(/google_service_account\.telemetry_writer\.name/g) ?? [],
+    ).toEqual(['google_service_account.telemetry_writer.name']);
+    expect(everyFile).toMatch(
+      /resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" \{[^}]*member\s*=\s*"principalSet:\/\/iam\.googleapis\.com\/\$\{google_iam_workload_identity_pool\.github\.name\}\/attribute\.repository\/\$\{var\.github_owner\}\/\$\{var\.github_repository\}"/s,
+    );
+  });
 });

@@ -49,11 +49,10 @@ variable "homelab_repository" {
     error_message = "homelab_repository must be one exact owner/repository pair without wildcards."
   }
 }
-# The rest of the fleet (#1325, #1350). These repos need nothing from this
-# project except OIDC admission to the shared `github` pool and read access
-# to the one Claude subscription token, so they get a plain list rather than
-# a named variable each - unlike sprinkles/homelab above, no other resource
-# refers to them individually.
+# The rest of the fleet (#1325). These repos are admitted to the shared
+# `github` WIF pool list tracked in `tools/iam-contract/model.json`, so they
+# use a plain list rather than a named variable each - unlike sprinkles/homelab
+# above, no other resource refers to them individually.
 variable "additional_fleet_repositories" {
   type = list(string)
   default = [
@@ -69,11 +68,6 @@ variable "additional_fleet_repositories" {
     ])
     error_message = "each entry must be one exact owner/repository pair without wildcards."
   }
-}
-
-variable "budget_notification_channels" {
-  type    = list(string)
-  default = []
 }
 
 # The maintainer address Cloud Monitoring alerts notify (currently only the

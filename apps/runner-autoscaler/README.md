@@ -190,11 +190,12 @@ adapter after the queue has claimed it. Its environment is:
 LCARS_CONSOLE_URL=https://lcars.jlapenna.net
 LCARS_WORK_AUDIENCE=agent-lcars-work
 GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/telemetry-writer.json
+LCARS_SCHEDULER_CREDENTIALS=/secrets/lcars/scheduler-key.json
 LCARS_QUEUE_RUNNER_IMAGE=registry.example.com/homelab-runner:jit-node24
 ```
 
 The trusted autoscaler environment may set `LCARS_WORKER_POLICY_PROVIDERS` to a
-comma-separated subset of `claude,codex,opencode`, only after artifact-matched
+comma-separated subset of `claude,codex,opencode,agy`, only after artifact-matched
 qualification and specific activation approval. Empty or unset is disabled.
 The executor validates and snapshots this selector before startup, then
 explicitly forwards it to every worker Job, including the empty value so image
@@ -265,10 +266,11 @@ Nodes/Pods `list`, plus `get` on the configured worker ServiceAccount. Its
 credential never reaches worker pods. Startup verifies the account exists and
 write grants are allowed before claiming. `--check-config` performs the same
 read-only API inventory and permission preflight before a deployment stops its
-previous controller; it creates no Jobs, Secrets or workers. The provider
-Secret must have nonempty `telemetry-writer.json`, `claude-code-oauth-token`,
-`opencode-llm-api-key`, and `antigravity-oauth-token` keys. Each pod projects
-only the writer and its own provider key. Codex restores subscription credentials through the existing
+previous controller; it creates no Jobs, Secrets or workers. Preflight checks
+that the provider Secret has nonempty `telemetry-writer.json`,
+`claude-code-oauth-token`, and `opencode-llm-api-key` keys (`antigravity-oauth-token`
+is projected only into `agy` pods, and optional `hindsight-api-token` into
+`/run/hindsight`). Each pod projects only the writer and its own provider key. Codex restores subscription credentials through the existing
 Console broker and keeps rotating credentials/transcripts in a 64Mi memory
 `emptyDir`. Workers disable ServiceAccount token mounting, run as uid/gid 1001,
 and use no host paths, Docker socket, or SSH key.
@@ -341,18 +343,15 @@ checks and the read-only Kubernetes preflight described above.
 
 The same continuously running process ticks native schedules through
 `POST /api/work/v1/schedules/tick` once at startup and then every five
-minutes. By default it reuses the queue executor's Google ID-token source and
-Work API audience (`GOOGLE_APPLICATION_CREDENTIALS`); setting
-`LCARS_SCHEDULER_CREDENTIALS` points the schedule and maintenance ticker at a
-dedicated service-account key (`job-scheduler@agent-lcars.iam.gserviceaccount.com`)
-so the `work.cron` scope and repository-job automatic activation (`#3217`) stay
-separate from the runner-mounted `telemetry-writer.json` executor key. Production
-sets it; the Console grants `work.cron` only to `svc:job-scheduler`, so an
-unset variable makes the Work API refuse ticks. When
-`LCARS_SCHEDULER_CREDENTIALS` is set to a distinct path, an unreadable or
-missing file fails closed for the schedule ticker without falling back to the
-executor identity. `work.executor` alone cannot mint schedules, and `work.cron`
-cannot claim runs. This keeps schedule state and admission in the Work API and
+minutes. Required `LCARS_SCHEDULER_CREDENTIALS` points the schedule and
+maintenance ticker at its dedicated service-account key
+(`job-scheduler@agent-lcars.iam.gserviceaccount.com`) so the `work.cron` scope
+and repository-job automatic activation (`#3217`) stay separate from the
+runner-mounted `telemetry-writer.json` executor key. The Console grants `work.cron` exclusively to `svc:job-scheduler`; an unset
+`LCARS_SCHEDULER_CREDENTIALS` fails `--check-config` closed, and an unreadable
+or missing key file at `LCARS_SCHEDULER_CREDENTIALS` fails the schedule ticker
+closed at runtime without falling back to `GOOGLE_APPLICATION_CREDENTIALS`.
+`work.executor` alone cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule state and admission in the Work API and
 removes GitHub Actions schedule delivery from the ingress path.
 `github_runner_autoscaler_schedule_ticks_total` reports `success` and `error`
 outcomes for operations monitoring.

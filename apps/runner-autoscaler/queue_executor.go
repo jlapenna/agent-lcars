@@ -105,21 +105,14 @@ const (
 	queuePollOutcomeCapacityWait queuePollOutcome = "capacity_wait"
 )
 
-// pollOnce claims at most one run and, on success, launches it through the
-// reserved slot. "Nothing
-// queued for these pipelines" is not an error -- the caller's loop simply
-// tries again on the next tick -- and the console answers it two ways this
-// function must both tolerate: a bare 204, or (what it actually sends today)
-// 200 with an empty body.
-func pollOnce(cfg queueExecutorConfig) error {
-	_, err := pollOnceWithOutcome(cfg)
-	return err
-}
-
-// pollOnceWithOutcome preserves pollOnce's API/error behavior while exposing
-// a bounded operational outcome to the durable poller metrics. A valid claim
-// is counted before launch, so a launch failure is visible as both a claimed
-// run and a failed launch rather than being mistaken for an empty queue.
+// pollOnceWithOutcome claims at most one run and, on success, launches it
+// through the reserved slot while exposing a bounded operational outcome to
+// the durable poller metrics. "Nothing queued for these pipelines" is not an
+// error -- the caller's loop simply tries again on the next tick -- and the
+// console answers it two ways this function must both tolerate: a bare 204, or
+// (what it actually sends today) 200 with an empty body. A valid claim is
+// counted before launch, so a launch failure is visible as both a claimed run
+// and a failed launch rather than being mistaken for an empty queue.
 func pollOnceWithOutcome(cfg queueExecutorConfig) (queuePollOutcome, error) {
 	reservation, err := cfg.reserve()
 	if err != nil {

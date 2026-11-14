@@ -36,28 +36,28 @@ func writeConfig(t *testing.T, body string) string {
 }
 
 func TestOrchestratorConfigDefaultsServerFields(t *testing.T) {
-	resolved, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
+	cfg, err := loadOrchestratorConfig(writeConfig(t, validOrchestratorYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := resolved.Raw.Server.MetricsAddr, "127.0.0.1:8080"; got != want {
+	if got, want := cfg.Server.MetricsAddr, "127.0.0.1:8080"; got != want {
 		t.Fatalf("default metrics_addr = %q, want %q", got, want)
 	}
-	if got, want := resolved.Raw.Server.LogLevel, "info"; got != want {
+	if got, want := cfg.Server.LogLevel, "info"; got != want {
 		t.Fatalf("default log_level = %q, want %q", got, want)
 	}
-	if got, want := resolved.Raw.Server.LogFormat, "text"; got != want {
+	if got, want := cfg.Server.LogFormat, "text"; got != want {
 		t.Fatalf("default log_format = %q, want %q", got, want)
 	}
 }
 
 func TestOrchestratorConfigHonorsExplicitMetricsAddr(t *testing.T) {
 	body := strings.Replace(validOrchestratorYAML, "version: 1\n", "version: 1\nserver:\n  metrics_addr: 0.0.0.0:9999\n", 1)
-	resolved, err := loadOrchestratorConfig(writeConfig(t, body))
+	cfg, err := loadOrchestratorConfig(writeConfig(t, body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := resolved.Raw.Server.MetricsAddr, "0.0.0.0:9999"; got != want {
+	if got, want := cfg.Server.MetricsAddr, "0.0.0.0:9999"; got != want {
 		t.Fatalf("metrics_addr = %q, want %q", got, want)
 	}
 }
@@ -143,11 +143,11 @@ arc_lanes:
   registration_url: https://github.com/jlapenna/agent-lcars
   metrics_url: http://laforge.lan.jlapenna.net:30086/metrics
 `
-	resolved, err := loadOrchestratorConfig(writeConfig(t, live))
+	cfg, err := loadOrchestratorConfig(writeConfig(t, live))
 	if err != nil {
 		t.Fatalf("live homelab orchestrator.yml shape rejected: %v", err)
 	}
-	if resolved.Raw.Kubernetes == nil || resolved.Raw.Kubernetes.MaxConcurrent != 5 || len(resolved.Raw.ARCLanes) != 1 {
-		t.Fatalf("live config resolved unexpectedly: %+v", resolved.Raw)
+	if cfg.Kubernetes == nil || cfg.Kubernetes.MaxConcurrent != 5 || len(cfg.ARCLanes) != 1 {
+		t.Fatalf("live config resolved unexpectedly: %+v", cfg)
 	}
 }

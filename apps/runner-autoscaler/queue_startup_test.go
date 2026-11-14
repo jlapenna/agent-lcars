@@ -35,17 +35,18 @@ current-context: test
 	return path
 }
 
-func testKubernetesResolved(t *testing.T) resolvedOrchestratorConfig {
+func testKubernetesResolved(t *testing.T) OrchestratorConfig {
 	t.Helper()
 	q, _ := kubeQueueFixture()
 	config := q.config
 	config.Kubeconfig = writeTestKubeconfig(t)
-	return resolvedOrchestratorConfig{Raw: OrchestratorConfig{Version: 1, Kubernetes: &config}}
+	return OrchestratorConfig{Version: 1, Kubernetes: &config}
 }
 
 func TestQueueEnvironmentAcceptsCompleteKubernetesDeployment(t *testing.T) {
 	t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
+	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/secrets/scheduler.json")
 	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
 	if err := validateQueueExecutorEnvironment(testKubernetesResolved(t)); err != nil {
 		t.Fatalf("complete deployment rejected: %v", err)
@@ -53,10 +54,11 @@ func TestQueueEnvironmentAcceptsCompleteKubernetesDeployment(t *testing.T) {
 }
 
 func TestQueueEnvironmentRejectsStaticDefects(t *testing.T) {
-	for _, key := range []string{"LCARS_QUEUE_RUNNER_IMAGE", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_CONSOLE_URL", "LCARS_WORKER_POLICY_PROVIDERS"} {
+	for _, key := range []string{"LCARS_QUEUE_RUNNER_IMAGE", "GOOGLE_APPLICATION_CREDENTIALS", "LCARS_SCHEDULER_CREDENTIALS", "LCARS_CONSOLE_URL", "LCARS_WORKER_POLICY_PROVIDERS"} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
 			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
+			t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/secrets/scheduler.json")
 			t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry/direct-runner:test")
 			bad := ""
 			if key == "LCARS_CONSOLE_URL" {
