@@ -33,7 +33,7 @@ var (
 	}, []string{"outcome"})
 	queueExecutorClaimsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_claims_total",
-		Help: "Successful queue claims returned by the control plane before direct-runner launch, by provider pipeline.",
+		Help: "Successful queue claims returned by the control plane before direct-runner launch, by claimed pipeline (provider pipelines and declared runtimes such as claw-investigator).",
 	}, []string{"pipeline"})
 	queueExecutorLaunchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_launches_total",
@@ -41,7 +41,7 @@ var (
 	}, []string{"outcome"})
 	queueExecutorMemoryLaunchesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_queue_executor_memory_launches_total",
-		Help: "New direct-runner Jobs by provider pipeline and Hindsight memory credential state at launch: configured (token key present), isolated (goose; no token mounted by design), no_token (memory expected but the credential Secret lacks a nonempty hindsight-api-token), or unknown (Secret read failed). Never reads or exports the token value.",
+		Help: "New direct-runner Jobs by provider pipeline and Hindsight memory credential state at launch: configured (token key present), isolated (goose and declared runtimes; no token mounted by design), no_token (memory expected but the credential Secret lacks a nonempty hindsight-api-token), or unknown (Secret read failed). Never reads or exports the token value.",
 	}, []string{"pipeline", "memory"})
 	scheduleTicksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "github_runner_autoscaler_schedule_ticks_total",
