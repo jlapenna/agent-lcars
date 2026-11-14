@@ -1,3 +1,4 @@
+import { CLAW_REPORT_MAX } from '@agent-lcars/dispatch-contracts';
 import { type RunResult } from '@agent-lcars/orchestrator';
 import { outcomeReferenceSchema } from '@agent-lcars/work';
 
@@ -105,6 +106,32 @@ export function toRunResult(
     ...(relatedRefs === undefined || relatedRefs.length === 0
       ? {}
       : { relatedRefs }),
+    ...(finalMessage === undefined ? {} : { message: finalMessage }),
+  };
+}
+
+/** A claw run's completion. Its spec permits exactly one successful
+ * outcome, a nonblank `report` whose message is the deliverable; claw runs
+ * have no repository, so no outcome reference is ever recorded. Everything
+ * else -- `runner-failed`, a blank report, or any repository outcome -- is a
+ * failed attempt that the finite retry policy owns. */
+export function toClawRunResult(
+  outcome: unknown,
+  message?: unknown,
+): RunResult {
+  const finalMessage =
+    typeof message === 'string' && message.length > 0
+      ? message.slice(0, CLAW_REPORT_MAX)
+      : undefined;
+  const ok = outcome === 'report' && (finalMessage?.trim() ?? '') !== '';
+  // Only two summaries are ever stored for claw work. Any other outcome --
+  // including the reserved `park`, which item-state derivation treats as a
+  // human handoff -- is normalized to `runner-failed`, so an exhausted claw
+  // investigation reads as failed, never as parked (claw work refuses the
+  // reply/redispatch controls a parked item would offer).
+  return {
+    ok,
+    summary: ok ? 'report' : 'runner-failed',
     ...(finalMessage === undefined ? {} : { message: finalMessage }),
   };
 }

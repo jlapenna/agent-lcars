@@ -2,6 +2,8 @@ import 'server-only';
 
 import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
+  CLAW_INVESTIGATE_OPERATION,
+  clawInvestigateInputSchema,
   formatAttemptId,
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
@@ -20,6 +22,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import {
   runsContract,
+  storedClawWorkSpec,
   storedWorkPayloadSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
@@ -56,7 +59,7 @@ import { validateJobResult } from './repository-job-result';
 import type { JobOccurrence } from './repository-job-store';
 import type { RepositoryJobs } from './repository-jobs';
 import { repositoryJobs } from './repository-jobs-runtime';
-import { toRunResult } from './run-result';
+import { toClawRunResult, toRunResult } from './run-result';
 import { hashRunToken, mintRunToken, runTokenMatches } from './run-token';
 import { getWatchedRepos } from './watched-repos-config';
 import type { WorkPrincipal } from './work-auth';
@@ -287,6 +290,19 @@ async function drainAfterCompletion(
       error,
     );
   }
+}
+
+/** A claw run's stored spec, only when the run executes it: the pipeline and
+ *  the stored Work must agree. Undefined for every other run, which keeps
+ *  every repository check unchanged. */
+function clawRunSpec(
+  run: Pick<Run, 'pipeline'>,
+  task: { work: unknown } | undefined,
+) {
+  const spec = storedClawWorkSpec(task?.work);
+  return spec !== undefined && spec.pipeline === run.pipeline
+    ? spec
+    : undefined;
 }
 
 export const runsRouter = os.router({
@@ -545,11 +561,17 @@ export const runsRouter = os.router({
     const run = await requireRunToken(context, input.runId);
     const task = await context.store.readTask(run.task);
     const mode = run.params?.['mode'];
+    const claw =
+      isWorkAnchor(run.task) && task !== undefined
+        ? clawRunSpec(run, task.task)
+        : undefined;
     if (
       !mode ||
-      !(run.pipeline === 'goose'
-        ? mode === 'recipe'
-        : ['implement', 'review', 'reply'].includes(mode))
+      !(claw !== undefined
+        ? mode === 'claw'
+        : run.pipeline === 'goose'
+          ? mode === 'recipe'
+          : ['implement', 'review', 'reply'].includes(mode))
     ) {
       throw errors.UNAUTHORIZED({ message: 'run has no valid dispatch mode' });
     }
@@ -641,6 +663,35 @@ export const runsRouter = os.router({
       });
     }
     const { spec } = parsed.data;
+    if (claw !== undefined) {
+      // The question exists only in the executing round's revision input:
+      // the immutable spec carries none, so the brief never holds two.
+      const { operation, ...operationInput } = run.sourceRevision?.input ?? {};
+      const input = clawInvestigateInputSchema.safeParse(operationInput);
+      if (!input.success || operation !== claw.operation) {
+        logger.error('agent-lcars: claw run has no valid operation input', {
+          runId: run.runId,
+          workId: run.task.workId,
+        });
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: 'run has corrupted Work',
+        });
+      }
+      return {
+        id: run.task.workId,
+        spec: claw,
+        anchor: {
+          type: 'work' as const,
+          id: run.task.workId,
+          title: claw.title,
+          body: input.data.question,
+          html_url: `${consoleUrl()}/work/${run.task.workId}`,
+        },
+        ...shared,
+        mode: 'claw' as const,
+        claw: { operation: CLAW_INVESTIGATE_OPERATION, input: input.data },
+      };
+    }
     const target = anchorTarget(run, task.task);
     return {
       id: run.task.workId,
@@ -666,6 +717,10 @@ export const runsRouter = os.router({
     // after it, so the returned Run is the one the token still owns.
     if (isWorkAnchor(run.task))
       run = await requireRunToken(context, input.runId);
+    if (clawRunSpec(run, task) !== undefined)
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Claw runs have no repository identity',
+      });
     const target = anchorTarget(run, task);
     const verifiedAt = context.now().toISOString();
     const validUntil = runRecoveryDeadline(run) ?? run.leaseExpiresAt;
@@ -867,23 +922,30 @@ export const runsRouter = os.router({
     // Same task fetch checkoutToken already needs below: a native run's
     // anchorTarget cannot resolve spec.target.repo from the run alone.
     const task = (await context.store.readTask(run.task))?.task;
-    const target = anchorTarget(run, task);
+    // A claw run has no repository: its spec, not `workPayloadSchema`'s
+    // `deliverable`, permits exactly a report. Every other run keeps the
+    // repository-bound mapper and its exact reference checks.
+    const claw = isWorkAnchor(run.task) ? clawRunSpec(run, task) : undefined;
+    const target = claw === undefined ? anchorTarget(run, task) : undefined;
     // The shared outcome mapper validates exact references against this
     // stored run's anchor and mode, not caller-supplied identity metadata.
-    let result = toRunResult(
-      target.repo,
-      input.outcome,
-      input.outcomeReference,
-      input.message,
-      {
-        issue: target.issue,
-        mode: run.params?.mode,
-        report:
-          isWorkAnchor(run.task) &&
-          workPayloadSchema.safeParse(task?.work).data?.spec.deliverable ===
-            'report',
-      },
-    );
+    let result =
+      target === undefined
+        ? toClawRunResult(input.outcome, input.message)
+        : toRunResult(
+            target.repo,
+            input.outcome,
+            input.outcomeReference,
+            input.message,
+            {
+              issue: target.issue,
+              mode: run.params?.mode,
+              report:
+                isWorkAnchor(run.task) &&
+                workPayloadSchema.safeParse(task?.work).data?.spec
+                  .deliverable === 'report',
+            },
+          );
     let publishTriage = false;
     if (triageBriefContext(run) !== undefined && result.ok) {
       try {
@@ -920,7 +982,12 @@ export const runsRouter = os.router({
       run.params?.mode !== 'review'
     ) {
       const reference = result.ref?.match(/\/pull\/(\d+)$/u);
-      if (task === undefined || reference === undefined || reference === null)
+      if (
+        task === undefined ||
+        target === undefined ||
+        reference === undefined ||
+        reference === null
+      )
         throw new ORPCError('CONFLICT', {
           message: 'Ready delivery evidence missing',
         });
@@ -1036,6 +1103,10 @@ export const runsRouter = os.router({
       'workId' in run.task
         ? (await context.store.readTask(run.task))?.task
         : undefined;
+    if (clawRunSpec(run, task) !== undefined)
+      throw new ORPCError('FORBIDDEN', {
+        message: 'Claw runs have no repository checkout',
+      });
     const target = anchorTarget(run, task);
 
     let profile: JobProfile | undefined;

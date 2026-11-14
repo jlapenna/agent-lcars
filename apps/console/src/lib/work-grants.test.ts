@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
@@ -285,5 +286,75 @@ describe('grant channel', () => {
         ]),
       ),
     ).toThrow();
+  });
+});
+
+describe('claw-investigator grants', () => {
+  function committedGrants() {
+    const config = parseYaml(
+      readFileSync(
+        path.join(import.meta.dirname, '../../apphosting.yaml'),
+        'utf8',
+      ),
+    ) as { env: { variable: string; value?: string }[] };
+    return parseWorkGrants(
+      config.env.find((entry) => entry.variable === 'AGENT_LCARS_WORK_GRANTS')
+        ?.value,
+    );
+  }
+
+  it('accepts the zone executor and admitter grant rows', () => {
+    const grants = parseWorkGrants(
+      JSON.stringify([
+        {
+          principal: 'svc:claw-homelab-ops',
+          subjects: ['claw-homelab-ops@agent-lcars.iam.gserviceaccount.com'],
+          pipelines: ['claw-investigator'],
+          scopes: ['work.executor'],
+        },
+        {
+          principal: 'user:jlapenna',
+          subjects: ['github:jlapenna'],
+          pipelines: ['claude', 'claw-investigator'],
+          scopes: ['work.operator', 'work.claw.admit'],
+        },
+      ]),
+    );
+    expect(grants.map((grant) => grant.pipelines)).toEqual([
+      ['claw-investigator'],
+      ['claude', 'claw-investigator'],
+    ]);
+  });
+
+  it('never lets the shared executor grant claim claw work', async () => {
+    const shared = committedGrants().find(
+      (grant) => grant.principal === 'svc:telemetry-writer',
+    );
+    expect(shared?.scopes).toContain('work.executor');
+    expect(shared?.pipelines).not.toContain('claw-investigator');
+
+    const store = new MemoryStore();
+    const now = '2026-11-14T10:00:00.000Z';
+    const orchestrator = new Orchestrator(store, { now: () => now });
+    const outcome = await orchestrator.request({
+      taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+      requestId: 'claw',
+      pipeline: 'claw-investigator',
+      work: { spec: { title: 'claw' } },
+    });
+    if ('refused' in outcome) throw new Error(outcome.reason);
+    await store.enqueueRun({ runId: outcome.run!.runId, now });
+    const claim = (pipelines: readonly string[]) =>
+      store.claimQueuedRun({
+        pipelines,
+        now,
+        claimedBy: 'runner',
+        claimedBySubject: 'executor@example.com',
+        tokenHash: 'a'.repeat(64),
+      });
+    expect(await claim(shared!.pipelines)).toBeUndefined();
+    expect((await claim(['claw-investigator']))?.runId).toBe(
+      outcome.run!.runId,
+    );
   });
 });

@@ -200,6 +200,51 @@ export function runOrchestratorStoreContract(
       });
     });
 
+    it('retries a lost read-only claw round under the finite budget, but never an effectful recipe', async () => {
+      for (const [pipeline, retried] of [
+        ['claw-investigator', 1],
+        ['goose', 0],
+      ] as const) {
+        const store = await makeStore();
+        const clock = new TestClock(T0);
+        const orchestrator = new Orchestrator(store, clock);
+        const taskId = {
+          workId:
+            pipeline === 'goose'
+              ? '01J5Z3K9QX8F0N2B4V6C8D1E4A'
+              : '01J5Z3K9QX8F0N2B4V6C8D1E4B',
+        };
+        const admitted = await orchestrator.request({
+          taskId,
+          requestId: 'question',
+          pipeline,
+          work: TASK_WORK,
+          sourceRevision: {
+            key: 'question',
+            input: { operation: 'investigate:v1', question: 'why?' },
+          },
+        });
+        if (isRefusal(admitted)) throw new Error(admitted.reason);
+        clock.advanceMinutes(121);
+        const swept = await orchestrator.sweepExpired();
+        expect(swept.lost).toHaveLength(1);
+        expect(swept.retried).toHaveLength(retried);
+        const failure =
+          retried === 0
+            ? undefined
+            : await orchestrator.report(swept.retried[0]!.newRunId, {
+                ok: false,
+                summary: 'runner-failed',
+              });
+        if (failure !== undefined) {
+          if (isRefusal(failure)) throw new Error(failure.reason);
+          // A failed read-only attempt also retries, within the same budget.
+          expect(failure.additionalRuns).toHaveLength(1);
+          expect(failure.additionalRuns?.[0]?.revisionAttempt).toBe(3);
+        }
+      }
+    });
+
     it('finishes a source revision after its finite failed model attempts', async () => {
       const store = await makeStore();
       const orchestrator = new Orchestrator(store, new TestClock(T0));
@@ -3325,6 +3370,46 @@ export function runOrchestratorStoreContract(
             (await store.listQueuedRuns()).map((run) => run.runId),
           ).toEqual([runs[1]?.runId]);
         }
+      });
+
+      it('admits at most two live claw-investigator claims, and only to a grant listing it', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const runs = [];
+        for (const value of [60, 61, 62]) {
+          const run = await queuedRun(
+            orchestrator,
+            `q${value}`,
+            'claw-investigator',
+          );
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          runs.push(run);
+          clock.advanceMinutes(1);
+        }
+        // The shared executor's grant does not list the claw pipeline.
+        expect(
+          await store.claimQueuedRun({
+            pipelines: ['claude', 'codex', 'opencode', 'agy', 'goose'],
+            now: clock.now(),
+            claimedBy: 'shared-runner',
+            claimedBySubject: 'shared@example.com',
+            tokenHash: '6'.repeat(64),
+          }),
+        ).toBeUndefined();
+        const claims = await Promise.all(
+          ['7', '8', '9'].map((digit, index) =>
+            store.claimQueuedRun({
+              pipelines: ['claw-investigator'],
+              now: clock.now(),
+              claimedBy: `zone-runner-${index}`,
+              claimedBySubject: 'zone@example.com',
+              tokenHash: digit.repeat(64),
+            }),
+          ),
+        );
+        expect(claims.filter((run) => run !== undefined)).toHaveLength(2);
+        expect((await store.listQueuedRuns()).map((run) => run.runId)).toEqual([
+          runs[2]?.runId,
+        ]);
       });
 
       it.each([

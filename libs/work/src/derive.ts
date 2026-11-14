@@ -2,6 +2,7 @@ import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import {
   type DeliveryBinding,
   deliveryWaiting,
+  isEffectfulPipeline,
   isLive,
   MAX_AUTO_RETRIES,
   type ProviderFallback,
@@ -78,7 +79,7 @@ export function deriveItemState(
     return latest.result?.ok ? 'done' : 'failed';
   }
   // lost: the sweep retries until the budget is spent, then leaves it.
-  if (latest.pipeline === 'goose') return 'failed';
+  if (isEffectfulPipeline(latest.pipeline)) return 'failed';
   return task.consecutiveLost > MAX_AUTO_RETRIES ||
     (latest.sourceRevision !== undefined &&
       (latest.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)

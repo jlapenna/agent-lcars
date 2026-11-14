@@ -188,6 +188,7 @@ const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   goose: 'goose',
   'inbox-summary': 'inbox summary',
   'handoff-summary': 'handoff summary',
+  'claw-investigator': 'claw investigator',
 };
 
 const PIPELINE_COLORS: Record<StoredPipeline, string> = {
@@ -201,6 +202,8 @@ const PIPELINE_COLORS: Record<StoredPipeline, string> = {
   goose: 'gray',
   'inbox-summary': 'gray',
   'handoff-summary': 'gray',
+  // A read-only claw agent: an internal executor, not a coding provider.
+  'claw-investigator': 'orange',
 };
 
 /**
