@@ -52,6 +52,14 @@ MAX_JOB_LABELS_PER_WORKFLOW = 100
 # Runs older than this do not count toward a workflow's consecutive-failure
 # streak, so a workflow that no longer runs stops reporting one (see collect()).
 CONSECUTIVE_FAILURE_WINDOW_SECONDS = 3 * 24 * 3600
+# Conclusions that count a pull_request run as failed. Unlike the main-line
+# streak this leaves out action_required: on a pull request it means the run
+# is waiting for a maintainer to approve it, and nothing has failed.
+PULL_REQUEST_FAILURE_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
+# How often, and for how many runs, the poller asks GitHub whether a failed
+# pull_request run has been rerun (see Poller.refresh_repository).
+PULL_REQUEST_RECHECK_SECONDS = 300
+PULL_REQUEST_RECHECK_LIMIT = 20
 OVERFLOW_JOB_LABEL = "__other__"
 MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW = 100
 OVERFLOW_CONCURRENCY_GROUP_LABEL = "__other__"
@@ -1035,6 +1043,41 @@ class Database:
                 (repository, run_id),
             )
 
+    def failing_pull_request_run_ids(self, repository: str) -> set[int]:
+        """The newest failed pull_request runs no later success has cleared.
+
+        These are the runs behind
+        github_actions_workflow_pull_request_failing_branches, newest first
+        and capped, so the poller can look for a rerun of each.
+        """
+        placeholders = ",".join("?" for _ in PULL_REQUEST_FAILURE_CONCLUSIONS)
+        run_ids: list[int] = []
+        settled: set[str] = set()
+        for row in self.rows(
+            f"""
+            SELECT id, workflow, conclusion
+            FROM workflow_runs
+            WHERE repository = ?
+              AND status = 'completed'
+              AND event = 'pull_request'
+              AND conclusion IN ('success', {placeholders})
+              AND COALESCE(started_at, created_at) >= ?
+            ORDER BY COALESCE(started_at, created_at) DESC, id DESC, run_attempt DESC
+            """,
+            (
+                repository,
+                *PULL_REQUEST_FAILURE_CONCLUSIONS,
+                time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,
+            ),
+        ):
+            if row["workflow"] in settled:
+                continue
+            if row["conclusion"] == "success":
+                settled.add(row["workflow"])
+            elif row["id"] not in run_ids:
+                run_ids.append(row["id"])
+        return set(run_ids[:PULL_REQUEST_RECHECK_LIMIT])
+
     def run_attempt_gaps(self, repository: str) -> list[tuple[int, tuple[int, ...]]]:
         """Return known reruns whose earlier attempts have not been stored."""
         with self.lock:
@@ -1514,21 +1557,24 @@ class DatabaseMetrics:
         works. As in _decisive_runs, nothing older than the newest success
         can affect the count, so it is not kept.
         """
+        placeholders = ",".join("?" for _ in PULL_REQUEST_FAILURE_CONCLUSIONS)
         runs: dict[tuple[str, str], list[tuple[float, bool, str]]] = {}
         settled: set[tuple[str, str]] = set()
         for row in self.database.rows(
-            """
+            f"""
             SELECT repository, workflow, conclusion, head_branch,
                    COALESCE(started_at, created_at) AS ran_at
             FROM workflow_runs
             WHERE status = 'completed'
               AND event = 'pull_request'
-              AND conclusion IN ('success', 'failure', 'timed_out',
-                                 'action_required', 'startup_failure')
+              AND conclusion IN ('success', {placeholders})
               AND COALESCE(started_at, created_at) >= ?
             ORDER BY repository, workflow, ran_at DESC, id DESC, run_attempt DESC
             """,
-            (time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,),
+            (
+                *PULL_REQUEST_FAILURE_CONCLUSIONS,
+                time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,
+            ),
         ):
             key = (row["repository"], row["workflow"])
             if key in settled:
@@ -1555,8 +1601,9 @@ class DatabaseMetrics:
         # instead of runs separates the two: failures on different head
         # branches with no successful pull_request run in between point at
         # the workflow or its runner, not at one change. Reruns and new
-        # pushes on one branch count once. Cancelled and skipped runs neither
-        # add a branch nor reset the count, and a run stored before
+        # pushes on one branch count once. Cancelled, skipped and
+        # approval-pending (action_required) runs neither add a branch nor
+        # reset the count, and a run stored before
         # head_branch was recorded stops the count if it succeeded but adds
         # no branch if it failed. Fork branches sharing a name count once.
         failing_branches = GaugeMetricFamily(
@@ -1793,6 +1840,7 @@ class Poller:
         self.api = api
         self.state = state
         self.concurrency_groups_retry_after: dict[str, float] = {}
+        self.pull_request_recheck_after: dict[str, float] = {}
         for repository in config.repositories:
             last_success = self.database.last_success_at(repository)
             self.state.last_success.labels(repository).set(
@@ -1841,6 +1889,32 @@ class Poller:
                     self.database.mark_run_missing(repository, run_id)
                     continue
                 self._store_run(repository, run)
+
+            # A rerun keeps its run's created_at, so one started after the
+            # overlap is never listed again and its run is no longer active.
+            # Without this, a pull request rerun once the runner was repaired
+            # would leave the failing-branch count, and its alert, standing
+            # until a new push passed or the window expired (homelab#3509).
+            # get_run returns the newest attempt; a new one is stored as
+            # active and then followed like any other run. A run GitHub no
+            # longer has keeps its stored result.
+            recheck_at = time.monotonic()
+            if recheck_at >= self.pull_request_recheck_after.get(repository, 0):
+                self.pull_request_recheck_after[repository] = (
+                    recheck_at + PULL_REQUEST_RECHECK_SECONDS
+                )
+                for run_id in (
+                    self.database.failing_pull_request_run_ids(repository)
+                    - discovered_ids
+                    - persisted_ids
+                ):
+                    try:
+                        run = self.api.get_run(repository, run_id)
+                    except GitHubRequestError as exc:
+                        if exc.status_code != 404:
+                            raise
+                        continue
+                    self._store_run(repository, run)
 
             for run_id, attempts in self.database.run_attempt_gaps(repository):
                 for attempt in attempts:
