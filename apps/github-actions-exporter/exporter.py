@@ -56,8 +56,8 @@ CONSECUTIVE_FAILURE_WINDOW_SECONDS = 3 * 24 * 3600
 # streak this leaves out action_required: on a pull request it means the run
 # is waiting for a maintainer to approve it, and nothing has failed.
 PULL_REQUEST_FAILURE_CONCLUSIONS = ("failure", "timed_out", "startup_failure")
-# How often, and for how many runs, the poller asks GitHub whether a failed
-# pull_request run has been rerun (see Poller.refresh_repository).
+# How often, and for how many runs at a time, the poller asks GitHub whether a
+# failed pull_request run has been rerun (see Poller.refresh_repository).
 PULL_REQUEST_RECHECK_SECONDS = 300
 PULL_REQUEST_RECHECK_LIMIT = 20
 OVERFLOW_JOB_LABEL = "__other__"
@@ -1043,12 +1043,12 @@ class Database:
                 (repository, run_id),
             )
 
-    def failing_pull_request_run_ids(self, repository: str) -> set[int]:
-        """The newest failed pull_request runs no later success has cleared.
+    def failing_pull_request_run_ids(self, repository: str) -> list[int]:
+        """The failed pull_request runs no later success has cleared.
 
         These are the runs behind
-        github_actions_workflow_pull_request_failing_branches, newest first
-        and capped, so the poller can look for a rerun of each.
+        github_actions_workflow_pull_request_failing_branches, newest first,
+        so the poller can look for a rerun of each.
         """
         placeholders = ",".join("?" for _ in PULL_REQUEST_FAILURE_CONCLUSIONS)
         run_ids: list[int] = []
@@ -1076,7 +1076,7 @@ class Database:
                 settled.add(row["workflow"])
             elif row["id"] not in run_ids:
                 run_ids.append(row["id"])
-        return set(run_ids[:PULL_REQUEST_RECHECK_LIMIT])
+        return run_ids
 
     def run_attempt_gaps(self, repository: str) -> list[tuple[int, tuple[int, ...]]]:
         """Return known reruns whose earlier attempts have not been stored."""
@@ -1841,6 +1841,7 @@ class Poller:
         self.state = state
         self.concurrency_groups_retry_after: dict[str, float] = {}
         self.pull_request_recheck_after: dict[str, float] = {}
+        self.pull_request_rechecked_at: dict[str, dict[int, float]] = {}
         for repository in config.repositories:
             last_success = self.database.last_success_at(repository)
             self.state.last_success.labels(repository).set(
@@ -1897,17 +1898,33 @@ class Poller:
             # until a new push passed or the window expired (homelab#3509).
             # get_run returns the newest attempt; a new one is stored as
             # active and then followed like any other run. A run GitHub no
-            # longer has keeps its stored result.
+            # longer has keeps its stored result. Each check is capped, and
+            # takes the runs checked longest ago first: always taking the
+            # newest would never reach the rerun of an older failure once
+            # more runs than the cap were failing, and would let one noisy
+            # workflow starve another's.
             recheck_at = time.monotonic()
             if recheck_at >= self.pull_request_recheck_after.get(repository, 0):
                 self.pull_request_recheck_after[repository] = (
                     recheck_at + PULL_REQUEST_RECHECK_SECONDS
                 )
-                for run_id in (
-                    self.database.failing_pull_request_run_ids(repository)
-                    - discovered_ids
-                    - persisted_ids
-                ):
+                candidates = [
+                    run_id
+                    for run_id in self.database.failing_pull_request_run_ids(repository)
+                    if run_id not in discovered_ids and run_id not in persisted_ids
+                ]
+                previous = self.pull_request_rechecked_at.get(repository, {})
+                # sorted() is stable, so never-checked runs stay newest first.
+                due = sorted(
+                    candidates,
+                    key=lambda run_id: previous.get(run_id, float("-inf")),
+                )[:PULL_REQUEST_RECHECK_LIMIT]
+                self.pull_request_rechecked_at[repository] = {
+                    run_id: recheck_at if run_id in due else previous[run_id]
+                    for run_id in candidates
+                    if run_id in due or run_id in previous
+                }
+                for run_id in due:
                     try:
                         run = self.api.get_run(repository, run_id)
                     except GitHubRequestError as exc:

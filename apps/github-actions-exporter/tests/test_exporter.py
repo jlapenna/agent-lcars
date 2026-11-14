@@ -730,6 +730,58 @@ class GitHubActionsExporterTests(unittest.TestCase):
         poller.refresh_repository(repository)
         api.get_run.assert_not_called()
 
+    def test_rerun_checks_rotate_past_the_per_cycle_cap(self):
+        # Always checking the newest runs would never reach the rerun of an
+        # older failure once more runs than the cap were failing.
+        repository = "jlapenna/homelab"
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+        name = "github_actions_workflow_pull_request_failing_branches"
+        limit = exporter.PULL_REQUEST_RECHECK_LIMIT
+        runs = {}
+        # id 1 is the newest failure; the last id is the oldest.
+        for run_id in range(1, limit + 2):
+            run = self.pull_request_run(run_id, f"feature-{run_id}", id=run_id)
+            runs[run_id] = run
+            self.database.upsert_run(repository, run)
+            self.database.upsert_jobs(repository, run, [])
+        oldest = limit + 1
+        runs[oldest] = self.pull_request_run(
+            0.5,
+            f"feature-{oldest}",
+            "success",
+            id=oldest,
+            run_attempt=2,
+            created_at=recent(oldest),
+        )
+        api = Mock()
+        api.list_runs.return_value = []
+        api.get_run.side_effect = lambda _repository, run_id: runs[run_id]
+        api.list_jobs.return_value = []
+        poller = exporter.Poller(
+            exporter.Config(
+                credentials=exporter.StaticCredentials("test"),
+                repositories=(repository,),
+            ),
+            self.database,
+            api,
+            FakeState(),
+        )
+
+        poller.refresh_repository(repository)
+        self.assertEqual(api.get_run.call_count, limit)
+        self.assertNotIn(call(repository, oldest), api.get_run.call_args_list)
+        self.assertEqual(
+            exported_metric_value(self.metrics(), name, labels), float(limit + 1)
+        )
+
+        # The next eligible cycle starts with the run it has not checked yet.
+        api.get_run.reset_mock()
+        poller.pull_request_recheck_after.clear()
+        poller.refresh_repository(repository)
+        self.assertEqual(api.get_run.call_args_list[0], call(repository, oldest))
+        self.assertEqual(api.get_run.call_count, limit)
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
+
     def test_approval_pending_pull_request_runs_are_not_failures(self):
         # action_required on a pull request is a run waiting for a maintainer
         # to approve it. Two of them are not a broken workflow.
@@ -741,7 +793,7 @@ class GitHubActionsExporterTests(unittest.TestCase):
         self.assertNotIn(
             "github_actions_workflow_pull_request_failing_branches{", self.metrics()
         )
-        self.assertEqual(self.database.failing_pull_request_run_ids(repository), set())
+        self.assertEqual(self.database.failing_pull_request_run_ids(repository), [])
 
     def test_pull_request_failing_branches_expire_with_the_window(self):
         repository = "jlapenna/homelab"

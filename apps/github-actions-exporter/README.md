@@ -139,9 +139,10 @@ across pull requests (homelab#3509). The branch name is stored to tell pull
 requests apart and is never exported.
 
 GitHub lists runs by creation time, and a rerun keeps its run's. Every five
-minutes the poller therefore asks GitHub for the newest attempt of each run
-behind that count (at most 20 per repository), so a rerun that passes after
-the runner is repaired clears it.
+minutes the poller therefore asks GitHub for the newest attempt of the runs
+behind that count, so a rerun that passes after the runner is repaired clears
+it. Each check covers at most 20 runs per repository, taking those checked
+longest ago first, so every run is reached within a few checks.
 
 ## Full-suite performance queries
 
