@@ -25,8 +25,8 @@ import {
   cp,
   mkdir,
   mkdtemp,
-  readFile,
   readdir,
+  readFile,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -40,6 +40,12 @@ const RESERVED_ENV =
   /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
 
 export class ClawFailure extends Error {}
+
+// Periodic heartbeats are best effort: the lease and its recovery belong to
+// LCARS, and only the startup acknowledgement gates provider work.
+function ignoreHeartbeatFailure() {
+  return undefined;
+}
 
 const required = (env, name) => {
   if (!env[name]) throw new ClawFailure(`${name} is required`);
@@ -261,7 +267,7 @@ export async function prepareState({ agentDir, workRoot, openclaw, env }) {
     env: childEnv,
     timeoutMs: 120_000,
   });
-  let valid = false;
+  let valid;
   try {
     valid = JSON.parse(validation.stdout).valid === true;
   } catch {
@@ -316,7 +322,7 @@ export async function main(env = process.env, deps = {}) {
     throw new ClawFailure('startup heartbeat was not acknowledged');
 
   const heartbeat = setInterval(() => {
-    call('heartbeat', {}).catch(() => {});
+    call('heartbeat', {}).catch(ignoreHeartbeatFailure);
   }, heartbeatMs);
   heartbeat.unref();
   try {
@@ -358,7 +364,9 @@ export async function main(env = process.env, deps = {}) {
         ],
         { env: childEnv, cwd: workspace, timeoutMs: turnDeadlineMs },
       );
-      await call('heartbeat', { providerProcessStarted: true }).catch(() => {});
+      await call('heartbeat', { providerProcessStarted: true }).catch(
+        ignoreHeartbeatFailure,
+      );
       result = settle(await turn);
     } catch (error) {
       result = {
