@@ -50,6 +50,28 @@ describe('recordOperatorComment', () => {
       githubMessage: 'Bad credentials',
     });
   });
+
+  it("adds GitHub's request id and its registry's verdict on the token", () => {
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+
+    recordOperatorComment('rejected_token', {
+      githubRequestId: 'ABCD:1234',
+      tokenRecord: 'present',
+      tokenRecordCreatedAt: '2026-11-11T19:00:52Z',
+      tokenRecordExpiresAt: null,
+    });
+
+    expect(structured.mock.calls[0]?.[2]).toEqual({
+      component: 'lcars-operator-comment',
+      outcome: 'rejected_token',
+      githubRequestId: 'ABCD:1234',
+      tokenRecord: 'present',
+      tokenRecordCreatedAt: '2026-11-11T19:00:52Z',
+      tokenRecordExpiresAt: null,
+    });
+  });
 });
 
 describe('recordOperatorTokenIssued', () => {

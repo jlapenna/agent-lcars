@@ -2,6 +2,8 @@ import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
 
+import type { OperatorTokenRecord } from './operator-token-check';
+
 export type OperatorCommentOutcome =
   'posted' | 'missing_token' | 'rejected_token' | 'failed';
 
@@ -28,6 +30,18 @@ export function recordOperatorComment(
       ...(rejection?.githubMessage === undefined
         ? {}
         : { githubMessage: rejection.githubMessage }),
+      ...(rejection?.githubRequestId === undefined
+        ? {}
+        : { githubRequestId: rejection.githubRequestId }),
+      ...(rejection?.tokenRecord === undefined
+        ? {}
+        : { tokenRecord: rejection.tokenRecord }),
+      ...(rejection?.tokenRecordCreatedAt === undefined
+        ? {}
+        : { tokenRecordCreatedAt: rejection.tokenRecordCreatedAt }),
+      ...(rejection?.tokenRecordExpiresAt === undefined
+        ? {}
+        : { tokenRecordExpiresAt: rejection.tokenRecordExpiresAt }),
     },
     { enrich: false },
   );
@@ -35,12 +49,14 @@ export function recordOperatorComment(
 
 /**
  * Why GitHub refused an operator token, as far as the console can see: how
- * long ago that token was issued and GitHub's own short reason. Neither
+ * long ago that token was issued, GitHub's own short reason and request id,
+ * and whether GitHub's token registry still lists it. None of these
  * identifies the operator or the token.
  */
-export interface OperatorTokenRejection {
+export interface OperatorTokenRejection extends Partial<OperatorTokenRecord> {
   tokenAgeSeconds?: number;
   githubMessage?: string;
+  githubRequestId?: string;
 }
 
 /**
