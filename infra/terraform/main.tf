@@ -675,6 +675,18 @@ resource "google_service_account" "job_scheduler" {
   display_name = "Agent LCARS schedule ticker and job automation caller"
 }
 
+# Homelab-ops claw zone executor (agent-lcars#3349; spec "### `claw`",
+# execution zones). It holds no project role and no resource grant: its only
+# use is minting a Google ID token for the Work API, where its grant admits
+# work.executor for the zone's own claw pipelines only. The key lives in the
+# Homelab vault (claw_zone_executor_key_json) and is mounted only into the
+# zone executor on the homelab controller, never into claw Job pods, so zone
+# Jobs cannot claim work and the shared executor key cannot claim zone work.
+resource "google_service_account" "claw_homelab_ops" {
+  account_id   = "claw-homelab-ops"
+  display_name = "Agent LCARS homelab-ops claw zone executor"
+}
+
 # QueueExecutor is the only supported Codex execution path. Its Console
 # broker owns the one rotating subscription lineage; hosted repository
 # identities receive no auth-object or refresh-lease grant.
