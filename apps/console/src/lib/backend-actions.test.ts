@@ -39,6 +39,7 @@ import { withConsoleReplyMarker } from './console-reply-marker';
 import { type DispatchTokenProvider, REPO_HEADER } from './github-app-tokens';
 import { createGithubUserClient, getGithubClient } from './github-client';
 import { recordOperatorComment } from './operator-comment-observability';
+import { describeRefusedOperatorToken } from './operator-token-check';
 import { drainOutbox } from './orchestrator-dispatch';
 import { handleReconcile } from './orchestrator-routes';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
@@ -79,6 +80,10 @@ vi.mock('./github-client', async (importOriginal) => {
 
 vi.mock('./operator-comment-observability', () => ({
   recordOperatorComment: vi.fn(),
+}));
+
+vi.mock('./operator-token-check', () => ({
+  describeRefusedOperatorToken: vi.fn(async () => undefined),
 }));
 
 vi.mock('./orchestrator-runtime', () => ({
@@ -561,6 +566,42 @@ describe('postComment (direct Work admission)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('records whether GitHub still lists the token it refused', async () => {
+    const { createComment } = mockOctokit();
+    createComment.mockRejectedValue(
+      Object.assign(new Error('Bad credentials'), {
+        status: 401,
+        response: {
+          data: { message: 'Bad credentials' },
+          headers: { 'x-github-request-id': 'ABCD:1234' },
+        },
+      }),
+    );
+    vi.mocked(describeRefusedOperatorToken).mockResolvedValueOnce({
+      tokenRecord: 'present',
+      tokenRecordCreatedAt: '2026-11-11T19:00:52Z',
+      tokenRecordExpiresAt: null,
+    });
+
+    await expect(
+      postComment(DEFAULT_REPO, 2709, 'Use option 2', OPERATOR),
+    ).rejects.toBeInstanceOf(GithubReauthRequiredError);
+
+    expect(describeRefusedOperatorToken).toHaveBeenCalledExactlyOnceWith(
+      OPERATOR.githubToken,
+    );
+    expect(recordOperatorComment).toHaveBeenCalledExactlyOnceWith(
+      'rejected_token',
+      {
+        githubMessage: 'Bad credentials',
+        githubRequestId: 'ABCD:1234',
+        tokenRecord: 'present',
+        tokenRecordCreatedAt: '2026-11-11T19:00:52Z',
+        tokenRecordExpiresAt: null,
+      },
+    );
   });
 
   it('records other GitHub write failures without hiding them', async () => {

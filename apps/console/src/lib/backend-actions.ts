@@ -22,6 +22,7 @@ import {
 } from './github-client';
 import { admitGithubWork } from './github-work-admission';
 import { recordOperatorComment } from './operator-comment-observability';
+import { describeRefusedOperatorToken } from './operator-token-check';
 import { createOrchestratorRuntime } from './orchestrator-runtime';
 import { type Pipeline } from './primary-action';
 import {
@@ -150,6 +151,8 @@ export class GithubReauthRequiredError extends ActionError {
   constructor(
     /** GitHub's own reason for a refused token; absent for a missing one. */
     readonly githubMessage?: string,
+    /** GitHub's id for the refused request, which its support can trace. */
+    readonly githubRequestId?: string,
   ) {
     super(GITHUB_SIGN_IN_AGAIN, 401);
     this.name = 'GithubReauthRequiredError';
@@ -215,7 +218,10 @@ async function asOperator<T>(
         'status' in error &&
         error.status === 401
       ) {
-        throw new GithubReauthRequiredError(githubErrorMessage(error));
+        throw new GithubReauthRequiredError(
+          githubErrorMessage(error),
+          githubRequestId(error),
+        );
       }
       throw error;
     },
@@ -228,6 +234,13 @@ function githubErrorMessage(error: object): string | undefined {
   const message = (error as { response?: { data?: { message?: unknown } } })
     .response?.data?.message;
   return typeof message === 'string' ? message.slice(0, 120) : undefined;
+}
+
+/** GitHub's id for a failed request, bounded like the message above. */
+function githubRequestId(error: object): string | undefined {
+  const id = (error as { response?: { headers?: Record<string, unknown> } })
+    .response?.headers?.['x-github-request-id'];
+  return typeof id === 'string' ? id.slice(0, 64) : undefined;
 }
 
 /**
@@ -267,6 +280,12 @@ async function postOperatorComment(
         ...(error.githubMessage === undefined
           ? {}
           : { githubMessage: error.githubMessage }),
+        ...(error.githubRequestId === undefined
+          ? {}
+          : { githubRequestId: error.githubRequestId }),
+        // GitHub's security log showed neither a revoked token nor a removed
+        // authorization for tokens it refused, so ask its registry directly.
+        ...(await describeRefusedOperatorToken(actor.githubToken)),
       });
     } else {
       recordOperatorComment('failed');
