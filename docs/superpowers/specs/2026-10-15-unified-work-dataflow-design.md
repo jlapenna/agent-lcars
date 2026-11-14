@@ -218,11 +218,12 @@ in [image publish routing](../../image-publish-routing.md). The launcher:
 6. Completes the attempt from the JSON envelope: `final`, `payloads`, the
    top-level `error` and `toolSummary`. `agent exec` exits `0` with
    `ok: true` even when every tool call was denied, so
-   `toolSummary.unresolvedError`, or any tool failure in an operation that
-   needs its tools, settles as a failed attempt rather than a report. Exit
-   `2` is a timeout. Exit `1` with a successful result and a cleanup error
-   settles the result and reports the cleanup failure; other exit `1` is a
-   failed attempt.
+   `toolSummary.unresolvedError` settles as a failed attempt rather than a
+   report, and an evidence operation (`investigate:v1`) answered without any
+   tool call is a failed attempt too. A tool call that failed and was then
+   resolved, such as a probe of a host that is down, is evidence rather than
+   a runner failure. Exit `2` is a timeout; other non-ok results are failed
+   attempts.
 
 The Job keeps every LCARS lifecycle duty: claim, lease, heartbeat, startup
 deadline, cancellation, `lost`. Requests equal limits and must fit one supported
