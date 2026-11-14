@@ -440,30 +440,15 @@ resource "google_service_account_iam_member" "github_app_webhook_configurator_im
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_app_webhook_configurator.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
-resource "google_service_account_iam_member" "fleet_writer_impersonation" {
-  for_each           = toset(local.github_repositories)
+resource "google_service_account_iam_member" "agent_lcars_writer_impersonation" {
   service_account_id = google_service_account.telemetry_writer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.value}"
-}
-
-# Preserve the three pre-fleet resource addresses while making the curated
-# repository list the single source for both WIF admission and writer
-# impersonation. A plan should therefore add only the four newly onboarded
-# repositories, not churn the existing grants.
-moved {
-  from = google_service_account_iam_member.agent_lcars_writer_impersonation
-  to   = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/agent-lcars"]
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.github_owner}/${var.github_repository}"
 }
 
 moved {
-  from = google_service_account_iam_member.members_writer_impersonation
-  to   = google_service_account_iam_member.fleet_writer_impersonation["supersprinklesracing/sprinkles"]
-}
-
-moved {
-  from = google_service_account_iam_member.homelab_writer_impersonation
-  to   = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/homelab"]
+  from = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/agent-lcars"]
+  to   = google_service_account_iam_member.agent_lcars_writer_impersonation
 }
 
 resource "google_secret_manager_secret" "runtime" {
@@ -635,10 +620,10 @@ resource "google_secret_manager_secret" "claude_oauth" {
   depends_on = [google_project_service.services]
 }
 
-# Its own identity rather than codex_agent or telemetry_writer: this one is
-# read-only, holds nothing but accessor on the single secret below, and -
-# unlike codex_agent - is never exported as ambient ADC into the agent's
-# shell. Blast radius is exactly the Claude token.
+# Dedicated Secret Manager accessor identity for CLAUDE_CODE_OAUTH_TOKEN,
+# pinned in tools/iam-contract/model.json. It holds accessor on this single
+# secret only and carries zero GitHub Actions WIF impersonation bindings now
+# that hosted agent lanes are retired (#1599).
 resource "google_service_account" "claude_token_reader" {
   account_id   = "claude-token-reader"
   display_name = "QueueExecutor Claude subscription-token reader"
@@ -648,16 +633,6 @@ resource "google_secret_manager_secret_iam_member" "claude_oauth_accessor" {
   secret_id = google_secret_manager_secret.claude_oauth.id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${google_service_account.claude_token_reader.email}"
-}
-
-# Every fleet repo may impersonate the reader, because every fleet repo may
-# run the claude lane. The pool's own attribute_condition is what bounds
-# this to the repositories in local.github_repositories.
-resource "google_service_account_iam_member" "claude_token_reader_impersonation" {
-  for_each           = toset(local.github_repositories)
-  service_account_id = google_service_account.claude_token_reader.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.value}"
 }
 
 resource "google_service_account_iam_member" "codex_agent_impersonation" {
@@ -693,53 +668,11 @@ resource "google_service_account_iam_member" "work_reader_token_creator" {
 # Dedicated Work API schedule-ticker and repository-job automation identity
 # (#3217). It holds no project role and no resource grant: its only use is
 # minting a Google ID token for the autoscaler's schedule/maintenance ticker
-# (`LCARS_SCHEDULER_CREDENTIALS`) once `work.cron` is separated from the
+# (`LCARS_SCHEDULER_CREDENTIALS`), keeping `work.cron` separate from the
 # runner-mounted `telemetry-writer` executor key.
 resource "google_service_account" "job_scheduler" {
   account_id   = "job-scheduler"
   display_name = "Agent LCARS schedule ticker and job automation caller"
-}
-
-resource "google_service_account" "homelab_codex_agent" {
-  account_id   = "homelab-codex-agent"
-  display_name = "Homelab Codex issue agent"
-}
-
-# The 2026-08 fleet additions (#1354). Each repo gets its own identity because
-# its GCS auth object is repository-scoped and generation-CAS protected.
-#
-# Project agent-lcars for all four, including the two supersprinklesracing
-# repos (#1354): the shared `github` pool that admits them lives here, a
-# WIF-impersonated service account must live in the pool's project, and one
-# control plane beats matching each repo's owning org. This settles the
-# convention fleet-credentials.md flagged as unmade.
-locals {
-  fleet_codex_agents = {
-    "supersprinklesracing/www"    = { slug = "www" }
-    "supersprinklesracing/girosf" = { slug = "girosf" }
-    "jlapenna/nx-cache-server"    = { slug = "nx-cache-server" }
-    "jlapenna/sync-padd"          = { slug = "sync-padd" }
-  }
-}
-
-resource "google_service_account" "fleet_codex_agent" {
-  for_each     = local.fleet_codex_agents
-  account_id   = "${each.value.slug}-codex-agent"
-  display_name = "${each.key} Codex issue agent"
-}
-
-
-resource "google_service_account_iam_member" "fleet_codex_agent_impersonation" {
-  for_each           = local.fleet_codex_agents
-  service_account_id = google_service_account.fleet_codex_agent[each.key].name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${each.key}"
-}
-
-resource "google_service_account_iam_member" "homelab_codex_agent_impersonation" {
-  service_account_id = google_service_account.homelab_codex_agent.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${var.homelab_repository}"
 }
 
 # QueueExecutor is the only supported Codex execution path. Its Console

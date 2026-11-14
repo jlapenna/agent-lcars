@@ -16,13 +16,13 @@ import (
 // shutdown. validateQueueExecutorEnvironment has already refused an
 // unconfigured executor before this runs, so the only states here are
 // misconfigured (a credential, token source or preflight failed) and ready.
-func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) error {
+func runOrchestrator(ctx context.Context, cfg OrchestratorConfig) error {
 	logger := slog.Default().With("component", "orchestrator")
 
 	orchestratorSchedulerReady.Store(true)
 	defer orchestratorSchedulerReady.Store(false)
 
-	if _, err := startMetricsServer(ctx, resolved.Raw.Server.MetricsAddr, logger); err != nil {
+	if _, err := startMetricsServer(ctx, cfg.Server.MetricsAddr, logger); err != nil {
 		return fmt.Errorf("starting metrics server: %w", err)
 	}
 
@@ -42,15 +42,15 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	// consumer unable to distinguish that condition from a stale telemetry
 	// writer.
 	go runQueueExecutorStatusPublisher(ctx, statusPublisher, queueStatus)
-	go runARCLaneStatusPublisher(ctx, statusPublisher, resolved.Raw.ARCLanes, logger)
+	go runARCLaneStatusPublisher(ctx, statusPublisher, cfg.ARCLanes, logger)
 
 	// Native work items: the durable queue executor claims and launches direct
 	// runners, while the schedule ticker calls the Work API's schedule route.
 	// Both use the same server-owned API and Google ID-token path, but the
 	// server grants work.executor and work.cron independently.
 	// These values are read once at startup: changing an
-	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE value, or the
-	// kubernetes stanza, needs a full daemon restart.
+	// LCARS_QUEUE_*/LCARS_CONSOLE_URL/LCARS_WORK_AUDIENCE/LCARS_SCHEDULER_CREDENTIALS
+	// value, or the kubernetes stanza, needs a full daemon restart.
 	consoleURL := strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL"))
 	keyPath := strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"))
 	// Do not advertise ready merely because the process configuration parses:
@@ -67,10 +67,9 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	if schedulerTokenErr != nil {
 		logger.Error("Schedule ticker misconfigured: could not build the schedule ID token source", slog.Any("error", schedulerTokenErr))
 	} else {
-		// Schedule ticking needs only the Console URL and its Google key
-		// (LCARS_SCHEDULER_CREDENTIALS when separated from the executor key,
-		// falling back to GOOGLE_APPLICATION_CREDENTIALS), no cluster access
-		// or provider credential. Keep it independent from direct-runner
+		// Schedule ticking needs only the Console URL and its dedicated
+		// scheduler Google key (LCARS_SCHEDULER_CREDENTIALS), with no cluster
+		// access or provider credential. Keep it independent from direct-runner
 		// launch preflight so a temporary cluster fault cannot couple the two
 		// together: the server still safely owns schedule admission and queue
 		// state. The API enforces the distinct work.cron grant.
@@ -86,7 +85,7 @@ func runOrchestrator(ctx context.Context, resolved resolvedOrchestratorConfig) e
 	} else {
 		hostname, hostErr := os.Hostname()
 		runnerName := queueExecutorRunnerName(hostname, hostErr)
-		queue, err := newKubernetesQueue(ctx, *resolved.Raw.Kubernetes, logger)
+		queue, err := newKubernetesQueue(ctx, *cfg.Kubernetes, logger)
 		if err != nil {
 			logger.Error("Queue executor Kubernetes preflight failed", slog.Any("error", err))
 		} else {

@@ -44,11 +44,11 @@ run "renders_exact_repository_authorization" {
   }
 
   override_resource {
-    target          = google_service_account.homelab_codex_agent
+    target          = google_service_account.telemetry_writer
     override_during = plan
     values = {
-      email = "homelab-codex-agent@agent-lcars.iam.gserviceaccount.com"
-      name  = "projects/agent-lcars/serviceAccounts/homelab-codex-agent@agent-lcars.iam.gserviceaccount.com"
+      email = "telemetry-writer@agent-lcars.iam.gserviceaccount.com"
+      name  = "projects/agent-lcars/serviceAccounts/telemetry-writer@agent-lcars.iam.gserviceaccount.com"
     }
   }
 
@@ -100,8 +100,8 @@ run "renders_exact_repository_authorization" {
   }
 
   assert {
-    condition     = length(google_service_account_iam_member.fleet_writer_impersonation) == length(local.github_repositories) && alltrue([for repository, binding in google_service_account_iam_member.fleet_writer_impersonation : binding.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${repository}" && binding.role == "roles/iam.workloadIdentityUser"])
-    error_message = "Every authorized fleet repository, and no others, must impersonate the telemetry writer through its exact repository principal."
+    condition     = google_service_account_iam_member.agent_lcars_writer_impersonation.service_account_id == google_service_account.telemetry_writer.name && google_service_account_iam_member.agent_lcars_writer_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/agent-lcars" && google_service_account_iam_member.agent_lcars_writer_impersonation.role == "roles/iam.workloadIdentityUser"
+    error_message = "Only jlapenna/agent-lcars may impersonate telemetry_writer over GitHub WIF (for work-session-expiry.yml)."
   }
 
   assert {
@@ -117,21 +117,6 @@ run "renders_exact_repository_authorization" {
   assert {
     condition     = google_secret_manager_secret_iam_member.admin_storage_state_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.admin_storage_state_accessor.member == "serviceAccount:${google_service_account.codex_agent.email}"
     error_message = "The Agent LCARS Codex service account must have read-only access to the verifier session secret."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.homelab_codex_agent_impersonation.member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/jlapenna/homelab"
-    error_message = "The Homelab Codex grant must use the exact repository principal."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.homelab_codex_agent_impersonation.service_account_id == google_service_account.homelab_codex_agent.name && google_service_account_iam_member.homelab_codex_agent_impersonation.service_account_id != google_service_account.codex_agent.name
-    error_message = "Homelab must use its own Codex service account so rotating credentials cannot race across repositories."
-  }
-
-  assert {
-    condition     = google_service_account_iam_member.fleet_writer_impersonation["jlapenna/homelab"].role == "roles/iam.workloadIdentityUser" && google_service_account_iam_member.homelab_codex_agent_impersonation.role == "roles/iam.workloadIdentityUser"
-    error_message = "Both Homelab grants must use roles/iam.workloadIdentityUser."
   }
 
   assert {
@@ -153,29 +138,12 @@ run "renders_exact_repository_authorization" {
   }
 
   # #1350: one shared, READ-ONLY Claude subscription token. The absence of a
-  # secretVersionAdder grant is the point - the lane reads, only a human
-  # writes - so assert the identity holds exactly one role on exactly one
-  # secret. Contrast the codex agents below, which must be able to rotate.
+  # secretVersionAdder grant is the point - only a human writes - so assert
+  # the identity holds exactly one role on exactly one secret and carries no
+  # GitHub Actions WIF impersonation.
   assert {
     condition     = google_secret_manager_secret.claude_oauth.secret_id == "CLAUDE_CODE_OAUTH_TOKEN" && google_secret_manager_secret_iam_member.claude_oauth_accessor.role == "roles/secretmanager.secretAccessor" && google_secret_manager_secret_iam_member.claude_oauth_accessor.member == "serviceAccount:${google_service_account.claude_token_reader.email}"
     error_message = "The Claude subscription token must be one secret read by one dedicated read-only identity."
-  }
-
-  assert {
-    condition     = length(google_service_account_iam_member.claude_token_reader_impersonation) == length(local.github_repositories)
-    error_message = "Every authorized repository must be able to impersonate the Claude token reader, and no others."
-  }
-
-  # Each Codex caller keeps its own identity; conditional bucket IAM grants
-  # it access only to its own generation-CAS object.
-  assert {
-    condition     = length(distinct([for key, _ in local.fleet_codex_agents : google_service_account.fleet_codex_agent[key].account_id])) == length(local.fleet_codex_agents)
-    error_message = "Each fleet repository must retain its own Codex service account."
-  }
-
-  assert {
-    condition     = alltrue([for key, _ in local.fleet_codex_agents : google_service_account_iam_member.fleet_codex_agent_impersonation[key].member == "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github.name}/attribute.repository/${key}"])
-    error_message = "Each fleet Codex identity must be impersonable only from its own repository."
   }
 
   assert {

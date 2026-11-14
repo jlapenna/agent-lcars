@@ -185,7 +185,7 @@
     {
       "project": "agent-lcars",
       "secret": "CLAUDE_CODE_OAUTH_TOKEN",
-      "rationale": "Exactly one binding. Two speculative accessor grants were added while chasing #1368 and pruned the same night; nothing but this check stops the next ones from persisting. The reader is claude-token-reader, impersonated by every fleet repo through the shared 'github' pool.",
+      "rationale": "Exactly one binding. Two speculative accessor grants were added while chasing #1368 and pruned the same night; nothing but this check stops the next ones from persisting. The reader is claude-token-reader, with zero GitHub Actions WIF impersonation bindings since hosted agent lanes retired (#1599); QueueExecutor pods receive claude-code-oauth-token via Homelab's lcars-runner-credentials Kubernetes Secret (ansible/deploy_queue_kubernetes.yml).",
       "bindings": {
         "roles/secretmanager.secretAccessor": [
           "serviceAccount:claude-token-reader@agent-lcars.iam.gserviceaccount.com"

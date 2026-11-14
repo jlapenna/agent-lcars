@@ -57,7 +57,7 @@ jobs:
           echo "token=$oidc_token" >> "$GITHUB_OUTPUT"
 
       # Write side: WIF-impersonate telemetry_writer, the existing
-      # fleet_writer_impersonation binding (infra/terraform/main.tf). No new
+      # agent_lcars_writer_impersonation binding (infra/terraform/main.tf). No new
       # Terraform, IAM, or secret. No untrusted step follows in this job, so
       # the exported GCLOUD_PROJECT is safe and lets the Firestore client
       # resolve its project outside a GCP runtime.

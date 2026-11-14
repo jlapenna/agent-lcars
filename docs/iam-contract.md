@@ -74,13 +74,13 @@ authority over every repository it covers. The maintainer confirmed
 2026-10-12, so a new jlapenna repository is covered by both Apps without a
 model change.
 
-| App                      | Installation | Account              | Selection  |
-| ------------------------ | ------------ | -------------------- | ---------- |
-| `agent-lcars`            | `150568943`  | jlapenna             | `all`      |
-| `agent-lcars`            | `150568991`  | supersprinklesracing | `selected` |
-| `agent-lcars`            | `154278523`  | jlaorg               | `all`      |
-| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`      |
-| `agent-lcars-autoscaler` | `154210731`  | supersprinklesracing | `all`      |
+| App                      | Installation | Account              | Selection |
+| ------------------------ | ------------ | -------------------- | --------- |
+| `agent-lcars`            | `150568943`  | jlapenna             | `all`     |
+| `agent-lcars`            | `150568991`  | supersprinklesracing | `all`     |
+| `agent-lcars`            | `154278523`  | jlaorg               | `all`     |
+| `agent-lcars-autoscaler` | `154210710`  | jlapenna             | `all`     |
+| `agent-lcars-autoscaler` | `154210731`  | supersprinklesracing | `all`     |
 
 The jlapenna autoscaler installation was previously narrowed under #1381.
 The maintainer's current confirmed scope supersedes that account's selected
@@ -88,8 +88,9 @@ contract. The organization-side `154210731` baseline and its separately owned
 narrowing decision remain unchanged. When that narrowing occurs, update the
 model, credential documentation and genuine consumer verification together.
 
-`agent-lcars` installation `150568991` retains selected access to `girosf`,
-`sprinkles` and `www`. Its separate `jlaorg` installation remains unchanged.
+`agent-lcars` installation `150568991` on `supersprinklesracing` uses `all`
+repositories (widened from the former `girosf`, `sprinkles` and `www`
+selection on 2026-10-28). Its separate `jlaorg` installation remains unchanged.
 `jlapenna/labels` is covered by both jlapenna installations; its source
 onboarding uses GitHub-hosted CI and adds no ARC lane.
 

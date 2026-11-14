@@ -69,26 +69,18 @@ type scheduleTickerConfig struct {
 	idToken    func() (string, error)
 }
 
-// schedulerCredentialsPath resolves the Google service-account key file used
-// by the schedule and maintenance ticker (#3217). When
-// LCARS_SCHEDULER_CREDENTIALS is set, the ticker authenticates with that
-// dedicated scheduler key so work.cron and repository-job automatic activation
-// do not share the runner-mounted executor key; otherwise it falls back to
-// executorKeyPath (GOOGLE_APPLICATION_CREDENTIALS).
-func schedulerCredentialsPath(executorKeyPath string) string {
-	if configured := strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS")); configured != "" {
-		return configured
-	}
-	return strings.TrimSpace(executorKeyPath)
+// schedulerCredentialsPath returns the configured Google service-account key
+// file path for the schedule and maintenance ticker (#3217). Production grants
+// work.cron exclusively to svc:job-scheduler, so LCARS_SCHEDULER_CREDENTIALS
+// is required rather than falling back to GOOGLE_APPLICATION_CREDENTIALS.
+func schedulerCredentialsPath() string {
+	return strings.TrimSpace(os.Getenv("LCARS_SCHEDULER_CREDENTIALS"))
 }
 
-// newScheduleTickerIDTokenSource builds or reuses the ID token source for
-// schedule and maintenance ticks. When LCARS_SCHEDULER_CREDENTIALS names the
-// same file as executorKeyPath (or is unset) and executorSource is already
-// built, it reuses executorSource to avoid duplicate file reads and token
-// refreshes. When a distinct LCARS_SCHEDULER_CREDENTIALS path is configured,
-// it builds a dedicated token source and fails closed on a bad/missing file
-// rather than falling back to the executor identity.
+// newScheduleTickerIDTokenSource builds (or reuses when explicitly pointed at
+// the same file) the ID token source for schedule and maintenance ticks. An
+// unset or unreadable LCARS_SCHEDULER_CREDENTIALS fails closed rather than
+// falling back to the executor identity.
 func newScheduleTickerIDTokenSource(
 	ctx context.Context,
 	executorKeyPath string,
@@ -96,7 +88,10 @@ func newScheduleTickerIDTokenSource(
 	executorSource oauth2.TokenSource,
 	executorErr error,
 ) (oauth2.TokenSource, error) {
-	schedulerPath := schedulerCredentialsPath(executorKeyPath)
+	schedulerPath := schedulerCredentialsPath()
+	if schedulerPath == "" {
+		return nil, fmt.Errorf("LCARS_SCHEDULER_CREDENTIALS is required for the schedule ticker")
+	}
 	if schedulerPath == strings.TrimSpace(executorKeyPath) {
 		if executorErr != nil {
 			return nil, executorErr

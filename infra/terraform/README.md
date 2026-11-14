@@ -11,10 +11,11 @@ gs://agent-lcars-terraform-state --project agent-lcars --location us`, then add
 a GCS backend and run `terraform init -migrate-state`. Supply the billing account
 as `TF_VAR_billing_account`.
 
-Firebase App Hosting's GitHub connection remains an explicit bootstrap action:
-run `firebase apphosting:backends:create --project agent-lcars` and select
-`jlapenna/agent-lcars`, root `apps/console`, backend id `agent-lcars`, and region
-`us-central1`. Thereafter pushes to `main` deploy through App Hosting.
+Firebase App Hosting backend creation is a one-time bootstrap action: create
+backend id `agent-lcars` in region `us-central1` for project `agent-lcars`.
+Console rollouts do not use App Hosting GitHub auto-build triggers; `main`
+deploys through [`.github/workflows/deploy-console.yml`](../../.github/workflows/deploy-console.yml)
+and [`tools/deploy-console-prebuilt.mjs`](../../tools/deploy-console-prebuilt.mjs) (#2997).
 
 ## CI verification
 

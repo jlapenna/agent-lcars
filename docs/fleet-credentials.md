@@ -18,7 +18,7 @@ history — move values with pipes, `read -rs`, or files created under
 | ------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)                                            | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
 | Codex `auth.json` lineage | Console QueueExecutor (run time)                                            | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                            | age store + repo Actions secret                                                          | anyone with the LiteLLM master key |
+| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                            | age store + homelab vault (`lcars-runner-credentials`)                                   | anyone with the LiteLLM master key |
 | `antigravity-oauth-token` | Console QueueExecutor (run time)                                            | homelab vault `agent_lcars_antigravity_oauth_token` (`lcars-runner-credentials`)         | maintainer only (`agy auth login`) |
 | `hindsight-api-token`     | Console QueueExecutor (run time, per-repo `agent-lcars::<repo>` memory)     | homelab vault `hindsight_api_token` + age store `HINDSIGHT_API_TOKEN`                    | maintainer (homelab secrets)       |
 | `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                        | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
@@ -120,14 +120,19 @@ A long-lived OAuth token for the maintainer's Claude subscription. It does
 back — so unlike the Codex lineage below one value is safely shared across
 every repo, and it lives in exactly one place (#1350).
 
-No repo carries a copy. QueueExecutor reads it from Secret Manager per run,
-so onboarding a repository needs no credential work at all, and an expiry is
-one command rather than an N-repo fan-out. The reader identity is
+No repo carries a copy. Homelab's `ansible/deploy_queue_kubernetes.yml`
+(run by `bin/reconcile-fleet.sh`) renders `claude-code-oauth-token` from
+Homelab's encrypted vault (`agent_lcars_claude_oauth_token` in
+`ansible/secrets.yml`) into the `lcars-runner-credentials` Kubernetes Secret for
+QueueExecutor, so onboarding a repository needs no credential work at all, and
+an expiry updates the Secret Manager canonical store plus Homelab's vault entry
+rather than an N-repo fan-out. The modelled Secret Manager accessor identity is
 `claude-token-reader@agent-lcars.iam.gserviceaccount.com`: it holds
-`secretAccessor` on this one secret and nothing else, and is never exported as
-ambient ADC into the agent's shell.
+`secretAccessor` on this one secret and nothing else, carries zero GitHub
+Actions WIF impersonation bindings, and is never exported as ambient ADC into
+the agent's shell.
 
-The runtime reads this credential through its dedicated Secret Manager client;
+The runtime projects only the provider-specific key into a Claude worker pod;
 it is never mounted into a target-repository checkout or passed through a
 GitHub Actions workflow.
 
@@ -136,9 +141,10 @@ GitHub Actions workflow.
    browser tooling can do this — navigate, click **Authorize**, and copy
    the resulting code back into the waiting prompt if one is shown). The
    command then prints the long-lived token exactly once.
-2. Publish it as a new version of the one canonical secret, without it
-   touching shell history or chat. `printf %s`, not `echo`: a trailing
-   newline corrupts the credential.
+2. Publish it as a new version of the canonical Secret Manager secret and update
+   `agent_lcars_claude_oauth_token` in Homelab's `ansible/secrets.yml`, without
+   touching shell history or chat. `printf %s`, not `echo`: a trailing newline
+   corrupts the credential.
 
    ```bash
    read -rs TOKEN   # paste the token, press Enter (nothing echoes)
@@ -147,9 +153,9 @@ GitHub Actions workflow.
    unset TOKEN
    ```
 
-3. Verify, then label an issue `agent:claude`. The lane's "Read the Claude
-   subscription token" step is the first consumer and names the secret on
-   failure; "Run Claude Code" is the second.
+3. Verify the stored digest, run Homelab's `ansible/deploy_queue_kubernetes.yml`
+   to refresh `lcars-runner-credentials`, and dispatch an `agent:claude` run to
+   exercise the new token.
 
    ```bash
    gcloud secrets versions access latest --secret=CLAUDE_CODE_OAUTH_TOKEN \
@@ -262,7 +268,7 @@ The central activation contract is:
 1. The Console App Hosting identity has generation-CAS access to the one
    central auth object and the one lease object.
 2. The central `svc:telemetry-writer` `work.executor` grant covers `claude`,
-   `codex`, and `opencode`.
+   `codex`, `opencode`, and `agy`.
    Direct QueueExecutor heartbeats renew the same record to the broker run expiry.
    This source configuration does not grant IAM access or deploy the production
    change. Onboarding another target repository requires its normal LCARS
@@ -327,8 +333,11 @@ Copy the **`key` field** (`sk-…`) of the response — _not_ `token`, which is
 the sha256 hash LiteLLM stores; shipping the hash is the exact mistake
 behind the 2026-08 Prometheus-scrape incident (homelab
 `docs/incidents.md`). Store it in the age store
-(`secrets-add "OPENCODE_LLM_API_KEY=sk-…"`) and per repo with
-`gh secret set OPENCODE_LLM_API_KEY -R <repo>`.
+(`secrets-add "OPENCODE_LLM_API_KEY=sk-…"`) and update
+`agent_lcars_opencode_llm_api_key` in Homelab's `ansible/secrets.yml` so
+`ansible/deploy_queue_kubernetes.yml` refreshes `opencode-llm-api-key` in
+`lcars-runner-credentials` (repositories no longer carry `OPENCODE_LLM_API_KEY`
+GitHub Actions secrets now that OpenCode runs on QueueExecutor).
 
 ## `AGENT_LCARS_PRIVATE_KEY` (fleet App key)
 

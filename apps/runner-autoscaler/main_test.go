@@ -25,7 +25,7 @@ import (
 // permanent deployment failures must surface before the old controller stops,
 // and the successful check must not allocate work or change fleet resources.
 func TestCheckConfigUsesReadOnlyKubernetesStartupPreflight(t *testing.T) {
-	for _, failure := range []string{"", "missing worker", "denied update", "inventory unavailable"} {
+	for _, failure := range []string{"", "missing scheduler", "missing worker", "denied update", "inventory unavailable"} {
 		t.Run(failure, func(t *testing.T) {
 			seen := map[string]bool{}
 			var seenMu sync.Mutex
@@ -100,6 +100,11 @@ func TestCheckConfigUsesReadOnlyKubernetesStartupPreflight(t *testing.T) {
 			t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry.example.com/runner:test")
 			t.Setenv("LCARS_CONSOLE_URL", "https://console.example.com")
 			t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/controller/writer.json")
+			if failure == "missing scheduler" {
+				t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "")
+			} else {
+				t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/controller/scheduler.json")
+			}
 			err = cmd.RunE(cmd, nil)
 			if (err != nil) != (failure != "") {
 				t.Fatalf("check-config error=%v for failure=%q", err, failure)

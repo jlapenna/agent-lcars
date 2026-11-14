@@ -26,19 +26,15 @@ type OrchestratorServer struct {
 	LogFormat   string `yaml:"log_format,omitempty"`
 }
 
-type resolvedOrchestratorConfig struct {
-	Raw OrchestratorConfig
-}
-
-func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
-	var out resolvedOrchestratorConfig
+func loadOrchestratorConfig(path string) (OrchestratorConfig, error) {
+	var out OrchestratorConfig
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return out, fmt.Errorf("reading orchestrator config %q: %w", path, err)
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
-	if err := dec.Decode(&out.Raw); err != nil {
+	if err := dec.Decode(&out); err != nil {
 		return out, fmt.Errorf("parsing orchestrator config %q: %w", path, err)
 	}
 	if err := out.resolve(); err != nil {
@@ -47,8 +43,7 @@ func loadOrchestratorConfig(path string) (resolvedOrchestratorConfig, error) {
 	return out, nil
 }
 
-func (r *resolvedOrchestratorConfig) resolve() error {
-	c := &r.Raw
+func (c *OrchestratorConfig) resolve() error {
 	if err := validateARCLanes(c.ARCLanes); err != nil {
 		return err
 	}
