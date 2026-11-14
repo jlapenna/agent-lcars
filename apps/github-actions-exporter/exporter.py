@@ -790,6 +790,7 @@ class Database:
                     completed_at REAL,
                     updated_at REAL,
                     jobs_updated_at REAL,
+                    head_branch TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY (repository, id, run_attempt)
                 );
 
@@ -825,6 +826,16 @@ class Database:
                     ON jobs (repository, run_id);
                 """
             )
+            run_columns = {
+                row["name"]
+                for row in self.connection.execute("PRAGMA table_info(workflow_runs)")
+            }
+            # Rows stored before this column existed keep '', which the
+            # pull-request streak reads as "branch unknown" (homelab#3509).
+            if "head_branch" not in run_columns:
+                self.connection.execute(
+                    "ALTER TABLE workflow_runs ADD COLUMN head_branch TEXT NOT NULL DEFAULT ''"
+                )
             columns = {
                 row["name"]
                 for row in self.connection.execute("PRAGMA table_info(jobs)")
@@ -1077,8 +1088,9 @@ class Database:
                 """
                 INSERT INTO workflow_runs (
                     repository, id, workflow, event, status, conclusion,
-                    created_at, started_at, completed_at, updated_at, run_attempt
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, started_at, completed_at, updated_at, run_attempt,
+                    head_branch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(repository, id, run_attempt) DO UPDATE SET
                     workflow = excluded.workflow,
                     event = excluded.event,
@@ -1087,7 +1099,8 @@ class Database:
                     created_at = excluded.created_at,
                     started_at = excluded.started_at,
                     completed_at = excluded.completed_at,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    head_branch = excluded.head_branch
                 """,
                 (
                     repository,
@@ -1101,6 +1114,9 @@ class Database:
                     completed_at,
                     updated_at,
                     run_attempt,
+                    # Stored to tell pull requests apart, never exported: a
+                    # branch name is unbounded label cardinality.
+                    str(run.get("head_branch") or ""),
                 ),
             )
             placeholders = ",".join("?" for _ in ACTIVE_STATUSES)
@@ -1358,6 +1374,7 @@ class DatabaseMetrics:
                 list[Any],
                 list[tuple[list[str], float]],
                 dict[tuple[str, str], list[tuple[float, bool]]],
+                dict[tuple[str, str], list[tuple[float, bool, str]]],
             ]
             | None
         ) = None
@@ -1381,14 +1398,20 @@ class DatabaseMetrics:
                 QUEUED_STATUSES,
             )
         ]
-        self._snapshot = (families, oldest_queued, self._decisive_runs())
+        self._snapshot = (
+            families,
+            oldest_queued,
+            self._decisive_runs(),
+            self._pull_request_runs(),
+        )
 
     def collect(self):
         if self._snapshot is None:
             self.refresh()
-        families, oldest_queued_rows, decisive_runs = self._snapshot
+        families, oldest_queued_rows, decisive_runs, pull_request_runs = self._snapshot
         yield from families
         yield from self._consecutive_failures(decisive_runs, time.time())
+        yield self._pull_request_failing_branches(pull_request_runs, time.time())
 
         oldest_queued = GaugeMetricFamily(
             "github_actions_job_oldest_queued_seconds",
@@ -1479,6 +1502,85 @@ class DatabaseMetrics:
             )
         yield consecutive_failures
         yield consecutive_failures_complete
+
+    def _pull_request_runs(
+        self,
+    ) -> dict[tuple[str, str], list[tuple[float, bool, str]]]:
+        """Each workflow's decisive pull_request runs in the window, newest first.
+
+        Ordered by when the attempt started rather than when the run was
+        created: a rerun keeps its run's created_at, and a rerun that passes
+        after a newer run failed is the newest evidence that the workflow
+        works. As in _decisive_runs, nothing older than the newest success
+        can affect the count, so it is not kept.
+        """
+        runs: dict[tuple[str, str], list[tuple[float, bool, str]]] = {}
+        settled: set[tuple[str, str]] = set()
+        for row in self.database.rows(
+            """
+            SELECT repository, workflow, conclusion, head_branch,
+                   COALESCE(started_at, created_at) AS ran_at
+            FROM workflow_runs
+            WHERE status = 'completed'
+              AND event = 'pull_request'
+              AND conclusion IN ('success', 'failure', 'timed_out',
+                                 'action_required', 'startup_failure')
+              AND COALESCE(started_at, created_at) >= ?
+            ORDER BY repository, workflow, ran_at DESC, id DESC, run_attempt DESC
+            """,
+            (time.time() - CONSECUTIVE_FAILURE_WINDOW_SECONDS,),
+        ):
+            key = (row["repository"], row["workflow"])
+            if key in settled:
+                continue
+            success = row["conclusion"] == "success"
+            runs.setdefault(key, []).append(
+                (float(row["ran_at"]), success, row["head_branch"])
+            )
+            if success:
+                settled.add(key)
+        return runs
+
+    @staticmethod
+    def _pull_request_failing_branches(
+        pull_request_runs: dict[tuple[str, str], list[tuple[float, bool, str]]],
+        now: float,
+    ) -> GaugeMetricFamily:
+        # The consecutive-failure streak above skips pull_request runs on
+        # purpose: one pull request with a broken change fails on every push
+        # and would read as an outage. That left a workflow failing on every
+        # pull request of a low-volume repository invisible (homelab#3509:
+        # homegit's required check failed on two pull requests over two hours
+        # on 2026-11-11 and no rule could see it). Counting pull requests
+        # instead of runs separates the two: failures on different head
+        # branches with no successful pull_request run in between point at
+        # the workflow or its runner, not at one change. Reruns and new
+        # pushes on one branch count once. Cancelled and skipped runs neither
+        # add a branch nor reset the count, and a run stored before
+        # head_branch was recorded stops the count if it succeeded but adds
+        # no branch if it failed. Fork branches sharing a name count once.
+        failing_branches = GaugeMetricFamily(
+            "github_actions_workflow_pull_request_failing_branches",
+            "Distinct pull-request head branches among a workflow's most recent decisive pull_request runs that did not succeed, counted back to the first success; 0 once the latest decisive pull_request run succeeded.",
+            labels=("repository", "workflow"),
+        )
+        cutoff = now - CONSECUTIVE_FAILURE_WINDOW_SECONDS
+        for (repository, workflow), runs in pull_request_runs.items():
+            live = [
+                (success, branch)
+                for ran_at, success, branch in runs
+                if ran_at >= cutoff
+            ]
+            if not live:
+                continue
+            branches: set[str] = set()
+            for success, branch in live:
+                if success:
+                    break
+                if branch:
+                    branches.add(branch)
+            failing_branches.add_metric([repository, workflow], float(len(branches)))
+        return failing_branches
 
     def _history_families(self):
         workflow_runs = CounterMetricFamily(

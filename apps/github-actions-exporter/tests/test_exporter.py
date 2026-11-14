@@ -603,6 +603,123 @@ class GitHubActionsExporterTests(unittest.TestCase):
             metrics,
         )
 
+    def pull_request_run(self, hours_ago, branch, conclusion="failure", **overrides):
+        """A pull_request run whose attempt started `hours_ago` hours ago."""
+        started = recent(hours_ago)
+        run = workflow_run(
+            event="pull_request",
+            conclusion=conclusion,
+            head_branch=branch,
+            created_at=started,
+            run_started_at=started,
+        )
+        run.update(overrides)
+        return run
+
+    def test_pull_request_failing_branches_count_pull_requests_not_runs(self):
+        # homelab#3509: a required check failed on two pull requests over two
+        # hours and no rule saw it, because the streak skips pull_request runs.
+        repository = "jlapenna/homelab"
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+        name = "github_actions_workflow_pull_request_failing_branches"
+        for run in (
+            self.pull_request_run(9, "feature-a", "success", id=1),
+            # One pull request failing on every push and rerun is one branch.
+            self.pull_request_run(8, "feature-a", id=2),
+            self.pull_request_run(7, "feature-a", id=2, run_attempt=2),
+            self.pull_request_run(6, "feature-a", id=3),
+        ):
+            self.database.upsert_run(repository, run)
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 1.0)
+
+        for run in (
+            self.pull_request_run(5, "renovate/all", id=4),
+            # Neither a cancelled pull_request run nor a main-line failure
+            # adds a branch or resets the count.
+            self.pull_request_run(4, "feature-c", "cancelled", id=5),
+            workflow_run(
+                id=6,
+                conclusion="success",
+                created_at=recent(3),
+                run_started_at=recent(3),
+            ),
+        ):
+            self.database.upsert_run(repository, run)
+        metrics = self.metrics()
+        self.assertEqual(exported_metric_value(metrics, name, labels), 2.0)
+        # Branch names are stored to tell pull requests apart, never exported.
+        self.assertNotIn("renovate/all", metrics)
+        self.assertNotIn("feature-a", metrics)
+
+        # Any passing pull_request run proves the workflow works again.
+        self.database.upsert_run(
+            repository, self.pull_request_run(2, "feature-d", "success", id=7)
+        )
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
+
+    def test_passing_rerun_of_an_older_pull_request_run_resets_the_count(self):
+        # A rerun keeps its run's created_at. Ordering by creation would put
+        # the passing rerun behind the newer failure and keep the count at 2.
+        repository = "jlapenna/homelab"
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+        name = "github_actions_workflow_pull_request_failing_branches"
+        for run in (
+            self.pull_request_run(5, "feature-a", id=1),
+            self.pull_request_run(4, "feature-b", id=2),
+        ):
+            self.database.upsert_run(repository, run)
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 2.0)
+
+        self.database.upsert_run(
+            repository,
+            self.pull_request_run(
+                1,
+                "feature-a",
+                "success",
+                id=1,
+                run_attempt=2,
+                created_at=recent(5),
+            ),
+        )
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
+
+    def test_pull_request_failing_branches_expire_with_the_window(self):
+        repository = "jlapenna/homelab"
+        old = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for i, branch in enumerate(("feature-a", "feature-b"), start=1):
+            self.database.upsert_run(
+                repository,
+                self.pull_request_run(
+                    0, branch, id=i, created_at=old, run_started_at=old
+                ),
+            )
+        self.assertNotIn(
+            "github_actions_workflow_pull_request_failing_branches{", self.metrics()
+        )
+
+    def test_runs_stored_before_head_branch_existed_add_no_branch(self):
+        # An existing deployment's database gains the column on startup. Its
+        # stored failures have no branch, so they cannot be told apart and
+        # must not combine with a later failure into a false count of two.
+        repository = "jlapenna/homelab"
+        labels = '{repository="jlapenna/homelab",workflow="validate"}'
+        name = "github_actions_workflow_pull_request_failing_branches"
+        self.database.upsert_run(repository, self.pull_request_run(3, "", id=1))
+        self.database.close()
+        path = str(Path(self.temporary_directory.name) / "actions.db")
+        connection = exporter.sqlite3.connect(path)
+        connection.execute("ALTER TABLE workflow_runs DROP COLUMN head_branch")
+        connection.commit()
+        connection.close()
+
+        self.database = exporter.Database(path)
+        self.addCleanup(self.database.close)
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 0.0)
+        self.database.upsert_run(
+            repository, self.pull_request_run(2, "feature-b", id=2)
+        )
+        self.assertEqual(exported_metric_value(self.metrics(), name, labels), 1.0)
+
     def test_queued_jobs_carry_the_fleet_label_they_target(self):
         # agent-lcars#1699: the first non-hosted runs-on label is the routing
         # dimension; a GitHub-hosted job exports an empty one.
