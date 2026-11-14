@@ -151,6 +151,11 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 		if len(validation.IsDNS1123Subdomain(r.Agent.ConfigMap)) != 0 {
 			return fmt.Errorf("%s.agent.config_map must be a valid ConfigMap name", prefix)
 		}
+		// Each agent item is mounted as its own file (see runtimeJobShape),
+		// so the definition must be listed item by item.
+		if len(r.Agent.Items) == 0 {
+			return fmt.Errorf("%s.agent.items must list every agent file", prefix)
+		}
 		if err := validateQueueRuntimeItems(prefix+".agent.items", r.Agent.Items); err != nil {
 			return err
 		}
@@ -319,9 +324,18 @@ func (q *kubernetesQueue) runtimeJobShape(l directRunnerLaunch, rt queueRuntimeC
 		// Agent tools (tools/*) run by path under the exec allowlist, so the
 		// definition is read+execute with no write. Secrets stay 0440 above:
 		// zone credentials are never executable.
+		//
+		// Each item is its own subPath mount rather than one directory mount:
+		// a ConfigMap directory presents files as symlinks into a timestamped
+		// ..data directory, and OpenClaw's exec allowlist matches the
+		// resolved binary path, so an allowlisted tool would resolve outside
+		// its declared path and be denied. A subPath mount binds the real
+		// file at exactly /claw/agent/<path>.
 		agentMode := int32(0555)
 		volumes = append(volumes, core.Volume{Name: "claw-agent", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: rt.Agent.ConfigMap}, Items: queueRuntimeKeyToPaths(rt.Agent.Items), DefaultMode: &agentMode}}})
-		mounts = append(mounts, core.VolumeMount{Name: "claw-agent", MountPath: queueRuntimeAgentMountPath, ReadOnly: true})
+		for _, item := range rt.Agent.Items {
+			mounts = append(mounts, core.VolumeMount{Name: "claw-agent", MountPath: queueRuntimeAgentMountPath + "/" + item.Path, SubPath: item.Path, ReadOnly: true})
+		}
 	}
 	return queueJobShape{
 		container: "claw", image: rt.Image, pullPolicy: core.PullIfNotPresent,

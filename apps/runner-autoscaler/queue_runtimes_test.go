@@ -416,7 +416,18 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 	for _, m := range container.VolumeMounts {
 		mounts[m.MountPath] = m
 	}
-	if len(mounts) != 4 || !mounts["/run/claw-secrets"].ReadOnly || !mounts["/claw/agent"].ReadOnly || mounts["/work"].Name != "work" || mounts["/tmp"].Name != "tmp" {
+	// One read-only subPath mount per agent item, so each tool's resolved path
+	// is exactly its declared /claw/agent/<path> (no ..data symlink).
+	for _, item := range agent.Items {
+		m, ok := mounts["/claw/agent/"+item.Path]
+		if !ok || m.Name != "claw-agent" || m.SubPath != item.Path || !m.ReadOnly {
+			t.Fatalf("agent item %s mount = %+v", item.Path, m)
+		}
+	}
+	if _, whole := mounts["/claw/agent"]; whole {
+		t.Fatal("the agent ConfigMap must not be mounted as a symlinked directory")
+	}
+	if len(mounts) != 3+len(agent.Items) || !mounts["/run/claw-secrets"].ReadOnly || mounts["/work"].Name != "work" || mounts["/tmp"].Name != "tmp" {
 		t.Fatalf("mounts = %v", container.VolumeMounts)
 	}
 	text := job.String()
@@ -676,5 +687,15 @@ func TestLaunchSettlesClaimWhenJobCreateIsInvalid(t *testing.T) {
 				t.Fatal("refused create left a Job")
 			}
 		})
+	}
+}
+
+func TestRuntimeAgentRequiresExplicitItems(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	r := q.config.Runtimes["claw-investigator"]
+	r.Agent.Items = nil
+	q.config.Runtimes["claw-investigator"] = r
+	if err := q.config.validate(); err == nil || !strings.Contains(err.Error(), "agent.items must list every agent file") {
+		t.Fatalf("validate() = %v, want an agent items error", err)
 	}
 }
