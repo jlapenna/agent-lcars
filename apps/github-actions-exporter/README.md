@@ -127,6 +127,23 @@ rendered for Glance. The exporter serves the last successfully collected data
 if GitHub is temporarily unavailable; `github_actions_exporter_*` metrics make
 API errors and stale repository refreshes observable.
 
+## Pull-request failures
+
+`github_actions_workflow_consecutive_failures` skips `pull_request` runs,
+because one pull request with a broken change fails on every push.
+`github_actions_workflow_pull_request_failing_branches` covers them by counting
+pull requests instead of runs: the distinct head branches among a workflow's
+newest `pull_request` runs that failed, back to the first success, inside the
+same three-day window. Two or more means the workflow or its runner is failing
+across pull requests (homelab#3509). The branch name is stored to tell pull
+requests apart and is never exported.
+
+GitHub lists runs by creation time, and a rerun keeps its run's. Every five
+minutes the poller therefore asks GitHub for the newest attempt of the runs
+behind that count, so a rerun that passes after the runner is repaired clears
+it. Each check covers at most 20 runs per repository, taking those checked
+longest ago first, so every run is reached within a few checks.
+
 ## Full-suite performance queries
 
 Agent LCARS marks the real console browser step in `Console E2E browser suite`,
