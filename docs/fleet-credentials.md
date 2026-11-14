@@ -94,14 +94,21 @@ source-owned by homelab Terraform and mirrored in the IAM contract model here
 so live drift detection covers both accidental widening and a stale declared
 boundary (#1620).
 
-The same pool carries a second provider, `www-github`, for the `www` site
-deploy. It is narrower than its sibling on every axis: one repository
-(`supersprinklesracing/www`), one workflow file (`.github/workflows/site.yml`),
-and `refs/heads/main` only — a tag or a non-main branch cannot match. It also
-declares no `workflow_class` mapping, because it admits a single workflow and
-nothing keys off a class. Admission reaches exactly one identity,
-`www-deploy@`, which holds `firebasehosting.admin` and `firebase.viewer` — a
-static-site deploy and nothing more.
+The same pool carries a second provider, `www-github`, for the website
+deploy. The site lives in the sprinkles monorepo as `apps/www`
+(supersprinklesracing/sprinkles#6484), and the provider is narrower than its
+sibling there: one workflow file (`supersprinklesracing/sprinkles`'s
+`.github/workflows/www.yml`) and `refs/heads/main` only — a tag, a non-main
+branch or any other workflow cannot match. Admission reaches exactly one
+identity, `www-deploy@`, which holds `firebasehosting.admin` and
+`firebase.viewer` — a static-site deploy and nothing more.
+
+It deliberately maps no `attribute.repository`. Its sibling maps that
+attribute for the same repository, and `claude-agent-readonly@` is bound to
+`attribute.repository/supersprinklesracing/sprinkles`, so a token from this
+provider carrying it would inherit that binding. `www-deploy@` is instead
+bound to `attribute.workflow_class/www-deploy`, a value only this provider
+produces (the sibling's classes are `ci`, `deploy` and `agent`).
 
 Its history is the reason this file and the model are kept in step. The
 provider and its impersonation binding were created outside Terraform and
