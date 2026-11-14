@@ -27,6 +27,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -301,7 +302,12 @@ export async function prepareState({
   await rm(workspace, { recursive: true, force: true });
   await mkdir(workspace, { recursive: true });
   try {
-    await cp(join(agentDir, 'workspace'), workspace, { recursive: true });
+    // A ConfigMap mount presents workspace/ as a symlink into its
+    // timestamped data directory; copy the resolved files, not the link.
+    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
+      recursive: true,
+      dereference: true,
+    });
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }

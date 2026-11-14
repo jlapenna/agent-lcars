@@ -1,6 +1,13 @@
 /* eslint-disable vitest/no-import-node-test -- the claw image's suite runs under node --test without Vitest, like the runner-image runtime suites. */
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -395,4 +402,31 @@ test('the overall deadline also bounds setup and stops before the turn', async (
   const log = await readFile(env.FAKE_LOG, 'utf8');
   assert.ok(!log.includes('"approvals"'), 'approvals ran after the deadline');
   assert.ok(!log.includes('"exec"'), 'the turn started after the deadline');
+});
+
+test('a ConfigMap-style symlinked agent directory is read and copied', async () => {
+  const { root, env, fetchImpl } = await fixture();
+  // Rebuild the agent dir the way the kubelet projects a ConfigMap:
+  // real files in a timestamped dir, top-level entries as symlinks.
+  const projected = join(root, 'projected');
+  const data = join(projected, '..2026_11_14_00_00_00.1');
+  await mkdir(join(data, 'workspace'), { recursive: true });
+  for (const name of ['config.json', 'approvals.json'])
+    await writeFile(
+      join(data, name),
+      await readFile(join(env.CLAW_AGENT_DIR, name)),
+    );
+  await writeFile(join(data, 'workspace', 'AGENTS.md'), '# projected\n');
+  await symlink('..2026_11_14_00_00_00.1', join(projected, '..data'));
+  for (const name of ['config.json', 'approvals.json', 'workspace'])
+    await symlink(join('..data', name), join(projected, name));
+  const result = await main(
+    { ...env, CLAW_AGENT_DIR: projected },
+    { fetchImpl },
+  );
+  assert.equal(result.outcome, 'report');
+  assert.equal(
+    await readFile(join(env.CLAW_WORK_DIR, 'workspace', 'AGENTS.md'), 'utf8'),
+    '# projected\n',
+  );
 });
