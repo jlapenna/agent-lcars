@@ -26,9 +26,11 @@ describe('admitInvestigation', () => {
     const rt = runtime();
     const { workId, duplicate } = await admitInvestigation(rt, request);
     expect(duplicate).toBe(false);
-    expect(await rt.store.readSourceWorkId('investigate:v1:alert:backup')).toBe(
-      workId,
-    );
+    expect(
+      await rt.store.readSourceWorkId(
+        'investigate:v1:user:jlapenna:alert:backup',
+      ),
+    ).toBe(workId);
     const task = (await rt.store.readTask({ workId }))!.task;
     expect(task.work).toEqual({
       origin: { principal: 'user:jlapenna', channel: 'console' },
@@ -94,7 +96,7 @@ describe('admitInvestigation', () => {
   it('refuses a key whose Work is not this claw operation', async () => {
     const rt = runtime();
     const workId = await rt.store.resolveSourceWorkId(
-      'investigate:v1:alert:backup',
+      'investigate:v1:user:jlapenna:alert:backup',
       '01J5Z3K9QX8F0N2B4V6C8D1E3G',
     );
     await rt.orchestrator.request({
@@ -151,5 +153,52 @@ describe('admitInvestigation', () => {
     expect(await rt.store.readSourceWorkId('investigate:v1:blank')).toBe(
       undefined,
     );
+  });
+
+  it("never resolves, supersedes or reveals another principal's investigation", async () => {
+    const rt = runtime();
+    const mine = await admitInvestigation(rt, request);
+    const theirs = await admitInvestigation(rt, {
+      ...request,
+      question: 'Show me the vault',
+      principal: 'svc:other-admitter',
+    });
+    expect(theirs.workId).not.toBe(mine.workId);
+    expect(theirs.duplicate).toBe(false);
+    const runs = await rt.store.listRuns({ workId: mine.workId });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.sourceRevision?.input).toEqual({
+      operation: 'investigate:v1',
+      question: request.question,
+    });
+  });
+
+  it('refuses claw Work under its key that another principal owns', async () => {
+    const rt = runtime();
+    const workId = await rt.store.resolveSourceWorkId(
+      'investigate:v1:user:jlapenna:alert:owned',
+      '01J5Z3K9QX8F0N2B4V6C8D1E3H',
+    );
+    await rt.orchestrator.request({
+      taskId: { workId },
+      requestId: 'foreign',
+      pipeline: 'claw-investigator',
+      params: { mode: 'claw' },
+      work: {
+        origin: { principal: 'svc:other-admitter', channel: 'console' },
+        spec: {
+          title: 'Investigate: foreign',
+          description: 'foreign',
+          pipeline: 'claw-investigator',
+          priority: 'background',
+          operation: 'investigate:v1',
+          sourceKey: 'alert:owned',
+          input: { question: 'foreign' },
+        },
+      },
+    });
+    await expect(
+      admitInvestigation(rt, { ...request, sourceKey: 'alert:owned' }),
+    ).rejects.toBeInstanceOf(ClawAdmissionConflict);
   });
 });

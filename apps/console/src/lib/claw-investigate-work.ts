@@ -46,7 +46,9 @@ function investigationTitle(question: string): string {
  * resolves to one stable Work id, the question is the immutable revision
  * input, a repeated question is the same round, and a new question for the
  * same key supersedes a queued one. Without a `sourceKey` every call admits
- * a new item. The origin is the authenticated principal on the `console`
+ * a new item. Keys are scoped to the admitting principal, and stored Work
+ * owned by another principal is never compatible. The origin is the
+ * authenticated principal on the `console`
  * channel with no thread: completion is persisted only, never delivered.
  */
 export async function admitInvestigation(
@@ -57,8 +59,10 @@ export async function admitInvestigation(
     question: request.question,
   });
   const sourceKey = request.sourceKey ?? `adhoc:${ulid()}`;
+  // The source key is namespaced by principal: one caller's key can never
+  // resolve to, supersede or read another caller's investigation.
   const workId = await runtime.store.resolveSourceWorkId(
-    `${CLAW_INVESTIGATE_OPERATION}:${sourceKey}`,
+    `${CLAW_INVESTIGATE_OPERATION}:${request.principal}:${sourceKey}`,
     ulid(),
   );
   const revisionInput = { operation: CLAW_INVESTIGATE_OPERATION, ...input };
@@ -91,6 +95,7 @@ export async function admitInvestigation(
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;
+      if (parsed.data.origin?.principal !== request.principal) return false;
       const claw = clawWorkSpecSchema.safeParse(parsed.data.spec);
       return (
         claw.success &&
