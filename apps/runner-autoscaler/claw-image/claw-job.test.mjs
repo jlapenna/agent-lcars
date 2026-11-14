@@ -74,7 +74,7 @@ async function fixture(overrides = {}) {
   await chmod(openclaw, 0o755);
   const calls = [];
   const brief = overrides.brief ?? {
-    runId: RUN_ID,
+    intentId: RUN_ID,
     pipeline: 'claw-investigator',
     mode: 'claw',
     claw: {
@@ -187,7 +187,7 @@ test('a Doctor change beyond its own stamps fails closed', async () => {
 
 test('a brief for another pipeline is refused', async () => {
   const { env, fetchImpl } = await fixture({
-    brief: { runId: RUN_ID, pipeline: 'claude', mode: 'implement' },
+    brief: { intentId: RUN_ID, pipeline: 'claude', mode: 'implement' },
   });
   const result = await main(env, { fetchImpl });
   assert.equal(result.outcome, 'runner-failed');
@@ -276,7 +276,7 @@ test('settle maps envelopes conservatively', () => {
     timedOut: false,
     stdout: JSON.stringify({ ok: true, final: 'x'.repeat(100_000) }),
   });
-  assert.ok(Buffer.byteLength(huge.message) <= 64 * 1024);
+  assert.ok(huge.message.length <= 16_384);
 });
 
 test('comparableConfig ignores only meta and wizard stamps', () => {
@@ -298,7 +298,7 @@ test('briefQuestion requires this run and a non-empty question', () => {
     () =>
       briefQuestion(
         {
-          runId: 'other',
+          intentId: 'other',
           pipeline: 'claw-investigator',
           mode: 'claw',
           claw: { input: { question: 'q' } },
@@ -311,7 +311,7 @@ test('briefQuestion requires this run and a non-empty question', () => {
     () =>
       briefQuestion(
         {
-          runId: RUN_ID,
+          intentId: RUN_ID,
           pipeline: 'claw-investigator',
           mode: 'claw',
           claw: { input: { question: ' ' } },
