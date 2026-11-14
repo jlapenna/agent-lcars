@@ -9,6 +9,8 @@ apps/console/next-env.d.ts
 
 # pnpm owns the canonical lockfile representation.
 pnpm-lock.yaml
+# npm owns the claw runner image's pinned OpenClaw lockfile.
+apps/runner-autoscaler/claw-image/package-lock.json
 
 # Generated and local agent state.
 .agent/

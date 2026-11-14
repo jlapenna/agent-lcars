@@ -28,6 +28,7 @@ registry-side promotion contract.
 | `github-actions-exporter` | `apps/github-actions-exporter`               | `apps/github-actions-exporter/Dockerfile`               | `latest`               |
 | `e2e`                     | `tools/e2e`                                  | `tools/e2e/Dockerfile`                                  | `df-<Dockerfile hash>` |
 | `e2e-runner`              | repo root                                    | `tools/e2e-runner/Dockerfile`                           | `latest`               |
+| `claw-runner`             | `apps/runner-autoscaler/claw-image`          | `apps/runner-autoscaler/claw-image/Dockerfile`          | `latest`               |
 
 The JIT runner receives the selected source SHA as both `CACHE_BUST` and
 `AGENT_LCARS_REF`, plus its required C toolchain packages. It also receives
@@ -113,6 +114,9 @@ homelab operation. Select:
 - `github-actions-exporter` for its Dockerfile, `exporter.py`, or
   `requirements.lock`.
 - `e2e` and `e2e-runner` together when `tools/e2e/Dockerfile` changes.
+- `claw-runner` alone for `apps/runner-autoscaler/claw-image/**`. Zone
+  executors pin it by digest, so promotion alone changes no running agent;
+  each zone adopts a new digest in its own deployment change.
 - `e2e-runner` alone for `tools/e2e-runner/**`, `package.json`, or
   `apps/runner-autoscaler/runner-image/pnpm-seed/fleet/jlapenna__agent-lcars/**`
   changes (its runner user's Corepack cache bakes the `packageManager` pnpm,

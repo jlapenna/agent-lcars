@@ -18,12 +18,15 @@ while IFS= read -r manifest; do
 # workspaces. Their exact dependency sets are intentionally curated for the
 # runner image and locked independently of the application workspace; folding
 # them into the root dependency policy would couple seed refreshes to consumer
-# lockfile churn. Keep this exception path-specific rather than treating all
-# nested/private package manifests as exempt.
+# lockfile churn. The claw runner image's npm lockfile likewise pins its
+# OpenClaw distribution as a standalone image input. Keep these exceptions
+# path-specific rather than treating all nested/private package manifests as
+# exempt.
 done < <(
   find apps libs -name package.json -not -path '*/dist/*' \
     -not -path 'apps/runner-autoscaler/runner-image/pnpm-seed/*' \
-    -not -path 'apps/runner-autoscaler/runner-image/pnpm-seed-regression/*' | sort
+    -not -path 'apps/runner-autoscaler/runner-image/pnpm-seed-regression/*' \
+    -not -path 'apps/runner-autoscaler/claw-image/*' | sort
 )
 
 if [ "$violations" -ne 0 ]; then

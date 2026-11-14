@@ -87,6 +87,11 @@
       ]
     },
     {
+      "description": "The claw runner image pins the approved OpenClaw distribution (apps/runner-autoscaler/claw-image). An OpenClaw upgrade changes the agent runtime, needs a re-normalized agent config per zone (claw-image/README.md) and a deliberate qualification, and zones adopt it by digest; a bot bump of openclaw or its lockfile would only produce an image no zone runs.",
+      "enabled": false,
+      "matchFileNames": ["apps/runner-autoscaler/claw-image/**"]
+    },
+    {
       "description": "CI's JDK deliberately tracks a floating Temurin major line ('21'), like node '24' and actions/setup-java v6. The java-version datasource can only offer exact builds (re-bumped every quarter) or a new major (25), and the JVM here only runs the Firestore emulator: the runner image installs openjdk-21-jre-headless and the E2E sandbox image Ubuntu Noble's default-jre-headless (Java 21), so moving setup-java alone would split the fleet across two JVMs for no benefit. Same rule and reasoning as sprinkles. Revisit when the sandbox base image's default JRE moves (#2001).",
       "enabled": false,
       "matchDatasources": ["java-version"],
