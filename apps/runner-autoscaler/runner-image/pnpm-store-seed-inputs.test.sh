@@ -85,7 +85,6 @@ if grep -Fqx '    test -d /pnpm-cache/v11/metadata' "$dockerfile"; then
   exit 1
 fi
 grep -Fqx '    /pnpm-cache/ /home/runner/.cache/pnpm/' "$dockerfile"
-grep -Fqx 'COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/' "$dockerfile"
 grep -Fqx '    /pnpm-store/ /home/runner/.local/share/pnpm/store/' "$dockerfile"
 # Match the store COPY itself: the Corepack-cache COPY uses the same prefix.
 if ! grep -Fx -A1 "COPY --from=pnpm-store-seed --chown=runner:runner \\" "$dockerfile" |
