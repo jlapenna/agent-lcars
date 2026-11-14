@@ -1,9 +1,12 @@
 import {
-  CLAW_INVESTIGATE_OPERATION,
+  CLAW_OPERATIONS,
   clawInvestigateInputSchema,
   humanNeededActionsSchema,
   issueCommentSchema,
   issueReferenceSchema,
+  ONCALL_FINGERPRINT_PATTERN,
+  ONCALL_FINGERPRINTS_MAX,
+  ONCALL_GROUP_KEY_PATTERN,
   providerRoutingSchema,
   runPlacementSchema,
   trackerIssueProjectionSchema,
@@ -572,6 +575,58 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
+  /** `claw/oncall` intake from Homelab's `oncall-alert-gate` (phase 3b,
+   *  shadow). Requires `work.claw.admit` and a grant listing pipeline
+   *  `claw-oncall`. A firing group admits one `oncall-investigate:v1` round
+   *  per fingerprint set; a resolved group invalidates its pending round. */
+  admitOncallAlert: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/claw/oncall/alerts',
+        operationId: 'admitOncallAlert',
+        summary:
+          'Admit or resolve an Alertmanager group for claw/oncall (work.claw.admit required)',
+        description:
+          '`groupKey` names one Work item per admitting principal. While ' +
+          'firing, the sorted fingerprint set is the revision: the same set ' +
+          'returns its existing round even when `question` differs, and a new ' +
+          'set supersedes a queued round. `resolved` invalidates a pending ' +
+          'round; a running attempt finishes. Outcomes are persisted only.',
+        successStatus: 202,
+        successDescription:
+          'Admitted, the existing round, or the resolution result.',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Principal may not admit claw-oncall work' },
+      CONFLICT: { message: 'Group key names incompatible Work' },
+    })
+    .input(
+      z
+        .strictObject({
+          groupKey: z.string().regex(ONCALL_GROUP_KEY_PATTERN),
+          status: z.enum(['firing', 'resolved']),
+          fingerprints: z
+            .array(z.string().regex(ONCALL_FINGERPRINT_PATTERN))
+            .min(1)
+            .max(ONCALL_FINGERPRINTS_MAX),
+          question: clawInvestigateInputSchema.shape.question.optional(),
+        })
+        .refine(
+          (body) => body.status === 'resolved' || body.question !== undefined,
+          { message: 'A firing group requires question', path: ['question'] },
+        ),
+    )
+    .output(
+      z.union([
+        itemViewSchema,
+        z.strictObject({
+          workId: workIdSchema.optional(),
+          invalidated: z.boolean(),
+        }),
+      ]),
+    ),
   get: base
     .meta(
       openapi({
@@ -1238,7 +1293,7 @@ const clawRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
   mode: z.literal('claw'),
   claw: z.strictObject({
-    operation: z.literal(CLAW_INVESTIGATE_OPERATION),
+    operation: z.enum(CLAW_OPERATIONS),
     input: clawInvestigateInputSchema,
   }),
 });

@@ -18,6 +18,7 @@ import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { admitInvestigation } from './claw-investigate-work';
+import { admitOncallAlert } from './claw-oncall-work';
 import {
   CODEX_GLOBAL_LEASE_OBJECT,
   CodexAuthStoreError,
@@ -6228,6 +6229,44 @@ describe('claw-investigator runs', () => {
     }
     const task = await f.store.readTask({ workId });
     expect(deriveItemState(task!.task, runs)).toBe('failed');
+  });
+
+  it('briefs a claw-oncall round with its operation, only to a grant listing claw-oncall', async () => {
+    const f = fixture();
+    const { workId } = await admitOncallAlert(f, {
+      groupKey: 'page:HostDiskFull:riker',
+      fingerprints: ['0123456789abcdef'],
+      question: 'Alert HostDiskFull is firing on riker.',
+      principal: 'svc:oncall-alert-gate',
+    });
+    const runId = (await f.store.readTask({ workId }))!.task.activeRunId!;
+    if ((await f.store.readRun(runId))?.queue === undefined) {
+      await f.store.enqueueRun({ runId, now: NOW });
+      await f.orchestrator.confirmDispatch(runId);
+    }
+    expect((await claim(f, ZONE)).json).toBeUndefined();
+    const claimed = await claim(f, ['claw-investigator', 'claw-oncall']);
+    expect(claimed.json).toMatchObject({
+      runId,
+      workId,
+      pipeline: 'claw-oncall',
+    });
+    const { token } = claimed.json as { token: string };
+    const brief = await call(
+      { ...f, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(brief.status).toBe(200);
+    expect(brief.json).toMatchObject({
+      pipeline: 'claw-oncall',
+      mode: 'claw',
+      spec: { pipeline: 'claw-oncall', operation: 'oncall-investigate:v1' },
+      claw: {
+        operation: 'oncall-investigate:v1',
+        input: { question: 'Alert HostDiskFull is firing on riker.' },
+      },
+    });
   });
 
   it('briefs the executing round, so a newer question reaches its successor', async () => {

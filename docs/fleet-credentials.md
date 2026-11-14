@@ -225,6 +225,30 @@ Rotate by creating a new key the same way, deploying it, and deleting the old
 key with `gcloud iam service-accounts keys delete`. Revoke by removing the
 Console grant.
 
+## `oncall-alert-gate` (claw/oncall Alertmanager intake)
+
+Homelab's `oncall-alert-gate` admits Alertmanager groups as `claw/oncall`
+Work (spec, Channels, "Alertmanager"; phase 3b). It authenticates as
+`oncall-alert-gate@agent-lcars.iam.gserviceaccount.com`, an identity with no
+project role. Its Console grant, `svc:oncall-alert-gate`, holds only
+`work.claw.admit` for pipeline `claw-oncall`: it can call
+`POST /claw/oncall/alerts` and cancel its own oncall Work, and nothing else.
+It claims nothing; the `svc:claw-homelab-ops` zone executor runs the Jobs.
+
+It uses a user-managed key for the same reason as the zone executor
+(allowlisted in [`tools/iam-contract/model.json`](../tools/iam-contract/model.json)).
+The Homelab vault password exists only on the homelab host, so mint the key
+straight into a Homelab feature worktree there after the Terraform apply:
+
+```bash
+gcloud iam service-accounts keys create /dev/stdout \
+  --iam-account=oncall-alert-gate@agent-lcars.iam.gserviceaccount.com \
+  | ssh homelab 'cd <homelab feature worktree> && \
+      ./bin/manage-secrets.sh set-stdin --create oncall_alert_gate_lcars_key_json'
+```
+
+Rotate and revoke as for `claw-homelab-ops`.
+
 ## Codex `auth.json` lineage (Console QueueExecutor)
 
 The Console owns one rotating subscription lineage at

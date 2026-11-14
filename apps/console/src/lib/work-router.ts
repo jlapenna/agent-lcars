@@ -29,6 +29,11 @@ import {
   CLAW_INVESTIGATOR_PIPELINE,
   ClawAdmissionConflict,
 } from './claw-investigate-work';
+import {
+  admitOncallAlert,
+  CLAW_ONCALL_PIPELINE,
+  resolveOncallAlert,
+} from './claw-oncall-work';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
 import {
@@ -414,6 +419,45 @@ export const workRouter = os.router({
       if (task === undefined)
         throw new ORPCError('INTERNAL_SERVER_ERROR', {
           message: 'Admitted investigation is missing',
+        });
+      return view(context, admitted.workId, task.task);
+    },
+  ),
+
+  admitOncallAlert: clawAdmitter.admitOncallAlert.handler(
+    async ({ input, context, errors }) => {
+      const { principal } = context;
+      if (!mayAdmitClaw(principal, CLAW_ONCALL_PIPELINE))
+        throw errors.FORBIDDEN();
+      if (input.status === 'resolved') {
+        const resolved = await resolveOncallAlert(context.runtime, {
+          groupKey: input.groupKey,
+          principal: principal.principal,
+        });
+        await context.runtime.drain();
+        return resolved;
+      }
+      let admitted: { workId: string };
+      try {
+        admitted = await admitOncallAlert(context.runtime, {
+          groupKey: input.groupKey,
+          fingerprints: input.fingerprints,
+          // The contract refines a firing body to carry its question.
+          question: input.question ?? '',
+          principal: principal.principal,
+        });
+      } catch (error) {
+        if (error instanceof ClawAdmissionConflict)
+          throw errors.CONFLICT({ message: error.message });
+        throw error;
+      }
+      await context.runtime.drain();
+      const task = await context.runtime.store.readTask({
+        workId: admitted.workId,
+      });
+      if (task === undefined)
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: 'Admitted alert group is missing',
         });
       return view(context, admitted.workId, task.task);
     },

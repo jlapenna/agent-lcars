@@ -182,6 +182,7 @@ describe('readStoredWorkSpec', () => {
       'inbox-summary',
       'handoff-summary',
       'claw-investigator',
+      'claw-oncall',
     ]);
   });
 
@@ -208,6 +209,22 @@ describe('clawWorkSpecSchema', () => {
     expect(storedClawWorkSpec({ origin, spec: clawSpec })).toEqual(clawSpec);
   });
 
+  it('binds claw-oncall to oncall-investigate:v1 on the alertmanager channel', () => {
+    const oncall = {
+      ...clawSpec,
+      pipeline: 'claw-oncall',
+      operation: 'oncall-investigate:v1',
+    };
+    const alertmanager = {
+      principal: 'svc:oncall-alert-gate',
+      channel: 'alertmanager',
+    };
+    expect(clawWorkSpecSchema.parse(oncall)).toEqual(oncall);
+    expect(storedClawWorkSpec({ origin: alertmanager, spec: oncall })).toEqual(
+      oncall,
+    );
+  });
+
   it('is source-managed, so public mutation routes refuse it', () => {
     expect(isSourceManagedWork({ origin, spec: clawSpec })).toBe(true);
   });
@@ -216,6 +233,10 @@ describe('clawWorkSpecSchema', () => {
     ['a target', { target: { repo: 'octo/example' } }],
     ['another priority', { priority: 'normal' }],
     ['another operation', { operation: 'oncall-investigate:v1' }],
+    [
+      'claw-oncall with the investigator operation',
+      { pipeline: 'claw-oncall' },
+    ],
     // The immutable spec never holds a round's question.
     ['a question', { input: { question: 'q' } }],
   ])('rejects %s', (_name, change) => {

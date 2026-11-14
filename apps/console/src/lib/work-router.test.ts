@@ -399,6 +399,122 @@ describe('claw investigation admission', () => {
   });
 });
 
+const oncallGate = {
+  principal: 'svc:oncall-alert-gate',
+  subject: 'oncall-alert-gate@agent-lcars.iam.gserviceaccount.com',
+  scopes: new Set(['work.claw.admit'] as const),
+  pipelines: ['claw-oncall'],
+  via: 'google' as const,
+};
+
+describe('claw/oncall Alertmanager intake', () => {
+  const firing = {
+    groupKey: 'page:HostDiskFull:riker',
+    status: 'firing',
+    fingerprints: ['fedcba9876543210', '0123456789abcdef'],
+    question: 'Alert HostDiskFull is firing on riker.',
+  };
+
+  it('admits a persist-only alertmanager round, idempotent by fingerprint set', async () => {
+    const drain = vi.fn(async () => ({ dispatched: [], failed: [] }));
+    const base = context({ principal: oncallGate });
+    const ctx = context({
+      principal: oncallGate,
+      runtime: { ...base.runtime, drain } as WorkContext['runtime'],
+    });
+    const first = await call(ctx, 'POST', '/claw/oncall/alerts', firing);
+    expect(first.status).toBe(202);
+    expect(first.json).toMatchObject({
+      origin: { principal: 'svc:oncall-alert-gate', channel: 'alertmanager' },
+      spec: {
+        pipeline: 'claw-oncall',
+        operation: 'oncall-investigate:v1',
+        sourceKey: 'page:HostDiskFull:riker',
+      },
+      state: 'running',
+    });
+    expect(first.json.origin).not.toHaveProperty('thread');
+    expect(drain).toHaveBeenCalled();
+    const replay = await call(ctx, 'POST', '/claw/oncall/alerts', {
+      ...firing,
+      fingerprints: [...firing.fingerprints].reverse(),
+      question: 'Alert HostDiskFull is firing on riker (re-rendered).',
+    });
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(first.json.id);
+    expect(
+      await ctx.runtime.store.listRuns({ workId: first.json.id as string }),
+    ).toHaveLength(1);
+  });
+
+  it('invalidates the pending round on resolution and answers an unknown group alike', async () => {
+    const ctx = context({ principal: oncallGate });
+    const admitted = await call(ctx, 'POST', '/claw/oncall/alerts', firing);
+    const resolved = await call(ctx, 'POST', '/claw/oncall/alerts', {
+      groupKey: firing.groupKey,
+      status: 'resolved',
+      fingerprints: firing.fingerprints,
+    });
+    expect(resolved).toMatchObject({
+      status: 202,
+      json: { workId: admitted.json.id, invalidated: true },
+    });
+    const unknown = await call(ctx, 'POST', '/claw/oncall/alerts', {
+      groupKey: 'page:Unknown',
+      status: 'resolved',
+      fingerprints: firing.fingerprints,
+    });
+    expect(unknown).toMatchObject({
+      status: 202,
+      json: { invalidated: false },
+    });
+    expect(unknown.json).not.toHaveProperty('workId');
+  });
+
+  it.each([
+    ['an operator without the claw scope', operator, 401],
+    ['the claw zone executor', clawZoneExecutor, 401],
+    ['the investigator admitter', clawAdmitter, 403],
+  ] as const)('refuses %s', async (_name, principal, status) => {
+    const ctx = context({ principal });
+    const response = await call(ctx, 'POST', '/claw/oncall/alerts', firing);
+    expect(response.status).toBe(status);
+    expect(await ctx.runtime.store.listNativeTasks(10)).toHaveLength(0);
+  });
+
+  it('keeps the gate out of claw-investigator admission', async () => {
+    const ctx = context({ principal: oncallGate });
+    const response = await call(ctx, 'POST', '/claw/investigations', {
+      question: 'Why?',
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it.each([
+    ['a firing group without a question', { ...firing, question: undefined }],
+    ['a blank question', { ...firing, question: '   ' }],
+    ['a malformed group key', { ...firing, groupKey: 'page/../x' }],
+    ['a malformed fingerprint', { ...firing, fingerprints: ['ABC'] }],
+    ['no fingerprints', { ...firing, fingerprints: [] }],
+    [
+      'too many fingerprints',
+      {
+        ...firing,
+        fingerprints: Array.from({ length: 65 }, (_, i) =>
+          i.toString(16).padStart(16, '0'),
+        ),
+      },
+    ],
+    ['an unknown status', { ...firing, status: 'suppressed' }],
+    ['a caller-chosen pipeline', { ...firing, pipeline: 'claude' }],
+  ])('rejects %s', async (_name, body) => {
+    const ctx = context({ principal: oncallGate });
+    expect((await call(ctx, 'POST', '/claw/oncall/alerts', body)).status).toBe(
+      400,
+    );
+  });
+});
+
 describe('items routes', () => {
   it.each(['inbox-summary', 'handoff-summary'])(
     'exposes %s history while rejecting coding mutations',
