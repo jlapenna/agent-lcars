@@ -1,4 +1,5 @@
 import {
+  CLAW_INVESTIGATE_OPERATION,
   PIPELINE_CONTRACTS,
   QUEUE_PRIORITIES,
 } from '@agent-lcars/dispatch-contracts';
@@ -96,12 +97,17 @@ export const SUMMARY_PIPELINES = Object.freeze([
   'inbox-summary',
   'handoff-summary',
 ] as const);
+/** Internal `claw` agents executed as one k3s Job per attempt. Each is
+ * bound to its operation by trusted configuration, never by source text. */
+export const CLAW_PIPELINES = Object.freeze(['claw-investigator'] as const);
+export type ClawPipeline = (typeof CLAW_PIPELINES)[number];
 /** Every pipeline a stored Work spec can name: the public coding pipelines,
- * then internal recipe and summary work. */
+ * then internal recipe, summary and claw work. */
 export const STORED_PIPELINES = Object.freeze([
   ...PIPELINES,
   'goose',
   ...SUMMARY_PIPELINES,
+  ...CLAW_PIPELINES,
 ] as const);
 export type StoredPipeline = (typeof STORED_PIPELINES)[number];
 
@@ -121,10 +127,26 @@ export const recipeWorkSpecSchema = z.strictObject({
   target: workTargetSchema,
   jobOccurrence: z.string().regex(/^[a-f0-9]{64}$/u),
 });
+/** Internal read-only investigation. It names no target: the agent reads
+ * its zone, not a repository. It carries no question either: the stored
+ * spec is immutable while a source key admits a new round per question, so
+ * each round's question lives only in its revision input. Admitted only by the internal admission route
+ * (`POST /claw/investigations`); public `create` validates `workSpecSchema`
+ * and so rejects this shape. */
+export const clawWorkSpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  pipeline: z.literal('claw-investigator'),
+  priority: z.literal('background'),
+  operation: z.literal(CLAW_INVESTIGATE_OPERATION),
+  sourceKey: z.string().min(1).max(256),
+});
+export type ClawWorkSpec = z.infer<typeof clawWorkSpecSchema>;
 export const storedWorkSpecSchema = z.union([
   workSpecSchema,
   summaryWorkSpecSchema,
   recipeWorkSpecSchema,
+  clawWorkSpecSchema,
 ]);
 export type StoredWorkSpec = z.infer<typeof storedWorkSpecSchema>;
 export const storedWorkPayloadSchema = z.strictObject({
@@ -132,8 +154,18 @@ export const storedWorkPayloadSchema = z.strictObject({
   spec: storedWorkSpecSchema,
 });
 
+/** The stored claw spec of a Work payload, or undefined for every other
+ * shape. Run routes use it to serve target-less claw runs without relaxing
+ * the repository checks every other pipeline keeps. */
+export function storedClawWorkSpec(payload: unknown): ClawWorkSpec | undefined {
+  const parsed = storedWorkPayloadSchema.safeParse(payload);
+  if (!parsed.success) return undefined;
+  const claw = clawWorkSpecSchema.safeParse(parsed.data.spec);
+  return claw.success ? claw.data : undefined;
+}
+
 /** What a reader needs from any stored spec shape. `repo` is absent for
- * internal summary work, which reads a source rather than targeting one.
+ * internal summary and claw work, which reads a source rather than targeting one.
  * Undefined when the value matches no stored shape. */
 export function readStoredWorkSpec(
   spec: unknown,

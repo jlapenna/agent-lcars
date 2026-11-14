@@ -15,6 +15,8 @@ import {
   itemsContract,
   type MaintenanceTickOutput,
   recipeWorkSpecSchema,
+  storedClawWorkSpec,
+  storedWorkPayloadSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -22,6 +24,11 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { readAnchorOwner, readTrackerIssueOwner } from './anchor-owner';
+import {
+  admitInvestigation,
+  CLAW_INVESTIGATOR_PIPELINE,
+  ClawAdmissionConflict,
+} from './claw-investigate-work';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
 import {
@@ -134,6 +141,65 @@ const ownerReader = os.use(async ({ context, next }) => {
   }
   return next({ context: { principal } });
 });
+
+/** Internal claw admission: `work.claw.admit` alone. The grant must also
+ *  list the claw pipeline (checked per handler, as `create` checks its
+ *  pipeline), so the scope never confers another agent. */
+const clawAdmitter = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (principal === undefined || !principal.scopes.has('work.claw.admit')) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.claw.admit scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
+/** Cancellation is the one mutation a claw admitter shares with operators:
+ *  3a requires claw cancellation to settle through LCARS. Which of the two
+ *  authorities applies is decided per item in the handler. */
+const canceller = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (
+    principal === undefined ||
+    (!principal.scopes.has('work.operator') &&
+      !principal.scopes.has('work.claw.admit'))
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator or work.claw.admit scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
+/** Claw cancellation authority: the stored Work's admitting principal,
+ *  still holding the claw grant for its pipeline. */
+function ownsClawWork(
+  principal: {
+    principal: string;
+    scopes: ReadonlySet<string>;
+    pipelines: readonly string[];
+  },
+  work: unknown,
+): boolean {
+  const spec = storedClawWorkSpec(work);
+  const origin = storedWorkPayloadSchema.safeParse(work).data?.origin;
+  return (
+    spec !== undefined &&
+    origin?.principal === principal.principal &&
+    mayAdmitClaw(principal, spec.pipeline)
+  );
+}
+
+function mayAdmitClaw(
+  principal: { scopes: ReadonlySet<string>; pipelines: readonly string[] },
+  pipeline: string,
+): boolean {
+  return (
+    principal.scopes.has('work.claw.admit') &&
+    principal.pipelines.includes(pipeline)
+  );
+}
 
 export const workRouter = os.router({
   issueOwner: ownerReader.issueOwner.handler(async ({ input, context }) => {
@@ -320,13 +386,69 @@ export const workRouter = os.router({
     };
   }),
 
-  cancel: operator.cancel.handler(async ({ input, context, errors }) => {
-    const task = await readWorkTask(context, input.id);
-    if (task === undefined) throw errors.NOT_FOUND();
-    if (isSourceManagedWork(task.task.work))
-      throw errors.CONFLICT({
-        message: 'Source-managed work is read-only.',
+  admitClawInvestigation: clawAdmitter.admitClawInvestigation.handler(
+    async ({ input, context, errors }) => {
+      const { principal } = context;
+      if (!mayAdmitClaw(principal, CLAW_INVESTIGATOR_PIPELINE))
+        throw errors.FORBIDDEN();
+      let admitted: { workId: string };
+      try {
+        admitted = await admitInvestigation(context.runtime, {
+          question: input.question,
+          ...(input.sourceKey === undefined
+            ? {}
+            : { sourceKey: input.sourceKey }),
+          principal: principal.principal,
+        });
+      } catch (error) {
+        if (error instanceof ClawAdmissionConflict)
+          throw errors.CONFLICT({ message: error.message });
+        throw error;
+      }
+      // Durable before returning; the drain makes the round claimable now
+      // rather than on the next maintenance tick.
+      await context.runtime.drain();
+      const task = await context.runtime.store.readTask({
+        workId: admitted.workId,
       });
+      if (task === undefined)
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: 'Admitted investigation is missing',
+        });
+      return view(context, admitted.workId, task.task);
+    },
+  ),
+
+  cancel: canceller.cancel.handler(async ({ input, context, errors }) => {
+    const { principal } = context;
+    let task: Awaited<ReturnType<typeof readWorkTask>>;
+    if (!isWorkOperatorPrincipal(principal)) {
+      // A claw admitter without work.operator may cancel only its own claw
+      // investigations. Every other item -- missing, not claw, owned by
+      // another principal, or outside its repository binding -- answers the
+      // same 404, so the route is no existence oracle for it.
+      const stored = await context.runtime.store.readTask({
+        workId: input.id,
+      });
+      if (
+        stored === undefined ||
+        !mayAccessStoredWork(principal, stored.task.work) ||
+        !ownsClawWork(principal, stored.task.work)
+      )
+        throw errors.NOT_FOUND();
+      task = stored;
+    } else {
+      task = await readWorkTask(context, input.id);
+      if (task === undefined) throw errors.NOT_FOUND();
+      if (storedClawWorkSpec(task.task.work) !== undefined) {
+        // Operators may read claw work like every other native item, but
+        // only its admitting principal, holding its claw grant, cancels it.
+        if (!ownsClawWork(principal, task.task.work)) throw errors.FORBIDDEN();
+      } else if (isSourceManagedWork(task.task.work))
+        throw errors.CONFLICT({
+          message: 'Source-managed work is read-only.',
+        });
+    }
     const runs = await context.runtime.store.listRuns({ workId: input.id });
     const state = deriveItemState(task.task, runs);
     if (state === 'done' || state === 'canceled') {

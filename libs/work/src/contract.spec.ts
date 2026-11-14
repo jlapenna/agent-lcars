@@ -29,6 +29,7 @@ describe('WORK_ID_PATTERN', () => {
 describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
+      'admitClawInvestigation',
       'anchorOwner',
       'cancel',
       'create',
@@ -431,6 +432,61 @@ describe('runsContract.brief resume field', () => {
   });
 });
 
+describe('runsContract.brief claw branch', () => {
+  const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
+  const spec = {
+    title: 'Investigate: why?',
+    description: 'why?',
+    pipeline: 'claw-investigator',
+    priority: 'background',
+    operation: 'investigate:v1',
+    sourceKey: 'adhoc:x',
+  };
+  const brief = {
+    id: workId,
+    spec,
+    anchor: {
+      type: 'work',
+      id: workId,
+      title: spec.title,
+      body: 'why?',
+      html_url: `https://lcars.test/work/${workId}`,
+    },
+    pipeline: 'claw-investigator',
+    mode: 'claw',
+    reply: '',
+    replyChannel: '',
+    replyPrincipal: '',
+    runbook: '',
+    context: '',
+    attemptId: `g1:work:${workId}/r1`,
+    generation: 1,
+    intentId: `work:${workId}/r1`,
+    claw: { operation: 'investigate:v1', input: { question: 'why?' } },
+  };
+
+  it('carries the operation input and no repository', () => {
+    expect(runBriefSchema.parse(brief)).toEqual(brief);
+  });
+
+  it('refuses a claw brief whose spec carries a question', () => {
+    expect(
+      runBriefSchema.safeParse({
+        ...brief,
+        spec: { ...spec, input: { question: 'why?' } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a claw brief without its operation or with another mode', () => {
+    const { claw: _claw, ...withoutClaw } = brief;
+    expect(runBriefSchema.safeParse(withoutClaw).success).toBe(false);
+    expect(
+      runBriefSchema.safeParse({ ...brief, mode: 'implement' }).success,
+    ).toBe(false);
+  });
+});
+
 describe('runsContract.brief crossRepo field', () => {
   it('runBriefSchema accepts an optional crossRepo boolean', () => {
     const withCrossRepo = runBriefSchema.parse({
@@ -529,6 +585,7 @@ describe('generateWorkOpenApi', () => {
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
         '/anchors/github/owner',
+        '/claw/investigations',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/issues',
@@ -658,7 +715,8 @@ describe('generateWorkOpenApi', () => {
       'POST /issues/refresh': ['200', '400', '403', '404', '409'],
       'POST /issues/dispatch': ['200', '400', '403', '404', '409'],
       'PATCH /items/{id}': ['200', '404', '409'],
-      'POST /items/{id}/cancel': ['200', '404', '409'],
+      'POST /items/{id}/cancel': ['200', '403', '404', '409'],
+      'POST /claw/investigations': ['202', '403', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],

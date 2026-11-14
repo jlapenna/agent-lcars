@@ -110,6 +110,32 @@ describe('deriveItemState', () => {
   });
 });
 
+describe('loss policy by pipeline', () => {
+  const revision = {
+    key: 'k',
+    input: { operation: 'investigate:v1', question: 'why?' },
+  };
+  it('a lost read-only claw round stays running while its budget remains', () => {
+    const current = task({ consecutiveLost: 1, desiredRevision: revision });
+    const lost = run(1, 'lost', {
+      pipeline: 'claw-investigator',
+      sourceRevision: revision,
+      revisionAttempt: 1,
+    });
+    expect(deriveItemState(current, [lost])).toBe('running');
+    expect(deriveItemState(current, [{ ...lost, revisionAttempt: 3 }])).toBe(
+      'failed',
+    );
+  });
+  it('a lost effectful recipe is terminal at once', () => {
+    expect(
+      deriveItemState(task({ consecutiveLost: 1 }), [
+        run(1, 'lost', { pipeline: 'goose' }),
+      ]),
+    ).toBe('failed');
+  });
+});
+
 describe('delivery correction loss projection', () => {
   const delivery = {
     runId: `work:${WORK_ID}/r1`,
@@ -439,4 +465,21 @@ describe('completed delivery is bound to its run', () => {
       expect(original.result).toEqual({ ok: true, summary: 'pull-request' });
     },
   );
+
+  it('shows an exhausted claw investigation as failed even if a worker sent park', () => {
+    // toClawRunResult normalizes every unsupported claw outcome to
+    // runner-failed; three failed attempts exhaust the finite retries.
+    const failed = {
+      ok: false,
+      summary: 'runner-failed',
+      message: 'park: needs a human',
+    };
+    expect(
+      deriveItemState(task(), [
+        run(1, 'finished', { result: failed }),
+        run(2, 'finished', { result: failed }),
+        run(3, 'finished', { result: failed }),
+      ]),
+    ).not.toBe('parked');
+  });
 });

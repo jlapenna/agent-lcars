@@ -17,6 +17,7 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { admitInvestigation } from './claw-investigate-work';
 import {
   CODEX_GLOBAL_LEASE_OBJECT,
   CodexAuthStoreError,
@@ -6042,5 +6043,203 @@ describe('reply recovery preserves incomplete delivery output requirements', () 
     expect((await f.store.readRun(f.originalId))!.result).toEqual(
       f.originalResult,
     );
+  });
+});
+
+describe('claw-investigator runs', () => {
+  const ZONE = ['claw-investigator'];
+  const SHARED = ['claude', 'codex', 'opencode', 'agy', 'goose'];
+
+  async function admitted(
+    f: ReturnType<typeof fixture>,
+    question = 'Why did the backup alert fire?',
+    sourceKey = 'alert:backup',
+  ) {
+    const { workId } = await admitInvestigation(f, {
+      question,
+      sourceKey,
+      principal: 'user:jlapenna',
+    });
+    const task = (await f.store.readTask({ workId }))!.task;
+    const runId = task.activeRunId!;
+    if ((await f.store.readRun(runId))?.queue === undefined) {
+      await f.store.enqueueRun({ runId, now: NOW });
+      await f.orchestrator.confirmDispatch(runId);
+    }
+    return { workId, runId };
+  }
+
+  async function claim(f: ReturnType<typeof fixture>, pipelines: string[]) {
+    return call(
+      { ...f, ...context, principal: executorPrincipal(pipelines) },
+      'POST',
+      '/runs/claim',
+      { runner: 'zone-runner' },
+    );
+  }
+
+  it('is claimable only by a grant listing it, and its brief carries the operation input', async () => {
+    const f = fixture();
+    const { workId, runId } = await admitted(f);
+    expect((await claim(f, SHARED)).json).toBeUndefined();
+    const claimed = await claim(f, ZONE);
+    expect(claimed.json).toMatchObject({
+      runId,
+      workId,
+      pipeline: 'claw-investigator',
+    });
+    const { token } = claimed.json as { token: string };
+    const runCtx: RunsContext = { ...f, ...context, bearerToken: token };
+
+    const brief = await call(runCtx, 'GET', runPath(runId, '/brief'));
+    expect(brief.status).toBe(200);
+    expect(brief.json).toMatchObject({
+      id: workId,
+      spec: {
+        pipeline: 'claw-investigator',
+        priority: 'background',
+        operation: 'investigate:v1',
+        sourceKey: 'alert:backup',
+        title: 'Claw investigation alert:backup',
+      },
+      anchor: {
+        type: 'work',
+        id: workId,
+        body: 'Why did the backup alert fire?',
+        html_url: expect.stringMatching(new RegExp(`/work/${workId}$`, 'u')),
+      },
+      pipeline: 'claw-investigator',
+      mode: 'claw',
+      context: '',
+      intentId: runId,
+      generation: 1,
+      claw: {
+        operation: 'investigate:v1',
+        input: { question: 'Why did the backup alert fire?' },
+      },
+    });
+    expect(brief.json).not.toHaveProperty('spec.target');
+    expect(brief.json).not.toHaveProperty('anchor.target_repo');
+    expect(brief.json).not.toHaveProperty('spec.input');
+
+    const heartbeat = await call(runCtx, 'POST', runPath(runId, '/heartbeat'));
+    expect(heartbeat.status).toBe(200);
+
+    expect(
+      (await call(runCtx, 'GET', runPath(runId, '/checkout-token'))).status,
+    ).toBe(403);
+    expect(
+      (await call(runCtx, 'GET', runPath(runId, '/introspect'))).status,
+    ).toBe(401);
+
+    const report = '# Findings\n\nThe backup job hit its timeout.';
+    const complete = await call(runCtx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'report',
+      message: report,
+    });
+    expect(complete).toEqual({
+      status: 200,
+      json: { runId, state: 'finished' },
+    });
+    expect((await f.store.readRun(runId))?.result).toEqual({
+      ok: true,
+      summary: 'report',
+      message: report,
+    });
+    const task = await f.store.readTask({ workId });
+    expect(
+      deriveItemState(task!.task, await f.store.listRuns({ workId })),
+    ).toBe('done');
+  });
+
+  it.each([
+    { outcome: 'runner-failed', message: 'openclaw exited 1' },
+    { outcome: 'report', message: '  ' },
+    {
+      outcome: 'pull-request',
+      message: 'not a claw result',
+      outcomeReference: { kind: 'pull-request', number: 12 },
+    },
+  ])(
+    'settles $outcome as a failed attempt and retries under the finite policy',
+    async (body) => {
+      const f = fixture();
+      const { workId, runId } = await admitted(f);
+      const { token } = (await claim(f, ZONE)).json as { token: string };
+      const complete = await call(
+        { ...f, ...context, bearerToken: token },
+        'POST',
+        runPath(runId, '/complete'),
+        body,
+      );
+      expect(complete.status).toBe(200);
+      const settled = await f.store.readRun(runId);
+      // Any unusable claw completion is stored as runner-failed, so an
+      // exhausted run never reads as a report or a parked delivery.
+      expect(settled?.result).toMatchObject({
+        ok: false,
+        summary: 'runner-failed',
+      });
+      expect(settled?.result?.ref).toBeUndefined();
+      const runs = await f.store.listRuns({ workId });
+      expect(runs).toHaveLength(2);
+      expect(runs.find((run) => run.runId !== runId)).toMatchObject({
+        state: 'pending',
+        pipeline: 'claw-investigator',
+        params: { mode: 'claw' },
+        revisionAttempt: 2,
+      });
+      const task = await f.store.readTask({ workId });
+      expect(deriveItemState(task!.task, runs)).toBe('running');
+    },
+  );
+
+  it('briefs the executing round, so a newer question reaches its successor', async () => {
+    const f = fixture();
+    const { workId, runId } = await admitted(f, 'First question?');
+    const { token } = (await claim(f, ZONE)).json as { token: string };
+    // A claimed attempt keeps executing; the new question waits for it.
+    await admitted(f, 'Second question?');
+    const done = await call(
+      { ...f, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      { outcome: 'report', message: 'answer to the first' },
+    );
+    expect(done.status).toBe(200);
+    const successor = (await f.store.readTask({ workId }))!.task.activeRunId!;
+    expect(successor).not.toBe(runId);
+    await f.store.enqueueRun({ runId: successor, now: NOW });
+    await f.orchestrator.confirmDispatch(successor);
+    const next = (await claim(f, ZONE)).json as { token: string };
+    const brief = await call(
+      { ...f, ...context, bearerToken: next.token },
+      'GET',
+      runPath(successor, '/brief'),
+    );
+    expect(brief.json).toMatchObject({
+      anchor: { body: 'Second question?' },
+      claw: { input: { question: 'Second question?' } },
+    });
+    // The successor brief holds exactly one question: no stale copy in its
+    // spec, title or anywhere else.
+    expect(JSON.stringify(brief.json)).not.toContain('First question?');
+    expect(brief.json).not.toHaveProperty('spec.input');
+  });
+
+  it('refuses claw mode for any other pipeline', async () => {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('claw-mode-on-claude'),
+      now: NOW,
+      params: { mode: 'claw' },
+    });
+    const { token } = (await claim(f, ['claude'])).json as { token: string };
+    const brief = await call(
+      { ...f, ...context, bearerToken: token },
+      'GET',
+      runPath(runId, '/brief'),
+    );
+    expect(brief.status).toBe(401);
   });
 });

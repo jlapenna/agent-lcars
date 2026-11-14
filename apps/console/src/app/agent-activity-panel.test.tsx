@@ -1013,14 +1013,16 @@ describe('AgentActivityPanel pipeline metadata', () => {
     expect(screen.getByText('#42: Fix the thing')).toBeTruthy();
   });
 
-  it('names internal recipe and summary pipelines on the badge', () => {
+  it('names internal recipe, summary and claw pipelines on the badge', () => {
     render(
       <MantineProvider>
         <PipelineBadge pipeline="goose" />
         <PipelineBadge pipeline="inbox-summary" />
         <PipelineBadge pipeline="handoff-summary" />
+        <PipelineBadge pipeline="claw-investigator" />
       </MantineProvider>,
     );
+    expect(screen.getByText('claw investigator')).toBeTruthy();
     expect(screen.getByText('goose')).toBeTruthy();
     expect(screen.getByText('inbox summary')).toBeTruthy();
     expect(screen.getByText('handoff summary')).toBeTruthy();

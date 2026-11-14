@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { toRunResult } from './run-result';
+import { toClawRunResult, toRunResult } from './run-result';
 
 describe('toRunResult', () => {
   it('carries the agent final message onto the result', () => {
@@ -231,5 +231,38 @@ describe('declared native report (#2845 bridge to #2810 intent: report)', () => 
         toRunResult('octo/example', 'report', null, message, report).ok,
       ).toBe(false);
     }
+  });
+});
+
+describe('toClawRunResult', () => {
+  it('settles a nonblank report as the successful deliverable', () => {
+    expect(toClawRunResult('report', '# Findings')).toEqual({
+      ok: true,
+      summary: 'report',
+      message: '# Findings',
+    });
+  });
+
+  it.each([
+    ['runner-failed', 'openclaw exited 1'],
+    ['report', ' \n '],
+    ['report', undefined],
+    ['pull-request', 'no repository'],
+    ['park', 'needs a human'],
+    ['no-op', 'nothing'],
+    [undefined, 'no outcome'],
+  ])('settles %s as a failed attempt', (outcome, message) => {
+    const result = toClawRunResult(outcome, message);
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty('ref');
+    // Only `report` and `runner-failed` are ever stored for claw work, so a
+    // reserved summary such as `park` can never make the item read parked.
+    expect(result.summary).toBe('runner-failed');
+  });
+
+  it('keeps the existing completion bound', () => {
+    expect(toClawRunResult('report', 'x'.repeat(20_000)).message).toHaveLength(
+      16_384,
+    );
   });
 });
