@@ -412,6 +412,7 @@ describe('claw/oncall Alertmanager intake', () => {
     groupKey: 'page:HostDiskFull:riker',
     status: 'firing',
     fingerprints: ['fedcba9876543210', '0123456789abcdef'],
+    episode: '2026-11-14T09:58:00.123Z',
     question: 'Alert HostDiskFull is firing on riker.',
   };
 
@@ -454,6 +455,8 @@ describe('claw/oncall Alertmanager intake', () => {
       groupKey: firing.groupKey,
       status: 'resolved',
       fingerprints: firing.fingerprints,
+      // Ignored on resolution.
+      episode: '2026-11-14T10:30:00Z',
     });
     expect(resolved).toMatchObject({
       status: 202,
@@ -469,6 +472,30 @@ describe('claw/oncall Alertmanager intake', () => {
       json: { invalidated: false },
     });
     expect(unknown.json).not.toHaveProperty('workId');
+  });
+
+  it('admits a new round when the group re-fires after resolution in a new episode', async () => {
+    const ctx = context({ principal: oncallGate });
+    const first = await call(ctx, 'POST', '/claw/oncall/alerts', firing);
+    await call(ctx, 'POST', '/claw/oncall/alerts', {
+      groupKey: firing.groupKey,
+      status: 'resolved',
+      fingerprints: firing.fingerprints,
+    });
+    const same = await call(ctx, 'POST', '/claw/oncall/alerts', firing);
+    expect(same.status).toBe(202);
+    const workId = first.json.id as string;
+    expect(await ctx.runtime.store.listRuns({ workId })).toHaveLength(1);
+    const refire = await call(ctx, 'POST', '/claw/oncall/alerts', {
+      ...firing,
+      episode: '2026-11-14T10:40:00Z',
+    });
+    expect(refire).toMatchObject({ status: 202, json: { id: workId } });
+    const runs = await ctx.runtime.store.listRuns({ workId });
+    expect(runs.map((run) => run.state).sort()).toEqual([
+      'canceled',
+      'pending',
+    ]);
   });
 
   it.each([
@@ -506,6 +533,8 @@ describe('claw/oncall Alertmanager intake', () => {
       },
     ],
     ['an unknown status', { ...firing, status: 'suppressed' }],
+    ['a malformed episode', { ...firing, episode: 'yesterday' }],
+    ['an oversized episode', { ...firing, episode: '1'.repeat(41) }],
     ['a caller-chosen pipeline', { ...firing, pipeline: 'claude' }],
   ])('rejects %s', async (_name, body) => {
     const ctx = context({ principal: oncallGate });

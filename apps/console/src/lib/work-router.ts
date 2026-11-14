@@ -442,6 +442,7 @@ export const workRouter = os.router({
         admitted = await admitOncallAlert(context.runtime, {
           groupKey: input.groupKey,
           fingerprints: input.fingerprints,
+          ...(input.episode === undefined ? {} : { episode: input.episode }),
           // The contract refines a firing body to carry its question.
           question: input.question ?? '',
           principal: principal.principal,

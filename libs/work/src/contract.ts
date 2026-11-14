@@ -4,6 +4,7 @@ import {
   humanNeededActionsSchema,
   issueCommentSchema,
   issueReferenceSchema,
+  ONCALL_EPISODE_PATTERN,
   ONCALL_FINGERPRINT_PATTERN,
   ONCALL_FINGERPRINTS_MAX,
   ONCALL_GROUP_KEY_PATTERN,
@@ -589,10 +590,12 @@ export const itemsContract = {
           'Admit or resolve an Alertmanager group for claw/oncall (work.claw.admit required)',
         description:
           '`groupKey` names one Work item per admitting principal. While ' +
-          'firing, the sorted fingerprint set is the revision: the same set ' +
-          'returns its existing round even when `question` differs, and a new ' +
-          'set supersedes a queued round. `resolved` invalidates a pending ' +
-          'round; a running attempt finishes. Outcomes are persisted only.',
+          'firing, the sorted fingerprint set and `episode` (the earliest ' +
+          'alert `startsAt`) are the revision: the same pair returns its ' +
+          'existing round even when `question` differs, and a new set or a ' +
+          're-fire after resolution supersedes a queued round. `resolved` ' +
+          'invalidates a pending round and ignores `episode`; a running ' +
+          'attempt finishes. Outcomes are persisted only.',
         successStatus: 202,
         successDescription:
           'Admitted, the existing round, or the resolution result.',
@@ -612,6 +615,9 @@ export const itemsContract = {
             .min(1)
             .max(ONCALL_FINGERPRINTS_MAX),
           question: clawInvestigateInputSchema.shape.question.optional(),
+          /** Earliest alert `startsAt` of the firing group; ignored when
+           *  resolved. */
+          episode: z.string().regex(ONCALL_EPISODE_PATTERN).optional(),
         })
         .refine(
           (body) => body.status === 'resolved' || body.question !== undefined,

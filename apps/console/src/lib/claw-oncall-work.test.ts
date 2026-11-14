@@ -22,6 +22,7 @@ function runtime() {
 const request = {
   groupKey: 'page:HostDiskFull:riker',
   fingerprints: [A],
+  episode: '2026-11-14T09:58:00Z',
   question: 'Alert HostDiskFull is firing on riker.',
   principal: GATE,
 };
@@ -55,7 +56,7 @@ describe('admitOncallAlert', () => {
       pipeline: 'claw-oncall',
       params: { mode: 'claw' },
       sourceRevision: {
-        key: oncallRevisionKey([A]),
+        key: oncallRevisionKey([A], request.episode),
         input: {
           operation: 'oncall-investigate:v1',
           question: request.question,
@@ -67,6 +68,10 @@ describe('admitOncallAlert', () => {
   it('keys the revision by the deduplicated, order-independent fingerprint set', () => {
     expect(oncallRevisionKey([B, A, B])).toBe(oncallRevisionKey([A, B]));
     expect(oncallRevisionKey([A])).not.toBe(oncallRevisionKey([A, B]));
+    expect(oncallRevisionKey([A], 'e1')).not.toBe(oncallRevisionKey([A], 'e2'));
+    expect(oncallRevisionKey([A], undefined)).not.toBe(
+      oncallRevisionKey([A], 'e1'),
+    );
   });
 
   it('returns the same round for the same fingerprints even when the alert text differs', async () => {
@@ -115,6 +120,31 @@ describe('admitOncallAlert', () => {
 });
 
 describe('resolveOncallAlert', () => {
+  it('admits a new round when the group re-fires with the same fingerprints in a new episode', async () => {
+    const rt = runtime();
+    const { workId } = await admitOncallAlert(rt, request);
+    await resolveOncallAlert(
+      rt,
+      { groupKey: request.groupKey, principal: GATE },
+      '2026-11-14T10:05:00.000Z',
+    );
+    // The same episode stays the resolved round, never a new one.
+    expect(await admitOncallAlert(rt, request)).toEqual({
+      workId,
+      duplicate: true,
+    });
+    const refire = await admitOncallAlert(rt, {
+      ...request,
+      episode: '2026-11-14T10:20:00Z',
+    });
+    expect(refire).toEqual({ workId, duplicate: false });
+    const runs = await rt.store.listRuns({ workId });
+    expect(runs.map((run) => run.state).sort()).toEqual([
+      'canceled',
+      'pending',
+    ]);
+  });
+
   it('cancels a pending round and admits no successor', async () => {
     const rt = runtime();
     const { workId } = await admitOncallAlert(rt, request);

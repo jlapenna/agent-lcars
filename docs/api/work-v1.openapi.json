@@ -8055,7 +8055,7 @@
       "post": {
         "operationId": "admitOncallAlert",
         "summary": "Admit or resolve an Alertmanager group for claw/oncall (work.claw.admit required)",
-        "description": "`groupKey` names one Work item per admitting principal. While firing, the sorted fingerprint set is the revision: the same set returns its existing round even when `question` differs, and a new set supersedes a queued round. `resolved` invalidates a pending round; a running attempt finishes. Outcomes are persisted only.",
+        "description": "`groupKey` names one Work item per admitting principal. While firing, the sorted fingerprint set and `episode` (the earliest alert `startsAt`) are the revision: the same pair returns its existing round even when `question` differs, and a new set or a re-fire after resolution supersedes a queued round. `resolved` invalidates a pending round and ignores `episode`; a running attempt finishes. Outcomes are persisted only.",
         "tags": ["items"],
         "requestBody": {
           "required": true,
@@ -8085,6 +8085,10 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4000
+                  },
+                  "episode": {
+                    "type": "string",
+                    "pattern": "^[0-9TZ:.+-]{1,40}$"
                   }
                 },
                 "required": ["groupKey", "status", "fingerprints"],

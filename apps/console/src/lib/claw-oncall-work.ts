@@ -58,11 +58,17 @@ function isOwnOncallWork(
   );
 }
 
-/** The fingerprint set is the revision identity (design: `sourceRevision:
- *  <verified fingerprints>`), deduplicated and order-independent. */
-export function oncallRevisionKey(fingerprints: readonly string[]): string {
+/** The fingerprint set (design: `sourceRevision: <verified fingerprints>`),
+ *  deduplicated and order-independent, plus the firing episode, so a group
+ *  that resolves and re-fires with the same fingerprints is a new round. */
+export function oncallRevisionKey(
+  fingerprints: readonly string[],
+  episode?: string,
+): string {
   const sorted = [...new Set(fingerprints)].sort();
-  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+  return createHash('sha256')
+    .update(JSON.stringify({ fingerprints: sorted, episode: episode ?? null }))
+    .digest('hex');
 }
 
 /**
@@ -70,8 +76,9 @@ export function oncallRevisionKey(fingerprints: readonly string[]): string {
  *
  * Shadow stage (phase 3b): origin channel `alertmanager` with no thread, so
  * the outcome is persisted only; the legacy Gateway hook still pages. The
- * same fingerprint set is the same round even when the rendered alert text
- * differs (annotations re-render on every notification); a new set
+ * same fingerprint set and episode are the same round even when the
+ * rendered alert text differs (annotations re-render on every
+ * notification); a new set, or a re-fire after resolution (a new episode),
  * supersedes a queued round and waits behind a claimed one.
  */
 export async function admitOncallAlert(
@@ -79,6 +86,7 @@ export async function admitOncallAlert(
   request: {
     groupKey: string;
     fingerprints: readonly string[];
+    episode?: string;
     question: string;
     principal: string;
   },
@@ -91,7 +99,7 @@ export async function admitOncallAlert(
     ulid(),
   );
   const revision = workRevisionSchema.parse({
-    key: oncallRevisionKey(request.fingerprints),
+    key: oncallRevisionKey(request.fingerprints, request.episode),
     input: { operation: CLAW_ONCALL_INVESTIGATE_OPERATION, ...input },
   });
   const spec = clawWorkSpecSchema.parse({

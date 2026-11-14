@@ -23,6 +23,10 @@ export const ONCALL_GROUP_KEY_PATTERN = /^[A-Za-z0-9:_.-]{1,128}$/u;
 /** Alertmanager alert fingerprints: 16 lowercase hex digits. */
 export const ONCALL_FINGERPRINT_PATTERN = /^[0-9a-f]{16}$/u;
 export const ONCALL_FINGERPRINTS_MAX = 64;
+/** The firing episode: the group's earliest alert `startsAt` (RFC 3339),
+ * so a group that resolves and re-fires with the same fingerprints is a new
+ * round. */
+export const ONCALL_EPISODE_PATTERN = /^[0-9TZ:.+-]{1,40}$/u;
 
 export const CLAW_INVESTIGATE_QUESTION_MAX = 4_000;
 
