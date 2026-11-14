@@ -60,24 +60,28 @@ describe('describeRefusedOperatorToken', () => {
     expect(JSON.stringify(record)).not.toContain(TOKEN);
   });
 
-  it.each([404, 422])(
-    'reports a token GitHub no longer holds (HTTP %i)',
+  it('reports a token GitHub no longer holds', async () => {
+    stubGithub(new Response('{}', { status: 404 }));
+
+    await expect(describeRefusedOperatorToken(TOKEN)).resolves.toEqual({
+      tokenRecord: 'absent',
+    });
+  });
+
+  it.each([422, 503])(
+    'reports no verdict when GitHub answers HTTP %i',
     async (status) => {
       stubGithub(new Response('{}', { status }));
 
       await expect(describeRefusedOperatorToken(TOKEN)).resolves.toEqual({
-        tokenRecord: 'absent',
+        tokenRecord: 'unknown',
       });
     },
   );
 
-  it('reports no verdict when GitHub cannot answer', async () => {
-    stubGithub(new Response('{}', { status: 503 }));
-    await expect(describeRefusedOperatorToken(TOKEN)).resolves.toEqual({
-      tokenRecord: 'unknown',
-    });
-
+  it('reports no verdict when GitHub cannot be reached', async () => {
     stubGithub(new Error('network down'));
+
     await expect(describeRefusedOperatorToken(TOKEN)).resolves.toEqual({
       tokenRecord: 'unknown',
     });

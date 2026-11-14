@@ -54,11 +54,10 @@ export async function describeRefusedOperatorToken(
         signal: AbortSignal.timeout(TOKEN_CHECK_TIMEOUT_MS),
       },
     );
-    // GitHub answers 404 for a token it no longer holds and 422 for one it
-    // cannot parse; either way the token is not in its registry.
-    if (response.status === 404 || response.status === 422) {
-      return { tokenRecord: 'absent' };
-    }
+    // 404 is GitHub's documented answer for a token it does not hold. Every
+    // other failure, including the 422 it also uses for abuse protection,
+    // establishes nothing about the registry.
+    if (response.status === 404) return { tokenRecord: 'absent' };
     if (!response.ok) return { tokenRecord: 'unknown' };
     const record = (await response.json()) as {
       created_at?: unknown;
