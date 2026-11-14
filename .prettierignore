@@ -23,3 +23,6 @@ apps/runner-autoscaler/runner-image/pnpm-seed/fleet/
 
 # OpenDesign-generated HTML mockups; promoted as generated snapshots.
 design/*.html
+
+# Third-party review command retained verbatim with its pinned provenance.
+agents/shared/skills/agent-protocol/reference/anthropic-code-review/upstream.md

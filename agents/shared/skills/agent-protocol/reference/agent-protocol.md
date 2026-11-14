@@ -375,6 +375,11 @@ do not infer the job from labels:
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.
 
+Review dispatches follow the trusted [Anthropic review procedure](anthropic-code-review/README.md)
+at `$AGENT_REVIEW_PATH`: independent review passes, separate finding validation,
+and a review bound to the exact head. Its pinned source, license and LCARS
+adaptations ship beside this protocol. Read it only for review work.
+
 Reply dispatches recognize `@claude`, the generic `@agent` alias for Claude,
 `/codex`, `/opencode`, `/oc`, `/agy`, and `/antigravity` in an owner or
 member's comment. GitHub-style `@claude`/`@agent` mentions may appear in
@@ -612,11 +617,16 @@ whether you may rerun one yourself. The section number is unchanged there.
 
 This is a headless CI run: the process exits the moment you end your turn,
 and nothing resumes later. Work strictly synchronously — never launch
-background subagents, never schedule wakeups or otherwise wait for
+subagents that outlive the coordinating turn, never schedule wakeups or otherwise wait for
 something to finish later, and never treat your own reasoning as if a user
 just replied (no live user is watching; questions go through §4, they do
 not get answered inline). A "success" conclusion on the job itself is not
 proof anything was delivered — see §5.
+
+Review dispatches may delegate the independent passes required by the trusted
+Anthropic procedure, provided the coordinator waits for every child and
+collects its results before publishing a review or ending the turn. Child
+reviewers return evidence to that coordinator and never publish independently.
 
 ## 10. GitHub Apps bot-identity assignment gotcha
 

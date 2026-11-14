@@ -42,7 +42,7 @@ run_prepare_dispatch() {
   export BUDGET_MINUTES=80
   : > "$RUNTIME_ENV"
 
-  bash "$RUNTIME_HELPERS_DIR/prepare-dispatch.sh"
+  bash "$RUNTIME_HELPERS_DIR/prepare-dispatch.sh" || return $?
   context_path="$RUNNER_TEMP/agent-dispatch/context.json"
 }
 
@@ -90,6 +90,32 @@ jq -e '(has("prior_terminal_state") or has("deliveryHandoffVersion")) | not' "$c
   fail "brief still carries a retired field ($(jq -c 'keys' "$context_path"))"
 
 echo "scenario runtime-block: OK"
+
+# The trusted review dependency is selected from the baked image, never the
+# consumer checkout. Missing artifacts must stop review preparation instead of
+# silently launching the old generic review; other modes do not load them.
+export MODE='review'
+run_prepare_dispatch review-procedure
+review_dir="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+grep -Fxq "AGENT_REVIEW_PATH=$review_dir/README.md" "$RUNTIME_ENV" ||
+  fail "review: procedure path did not resolve from the baked image"
+for artifact in README.md upstream.md LICENSE; do
+  mv "$review_dir/$artifact" "$tmp/review-artifact"
+  if run_prepare_dispatch "review-missing-$artifact" > "$tmp/review-error" 2>&1; then
+    fail "review: missing $artifact did not stop dispatch preparation"
+  fi
+  grep -Fq "Anthropic review procedure is missing or empty at $review_dir/$artifact" "$tmp/review-error" ||
+    fail "review: missing $artifact did not name the failed artifact"
+  [ ! -s "$RUNTIME_ENV" ] || fail "review: missing $artifact exported a partial context"
+  export MODE='implement'
+  run_prepare_dispatch "implement-without-$artifact"
+  if grep -q '^AGENT_REVIEW_PATH=' "$RUNTIME_ENV"; then
+    fail "implement: loaded the review-only procedure"
+  fi
+  mv "$tmp/review-artifact" "$review_dir/$artifact"
+  export MODE='review'
+done
+echo "scenario review-procedure: OK"
 
 # Linear source identity stays distinct from the native Work/checkout anchor.
 export WORK='{"id":"01PREPAREDISPATCHTESTFIX1","spec":{"title":"SPR-84: Fix source","description":"Current admitted issue body","pipeline":"claude","target":{"repo":"octo/example"}},"issue":{"reference":{"tracker":"linear","organizationId":"11111111-1111-4111-8111-111111111111","issueId":"44444444-4444-4444-8444-444444444444"},"identifier":"SPR-84","url":"https://linear.app/example/issue/SPR-84","title":"Fix source","state":"open","updatedAt":"2026-11-04T10:00:00Z"}}'
