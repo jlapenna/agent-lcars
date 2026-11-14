@@ -10,8 +10,10 @@ material, not a plugin to install or a second dispatch entry point.
 Anthropic's `code-review` plugin is a native Git submodule at
 `third_party/anthropic-plugins`. `.gitmodules` declares its repository and
 tracking branch; the committed gitlink is the authoritative version lock.
-Renovate's `git-submodules` manager proposes revision updates through normal
-PRs. Initialize it with `git submodule update --init --depth 1` (worktree setup
+Renovate's `git-submodules` manager proposes separate draft PRs with auto-merge
+disabled. Review upstream changes against this adapter and qualify them on a
+real PR before making an update ready. Initialize the dependency with
+`git submodule update --init --depth 1` (worktree setup
 and CI do this automatically).
 
 The runner build packages the unmodified

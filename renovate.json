@@ -65,6 +65,15 @@
   ],
   "packageRules": [
     {
+      "description": "The Anthropic dependency supplies executable review instructions. Qualify upstream changes against the LCARS adapter and a real PR before making the update ready; keep them out of the unattended digest-update group. Drafts also prevent the fleet bot auto-merge workflow from arming them.",
+      "matchManagers": ["git-submodules"],
+      "matchPackageNames": ["third_party/anthropic-plugins"],
+      "groupName": "Anthropic review workflow",
+      "groupSlug": "anthropic-review-workflow",
+      "automerge": false,
+      "draftPR": true
+    },
+    {
       "description": "@types/node must track the Node major the repo runs on (engines `<27`, CI/runner image/deploy pinned to 26.x), not the newest Node: a newer major types APIs the runtime lacks, so typecheck would pass code that fails in production. Move it together with the Node pins in a deliberate runtime upgrade (#3101 closed #3053 for this reason).",
       "enabled": false,
       "matchPackageNames": ["@types/node"],
