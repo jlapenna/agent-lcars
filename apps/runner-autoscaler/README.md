@@ -416,9 +416,13 @@ tolerations) and differs only in:
   outer turn deadline ends first) and the declared `env`;
 - the only Secret material is the declared items of `secret_name`, read-only
   at `/run/claw-secrets` (the launcher exports items under `env/` as
-  environment variables); the optional `agent` ConfigMap is read-only at
-  `/claw/agent` with mode 0555, so agent tools under `tools/` can run by path
-  (Secret items stay 0440 and are never executable);
+  environment variables); each item of the optional `agent` ConfigMap is its
+  own read-only subPath mount at `/claw/agent/<path>` with mode 0555, so agent
+  tools under `tools/` run by path and resolve to exactly that path (a
+  directory mount would resolve them through the ConfigMap's `..data`
+  symlinks, and OpenClaw's exec allowlist matches the resolved path; agent
+  `items` are therefore required). Secret items stay 0440 and are never
+  executable;
 - `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
   (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
   `emptyDir`.
