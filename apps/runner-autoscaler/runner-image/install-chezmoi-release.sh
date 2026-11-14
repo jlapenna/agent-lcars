@@ -21,4 +21,14 @@ printf '%s  %s\n' "$digest" "$chezmoi_install_tmp/release.tar.gz" | sha256sum --
 tar -xzf "$chezmoi_install_tmp/release.tar.gz" -C "$chezmoi_install_tmp" chezmoi
 install -d "${CHEZMOI_INSTALL_DIR:-/usr/local/bin}"
 install -m 0755 "$chezmoi_install_tmp/chezmoi" "${CHEZMOI_INSTALL_DIR:-/usr/local/bin}/chezmoi"
-"${CHEZMOI_INSTALL_DIR:-/usr/local/bin}/chezmoi" --version | grep -Eq "^chezmoi version v${CHEZMOI_VERSION//./\\.},"
+# This runs on the builder's platform for the target's binary, so the binary
+# can only report its version when the two match. Otherwise the checksum
+# above, which is of this exact release archive, is the proof.
+case "$(uname -m)" in
+  x86_64) native=amd64 ;;
+  aarch64) native=arm64 ;;
+  *) native=unknown ;;
+esac
+if [[ "$native" == "$TARGETARCH" ]]; then
+  "${CHEZMOI_INSTALL_DIR:-/usr/local/bin}/chezmoi" --version | grep -Eq "^chezmoi version v${CHEZMOI_VERSION//./\\.},"
+fi
