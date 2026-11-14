@@ -255,7 +255,9 @@ describe('toClawRunResult', () => {
     const result = toClawRunResult(outcome, message);
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty('ref');
-    expect(result.summary).toBe(outcome);
+    // Only `report` and `runner-failed` are ever stored for claw work, so a
+    // reserved summary such as `park` can never make the item read parked.
+    expect(result.summary).toBe('runner-failed');
   });
 
   it('keeps the existing completion bound', () => {

@@ -465,4 +465,21 @@ describe('completed delivery is bound to its run', () => {
       expect(original.result).toEqual({ ok: true, summary: 'pull-request' });
     },
   );
+
+  it('shows an exhausted claw investigation as failed even if a worker sent park', () => {
+    // toClawRunResult normalizes every unsupported claw outcome to
+    // runner-failed; three failed attempts exhaust the finite retries.
+    const failed = {
+      ok: false,
+      summary: 'runner-failed',
+      message: 'park: needs a human',
+    };
+    expect(
+      deriveItemState(task(), [
+        run(1, 'finished', { result: failed }),
+        run(2, 'finished', { result: failed }),
+        run(3, 'finished', { result: failed }),
+      ]),
+    ).not.toBe('parked');
+  });
 });

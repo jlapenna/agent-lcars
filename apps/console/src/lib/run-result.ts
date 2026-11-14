@@ -119,14 +119,19 @@ export function toClawRunResult(
   outcome: unknown,
   message?: unknown,
 ): RunResult {
-  const summary = typeof outcome === 'string' ? outcome : undefined;
   const finalMessage =
     typeof message === 'string' && message.length > 0
       ? message.slice(0, CLAW_REPORT_MAX)
       : undefined;
+  const ok = outcome === 'report' && (finalMessage?.trim() ?? '') !== '';
+  // Only two summaries are ever stored for claw work. Any other outcome --
+  // including the reserved `park`, which item-state derivation treats as a
+  // human handoff -- is normalized to `runner-failed`, so an exhausted claw
+  // investigation reads as failed, never as parked (claw work refuses the
+  // reply/redispatch controls a parked item would offer).
   return {
-    ok: outcome === 'report' && (finalMessage?.trim() ?? '') !== '',
-    ...(summary === undefined ? {} : { summary }),
+    ok,
+    summary: ok ? 'report' : 'runner-failed',
     ...(finalMessage === undefined ? {} : { message: finalMessage }),
   };
 }
