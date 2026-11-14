@@ -6155,6 +6155,7 @@ describe('claw-investigator runs', () => {
   it.each([
     { outcome: 'runner-failed', message: 'openclaw exited 1' },
     { outcome: 'report', message: '  ' },
+    { outcome: 'park', message: 'Which host?' },
     {
       outcome: 'pull-request',
       message: 'not a claw result',
@@ -6193,6 +6194,41 @@ describe('claw-investigator runs', () => {
       expect(deriveItemState(task!.task, runs)).toBe('running');
     },
   );
+
+  it('settles an investigation that parks on every attempt as failed, not parked', async () => {
+    const f = fixture();
+    const { workId } = await admitted(f);
+    let attempts = 0;
+    for (; attempts < 10; attempts += 1) {
+      // Production's outbox drain dispatches each retry; do it here.
+      for (const run of await f.store.listRuns({ workId })) {
+        if (run.state === 'pending' && run.queue === undefined) {
+          await f.store.enqueueRun({ runId: run.runId, now: NOW });
+          await f.orchestrator.confirmDispatch(run.runId);
+        }
+      }
+      const claimed = (await claim(f, ZONE)).json as
+        { token: string; runId: string } | undefined;
+      if (!claimed) break;
+      const complete = await call(
+        { ...f, ...context, bearerToken: claimed.token },
+        'POST',
+        runPath(claimed.runId, '/complete'),
+        { outcome: 'park', message: 'Which host?' },
+      );
+      expect(complete.status).toBe(200);
+    }
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThan(10);
+    const runs = await f.store.listRuns({ workId });
+    expect(runs.length).toBeGreaterThan(1);
+    expect(runs.every((run) => run.state !== 'pending')).toBe(true);
+    for (const run of runs) {
+      expect(run.result).toMatchObject({ ok: false, summary: 'runner-failed' });
+    }
+    const task = await f.store.readTask({ workId });
+    expect(deriveItemState(task!.task, runs)).toBe('failed');
+  });
 
   it('briefs the executing round, so a newer question reaches its successor', async () => {
     const f = fixture();
