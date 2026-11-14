@@ -152,11 +152,10 @@ PROVIDER_OUTPUT_FILE="$RUNNER_TEMP/provider-output.log"
 redact_runner_secrets() {
   local text secret file
   local -a secrets=("${LCARS_RUN_TOKEN:-}" "${CHECKOUT_TOKEN:-}" "${GITHUB_TOKEN:-}" "${GH_TOKEN:-}"
-    "${ACTIONS_RERUN_TOKEN:-}" "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${HINDSIGHT_API_TOKEN:-}")
+    "${OPENCODE_LLM_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${HINDSIGHT_API_TOKEN:-}")
   for file in "${CHECKOUT_TOKEN_FILE:-}" "${CHECKOUT_OWNERS_DIR:-/nonexistent}"/*/token \
     "${OPENCODE_TOKEN_FILE:-}" "${CLAUDE_TOKEN_FILE:-}" "${AGY_TOKEN_FILE:-}" \
-    "${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}" \
-    "/run/secrets/hindsight-api-token"; do
+    "${HINDSIGHT_TOKEN_FILE:-/run/hindsight/hindsight-api-token}"; do
     if [ -n "$file" ] && [ -r "$file" ]; then secrets+=("$(cat "$file")"); fi
   done
   if [ -n "${CODEX_AUTH_FILE:-}" ] && [ -r "$CODEX_AUTH_FILE" ]; then
@@ -556,7 +555,7 @@ CHECKOUT_REFRESH_PID=$!
 # environment. Git and the sanctioned gh command therefore read the renewable
 # credential file for each invocation; clear inherited static tokens so they
 # cannot override those paths after rotation.
-unset CHECKOUT_TOKEN CHECKOUT_AUTH_HEADER GITHUB_TOKEN GH_TOKEN ACTIONS_RERUN_TOKEN
+unset CHECKOUT_TOKEN CHECKOUT_AUTH_HEADER GITHUB_TOKEN GH_TOKEN
 
 # Every QueueExecutor agent commit needs this Git identity; without it an
 # agent commit fails outright.
@@ -828,7 +827,7 @@ if [ "$PIPELINE" = "opencode" ]; then
   else
     echo 'Using synchronous OpenCode store migration and baseline discovery.'
     opencode_bootstrap_json="$RUNNER_TEMP/opencode-bootstrap-sessions.json"
-    if ! env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+    if ! env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
       "$OPENCODE_BIN" --pure session list --format json > "$opencode_bootstrap_json"; then
       EARLY_FAILURE_MESSAGE='OpenCode store initialization failed'
@@ -1406,7 +1405,7 @@ else
     if [ "$round_remaining" -lt 1 ]; then
       return 124
     fi
-    env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+    env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=30s "${round_remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" "$OPENCODE_BIN" run --model "$OPENCODE_MODEL" \
         "$@" \
@@ -1432,7 +1431,7 @@ else
     fi
     opencode_after_json="$RUNNER_TEMP/opencode-after-first-round.json"
     opencode_after_sessions="$RUNNER_TEMP/opencode-after-first-round.txt"
-    if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+    if env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
       timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
       "$OPENCODE_BIN" --pure session list --format json > "$opencode_after_json" &&
       jq -e 'type == "array"' "$opencode_after_json" >/dev/null 2>&1; then
@@ -1467,7 +1466,7 @@ else
     opencode_report_export="$RUNNER_TEMP/opencode-report-export.json"
     if [ -n "$OPENCODE_ROUND_SESSION" ] &&
       ( ulimit -f 32768
-        exec env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN -u ACTIONS_RERUN_TOKEN \
+        exec env -u OPENCODE_LLM_API_KEY -u GITHUB_TOKEN -u GH_TOKEN \
           timeout --signal=TERM --kill-after=5s "${OPENCODE_BOOTSTRAP_TIMEOUT_SECONDS}s" \
           "$OPENCODE_BIN" --pure export "$OPENCODE_ROUND_SESSION" ) > "$opencode_report_export" 2>/dev/null &&
       jq -j -n '

@@ -122,8 +122,9 @@ The initial import is resumable: it is marked complete only after every run
 and job in the window has been stored. Each successful refresh timestamp is
 also persisted, so collection after an outage resumes from the last successful
 poll with the overlap margin instead of losing runs created during the gap.
-The homelab deployment reuses the existing vault-managed read token already
-rendered for Glance. The exporter serves the last successfully collected data
+The homelab deployment authenticates with the fleet GitHub App credentials
+mounted by Homelab (`GITHUB_APP_CLIENT_ID` and `GITHUB_APP_PRIVATE_KEY_FILE`).
+The exporter serves the last successfully collected data
 if GitHub is temporarily unavailable; `github_actions_exporter_*` metrics make
 API errors and stale repository refreshes observable.
 
@@ -250,12 +251,12 @@ minutes. The five-run pre-change baseline is recorded in Agent LCARS issue
 
 Every GitHub REST response increments the bounded
 `github_actions_exporter_api_requests_total{endpoint,status}` counter and, when
-the corresponding header is valid, updates these unlabelled gauges:
+the corresponding header is valid, updates these per-owner gauges (`{owner}`):
 
-- `github_actions_exporter_api_rate_limit_remaining`
-- `github_actions_exporter_api_rate_limit_limit`
-- `github_actions_exporter_api_rate_limit_used`
-- `github_actions_exporter_api_rate_limit_reset_timestamp_seconds`
+- `github_actions_exporter_api_rate_limit_remaining{owner}`
+- `github_actions_exporter_api_rate_limit_limit{owner}`
+- `github_actions_exporter_api_rate_limit_used{owner}`
+- `github_actions_exporter_api_rate_limit_reset_timestamp_seconds{owner}`
 
 Missing or malformed rate-limit headers leave the previous valid observation
 intact. This makes the metrics safe for projected-exhaustion alerts while an

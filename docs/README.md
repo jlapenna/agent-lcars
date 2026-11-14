@@ -6,22 +6,21 @@ Use this index to retrieve the smallest current contract for a task.
 
 ## System and operations
 
-| Need                                                       | Canonical document                                                   |
-| ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| Human-needed handoff summaries and LLM configuration       | [`human-needed-summaries.md`](human-needed-summaries.md)             |
-| Dispatch ownership and failure routing                     | [`lifecycle-systems.md`](lifecycle-systems.md)                       |
-| Application/deployment/Homelab boundary                    | [`deployment-boundary.md`](deployment-boundary.md)                   |
-| Work API access and parked-item cleanup                    | [`../OPERATIONS.md`](../OPERATIONS.md)                               |
-| Product lifecycle measurement and SLO handoff              | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md)       |
-| Published actions and reusable workflows                   | [`published-actions.md`](published-actions.md)                       |
-| CI control flags                                           | [`ci-control-flags.md`](ci-control-flags.md)                         |
-| Runner image publication                                   | [`image-publish-routing.md`](image-publish-routing.md)               |
-| Nx remote cache                                            | [`nx-remote-cache.md`](nx-remote-cache.md)                           |
-| Provider-process start event contract                      | [`provider-process-measurement.md`](provider-process-measurement.md) |
-| Native Work production smoke (maintainer-approved runbook) | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md)       |
-| Tracker-source HTTP API for external clients               | [`api/tracker-sources.md`](api/tracker-sources.md)                   |
-| Linear issue tracker and operator workflows                | [`linear.md`](linear.md)                                             |
-| Repository-owned jobs                                      | [`repository-jobs.md`](repository-jobs.md)                           |
+| Need                                                                   | Canonical document                                             |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Human-needed handoff summaries and LLM configuration                   | [`human-needed-summaries.md`](human-needed-summaries.md)       |
+| Dispatch ownership and failure routing                                 | [`lifecycle-systems.md`](lifecycle-systems.md)                 |
+| Application/deployment/Homelab boundary                                | [`deployment-boundary.md`](deployment-boundary.md)             |
+| Work API access and parked-item cleanup                                | [`../OPERATIONS.md`](../OPERATIONS.md)                         |
+| Product lifecycle measurement, provider-process event, and SLO handoff | [`product-lifecycle-metrics.md`](product-lifecycle-metrics.md) |
+| Published actions and reusable workflows                               | [`published-actions.md`](published-actions.md)                 |
+| CI control flags                                                       | [`ci-control-flags.md`](ci-control-flags.md)                   |
+| Runner image publication                                               | [`image-publish-routing.md`](image-publish-routing.md)         |
+| Nx remote cache                                                        | [`nx-remote-cache.md`](nx-remote-cache.md)                     |
+| Native Work production smoke (maintainer-approved runbook)             | [`native-work-smoke-runbook.md`](native-work-smoke-runbook.md) |
+| Tracker-source HTTP API for external clients                           | [`api/tracker-sources.md`](api/tracker-sources.md)             |
+| Linear issue tracker and operator workflows                            | [`linear.md`](linear.md)                                       |
+| Repository-owned jobs                                                  | [`repository-jobs.md`](repository-jobs.md)                     |
 
 ## Identity, credentials, and security
 

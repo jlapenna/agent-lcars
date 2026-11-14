@@ -259,7 +259,9 @@ the work that has stopped, and the work in flight.
   out instead: "Redispatch on GitHub (remove and re-add its agent:\* label)".
   The panel needs `work.operator` and reads 200 tasks per page, with "Older
   stopped work →" and "Reset stopped-work page" cursor navigation.
-- **FE-BR-3 [Shipped]** `AgentActivityPanel` ("Operations") shows:
+- **FE-BR-3 [Shipped]** The Bridge Operations panels (`RunnerFleetPanel`,
+  `ActiveDispatchesPanel`, `RecentCompletionsPanel`, and `CliSessionsPanel` in
+  `apps/console/src/app/ops-panels.tsx`) show:
   - In-flight runs, each with a 120-minute time gauge (yellow from 50%, red
     from 80%) and, for Claude runs, an "N of 200 turns" count. A cancelled
     run that used 95% or more of its budget is classified as `timeout`.
@@ -696,13 +698,14 @@ jobs, and administer per-job runtime credential sets.
   scheduler principal holds `work.cron` for that repository and `goose`, LCARS
   creates or updates its schedule state automatically without a separate manual
   enable step. If an operator pauses a job (`enabled: false`), that veto is
-  sticky (`operatorDisabledAt`) across future `main` commits until an operator
+  sticky (`vetoedBy`) across future `main` commits until an operator
   explicitly re-enables it (`enabled: true`).
 - **FE-JB-3 [Shipped] Manual job invocation.** Operators with `work.operator`
-  for the repository and `goose` can run any valid job (`Run now` for
-  zero-parameter jobs, or `Parameters…` when `recipe.yaml` declares parameters)
-  with an idempotency key and priority override. Manual runs execute one-shot
-  and never advance the scheduled `lastSucceededHeadSha` baseline.
+  for the repository and `goose` can open `Run now` on any valid job to submit
+  a `Run once` invocation (`Start run`) with an idempotency key, optional
+  profile selection, and any declared recipe parameters. Reconciled successful
+  occurrences advance the job's comparison-keyed `baseline` (`{ occurrence,
+comparison }`).
 - **FE-JB-4 [Shipped] Per-job credential administration (`/jobs/credentials`).**
   Principals with `secrets.admin` can register secrets (`github` or `opaque`),
   upload secret versions to the dedicated `agent-lcars-job-secrets` GCP Secret
@@ -853,9 +856,9 @@ host-investigation surfaces.
   - `lcars work dispatch (<owner/repo>#<n> | github:<owner/repo>#<n> | linear:<id>) --pipeline <claude|codex|opencode|agy> [--repo <owner/repo>] [--priority <urgent|normal|background>] [--fallback-pipelines <ordered,csv|none>] [--request-id <key>] [--json]`
   - `lcars work source [--run-id <runId>] [--json]` (worker-only run-scoped issue source readout)
 - **Repository-owned Goose jobs and per-job credentials:**
-  - `lcars work job get --repo <owner/repo> --job <name> [--json]`
-  - `lcars work job invoke --repo <owner/repo> --job <name> [--request-id <key>] [--priority <urgent|normal|background>] [--param <key=value>] [--params-json <json>] [--json]`
-  - `lcars work secrets <secrets|sets|grants|register|publish|grant|upload|promote|disable|enable> ...`
+  - `lcars work job get <occurrence-id>`
+  - `lcars work job invoke --repo <owner/name> --name <recipe> --request-id <key> [--parameters <JSON>] [--profile <name>]`
+  - `lcars work secrets <secrets|sets|grants|register|publish|grant|upload NAME|promote NAME --version N|disable NAME|enable NAME>` (canonical CLI usage: `apps/telemetry-watcher/src/lib/work-command.ts`, `apps/telemetry-watcher/README.md`, and `libs/work/README.md`)
 - **Restricted host investigation (worker-only):**
   - `lcars investigate --request-id <key> (--question "<text>" | --question-file <path>) [--repo <owner/repo>] [--issue <n>] [--pr <n>] [--run-id <id>] [--host <name>] [--service <name>] [--unit <name>] [--namespace <ns>] [--pod <name>] [--url <https://...>] [--window <15m|1h|6h|24h>] [--json]`
 - **Session telemetry, archive, and hooks:**
@@ -951,7 +954,7 @@ non-`secrets.admin` access gate for `svc:production-verifier`), `/sessions`,
 `/task/jlapenna/homelab/3200` (verifying `FE-SB-3a` requested/effective provider
 handoff provenance), and `/task/jlapenna/agent-lcars/3133`. Live `secrets.admin`
 write mutations were also qualified on `2026-11-08` against
-`https://lcars.jlapenna.net/api/work/v1/job-secrets` (`register`, `upload`,
+`https://lcars.jlapenna.net/api/work/v1/credentials` (`register`, `upload`,
 `promote`, `sets` publish, and `grants` upsert for `skill-evals-garage-rclone`
 version `1`, `skill-evals` credential-set revision `2`, and nine repository
 grants).

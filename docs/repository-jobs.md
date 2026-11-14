@@ -230,8 +230,8 @@ The QueueExecutor uses its normal configured runner image and resources. Its who
 runner credential Secret supplies `goose-environment.json` (a string-valued map of
 provider environment variables) and `goose-config.yaml` (the operator-owned Goose
 configuration). Goose uses one shared tool environment across the fleet. A job
-class that needs its own credentials (for example the Claude token `claude
-plugin eval` uses in `skill-evals`) selects an LCARS credential set through its
+class that needs its own credentials (for example the provider or storage
+credentials `repo-skill-evals` uses in `skill-evals`) selects an LCARS credential set through its
 profile, as described below; credential sets do not change Goose tools.
 Do not add model credentials to repository recipes. The image publication lifecycle
 is the existing supported stack lifecycle; source merging does not bypass its publication or activation holds.

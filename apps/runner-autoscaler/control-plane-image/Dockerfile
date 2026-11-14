@@ -26,20 +26,6 @@ ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
 RUN rm -rf /home/runner/externals/node20 /home/runner/externals/node20_alpine
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# The upstream runner image bundles a Docker engine even though this
-# socketless control-plane image deliberately has no Docker workload. Remove
-# the daemon and its containerd payload rather than carrying a fixed critical
-# gRPC vulnerability in an unused component.
-RUN rm -f \
-    /usr/bin/containerd \
-    /usr/bin/containerd-shim-runc-v2 \
-    /usr/bin/ctr \
-    /usr/bin/docker \
-    /usr/bin/docker-init \
-    /usr/bin/docker-proxy \
-    /usr/bin/dockerd \
-    /usr/local/lib/docker/cli-plugins/docker-buildx
-
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl git; \
@@ -85,15 +71,18 @@ RUN set -eux; \
     # those binaries only adds an unneeded privilege-shaped attack surface.
     # In particular, the bundled containerd can otherwise carry vulnerabilities
     # unrelated to this image's runner, git, Node, and gh contract.
-    rm -f /usr/bin/docker /usr/bin/dockerd /usr/bin/docker-proxy \
+    rm -f /usr/bin/docker /usr/bin/dockerd /usr/bin/docker-init /usr/bin/docker-proxy \
       /usr/bin/containerd /usr/bin/containerd-shim-runc-v2 /usr/bin/ctr \
-      /usr/bin/runc; \
+      /usr/bin/runc /usr/local/lib/docker/cli-plugins/docker-buildx; \
     test ! -e /usr/bin/docker; \
     test ! -e /usr/bin/dockerd; \
+    test ! -e /usr/bin/docker-init; \
+    test ! -e /usr/bin/docker-proxy; \
     test ! -e /usr/bin/containerd; \
     test ! -e /usr/bin/containerd-shim-runc-v2; \
     test ! -e /usr/bin/ctr; \
     test ! -e /usr/bin/runc; \
+    test ! -e /usr/local/lib/docker/cli-plugins/docker-buildx; \
     # Upstream installs software-properties-common to add its Git PPA, which
     # pulls in Python even though neither the runner nor these control jobs use
     # it. Remove only the installed Python packages and their build-time owner;

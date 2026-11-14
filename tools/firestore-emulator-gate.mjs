@@ -37,29 +37,29 @@ import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = path.resolve(HERE, '..');
+const REPO_ROOT = path.resolve(HERE, '..');
 
-export const DEFAULT_INFO_JSON = path.join(
+const DEFAULT_INFO_JSON = path.join(
   REPO_ROOT,
   'node_modules/firebase-tools/lib/emulator/downloadableEmulatorInfo.json',
 );
-export const DEFAULT_EXEC_CMD =
+const DEFAULT_EXEC_CMD =
   'pnpm exec firebase emulators:exec --only firestore --project=demo-no-project ' +
   '"FIRESTORE_EMULATOR_HOST=localhost:4002 ./tools/test-firestore-contracts.sh"';
 
-export const STAGE_BOOTSTRAP = 'artifact-bootstrap';
-export const STAGE_EMULATOR_START = 'emulator-start';
-export const STAGE_CONTRACT_EXECUTION = 'contract-execution';
-export const STAGE_UNKNOWN = 'unknown';
+const STAGE_BOOTSTRAP = 'artifact-bootstrap';
+const STAGE_EMULATOR_START = 'emulator-start';
+const STAGE_CONTRACT_EXECUTION = 'contract-execution';
+const STAGE_UNKNOWN = 'unknown';
 
-export const DIAGNOSTIC_MAX_LINES = 40;
-export const DIAGNOSTIC_MAX_BYTES = 6_000;
-export const DIAGNOSTIC_LINE_MAX_CHARS = 400;
-export const BUFFER_MAX_BYTES = 512 * 1024;
-export const LIVE_MAX_BYTES = 48 * 1024;
-export const DOWNLOAD_ATTEMPTS = 3;
-export const DOWNLOAD_TIMEOUT_MS = 300_000;
-export const RETRY_DELAY_MS = 10_000;
+const DIAGNOSTIC_MAX_LINES = 40;
+const DIAGNOSTIC_MAX_BYTES = 6_000;
+const DIAGNOSTIC_LINE_MAX_CHARS = 400;
+const BUFFER_MAX_BYTES = 512 * 1024;
+const LIVE_MAX_BYTES = 48 * 1024;
+const DOWNLOAD_ATTEMPTS = 3;
+const DOWNLOAD_TIMEOUT_MS = 300_000;
+const RETRY_DELAY_MS = 10_000;
 
 // Signatures taken from the installed firebase-tools, not invented: apiv2 raises
 // `Failed to make request: ...`, downloadToTmp raises `download failed, status N:`
@@ -115,7 +115,7 @@ const SECRET_PATTERNS = [
   },
 ];
 
-export function emulatorCacheDir(env = process.env) {
+function emulatorCacheDir(env = process.env) {
   return (
     env.FIREBASE_EMULATORS_PATH ||
     path.join(os.homedir(), '.cache', 'firebase', 'emulators')
@@ -181,7 +181,7 @@ function createSanitizingLineWriter(
 
 // Bounded, sanitized excerpt: the CI log stays the full record, the gate's own
 // block must never be able to spill a credential or a 136 MB progress bar.
-export function boundedExcerpt(
+function boundedExcerpt(
   text,
   { maxLines = DIAGNOSTIC_MAX_LINES, maxBytes = DIAGNOSTIC_MAX_BYTES } = {},
 ) {
@@ -200,7 +200,7 @@ export function boundedExcerpt(
   return kept.reverse().join('\n');
 }
 
-export function firstMatches(text, patterns) {
+function firstMatches(text, patterns) {
   const haystack = String(text ?? '');
   const matched = [];
   for (const pattern of patterns) {
@@ -213,7 +213,7 @@ export function firstMatches(text, patterns) {
 // The deepest stage with evidence wins: contracts that started prove the jar and
 // the emulator process were already past, while a log with only download failures
 // proves nothing was evaluated.
-export function classifyFailure({ exitCode, log = '' }) {
+function classifyFailure({ exitCode, log = '' }) {
   const contract = firstMatches(log, CONTRACT_EXECUTION_PATTERNS);
   const emulatorStart = firstMatches(log, EMULATOR_START_FAILURE_PATTERNS);
   const bootstrap = firstMatches(log, BOOTSTRAP_FAILURE_PATTERNS);
@@ -242,7 +242,7 @@ export function classifyFailure({ exitCode, log = '' }) {
 // The jar the installed firebase-tools will run, resolved from its own declaration
 // rather than a version duplicated here. Operator overrides that change which
 // artifact Firebase runs are left entirely to the operator.
-export function resolveExpectations({
+function resolveExpectations({
   env = process.env,
   infoPath = env.FIRESTORE_GATE_INFO_JSON || DEFAULT_INFO_JSON,
   cacheDir = emulatorCacheDir(env),
@@ -304,12 +304,7 @@ function digestOf(filePath, algorithm) {
 // A cache entry is only trusted when it matches what Firebase expects to run. A
 // half-written jar left behind by an earlier killed run is reported invalid so the
 // download path replaces it instead of the JVM failing on a corrupt archive.
-export function inspectJar({
-  destPath,
-  expectedSize,
-  expectedSha256,
-  expectedMd5,
-}) {
+function inspectJar({ destPath, expectedSize, expectedSha256, expectedMd5 }) {
   if (!fs.existsSync(destPath)) return { state: 'missing', destPath };
   let stat;
   try {
@@ -350,7 +345,7 @@ export function inspectJar({
   return { state: 'ready', destPath, size: stat.size };
 }
 
-export async function seedJar(
+async function seedJar(
   expectations,
   {
     attempts = DOWNLOAD_ATTEMPTS,
@@ -420,7 +415,7 @@ function errMessage(err) {
   return parts.join(': ').replace(/\?.*$/, '?query-stripped').slice(0, 300);
 }
 
-export function diagnosticBlock({
+function diagnosticBlock({
   stage,
   exitCode,
   assertionsEvaluated,
@@ -458,7 +453,7 @@ export function diagnosticBlock({
   return `${lines.join('\n')}\n`;
 }
 
-export async function preflight({
+async function preflight({
   env = process.env,
   log = (line) => process.stdout.write(line),
   ...seedOptions
@@ -557,7 +552,7 @@ function runCommand(command, { env, onChunk }) {
   });
 }
 
-export async function runGate({
+async function runGate({
   env = process.env,
   command = env.FIRESTORE_GATE_EXEC_CMD || DEFAULT_EXEC_CMD,
   preflightOptions = {},
@@ -636,15 +631,6 @@ async function main(argv) {
   const env = process.env;
   const policy = retryPolicy(env);
 
-  if (mode === 'preflight') {
-    const result = await preflight({
-      env,
-      log: (line) => process.stderr.write(line),
-      ...policy,
-    });
-    return result.ok ? 0 : 1;
-  }
-
   if (mode === 'classify') {
     const flags = Object.fromEntries(
       argv.slice(1).map((arg) => {
@@ -660,7 +646,7 @@ async function main(argv) {
 
   if (mode !== 'run') {
     process.stderr.write(
-      `usage: node tools/firestore-emulator-gate.mjs [run|preflight|classify --code=N --log=FILE]\n`,
+      `usage: node tools/firestore-emulator-gate.mjs [run|classify --code=N --log=FILE]\n`,
     );
     return 64;
   }

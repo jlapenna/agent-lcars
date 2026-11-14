@@ -100,11 +100,9 @@ export interface FinalizeSidecarOptions {
  * to survive as more than a Firestore summary), and upserts a final
  * `ended` doc pointing at it via `transcriptGcsUri`.
  *
- * Liveness is hardcoded to `'ended'` rather than recomputed via
- * `computeLiveness` — by the time QueueExecutor finalization runs, the
- * provider has completed, so the
- * process this session's transcript belonged to is unconditionally gone;
- * there is no `/proc` check left to make.
+ * Liveness is hardcoded to `'ended'`: by the time QueueExecutor finalization
+ * runs, the provider has completed, so the process this session's transcript
+ * belonged to is unconditionally gone.
  *
  * Reads BOTH overlay channels only for the session IDs reduced from the
  * current transcript, matching the live sidecar's bounded lookup.

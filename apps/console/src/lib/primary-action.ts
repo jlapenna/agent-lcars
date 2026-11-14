@@ -1,6 +1,6 @@
-import type { ActionItem } from './action-items';
+export type { AgentPipeline as Pipeline } from '@agent-lcars/dispatch-contracts';
 
-export type Pipeline = 'claude' | 'codex' | 'opencode' | 'agy';
+import type { ActionItem } from './action-items';
 
 /**
  * The single next thing the maintainer should do with a queue item. Every

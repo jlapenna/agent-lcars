@@ -38,8 +38,8 @@ export const RUN_TIMEOUT_MINUTES = 120;
 // runs - see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-/** Exported so the panel can label the list as "last N" when it fills. */
-export const RECENT_RUN_LIMIT = 8;
+/** Terminal outcome count projected onto AgentActivity.recentRuns. */
+const RECENT_RUN_LIMIT = 8;
 /** Small bounded overfetch allows the global feed to contain live runs while
  * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
@@ -221,7 +221,7 @@ export function issueUrlForRun(run: AgentRun): string | undefined {
  * isn't supplying it a runner - distinct from "zero runners registered",
  * which is a normal scaled-to-zero idle state on its own.
  */
-export const QUEUE_STALL_THRESHOLD_SECONDS = 300;
+const QUEUE_STALL_THRESHOLD_SECONDS = 300;
 
 /** The longest-stalled queued live run, if any - used to drive the queue
  * health warning (and its "queued for Xm" message). */

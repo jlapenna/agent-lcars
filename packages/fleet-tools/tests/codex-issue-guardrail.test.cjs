@@ -3,7 +3,6 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const {
-  extractIssueNumbers,
   extractIssueReferences,
   projectNameFor,
   resolveRepoForDirDefault,
@@ -35,15 +34,15 @@ function dependencies({
 
 test('extracts issue numbers from view and edit commands', () => {
   assert.deepEqual(
-    extractIssueNumbers(
+    extractIssueReferences(
       'gh issue edit 642 --add-assignee agent-lcars-bot && gh issue view https://github.com/jlapenna/agent-lcars/issues/643',
-    ),
+    ).map(({ number }) => number),
     [642, 643],
   );
 });
 
 test('ignores unrelated commands', () => {
-  assert.deepEqual(extractIssueNumbers('git status --short'), []);
+  assert.deepEqual(extractIssueReferences('git status --short'), []);
 });
 
 test('returns no output when the issue is claimed', () => {

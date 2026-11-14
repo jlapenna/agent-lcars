@@ -203,6 +203,26 @@ contract; the broader product goals do not become measured facts by inference.
   server observations of successful OS spawn, not authentication, model
   execution or independently verified usefulness. Release/reclaim can replace
   the retained claim; these gauges are not a complete historical event journal.
+
+### Provider-process start report
+
+The direct runner reports `Run.queue.providerProcessStartedAt` inside the
+existing workload timeout, after bootstrap and credential restore, around
+Claude's print workload, Codex's exec workload, OpenCode's run workload, and
+Antigravity's prompt workload (never session listing, import, credential waits,
+or telemetry setup). After Node's OS `spawn` event succeeds for the provider
+executable, the supervisor posts `providerProcessStarted: true` to
+`POST /api/work/v1/runs/{runId}/heartbeat` using its bearer token over `curl`
+stdin (no credential in `argv` or output), bounded to 5 seconds with a 6-second
+kill backstop. Failed OS `exec` emits nothing, and an unfinished callback is
+canceled if the workload exits first so workload lifetime and exit status stay
+unchanged. On the server, the atomic `Task`+`Run` transition enforces current
+claim fingerprint, active ownership, and recovery deadlines; the first accepted
+timestamp wins across correction rounds and duplicate callbacks, and retries get
+a fresh `Run` identity with no inherited observation.
+
+Other `measurement_unknown_window` series:
+
 - `verified_evidence`: denominator finished runs in the hour. The ledger has
   a reported outcome but not the artifact verifier result/version/exact
   attempt marker and its durable verification time. Parks and no-ops require

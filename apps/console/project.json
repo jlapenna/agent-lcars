@@ -86,15 +86,6 @@
         "{workspaceRoot}/dist/apps/console/.next/standalone/dist/apps/console/.next/static"
       ]
     },
-    "deploy": {
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "firebase deploy --project=agent-lcars --only apphosting:agent-lcars"
-      },
-      "configurations": {
-        "production": {}
-      }
-    },
     "serve-production": {
       "executor": "nx:run-commands",
       "dependsOn": ["bundle"],

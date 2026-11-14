@@ -4,9 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   formatQuickTaskMarker,
-  parseQuickTaskMarker,
   parseTerminalQuickTaskBody,
-  QUICK_TASK_MARKER_RE,
   quickTaskDigest,
   quickTaskMarkerMatcher,
 } from './quick-task';
@@ -69,15 +67,10 @@ describe('the Quick Task marker', () => {
   const requestId = '80df296f-07d8-4e9b-b33f-1fd1b8d2fa9c';
   const digest = quickTaskDigest(identity, sha256Hex);
 
-  it('round-trips', () => {
+  it('round-trips a terminal marker body', () => {
     expect(
-      parseQuickTaskMarker(formatQuickTaskMarker({ requestId, digest })),
-    ).toEqual({ requestId, digest });
-  });
-
-  it('finds a marker embedded in an issue body', () => {
-    const body = `Some description.\n\n${formatQuickTaskMarker({ requestId, digest })}`;
-    expect(parseQuickTaskMarker(body)).toEqual({ requestId, digest });
+      parseTerminalQuickTaskBody(formatQuickTaskMarker({ requestId, digest })),
+    ).toEqual({ requestId, digest, description: '' });
   });
 
   it('requires a real UUID v4, not merely 36 hex-ish characters', () => {
@@ -86,7 +79,7 @@ describe('the Quick Task marker', () => {
     // smuggle an ID the writer would never mint.
     const notV4 = '80df296f-07d8-1e9b-b33f-1fd1b8d2fa9c';
     expect(
-      parseQuickTaskMarker(
+      parseTerminalQuickTaskBody(
         `<!-- agent-lcars:quick-task-request:v1 id=${notV4} digest=${digest} -->`,
       ),
     ).toBe(undefined);
@@ -94,15 +87,15 @@ describe('the Quick Task marker', () => {
 
   it('rejects a malformed digest', () => {
     expect(
-      parseQuickTaskMarker(
+      parseTerminalQuickTaskBody(
         `<!-- agent-lcars:quick-task-request:v1 id=${requestId} digest=abc -->`,
       ),
     ).toBe(undefined);
   });
 
   it('tolerates a missing body', () => {
-    expect(parseQuickTaskMarker(undefined)).toBe(undefined);
-    expect(parseQuickTaskMarker('no marker here')).toBe(undefined);
+    expect(parseTerminalQuickTaskBody(undefined)).toBe(undefined);
+    expect(parseTerminalQuickTaskBody('no marker here')).toBe(undefined);
   });
 
   it('hands out a fresh matcher rather than sharing lastIndex', () => {
@@ -111,10 +104,6 @@ describe('the Quick Task marker', () => {
     const body = formatQuickTaskMarker({ requestId, digest });
     expect([...body.matchAll(quickTaskMarkerMatcher())]).toHaveLength(1);
     expect([...body.matchAll(quickTaskMarkerMatcher())]).toHaveLength(1);
-  });
-
-  it('keeps the non-global matcher free of lastIndex state', () => {
-    expect(QUICK_TASK_MARKER_RE.global).toBe(false);
   });
 
   it('separates a terminal identity marker from the editable description', () => {

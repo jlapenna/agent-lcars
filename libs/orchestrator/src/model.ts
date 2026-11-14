@@ -320,7 +320,6 @@ export const runQueueSchema = z.strictObject({
     .regex(/^[0-9a-f]{64}$/u)
     .optional(),
 });
-export type RunQueue = z.infer<typeof runQueueSchema>;
 
 /** A server-recorded action through an authenticated operator boundary.
  * This proves an authorized API intervention, never that the caller is human. */
@@ -599,7 +598,6 @@ export const taskDocumentSchema = z.strictObject({
   task: taskSchema,
   revision: z.number().int().nonnegative(),
 });
-export type TaskDocument = z.infer<typeof taskDocumentSchema>;
 
 /**
  * Effects that must survive the transaction that decided them. A worker

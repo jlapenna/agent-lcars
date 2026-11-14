@@ -45,7 +45,6 @@ describe('ActiveAgentsSection', () => {
           liveRuns={[run('42')]}
           itemsByRunId={{}}
           activeSessions={[]}
-          items={[]}
           sessionsByRunId={{ 42: { sessionId: 's-1' } as never }}
         />
       </MantineProvider>,
@@ -64,7 +63,6 @@ describe('ActiveAgentsSection', () => {
           liveRuns={[]}
           itemsByRunId={{}}
           activeSessions={[session('abc')]}
-          items={[]}
         />
       </MantineProvider>,
     );

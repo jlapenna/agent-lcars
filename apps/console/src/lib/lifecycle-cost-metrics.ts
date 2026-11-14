@@ -1,12 +1,14 @@
 import 'server-only';
 
+import { DISPATCH_PIPELINES } from '@agent-lcars/dispatch-contracts';
+
 import {
   getSessionArchive,
   ONE_HOUR_DAYS,
   type SessionArchiveResult,
 } from './session-archive';
 
-const PIPELINES = ['claude', 'codex', 'opencode', 'agy', 'unknown'] as const;
+const PIPELINES = [...DISPATCH_PIPELINES, 'unknown'] as const;
 
 /** The existing SessionSpend owner supplies all arithmetic and PR qualification.
  * These gauges describe cumulative selected-session spend, not hourly charges,
