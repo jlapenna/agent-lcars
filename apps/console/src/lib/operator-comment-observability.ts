@@ -89,3 +89,35 @@ export function recordOperatorTokenIssued(account: {
     { enrich: false },
   );
 }
+
+export type OperatorTokenRefreshOutcome = 'refreshed' | 'refused' | 'failed';
+
+/**
+ * One event per attempt to renew an expired operator token with its refresh
+ * token. `refused` means GitHub rejected the refresh token, so the operator
+ * is sent back through GitHub; `failed` means GitHub did not answer. Carries
+ * the old token's age and GitHub's short error code, never a token.
+ */
+export function recordOperatorTokenRefresh(
+  outcome: OperatorTokenRefreshOutcome,
+  detail: {
+    tokenAgeSeconds?: number | undefined;
+    githubError?: string | undefined;
+  } = {},
+): void {
+  logger.structured(
+    outcome === 'refreshed' ? 'info' : 'warn',
+    'LCARS operator token refresh outcome',
+    {
+      component: 'lcars-operator-token-refresh',
+      outcome,
+      ...(detail.tokenAgeSeconds === undefined
+        ? {}
+        : { tokenAgeSeconds: detail.tokenAgeSeconds }),
+      ...(detail.githubError === undefined
+        ? {}
+        : { githubError: detail.githubError }),
+    },
+    { enrich: false },
+  );
+}

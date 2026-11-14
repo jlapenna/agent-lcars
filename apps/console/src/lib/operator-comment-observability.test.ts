@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   recordOperatorComment,
   recordOperatorTokenIssued,
+  recordOperatorTokenRefresh,
 } from './operator-comment-observability';
 
 describe('recordOperatorComment', () => {
@@ -115,5 +116,41 @@ describe('recordOperatorTokenIssued', () => {
       },
     ]);
     expect(JSON.stringify(structured.mock.calls)).not.toContain('secret');
+  });
+});
+
+describe('recordOperatorTokenRefresh', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('records a renewal and a refusal without any token', () => {
+    const structured = vi
+      .spyOn(logger, 'structured')
+      .mockImplementation(() => undefined);
+
+    recordOperatorTokenRefresh('refreshed', { tokenAgeSeconds: 32_400 });
+    recordOperatorTokenRefresh('refused', {
+      tokenAgeSeconds: 32_400,
+      githubError: 'bad_refresh_token',
+    });
+
+    expect(structured.mock.calls.map((call) => [call[0], call[2]])).toEqual([
+      [
+        'info',
+        {
+          component: 'lcars-operator-token-refresh',
+          outcome: 'refreshed',
+          tokenAgeSeconds: 32_400,
+        },
+      ],
+      [
+        'warn',
+        {
+          component: 'lcars-operator-token-refresh',
+          outcome: 'refused',
+          tokenAgeSeconds: 32_400,
+          githubError: 'bad_refresh_token',
+        },
+      ],
+    ]);
   });
 });

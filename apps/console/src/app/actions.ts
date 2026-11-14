@@ -10,6 +10,7 @@ import {
   githubAccessTokenFor,
   githubAccessTokenIssuedAtFor,
   signIn,
+  withFreshGithubAccessToken,
 } from '../auth';
 import {
   ActionError,
@@ -94,15 +95,18 @@ function toFailure(error: unknown): ActionFailure {
   };
 }
 
-/** The signed-in operator a GitHub write is attributed to. An empty token is
- * rejected by the write itself with a re-authorization prompt. */
-function operatorFor(session: Session): CommentActor {
-  if (!session.user.login) {
+/** The signed-in operator a GitHub write is attributed to, with a token
+ * renewed first if GitHub's expiry has passed. An empty token is rejected by
+ * the write itself with a re-authorization prompt. */
+async function operatorFor(signedIn: Session): Promise<CommentActor> {
+  const login = signedIn.user.login;
+  if (!login) {
     throw new ActionError('Authenticated GitHub login is required', 401);
   }
+  const session = await withFreshGithubAccessToken(signedIn);
   const issuedAt = githubAccessTokenIssuedAtFor(session);
   return {
-    login: session.user.login,
+    login,
     githubToken: githubAccessTokenFor(session) ?? '',
     ...(issuedAt === undefined ? {} : { githubTokenIssuedAt: issuedAt }),
   };
@@ -162,7 +166,7 @@ export async function replyToItem(
       resolveWatchedRepo(repo),
       number,
       body,
-      operatorFor(session),
+      await operatorFor(session),
       assignedPipeline,
       handoff,
     );
@@ -304,7 +308,7 @@ export async function retriggerIssue(
       resolveWatchedRepo(repo),
       number,
       callerId,
-      operatorFor(session),
+      await operatorFor(session),
       note,
     );
     revalidateDashboard();
@@ -325,7 +329,7 @@ export async function dispatchUnstickPrs(
     await dispatchUnstickPrsLib(
       context,
       resolveWatchedRepo(repo),
-      operatorFor(session),
+      await operatorFor(session),
     );
     return { ok: true };
   } catch (error) {
