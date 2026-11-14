@@ -288,14 +288,6 @@ COPY --from=pnpm-store-layer-proof /home/runner/.cache/pnpm-proof/layer.ok /proo
 COPY --from=pnpm-store-work-proof /home/runner/.cache/pnpm-proof/work-mount.ok /proof/work-mount.ok
 COPY --from=pnpm-regression-base /home/runner/.config/pnpm/config.yaml /proof/config.yaml
 
-# Measurement-only targets: `FROM scratch` ensures their OCI output contains
-# only the compressed store payload, not the Node base or fetch-stage virtual
-# node_modules. Homelab's canonical image publisher measures these targets on
-# its remote BuildKit builder and blocks promotion above the 1.5 GiB budget.
-FROM scratch AS pnpm-store-content
-COPY --from=pnpm-store-seed /pnpm-store/ /pnpm-store/
-COPY --from=pnpm-store-seed /pnpm-cache/ /pnpm-cache/
-
 # CI's Verify job runs Go race tests and validates Actions syntax with
 # actionlint. On an ephemeral JIT runner actions/setup-go had to fetch and
 # unpack Go for every job, then `go install` compiled actionlint from scratch.

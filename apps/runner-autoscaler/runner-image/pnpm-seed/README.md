@@ -68,8 +68,10 @@ stage carries git because a consumer may lock a public git-hosted package
 Every listed repository must use pnpm 11 (the `v11` content-store layout);
 the seed test fails otherwise.
 
-Homelab's canonical publisher measures the shipped content-store and registry-
-metadata layers and refuses their combined compressed size above 1.5 GiB per
+Homelab's canonical publisher does not gate runner promotion on seed size
+([homelab#3518](https://github.com/jlapenna/homelab/issues/3518)). Its public
+pnpm seed, derived from the promoted runner's content-store and
+registry-metadata layers, still refuses more than 1.5 GiB compressed per
 architecture. Seed fetching runs on the builder platform without lifecycle
 scripts or target binaries. `fetch-pnpm-seed.mjs` reads each repository's pinned
 pnpm CPU settings and projects only `current` onto `TARGETARCH` (`amd64` to
