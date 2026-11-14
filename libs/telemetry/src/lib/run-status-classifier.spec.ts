@@ -161,6 +161,44 @@ describe('classifyRunStatus', () => {
       expect(result.diagnosis).toContain('Session errored during execution');
     });
 
+    it('with provider-limit outcomeSummary and a $0 error session: diagnoses provider limit, not expired OAuth token', () => {
+      const result = classifyRunStatus(
+        run({ conclusion: 'failure', outcomeSummary: 'provider-limit' }),
+        session({
+          result: { subtype: 'error_during_execution', isError: true },
+          totalCostUsd: 0,
+        }),
+      );
+      expect(result.status).toBe('failed');
+      expect(result.diagnosis).toContain(
+        'Provider quota, spend, or rate limit',
+      );
+      expect(result.diagnosis).not.toContain('expired or invalid OAuth token');
+    });
+
+    it('with provider-capacity outcomeSummary and a $0 error session: diagnoses model capacity, not expired OAuth token', () => {
+      const result = classifyRunStatus(
+        run({ conclusion: 'failure', outcomeSummary: 'provider-capacity' }),
+        session({
+          result: { subtype: 'error_during_execution', isError: true },
+          totalCostUsd: 0,
+        }),
+      );
+      expect(result.status).toBe('failed');
+      expect(result.diagnosis).toContain('provider capacity');
+      expect(result.diagnosis).not.toContain('expired or invalid OAuth token');
+    });
+
+    it('with provider-limit outcomeSummary and no joined session: still surfaces provider-limit diagnosis', () => {
+      const result = classifyRunStatus(
+        run({ conclusion: 'failure', outcomeSummary: 'provider-limit' }),
+      );
+      expect(result.status).toBe('failed');
+      expect(result.diagnosis).toContain(
+        'Provider quota, spend, or rate limit',
+      );
+    });
+
     it('does not apply the success-only zero-work heuristic to a failed run with zero turns (noise guard)', () => {
       const result = classifyRunStatus(
         run({ conclusion: 'failure' }),

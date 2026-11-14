@@ -416,10 +416,11 @@ inference. It needs its own per-repository grants.
 ### Provider-limit fallback
 
 A profile may name a `fallbackProfile`. When an occurrence under it settles
-unsuccessfully and its `result.json` carries the evaluator's structured
-`partialReason: "provider-limit"` (repo-tools reports a Codex usage-limit,
-rate-limit or quota stop that way; free-text reports are never parsed),
-reconcile reserves a re-run of the same definition, parameters,
+unsuccessfully and either the settled Goose Run itself carries the structured
+`provider-limit` outcome summary or its `result.json` carries the evaluator's
+structured `partialReason: "provider-limit"` (repo-tools reports a Codex
+usage-limit, rate-limit or quota stop that way; free-text reports are never
+parsed), reconcile reserves a re-run of the same definition, parameters,
 trigger and principal under the fallback profile. It records `fallbackOf` on
 the new occurrence and hands the job's active slot to it in the same write that
 settles the original. The fallback is authorized and credential-pinned like

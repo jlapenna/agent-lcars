@@ -150,6 +150,39 @@ describe('agentRunFromOrchestrator', () => {
       displayTitle: 'Native task',
     });
   });
+
+  it('projects settled outcomeSummary for GitHub and native runs', () => {
+    const github = agentRunFromOrchestrator(
+      run({
+        state: 'finished',
+        result: { ok: false, summary: 'provider-limit' },
+      }),
+      githubTask(),
+      NOW,
+    );
+    const native = agentRunFromOrchestrator(
+      run({
+        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
+        task: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E3G' },
+        state: 'finished',
+        pipeline: 'opencode',
+        result: { ok: false, summary: 'provider-capacity' },
+      }),
+      nativeTask(),
+      NOW,
+    );
+
+    expect(github).toMatchObject({
+      status: 'completed',
+      conclusion: 'failure',
+      outcomeSummary: 'provider-limit',
+    });
+    expect(native).toMatchObject({
+      status: 'completed',
+      conclusion: 'failure',
+      outcomeSummary: 'provider-capacity',
+    });
+  });
 });
 
 describe('agentRunFromOrchestrator stored Work specs', () => {

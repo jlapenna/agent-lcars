@@ -9,6 +9,7 @@ import { loadGooseEnvironment } from './goose-environment.mjs';
 import {
   cgroupAllocation,
   gooseExecutor,
+  settleGooseFailure,
   subprocess,
 } from './goose-executor.mjs';
 import { applyJobSecrets } from './job-secret-environment.mjs';
@@ -148,12 +149,19 @@ try {
     parameters: brief.parameters,
     signal: controller.signal,
   });
+  clearTimeout(timeout);
   controller.signal.throwIfAborted();
   if (codexAuth) await codexAuth.persist();
   await call('recipe', { result });
 } catch (error) {
-  console.error(error instanceof Error ? error.message : 'Goose recipe failed');
-  process.exitCode = 1;
+  const aborted = controller.signal.aborted;
+  clearTimeout(timeout);
+  const { settled } = await settleGooseFailure(error, {
+    aborted,
+    codexAuth,
+    complete: (payload) => call('complete', payload),
+  });
+  if (!settled) process.exitCode = 1;
 } finally {
   clearTimeout(timeout);
   claudeAuth?.close();

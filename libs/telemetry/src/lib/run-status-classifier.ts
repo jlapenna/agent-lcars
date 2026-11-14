@@ -13,6 +13,9 @@ export type RunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
 export interface ClassifierRunInput {
   status: RunStatus;
   conclusion?: RunConclusion;
+  /** Authoritative settled outcome summary (e.g. `provider-limit` or
+   * `provider-capacity`) when the executor recorded one. */
+  outcomeSummary?: string;
   /** Queued: seconds waiting for a runner. Running: seconds since start.
    * Completed: total run duration. Matches `AgentRun.elapsedSeconds`. */
   elapsedSeconds: number;
@@ -40,11 +43,13 @@ export type RunStatusClassification =
 export interface RunStatusClassifierResult {
   status: RunStatusClassification;
   /** Short human-readable sentence naming the known failure signature
-   * (expired token, max-turns exhaustion, timeout kill, a crash, or a
-   * "success" that shows essentially no session-provable work). Undefined
-   * when there's nothing more specific to say than the status itself —
-   * including whenever no session doc was joined (PRD user story 16: runner
-   * sessions may not be flowing yet, or the store may be unreachable). */
+   * (provider limit/capacity stop, expired token, max-turns exhaustion,
+   * timeout kill, a crash, or a "success" that shows essentially no
+   * session-provable work). Undefined when there's nothing more specific to
+   * say than the status itself — including whenever no session doc was joined
+   * and no structured run-outcome summary explains the stop (PRD user story
+   * 16: runner sessions may not be flowing yet, or the store may be
+   * unreachable). */
   diagnosis?: string;
 }
 
@@ -61,6 +66,10 @@ export const LIKELY_TIMEOUT_FRACTION = 0.95;
 
 const MAX_TURNS_DIAGNOSIS =
   'Hit the max-turns budget mid-task (error_max_turns) — likely made real progress but did not finish; check its last comment for a takeover/resume command.';
+const PROVIDER_LIMIT_DIAGNOSIS =
+  'Provider quota, spend, or rate limit reached — stopped on a provider limit rather than an expired credential or task crash.';
+const PROVIDER_CAPACITY_DIAGNOSIS =
+  'Selected model is at provider capacity — stopped on transient model capacity rather than an expired credential or task crash.';
 const AUTH_ERROR_DIAGNOSIS =
   'Session errored during startup with ~$0 cost — looks like an expired or invalid OAuth token/API key.';
 const CRASH_DIAGNOSIS =
@@ -90,12 +99,19 @@ function isCrashSignature(session: ClassifierSessionInput): boolean {
   return session.result?.isError === true && !isAuthErrorSignature(session);
 }
 
-/** Checks the session-level error signatures only (max-turns / auth /
- * crash) — used for the failure/cancelled branches below, where a session
- * error is a genuine finding worth naming. */
-function diagnoseSessionError(
+/** Checks authoritative provider-stop outcomes first, then session-level error
+ * signatures (max-turns / auth / crash) for non-success conclusions. A turn-1
+ * quota or capacity refusal records `isError: true` with `$0` cost, so naming
+ * the settled provider outcome first prevents misdiagnosing it as an expired
+ * OAuth token or API key. */
+function diagnoseNonSuccess(
+  run: ClassifierRunInput,
   session?: ClassifierSessionInput,
 ): string | undefined {
+  if (run.outcomeSummary === 'provider-limit') return PROVIDER_LIMIT_DIAGNOSIS;
+  if (run.outcomeSummary === 'provider-capacity') {
+    return PROVIDER_CAPACITY_DIAGNOSIS;
+  }
   if (!session) return undefined;
   if (isMaxTurnsSignature(session)) return MAX_TURNS_DIAGNOSIS;
   if (isAuthErrorSignature(session)) return AUTH_ERROR_DIAGNOSIS;
@@ -172,11 +188,14 @@ export function classifyRunStatus(
   }
 
   if (run.conclusion === 'cancelled') {
-    return { status: 'cancelled', diagnosis: diagnoseSessionError(session) };
+    return {
+      status: 'cancelled',
+      diagnosis: diagnoseNonSuccess(run, session),
+    };
   }
 
   if (run.conclusion === 'failure') {
-    return { status: 'failed', diagnosis: diagnoseSessionError(session) };
+    return { status: 'failed', diagnosis: diagnoseNonSuccess(run, session) };
   }
 
   if (run.conclusion === 'success') {
@@ -186,5 +205,5 @@ export function classifyRunStatus(
     return { status: 'succeeded' };
   }
 
-  return { status: 'failed', diagnosis: diagnoseSessionError(session) };
+  return { status: 'failed', diagnosis: diagnoseNonSuccess(run, session) };
 }

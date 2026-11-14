@@ -72,16 +72,25 @@ export function gooseExecutor({
         throw new Error('baseline exceeds 48 KiB bound');
       for (const [key, value] of Object.entries(parameters))
         args.push('--params', `${key}=${value}`);
-      const output = await subprocess(executable, args, {
-        cwd: workingDirectory,
-        signal,
-        environment,
-        onSpawn:
-          onProviderStarted ??
-          (() => {
-            /* No observer was supplied. */
-          }),
-      });
+      let output;
+      try {
+        output = await subprocess(executable, args, {
+          cwd: workingDirectory,
+          signal,
+          environment,
+          onSpawn:
+            onProviderStarted ??
+            (() => {
+              /* No observer was supplied. */
+            }),
+        });
+      } catch (error) {
+        const providerOutcome = classifyGooseProviderFailure(error);
+        if (providerOutcome && error instanceof Error) {
+          error.providerOutcome = providerOutcome;
+        }
+        throw error;
+      }
       // Goose's machine output wraps the conversation; --quiet alone still
       // renders tool activity. Only the final assistant response is a result.
       if (resultFile) {
@@ -171,6 +180,71 @@ export async function readGooseResultFile(path) {
   }
 }
 
+const PROVIDER_LIMIT_CAUSES = new Set([
+  'rate limit exceeded',
+  'resourceexhausted',
+  'resource_exhausted',
+  'insufficient_quota',
+  'exceeded your current quota',
+  'usage_limit_reached',
+  'service_spend_limit_reached',
+  'org_spend_cap_reached',
+  'credit balance is too low',
+  'monthly spend limit',
+]);
+
+export function classifyGooseProviderFailure(error) {
+  if (!(error instanceof Error)) return undefined;
+  const match = /^Goose exited [^:]+: (.+)$/u.exec(error.message);
+  if (!match) return undefined;
+  const causes = match[1]
+    .split('; ')
+    .map((cause) => cause.trim().toLowerCase());
+  if (causes.some((cause) => PROVIDER_LIMIT_CAUSES.has(cause))) {
+    return 'provider-limit';
+  }
+  if (causes.includes('model is at capacity')) {
+    return 'provider-capacity';
+  }
+  return undefined;
+}
+
+export async function settleGooseFailure(
+  error,
+  { aborted, codexAuth, complete, logError = console.error },
+) {
+  const providerOutcome =
+    !aborted &&
+    error instanceof Error &&
+    (error.providerOutcome === 'provider-limit' ||
+      error.providerOutcome === 'provider-capacity')
+      ? error.providerOutcome
+      : undefined;
+  if (!providerOutcome) {
+    logError(error instanceof Error ? error.message : 'Goose recipe failed');
+    return { settled: false };
+  }
+  logError(error.message);
+  try {
+    if (codexAuth && !codexAuth.persistenceAttempted) {
+      await codexAuth.persist();
+    }
+    await complete({
+      outcome: providerOutcome,
+      outcomeReference: null,
+      message: error.message,
+    });
+    return { settled: true, outcome: providerOutcome };
+  } catch (settlementError) {
+    logError(
+      settlementError instanceof Error
+        ? settlementError.message
+        : 'Goose provider failure settlement failed',
+    );
+    return { settled: false };
+  }
+}
+
 export async function subprocess(
   executable,
   args,
@@ -241,7 +315,7 @@ export async function subprocess(
         // container logs. Goose exits 1 once its provider retries are spent.
         const causes =
           stderr.match(
-            /No space left on device|Cannot allocate memory|Operation not permitted|Permission denied|Read-only file system|No such file or directory|out of memory|Network error|Could not connect|Request timed out|Rate limit exceeded|Server error/giu,
+            /No space left on device|Cannot allocate memory|Operation not permitted|Permission denied|Read-only file system|No such file or directory|out of memory|Network error|Could not connect|Request timed out|Rate limit exceeded|ResourceExhausted|RESOURCE_EXHAUSTED|insufficient_quota|exceeded your current quota|usage_limit_reached|service_spend_limit_reached|org_spend_cap_reached|Credit balance is too low|monthly spend limit|model is at capacity|Server error/giu,
           ) ?? [];
         reject(
           new Error(
