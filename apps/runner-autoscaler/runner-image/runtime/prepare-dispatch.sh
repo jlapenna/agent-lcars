@@ -62,7 +62,7 @@ fi
 review_path=""
 if [ "${MODE:-implement}" = review ]; then
   review_path="$(dirname "$protocol_path")/anthropic-code-review/README.md"
-  for review_file in "$review_path" "$(dirname "$review_path")/upstream.md" "$(dirname "$review_path")/LICENSE"; do
+  for review_file in "$review_path" "$(dirname "$review_path")/upstream.md" "$(dirname "$review_path")/LICENSE" "$(dirname "$review_path")/revision"; do
     if [ ! -s "$review_file" ]; then
       echo "::error::Anthropic review procedure is missing or empty at $review_file" >&2
       exit 1

@@ -253,7 +253,20 @@
 7. Before reporting task completion, follow the shared
    [worktree-hygiene workflow](https://github.com/jlapenna/repo-tools/blob/main/plugins/repo-tools/skills/worktree-hygiene/SKILL.md)
    for your own checkout. Record its absolute path, owning primary and branch,
-   and stop your own watchers and servers. Invoke the already-installed current
+   and stop your own watchers and servers.
+
+   This repository's Anthropic review dependency is a Git submodule. Before
+   guarded removal or parking, inspect its status, HEAD against the parent
+   gitlink, and local refs for private history. For a clean checkout at the
+   locked upstream revision with no private history, run
+   `git submodule deinit -- third_party/anthropic-plugins` from the task
+   worktree, then continue the shared guard below. Never force deinitialization.
+   Preserve a modified, moved or privately committed dependency through the
+   shared recovery workflow; retain and name that path if preservation cannot
+   be verified. This prerequisite prevents the remover from mistaking an
+   initialized dependency for an unrelated nested checkout.
+
+   Invoke the already-installed current
    managed shared CLI from a stable location outside that checkout. Resolve
    `repo-prune-merged-worktrees` and its real package location, and verify its
    helper bytes against the reviewed managed installation implementing the

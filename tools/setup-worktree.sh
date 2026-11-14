@@ -18,6 +18,9 @@ fi
 # it would also mean a worktree made by a bare `git worktree add` (which never
 # runs this script) silently loses the remote cache.
 
+echo "==> Initializing locked Git dependencies"
+git submodule update --init --depth 1 -- third_party/anthropic-plugins
+
 echo "==> Installing dependencies"
 pnpm install --frozen-lockfile
 

@@ -1,24 +1,30 @@
 # Anthropic code review for LCARS
 
-Use this procedure for `mode: review` dispatches. Read [upstream.md](upstream.md)
+Use this procedure for `mode: review` dispatches. Read the packaged `upstream.md`
 once and apply its independent review, finding validation and false-positive
 filtering steps with the adaptations below. The upstream command is reference
 material, not a plugin to install or a second dispatch entry point.
 
-## Source
+## Dependency
 
-- Author: Anthropic.
-- Repository: `anthropics/claude-plugins-official`.
-- Revision: `b5b01ac4f889fec0c4c6bb89f27ca7c8574473f6`.
-- [Original command](https://github.com/anthropics/claude-plugins-official/blob/b5b01ac4f889fec0c4c6bb89f27ca7c8574473f6/plugins/code-review/commands/code-review.md),
-  Git blob `8d1533fa424c89a2790541fd7687270be3993397`.
-- License: [Apache-2.0](LICENSE), copied from the same revision. No plugin-level
-  `NOTICE` file exists at that revision.
+Anthropic's `code-review` plugin is a native Git submodule at
+`third_party/anthropic-plugins`. `.gitmodules` declares its repository and
+tracking branch; the committed gitlink is the authoritative version lock.
+Renovate's `git-submodules` manager proposes revision updates through normal
+PRs. Initialize it with `git submodule update --init --depth 1` (worktree setup
+and CI do this automatically).
 
-`upstream.md` and `LICENSE` are unmodified copies. To update, review the upstream
-diff, replace both files from one immutable revision, update this provenance,
-and reconcile these adaptations. The runner image bakes this directory beside
-the shared protocol; no runtime download or target-repository override is used.
+The runner build packages the unmodified
+`plugins/code-review/commands/code-review.md` and its Apache-2.0 `LICENSE`
+from that locked checkout. `apps/runner-autoscaler/runner-image/package-anthropic-review.sh` refuses a
+revision mismatch or modified review source, and writes the exact revision to
+`revision` beside this adapter. Read that file for the upstream revision used
+in the procedure receipt. The rest of the marketplace is excluded from the
+runtime image. No worker downloads or resolves the dependency at runtime.
+
+When Renovate updates the gitlink, review the upstream command and reconcile
+these adaptations. The runner publisher tracks that dependency root as a
+Dockerfile COPY input, so a dependency-only update rebuilds the image.
 
 ## LCARS adaptations
 
@@ -90,8 +96,8 @@ review and comment-quality guidance applies.
    one review; do not substitute a top-level issue comment or terminal output.
 
 Keep the review body concise: verdict, actionable findings, reviewed SHA,
-material verification limits, and a short procedure receipt naming this
-Anthropic revision, completed review passes and validation results. Zero
+material verification limits, and a short procedure receipt naming the
+packaged Anthropic revision, completed review passes and validation results. Zero
 validated findings is a valid result. The receipt describes work actually done;
 the attempt marker proves artifact delivery, not review quality. End with
 `REVIEW <url>` or the shared protocol's `PARK <blocker and resume trigger>`.

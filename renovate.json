@@ -6,6 +6,9 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
+  "git-submodules": {
+    "enabled": true
+  },
   "customManagers": [
     {
       "customType": "regex",

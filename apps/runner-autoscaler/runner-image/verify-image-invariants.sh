@@ -62,6 +62,11 @@ check "repo-tools commands are installed and the worktree guard executes" \
   node "$lib/repo-tools-bins.mjs" verify "$repo_tools" "$repo_tools_bin"
 check "image carries no Codex authentication" test ! -e "$home/.codex/auth.json"
 check "image carries no Antigravity authentication" test ! -e "$home/.gemini/antigravity-cli/antigravity-oauth-token"
+review_dir="$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+for review_file in README.md upstream.md LICENSE revision; do
+  check "Anthropic review dependency contains $review_file" test -s "$review_dir/$review_file"
+done
+check "Anthropic review dependency records an immutable revision" grep -Eq '^[a-f0-9]{40}$' "$review_dir/revision"
 check "Hindsight coding-agents CLI is installed" test -x "$hindsight_cli"
 check "Hindsight runtime is staged for runner" test -f "$home/.hindsight/coding-agents/dist/index.js"
 check "Hindsight OpenCode wrapper is installed" test -f "$home/.config/opencode/hindsight.js"

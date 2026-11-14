@@ -141,6 +141,16 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-cli @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
+# Native Git dependency: .gitmodules declares upstream and the gitlink locks
+# its revision. Package only the review command, license and revision; the
+# plugin marketplace's other files never enter the runtime image. Keep the
+# output at the dependency root so the publisher's COPY-derived input inventory
+# observes a gitlink update and republishes the runner.
+RUN git submodule update --init --depth 1 -- third_party/anthropic-plugins && \
+    bash apps/runner-autoscaler/runner-image/package-anthropic-review.sh /tmp/anthropic-code-review && \
+    rm -rf third_party/anthropic-plugins && \
+    mv /tmp/anthropic-code-review third_party/anthropic-plugins
+
 # Action archives are immutable repository tarballs, never extracted or executed
 # during preparation. Download them on the existing builder-platform stage;
 # target-specific native dependencies remain in their original stages.
@@ -647,6 +657,9 @@ COPY --from=telemetry-watcher-build --chown=runner:runner \
 COPY --from=telemetry-watcher-build --chown=runner:runner \
     /repo/agents/shared/skills \
     /usr/local/lib/agent-lcars/agents/shared/skills
+COPY --from=telemetry-watcher-build --chown=runner:runner \
+    /repo/third_party/anthropic-plugins \
+    /usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review
 RUN chmod +x /usr/local/lib/agent-lcars/runtime/*.sh
 COPY direct-runner.sh /usr/local/lib/agent-lcars/direct-runner.sh
 RUN chmod +x /usr/local/lib/agent-lcars/direct-runner.sh

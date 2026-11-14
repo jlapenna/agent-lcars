@@ -144,6 +144,8 @@ else:
 PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
+bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
+  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
 
 BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
 BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"

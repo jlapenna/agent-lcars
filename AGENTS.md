@@ -91,7 +91,9 @@ policy; reconcile them against live code and canonical contracts.
 
 ## Setup and discovery
 
-- Primary checkout: `pnpm install` installs dependencies and git hooks.
+- Primary checkout: initialize locked Git dependencies with
+  `git submodule update --init --depth 1`, then `pnpm install` installs
+  JavaScript dependencies and git hooks.
 - Linked worktree: run `./tools/setup-worktree.sh`.
 - Use `./tools/nx` and query unfamiliar projects or flags with
   `./tools/nx show project <name> --json` or `./tools/nx <command> --help`.
