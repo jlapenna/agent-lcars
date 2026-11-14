@@ -189,6 +189,35 @@ Nothing is minted or rotated by hand: each CLI call runs
 `agent-lcars-work` audience. Revoke by removing the Terraform binding or the
 Console grant.
 
+## `claw-homelab-ops` (claw zone executor)
+
+The homelab-ops claw zone runs its own QueueExecutor instance on the homelab
+controller (spec "### `claw`", execution zones; #3349). It authenticates to
+the Work API as `claw-homelab-ops@agent-lcars.iam.gserviceaccount.com`, an
+identity with no project role. Its Console grant, `svc:claw-homelab-ops`,
+holds `work.executor` for the zone's claw pipelines only, so it cannot claim
+coding work, and the shared `svc:telemetry-writer` grant never lists a claw
+pipeline, so the shared executor cannot claim zone work. It holds no
+`work.cron`: the zone executor refuses to start with scheduler credentials.
+
+Like `telemetry-writer` and `job-scheduler`, it uses a user-managed key
+because the controller runs outside GitHub Actions and has no OIDC identity to
+federate (allowlisted in
+[`tools/iam-contract/model.json`](../tools/iam-contract/model.json)). Mint it
+after the Terraform apply and move it straight into the Homelab vault; it is
+never written to a repository, a log or a claw Job pod:
+
+```bash
+gcloud iam service-accounts keys create /dev/stdout \
+  --iam-account=claw-homelab-ops@agent-lcars.iam.gserviceaccount.com \
+  | (cd <homelab feature worktree> && \
+     ./bin/manage-secrets.sh set-stdin --create claw_zone_executor_key_json)
+```
+
+Rotate by creating a new key the same way, deploying it, and deleting the old
+key with `gcloud iam service-accounts keys delete`. Revoke by removing the
+Console grant.
+
 ## Codex `auth.json` lineage (Console QueueExecutor)
 
 The Console owns one rotating subscription lineage at

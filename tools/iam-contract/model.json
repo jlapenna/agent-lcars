@@ -138,6 +138,10 @@
         {
           "serviceAccount": "job-scheduler@agent-lcars.iam.gserviceaccount.com",
           "reason": "The dedicated Work scheduler credential (#3217; Homelab vault agent_lcars_scheduler_key_json, mounted as LCARS_SCHEDULER_CREDENTIALS) is consumed only by the homelab runner-autoscaler's schedule and maintenance ticker, which runs outside GitHub Actions and has no OIDC identity to federate. It is never mounted into runner pods, so the work.cron and repository-job automation authority stays off the executor key."
+        },
+        {
+          "serviceAccount": "claw-homelab-ops@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The homelab-ops claw zone executor credential (agent-lcars#3349; Homelab vault claw_zone_executor_key_json) is consumed only by the zone's QueueExecutor instance on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. Its Work grant admits work.executor for the zone's claw pipelines only, and it is never mounted into claw Job pods."
         }
       ]
     },
