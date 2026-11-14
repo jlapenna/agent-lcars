@@ -1266,4 +1266,31 @@ describe('provider-limit fallback', () => {
     expect(f.store.jobs.get(f.id)!.active).toBeUndefined();
     expect(f.store.occurrences.size).toBe(1);
   });
+
+  it('re-admits under the fallback profile when Goose settles the run directly as provider-limit without a result file', async () => {
+    const f = fixture();
+    const jobs = withFallback(f);
+    const original = await jobs.admit(
+      f.id,
+      'manual-goose-limit',
+      'user:joe',
+      'manual',
+      f.definition.digest,
+    );
+    const run = (await f.native.listRuns({ workId: original.workId }))[0]!;
+    await f.orchestrator.report(run.runId, {
+      ok: false,
+      summary: 'provider-limit',
+      message: 'Goose exited 1: Rate limit exceeded',
+    });
+    await jobs.reconcile(f.store.jobs.get(f.id)!);
+    const job = f.store.jobs.get(f.id)!;
+    expect(job.active).toBeDefined();
+    expect(job.active).not.toBe(original.id);
+    const fallback = (await f.store.readOccurrence(job.active!))!;
+    expect(fallback).toMatchObject({
+      fallbackOf: original.id,
+      profile: { name: 'audit-claude', providerAuth: 'claude' },
+    });
+  });
 });

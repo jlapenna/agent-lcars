@@ -24,6 +24,7 @@ export function classifyAgentRun(
     {
       status: run.status,
       conclusion: run.conclusion,
+      outcomeSummary: run.outcomeSummary,
       elapsedSeconds: run.elapsedSeconds,
       timeoutMinutes: RUN_TIMEOUT_MINUTES,
     },

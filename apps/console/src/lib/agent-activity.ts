@@ -64,6 +64,9 @@ export interface AgentRun {
   pipeline: StoredPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
+  /** Settled outcome summary (e.g. `provider-limit` or `provider-capacity`)
+   * projected from `OrchestratorRun.result.summary` when present. */
+  outcomeSummary?: string;
   url: string;
   /** Operator-facing task title projected from the owning Task record. */
   displayTitle: string;
@@ -401,6 +404,9 @@ export function agentRunFromOrchestrator(
       pipeline: run.pipeline as StoredPipeline,
       status,
       conclusion: conclusionFor(run),
+      ...(run.result?.summary === undefined
+        ? {}
+        : { outcomeSummary: run.result.summary }),
       url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
       displayTitle: `#${run.task.issue}: ${title}`,
       issueNumber: run.task.issue,
@@ -420,6 +426,9 @@ export function agentRunFromOrchestrator(
     pipeline: spec.pipeline,
     status,
     conclusion: conclusionFor(run),
+    ...(run.result?.summary === undefined
+      ? {}
+      : { outcomeSummary: run.result.summary }),
     url: `/work/${run.task.workId}`,
     workId: run.task.workId,
     displayTitle: spec.title,
