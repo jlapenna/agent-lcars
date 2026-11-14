@@ -147,7 +147,9 @@ export function briefMessage(question, brief) {
 // Decide the attempt outcome from the `agent exec --json` envelope. Exit 0 and
 // ok:true are returned even when every tool call was denied, so tool failures
 // are read from toolSummary rather than the exit code.
-export function settle({ code, timedOut, stdout }) {
+export function settle({ code, timedOut, aborted, stdout }) {
+  if (aborted)
+    return { outcome: 'runner-failed', message: 'Claw turn was cancelled.' };
   if (timedOut)
     return {
       outcome: 'runner-failed',
@@ -201,24 +203,52 @@ function truncateUtf8(text, maxBytes) {
     .replace(/�$/, '')}\n\n[report truncated]`;
 }
 
-export function run(command, args, { env, cwd, timeoutMs, input } = {}) {
+// Runs one OpenClaw command in its own process group, so a deadline or a
+// cancellation (SIGTERM to the launcher) stops the whole tree, including any
+// tool processes the agent started.
+export function run(
+  command,
+  args,
+  { env, cwd, timeoutMs, input, signal } = {},
+) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ClawFailure('claw run was cancelled'));
+      return;
+    }
     const child = spawn(command, args, {
       env,
       cwd,
+      detached: true,
       stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderrBytes = 0;
     let timedOut = false;
+    let aborted = false;
+    const killTree = (killSignal) => {
+      try {
+        process.kill(-child.pid, killSignal);
+      } catch {
+        // The group already exited.
+      }
+    };
+    const stop = () => {
+      killTree('SIGTERM');
+      setTimeout(() => killTree('SIGKILL'), 10_000).unref();
+    };
     const timer =
       timeoutMs > 0
         ? setTimeout(() => {
             timedOut = true;
-            child.kill('SIGTERM');
-            setTimeout(() => child.kill('SIGKILL'), 10_000).unref();
+            stop();
           }, timeoutMs)
         : undefined;
+    const onAbort = () => {
+      aborted = true;
+      stop();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.on('data', (chunk) => {
       if (stdout.length < MAX_ENVELOPE_BYTES) stdout += chunk;
     });
@@ -229,17 +259,25 @@ export function run(command, args, { env, cwd, timeoutMs, input } = {}) {
     });
     child.on('error', (error) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       reject(error);
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, timedOut, stdout, stderrBytes });
+      signal?.removeEventListener('abort', onAbort);
+      resolve({ code, timedOut, aborted, stdout, stderrBytes });
     });
     if (input !== undefined) child.stdin.end(input);
   });
 }
 
-export async function prepareState({ agentDir, workRoot, openclaw, env }) {
+export async function prepareState({
+  agentDir,
+  workRoot,
+  openclaw,
+  env,
+  signal,
+}) {
   const stateDir = await mkdtemp(join(workRoot, 'state-'));
   const workspace = join(workRoot, 'workspace');
   await rm(workspace, { recursive: true, force: true });
@@ -266,6 +304,7 @@ export async function prepareState({ agentDir, workRoot, openclaw, env }) {
   const validation = await run(openclaw, ['config', 'validate', '--json'], {
     env: childEnv,
     timeoutMs: 120_000,
+    signal,
   });
   let valid;
   try {
@@ -278,6 +317,7 @@ export async function prepareState({ agentDir, workRoot, openclaw, env }) {
   const doctor = await run(openclaw, ['doctor', '--fix', '--non-interactive'], {
     env: childEnv,
     timeoutMs: 300_000,
+    signal,
   });
   if (doctor.code !== 0 || doctor.timedOut)
     throw new ClawFailure(`openclaw doctor exited ${doctor.code}`);
@@ -290,7 +330,7 @@ export async function prepareState({ agentDir, workRoot, openclaw, env }) {
   const approvals = await run(
     openclaw,
     ['approvals', 'set', '--file', join(agentDir, 'approvals.json')],
-    { env: childEnv, timeoutMs: 120_000 },
+    { env: childEnv, timeoutMs: 120_000, signal },
   );
   if (approvals.code !== 0 || approvals.timedOut)
     throw new ClawFailure(`openclaw approvals set exited ${approvals.code}`);
@@ -306,6 +346,9 @@ export async function main(env = process.env, deps = {}) {
     signal: controller.signal,
     fetchImpl: deps.fetchImpl,
   });
+  // Settlement must still be attempted after cancellation, under its own
+  // request timeout only.
+  const settleCall = workClient(env, { fetchImpl: deps.fetchImpl });
   const openclaw =
     env.OPENCLAW_BIN || '/opt/openclaw/node_modules/.bin/openclaw';
   const agentDir = env.CLAW_AGENT_DIR || '/claw/agent';
@@ -342,6 +385,7 @@ export async function main(env = process.env, deps = {}) {
         workRoot,
         openclaw,
         env: baseEnv,
+        signal: controller.signal,
       });
       const messageFile = join(stateDir, 'brief.md');
       await writeFile(messageFile, briefMessage(question, brief), {
@@ -362,7 +406,12 @@ export async function main(env = process.env, deps = {}) {
           workspace,
           '--json',
         ],
-        { env: childEnv, cwd: workspace, timeoutMs: turnDeadlineMs },
+        {
+          env: childEnv,
+          cwd: workspace,
+          timeoutMs: turnDeadlineMs,
+          signal: controller.signal,
+        },
       );
       await call('heartbeat', { providerProcessStarted: true }).catch(
         ignoreHeartbeatFailure,
@@ -378,7 +427,7 @@ export async function main(env = process.env, deps = {}) {
       };
       if (!(error instanceof ClawFailure)) console.error(error);
     }
-    await call('complete', result);
+    await settleCall('complete', result);
     return result;
   } finally {
     clearInterval(heartbeat);

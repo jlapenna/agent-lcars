@@ -26,6 +26,17 @@ The executor supplies `LCARS_CONSOLE_URL`, `LCARS_RUN_ID`, `LCARS_RUN_TOKEN` and
 `CLAW_TURN_DEADLINE_SECONDS` (below the pod deadline, which is below the
 lease).
 
+## Trust boundary inside the pod
+
+OpenClaw and the agent's tools run as the same UID as the launcher, so a tool
+the agent is allowed to run could read the launcher's environment, including
+`LCARS_RUN_TOKEN`. That token authorizes only heartbeat, brief and completion
+for this one run, and the agent's own output already becomes that run's
+report, so reading it grants no new authority. The zone Secret items are
+mounted for the agent's tools by design; scope each runtime's items to what
+that agent may use. A launcher SIGTERM (cancellation or pod deadline) stops
+the whole OpenClaw process group and still settles the run.
+
 ## Launch sequence
 
 Each step fails the attempt closed with a `runner-failed` completion:

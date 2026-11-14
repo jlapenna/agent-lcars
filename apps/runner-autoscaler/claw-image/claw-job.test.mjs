@@ -321,3 +321,24 @@ test('briefQuestion requires this run and a non-empty question', () => {
     /no claw question/,
   );
 });
+
+test('cancellation stops the turn process group and still settles', async () => {
+  const { env, calls, fetchImpl } = await fixture({
+    env: { FAKE_EXEC_SLEEP: '1', CLAW_TURN_DEADLINE_SECONDS: '60' },
+  });
+  const pending = main(env, { fetchImpl });
+  // Wait until the turn has started, then deliver the pod's SIGTERM.
+  for (
+    let i = 0;
+    i < 100 && !calls.some((call) => call.body?.providerProcessStarted);
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  process.emit('SIGTERM');
+  const result = await pending;
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message: 'Claw turn was cancelled.',
+  });
+  assert.deepEqual(completion(calls), result);
+});
