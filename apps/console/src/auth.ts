@@ -1,5 +1,8 @@
 import 'server-only';
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+import { logger } from '@agent-lcars/logging';
 import {
   isE2eTesting,
   isOnGoogleCloud,
@@ -9,12 +12,16 @@ import {
 import { headers } from 'next/headers';
 import type { Session } from 'next-auth';
 import NextAuth from 'next-auth';
-import { getToken } from 'next-auth/jwt';
+import { getToken, type JWT } from 'next-auth/jwt';
 import GitHub from 'next-auth/providers/github';
 
 import { canSignInToConsole } from './lib/console-access';
 import { isAdminGithubLogin } from './lib/deployment';
-import { recordOperatorTokenIssued } from './lib/operator-comment-observability';
+import { refreshGithubUserToken } from './lib/github-token-refresh';
+import {
+  recordOperatorTokenIssued,
+  recordOperatorTokenRefresh,
+} from './lib/operator-comment-observability';
 
 /**
  * Mock session for the E2E test-session adapter (E2E_TESTING=true +
@@ -43,11 +50,33 @@ const SERVER_GITHUB_ACCESS_TOKEN = Symbol('server-github-access-token');
 const SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT = Symbol(
   'server-github-access-token-issued-at',
 );
+const SERVER_GITHUB_ACCESS_TOKEN_EXPIRES_AT = Symbol(
+  'server-github-access-token-expires-at',
+);
+const SERVER_GITHUB_ACCESS_TOKEN_RENEWABLE = Symbol(
+  'server-github-access-token-renewable',
+);
 
 type ServerSession = Session & {
   [SERVER_GITHUB_ACCESS_TOKEN]?: string;
   [SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT]?: number;
+  [SERVER_GITHUB_ACCESS_TOKEN_EXPIRES_AT]?: number;
+  [SERVER_GITHUB_ACCESS_TOKEN_RENEWABLE]?: true;
 };
+
+/** What the server keeps beside the operator token; never the refresh token
+ *  itself, which stays inside the encrypted session cookie. */
+interface ServerGithubTokenFacts {
+  issuedAt?: number | undefined;
+  expiresAt?: number | undefined;
+  renewable?: boolean | undefined;
+}
+
+/**
+ * Renew this long before GitHub's stated expiry, so a write that starts with
+ * a nearly expired token does not lose a race against the clock.
+ */
+const RENEW_BEFORE_EXPIRY_MS = 5 * 60_000;
 
 /**
  * Returns the signed-in user's GitHub OAuth token only from a server-side
@@ -61,8 +90,8 @@ export function githubAccessTokenFor(session: Session): string | undefined {
 
 /**
  * When this session's GitHub token was issued (epoch ms), for sessions signed
- * in since the console began recording it. GitHub invalidates these tokens
- * without telling the console, so a rejection reports the token's age.
+ * in since the console began recording it. The sign-in app's tokens expire
+ * eight hours after issue, so a rejection reports the token's age.
  */
 export function githubAccessTokenIssuedAtFor(
   session: Session,
@@ -81,14 +110,16 @@ async function attachServerGithubAccessToken(
     secureCookie,
   });
   return typeof token?.githubAccessToken === 'string'
-    ? withServerGithubAccessToken(
-        session,
-        token.githubAccessToken,
-        typeof token.githubAccessTokenIssuedAt === 'number'
-          ? token.githubAccessTokenIssuedAt
-          : undefined,
-      )
+    ? withServerGithubAccessToken(session, token.githubAccessToken, {
+        issuedAt: numberOrUndefined(token.githubAccessTokenIssuedAt),
+        expiresAt: numberOrUndefined(token.githubAccessTokenExpiresAt),
+        renewable: typeof token.githubRefreshToken === 'string',
+      })
     : session;
+}
+
+function numberOrUndefined(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
 }
 
 /** The placeholder user token carried by hermetic E2E sessions only. */
@@ -97,23 +128,88 @@ export const E2E_FIXTURE_GITHUB_USER_TOKEN = 'e2e-fixture-user-token';
 function withServerGithubAccessToken(
   session: Session,
   accessToken: string,
-  issuedAt?: number,
+  facts: ServerGithubTokenFacts = {},
 ): Session {
-  Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN, {
-    configurable: false,
-    enumerable: false,
-    value: accessToken,
-    writable: false,
-  });
-  if (issuedAt !== undefined) {
-    Object.defineProperty(session, SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT, {
+  const hidden = (key: symbol, value: unknown) =>
+    Object.defineProperty(session, key, {
       configurable: false,
       enumerable: false,
-      value: issuedAt,
+      value,
       writable: false,
     });
-  }
+  hidden(SERVER_GITHUB_ACCESS_TOKEN, accessToken);
+  if (facts.issuedAt !== undefined)
+    hidden(SERVER_GITHUB_ACCESS_TOKEN_ISSUED_AT, facts.issuedAt);
+  if (facts.expiresAt !== undefined)
+    hidden(SERVER_GITHUB_ACCESS_TOKEN_EXPIRES_AT, facts.expiresAt);
+  if (facts.renewable) hidden(SERVER_GITHUB_ACCESS_TOKEN_RENEWABLE, true);
   return session;
+}
+
+/** Carries a renewed token out of the `jwt` callback to the server action
+ *  that asked for it, without a second decode of the cookie it just wrote. */
+const renewalScope = new AsyncLocalStorage<{ renewed?: JWT }>();
+
+function isDueForRenewal(expiresAt: number | undefined): boolean {
+  return (
+    expiresAt !== undefined && Date.now() >= expiresAt - RENEW_BEFORE_EXPIRY_MS
+  );
+}
+
+/**
+ * Replaces an expiring GitHub token inside the session JWT using its refresh
+ * token. Runs only on a session update, which always writes the session
+ * cookie: GitHub rotates the refresh token, so renewing where the cookie
+ * cannot be written (a Server Component render) would strand the session on
+ * a spent one. A renewal GitHub does not answer leaves the token as it was,
+ * and one it refuses also drops the dead refresh token; either way the write
+ * that needed the token is refused and takes the re-authorization path.
+ *
+ * Known limit: two console instances can each spend the same refresh token.
+ * The loser is refused, and if its cookie reaches the browser last the
+ * operator re-authorizes once.
+ */
+async function withRenewedGithubToken(token: JWT): Promise<JWT> {
+  const refreshToken = token.githubRefreshToken;
+  if (
+    typeof refreshToken !== 'string' ||
+    !isDueForRenewal(numberOrUndefined(token.githubAccessTokenExpiresAt))
+  ) {
+    return token;
+  }
+  const issuedAt = numberOrUndefined(token.githubAccessTokenIssuedAt);
+  const tokenAgeSeconds =
+    issuedAt === undefined
+      ? undefined
+      : Math.round((Date.now() - issuedAt) / 1000);
+  const refreshed = await refreshGithubUserToken(refreshToken);
+  if (refreshed === undefined) return token;
+  if (!refreshed.ok) {
+    recordOperatorTokenRefresh(refreshed.outcome, {
+      tokenAgeSeconds,
+      githubError: refreshed.githubError,
+    });
+    if (refreshed.outcome !== 'refused') return token;
+    // GitHub will never accept this refresh token again. Forget it so later
+    // writes re-authorize at once instead of spending another refused call.
+    const { githubRefreshToken: _spent, ...withoutRefreshToken } = token;
+    return withoutRefreshToken;
+  }
+  // One event per exchange with GitHub, not per request that reused it.
+  if (!refreshed.shared)
+    recordOperatorTokenRefresh('refreshed', { tokenAgeSeconds });
+  const renewed: JWT = {
+    ...token,
+    githubAccessToken: refreshed.accessToken,
+    githubAccessTokenIssuedAt: Date.now(),
+    githubRefreshToken: refreshed.refreshToken ?? refreshToken,
+  };
+  if (refreshed.accessTokenExpiresAt === undefined)
+    delete renewed.githubAccessTokenExpiresAt;
+  else renewed.githubAccessTokenExpiresAt = refreshed.accessTokenExpiresAt;
+  const scope = renewalScope.getStore();
+  if (scope) scope.renewed = renewed;
+  return renewed;
 }
 
 const nextAuth = NextAuth({
@@ -129,7 +225,7 @@ const nextAuth = NextAuth({
     signIn({ profile }) {
       return canSignInToConsole(profile?.login);
     },
-    jwt({ token, profile, account }) {
+    async jwt({ token, profile, account, trigger }) {
       // Without a database adapter Auth.js gives every sign-in a random user
       // id, so per-user state (Inbox push subscriptions, decision snoozes,
       // the browser notification ledger) would split across sign-ins. The
@@ -149,8 +245,20 @@ const nextAuth = NextAuth({
         // it only for same-process server callers.
         token.githubAccessToken = account.access_token;
         token.githubAccessTokenIssuedAt = Date.now();
+        // GitHub issues this app an eight-hour token with a refresh token.
+        // Both stay in the encrypted cookie so a server action can renew the
+        // token without sending the operator back through GitHub.
+        if (typeof account.expires_at === 'number')
+          token.githubAccessTokenExpiresAt = account.expires_at * 1000;
+        else delete token.githubAccessTokenExpiresAt;
+        if (typeof account.refresh_token === 'string')
+          token.githubRefreshToken = account.refresh_token;
+        else delete token.githubRefreshToken;
         recordOperatorTokenIssued(account);
       }
+      // Never read the update payload: a browser can send one. The only
+      // effect of an update is renewing a token that is due anyway.
+      if (trigger === 'update') return withRenewedGithubToken(token);
       return token;
     },
     session({ session, token }) {
@@ -202,3 +310,43 @@ export const auth: typeof nextAuth.auth = (async (
 }) as typeof nextAuth.auth;
 
 export const { handlers, signIn, signOut } = nextAuth;
+
+/**
+ * The session with a GitHub token that is still good for a write. When the
+ * session's token has reached GitHub's expiry, this renews it with the
+ * session's refresh token and stores the result in the session cookie.
+ *
+ * Call it only from a Server Action or Route Handler: the renewed cookie
+ * must be written. Sessions without a refresh token (signed in before the
+ * console kept one, or the hermetic E2E session) and failed renewals return
+ * the session unchanged, so the write is refused and re-authorizes instead.
+ */
+export async function withFreshGithubAccessToken(
+  session: Session,
+): Promise<Session> {
+  const current = session as ServerSession;
+  if (
+    !current[SERVER_GITHUB_ACCESS_TOKEN_RENEWABLE] ||
+    !isDueForRenewal(current[SERVER_GITHUB_ACCESS_TOKEN_EXPIRES_AT])
+  ) {
+    return session;
+  }
+  const scope: { renewed?: JWT } = {};
+  try {
+    await renewalScope.run(scope, () => nextAuth.unstable_update({}));
+  } catch (error) {
+    logger.warn('GitHub operator token renewal could not be saved', error);
+    return session;
+  }
+  const renewed = scope.renewed;
+  if (typeof renewed?.githubAccessToken !== 'string') return session;
+  return withServerGithubAccessToken(
+    { ...session },
+    renewed.githubAccessToken,
+    {
+      issuedAt: numberOrUndefined(renewed.githubAccessTokenIssuedAt),
+      expiresAt: numberOrUndefined(renewed.githubAccessTokenExpiresAt),
+      renewable: typeof renewed.githubRefreshToken === 'string',
+    },
+  );
+}

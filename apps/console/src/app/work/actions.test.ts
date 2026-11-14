@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   token: vi.fn(),
+  fresh: vi.fn(),
   context: vi.fn(),
   create: vi.fn(),
   cancel: vi.fn(),
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/auth', () => ({
   auth: mocks.auth,
   githubAccessTokenFor: mocks.token,
+  withFreshGithubAccessToken: mocks.fresh,
 }));
 vi.mock('./context', () => ({ context: mocks.context }));
 vi.mock('@/lib/work-router', () => ({
@@ -101,6 +103,7 @@ beforeEach(() => {
   mocks.forbiddenReason.mockReturnValue(undefined);
   mocks.auth.mockResolvedValue({ user: { login: 'test' } });
   mocks.token.mockReturnValue('token');
+  mocks.fresh.mockImplementation(async (session: unknown) => session);
   mocks.resolveRepo.mockImplementation((repo) => repo);
   mocks.githubGet.mockResolvedValue({
     data: { id: 42, visibility: 'private' },
@@ -274,6 +277,29 @@ describe('createItemWithEvidence', () => {
       }
     },
   );
+});
+
+describe('operator token renewal', () => {
+  it('files the tracking issue with the renewed token, not the expired one', async () => {
+    const renewed = { user: { login: 'test' }, renewed: true };
+    mocks.fresh.mockResolvedValue(renewed);
+    mocks.token.mockImplementation((session: unknown) =>
+      session === renewed ? 'renewed-token' : 'expired-token',
+    );
+    mocks.issueCreate.mockResolvedValue({
+      data: { number: 7, html_url: 'https://github.example/7' },
+    });
+
+    const [error] = await createTrackingIssue({
+      workId: intent.workId,
+      repository: intent.repository,
+      title: 'Tracking',
+      body: 'Body',
+    });
+
+    expect(error).toBeUndefined();
+    expect(mocks.token).toHaveBeenLastCalledWith(renewed);
+  });
 });
 
 describe('createTrackingIssue', () => {

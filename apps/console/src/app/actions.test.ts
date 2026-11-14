@@ -9,7 +9,13 @@ import {
   vi,
 } from 'vitest';
 
-import { auth, githubAccessTokenIssuedAtFor, signIn } from '../auth';
+import {
+  auth,
+  githubAccessTokenFor,
+  githubAccessTokenIssuedAtFor,
+  signIn,
+  withFreshGithubAccessToken,
+} from '../auth';
 import {
   ActionError,
   approveAndMergePr,
@@ -105,6 +111,7 @@ vi.mock('../auth', () => ({
   auth: vi.fn(),
   githubAccessTokenFor: vi.fn(() => 'operator-token'),
   githubAccessTokenIssuedAtFor: vi.fn(),
+  withFreshGithubAccessToken: vi.fn(async (session: unknown) => session),
   signIn: vi.fn(),
 }));
 
@@ -440,6 +447,26 @@ describe('agent-lcars Server Actions', () => {
         'codex',
         false,
       );
+    });
+
+    it('replyToItem posts with the renewed operator token when the session token had expired', async () => {
+      const renewed = { user: { login: 'jlapenna', isAdmin: true } };
+      (withFreshGithubAccessToken as Mock).mockResolvedValueOnce(renewed);
+      (githubAccessTokenFor as Mock).mockImplementationOnce(
+        (session: unknown) =>
+          session === renewed ? 'renewed-token' : 'expired-token',
+      );
+      (postComment as Mock).mockResolvedValue({
+        url: 'https://x',
+        dispatched: false,
+      });
+
+      await replyToItem(DEFAULT_REPO, 42, 'hi');
+
+      expect((postComment as Mock).mock.calls[0]?.[3]).toEqual({
+        login: 'jlapenna',
+        githubToken: 'renewed-token',
+      });
     });
 
     it('replyToItem forwards when the operator token was issued, for rejection telemetry', async () => {

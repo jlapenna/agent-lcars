@@ -9,7 +9,7 @@ import {
 import { createServerFunctionable } from '@orpc/next';
 import { z } from 'zod';
 
-import { auth, githubAccessTokenFor } from '@/auth';
+import { auth, githubAccessTokenFor, withFreshGithubAccessToken } from '@/auth';
 import {
   createGithubUserClient,
   resolveWatchedRepo,
@@ -112,6 +112,15 @@ function undefinedWhenGithubRejectsCredential(error: unknown): undefined {
   throw error;
 }
 
+/** The signed-in operator's GitHub token, renewed first when GitHub's
+ * eight-hour expiry has passed. */
+async function operatorGithubToken(): Promise<string | undefined> {
+  const session = await auth();
+  return session
+    ? githubAccessTokenFor(await withFreshGithubAccessToken(session))
+    : undefined;
+}
+
 /** Native Work creation with an optional screenshot. The evidence keeps its
  * historical authenticated read URL and immutable binding, while the task is
  * minted exclusively through the canonical Work procedure. */
@@ -177,8 +186,7 @@ async function createItemWithEvidenceUnsafe(form: FormData) {
       undefined,
     ] as const;
   }
-  const session = await auth();
-  const token = session ? githubAccessTokenFor(session) : undefined;
+  const token = await operatorGithubToken();
   if (!token) {
     return [
       {
@@ -283,8 +291,7 @@ export async function createTrackingIssue(
       undefined,
     ] as const;
   }
-  const session = await auth();
-  const token = session ? githubAccessTokenFor(session) : undefined;
+  const token = await operatorGithubToken();
   if (!token) {
     return [
       {
