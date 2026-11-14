@@ -9,7 +9,7 @@
 # by tools/e2e-docker.sh and CI is derived from this file's content hash, so
 # editing this file automatically invalidates stale images everywhere.
 FROM node:26.13.1-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS node-runtime
-FROM mcr.microsoft.com/playwright:v1.65.0-noble
+FROM mcr.microsoft.com/playwright:v1.65.1-noble
 ARG COREPACK_VERSION=0.36.0
 
 # The Firebase emulators (auth/firestore/eventarc) used by the e2e target
