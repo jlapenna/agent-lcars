@@ -584,6 +584,17 @@ COPY python-hooks.test.sh /usr/local/lib/agent-lcars/python-hooks.test.sh
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# chezmoi for homegit's `validate` job on the homegit-ci lane
+# (jlapenna/homelab#3510), so that job fetches nothing at run time. Same
+# reviewed-release path as the runtimes above: exact version, per-architecture
+# SHA-256, and the installer fails the build unless the binary reports that
+# version. Placed late on purpose: adding it earlier would rebuild the apt,
+# Node and browser layers for a tool none of them need.
+COPY chezmoi-version /usr/local/share/agent-lcars-tooling/chezmoi-version
+COPY install-chezmoi-release.sh /usr/local/lib/agent-lcars/install-chezmoi-release.sh
+RUN CHEZMOI_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/chezmoi-version)" \
+    TARGETARCH="$TARGETARCH" bash /usr/local/lib/agent-lcars/install-chezmoi-release.sh
+
 # Actions runtime health-check functions consumed by entrypoint.sh.
 # agent-lcars#1330: pre-populate the runner's action-archive cache so job
 # setup survives codeload.github.com outages on the trusted path. The list
