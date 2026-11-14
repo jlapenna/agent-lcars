@@ -155,20 +155,57 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 			return err
 		}
 	}
+	// The declared env list and every Secret item under env/ (which the claw
+	// launcher exports as an environment variable named by the rest of the
+	// path) share one namespace: neither may set a reserved name or repeat
+	// the other.
 	envNames := map[string]bool{}
+	claim := func(source, name string) error {
+		if len(validation.IsEnvVarName(name)) != 0 {
+			return fmt.Errorf("%s %s name %q is not a valid environment variable name", prefix, source, name)
+		}
+		if queueRuntimeEnvReserved(name) {
+			return fmt.Errorf("%s %s name %q is reserved for the executor or launcher", prefix, source, name)
+		}
+		if envNames[name] {
+			return fmt.Errorf("%s %s repeats environment variable %q", prefix, source, name)
+		}
+		envNames[name] = true
+		return nil
+	}
 	for _, env := range r.Env {
-		if len(validation.IsEnvVarName(env.Name)) != 0 {
-			return fmt.Errorf("%s.env name %q is not a valid environment variable name", prefix, env.Name)
+		if err := claim("env", env.Name); err != nil {
+			return err
 		}
-		if strings.HasPrefix(env.Name, "LCARS_") || env.Name == "RUNNER_MODE" || env.Name == "CLAW_TURN_DEADLINE_SECONDS" {
-			return fmt.Errorf("%s.env name %q is reserved for the executor", prefix, env.Name)
+	}
+	for _, item := range r.Items {
+		name, ok := strings.CutPrefix(item.Path, queueRuntimeEnvItemPrefix)
+		if !ok {
+			continue
 		}
-		if envNames[env.Name] {
-			return fmt.Errorf("%s.env repeats %q", prefix, env.Name)
+		if strings.Contains(name, "/") {
+			return fmt.Errorf("%s.items path %q must name exactly one variable after %s", prefix, item.Path, queueRuntimeEnvItemPrefix)
 		}
-		envNames[env.Name] = true
+		if err := claim("items "+queueRuntimeEnvItemPrefix, name); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// queueRuntimeEnvItemPrefix marks Secret items the claw launcher exports as
+// environment variables (env/LITELLM_API_KEY -> LITELLM_API_KEY).
+const queueRuntimeEnvItemPrefix = "env/"
+
+// queueRuntimeEnvReserved names the variables only the executor (LCARS_*,
+// RUNNER_MODE, CLAW_TURN_DEADLINE_SECONDS) or the claw launcher (OPENCLAW_*,
+// NODE_OPTIONS, PATH, HOME) may set.
+func queueRuntimeEnvReserved(name string) bool {
+	switch name {
+	case "RUNNER_MODE", "CLAW_TURN_DEADLINE_SECONDS", "NODE_OPTIONS", "PATH", "HOME":
+		return true
+	}
+	return strings.HasPrefix(name, "LCARS_") || strings.HasPrefix(name, "OPENCLAW_")
 }
 
 func validateQueueRuntimeItems(field string, items []queueRuntimeSecretItem) error {
@@ -185,6 +222,14 @@ func validateQueueRuntimeItems(field string, items []queueRuntimeSecretItem) err
 		}
 		keys[item.Key], paths[item.Path] = true, true
 	}
+	// A file cannot also be a directory of another item's file.
+	for parent := range paths {
+		for child := range paths {
+			if strings.HasPrefix(child, parent+"/") {
+				return fmt.Errorf("%s path %q is a parent of %q", field, parent, child)
+			}
+		}
+	}
 	return nil
 }
 
@@ -192,8 +237,11 @@ func queueRuntimeItemPathValid(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\\x00") || path.Clean(p) != p {
 		return false
 	}
+	// Kubernetes refuses a projected path whose first element starts with
+	// "..", (its atomic writer owns ..data and ..<timestamp>); refuse every
+	// such segment here so the mistake fails startup, not a Job create.
 	for _, segment := range strings.Split(p, "/") {
-		if segment == ".." || segment == "." {
+		if segment == "." || strings.HasPrefix(segment, "..") {
 			return false
 		}
 	}

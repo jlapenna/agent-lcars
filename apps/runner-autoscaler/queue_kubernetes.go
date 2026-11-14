@@ -734,6 +734,15 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		return err
 	}
 	job, err := q.client.BatchV1().Jobs(q.config.Namespace).Create(ctx, desired, meta.CreateOptions{})
+	if apierrors.IsInvalid(err) {
+		// The apiserver validated and refused this exact spec, so no Job and
+		// no worker exist and a retry would fail identically: settle the claim
+		// now, as above, instead of holding it until its placement deadline.
+		if l.runToken != "" {
+			q.exits.observeTerminated(l.runID, l.runner, queueClaimFingerprint(l.runToken))
+		}
+		return fmt.Errorf("creating queue Job: %w", err)
+	}
 	if err != nil {
 		// A timed-out create may have reached the apiserver. Read the same name,
 		// never choose a new name and accidentally launch a duplicate attempt.

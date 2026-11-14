@@ -389,10 +389,18 @@ Validation refuses to start the executor unless:
 - `active_deadline_seconds` is at least 360 and strictly below the 7200 s run
   lease;
 - `secret_name` is a valid Secret name other than `credentials_secret`, with at
-  least one item; item and agent keys are valid keys, and paths are clean
-  relative paths without `.` or `..` segments and without repeats;
-- declared `env` names are valid, unique, not `RUNNER_MODE`,
-  `CLAW_TURN_DEADLINE_SECONDS` or any `LCARS_*` name.
+  least one item. Item and agent keys are valid keys. Paths are clean relative
+  paths with no `.` segment and no segment starting with `..` (Kubernetes
+  reserves `..data`). They do not repeat, and none is a parent of another
+  (`ssh` alongside `ssh/id_ed25519`);
+- declared `env` names, and the name after `env/` in each Secret item path
+  (which the launcher exports as a variable), are valid and share one
+  namespace without repeats. An `env/` path has exactly one segment after the
+  prefix. Neither may be `RUNNER_MODE`, `CLAW_TURN_DEADLINE_SECONDS`,
+  `NODE_OPTIONS`, `PATH`, `HOME`, or any `LCARS_*` or `OPENCLAW_*` name.
+
+If the apiserver still refuses a Job spec as invalid, launch settles the claim
+immediately rather than holding it until its placement deadline.
 
 A runtime Job reuses the shared template (suspended single attempt, per-run
 token Secret, non-root pod security context, `ndots:1` DNS, node selector and

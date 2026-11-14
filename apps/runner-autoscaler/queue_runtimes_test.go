@@ -10,9 +10,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	auth "k8s.io/api/authorization/v1"
 	core "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
 )
@@ -164,6 +167,111 @@ func TestQueueRuntimeValidation(t *testing.T) {
 			r.Env = []queueRuntimeEnv{{Name: "CLAW_TURN_DEADLINE_SECONDS", Value: "9999"}}
 			c.Runtimes["claw-investigator"] = r
 		},
+		"env item LCARS_RUN_TOKEN": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/LCARS_RUN_TOKEN"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item LCARS_CONSOLE_URL": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/LCARS_CONSOLE_URL"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item RUNNER_MODE": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/RUNNER_MODE"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item CLAW_TURN_DEADLINE_SECONDS": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/CLAW_TURN_DEADLINE_SECONDS"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item OPENCLAW_STATE_DIR": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/OPENCLAW_STATE_DIR"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item NODE_OPTIONS": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/NODE_OPTIONS"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item PATH": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/PATH"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item HOME": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/HOME"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item nested": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/LITELLM/API_KEY"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item invalid name": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/1-BAD"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"env item repeats declared env": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "env/CLAW_AGENT"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"item path ..data": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "..data"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"item path ..foo/bar": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "..foo/bar"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"item nested ..segment": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "litellm-api-key", Path: "ssh/..key"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"item path parent of another": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Items = []queueRuntimeSecretItem{{Key: "a", Path: "ssh"}, {Key: "b", Path: "ssh/id_ed25519"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"declared env HOME": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Env = []queueRuntimeEnv{{Name: "HOME", Value: "x"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"declared env PATH": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Env = []queueRuntimeEnv{{Name: "PATH", Value: "x"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"declared env NODE_OPTIONS": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Env = []queueRuntimeEnv{{Name: "NODE_OPTIONS", Value: "x"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"declared env OPENCLAW_CONFIG_PATH": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Env = []queueRuntimeEnv{{Name: "OPENCLAW_CONFIG_PATH", Value: "x"}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"agent path parent of another": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Agent = &queueRuntimeAgentConfig{ConfigMap: "agent", Items: []queueRuntimeSecretItem{{Key: "tools", Path: "tools"}, {Key: "tools-probe", Path: "tools/probe"}}}
+			c.Runtimes["claw-investigator"] = r
+		},
+		"agent path ..data": func(c *queueKubernetesConfig) {
+			r := c.Runtimes["claw-investigator"]
+			r.Agent = &queueRuntimeAgentConfig{ConfigMap: "agent", Items: []queueRuntimeSecretItem{{Key: "config.json", Path: "..data/config.json"}}}
+			c.Runtimes["claw-investigator"] = r
+		},
 		"runtimes_only with legacy credentials": func(c *queueKubernetesConfig) {
 			c.CredentialsSecret = "credentials"
 		},
@@ -180,9 +288,11 @@ func TestQueueRuntimeValidation(t *testing.T) {
 				t.Fatalf("baseline zone config rejected: %v", err)
 			}
 			mutate(&q.config)
-			if err := q.config.validate(); err == nil {
+			err := q.config.validate()
+			if err == nil {
 				t.Fatal("invalid runtime configuration accepted")
 			}
+			t.Log(err)
 		})
 	}
 }
@@ -520,5 +630,51 @@ func TestRuntimesOnlyEnvironmentNeedsNoRunnerImageOrScheduler(t *testing.T) {
 	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "")
 	if err := validateQueueExecutorEnvironment(shared); err == nil || !strings.Contains(err.Error(), "LCARS_SCHEDULER_CREDENTIALS is required") {
 		t.Fatalf("a shared executor without the scheduler key: err=%v, want refusal", err)
+	}
+}
+
+// Env items are a separate namespace from declared env only by name: a
+// distinct, unreserved env/ item and declared env coexist, and agent
+// ConfigMap items under env/ are files, not exported variables.
+func TestQueueRuntimeAcceptsDistinctEnvItems(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	r := q.config.Runtimes["claw-investigator"]
+	r.Items = append(r.Items, queueRuntimeSecretItem{Key: "github-token", Path: "env/GH_TOKEN"})
+	r.Agent.Items = append(r.Agent.Items, queueRuntimeSecretItem{Key: "env-home", Path: "env/HOME"})
+	q.config.Runtimes["claw-investigator"] = r
+	if err := q.config.validate(); err != nil {
+		t.Fatalf("distinct env items rejected: %v", err)
+	}
+}
+
+// A Job spec the apiserver refuses as invalid settles its claim at once
+// instead of holding it until the placement deadline; a transient create
+// failure does not.
+func TestLaunchSettlesClaimWhenJobCreateIsInvalid(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		err     error
+		settles bool
+	}{
+		{"invalid", apierrors.NewInvalid(schema.GroupKind{Group: "batch", Kind: "Job"}, "lcars-work-x", field.ErrorList{field.Invalid(field.NewPath("spec"), "..data", "must not start with '..'")}), true},
+		{"transient", apierrors.NewServiceUnavailable("apiserver unavailable"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := &exitReportRecorder{}
+			q, c := zoneQueueFixture()
+			q.exits = testExitReporter(recorder.server(t).URL)
+			c.PrependReactor("create", "jobs", func(clienttesting.Action) (bool, runtime.Object, error) { return true, nil, tc.err })
+			if err := q.launch(context.Background(), clawLaunch()); err == nil {
+				t.Fatal("refused create reported success")
+			}
+			q.exits.wg.Wait()
+			if got := len(recorder.requests()); (got == 1) != tc.settles {
+				t.Fatalf("exit reports = %d, want settled=%v", got, tc.settles)
+			}
+			jobs, _ := c.BatchV1().Jobs(q.config.Namespace).List(context.Background(), meta.ListOptions{})
+			if len(jobs.Items) != 0 {
+				t.Fatal("refused create left a Job")
+			}
+		})
 	}
 }
