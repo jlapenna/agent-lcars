@@ -409,7 +409,8 @@ tolerations) and differs only in:
 - the only Secret material is the declared items of `secret_name`, read-only
   at `/run/claw-secrets` (the launcher exports items under `env/` as
   environment variables); the optional `agent` ConfigMap is read-only at
-  `/claw/agent`;
+  `/claw/agent` with mode 0555, so agent tools under `tools/` can run by path
+  (Secret items stay 0440 and are never executable);
 - `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
   (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
   `emptyDir`.
@@ -424,10 +425,12 @@ declared runtimes. It must not set `credentials_secret`, `requests` or
 `limits`, and needs at least one runtime. It does not read
 `LCARS_QUEUE_RUNNER_IMAGE` or `LCARS_WORKER_POLICY_PROVIDERS`, does not require
 the legacy provider keys, and refuses (and settles) any claim for a pipeline
-without a runtime entry. Its environment is otherwise the same:
-`LCARS_CONSOLE_URL`, `LCARS_WORK_AUDIENCE`, `GOOGLE_APPLICATION_CREDENTIALS`
-(the zone executor principal's own key, whose `work.executor` grant admits
-only the zone's pipelines) and `LCARS_SCHEDULER_CREDENTIALS`. Preflight
+without a runtime entry. Its environment is `LCARS_CONSOLE_URL`,
+`LCARS_WORK_AUDIENCE` and `GOOGLE_APPLICATION_CREDENTIALS` (the zone executor
+principal's own key, whose `work.executor` grant admits only the zone's
+pipelines). It runs no schedule or maintenance ticker, which belongs to the
+shared executor: `LCARS_SCHEDULER_CREDENTIALS` must be unset, and startup and
+`--check-config` refuse a zone executor that sets it. Preflight
 requires every declared item of each runtime's Secret to be nonempty and every
 declared agent key to exist, which adds ConfigMaps `get` to the controller's
 RBAC when `agent` is used. A shared executor may also declare runtimes; it
@@ -442,7 +445,7 @@ unchanged.
 
 ### Native schedule ticker
 
-The same continuously running process ticks native schedules through
+The shared executor process ticks native schedules through
 `POST /api/work/v1/schedules/tick` once at startup and then every five
 minutes. Required `LCARS_SCHEDULER_CREDENTIALS` points the schedule and
 maintenance ticker at its dedicated service-account key
@@ -455,7 +458,9 @@ closed at runtime without falling back to `GOOGLE_APPLICATION_CREDENTIALS`.
 `work.executor` alone cannot mint schedules, and `work.cron` cannot claim runs. This keeps schedule state and admission in the Work API and
 removes GitHub Actions schedule delivery from the ingress path.
 `github_runner_autoscaler_schedule_ticks_total` reports `success` and `error`
-outcomes for operations monitoring.
+outcomes for operations monitoring. A `runtimes_only` zone executor runs no
+ticker and refuses `LCARS_SCHEDULER_CREDENTIALS`
+([zone executors](#declared-runtimes-and-zone-executors)).
 
 The same cadence posts `POST /api/work/v1/maintenance/tick`, which settles
 expired leases and drains the Console's outbox

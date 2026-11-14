@@ -282,6 +282,19 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 	if agent == nil || agent.Name != "claw-investigator-agent" || len(agent.Items) != 3 || agent.Items[2].Path != "workspace/AGENTS.md" {
 		t.Fatalf("agent ConfigMap volume = %+v", agent)
 	}
+	// Agent tools run by path, so the definition is read+execute and never
+	// writable; zone secrets stay 0440 and are never executable.
+	if agent.DefaultMode == nil || *agent.DefaultMode != 0o555 {
+		t.Fatalf("agent ConfigMap mode = %v, want 0555", agent.DefaultMode)
+	}
+	if secret.DefaultMode == nil || *secret.DefaultMode != 0o440 {
+		t.Fatalf("zone Secret mode = %v, want 0440", secret.DefaultMode)
+	}
+	for _, item := range append(append([]core.KeyToPath{}, secret.Items...), agent.Items...) {
+		if item.Mode != nil {
+			t.Fatalf("item %s overrides the volume mode", item.Key)
+		}
+	}
 	work := volumes["work"].EmptyDir
 	if work == nil || work.SizeLimit == nil || work.SizeLimit.Cmp(resource.MustParse("8Gi")) != 0 {
 		t.Fatal("work emptyDir must be bounded by the ephemeral-storage limit")
@@ -470,23 +483,42 @@ func TestZoneReserveUsesRuntimeShape(t *testing.T) {
 	r.release()
 }
 
-func TestRuntimesOnlyEnvironmentNeedsNoRunnerImage(t *testing.T) {
+// A zone executor needs neither the runner image nor the scheduler key, and
+// never owns the schedule ticker: that belongs to the shared executor.
+func TestRuntimesOnlyEnvironmentNeedsNoRunnerImageOrScheduler(t *testing.T) {
 	t.Setenv("LCARS_CONSOLE_URL", "https://console.example")
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/google.json")
-	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/secrets/scheduler.json")
+	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "")
 	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "")
 	t.Setenv("LCARS_WORKER_POLICY_PROVIDERS", "")
 	q, _ := zoneQueueFixture()
 	config := q.config
 	config.Kubeconfig = writeTestKubeconfig(t)
-	if err := validateQueueExecutorEnvironment(OrchestratorConfig{Version: 1, Kubernetes: &config}); err != nil {
+	zone := OrchestratorConfig{Version: 1, Kubernetes: &config}
+	if err := validateQueueExecutorEnvironment(zone); err != nil {
 		t.Fatalf("zone executor environment rejected: %v", err)
+	}
+	if runsScheduleTicker(zone) {
+		t.Fatal("a runtimes_only zone executor must not run the schedule ticker")
+	}
+	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "/secrets/scheduler.json")
+	if err := validateQueueExecutorEnvironment(zone); err == nil || !strings.Contains(err.Error(), "runs no schedule ticker") {
+		t.Fatalf("zone executor holding the scheduler key: err=%v, want refusal", err)
 	}
 	config.RuntimesOnly = false
 	config.CredentialsSecret = "credentials"
 	config.Requests = map[string]string{"cpu": "1", "memory": "1Gi", "ephemeral-storage": "1Gi"}
 	config.Limits = config.Requests
-	if err := validateQueueExecutorEnvironment(OrchestratorConfig{Version: 1, Kubernetes: &config}); err == nil {
+	shared := OrchestratorConfig{Version: 1, Kubernetes: &config}
+	if !runsScheduleTicker(shared) {
+		t.Fatal("the shared executor owns the schedule ticker")
+	}
+	if err := validateQueueExecutorEnvironment(shared); err == nil {
 		t.Fatal("a shared executor without LCARS_QUEUE_RUNNER_IMAGE must be rejected")
+	}
+	t.Setenv("LCARS_QUEUE_RUNNER_IMAGE", "registry.example.com/runner:test")
+	t.Setenv("LCARS_SCHEDULER_CREDENTIALS", "")
+	if err := validateQueueExecutorEnvironment(shared); err == nil || !strings.Contains(err.Error(), "LCARS_SCHEDULER_CREDENTIALS is required") {
+		t.Fatalf("a shared executor without the scheduler key: err=%v, want refusal", err)
 	}
 }

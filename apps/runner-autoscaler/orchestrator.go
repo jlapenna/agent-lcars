@@ -63,8 +63,9 @@ func runOrchestrator(ctx context.Context, cfg OrchestratorConfig) error {
 	// configuration fails startup elsewhere in this function -- loudly, at
 	// startup, rather than silently every 15s.
 	tokenSource, tokenErr := newDirectRunnerIDTokenSource(ctx, keyPath, audience)
-	schedulerTokenSource, schedulerTokenErr := newScheduleTickerIDTokenSource(ctx, keyPath, audience, tokenSource, tokenErr)
-	if schedulerTokenErr != nil {
+	if !runsScheduleTicker(cfg) {
+		logger.Info("Runtimes-only zone executor: schedule and maintenance ticker disabled")
+	} else if schedulerTokenSource, schedulerTokenErr := newScheduleTickerIDTokenSource(ctx, keyPath, audience, tokenSource, tokenErr); schedulerTokenErr != nil {
 		logger.Error("Schedule ticker misconfigured: could not build the schedule ID token source", slog.Any("error", schedulerTokenErr))
 	} else {
 		// Schedule ticking needs only the Console URL and its dedicated

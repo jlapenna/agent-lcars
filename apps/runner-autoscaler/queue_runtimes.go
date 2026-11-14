@@ -268,7 +268,10 @@ func (q *kubernetesQueue) runtimeJobShape(l directRunnerLaunch, rt queueRuntimeC
 		{Name: "tmp", MountPath: "/tmp"},
 	}
 	if rt.Agent != nil {
-		agentMode := int32(0444)
+		// Agent tools (tools/*) run by path under the exec allowlist, so the
+		// definition is read+execute with no write. Secrets stay 0440 above:
+		// zone credentials are never executable.
+		agentMode := int32(0555)
 		volumes = append(volumes, core.Volume{Name: "claw-agent", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: rt.Agent.ConfigMap}, Items: queueRuntimeKeyToPaths(rt.Agent.Items), DefaultMode: &agentMode}}})
 		mounts = append(mounts, core.VolumeMount{Name: "claw-agent", MountPath: queueRuntimeAgentMountPath, ReadOnly: true})
 	}
