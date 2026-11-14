@@ -493,9 +493,7 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    - **3b. `claw/oncall` from Alertmanager.** Add the `alertmanager` intake
      adapter, the gate principal and the admission-plus-live-attempt
      acknowledgement, with Homelab's paging contract, `OncallRunFailed` and
-     the gate's ack metrics and the jclaw oncall execution contract (which today names the Gateway as the authorization boundary) updated in the same change and reviewed by their owner. Run it in shadow
-     first: the gate admits Work while the existing OpenClaw hook still
-     delivers, and the reports are compared on real alerts. Cut over only
+     the gate's ack metrics and the jclaw oncall execution contract (which today names the Gateway as the authorization boundary) updated in the same change and reviewed by their owner. Run it in shadow first: the gate admits Work while the existing OpenClaw hook still delivers, and the reports are compared on real alerts. During shadow the legacy Gateway agent is the sole effect owner, and the shadow `claw/oncall` Job is read-only by enforcement, not by intent: its zone binding mounts only the investigator credential, and its config allowlists only read commands (`homelab-investigate`, read-only `gh`), so it holds neither the `homelab-oncall` key nor a write-capable `gh` identity. At cutover, stop the legacy hook, drain its in-flight turns, and only then bind the oncall key and write identity to the Job. Cut over only
      after a real ticket and a real page are investigated and reported through
      the Job path, including one while riker is cordoned. Then remove exec
      authority from the Gateway `oncall` agent and retire its hook, the paired
