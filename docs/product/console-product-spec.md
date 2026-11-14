@@ -997,8 +997,15 @@ settled `provider or grading error`; repo-tools #243 settles it as
 `provider-limit`. A fourth run on the runner image that carries #243 (Work
 `01M75X10SEEM6XYW4ESB1T8MBJ`, Garage `74955a0b-9418-41d7-aa00-c367ed01e838`)
 settled `partial: provider-limit` with no score, in the same 2 CPU / 6 GiB /
-24 GiB Pod and with no fallback profile. A scored Antigravity result awaits the
-quota reset.
+24 GiB Pod and with no fallback profile. After the quota reset, the dedicated
+`jlapenna/labels` job `skill-evals-agy` (labels#73; scheduled weekly, its first
+slot refused for a missing per-job credential grant that was then published)
+ran manually as `svc:production-verifier` (Work `01M7BZCCJ6XR3H8VEYK12R6MZD`,
+2026-11-14) in a 2 CPU / 6 GiB / 24 GiB Pod with `antigravity-oauth-token` as
+its only provider credential. It returned a complete scored result:
+`runner: antigravity`, model and judge `gemini-4-argon`, both cases run with no
+run errors (`partial: false`, 73 s), skill score 0.5 with failing graders that
+are skill findings, and Garage record `35adc799-fbc3-431e-af5a-9ac97e48cdaa`.
 
 **Not covered in hermetic E2E:** merge and rebase mutations against real GitHub,
 and live write mutations (which are intentionally excluded from automated
