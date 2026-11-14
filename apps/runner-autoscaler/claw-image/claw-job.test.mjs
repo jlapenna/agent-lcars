@@ -31,6 +31,7 @@ if (args[0] === 'config' && args[1] === 'validate') {
   process.exit(behaviour.FAKE_INVALID === '1' ? 1 : 0);
 }
 if (args[0] === 'doctor') {
+  if (behaviour.FAKE_DOCTOR_SLEEP) { setTimeout(() => process.exit(0), Number(behaviour.FAKE_DOCTOR_SLEEP)); return; }
   const path = process.env.OPENCLAW_CONFIG_PATH;
   const config = JSON.parse(fs.readFileSync(path, 'utf8'));
   config.meta = { lastTouchedVersion: 'fake' };
@@ -377,4 +378,21 @@ test('malformed numeric settings fail before any Work API call', async () => {
     await assert.rejects(main(env, { fetchImpl }), new RegExp(name));
     assert.equal(calls.length, 0);
   }
+});
+
+test('the overall deadline also bounds setup and stops before the turn', async () => {
+  const { env, calls, fetchImpl } = await fixture({
+    env: { FAKE_DOCTOR_SLEEP: '5000', CLAW_TURN_DEADLINE_SECONDS: '1' },
+  });
+  const started = Date.now();
+  const result = await main(env, { fetchImpl });
+  assert.ok(Date.now() - started < 4000, 'setup outlived the deadline');
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message: 'Claw turn exceeded its deadline.',
+  });
+  assert.deepEqual(completion(calls), result);
+  const log = await readFile(env.FAKE_LOG, 'utf8');
+  assert.ok(!log.includes('"approvals"'), 'approvals ran after the deadline');
+  assert.ok(!log.includes('"exec"'), 'the turn started after the deadline');
 });

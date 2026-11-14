@@ -398,6 +398,17 @@ export async function main(env = process.env, deps = {}) {
     call('heartbeat', {}).catch(ignoreHeartbeatFailure);
   }, heartbeatMs);
   heartbeat.unref();
+  // One absolute deadline, measured from launcher start, bounds setup and
+  // the turn alike; the pod deadline sits a fixed margin above it so the
+  // runner-failed completion below always has time to land. Each command's
+  // own timeout is only an inner cap.
+  const deadline = new AbortController();
+  const deadlineTimer = setTimeout(
+    () => deadline.abort(),
+    Math.max(0, turnDeadlineMs - (Date.now() - started)),
+  );
+  deadlineTimer.unref();
+  const work = AbortSignal.any([controller.signal, deadline.signal]);
   try {
     let result;
     try {
@@ -415,8 +426,9 @@ export async function main(env = process.env, deps = {}) {
         workRoot,
         openclaw,
         env: baseEnv,
-        signal: controller.signal,
+        signal: work,
       });
+      if (work.aborted) throw new ClawFailure('claw run was cancelled');
       const messageFile = join(stateDir, 'brief.md');
       await writeFile(messageFile, briefMessage(question, brief), {
         mode: 0o600,
@@ -439,32 +451,48 @@ export async function main(env = process.env, deps = {}) {
         {
           env: childEnv,
           cwd: workspace,
-          // The deadline covers setup too: the pod deadline sits a fixed
-          // margin above it, measured from launcher start.
-          timeoutMs: Math.max(1, turnDeadlineMs - (Date.now() - started)),
-          signal: controller.signal,
+          signal: work,
         },
       );
       await call('heartbeat', { providerProcessStarted: true }).catch(
         ignoreHeartbeatFailure,
       );
-      result = settle(await turn, {
-        requireTools: EVIDENCE_OPERATIONS.has(brief.claw.operation),
-      });
+      const finished = await turn;
+      result = settle(
+        {
+          ...finished,
+          aborted: controller.signal.aborted,
+          timedOut: deadline.signal.aborted && !controller.signal.aborted,
+        },
+        { requireTools: EVIDENCE_OPERATIONS.has(brief.claw.operation) },
+      );
     } catch (error) {
-      result = {
-        outcome: 'runner-failed',
-        message:
-          error instanceof ClawFailure
-            ? `Claw setup failed: ${error.message}.`
-            : 'Claw runner failed unexpectedly before settling.',
-      };
-      if (!(error instanceof ClawFailure)) console.error(error);
+      if (controller.signal.aborted)
+        result = {
+          outcome: 'runner-failed',
+          message: 'Claw turn was cancelled.',
+        };
+      else if (deadline.signal.aborted)
+        result = {
+          outcome: 'runner-failed',
+          message: 'Claw turn exceeded its deadline.',
+        };
+      else
+        result = {
+          outcome: 'runner-failed',
+          message:
+            error instanceof ClawFailure
+              ? `Claw setup failed: ${error.message}.`
+              : 'Claw runner failed unexpectedly before settling.',
+        };
+      if (!(error instanceof ClawFailure) && !work.aborted)
+        console.error(error);
     }
     await settleCall('complete', result);
     return result;
   } finally {
     clearInterval(heartbeat);
+    clearTimeout(deadlineTimer);
   }
 }
 
