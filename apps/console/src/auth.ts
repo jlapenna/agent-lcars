@@ -161,8 +161,13 @@ function isDueForRenewal(expiresAt: number | undefined): boolean {
  * token. Runs only on a session update, which always writes the session
  * cookie: GitHub rotates the refresh token, so renewing where the cookie
  * cannot be written (a Server Component render) would strand the session on
- * a spent one. A failed renewal leaves the token as it was; the write that
- * needed it is then refused and takes the re-authorization path.
+ * a spent one. A renewal GitHub does not answer leaves the token as it was,
+ * and one it refuses also drops the dead refresh token; either way the write
+ * that needed the token is refused and takes the re-authorization path.
+ *
+ * Known limit: two console instances can each spend the same refresh token.
+ * The loser is refused, and if its cookie reaches the browser last the
+ * operator re-authorizes once.
  */
 async function withRenewedGithubToken(token: JWT): Promise<JWT> {
   const refreshToken = token.githubRefreshToken;
@@ -184,9 +189,15 @@ async function withRenewedGithubToken(token: JWT): Promise<JWT> {
       tokenAgeSeconds,
       githubError: refreshed.githubError,
     });
-    return token;
+    if (refreshed.outcome !== 'refused') return token;
+    // GitHub will never accept this refresh token again. Forget it so later
+    // writes re-authorize at once instead of spending another refused call.
+    const { githubRefreshToken: _spent, ...withoutRefreshToken } = token;
+    return withoutRefreshToken;
   }
-  recordOperatorTokenRefresh('refreshed', { tokenAgeSeconds });
+  // One event per exchange with GitHub, not per request that reused it.
+  if (!refreshed.shared)
+    recordOperatorTokenRefresh('refreshed', { tokenAgeSeconds });
   const renewed: JWT = {
     ...token,
     githubAccessToken: refreshed.accessToken,

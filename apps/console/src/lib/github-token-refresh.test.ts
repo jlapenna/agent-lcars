@@ -106,8 +106,9 @@ describe('refreshGithubUserToken', () => {
     const late = await refreshGithubUserToken('refresh-1');
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(second).toBe(first);
-    expect(late).toBe(first);
+    expect(first).not.toHaveProperty('shared');
+    expect(second).toEqual({ ...first, shared: true });
+    expect(late).toEqual({ ...first, shared: true });
 
     vi.advanceTimersByTime(30_000);
     await refreshGithubUserToken('refresh-1');

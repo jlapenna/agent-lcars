@@ -270,20 +270,50 @@ describe('operator token renewal', () => {
     expect(renewed).not.toHaveProperty('githubAccessTokenExpiresAt');
   });
 
-  it('keeps the old token and reports why when GitHub refuses the refresh token', async () => {
+  it('forgets a refresh token GitHub refuses, keeps the old access token and reports why', async () => {
     mocks.refresh.mockResolvedValue({
       ok: false,
       outcome: 'refused',
       githubError: 'bad_refresh_token',
     });
 
-    expect(await jwtCallback({ token: expired, trigger: 'update' })).toBe(
-      expired,
-    );
+    const token = await jwtCallback({ token: expired, trigger: 'update' });
+
+    const { githubRefreshToken: _spent, ...withoutRefreshToken } = expired;
+    expect(token).toEqual(withoutRefreshToken);
     expect(mocks.recordRefresh).toHaveBeenCalledExactlyOnceWith('refused', {
       tokenAgeSeconds: 9 * 3600,
       githubError: 'bad_refresh_token',
     });
+    // The session no longer counts as renewable: the next write goes
+    // straight to re-authorization instead of another refused exchange.
+    const session = await serverSession(token as Record<string, unknown>);
+    expect(await withFreshGithubAccessToken(session)).toBe(session);
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps the refresh token for a retry when GitHub does not answer', async () => {
+    mocks.refresh.mockResolvedValue({ ok: false, outcome: 'failed' });
+
+    expect(await jwtCallback({ token: expired, trigger: 'update' })).toBe(
+      expired,
+    );
+    expect(mocks.recordRefresh).toHaveBeenCalledExactlyOnceWith('failed', {
+      tokenAgeSeconds: 9 * 3600,
+    });
+  });
+
+  it('counts one renewal per exchange, not per request that reused it', async () => {
+    mocks.refresh.mockResolvedValue({
+      ok: true,
+      accessToken: 'access-2',
+      shared: true,
+    });
+
+    const token = await jwtCallback({ token: expired, trigger: 'update' });
+
+    expect(token).toMatchObject({ githubAccessToken: 'access-2' });
+    expect(mocks.recordRefresh).not.toHaveBeenCalled();
   });
 
   it('ignores whatever a browser sends as the update payload', async () => {

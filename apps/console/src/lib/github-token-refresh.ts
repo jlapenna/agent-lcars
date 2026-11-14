@@ -22,6 +22,8 @@ export type GithubTokenRefresh =
       accessTokenExpiresAt?: number;
       /** GitHub rotates this on every refresh; absent if it sent none. */
       refreshToken?: string;
+      /** This answer reuses an exchange another request already made. */
+      shared?: true;
     }
   | {
       ok: false;
@@ -56,7 +58,11 @@ export function refreshGithubUserToken(
   // Keyed by a digest so the map never holds a usable credential as a key.
   const key = createHash('sha256').update(refreshToken).digest('hex');
   const shared = inFlight.get(key);
-  if (shared) return shared;
+  if (shared) {
+    return shared.then((result) =>
+      result.ok ? { ...result, shared: true as const } : result,
+    );
+  }
   const request = exchange(clientId, clientSecret, refreshToken);
   inFlight.set(key, request);
   void request.then((result) => {
