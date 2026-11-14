@@ -6174,9 +6174,11 @@ describe('claw-investigator runs', () => {
       );
       expect(complete.status).toBe(200);
       const settled = await f.store.readRun(runId);
+      // Any unusable claw completion is stored as runner-failed, so an
+      // exhausted run never reads as a report or a parked delivery.
       expect(settled?.result).toMatchObject({
         ok: false,
-        summary: body.outcome,
+        summary: 'runner-failed',
       });
       expect(settled?.result?.ref).toBeUndefined();
       const runs = await f.store.listRuns({ workId });
