@@ -148,47 +148,64 @@ describe('WorkDetailViewContent', () => {
 });
 
 describe('claw investigation detail', () => {
-  const question = 'Why did the backup alert fire?';
-  const report = 'The backup job hit its two-hour timeout on riker.';
+  const first = 'Why did the backup alert fire?';
+  const second = 'And why did the restore check pass?';
+  const run = (n: number, question: string, message: string) => ({
+    runId: `work:01J5Z3K9QX8F0N2B4V6C8D1E3H/r${n}`,
+    state: 'finished' as const,
+    pipeline: 'claw-investigator',
+    createdAt: `2026-11-14T10:0${n}:00.000Z`,
+    updatedAt: `2026-11-14T10:0${n}:30.000Z`,
+    sourceRevision: {
+      key: String(n).repeat(64),
+      input: { operation: 'investigate:v1', question },
+    },
+    revisionAttempt: 1,
+    result: { ok: true, summary: 'report', message },
+  });
   const clawItem: ItemView = {
     id: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
     state: 'done',
     spec: {
-      title: `Investigate: ${question}`,
-      description: question,
+      title: 'Claw investigation alert:backup',
+      description:
+        "Read-only claw investigation for source key alert:backup. Each round's question is its own revision input.",
       pipeline: 'claw-investigator',
       priority: 'background',
       operation: 'investigate:v1',
       sourceKey: 'alert:backup',
-      input: { question },
     },
     origin: { principal: 'user:jlapenna', channel: 'console' },
     createdAt: '2026-11-14T10:00:00.000Z',
     updatedAt: '2026-11-14T10:05:00.000Z',
     runs: [
-      {
-        runId: 'work:01J5Z3K9QX8F0N2B4V6C8D1E3H/r1',
-        state: 'finished',
-        pipeline: 'claw-investigator',
-        createdAt: '2026-11-14T10:00:00.000Z',
-        updatedAt: '2026-11-14T10:05:00.000Z',
-        sourceRevision: {
-          key: 'a'.repeat(64),
-          input: { operation: 'investigate:v1', question },
-        },
-        revisionAttempt: 1,
-        result: { ok: true, summary: 'report', message: report },
-      },
+      run(1, first, 'The backup job hit its two-hour timeout on riker.'),
+      run(2, second, 'The restore check read a cached snapshot.'),
     ],
     sessions: [],
   };
 
-  it('shows the report message and offers no coding mutations', () => {
+  it("shows each round's own question beside its report and offers no coding mutations", () => {
     renderDetail(clawItem);
-    expect(screen.getByText(report)).toBeInTheDocument();
+    expect(screen.getAllByText(first)).toHaveLength(1);
+    expect(screen.getAllByText(second)).toHaveLength(1);
     expect(
-      screen.getByText('Claw job · claw-investigator'),
+      screen.getByText('The backup job hit its two-hour timeout on riker.'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText('The restore check read a cached snapshot.'),
+    ).toBeInTheDocument();
+    const turns = document.body.textContent ?? '';
+    expect(turns.indexOf(first)).toBeLessThan(
+      turns.indexOf('two-hour timeout'),
+    );
+    expect(turns.indexOf('two-hour timeout')).toBeLessThan(
+      turns.indexOf(second),
+    );
+    expect(turns.indexOf(second)).toBeLessThan(
+      turns.indexOf('cached snapshot'),
+    );
+    expect(screen.getAllByText('Claw job · claw-investigator')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /Reply/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /Redispatch/i })).toBeNull();
   });

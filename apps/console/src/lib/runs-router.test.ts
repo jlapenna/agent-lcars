@@ -6100,6 +6100,7 @@ describe('claw-investigator runs', () => {
         priority: 'background',
         operation: 'investigate:v1',
         sourceKey: 'alert:backup',
+        title: 'Claw investigation alert:backup',
       },
       anchor: {
         type: 'work',
@@ -6119,6 +6120,7 @@ describe('claw-investigator runs', () => {
     });
     expect(brief.json).not.toHaveProperty('spec.target');
     expect(brief.json).not.toHaveProperty('anchor.target_repo');
+    expect(brief.json).not.toHaveProperty('spec.input');
 
     const heartbeat = await call(runCtx, 'POST', runPath(runId, '/heartbeat'));
     expect(heartbeat.status).toBe(200);
@@ -6217,6 +6219,10 @@ describe('claw-investigator runs', () => {
       anchor: { body: 'Second question?' },
       claw: { input: { question: 'Second question?' } },
     });
+    // The successor brief holds exactly one question: no stale copy in its
+    // spec, title or anywhere else.
+    expect(JSON.stringify(brief.json)).not.toContain('First question?');
+    expect(brief.json).not.toHaveProperty('spec.input');
   });
 
   it('refuses claw mode for any other pipeline', async () => {

@@ -632,8 +632,10 @@ export const itemsContract = {
         operationId: 'cancelItem',
         summary: 'Cancel a work item',
         description:
-          'Requires `work.operator`, except claw work, which only a ' +
-          'principal holding `work.claw.admit` for its pipeline may cancel.',
+          'Requires `work.operator`, except claw work, which only its ' +
+          'admitting principal, holding `work.claw.admit` for its pipeline, ' +
+          'may cancel. A caller holding only `work.claw.admit` receives 404 ' +
+          'for every item it may not cancel.',
       }),
     )
     .errors({

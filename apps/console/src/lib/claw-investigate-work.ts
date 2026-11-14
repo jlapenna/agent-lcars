@@ -31,12 +31,20 @@ export class ClawAdmissionConflict extends Error {
   override readonly name = 'ClawAdmissionConflict';
 }
 
-function investigationTitle(question: string): string {
-  const firstLine = question.trim().split('\n', 1)[0] ?? '';
-  const title = `Investigate: ${firstLine}`;
-  return title.length <= WORK_TITLE_MAX
-    ? title
-    : `${title.slice(0, WORK_TITLE_MAX - 1)}…`;
+/** Source-key based, never a question: the stored spec is immutable, while
+ * every round under the key may ask a different question. */
+function investigationText(sourceKey: string): {
+  title: string;
+  description: string;
+} {
+  const title = `Claw investigation ${sourceKey}`;
+  return {
+    title:
+      title.length <= WORK_TITLE_MAX
+        ? title
+        : `${title.slice(0, WORK_TITLE_MAX - 1)}…`,
+    description: `Read-only claw investigation for source key ${sourceKey}. Each round's question is its own revision input.`,
+  };
 }
 
 /**
@@ -44,7 +52,7 @@ function investigationTitle(question: string): string {
  *
  * Modelled on fleet triage and Inbox summaries: `(operation, sourceKey)`
  * resolves to one stable Work id, the question is the immutable revision
- * input, a repeated question is the same round, and a new question for the
+ * input and never part of the stored spec, a repeated question is the same round, and a new question for the
  * same key supersedes a queued one. Without a `sourceKey` every call admits
  * a new item. Keys are scoped to the admitting principal, and stored Work
  * owned by another principal is never compatible. The origin is the
@@ -73,13 +81,11 @@ export async function admitInvestigation(
     input: revisionInput,
   });
   const spec = clawWorkSpecSchema.parse({
-    title: investigationTitle(input.question),
-    description: input.question,
+    ...investigationText(sourceKey),
     pipeline: CLAW_INVESTIGATOR_PIPELINE,
     priority: 'background',
     operation: CLAW_INVESTIGATE_OPERATION,
     sourceKey,
-    input,
   });
   const outcome = await runtime.orchestrator.request({
     taskId: { workId },

@@ -35,15 +35,17 @@ describe('admitInvestigation', () => {
     expect(task.work).toEqual({
       origin: { principal: 'user:jlapenna', channel: 'console' },
       spec: {
-        title: 'Investigate: Why did the backup alert fire?',
-        description: request.question,
+        title: 'Claw investigation alert:backup',
+        description:
+          "Read-only claw investigation for source key alert:backup. Each round's question is its own revision input.",
         pipeline: 'claw-investigator',
         priority: 'background',
         operation: 'investigate:v1',
         sourceKey: 'alert:backup',
-        input: { question: request.question },
       },
     });
+    // The question lives only in the round's revision input.
+    expect(JSON.stringify(task.work)).not.toContain(request.question);
     expect(isSourceManagedWork(task.work)).toBe(true);
     const [run] = await rt.store.listRuns({ workId });
     expect(run).toMatchObject({
@@ -137,7 +139,7 @@ describe('admitInvestigation', () => {
     const rt = runtime();
     const { workId } = await admitInvestigation(rt, {
       ...request,
-      sourceKey: 'long',
+      sourceKey: 'k'.repeat(256),
       question: `${'x'.repeat(400)}\nsecond line`,
     });
     const title = (
@@ -150,9 +152,9 @@ describe('admitInvestigation', () => {
     await expect(
       admitInvestigation(rt, { ...request, sourceKey: 'blank', question: ' ' }),
     ).rejects.toThrow();
-    expect(await rt.store.readSourceWorkId('investigate:v1:blank')).toBe(
-      undefined,
-    );
+    expect(
+      await rt.store.readSourceWorkId('investigate:v1:user:jlapenna:blank'),
+    ).toBe(undefined);
   });
 
   it("never resolves, supersedes or reveals another principal's investigation", async () => {
@@ -187,13 +189,12 @@ describe('admitInvestigation', () => {
       work: {
         origin: { principal: 'svc:other-admitter', channel: 'console' },
         spec: {
-          title: 'Investigate: foreign',
+          title: 'Claw investigation alert:owned',
           description: 'foreign',
           pipeline: 'claw-investigator',
           priority: 'background',
           operation: 'investigate:v1',
           sourceKey: 'alert:owned',
-          input: { question: 'foreign' },
         },
       },
     });

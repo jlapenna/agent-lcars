@@ -46,3 +46,16 @@ export function eventSource(
     return { label: key, href: `/task/${github[1]}/${github[2]}/${github[3]}` };
   return { label: key };
 }
+
+/** The question a claw round executed: its own revision input, never the
+ * item's immutable spec, which a later round under the same source key may
+ * have outgrown. Undefined for any other run. */
+export function clawRoundQuestion(
+  run: Pick<ItemRunView, 'sourceRevision'>,
+): string | undefined {
+  const input = run.sourceRevision?.input;
+  return input?.['operation'] === 'investigate:v1' &&
+    typeof input['question'] === 'string'
+    ? input['question']
+    : undefined;
+}

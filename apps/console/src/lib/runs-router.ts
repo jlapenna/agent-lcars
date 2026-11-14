@@ -664,8 +664,8 @@ export const runsRouter = os.router({
     }
     const { spec } = parsed.data;
     if (claw !== undefined) {
-      // The executing round's input, not the item's first: a newer question
-      // admitted under the same source key supersedes the stored one.
+      // The question exists only in the executing round's revision input:
+      // the immutable spec carries none, so the brief never holds two.
       const { operation, ...operationInput } = run.sourceRevision?.input ?? {};
       const input = clawInvestigateInputSchema.safeParse(operationInput);
       if (!input.success || operation !== claw.operation) {

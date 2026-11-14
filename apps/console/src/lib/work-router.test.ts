@@ -195,8 +195,7 @@ describe('claw investigation admission', () => {
         priority: 'background',
         operation: 'investigate:v1',
         sourceKey: 'alert:backup',
-        input: { question },
-        description: question,
+        title: 'Claw investigation alert:backup',
       },
       state: 'running',
       runs: [
@@ -211,6 +210,8 @@ describe('claw investigation admission', () => {
     });
     expect(first.json.origin).not.toHaveProperty('thread');
     expect(first.json.spec).not.toHaveProperty('target');
+    expect(first.json.spec).not.toHaveProperty('input');
+    expect(JSON.stringify(first.json.spec)).not.toContain(question);
     expect(drain).toHaveBeenCalledTimes(1);
     const replay = await call(ctx, 'POST', '/claw/investigations', {
       question,
@@ -277,7 +278,6 @@ describe('claw investigation admission', () => {
         priority: 'background',
         operation: 'investigate:v1',
         sourceKey: 'alert:backup',
-        input: { question },
       },
     });
     expect(response.status).toBe(400);
@@ -341,19 +341,61 @@ describe('claw investigation admission', () => {
     expect(await ctx.runtime.store.listRuns({ workId: id })).toHaveLength(1);
   });
 
-  it('keeps cancel of other work operator-only and source-managed summaries read-only', async () => {
+  it('keeps cancel of other work operator-only, and is no existence oracle for a claw admitter', async () => {
     const ctx = context();
     expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const asAdmitter = { ...ctx, principal: clawAdmitter };
+    const existing = await call(asAdmitter, 'POST', `/items/${ID}/cancel`);
+    const missing = await call(asAdmitter, 'POST', `/items/${OTHER_ID}/cancel`);
+    expect(existing).toMatchObject({ status: 404 });
+    expect(missing).toMatchObject({ status: 404 });
+    expect(existing.json).toEqual(missing.json);
+    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
+  });
+
+  it("never lets one claw admitter cancel or read another principal's investigation", async () => {
+    const ctx = context({ principal: clawAdmitter });
+    const mine = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+    });
+    const id = mine.json.id as string;
+    const gate = {
+      ...clawAdmitter,
+      principal: 'svc:alert-gate',
+      subject: 'alert-gate@agent-lcars.iam.gserviceaccount.com',
+    };
+    const foreign = await call(
+      { ...ctx, principal: gate },
+      'POST',
+      `/items/${id}/cancel`,
+    );
+    const missing = await call(
+      { ...ctx, principal: gate },
+      'POST',
+      `/items/${OTHER_ID}/cancel`,
+    );
+    expect(foreign).toMatchObject({ status: 404 });
+    expect(foreign.json).toEqual(missing.json);
+    expect(JSON.stringify(foreign.json)).not.toContain(question);
+    // An operator who also admits claw work still cannot cancel another
+    // principal's investigation.
     expect(
       (
         await call(
-          { ...ctx, principal: clawAdmitter },
+          {
+            ...ctx,
+            principal: {
+              ...gate,
+              scopes: new Set(['work.operator', 'work.claw.admit'] as const),
+            },
+          },
           'POST',
-          `/items/${ID}/cancel`,
+          `/items/${id}/cancel`,
         )
       ).status,
-    ).toBe(401);
-    expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
+    ).toBe(403);
+    const runs = await ctx.runtime.store.listRuns({ workId: id });
+    expect(runs.map((run) => run.state)).toEqual(['pending']);
   });
 });
 

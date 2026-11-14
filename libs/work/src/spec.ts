@@ -1,6 +1,5 @@
 import {
   CLAW_INVESTIGATE_OPERATION,
-  clawInvestigateInputSchema,
   PIPELINE_CONTRACTS,
   QUEUE_PRIORITIES,
 } from '@agent-lcars/dispatch-contracts';
@@ -129,7 +128,9 @@ export const recipeWorkSpecSchema = z.strictObject({
   jobOccurrence: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 /** Internal read-only investigation. It names no target: the agent reads
- * its zone, not a repository. Admitted only by the internal admission route
+ * its zone, not a repository. It carries no question either: the stored
+ * spec is immutable while a source key admits a new round per question, so
+ * each round's question lives only in its revision input. Admitted only by the internal admission route
  * (`POST /claw/investigations`); public `create` validates `workSpecSchema`
  * and so rejects this shape. */
 export const clawWorkSpecSchema = z.strictObject({
@@ -139,7 +140,6 @@ export const clawWorkSpecSchema = z.strictObject({
   priority: z.literal('background'),
   operation: z.literal(CLAW_INVESTIGATE_OPERATION),
   sourceKey: z.string().min(1).max(256),
-  input: clawInvestigateInputSchema,
 });
 export type ClawWorkSpec = z.infer<typeof clawWorkSpecSchema>;
 export const storedWorkSpecSchema = z.union([

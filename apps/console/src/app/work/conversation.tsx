@@ -3,6 +3,7 @@ import { Anchor, Badge, Code, Group, Stack, Text } from '@mantine/core';
 
 import { HumanNeededSummary } from '../human-needed-summary';
 import { IssueSourceLink } from '../issue-source';
+import { clawRoundQuestion } from './event-work';
 import { ProviderFallbackSummary } from './provider-fallback-summary';
 import { resultRefs } from './result-refs';
 import { safeHttpUrl } from './safe-url';
@@ -109,17 +110,21 @@ export function Conversation({
     <Stack gap="md">
       {item.runs.map((run, index) => {
         const isFirstRound = index === 0;
+        const clawQuestion = clawRoundQuestion(run);
         const humanText =
+          clawQuestion ??
           run.reply ??
           (isFirstRound
             ? (run.issue?.description ?? item.spec.description)
             : undefined);
         const humanPrincipal =
-          isFirstRound && run.reply === undefined
+          clawQuestion !== undefined ||
+          (isFirstRound && run.reply === undefined)
             ? item.origin.principal
             : (run.replyPrincipal ?? 'unknown');
         const humanChannel =
-          isFirstRound && run.reply === undefined
+          clawQuestion !== undefined ||
+          (isFirstRound && run.reply === undefined)
             ? item.origin.channel
             : (run.replyChannel ?? 'unknown');
         const session = item.sessions.find((s) => s.runId === run.runId);

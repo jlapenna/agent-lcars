@@ -441,7 +441,6 @@ describe('runsContract.brief claw branch', () => {
     priority: 'background',
     operation: 'investigate:v1',
     sourceKey: 'adhoc:x',
-    input: { question: 'why?' },
   };
   const brief = {
     id: workId,
@@ -468,6 +467,15 @@ describe('runsContract.brief claw branch', () => {
 
   it('carries the operation input and no repository', () => {
     expect(runBriefSchema.parse(brief)).toEqual(brief);
+  });
+
+  it('refuses a claw brief whose spec carries a question', () => {
+    expect(
+      runBriefSchema.safeParse({
+        ...brief,
+        spec: { ...spec, input: { question: 'why?' } },
+      }).success,
+    ).toBe(false);
   });
 
   it('refuses a claw brief without its operation or with another mode', () => {

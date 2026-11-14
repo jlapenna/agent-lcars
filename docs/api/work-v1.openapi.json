@@ -3477,18 +3477,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -3497,8 +3485,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -4634,18 +4621,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -4654,8 +4629,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -5797,18 +5771,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -5817,8 +5779,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -6971,18 +6932,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -6991,8 +6940,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -8189,18 +8137,6 @@
                                     "type": "string",
                                     "minLength": 1,
                                     "maxLength": 256
-                                  },
-                                  "input": {
-                                    "type": "object",
-                                    "properties": {
-                                      "question": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 4000
-                                      }
-                                    },
-                                    "required": ["question"],
-                                    "additionalProperties": false
                                   }
                                 },
                                 "required": [
@@ -8209,8 +8145,7 @@
                                   "pipeline",
                                   "priority",
                                   "operation",
-                                  "sourceKey",
-                                  "input"
+                                  "sourceKey"
                                 ],
                                 "additionalProperties": false
                               }
@@ -9128,7 +9063,7 @@
       "post": {
         "operationId": "cancelItem",
         "summary": "Cancel a work item",
-        "description": "Requires `work.operator`, except claw work, which only a principal holding `work.claw.admit` for its pipeline may cancel.",
+        "description": "Requires `work.operator`, except claw work, which only its admitting principal, holding `work.claw.admit` for its pipeline, may cancel. A caller holding only `work.claw.admit` receives 404 for every item it may not cancel.",
         "tags": ["items"],
         "parameters": [
           {
@@ -9346,18 +9281,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -9366,8 +9289,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -10546,18 +10468,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -10566,8 +10476,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -11777,18 +11686,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -11797,8 +11694,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         }
@@ -15832,18 +15728,6 @@
                                   "type": "string",
                                   "minLength": 1,
                                   "maxLength": 256
-                                },
-                                "input": {
-                                  "type": "object",
-                                  "properties": {
-                                    "question": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 4000
-                                    }
-                                  },
-                                  "required": ["question"],
-                                  "additionalProperties": false
                                 }
                               },
                               "required": [
@@ -15852,8 +15736,7 @@
                                 "pipeline",
                                 "priority",
                                 "operation",
-                                "sourceKey",
-                                "input"
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -16476,18 +16359,6 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 256
-                            },
-                            "input": {
-                              "type": "object",
-                              "properties": {
-                                "question": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 4000
-                                }
-                              },
-                              "required": ["question"],
-                              "additionalProperties": false
                             }
                           },
                           "required": [
@@ -16496,8 +16367,7 @@
                             "pipeline",
                             "priority",
                             "operation",
-                            "sourceKey",
-                            "input"
+                            "sourceKey"
                           ],
                           "additionalProperties": false
                         },

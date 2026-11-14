@@ -16,6 +16,7 @@ import {
   type MaintenanceTickOutput,
   recipeWorkSpecSchema,
   storedClawWorkSpec,
+  storedWorkPayloadSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
 import { deriveItemState, toItemView } from '@agent-lcars/work/derive';
@@ -170,6 +171,25 @@ const canceller = os.use(async ({ context, next }) => {
   }
   return next({ context: { principal } });
 });
+
+/** Claw cancellation authority: the stored Work's admitting principal,
+ *  still holding the claw grant for its pipeline. */
+function ownsClawWork(
+  principal: {
+    principal: string;
+    scopes: ReadonlySet<string>;
+    pipelines: readonly string[];
+  },
+  work: unknown,
+): boolean {
+  const spec = storedClawWorkSpec(work);
+  const origin = storedWorkPayloadSchema.safeParse(work).data?.origin;
+  return (
+    spec !== undefined &&
+    origin?.principal === principal.principal &&
+    mayAdmitClaw(principal, spec.pipeline)
+  );
+}
 
 function mayAdmitClaw(
   principal: { scopes: ReadonlySet<string>; pipelines: readonly string[] },
@@ -400,19 +420,31 @@ export const workRouter = os.router({
   ),
 
   cancel: canceller.cancel.handler(async ({ input, context, errors }) => {
-    const task = await readWorkTask(context, input.id);
-    if (task === undefined) throw errors.NOT_FOUND();
-    const claw = storedClawWorkSpec(task.task.work);
-    if (claw !== undefined) {
-      // Claw work is source-managed, yet its admitter may cancel it.
-      if (!mayAdmitClaw(context.principal, claw.pipeline))
-        throw errors.FORBIDDEN();
+    const { principal } = context;
+    let task: Awaited<ReturnType<typeof readWorkTask>>;
+    if (!isWorkOperatorPrincipal(principal)) {
+      // A claw admitter without work.operator may cancel only its own claw
+      // investigations. Every other item -- missing, not claw, owned by
+      // another principal, or outside its repository binding -- answers the
+      // same 404, so the route is no existence oracle for it.
+      const stored = await context.runtime.store.readTask({
+        workId: input.id,
+      });
+      if (
+        stored === undefined ||
+        !mayAccessStoredWork(principal, stored.task.work) ||
+        !ownsClawWork(principal, stored.task.work)
+      )
+        throw errors.NOT_FOUND();
+      task = stored;
     } else {
-      if (!isWorkOperatorPrincipal(context.principal))
-        throw new ORPCError('UNAUTHORIZED', {
-          message: 'work.operator scope required',
-        });
-      if (isSourceManagedWork(task.task.work))
+      task = await readWorkTask(context, input.id);
+      if (task === undefined) throw errors.NOT_FOUND();
+      if (storedClawWorkSpec(task.task.work) !== undefined) {
+        // Operators may read claw work like every other native item, but
+        // only its admitting principal, holding its claw grant, cancels it.
+        if (!ownsClawWork(principal, task.task.work)) throw errors.FORBIDDEN();
+      } else if (isSourceManagedWork(task.task.work))
         throw errors.CONFLICT({
           message: 'Source-managed work is read-only.',
         });

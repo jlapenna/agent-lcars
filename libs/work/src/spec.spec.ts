@@ -167,7 +167,7 @@ describe('readStoredWorkSpec', () => {
       }),
     ).toEqual({ title: 'T', pipeline: 'inbox-summary' });
     expect(readStoredWorkSpec({ ...base, ...clawSpec })).toEqual({
-      title: 'Investigate: why?',
+      title: 'Claw investigation adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
       pipeline: 'claw-investigator',
     });
   });
@@ -192,13 +192,12 @@ describe('readStoredWorkSpec', () => {
 });
 
 const clawSpec = {
-  title: 'Investigate: why?',
-  description: 'Why did the backup alert fire?',
+  title: 'Claw investigation adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+  description: 'Read-only claw investigation.',
   pipeline: 'claw-investigator',
   priority: 'background',
   operation: 'investigate:v1',
   sourceKey: 'adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
-  input: { question: 'Why did the backup alert fire?' },
 };
 
 describe('clawWorkSpecSchema', () => {
@@ -217,9 +216,8 @@ describe('clawWorkSpecSchema', () => {
     ['a target', { target: { repo: 'octo/example' } }],
     ['another priority', { priority: 'normal' }],
     ['another operation', { operation: 'oncall-investigate:v1' }],
-    ['a blank question', { input: { question: '   ' } }],
-    ['an oversized question', { input: { question: 'q'.repeat(4_001) } }],
-    ['extra input', { input: { question: 'q', repo: 'octo/example' } }],
+    // The immutable spec never holds a round's question.
+    ['a question', { input: { question: 'q' } }],
   ])('rejects %s', (_name, change) => {
     expect(
       clawWorkSpecSchema.safeParse({ ...clawSpec, ...change }).success,
