@@ -1,0 +1,8 @@
+{
+  "name": "@agent-lcars/claw-runtime",
+  "private": true,
+  "description": "Pinned OpenClaw distribution for the claw runner image. npm ci verifies every package against package-lock.json integrity hashes.",
+  "dependencies": {
+    "openclaw": "2026.10.10-beta.3"
+  }
+}

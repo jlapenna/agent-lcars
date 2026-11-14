@@ -283,6 +283,9 @@ jobs:
       - name: Test the OpenCode LiteLLM proxy
         run: node --test apps/runner-autoscaler/runner-image/opencode-litellm-proxy.test.mjs
 
+      - name: Test the claw runner launcher (#3349)
+        run: node --test apps/runner-autoscaler/claw-image/claw-job.test.mjs
+
       - name: Test control-plane native cross-compilation (#1436)
         run: bash apps/runner-autoscaler/control-plane-image.test.sh
 
