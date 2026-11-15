@@ -58,6 +58,12 @@ review and comment-quality guidance applies.
    Haiku/Sonnet/Opus tiers. Preserve the four fresh review agents in step 4
    (two guidance-compliance reviewers and two bug reviewers). Run them in
    parallel up to available agent slots; wait and reuse slots when necessary.
+   Start each reviewer and validator with a fresh context, without inheriting
+   the parent's conversation or previous reviewers' answers. On Codex use
+   `fork_turns: "none"` (or `fork_context: false` when that is the native
+   schema). Give each reviewer only the common source inputs and its assigned
+   role; give validators the common inputs and candidate to verify. Distinct
+   session IDs alone do not establish independent contexts.
    Give the passes distinct responsibilities: guidance A checks scoped rules;
    guidance B checks mandatory workflow and operational contracts; bug A
    checks changed logic and concrete input/state failures; bug B traces the

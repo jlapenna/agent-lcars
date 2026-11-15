@@ -35,6 +35,7 @@ const lines = (path) =>
     });
 const trace = lines(join(directory, 'trace.jsonl'));
 const completed = new Set();
+const isolated = new Set();
 const canonicalIds = {};
 const models = new Set();
 const artifacts = [];
@@ -111,12 +112,20 @@ if (manifest.provider === 'codex') {
     files.length === 1 ? archive(files[0], 'codex-root.jsonl') : [];
   const spawned = new Set();
   const calls = new Map();
+  const spawnArguments = new Map();
   for (const event of native ?? []) {
     const payload = event.payload ?? {};
     if (event.type === 'turn_context' && payload.model)
       models.add(payload.model);
     if (payload.type === 'function_call')
       calls.set(payload.call_id, payload.name);
+    if (payload.type === 'function_call' && payload.name === 'spawn_agent') {
+      try {
+        spawnArguments.set(payload.call_id, JSON.parse(payload.arguments));
+      } catch {
+        errors.push('Cannot read native Codex spawn arguments');
+      }
+    }
     if (
       payload.type === 'agent_message' &&
       spawned.has(payload.author) &&
@@ -137,8 +146,15 @@ if (manifest.provider === 'codex') {
     if (
       calls.get(payload.call_id) === 'spawn_agent' &&
       typeof output.task_name === 'string'
-    )
+    ) {
       spawned.add(output.task_name);
+      const arguments_ = spawnArguments.get(payload.call_id);
+      if (
+        arguments_?.fork_turns === 'none' ||
+        arguments_?.fork_context === false
+      )
+        isolated.add(output.task_name);
+    }
     for (const agent of output.agents ?? []) {
       if (
         spawned.has(agent.agent_name) &&
@@ -239,11 +255,19 @@ writeFileSync(
   JSON.stringify(
     {
       provider: manifest.provider,
+      isolatedChildren: [...isolated].map((id) => canonicalIds[id] ?? id),
       completedChildren: [...completed].map((id) => canonicalIds[id] ?? id),
       canonicalIds,
       models: [...models],
       artifacts,
       errors,
+      providerFailure: trace.some((event) =>
+        /quota|RESOURCE_EXHAUSTED|rate.limit|usage.limit/i.test(
+          String(event.result?.error ?? event.error?.message ?? ''),
+        ),
+      )
+        ? 'provider-limit'
+        : null,
     },
     null,
     2,

@@ -87,6 +87,10 @@ const adapter = readFileSync(
 );
 writeFileSync(join(procedure, 'README.md'), adapter);
 const imageId = process.env.LCARS_REVIEW_QUALIFICATION_IMAGE_ID;
+if (imageId && !sourceRef && head !== git('rev-parse', 'HEAD').trim())
+  throw new Error(
+    'Current candidate PR head does not match qualification source',
+  );
 const baked =
   '/usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review';
 if (imageId) {
@@ -181,6 +185,10 @@ return evidence only, never recursively delegate and never write to GitHub.
 ${dependencyContext}
 Use the native delegation facility this harness actually exposes, and wait for
 all reviewers and validators. Do not substitute a single-agent inspection.
+Every reviewer and validator must start with a fresh context. On Codex explicitly
+set fork_turns="none" (or fork_context=false if that is its native schema), never
+the default inherited conversation. Supply common inputs and assigned role;
+validators also receive the candidate. Do not leak other reviewers' conclusions.
 Read source at ${head} with git show ${head}:<path>; the working checkout can
 belong to a later revision. Do not silently review current files for an older PR.
 ${sourceRef ? `This is an explicitly labelled historical snapshot of the real PR. Read source with git show ${head}:<path>, not the current checkout. The live PR has moved. Do not query live PR prose, external memory or later source: those can disclose later fixes. Current-head/preflight/publication checks are outside this replay's coverage; do not claim them. Do not use MCP tools for this replay.` : 'Read back the live PR head before deciding; if it moved, record an incomplete review.'}

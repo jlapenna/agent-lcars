@@ -147,6 +147,8 @@ await Promise.all(
       console.log(
         JSON.stringify({ provider, case: scenario.id, passed: row.passed }),
       );
+      const native = read(join(destination, 'run/native-evidence.json'));
+      if (native?.providerFailure === 'provider-limit') break;
     }
   }),
 );

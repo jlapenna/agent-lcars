@@ -46,6 +46,12 @@ export function evaluateReview({
   const validatorIds = validators.map((validator) =>
     canonical(validator.nativeSessionId),
   );
+  if (native?.provider === 'codex') {
+    const independent = new Set(native.isolatedChildren ?? []);
+    require([...ids, ...validatorIds].every((id) =>
+      independent.has(id),
+    ), 'codex-child-context-is-not-observably-fresh');
+  }
   require(new Set(candidates.map((candidate) => candidate.id)).size ===
     candidates.length &&
     validators.every((validator) =>
