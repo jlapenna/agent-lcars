@@ -191,12 +191,22 @@ if (manifest.provider === 'codex') {
     }
   }
   const receiptPath = join(directory, 'receipt.json');
+  let receiptIds = [];
   if (existsSync(receiptPath)) {
-    const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
-    for (const id of [
-      ...(receipt.reviewers ?? []),
-      ...(receipt.validators ?? []),
-    ].map((item) => item.nativeSessionId)) {
+    try {
+      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+      if (
+        !Array.isArray(receipt?.reviewers) ||
+        !Array.isArray(receipt?.validators)
+      )
+        throw new Error('Reviewer and validator inventories must be arrays');
+      receiptIds = [...receipt.reviewers, ...receipt.validators].map(
+        (item) => item?.nativeSessionId,
+      );
+    } catch (error) {
+      errors.push('Invalid Codex receipt: ' + error.message);
+    }
+    for (const id of receiptIds) {
       if (!/^[a-f0-9-]{36}$/.test(id ?? '')) continue;
       const children = find(join(home, 'sessions'), id);
       if (children.length !== 1) {

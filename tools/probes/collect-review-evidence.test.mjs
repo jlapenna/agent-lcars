@@ -123,6 +123,13 @@ function collect(format, mutation) {
       body: upstream + marker,
       comments: [],
     });
+    if (mutation === 'receipt-json')
+      writeFileSync(join(root, 'receipt.json'), '{');
+    if (mutation === 'receipt-null') json(join(root, 'receipt.json'), null);
+    if (mutation === 'receipt-inventory')
+      json(join(root, 'receipt.json'), { reviewers: {}, validators: [] });
+    if (mutation === 'receipt-null-item')
+      json(join(root, 'receipt.json'), { reviewers: [null], validators: [] });
     const execution = spawnSync(
       process.execPath,
       [
@@ -150,6 +157,33 @@ function collect(format, mutation) {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+for (const mutation of [
+  'receipt-json',
+  'receipt-null',
+  'receipt-inventory',
+  'receipt-null-item',
+]) {
+  test(`Codex collection retains failing evidence for ${mutation}`, () => {
+    const result = collect('v1', mutation);
+    assert.equal(result.exit, 1);
+    assert.equal(result.evaluation.passed, false);
+    assert.ok(result.evaluation.failures.length > 0);
+    if (mutation === 'receipt-json')
+      assert.ok(
+        result.evaluation.failures.some((reason) =>
+          reason.startsWith('missing-or-invalid-output'),
+        ),
+      );
+    assert.ok(result.native.artifacts.includes('native/codex-root.jsonl'));
+    if (mutation !== 'receipt-null-item')
+      assert.ok(
+        result.native.errors.some((reason) =>
+          reason.startsWith('Invalid Codex receipt:'),
+        ),
+      );
+  });
 }
 
 for (const format of ['v1', 'v2']) {

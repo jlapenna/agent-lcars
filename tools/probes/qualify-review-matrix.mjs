@@ -40,8 +40,15 @@ for (const signal of ['SIGINT', 'SIGTERM'])
     interrupted = true;
     for (const child of active) child.kill(signal);
   });
-const read = (path) =>
-  existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+const read = (path, errors) => {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    errors.push('Invalid output ' + path + ': ' + error.message);
+    return null;
+  }
+};
 const persist = () =>
   writeFileSync(
     join(output, 'matrix.json'),
@@ -110,37 +117,46 @@ await Promise.all(
           resolveResult({ exitCode, signal, stdout, stderr });
         });
       });
-      const evaluation = read(join(destination, 'run/evaluation.json'));
-      const receipt = read(join(destination, 'run/receipt.json'));
+      const outputErrors = [];
+      const evaluation = read(
+        join(destination, 'run/evaluation.json'),
+        outputErrors,
+      );
+      const receipt = read(join(destination, 'run/receipt.json'), outputErrors);
       // This is a minimum regression guard, not a substitute for inspecting the
       // actual candidate, validator evidence and captured inline comments.
       const controlFound =
         scenario.id !== 'unqualified-upstream-update' ||
-        (receipt?.validators ?? []).some((validator) => {
-          const candidate = receipt?.candidates?.find(
-            (item) => item.id === validator.candidateId,
-          );
-          const evidence = JSON.stringify({
-            candidate,
-            evidence: validator.evidence,
-          });
-          return (
-            validator.decision === 'confirmed' &&
-            /renovate|submodule/i.test(evidence) &&
-            /auto.?merge/i.test(evidence) &&
-            /qualif|digest/i.test(evidence)
-          );
-        });
+        (Array.isArray(receipt?.validators) &&
+          Array.isArray(receipt?.candidates) &&
+          receipt.validators.some((validator) => {
+            if (!validator || typeof validator !== 'object') return false;
+            const candidate = receipt?.candidates?.find(
+              (item) => item?.id === validator.candidateId,
+            );
+            const evidence = JSON.stringify({
+              candidate,
+              evidence: validator.evidence,
+            });
+            return (
+              validator.decision === 'confirmed' &&
+              /renovate|submodule/i.test(evidence) &&
+              /auto.?merge/i.test(evidence) &&
+              /qualif|digest/i.test(evidence)
+            );
+          }));
       const row = {
         provider,
         case: scenario.id,
         destination,
         execution,
         evaluation,
+        outputErrors,
         knownDefectDetected:
           scenario.id === 'unqualified-upstream-update' ? controlFound : null,
         passed:
           execution.exitCode === 0 &&
+          outputErrors.length === 0 &&
           evaluation?.passed === true &&
           controlFound,
       };
