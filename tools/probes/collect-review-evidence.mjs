@@ -71,18 +71,25 @@ if (manifest.provider === 'claude') {
         ids.add(match[1]);
     }
   }
-  const cwd = trace.find((event) => event.subtype === 'init')?.cwd;
-  if (!session || !cwd) errors.push('Claude native session binding missing');
-  for (const id of ids) {
-    const project = cwd.replace(/[^a-zA-Z0-9]/g, '-');
-    const path = join(
-      process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
-      'projects',
-      project,
-      session,
-      'subagents',
-      'agent-' + id + '.jsonl',
-    );
+  // Claude truncates/hashes long project paths. Bind to the observed native
+  // parent session instead of reproducing that private path encoding.
+  const projects = join(
+    process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+    'projects',
+  );
+  const parents =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      session ?? '',
+    ) && existsSync(projects)
+      ? readdirSync(projects)
+          .map((project) => join(projects, project, session))
+          .filter((path) => existsSync(join(path, 'subagents')))
+      : [];
+  const parent = parents.length === 1 ? parents[0] : null;
+  if (!parent)
+    errors.push('Cannot establish unique Claude native parent session');
+  for (const id of parent ? ids : []) {
+    const path = join(parent, 'subagents', 'agent-' + id + '.jsonl');
     const child = archive(path, 'claude-' + id + '.jsonl');
     const assistant = child
       ?.filter((event) => event.type === 'assistant')

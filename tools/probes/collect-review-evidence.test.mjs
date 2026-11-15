@@ -306,3 +306,143 @@ process.exit(0);
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Native Claude project directories can have truncated/hashed opaque names.
+// Session UUIDs, tool-result agent IDs and terminal transcripts bind evidence.
+function collectClaude(mutation) {
+  const root = mkdtempSync(join(tmpdir(), 'lcars-claude-project-'));
+  try {
+    const config = join(root, 'claude');
+    const session = randomUUID();
+    const projects = join(config, 'projects');
+    const directory = join(
+      projects,
+      'opaque-' + 'x'.repeat(190),
+      session,
+      'subagents',
+    );
+    mkdirSync(directory, { recursive: true });
+    const head = '1'.repeat(40),
+      upstream = '2'.repeat(40),
+      marker = '<!-- Claude native fixture -->';
+    const reviewers = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'].map(
+      (role, i) => ({
+        role,
+        nativeSessionId: 'a'.repeat(15) + i,
+        complete: true,
+      }),
+    );
+    const json = (path, value) => writeFileSync(path, JSON.stringify(value));
+    for (const reviewer of reviewers)
+      writeFileSync(
+        join(directory, 'agent-' + reviewer.nativeSessionId + '.jsonl'),
+        JSON.stringify({
+          type: 'assistant',
+          message: { model: 'fixture', stop_reason: 'end_turn' },
+        }) + '\n',
+      );
+    if (mutation === 'ambiguous')
+      mkdirSync(join(projects, 'another-project', session, 'subagents'), {
+        recursive: true,
+      });
+    const trace = [
+      ...(mutation === 'missing-init'
+        ? []
+        : [
+            {
+              subtype: 'init',
+              session_id: session,
+              cwd: '/review/' + 'long-context/'.repeat(30),
+            },
+          ]),
+      {
+        type: 'user',
+        message: {
+          content: reviewers.map((reviewer) => ({
+            type: 'tool_result',
+            content: 'agentId: ' + reviewer.nativeSessionId,
+          })),
+        },
+      },
+    ];
+    writeFileSync(
+      join(root, 'trace.jsonl'),
+      trace.map((event) => JSON.stringify(event)).join('\n') + '\n',
+    );
+    json(join(root, 'manifest.json'), {
+      provider: 'claude',
+      reviewedHead: head,
+      upstreamRevision: upstream,
+      marker,
+      publication: 'captured-not-posted',
+      environment: 'native-project-fixture',
+    });
+    json(join(root, 'execution.json'), {
+      exitCode: 0,
+      timedOut: false,
+      interrupted: false,
+    });
+    json(join(root, 'receipt.json'), {
+      head,
+      complete: true,
+      reviewers,
+      candidates: [],
+      validators: [],
+    });
+    json(join(root, 'review.json'), {
+      commit_id: head,
+      event: 'COMMENT',
+      body: upstream + marker,
+      comments: [],
+    });
+    const execution = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL('./collect-review-evidence.mjs', import.meta.url),
+        ),
+        root,
+      ],
+      {
+        env: { ...process.env, CLAUDE_CONFIG_DIR: config },
+        encoding: 'utf8',
+        timeout: 10000,
+      },
+    );
+    assert.equal(execution.error, undefined);
+    return {
+      exit: execution.status,
+      evaluation: JSON.parse(
+        readFileSync(join(root, 'evaluation.json'), 'utf8'),
+      ),
+      native: JSON.parse(
+        readFileSync(join(root, 'native-evidence.json'), 'utf8'),
+      ),
+    };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('Claude binds four completed reviewers through an opaque project directory for a long cwd', () => {
+  const result = collectClaude();
+  assert.equal(result.exit, 0);
+  assert.equal(result.evaluation.passed, true);
+  assert.equal(result.native.completedChildren.length, 4);
+});
+for (const mutation of ['ambiguous', 'missing-init'])
+  test(
+    'Claude rejects ' +
+      mutation +
+      ' native parent binding with a recorded result',
+    () => {
+      const result = collectClaude(mutation);
+      assert.equal(result.exit, 1);
+      assert.equal(result.evaluation.passed, false);
+      assert.ok(
+        result.native.errors.some((message) =>
+          message.includes('unique Claude native parent'),
+        ),
+      );
+    },
+  );
