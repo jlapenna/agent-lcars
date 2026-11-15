@@ -7,7 +7,11 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runImageContainer } from './qualification-container.mjs';
-import { protectedConfigMounts } from './review-auth-mounts.mjs';
+import {
+  protectedConfigMounts,
+  reconcileRegistrations,
+  snapshotRegistrations,
+} from './review-auth-mounts.mjs';
 
 const [provider, pull, imageId, output, historical] = process.argv.slice(2);
 if (
@@ -165,6 +169,7 @@ writeFileSync(
     2,
   ),
 );
+const registrationsBefore = snapshotRegistrations(provider, auth);
 try {
   const succeeded = await runImageContainer(
     args,
@@ -192,4 +197,19 @@ try {
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
+} finally {
+  // Runs on success and failure alike: a review must leave the caller's hook
+  // registrations exactly as it found them.
+  const findings = reconcileRegistrations(provider, auth, registrationsBefore);
+  if (findings.length) {
+    writeFileSync(
+      join(output, 'registration-changes.json'),
+      JSON.stringify(findings, null, 2),
+    );
+    console.error(
+      "Review changed the caller's hook registrations; qualification fails: " +
+        JSON.stringify(findings),
+    );
+    process.exitCode = 1;
+  }
 }

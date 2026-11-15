@@ -33,10 +33,15 @@ The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
 providers use the caller's existing native authentication directory, mounted
 without copying rotating login state. The container drops to the caller's UID
-so those files retain their ownership. Hook registrations inside that directory
-(Claude `settings.json` and `settings.local.json`, Codex `hooks.json`) are
-overlaid read-only, so nothing a review runs can install a hook into the
-caller's live sessions (#3379). The image's normal runner UID and setup
+so those files retain their ownership. The hook registrations LCARS's worker installer
+writes, and the scripts they run, are overlaid read-only when present: Claude
+`settings.json`, `settings.local.json` and `hooks/`, and Codex `hooks.json`.
+The launcher also snapshots those registration files before the run. If the
+run created one, it is moved aside to `<file>.review-qualification-<time>` and
+the qualification fails; any other change fails the qualification and is
+recorded in `registration-changes.json` (#3379). The rest of the directory
+stays writable for rotating login state, so Claude `plugins/` and Codex
+`config.toml` are not protected by this guard. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
