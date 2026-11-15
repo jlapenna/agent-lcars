@@ -74,8 +74,11 @@ export function oncallRevisionKey(
 /**
  * Admits one `oncall-investigate:v1` round for a firing Alertmanager group.
  *
- * Shadow stage (phase 3b): origin channel `alertmanager` with no thread, so
- * the outcome is persisted only; the legacy Gateway hook still pages. The
+ * Origin channel `alertmanager` has no thread: the outcome is persisted, and
+ * `oncall-alert-gate` reads it back through `GET /items/{id}` to acknowledge
+ * the page on the first attempt heartbeat and to post the report to Slack
+ * (the Console cannot reach that LAN receiver). Rounds are `urgent` so they
+ * claim ahead of investigator work in the shared zone. The
  * same fingerprint set and episode are the same round even when the
  * rendered alert text differs (annotations re-render on every
  * notification); a new set, or a re-fire after resolution (a new episode),
@@ -105,7 +108,7 @@ export async function admitOncallAlert(
   const spec = clawWorkSpecSchema.parse({
     ...oncallText(request.groupKey),
     pipeline: CLAW_ONCALL_PIPELINE,
-    priority: 'background',
+    priority: 'urgent',
     operation: CLAW_ONCALL_INVESTIGATE_OPERATION,
     sourceKey: request.groupKey,
   });

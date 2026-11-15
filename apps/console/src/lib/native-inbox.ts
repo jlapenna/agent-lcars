@@ -2,7 +2,10 @@ import 'server-only';
 
 import { fleetTriageReportSchema } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
-import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import {
+  isEffectfulPipeline,
+  type OrchestratorStore,
+} from '@agent-lcars/orchestrator';
 import { isSourceManagedWork } from '@agent-lcars/work';
 import { toWorkSummary } from '@agent-lcars/work/derive';
 
@@ -81,7 +84,7 @@ export async function getNativeInboxCards(
       }
       // Repository jobs expose artifacts and invocation through Jobs; coding
       // replies must not create a second attempt of an effectful occurrence.
-      if (work.spec.pipeline === 'goose') continue;
+      if (isEffectfulPipeline(work.spec.pipeline)) continue;
       cards.push({
         humanNeededActions,
         work: { ...work, anchor: work.anchor },

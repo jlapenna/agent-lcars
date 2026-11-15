@@ -3506,7 +3506,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -4697,7 +4697,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -5893,7 +5893,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -7100,7 +7100,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -8056,7 +8056,7 @@
       "post": {
         "operationId": "admitOncallAlert",
         "summary": "Admit or resolve an Alertmanager group for claw/oncall (work.claw.admit required)",
-        "description": "`groupKey` names one Work item per admitting principal. While firing, the sorted fingerprint set and `episode` (the earliest alert `startsAt`) are the revision: the same pair returns its existing round even when `question` differs, and a new set or a re-fire after resolution supersedes a queued round. `resolved` invalidates a pending round and ignores `episode`; a running attempt finishes. Outcomes are persisted only.",
+        "description": "`groupKey` names one Work item per admitting principal. While firing, the sorted fingerprint set and `episode` (the earliest alert `startsAt`) are the revision: the same pair returns its existing round even when `question` differs, and a new set or a re-fire after resolution supersedes a queued round. `resolved` invalidates a pending round and ignores `episode`; a running attempt finishes. Outcomes are persisted; the admitting gate reads them back with `GET /items/{id}`.",
         "tags": ["items"],
         "requestBody": {
           "required": true,
@@ -8329,7 +8329,7 @@
                                     },
                                     "priority": {
                                       "type": "string",
-                                      "const": "background"
+                                      "enum": ["urgent", "background"]
                                     },
                                     "sourceKey": {
                                       "type": "string",
@@ -9604,7 +9604,7 @@
                                       },
                                       "priority": {
                                         "type": "string",
-                                        "const": "background"
+                                        "enum": ["urgent", "background"]
                                       },
                                       "sourceKey": {
                                         "type": "string",
@@ -10794,7 +10794,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -12027,7 +12027,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -13291,7 +13291,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",
@@ -17379,7 +17379,7 @@
                                     },
                                     "priority": {
                                       "type": "string",
-                                      "const": "background"
+                                      "enum": ["urgent", "background"]
                                     },
                                     "sourceKey": {
                                       "type": "string",
@@ -18055,7 +18055,7 @@
                                 },
                                 "priority": {
                                   "type": "string",
-                                  "const": "background"
+                                  "enum": ["urgent", "background"]
                                 },
                                 "sourceKey": {
                                   "type": "string",

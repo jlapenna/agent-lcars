@@ -174,13 +174,13 @@ export const MAX_AUTO_RETRIES = 2;
 /** Pipelines whose attempts may already have performed external effects.
  *  Their lost and failed attempts settle terminally: no automatic rerun of
  *  potentially effectful work; new work needs explicit admission. Repository
- *  recipes (`goose`) are the only member today. A claw agent with effect
- *  authority opts in here; read-only agents such as `claw-investigator`
- *  retry under the normal finite policy. `claw-oncall` is read-only by
- *  enforcement during its phase 3b shadow (its zone binding mounts only the
- *  investigator credential), so it retries too; the cutover that binds the
- *  oncall key and write identity adds it here, making lost terminal. */
-const EFFECTFUL_PIPELINES: ReadonlySet<string> = new Set(['goose']);
+ *  recipes (`goose`) and `claw-oncall`, whose Jobs hold the Homelab oncall
+ *  key since the phase 3b cutover, are members. Read-only claw agents such
+ *  as `claw-investigator` retry under the normal finite policy. */
+const EFFECTFUL_PIPELINES: ReadonlySet<string> = new Set([
+  'goose',
+  'claw-oncall',
+]);
 
 export function isEffectfulPipeline(pipeline: string): boolean {
   return EFFECTFUL_PIPELINES.has(pipeline);

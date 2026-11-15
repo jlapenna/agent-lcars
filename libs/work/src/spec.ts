@@ -155,6 +155,8 @@ export const clawWorkSpecSchema = z.discriminatedUnion('pipeline', [
   }),
   z.strictObject({
     ...clawWorkSpecFields,
+    // `urgent` since the 3b cutover; shadow-era items stored `background`.
+    priority: z.enum(['urgent', 'background']),
     pipeline: z.literal('claw-oncall'),
     operation: z.literal(CLAW_ONCALL_INVESTIGATE_OPERATION),
   }),

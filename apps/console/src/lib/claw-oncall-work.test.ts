@@ -46,7 +46,7 @@ describe('admitOncallAlert', () => {
         description:
           "claw/oncall investigation of Alertmanager group page:HostDiskFull:riker. Each fingerprint set is one revision; its alert text is that revision's input.",
         pipeline: 'claw-oncall',
-        priority: 'background',
+        priority: 'urgent',
         operation: 'oncall-investigate:v1',
         sourceKey: 'page:HostDiskFull:riker',
       },

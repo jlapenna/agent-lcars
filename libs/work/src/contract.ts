@@ -576,8 +576,8 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
-  /** `claw/oncall` intake from Homelab's `oncall-alert-gate` (phase 3b,
-   *  shadow). Requires `work.claw.admit` and a grant listing pipeline
+  /** `claw/oncall` intake from Homelab's `oncall-alert-gate` (phase 3b).
+   *  Requires `work.claw.admit` and a grant listing pipeline
    *  `claw-oncall`. A firing group admits one `oncall-investigate:v1` round
    *  per fingerprint set; a resolved group invalidates its pending round. */
   admitOncallAlert: base
@@ -595,7 +595,8 @@ export const itemsContract = {
           'existing round even when `question` differs, and a new set or a ' +
           're-fire after resolution supersedes a queued round. `resolved` ' +
           'invalidates a pending round and ignores `episode`; a running ' +
-          'attempt finishes. Outcomes are persisted only.',
+          'attempt finishes. Outcomes are persisted; the admitting gate reads ' +
+          'them back with `GET /items/{id}`.',
         successStatus: 202,
         successDescription:
           'Admitted, the existing round, or the resolution result.',

@@ -203,8 +203,8 @@ export function runOrchestratorStoreContract(
     it('retries a lost read-only claw round under the finite budget, but never an effectful recipe', async () => {
       for (const [pipeline, retried] of [
         ['claw-investigator', 1],
-        // Shadow-stage claw-oncall is read-only by enforcement and retries.
-        ['claw-oncall', 1],
+        // claw-oncall holds the oncall key since the 3b cutover: terminal.
+        ['claw-oncall', 0],
         ['goose', 0],
       ] as const) {
         const store = await makeStore();

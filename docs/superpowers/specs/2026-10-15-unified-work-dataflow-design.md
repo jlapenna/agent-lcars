@@ -300,7 +300,7 @@ OpenClaw versions above):
 - **Cron.** Unchanged, apart from schedules naming `agent` and `intent` instead of `pipeline`. The disabled OpenClaw schedules (jlapenna/homelab#3180) move off the Gateway: hourly fleet triage becomes the phase 3 event path, and `onduty-daily` becomes cron Work for a `claw/onduty` agent defined when it is ported.
 - **Alertmanager.** Homelab's `oncall-alert-gate` becomes an intake adapter. It already re-queries live state and builds correlated groups; for each firing page or ticket group it admits one Work round `{agent: claw/oncall, operation: oncall-investigate:v1, source: {key: <group digest>}, sourceRevision: <verified fingerprints>}` through a dedicated internal-admission route (public mutation routes reject internal operations), instead of calling the OpenClaw hook. The gate gets its own principal in the [IAM contract](../../iam-contract.md) that can admit only that operation. Re-firing or new fingerprints advance the revision and coalesce like any event-derived work; resolution invalidates pending rounds.
   - **Acknowledgement becomes admission plus a live attempt.** A page is acknowledged when its admission returns a receipt **and** an attempt for that source is running or starts within the ack window (today 300 s). A follow-up round that coalesces behind a live attempt for the same group counts as acknowledged by that attempt. A human is paged when admission fails (including when the Work API is unreachable: oncall then degrades to direct human paging, never silence) or no attempt is live in time. The zone executor serves only its own agents, which isolates oncall's claim queue from coding Jobs; it reserves no node capacity, so its Jobs still compete with ARC and coding Jobs for room and node contention can still page a human. Its `maxLiveClaims` matches the Gateway's current six concurrent oncall runs until measured otherwise. This changes Homelab's paging contract (`docs/observability.md` §5) and ships only with that contract's update and Joe's sign-off.
-  - **Replies.** Reports go to Slack `#oc-oncall` through the outcome webhook with a registered `alertmanager` channel target that posts to that channel, threaded per alert group (`reply-to-origin`). The gate is never the reply target, because the Console cannot reach LAN receivers.
+  - **Replies.** Reports go to Slack `#oc-oncall`, threaded per alert group. The Console cannot reach LAN receivers, so it pushes nothing: the admitting gate reads its own Work back (`GET /items/{id}`, own claw Work only) and posts each settled attempt's report itself, with the Slack token it already holds. The same read is the acknowledgement signal: an attempt counts as live once it has a claim and its first worker heartbeat (`queue.firstHeartbeatAt`).
   - **Conversation.** Joe's direct requests to oncall in Slack stay on the Gateway `oncall` agent, without exec authority after cutover, until phase 4's Slack channel admits them as `claw/oncall` Work.
 - **Reply vs deliverable.** These stay separate. A Slack request that produces a PR replies in Slack with the PR link.
 
@@ -521,6 +521,13 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
      authority from the Gateway `oncall` agent and retire its hook, the paired
      `oncall-node` Deployment, its riker local volume and storage provisioner,
      and `OncallExecNodeUnavailable`, through their owning repositories.
+
+     Cutover (2026-11-15): Joe directed cutting over without the shadow
+     comparison. Anthropic credit exhaustion left the shadow unable to run
+     its model, and the Gateway agent itself runs on a ChatGPT subscription
+     that a Job cannot hold, so the comparison could not be like for like.
+     The other cutover conditions stand. `claw-oncall` is effectful (lost and
+     failed attempts are terminal) and its rounds are `urgent`.
 
      Shadow intake (agent-lcars, this phase's first step): `POST
 /api/work/v1/claw/oncall/alerts` (`admitOncallAlert`) admits a firing
