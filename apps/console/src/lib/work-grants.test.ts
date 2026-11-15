@@ -318,35 +318,19 @@ describe('claw-investigator grants', () => {
           pipelines: ['claude', 'claw-investigator'],
           scopes: ['work.operator', 'work.claw.admit'],
         },
-        {
-          principal: 'svc:oncall-alert-gate',
-          subjects: ['oncall-alert-gate@agent-lcars.iam.gserviceaccount.com'],
-          pipelines: ['claw-oncall'],
-          scopes: ['work.claw.admit'],
-        },
       ]),
     );
     expect(grants.map((grant) => grant.pipelines)).toEqual([
       ['claw-investigator'],
       ['claude', 'claw-investigator'],
-      ['claw-oncall'],
     ]);
   });
 
-  it('commits a gate grant that admits only claw-oncall and claims nothing', () => {
-    const gate = committedGrants().find(
-      (grant) => grant.principal === 'svc:oncall-alert-gate',
-    );
-    expect(gate).toEqual({
-      principal: 'svc:oncall-alert-gate',
-      subjects: ['oncall-alert-gate@agent-lcars.iam.gserviceaccount.com'],
-      pipelines: ['claw-oncall'],
-      scopes: ['work.claw.admit'],
-    });
+  it('commits a zone executor grant that claims only claw-investigator', () => {
     const zone = committedGrants().find(
       (grant) => grant.principal === 'svc:claw-homelab-ops',
     );
-    expect(zone?.pipelines).toEqual(['claw-investigator', 'claw-oncall']);
+    expect(zone?.pipelines).toEqual(['claw-investigator']);
     expect(zone?.scopes).toEqual(['work.executor']);
   });
 

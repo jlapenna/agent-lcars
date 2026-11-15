@@ -30,7 +30,6 @@ describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
       'admitClawInvestigation',
-      'admitOncallAlert',
       'anchorOwner',
       'cancel',
       'create',
@@ -587,7 +586,6 @@ describe('generateWorkOpenApi', () => {
       [
         '/anchors/github/owner',
         '/claw/investigations',
-        '/claw/oncall/alerts',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/issues',
@@ -719,7 +717,6 @@ describe('generateWorkOpenApi', () => {
       'PATCH /items/{id}': ['200', '404', '409'],
       'POST /items/{id}/cancel': ['200', '403', '404', '409'],
       'POST /claw/investigations': ['202', '403', '409'],
-      'POST /claw/oncall/alerts': ['202', '403', '409'],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],

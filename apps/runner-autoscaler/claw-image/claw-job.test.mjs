@@ -363,34 +363,6 @@ test('an investigation answered without any tool call is not a report', async ()
   });
 });
 
-test('a claw-oncall alert investigation also requires tool evidence', async () => {
-  const brief = {
-    intentId: RUN_ID,
-    pipeline: 'claw-oncall',
-    mode: 'claw',
-    claw: {
-      operation: 'oncall-investigate:v1',
-      input: { question: 'Alert HostDiskFull is firing on riker.' },
-    },
-  };
-  const unsupported = await fixture({
-    brief,
-    env: { FAKE_ENVELOPE: JSON.stringify({ ok: true, final: 'Fine.' }) },
-  });
-  assert.deepEqual(
-    await main(unsupported.env, { fetchImpl: unsupported.fetchImpl }),
-    {
-      outcome: 'runner-failed',
-      message: 'Claw turn answered without using any tool.',
-    },
-  );
-  const answered = await fixture({ brief });
-  assert.equal(
-    (await main(answered.env, { fetchImpl: answered.fetchImpl })).outcome,
-    'report',
-  );
-});
-
 test('a resolved tool failure is evidence, not a runner failure', async () => {
   const envelope = JSON.stringify({
     ok: true,

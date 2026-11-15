@@ -705,16 +705,6 @@ resource "google_service_account_iam_member" "claw_operator_token_creator" {
   member             = "user:jlapenna@gmail.com"
 }
 
-# Homelab oncall-alert-gate's Alertmanager intake for claw/oncall (phase 3b).
-# Like the zone executor it holds no project role: it only mints a Google ID
-# token for the Work API, where its grant admits work.claw.admit for pipeline
-# claw-oncall alone (POST /claw/oncall/alerts). The key lives in the Homelab
-# vault (oncall_alert_gate_lcars_key_json) and is mounted only into the gate.
-resource "google_service_account" "oncall_alert_gate" {
-  account_id   = "oncall-alert-gate"
-  display_name = "Agent LCARS oncall-alert-gate Alertmanager intake"
-}
-
 # QueueExecutor is the only supported Codex execution path. Its Console
 # broker owns the one rotating subscription lineage; hosted repository
 # identities receive no auth-object or refresh-lease grant.

@@ -489,7 +489,7 @@ func TestLegacyJobsUnchangedByDeclaredRuntimes(t *testing.T) {
 
 func TestRuntimesOnlyExecutorRefusesLegacyPipelines(t *testing.T) {
 	q, c := zoneQueueFixture()
-	for _, pipeline := range []string{"claude", "codex", "goose", "claw-oncall"} {
+	for _, pipeline := range []string{"claude", "codex", "goose", "claw-undeclared"} {
 		if err := q.launch(context.Background(), directRunnerLaunch{runID: "work:x/" + pipeline, pipeline: pipeline}); err == nil {
 			t.Fatalf("runtimes-only executor launched %s", pipeline)
 		}
