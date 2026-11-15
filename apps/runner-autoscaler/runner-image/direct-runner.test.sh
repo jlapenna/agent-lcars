@@ -33,6 +33,12 @@ export tmp
 export HOOK_TELEMETRY_CREDENTIALS_FILE="$tmp/no-hook-telemetry-writer.json"
 export HINDSIGHT_TOKEN_FILE="$tmp/no-hindsight-token"
 unset HINDSIGHT_API_TOKEN HINDSIGHT_DISABLED HINDSIGHT_CONFIG HINDSIGHT_BANK_ID
+# direct-runner resolves provider configuration from these before $HOME. Each
+# scenario sets a private $HOME, so a caller's value would point the policy
+# bootstrap at the caller's real config and install the worker hook there
+# (#3379: a review-qualification run rewrote the operator's settings.json).
+unset CLAUDE_CONFIG_DIR CODEX_HOME ANTIGRAVITY_CONFIG_DIR OPENCODE_CONFIG \
+  OPENCODE_CONFIG_DIR OPENCODE_BASE_CONFIG_DIR XDG_CONFIG_HOME
 cleanup() {
   local result=$?
   trap - EXIT
@@ -2752,6 +2758,10 @@ for provider in claude codex opencode; do
   export LCARS_WORKER_POLICY_PROVIDERS="$provider"
   run_scenario "$provider-policy-bootstrap" "$provider"
   [ "$rc" -eq 0 ] || fail "$provider policy bootstrap failed ($(tail -n 4 "$scenario_log"))"
+  if [ "$provider" = claude ]; then
+    grep -Fq '# lcars-worker-pretool:v1' "$HOME/.claude/settings.json" ||
+      fail "claude worker hook was not registered in the scenario's private HOME"
+  fi
   context_file="$(cat "$WORKER_CONTEXT_LOG")"
   [ "$context_file" = "$scenario_runner_temp/worker-policy-context.json" ] || fail "$provider launched without bound policy context"
   jq -e --arg provider "$provider" '.provider == $provider and .attemptId == "g1:work:01DIRECTRUNNERTESTFIXTURE1/r1"' "$context_file" >/dev/null || fail "$provider context mismatch"
