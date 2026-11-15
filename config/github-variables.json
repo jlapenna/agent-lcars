@@ -2,7 +2,11 @@
   "version": 1,
   "profiles": {
     "jobs-only": {
-      "repositories": ["jlapenna/dev"],
+      "repositories": [
+        "jlapenna/dev",
+        "jlapenna/repo-tools",
+        "jlapenna/fleet-runtime"
+      ],
       "variables": {}
     },
     "agent-lcars": {
