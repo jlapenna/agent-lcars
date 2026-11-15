@@ -7,9 +7,9 @@ set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'
 readonly OPENCODE_RELEASE_REPOSITORY='opencode'
-# v1.18.25's largest reviewed archive is the 60,534,299-byte amd64 baseline
+# v1.19.5's largest reviewed archive is the 79,651,821-byte amd64 baseline
 # release. Keep a small bounded margin without permitting unbounded downloads.
-readonly OPENCODE_MAX_ARCHIVE_BYTES=67108864
+readonly OPENCODE_MAX_ARCHIVE_BYTES=88080384
 readonly OPENCODE_DOWNLOAD_BUDGET_SECONDS=600
 readonly OPENCODE_RETRY_MAX_SECONDS=570
 opencode_temp_dir=''
@@ -33,11 +33,11 @@ select_opencode_release() {
   case "$arch" in
     amd64)
       asset='opencode-linux-x64-baseline.tar.gz'
-      digest='ccd10586611b598b1eaed7c05cfbcbc68e3ec09e736b360da09b1d615d922968'
+      digest='17c200fd4b2289954cc01552559f9b6d03ec157b2ddfb5eb54144f491656333d'
       ;;
     arm64)
       asset='opencode-linux-arm64.tar.gz'
-      digest='35ef77897425e41b5183a2c21ac4fb1d4d944d82a94e3c920f57b5490af11ac5'
+      digest='fae5be262d693b7c5e562856cc473e59e741772936db0c0600ac0d5ed5bd088b'
       ;;
     *)
       fail "unsupported target architecture: $arch"
@@ -47,7 +47,7 @@ select_opencode_release() {
   # The checksum review is intentionally tied to the exact version below.
   # A version bump must add its own reviewed digest rather than silently
   # reusing these bytes.
-  if [[ "$version" != 'v1.18.25' ]]; then
+  if [[ "$version" != 'v1.19.5' ]]; then
     fail "no reviewed OpenCode artifact digest for $version"
   fi
 

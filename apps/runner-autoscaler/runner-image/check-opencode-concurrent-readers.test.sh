@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exercises check-opencode-concurrent-readers.sh with a fake CLI that opens
-# SQLite exactly as OpenCode v1.18.25 does: its first statement runs with no
+# SQLite exactly as OpenCode v1.19.5 does: its first statement runs with no
 # busy timeout (#2071). The fake proves the gate's ordering deterministically
 # through the store's POSIX locks instead of hoping a race does not fire: the
 # cold reader is the only connection, and every concurrent reader starts
@@ -92,7 +92,7 @@ db.execute('CREATE TABLE session (id TEXT)')
 db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 db.close()
 PY
-  printf '1.18.25\n' > "$data/opencode/.lcars-baked-version"
+  printf '1.19.5\n' > "$data/opencode/.lcars-baked-version"
 }
 
 run_gate() {
@@ -107,7 +107,7 @@ run_gate() {
     bash "$here/check-opencode-concurrent-readers.sh" >"$tmp/$name/out" 2>&1
 }
 
-[ "$(tr -d '\r\n' < "$here/opencode-version")" = v1.18.25 ] ||
+[ "$(tr -d '\r\n' < "$here/opencode-version")" = v1.19.5 ] ||
   fail 'update the baked-version fixture alongside the pinned OpenCode version'
 
 make_store healthy

@@ -291,9 +291,9 @@ receipts; they still do not claim full delegated-agent or image qualification.
 After verification, `session_id` carries the bound root for shared policy and
 recovery, while `native_session_id` retains the actual child ID. The same
 mode/worktree/ownership/marker/hold policy still applies to child actions.
-The provider contract is pinned to OpenCode 1.18.25's
-[plugin SDK](https://github.com/anomalyco/opencode/blob/v1.18.25/packages/plugin/src/index.ts)
-and [native task parent relationship](https://github.com/anomalyco/opencode/blob/v1.18.25/packages/opencode/src/tool/task.ts).
+The provider contract is pinned to OpenCode 1.19.5's
+[plugin SDK](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/plugin/src/index.ts)
+and [native task parent relationship](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/opencode/src/tool/task.ts).
 
 The `bootstrap-lineage` probe uses real native API-created empty child,
 grandchild, and unrelated session records, then exercises the actual adapter
@@ -361,7 +361,7 @@ evidence refuses qualification. Contract tests run in the existing required
 Run the real executable against a deterministic localhost model:
 
 ```sh
-node tools/probes/opencode-hook-boundary.mjs /absolute/path/to/opencode 1.18.25
+node tools/probes/opencode-hook-boundary.mjs /absolute/path/to/opencode 1.19.5
 ```
 
 The version must match exactly. The runner's pin is in

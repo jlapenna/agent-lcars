@@ -2,7 +2,7 @@
 # Build gate for the baked OpenCode store (#2040, #2071), run in the layer
 # after prepare-opencode-store.sh so the store is a cold lower-layer file.
 #
-# Locking boundary: OpenCode v1.18.25 opens SQLite and executes
+# Locking boundary: OpenCode v1.19.5 opens SQLite and executes
 # `PRAGMA journal_mode = WAL` before it sets `busy_timeout`, so that first
 # statement fails immediately with `database is locked` on any contention.
 # When no other connection holds the store, two OpenCode processes contend:

@@ -1,6 +1,6 @@
 # OpenCode working context and compaction
 
-The shared runner uses OpenCode 1.18.25 against `homelab/default`, currently
+The shared runner pins OpenCode 1.19.5 against `homelab/default`, currently
 Qwen3.8 Flash Next on the two-Spark SGLang lane. Model capacity and the desired
 working-set size are separate:
 
@@ -26,7 +26,7 @@ not 189. Successful #5465/r3 still spent 43.6 minutes awaiting 22 summaries.
 Initial requests used about 24,350 tokens. The old `context: 60000`,
 `output: 8192`, no-input configuration actually triggered at **51,808**, not
 57,000: OpenCode ignores `reserved` in that branch. The [pinned overflow
-implementation](https://github.com/anomalyco/opencode/blob/v1.18.25/packages/opencode/src/session/overflow.ts)
+implementation](https://github.com/anomalyco/opencode/blob/v1.19.5/packages/opencode/src/session/overflow.ts)
 uses `input - reserved` when an explicit input limit exists and otherwise
 `context - maxOutputTokens`. It checks completed-response usage; this is not a
 hard admission ceiling on the next request. Large tool batches can overshoot.
