@@ -149,8 +149,9 @@ await Promise.all(
       console.log(
         JSON.stringify({ provider, case: scenario.id, passed: row.passed }),
       );
-      const native = read(join(destination, 'run/native-evidence.json'));
-      if (native?.providerFailure === 'provider-limit') break;
+      // An exhausted account may fail before native JSON exists. Stop this
+      // lane after any failed case; other providers still finish independently.
+      if (!row.passed) break;
     }
   }),
 );

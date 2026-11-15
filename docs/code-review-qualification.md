@@ -48,10 +48,14 @@ snapshot. Its bytes and provenance are inputs for every reviewer and validator;
 the test does not assert what an unversioned hosted URL served historically.
 Expectations remain in the driver and are not included in model prompts.
 
-Each provider runs cases serially; the four providers may run independently.
+Each provider runs cases serially and stops at its first failed case; the other
+providers finish independently. This also stops exhausted-account failures that
+happen before native JSON is emitted. A stopped lane cannot qualify: acceptance
+still requires every case for all four providers.
 The optional final provider argument selects one lane for diagnosis. Keep the
 first failure, its source and logs. Retry only after diagnosing an environment
 failure or changing a relevant input; do not rerun a quality failure until green.
+Use `run-review-image.mjs` with a historical case SHA for a targeted follow-up.
 A provider limit is incomplete qualification, never a clean review or PARK.
 Each provider uses the existing 80-minute production execution budget; OpenCode
 runs children sequentially with the same local model and an explicit `medium`

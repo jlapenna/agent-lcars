@@ -327,13 +327,6 @@ writeFileSync(
       models: [...models],
       artifacts,
       errors,
-      providerFailure: trace.some((event) =>
-        /quota|RESOURCE_EXHAUSTED|rate.limit|usage.limit/i.test(
-          String(event.result?.error ?? event.error?.message ?? ''),
-        ),
-      )
-        ? 'provider-limit'
-        : null,
     },
     null,
     2,
