@@ -7,9 +7,9 @@ set -euo pipefail
 
 readonly OPENCODE_RELEASE_OWNER='anomalyco'
 readonly OPENCODE_RELEASE_REPOSITORY='opencode'
-# v1.18.25's largest reviewed archive is the 60,534,299-byte amd64 baseline
+# v1.19.5's largest reviewed archive is the 79,651,821-byte amd64 baseline
 # release. Keep a small bounded margin without permitting unbounded downloads.
-readonly OPENCODE_MAX_ARCHIVE_BYTES=67108864
+readonly OPENCODE_MAX_ARCHIVE_BYTES=88080384
 readonly OPENCODE_DOWNLOAD_BUDGET_SECONDS=600
 readonly OPENCODE_RETRY_MAX_SECONDS=570
 opencode_temp_dir=''
@@ -28,30 +28,30 @@ cleanup_opencode_temp_dir() {
 select_opencode_release() {
   local version="$1"
   local arch="$2"
-  local asset digest
+  local asset release
+  local manifest="${3:-$(dirname "${BASH_SOURCE[0]}")/runtime-releases.json}"
 
   case "$arch" in
     amd64)
       asset='opencode-linux-x64-baseline.tar.gz'
-      digest='ccd10586611b598b1eaed7c05cfbcbc68e3ec09e736b360da09b1d615d922968'
       ;;
     arm64)
       asset='opencode-linux-arm64.tar.gz'
-      digest='35ef77897425e41b5183a2c21ac4fb1d4d944d82a94e3c920f57b5490af11ac5'
       ;;
     *)
       fail "unsupported target architecture: $arch"
       ;;
   esac
 
-  # The checksum review is intentionally tied to the exact version below.
-  # A version bump must add its own reviewed digest rather than silently
-  # reusing these bytes.
-  if [[ "$version" != 'v1.18.25' ]]; then
-    fail "no reviewed OpenCode artifact digest for $version"
-  fi
-
-  printf '%s\t%s\n' "$asset" "$digest"
+  # Renovate updates the version and each platform digest together. A missing,
+  # ambiguous or mismatched lock entry fails before any download.
+  release="$(jq -er --arg version "$version" --arg arch "$arch" --arg asset "$asset" '
+    [.releases[] | select(.repository == "anomalyco/opencode" and .version == $version and .architecture == $arch)]
+    | if length == 1 then .[0] else error("expected one platform release") end
+    | select(.asset == $asset and (.sha256 | test("^[a-f0-9]{64}$")))
+    | [.asset, .sha256] | @tsv
+  ' "$manifest")" || fail "no reviewed OpenCode artifact digest for $version/$arch"
+  printf '%s\n' "$release"
 }
 
 validate_opencode_archive() {

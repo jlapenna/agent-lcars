@@ -59,6 +59,17 @@ if [ ! -f "$protocol_path" ]; then
   exit 1
 fi
 
+review_path=""
+if [ "${MODE:-implement}" = review ]; then
+  review_path="$(dirname "$protocol_path")/anthropic-code-review/README.md"
+  for review_file in "$review_path" "$(dirname "$review_path")/upstream.md" "$(dirname "$review_path")/LICENSE" "$(dirname "$review_path")/revision"; do
+    if [ ! -s "$review_file" ]; then
+      echo "::error::Anthropic review procedure is missing or empty at $review_file" >&2
+      exit 1
+    fi
+  done
+fi
+
 mkdir -p "$dispatch_dir"
 
 if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
@@ -278,4 +289,7 @@ jq -n \
 {
   echo "AGENT_DISPATCH_CONTEXT=$context_path"
   echo "AGENT_PROTOCOL_PATH=$protocol_path"
+  if [ -n "$review_path" ]; then
+    echo "AGENT_REVIEW_PATH=$review_path"
+  fi
 } >> "$RUNTIME_ENV"

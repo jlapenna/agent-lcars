@@ -12,8 +12,15 @@ Keep this file short. It is re-sent on every request.
 
 ## Keep investigation bounded
 
-Work directly in this session. Delegated exploration is disabled for this
-serial inference runner: waiting on a child consumed an entire two-hour run.
+For review dispatches, follow the trusted Anthropic procedure at
+`$AGENT_REVIEW_PATH`. Delegation is enabled for that mode only: run one fresh
+reviewer or validator at a time and synchronously wait for it before starting
+another. Child agents return evidence to the coordinating reviewer; only that
+coordinator publishes the review. Do not recursively delegate from children.
+
+For other modes, work directly in this session. Delegated exploration is
+disabled for this serial inference runner: waiting on a child consumed an
+entire two-hour run.
 Use targeted glob/grep and short reads to answer a concrete implementation
 question. Larger explicit reads are supported. Search for the specific definition or
 caller, then read the range needed to understand it. Older read contents may

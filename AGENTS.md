@@ -91,8 +91,10 @@ policy; reconcile them against live code and canonical contracts.
 
 ## Setup and discovery
 
-- Primary checkout: `pnpm install` installs dependencies and git hooks.
-- Linked worktree: run `./tools/setup-worktree.sh`.
+- Primary checkout: keep the clean `main` source anchor; use task worktrees
+  for dependency setup.
+- Linked worktree: run `./tools/setup-worktree.sh` to initialize locked Git
+  dependencies, install JavaScript dependencies, and set up git hooks.
 - Use `./tools/nx` and query unfamiliar projects or flags with
   `./tools/nx show project <name> --json` or `./tools/nx <command> --help`.
 - Search tracked source with `rg` and `rg --files`; avoid recursive scans

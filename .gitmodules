@@ -1,0 +1,5 @@
+[submodule "third_party/anthropic-plugins"]
+	path = third_party/anthropic-plugins
+	url = https://github.com/anthropics/claude-plugins-official.git
+	branch = main
+	shallow = true

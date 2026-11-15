@@ -26,6 +26,8 @@ cp "$here/externals-health.sh" "$here/toolchain-health.sh" "$here/verify-image-i
 printf '%s\n' 'process.exit(Number(process.env.IMAGE_TEST_REPO_TOOLS_FAILURE || 0));' > "$lib/repo-tools-bins.mjs"
 cp "$here/runtime/install-skills.sh" "$here/runtime/layer1-skills.conf" "$lib/runtime/"
 cp -R "$repo_root/agents/shared/skills" "$lib/agents/shared/skills"
+bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
+  "$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
 
 write_exe() {
   printf '%s\n' '#!/bin/sh' "$2" > "$1"
@@ -92,6 +94,15 @@ grep -q "FAIL: layer-1 skill 'agent-protocol' is installed" "$tmp/out" ||
 
 install_skills || fail "installer rejected the real layer-1 skills ($(cat "$tmp/install.err"))"
 gate || fail "healthy image was rejected ($(cat "$tmp/out"))"
+
+review_dir="$lib/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+for review_file in upstream.md LICENSE revision; do
+  mv "$review_dir/$review_file" "$tmp/review-file"
+  if gate; then fail "image without review dependency $review_file was accepted"; fi
+  grep -Fq "FAIL: Anthropic review dependency contains $review_file" "$tmp/out" ||
+    fail "missing review dependency $review_file was not named"
+  mv "$tmp/review-file" "$review_dir/$review_file"
+done
 
 # A no-op repeat of setup is safe: reinstalling yields the same content and
 # the gate still passes.

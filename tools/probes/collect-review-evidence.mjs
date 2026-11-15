@@ -1,0 +1,361 @@
+#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+// Collect private native receipts. Never turn a missing transcript into a pass.
+import {
+  copyFileSync,
+  openSync,
+  closeSync,
+  statSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  chmodSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  readReviewEvidence,
+  completedOpenCodeChild,
+  antigravityChildIds,
+} from './review-evidence.mjs';
+
+const directory = resolve(process.argv[2] ?? '');
+if (!process.argv[2])
+  throw new Error('Usage: collect-review-evidence.mjs <evidence directory>');
+const manifest = JSON.parse(
+  readFileSync(join(directory, 'manifest.json'), 'utf8'),
+);
+const errors = [];
+const lines = (path) =>
+  readFileSync(path, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        errors.push('Malformed native JSONL: ' + path);
+        return [];
+      }
+    });
+const trace = lines(join(directory, 'trace.jsonl'));
+const completed = new Set();
+const isolated = new Set();
+const canonicalIds = {};
+const models = new Set();
+const artifacts = [];
+const archive = (path, name) => {
+  if (!existsSync(path)) {
+    errors.push('Missing native transcript: ' + path);
+    return null;
+  }
+  const destination = join(directory, 'native', name);
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  copyFileSync(path, destination);
+  chmodSync(destination, 0o600);
+  artifacts.push('native/' + name);
+  return lines(destination);
+};
+if (manifest.provider === 'claude') {
+  const session = trace.find((event) => event.subtype === 'init')?.session_id;
+  const agentCalls = new Set(
+    trace
+      .filter((event) => event.parent_tool_use_id == null)
+      .flatMap((event) => event.message?.content ?? [])
+      .filter((block) => block?.type === 'tool_use' && block.name === 'Agent')
+      .map((block) => block.id),
+  );
+  const ids = new Set();
+  for (const event of trace) {
+    if (event.parent_tool_use_id != null) continue;
+    const id = event.tool_use_result?.agentId;
+    if (typeof id !== 'string' || !/^[a-f0-9]{8,}$/.test(id)) continue;
+    if (
+      (event.message?.content ?? []).some(
+        (block) =>
+          block?.type === 'tool_result' && agentCalls.has(block.tool_use_id),
+      )
+    )
+      ids.add(id);
+  }
+  // Claude truncates/hashes long project paths. Bind to the observed native
+  // parent session instead of reproducing that private path encoding.
+  const projects = join(
+    process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'),
+    'projects',
+  );
+  const parents =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      session ?? '',
+    ) && existsSync(projects)
+      ? readdirSync(projects)
+          .map((project) => join(projects, project, session))
+          .filter((path) => existsSync(join(path, 'subagents')))
+      : [];
+  const parent = parents.length === 1 ? parents[0] : null;
+  if (!parent)
+    errors.push('Cannot establish unique Claude native parent session');
+  for (const id of parent ? ids : []) {
+    const path = join(parent, 'subagents', 'agent-' + id + '.jsonl');
+    const child = archive(path, 'claude-' + id + '.jsonl');
+    const assistant = child
+      ?.filter((event) => event.type === 'assistant')
+      .at(-1);
+    const canonical = session + '/subagents/agent-' + id;
+    canonicalIds[id] = canonical;
+    canonicalIds[canonical] = canonical;
+    canonicalIds[path] = canonical;
+    if (assistant?.message?.stop_reason === 'end_turn')
+      completed.add(canonical);
+    for (const event of child ?? [])
+      if (event.message?.model) models.add(event.message.model);
+  }
+}
+if (manifest.provider === 'codex') {
+  const thread = trace.find(
+    (event) => event.type === 'thread.started',
+  )?.thread_id;
+  const home = process.env.CODEX_HOME ?? join(homedir(), '.codex');
+  const find = (path, id) => {
+    if (!existsSync(path)) return [];
+    return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+      const file = join(path, entry.name);
+      return entry.isDirectory()
+        ? find(file, id)
+        : entry.name.endsWith(id + '.jsonl')
+          ? [file]
+          : [];
+    });
+  };
+  const files = thread ? find(join(home, 'sessions'), thread) : [];
+  if (files.length !== 1)
+    errors.push('Cannot establish unique Codex native transcript');
+  const native =
+    files.length === 1 ? archive(files[0], 'codex-root.jsonl') : [];
+  const spawned = new Set();
+  const calls = new Map();
+  const spawnArguments = new Map();
+  for (const event of native ?? []) {
+    const payload = event.payload ?? {};
+    if (event.type === 'turn_context' && payload.model)
+      models.add(payload.model);
+    if (payload.type === 'function_call')
+      calls.set(payload.call_id, payload.name);
+    if (payload.type === 'function_call' && payload.name === 'spawn_agent') {
+      try {
+        spawnArguments.set(payload.call_id, JSON.parse(payload.arguments));
+      } catch {
+        errors.push('Cannot read native Codex spawn arguments');
+      }
+    }
+    if (
+      payload.type === 'agent_message' &&
+      spawned.has(payload.author) &&
+      payload.content?.some(
+        (block) =>
+          block.type === 'input_text' &&
+          block.text.startsWith('Message Type: FINAL_ANSWER\n'),
+      )
+    )
+      completed.add(payload.author);
+    if (payload.type !== 'function_call_output') continue;
+    let output;
+    try {
+      output = JSON.parse(payload.output);
+    } catch {
+      continue;
+    }
+    const spawnedId =
+      typeof output.task_name === 'string' ? output.task_name : output.agent_id;
+    if (
+      calls.get(payload.call_id) === 'spawn_agent' &&
+      typeof spawnedId === 'string'
+    ) {
+      spawned.add(spawnedId);
+      const arguments_ = spawnArguments.get(payload.call_id);
+      if (
+        arguments_?.fork_turns === 'none' ||
+        arguments_?.fork_context === false
+      )
+        isolated.add(spawnedId);
+    }
+    for (const agent of output.agents ?? []) {
+      if (
+        spawned.has(agent.agent_name) &&
+        typeof agent.agent_status?.completed === 'string'
+      )
+        completed.add(agent.agent_name);
+    }
+  }
+  const receiptPath = join(directory, 'receipt.json');
+  let receiptIds = [];
+  if (existsSync(receiptPath)) {
+    try {
+      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+      if (
+        !Array.isArray(receipt?.reviewers) ||
+        !Array.isArray(receipt?.validators)
+      )
+        throw new Error('Reviewer and validator inventories must be arrays');
+      receiptIds = [...receipt.reviewers, ...receipt.validators].map(
+        (item) => item?.nativeSessionId,
+      );
+    } catch (error) {
+      errors.push('Invalid Codex receipt: ' + error.message);
+    }
+    for (const id of receiptIds) {
+      if (!/^[a-f0-9-]{36}$/.test(id ?? '')) continue;
+      const children = find(join(home, 'sessions'), id);
+      if (children.length !== 1) {
+        errors.push('Cannot establish unique Codex child transcript: ' + id);
+        continue;
+      }
+      const child = archive(children[0], 'codex-' + id + '.jsonl');
+      const binding = child?.find(
+        (event) => event.type === 'session_meta' && event.payload?.id === id,
+      )?.payload;
+      const parent = binding?.source?.subagent?.thread_spawn;
+      if (
+        parent?.parent_thread_id !== thread ||
+        parent.depth !== 1 ||
+        !(spawned.has(id) || spawned.has(parent.agent_path))
+      ) {
+        errors.push('Codex child is not bound to this native parent: ' + id);
+        continue;
+      }
+      if (parent.agent_path) canonicalIds[parent.agent_path] = id;
+      canonicalIds[id] = id;
+      if (
+        child.some(
+          (event) =>
+            event.type === 'event_msg' &&
+            event.payload?.type === 'task_complete',
+        )
+      )
+        completed.add(id);
+    }
+  }
+}
+if (manifest.provider === 'agy') {
+  const ids = antigravityChildIds(trace);
+  for (const id of ids) {
+    const child = archive(
+      join(
+        homedir(),
+        '.gemini/antigravity-cli/brain',
+        id,
+        '.system_generated/logs/transcript.jsonl',
+      ),
+      'agy-' + id + '.jsonl',
+    );
+    const last = child?.at(-1);
+    if (
+      last?.type === 'PLANNER_RESPONSE' &&
+      last.status === 'DONE' &&
+      typeof last.content === 'string' &&
+      last.content &&
+      !last.tool_calls?.length
+    )
+      completed.add(id);
+    for (const event of child ?? []) if (event.model) models.add(event.model);
+  }
+}
+if (manifest.provider === 'opencode') {
+  const rootId = trace.find(
+    (event) => typeof event.sessionID === 'string',
+  )?.sessionID;
+  const exports = new Map();
+  const exported = (id) => {
+    if (exports.has(id)) return exports.get(id);
+    if (!/^ses_[a-zA-Z0-9]+$/.test(id ?? ''))
+      throw new Error('Missing OpenCode native session binding');
+    const name = 'native/opencode-' + id + '.json';
+    const destination = join(directory, name);
+    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+    // The pinned native CLI can exit before piped stdout drains. A regular
+    // file preserves the complete supported export, including large sessions.
+    const fd = openSync(destination, 'wx', 0o600);
+    try {
+      execFileSync(
+        manifest.imageId ? '/usr/local/bin/opencode' : 'opencode',
+        ['export', id],
+        {
+          timeout: 10000,
+          maxBuffer: 1024 * 1024,
+          stdio: ['ignore', fd, 'pipe'],
+        },
+      );
+    } finally {
+      closeSync(fd);
+    }
+    if (statSync(destination).size > 32 * 1024 * 1024)
+      throw new Error(
+        'OpenCode native export exceeded the evidence size limit',
+      );
+    const result = JSON.parse(readFileSync(destination, 'utf8'));
+    if (result.info?.id !== id)
+      throw new Error('OpenCode exported a different native session');
+    artifacts.push(name);
+    exports.set(id, result);
+    return result;
+  };
+  try {
+    const root = exported(rootId);
+    for (const message of root.messages ?? []) {
+      for (const part of message.parts ?? []) {
+        if (part.tool !== 'task' || part.state?.status !== 'completed')
+          continue;
+        const child = exported(part.state.metadata?.sessionId);
+        if (completedOpenCodeChild(root, part, child))
+          completed.add(child.info.id);
+        else
+          errors.push(
+            'OpenCode child lacks native parent/completion proof: ' +
+              child.info?.id,
+          );
+        if (child.info?.model) models.add(JSON.stringify(child.info.model));
+      }
+    }
+    for (const event of trace)
+      if (event.type === 'error') errors.push('OpenCode native provider error');
+  } catch (error) {
+    errors.push('OpenCode native export failed: ' + error.message);
+  }
+}
+
+writeFileSync(
+  join(directory, 'native-evidence.json'),
+  JSON.stringify(
+    {
+      provider: manifest.provider,
+      isolatedChildren: [...isolated].map((id) => canonicalIds[id] ?? id),
+      completedChildren: [...completed].map((id) => canonicalIds[id] ?? id),
+      canonicalIds,
+      models: [...models],
+      artifacts,
+      errors,
+    },
+    null,
+    2,
+  ),
+  { mode: 0o600 },
+);
+let result;
+try {
+  result = readReviewEvidence(directory);
+} catch (error) {
+  result = {
+    passed: false,
+    failures: ['missing-or-invalid-output: ' + error.message],
+  };
+}
+writeFileSync(
+  join(directory, 'evaluation.json'),
+  JSON.stringify(result, null, 2),
+  { mode: 0o600 },
+);
+console.log(JSON.stringify(result));
+process.exitCode = result.passed ? 0 : 1;

@@ -144,6 +144,8 @@ else:
 PY
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
+bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
+  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
 
 BAKED_RUNTIME_HELPERS_DIR="$baked/runtime"
 BAKED_PREPARE_DISPATCH="$baked/runtime/prepare-dispatch.sh"
@@ -529,6 +531,34 @@ FAKE
   # where the real CLI prints its `AGY_ERROR: {json}` provider stop record.
   cat > "$bindir/agy" <<'FAKE'
 #!/usr/bin/env bash
+echo "$@" >> "$AGY_ARGS_LOG"
+run_count=1
+if [ -f "$WORKER_RUN_COUNT_FILE" ]; then run_count=$(( $(cat "$WORKER_RUN_COUNT_FILE") + 1 )); fi
+echo "$run_count" > "$WORKER_RUN_COUNT_FILE"
+python3 "$FIXTURE_TIMING_HELPER" workload "${FAKE_WORKER_SLEEP:-}" || exit $?
+if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
+  read -r uptime _ < "$DIRECT_RUNNER_UPTIME_FILE"
+  printf '%s.00 0.00\n' "$(( ${uptime%%.*} + FAKE_WORKER_ELAPSED ))" > "$DIRECT_RUNNER_UPTIME_FILE"
+fi
+if [ "${FAKE_AGY_REVIEW_CHILDREN:-}" = 1 ] && [ "$run_count" -eq 1 ]; then
+  parent=11111111-1111-4111-8111-111111111111
+  brain="$HOME/.gemini/antigravity-cli/brain"
+  for index in 0 1 2 3 4; do
+    id="22222222-2222-4222-8222-22222222222$index"
+    [ "$index" -ne 0 ] || id="$parent"
+    mkdir -p "$brain/$id/.system_generated/logs"
+    if [ "$index" -eq 0 ]; then
+      printf '%s\n' '{"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE"}' > "$brain/$id/.system_generated/logs/transcript.jsonl"
+    else
+      printf '%s\n' '{"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE"}' > "$brain/$id/.system_generated/logs/transcript.jsonl"
+    fi
+  done
+  if [ "${FAKE_AGY_AMBIGUOUS_PARENT:-}" = 1 ]; then
+    cp "$brain/$parent/.system_generated/logs/transcript.jsonl" "$brain/22222222-2222-4222-8222-222222222221/.system_generated/logs/transcript.jsonl"
+  elif [ "${FAKE_AGY_MALFORMED_PARENT:-}" = 1 ]; then
+    printf 'invalid native JSON\n' > "$brain/$parent/.system_generated/logs/transcript.jsonl"
+  fi
+fi
 if [ -n "${FAKE_AGY_STDERR:-}" ]; then
   printf '%s\n' "$FAKE_AGY_STDERR" >&2
 fi
@@ -735,7 +765,7 @@ fi
 command="${args[$command_offset]:-}"
 round=0
 case "${command##*/}:${args[$((command_offset + 1))]:-}" in
-  claude:*|codex:exec|opencode:run) round=1 ;;
+  claude:*|codex:exec|opencode:run|agy:*) round=1 ;;
 esac
 if [ "$round" -eq 0 ]; then exec /usr/bin/timeout "$@"; fi
 [[ "$seconds" =~ ^[0-9]+s$ ]] || exit 2
@@ -889,6 +919,7 @@ run_scenario() {
   export NODE_ARGS_LOG="$dir/node-args.log"
   export CLAUDE_ENV_TOKEN_LOG="$dir/claude-env-token.log"
   export CODEX_ARGS_LOG="$dir/codex-args.log"
+  export AGY_ARGS_LOG="$dir/agy-args.log"
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
@@ -2210,10 +2241,23 @@ grep -Fq 'Do not use the NO-OP comment path' "$OPENCODE_ARGS_LOG" ||
   fail "github review: review prompt did not forbid the NO-OP comment path ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCODE_ARGS_LOG" ||
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
+grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
+  fail "github review: provider was not directed to the trusted review procedure"
+jq -e '.permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+  fail "github review: OpenCode independent reviewers remain disabled"
+jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+  fail "github review: OpenCode review reasoning budget was not configured"
 jq -e '.outcome == "review" and .outcomeReference == {kind:"review",number:42,id:100,url:"https://github.com/octo/example/pull/42#pullrequestreview-100"}' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "github review: marker-bound review was misclassified ($(cat "$COMPLETE_LOG"))"
 
 echo "scenario github-review: OK"
+
+run_scenario implement-delegation-policy opencode
+[ "$rc" -eq 0 ] || fail "implement delegation policy: expected exit 0, got $rc"
+jq -e '.permission.task == "deny"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+  fail "implement delegation policy: review-only task permission leaked into implementation"
+jq -e '(.provider.homelab.models.default.options.reasoningEffort // null) == null' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+  fail "implement delegation policy: review reasoning budget leaked into implementation"
 
 # --- Scenario 1b: GitHub-Actions temp environment absent -------------------
 # A direct-mode container is started by Docker rather than GitHub Actions, so
@@ -2670,6 +2714,30 @@ for provider in claude codex; do
     fi
   done
   echo "scenario $provider-bounded-completion: OK"
+done
+# Observed Antigravity review topology: one explicit coordinator plus four
+# system-started reviewer conversations. Recovery must resume that parent,
+# preserve its original deadline and refuse an ambiguous/corrupt native store.
+for shape in children ambiguous malformed; do
+  export FAKE_BRIEF_NO_RESUME=1 FAKE_GH_NO_MATCH=1 FAKE_GH_MATCH_AFTER_WORKER_RUNS=2
+  export FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 AGY_TIMEOUT_SECONDS=5 FAKE_MODE=review
+  export FAKE_AGY_REVIEW_CHILDREN=1
+  [ "$shape" != ambiguous ] || export FAKE_AGY_AMBIGUOUS_PARENT=1
+  [ "$shape" != malformed ] || export FAKE_AGY_MALFORMED_PARENT=1
+  run_scenario "agy-review-recovery-$shape" agy
+  if [ "$shape" = children ]; then
+    [ "$rc" -eq 0 ] || fail "Antigravity review recovery did not deliver"
+    [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "Antigravity review recovery must run exactly twice"
+    grep -Fq -- '--conversation 11111111-1111-4111-8111-111111111111' "$AGY_ARGS_LOG" || fail "Antigravity recovery did not resume the coordinator"
+    mapfile -t round_timeouts < <(grep -E '[0-9]+s .*provider-process.mjs .*agy ' "$TIMEOUT_ARGS_LOG" | sed -nE 's/.* ([0-9]+)s .*provider-process.mjs .*agy .*/\1/p')
+    [ "${round_timeouts[*]}" = '5 4' ] || fail "Antigravity recovery reset its deadline (${round_timeouts[*]})"
+    assert_budget_receipt || fail "Antigravity recovery lost its original deadline"
+  else
+    [ "$rc" -ne 0 ] || fail "Antigravity recovered an $shape parent"
+    [ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 1 ] || fail "Antigravity guessed an $shape parent"
+  fi
+  unset FAKE_BRIEF_NO_RESUME FAKE_GH_NO_MATCH FAKE_GH_MATCH_AFTER_WORKER_RUNS FAKE_CLOCK FAKE_WORKER_ELAPSED AGY_TIMEOUT_SECONDS FAKE_MODE
+  unset FAKE_AGY_REVIEW_CHILDREN FAKE_AGY_AMBIGUOUS_PARENT FAKE_AGY_MALFORMED_PARENT
 done
 export FAKE_WORKER_NO_THREAD=1 FAKE_GH_NO_MATCH=1
 run_scenario codex-no-thread-no-correction codex

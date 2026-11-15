@@ -21,6 +21,7 @@ export default [
       '.gemini/',
       '.jules/',
       '.worktrees/',
+      'third_party/',
       '**/vitest.config.*.timestamp*',
     ],
   },

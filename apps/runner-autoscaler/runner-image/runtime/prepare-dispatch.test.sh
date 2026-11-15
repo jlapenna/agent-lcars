@@ -16,6 +16,28 @@ mkdir -p "$baked/runtime"
 cp -R "$here/." "$baked/runtime/"
 mkdir -p "$baked/agents/shared/skills"
 cp -R "$repo_root/agents/shared/skills/." "$baked/agents/shared/skills/"
+bash "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" \
+  "$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+review_package="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/commands/code-review.md" "$review_package/upstream.md"
+cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/LICENSE" "$review_package/LICENSE"
+[ "$(cat "$review_package/revision")" = "$(git -C "$repo_root" rev-parse :third_party/anthropic-plugins)" ]
+
+# A valid source checkout at a different locked revision must never package.
+# Give the production packager an isolated parent index, keeping the real
+# dependency checkout and its index untouched.
+lock_fixture="$tmp/lock-fixture"
+mkdir -p "$lock_fixture/apps/runner-autoscaler/runner-image" "$lock_fixture/third_party"
+cp "$repo_root/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$lock_fixture/apps/runner-autoscaler/runner-image/"
+ln -s "$repo_root/third_party/anthropic-plugins" "$lock_fixture/third_party/anthropic-plugins"
+git init --quiet "$lock_fixture"
+git -C "$lock_fixture" update-index --add --cacheinfo \
+  160000,1111111111111111111111111111111111111111,third_party/anthropic-plugins
+if bash "$lock_fixture/apps/runner-autoscaler/runner-image/package-anthropic-review.sh" "$tmp/mismatched-package" > "$tmp/lock-error" 2>&1; then
+  echo 'review dependency: packaging accepted a checkout that differs from the lock' >&2
+  exit 1
+fi
+grep -Fq 'not at its locked revision' "$tmp/lock-error"
 
 fail() {
   echo "$1" >&2
@@ -42,7 +64,7 @@ run_prepare_dispatch() {
   export BUDGET_MINUTES=80
   : > "$RUNTIME_ENV"
 
-  bash "$RUNTIME_HELPERS_DIR/prepare-dispatch.sh"
+  bash "$RUNTIME_HELPERS_DIR/prepare-dispatch.sh" || return $?
   context_path="$RUNNER_TEMP/agent-dispatch/context.json"
 }
 
@@ -90,6 +112,32 @@ jq -e '(has("prior_terminal_state") or has("deliveryHandoffVersion")) | not' "$c
   fail "brief still carries a retired field ($(jq -c 'keys' "$context_path"))"
 
 echo "scenario runtime-block: OK"
+
+# The trusted review dependency is selected from the baked image, never the
+# consumer checkout. Missing artifacts must stop review preparation instead of
+# silently launching the old generic review; other modes do not load them.
+export MODE='review'
+run_prepare_dispatch review-procedure
+review_dir="$baked/agents/shared/skills/agent-protocol/reference/anthropic-code-review"
+grep -Fxq "AGENT_REVIEW_PATH=$review_dir/README.md" "$RUNTIME_ENV" ||
+  fail "review: procedure path did not resolve from the baked image"
+for artifact in README.md upstream.md LICENSE revision; do
+  mv "$review_dir/$artifact" "$tmp/review-artifact"
+  if run_prepare_dispatch "review-missing-$artifact" > "$tmp/review-error" 2>&1; then
+    fail "review: missing $artifact did not stop dispatch preparation"
+  fi
+  grep -Fq "Anthropic review procedure is missing or empty at $review_dir/$artifact" "$tmp/review-error" ||
+    fail "review: missing $artifact did not name the failed artifact"
+  [ ! -s "$RUNTIME_ENV" ] || fail "review: missing $artifact exported a partial context"
+  export MODE='implement'
+  run_prepare_dispatch "implement-without-$artifact"
+  if grep -q '^AGENT_REVIEW_PATH=' "$RUNTIME_ENV"; then
+    fail "implement: loaded the review-only procedure"
+  fi
+  mv "$tmp/review-artifact" "$review_dir/$artifact"
+  export MODE='review'
+done
+echo "scenario review-procedure: OK"
 
 # Linear source identity stays distinct from the native Work/checkout anchor.
 export WORK='{"id":"01PREPAREDISPATCHTESTFIX1","spec":{"title":"SPR-84: Fix source","description":"Current admitted issue body","pipeline":"claude","target":{"repo":"octo/example"}},"issue":{"reference":{"tracker":"linear","organizationId":"11111111-1111-4111-8111-111111111111","issueId":"44444444-4444-4444-8444-444444444444"},"identifier":"SPR-84","url":"https://linear.app/example/issue/SPR-84","title":"Fix source","state":"open","updatedAt":"2026-11-04T10:00:00Z"}}'

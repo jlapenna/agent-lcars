@@ -6,7 +6,44 @@
     "monorepo:nextjs",
     "monorepo:react"
   ],
+  "git-submodules": {
+    "enabled": true
+  },
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Native OpenCode version selector; platform SHA-256 locks below move in the same qualified runtime PR.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/runner-image\\/opencode-version$/"
+      ],
+      "matchStrings": ["(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)"],
+      "depNameTemplate": "anomalyco/opencode",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "description": "Native Antigravity version selector; platform SHA-256 locks below move in the same qualified runtime PR.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/runner-image\\/agy-version$/"
+      ],
+      "matchStrings": ["(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"],
+      "depNameTemplate": "google-antigravity/antigravity-cli",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "description": "Native per-platform GitHub release locks. The attachment datasource updates the matching artifact digest with its release version.",
+      "managerFilePatterns": [
+        "/^apps\\/runner-autoscaler\\/runner-image\\/runtime-releases\\.json$/"
+      ],
+      "matchStrings": [
+        "\"repository\":\\s*\"(?<depName>[^\"]+)\",\\s*\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"asset\":\\s*\"[^\"]+\",\\s*\"sha256\":\\s*\"(?<currentDigest>[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver-coerced"
+    },
     {
       "customType": "regex",
       "description": "Runner image Go toolchain; must equal apps/runner-autoscaler/go.mod's go directive (toolchain-health.test.sh)",
@@ -61,6 +98,28 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Native runtime updates require candidate-image qualification. Keep version selectors, platform digests and npm CLI locks in one draft PR, outside unattended non-major updates.",
+      "matchDepNames": [
+        "anomalyco/opencode",
+        "google-antigravity/antigravity-cli",
+        "@openai/codex",
+        "@anthropic-ai/claude-code"
+      ],
+      "groupName": "runner CLI runtimes",
+      "groupSlug": "runner-cli-runtimes",
+      "automerge": false,
+      "draftPR": true
+    },
+    {
+      "description": "The Anthropic dependency supplies executable review instructions. Qualify upstream changes against the LCARS adapter and a real PR before making the update ready; keep them out of the unattended digest-update group. Drafts also prevent the fleet bot auto-merge workflow from arming them.",
+      "matchManagers": ["git-submodules"],
+      "matchDepNames": ["third_party/anthropic-plugins"],
+      "groupName": "Anthropic review workflow",
+      "groupSlug": "anthropic-review-workflow",
+      "automerge": false,
+      "draftPR": true
+    },
     {
       "description": "@types/node must track the Node major the repo runs on (engines `<27`, CI/runner image/deploy pinned to 26.x), not the newest Node: a newer major types APIs the runtime lacks, so typecheck would pass code that fails in production. Move it together with the Node pins in a deliberate runtime upgrade (#3101 closed #3053 for this reason).",
       "enabled": false,

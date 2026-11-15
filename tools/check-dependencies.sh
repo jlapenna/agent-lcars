@@ -21,11 +21,14 @@ while IFS= read -r manifest; do
 # lockfile churn. The claw runner image's npm lockfile likewise pins its
 # OpenClaw distribution as a standalone image input. Keep these exceptions
 # path-specific rather than treating all nested/private package manifests as
-# exempt.
+# exempt. The native CLI package/lock pair is also a standalone image input;
+# installing these CLIs in the application workspace would couple image-only
+# updates and platform packages to every developer/application installation.
 done < <(
   find apps libs -name package.json -not -path '*/dist/*' \
     -not -path 'apps/runner-autoscaler/runner-image/pnpm-seed/*' \
     -not -path 'apps/runner-autoscaler/runner-image/pnpm-seed-regression/*' \
+    -not -path 'apps/runner-autoscaler/runner-image/runtime-clis/*' \
     -not -path 'apps/runner-autoscaler/claw-image/*' | sort
 )
 

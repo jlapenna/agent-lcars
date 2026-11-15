@@ -20,18 +20,30 @@ assert_release() {
   local actual_asset actual_digest
 
   IFS=$'\t' read -r actual_asset actual_digest < <(
-    select_opencode_release v1.18.25 "$arch"
+    select_opencode_release v9.8.7 "$arch" "$tmp/releases.json"
   )
   [[ "$actual_asset" == "$expected_asset" && "$actual_digest" == "$expected_digest" ]] ||
     fail_test "wrong reviewed release selection for $arch"
 }
 
+# Distinct fixture digests catch swapped platform selection independently of
+# whichever vendor release Renovate currently locks.
+fixture_amd_digest="$(printf 'a%.0s' {1..64})"
+fixture_arm_digest="$(printf 'b%.0s' {1..64})"
+jq -n --arg amd "$fixture_amd_digest" --arg arm "$fixture_arm_digest" '{releases: [
+  {repository:"anomalyco/opencode",version:"v9.8.7",architecture:"amd64",asset:"opencode-linux-x64-baseline.tar.gz",sha256:$amd},
+  {repository:"anomalyco/opencode",version:"v9.8.7",architecture:"arm64",asset:"opencode-linux-arm64.tar.gz",sha256:$arm}
+]}' > "$tmp/releases.json"
 assert_release amd64 opencode-linux-x64-baseline.tar.gz \
-  ccd10586611b598b1eaed7c05cfbcbc68e3ec09e736b360da09b1d615d922968
+  "$fixture_amd_digest"
 assert_release arm64 opencode-linux-arm64.tar.gz \
-  35ef77897425e41b5183a2c21ac4fb1d4d944d82a94e3c920f57b5490af11ac5
-[[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 67108864 ]] ||
-  fail_test 'OpenCode archive size cap is no longer the reviewed 64 MiB bound'
+  "$fixture_arm_digest"
+# Both real platform locks must exist for the selector the image consumes.
+pinned_version="$(tr -d '\r\n' < "$here/opencode-version")"
+select_opencode_release "$pinned_version" amd64 >/dev/null
+select_opencode_release "$pinned_version" arm64 >/dev/null
+[[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 88080384 ]] ||
+  fail_test 'OpenCode archive size cap is no longer the reviewed 84 MiB bound'
 [[ "$OPENCODE_RETRY_MAX_SECONDS" -eq 570 && "$OPENCODE_DOWNLOAD_BUDGET_SECONDS" -eq 600 ]] ||
   fail_test 'OpenCode retry/download budgets are no longer bounded to the install window'
 grep -Fq -- '--max-filesize "$OPENCODE_MAX_ARCHIVE_BYTES"' "$here/install-opencode-release.sh" ||
@@ -40,10 +52,10 @@ grep -Fq -- '--retry-max-time "$OPENCODE_RETRY_MAX_SECONDS"' "$here/install-open
   fail_test 'OpenCode curl invocation is missing the aggregate retry bound'
 grep -Fq -- 'timeout -k 30s "${OPENCODE_DOWNLOAD_BUDGET_SECONDS}s"' "$here/install-opencode-release.sh" ||
   fail_test 'OpenCode curl invocation is missing the outer install budget'
-if (select_opencode_release v1.18.25 ppc64le) >/dev/null 2>&1; then
+if (select_opencode_release v9.8.7 ppc64le "$tmp/releases.json") >/dev/null 2>&1; then
   fail_test 'unsupported target architecture was accepted'
 fi
-if (select_opencode_release v1.18.26 amd64) >/dev/null 2>&1; then
+if (select_opencode_release v9.8.8 amd64 "$tmp/releases.json") >/dev/null 2>&1; then
   fail_test 'unreviewed version was accepted'
 fi
 

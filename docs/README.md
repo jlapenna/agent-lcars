@@ -51,6 +51,7 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | E2E reliability and triage       | [`e2e-reliability.md`](e2e-reliability.md)                                   |
 | Worker behavior enforcement      | [`worker-behavior-enforcement.md`](worker-behavior-enforcement.md)           |
 | Worker qualification and rollout | [`worker-policy-rollout.md`](worker-policy-rollout.md)                       |
+| Native code review qualification | [`code-review-qualification.md`](code-review-qualification.md)               |
 | OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
 | Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md)                     |
 

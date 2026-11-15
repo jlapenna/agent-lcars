@@ -11,6 +11,7 @@ apps/console/next-env.d.ts
 pnpm-lock.yaml
 # npm owns the claw runner image's pinned OpenClaw lockfile.
 apps/runner-autoscaler/claw-image/package-lock.json
+apps/runner-autoscaler/runner-image/runtime-clis/package-lock.json
 
 # Generated and local agent state.
 .agent/
@@ -23,3 +24,9 @@ apps/runner-autoscaler/runner-image/pnpm-seed/fleet/
 
 # OpenDesign-generated HTML mockups; promoted as generated snapshots.
 design/*.html
+
+# Upstream source is managed by Git, outside our formatting policy.
+/third_party/
+
+# Recorded upstream preset bytes are verified by the replay SHA-256.
+tools/probes/review-fixtures/repo-tools-renovate-preset.json
