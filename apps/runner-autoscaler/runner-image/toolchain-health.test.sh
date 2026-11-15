@@ -67,10 +67,9 @@ check_final_stage_order() {
         '$1 > from { line = $1; if (pick == "first") { print line; exit } }
          END { if (pick == "last" && line) print line }'
   }
-  local user codex claude plugin claude_plugin pnpm_warm skills invariants
+  local user runtime_clis plugin claude_plugin pnpm_warm skills invariants
   user="$(final_line 'USER runner')"
-  codex="$(final_line 'RUN npm install -g @openai/codex && codex --version')"
-  claude="$(final_line 'RUN npm install -g @anthropic-ai/claude-code && claude --version')"
+  runtime_clis="$(final_line '    codex --version && claude --version')"
   plugin="$(final_line 'RUN codex plugin marketplace add /opt/repo-tools && \')"
   claude_plugin="$(final_line 'RUN claude plugin marketplace add /opt/repo-tools && \')"
   pnpm_warm="$(final_line 'RUN pnpm --version' last)"
@@ -78,12 +77,8 @@ check_final_stage_order() {
     awk -v from="$final_from" '$1 > from { print; exit }')"
   invariants="$(final_line 'RUN bash /usr/local/lib/agent-lcars/verify-image-invariants.sh')"
   before() { [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]] && (($1 < $2)); }
-  if ! before "$codex" "$user"; then
-    echo "runner image must install and smoke-check Codex before switching users" >&2
-    return 1
-  fi
-  if ! before "$claude" "$user"; then
-    echo "runner image must install and smoke-check Claude Code before switching users" >&2
+  if ! before "$runtime_clis" "$user"; then
+    echo "runner image must install and smoke-check the locked runtime CLIs before switching users" >&2
     return 1
   fi
   if ! before "$user" "$plugin" || ! before "$user" "$claude_plugin"; then
@@ -371,13 +366,10 @@ expect_order_failure() {
   fi
   [[ "$err" == "$message" ]] || { echo "ordering guard for $name reported: $err" >&2; exit 1; }
 }
-codex_msg="runner image must install and smoke-check Codex before switching users"
-expect_order_failure no-final-user "$codex_msg" 'USER runner' '<absent>' after
-expect_order_failure user-before-codex "$codex_msg" \
-  'USER runner' 'RUN npm install -g @openai/codex && codex --version' before
-expect_order_failure user-before-claude \
-  "runner image must install and smoke-check Claude Code before switching users" \
-  'USER runner' 'RUN npm install -g @anthropic-ai/claude-code && claude --version' before
+runtime_clis_msg="runner image must install and smoke-check the locked runtime CLIs before switching users"
+expect_order_failure no-final-user "$runtime_clis_msg" 'USER runner' '<absent>' after
+expect_order_failure user-before-runtime-clis "$runtime_clis_msg" \
+  'USER runner' 'COPY runtime-clis/package.json runtime-clis/package-lock.json /opt/runner-clis/' before
 expect_order_failure plugins-before-user "runner image must enable the public repo-tools plugins as runner" \
   'USER runner' '    claude plugin install repo-tools@repo-tools' after
 expect_order_failure claude-plugin-before-user "runner image must enable the public repo-tools plugins as runner" \
