@@ -110,6 +110,14 @@ provider carrying it would inherit that binding. `www-deploy@` is instead
 bound to `attribute.workflow_class/www-deploy`, a value only this provider
 produces (the sibling's classes are `ci`, `deploy` and `agent`).
 
+A third provider, `girosf-github`, has the same shape for the Il Giro di San
+Francisco site (`apps/girosf`, supersprinklesracing/sprinkles#6496): it admits
+only sprinkles' `.github/workflows/girosf.yml` on `refs/heads/main` and reaches
+only `girosf-deploy@girosf` (`firebasehosting.admin` and `firebase.viewer` in
+the `girosf` project, no keys), bound to `attribute.workflow_class/girosf-deploy`.
+It replaced the exported `FIREBASE_SERVICE_ACCOUNT_GIROSF` key the site's own
+repository deployed with.
+
 Its history is the reason this file and the model are kept in step. The
 provider and its impersonation binding were created outside Terraform and
 declared nowhere, and stayed invisible until the contract check compared the
