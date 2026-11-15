@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 // Collect private native receipts. Never turn a missing transcript into a pass.
 import {
   copyFileSync,
@@ -12,7 +13,10 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readReviewEvidence } from './review-evidence.mjs';
+import {
+  readReviewEvidence,
+  completedOpenCodeChild,
+} from './review-evidence.mjs';
 
 const directory = resolve(process.argv[2] ?? '');
 if (!process.argv[2])
@@ -143,17 +147,19 @@ if (manifest.provider === 'codex') {
     } catch {
       continue;
     }
+    const spawnedId =
+      typeof output.task_name === 'string' ? output.task_name : output.agent_id;
     if (
       calls.get(payload.call_id) === 'spawn_agent' &&
-      typeof output.task_name === 'string'
+      typeof spawnedId === 'string'
     ) {
-      spawned.add(output.task_name);
+      spawned.add(spawnedId);
       const arguments_ = spawnArguments.get(payload.call_id);
       if (
         arguments_?.fork_turns === 'none' ||
         arguments_?.fork_context === false
       )
-        isolated.add(output.task_name);
+        isolated.add(spawnedId);
     }
     for (const agent of output.agents ?? []) {
       if (
@@ -184,12 +190,12 @@ if (manifest.provider === 'codex') {
       if (
         parent?.parent_thread_id !== thread ||
         parent.depth !== 1 ||
-        !spawned.has(parent.agent_path)
+        !(spawned.has(id) || spawned.has(parent.agent_path))
       ) {
         errors.push('Codex child is not bound to this native parent: ' + id);
         continue;
       }
-      canonicalIds[parent.agent_path] = id;
+      if (parent.agent_path) canonicalIds[parent.agent_path] = id;
       canonicalIds[id] = id;
       if (
         child.some(
@@ -235,21 +241,58 @@ if (manifest.provider === 'agy') {
   }
 }
 if (manifest.provider === 'opencode') {
-  for (const event of trace) {
-    const part = event.part;
-    if (event.type === 'error') errors.push('OpenCode native provider error');
-    if (part?.tool !== 'task' || part.state?.status !== 'completed') continue;
-    const metadata = part.state.metadata;
-    if (
-      metadata?.sessionId &&
-      metadata.parentSessionId === event.sessionID &&
-      metadata.sessionId !== event.sessionID &&
-      metadata.truncated === false
-    )
-      completed.add(metadata.sessionId);
-    if (metadata?.model) models.add(JSON.stringify(metadata.model));
+  const rootId = trace.find(
+    (event) => typeof event.sessionID === 'string',
+  )?.sessionID;
+  const exported = (id) => {
+    if (!/^ses_[a-zA-Z0-9]+$/.test(id ?? ''))
+      throw new Error('Missing OpenCode native session binding');
+    const result = JSON.parse(
+      execFileSync(
+        manifest.imageId ? '/usr/local/bin/opencode' : 'opencode',
+        ['export', id],
+        {
+          encoding: 'utf8',
+          timeout: 10000,
+          maxBuffer: 32 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      ),
+    );
+    if (result.info?.id !== id)
+      throw new Error('OpenCode exported a different native session');
+    const name = 'native/opencode-' + id + '.json';
+    mkdirSync(join(directory, 'native'), { recursive: true, mode: 0o700 });
+    writeFileSync(join(directory, name), JSON.stringify(result), {
+      mode: 0o600,
+    });
+    artifacts.push(name);
+    return result;
+  };
+  try {
+    const root = exported(rootId);
+    for (const message of root.messages ?? []) {
+      for (const part of message.parts ?? []) {
+        if (part.tool !== 'task' || part.state?.status !== 'completed')
+          continue;
+        const child = exported(part.state.metadata?.sessionId);
+        if (completedOpenCodeChild(root, part, child))
+          completed.add(child.info.id);
+        else
+          errors.push(
+            'OpenCode child lacks native parent/completion proof: ' +
+              child.info?.id,
+          );
+        if (child.info?.model) models.add(JSON.stringify(child.info.model));
+      }
+    }
+    for (const event of trace)
+      if (event.type === 'error') errors.push('OpenCode native provider error');
+  } catch (error) {
+    errors.push('OpenCode native export failed: ' + error.message);
   }
 }
+
 writeFileSync(
   join(directory, 'native-evidence.json'),
   JSON.stringify(

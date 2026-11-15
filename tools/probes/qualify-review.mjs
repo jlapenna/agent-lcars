@@ -13,6 +13,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { finished } from 'node:stream/promises';
 import { claudeRunnerToolArgs } from './delegation-fixture.mjs';
+import { materializeReviewSource } from './materialize-review-source.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const [provider, pull, output, sourceRef] = process.argv.slice(2);
@@ -50,8 +51,16 @@ const head = sourceRef ?? metadata.headRefOid;
 if (!/^[a-f0-9]{40}$/.test(head))
   throw new Error('Expected a full immutable source SHA');
 const base = metadata.baseRefOid;
-const diff = git('diff', '--no-ext-diff', `${base}...${head}`);
-const filenames = git('diff', '--name-only', `${base}...${head}`)
+mkdirSync(output, { mode: 0o700 });
+const reviewRoot = materializeReviewSource(
+  root,
+  join(output, 'source'),
+  head,
+  base,
+);
+const reviewGit = (...args) => run('git', ['-C', reviewRoot, ...args]);
+const diff = reviewGit('diff', '--no-ext-diff', `${base}...${head}`);
+const filenames = reviewGit('diff', '--name-only', `${base}...${head}`)
   .trim()
   .split('\n');
 const files = new Set(['AGENTS.md', 'CLAUDE.md']);
@@ -65,13 +74,12 @@ for (const path of filenames) {
 }
 let guidance = '';
 const tracked = new Set(
-  git('ls-tree', '-r', '--name-only', head).trim().split('\n'),
+  reviewGit('ls-tree', '-r', '--name-only', head).trim().split('\n'),
 );
 for (const path of [...files].sort()) {
   if (tracked.has(path))
-    guidance += `\n\n## ${path}\n\n${git('show', `${head}:${path}`)}`;
+    guidance += `\n\n## ${path}\n\n${reviewGit('show', `${head}:${path}`)}`;
 }
-mkdirSync(output, { mode: 0o700 });
 const procedure = join(output, 'procedure');
 mkdirSync(procedure, { mode: 0o700 });
 const packager = join(
@@ -171,6 +179,10 @@ writeFileSync(
   join(output, 'pr.json'),
   JSON.stringify(contextMetadata, null, 2),
 );
+const seconds = Number(process.env.LCARS_REVIEW_TIMEOUT_SECONDS ?? 4800);
+if (!Number.isInteger(seconds) || seconds < 1 || seconds > 4800)
+  throw new Error('Review deadline must be 1–4800 seconds');
+const reviewDeadline = new Date(Date.now() + seconds * 1000).toISOString();
 const marker = `<!-- review-qualification:${provider}:${head}:${Date.now()} -->`;
 const receipt = join(output, 'receipt.json');
 const payload = join(output, 'review.json');
@@ -183,12 +195,16 @@ ${join(output, 'guidance.md')}; PR metadata is ${join(output, 'pr.json')}.
 Give every child the full diff, guidance, PR metadata and exact head. Children
 return evidence only, never recursively delegate and never write to GitHub.
 ${dependencyContext}
+All passes, validators and captured publication share this ${seconds}-second
+provider budget, ending by ${reviewDeadline}. Give the shared deadline to every
+child and reserve time for validation and publication.
 Use the native delegation facility this harness actually exposes, and wait for
 all reviewers and validators. Do not substitute a single-agent inspection.
 Every reviewer and validator must start with a fresh context. On Codex explicitly
 set fork_turns="none" (or fork_context=false if that is its native schema), never
 the default inherited conversation. Supply common inputs and assigned role;
 validators also receive the candidate. Do not leak other reviewers' conclusions.
+The source checkout is ${reviewRoot}. Give this working directory to every child.
 Read source at ${head} with git show ${head}:<path>; the working checkout can
 belong to a later revision. Do not silently review current files for an older PR.
 ${sourceRef ? `This is an explicitly labelled historical snapshot of the real PR. Read source with git show ${head}:<path>, not the current checkout. The live PR has moved. Do not query live PR prose, external memory or later source: those can disclose later fixes. Current-head/preflight/publication checks are outside this replay's coverage; do not claim them. Do not use MCP tools for this replay.` : 'Read back the live PR head before deciding; if it moved, record an incomplete review.'}
@@ -311,9 +327,7 @@ if (imageId && version.match(/\d+\.\d+\.\d+/)?.[0] !== expectedVersion)
   throw new Error(
     'Installed candidate CLI version does not match its declared dependency',
   );
-const seconds = Number(process.env.LCARS_REVIEW_TIMEOUT_SECONDS ?? 1800);
-if (!Number.isInteger(seconds) || seconds < 1 || seconds > 4800)
-  throw new Error('Review deadline must be 1–4800 seconds');
+if (provider === 'claude') env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS = '0';
 const manifest = {
   provider,
   version,
@@ -321,6 +335,7 @@ const manifest = {
   imageId: imageId ?? null,
   uid: process.getuid(),
   timeoutSeconds: seconds,
+  reviewWorkingDirectory: reviewRoot,
   sourceCommit: git('rev-parse', 'HEAD').trim(),
   reviewedHead: head,
   base,
@@ -346,7 +361,7 @@ writeFileSync(join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
 const stdout = createWriteStream(join(output, 'trace.jsonl'), { mode: 0o600 });
 const stderr = createWriteStream(join(output, 'stderr.txt'), { mode: 0o600 });
 const child = spawn(binary, args, {
-  cwd: root,
+  cwd: reviewRoot,
   env,
   detached: true,
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -390,12 +405,25 @@ const result = await new Promise((resolveResult) => {
 });
 clearTimeout(timer);
 clearTimeout(forcedKill);
+let sourceUnchanged = false;
+try {
+  sourceUnchanged =
+    reviewGit('rev-parse', 'HEAD').trim() === head &&
+    spawnSync('git', ['-C', reviewRoot, 'diff', '--quiet', head, '--'], {
+      cwd: root,
+      env,
+      timeout: 10000,
+    }).status === 0;
+} catch {
+  /* Missing or moved review source cannot qualify. */
+}
 await Promise.all([finished(stdout), finished(stderr)]);
 writeFileSync(
   join(output, 'execution.json'),
   JSON.stringify(
     {
       ...result,
+      sourceUnchanged,
       timedOut,
       interrupted,
       finishedAt: new Date().toISOString(),
@@ -414,7 +442,8 @@ console.log(
     qualificationAccepted: false,
   }),
 );
-process.exitCode = result.exitCode === 0 && !timedOut && !interrupted ? 0 : 1;
+process.exitCode =
+  result.exitCode === 0 && !timedOut && !interrupted && sourceUnchanged ? 0 : 1;
 if (imageId) {
   const collected = spawnSync(
     process.execPath,

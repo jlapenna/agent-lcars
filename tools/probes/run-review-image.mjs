@@ -89,10 +89,7 @@ const args = [
   ...env('HOME', '/tmp/review-home'),
   ...env('GIT_OPTIONAL_LOCKS', '0'),
   ...env('LCARS_REVIEW_QUALIFICATION_IMAGE_ID', imageId),
-  ...env(
-    'LCARS_REVIEW_TIMEOUT_SECONDS',
-    provider === 'opencode' ? '4800' : '1800',
-  ),
+  ...env('LCARS_REVIEW_TIMEOUT_SECONDS', '4800'),
 ];
 if (provider === 'opencode')
   args.push(...mount(auth, '/run/secrets/opencode-llm-api-key', true));
@@ -179,7 +176,7 @@ try {
       return !execution.error && execution.status === 0;
     },
     {
-      timeout: (provider === 'opencode' ? 82 : 32) * 60 * 1000,
+      timeout: 82 * 60 * 1000,
       cleanupTimeout: 30000,
     },
   );

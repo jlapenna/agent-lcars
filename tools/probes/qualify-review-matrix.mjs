@@ -7,17 +7,18 @@ import { fileURLToPath } from 'node:url';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const root = resolve(directory, '../..');
-const [image, output, selected] = process.argv.slice(2);
+const [pull, image, output, selected] = process.argv.slice(2);
 const cases = JSON.parse(
   readFileSync(join(directory, 'review-cases.json'), 'utf8'),
 );
 if (
+  !/^[1-9][0-9]*$/.test(pull ?? '') ||
   !/^sha256:[a-f0-9]{64}$/.test(image ?? '') ||
   !isAbsolute(output ?? '') ||
   (selected && !cases.providers.includes(selected))
 )
   throw new Error(
-    'Usage: qualify-review-matrix.mjs <immutable image ID> <new absolute output> [provider]',
+    'Usage: qualify-review-matrix.mjs <candidate PR> <immutable image ID> <new absolute output> [provider]',
   );
 if (
   execFileSync('git', ['status', '--porcelain'], {
@@ -48,6 +49,7 @@ const persist = () =>
       {
         image,
         source,
+        candidatePullRequest: Number(pull),
         results,
         complete:
           results.length ===
@@ -72,7 +74,7 @@ await Promise.all(
       const args = [
         join(directory, 'run-review-image.mjs'),
         provider,
-        String(scenario.pullRequest),
+        String(scenario.head === 'candidate' ? pull : scenario.pullRequest),
         image,
         destination,
         ...(scenario.head === 'candidate' ? [] : [scenario.head]),

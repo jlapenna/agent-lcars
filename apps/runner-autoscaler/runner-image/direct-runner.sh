@@ -928,6 +928,11 @@ if [ "$PIPELINE" = "claude" ]; then
     echo "FATAL: CLAUDE_TIMEOUT_SECONDS must be a positive integer" >&2
     exit 1
   fi
+  # Print mode otherwise kills pending child reviews after ten idle minutes,
+  # even with exit 0. The existing outer timeout remains the hard run deadline.
+  if [ "$MODE" = review ]; then
+    export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+  fi
   LAST_MESSAGE_FILE="$RUNNER_TEMP/last-message.txt"
   CLAUDE_DEADLINE=$(($(monotonic_seconds) + CLAUDE_TIMEOUT_SECONDS))
   run_claude_round() {

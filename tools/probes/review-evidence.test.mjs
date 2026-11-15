@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluateReview } from './review-evidence.mjs';
+import { evaluateReview, completedOpenCodeChild } from './review-evidence.mjs';
 
 function completedReview() {
   const head = '1'.repeat(40);
@@ -125,4 +125,68 @@ test('native collection errors cannot be hidden by a completed receipt', () => {
   const input = completedReview();
   input.native.errors.push('Missing child transcript');
   assert.equal(evaluateReview(input).passed, false);
+});
+
+function openCodeExport() {
+  return {
+    root: { info: { id: 'native-parent' } },
+    task: {
+      tool: 'task',
+      state: {
+        status: 'completed',
+        metadata: {
+          parentSessionId: 'native-parent',
+          sessionId: 'native-child',
+          truncated: false,
+        },
+      },
+    },
+    child: {
+      info: { id: 'native-child', parentID: 'native-parent' },
+      messages: [
+        {
+          info: { role: 'assistant', finish: 'stop' },
+          parts: [{ type: 'text', text: 'Review evidence.' }],
+        },
+      ],
+    },
+  };
+}
+
+test('OpenCode store exports retain a completed child when the live stream loses its task event', () => {
+  const input = openCodeExport();
+  assert.equal(
+    completedOpenCodeChild(input.root, input.task, input.child),
+    true,
+  );
+});
+
+test('OpenCode cannot borrow a completed child from another native parent', () => {
+  const input = openCodeExport();
+  input.child.info.parentID = 'another-parent';
+  assert.equal(
+    completedOpenCodeChild(input.root, input.task, input.child),
+    false,
+  );
+});
+
+test('OpenCode background-start or unfinished exports are not completion proof', () => {
+  const input = openCodeExport();
+  input.task.state.metadata.background = true;
+  assert.equal(
+    completedOpenCodeChild(input.root, input.task, input.child),
+    false,
+  );
+  delete input.task.state.metadata.background;
+  input.child.messages[0].info.finish = 'tool-calls';
+  assert.equal(
+    completedOpenCodeChild(input.root, input.task, input.child),
+    false,
+  );
+});
+
+test('a review that mutated its source checkout cannot pass', () => {
+  const input = completedReview();
+  input.execution.sourceUnchanged = false;
+  assert.ok(evaluateReview(input).failures.includes('review-source-changed'));
 });

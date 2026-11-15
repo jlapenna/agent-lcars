@@ -16,8 +16,9 @@ the maintainer completing an update runs qualification before making it ready.
 
 Run this explicit, paid functional evaluation when changing the procedure or
 qualifying runtime updates. It is not scheduled monitoring or a health probe.
-Build the candidate through the normal image workflow at the committed source,
-then inspect its immutable local ID:
+Build the pushed candidate with `AGENT_LCARS_REF` set to its full source SHA
+and `--label org.opencontainers.image.revision=<same-SHA>`. Use the owning image
+workflow’s other build inputs, then inspect its immutable local ID:
 
 ```bash
 docker image inspect --format '{{.Id}}' <candidate-tag>
@@ -25,7 +26,7 @@ LCARS_REVIEW_CODEX_MODEL=<caller-selected-model> \
 LCARS_REVIEW_CODEX_EFFORT=<caller-selected-effort> \
 LCARS_REVIEW_OPENCODE_KEY_FILE=<protected-native-key-file> \
   node tools/probes/qualify-review-matrix.mjs \
-  <sha256:image-id> <new-absolute-private-evidence-directory>
+  <candidate-PR-number> <sha256:image-id> <new-absolute-private-evidence-directory>
 ```
 
 The key file is a protected consuming-process binding for the existing named
@@ -37,9 +38,12 @@ are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
 
-The committed cases cover the actual candidate PR, the earlier real PR revision
+The explicit PR argument selects the current candidate. The historical anchors
+remain fixed. The committed cases cover the actual candidate PR, the earlier real PR revision
 with the unqualified-upstream-update defect, and PR #3355's file-mount change.
-The earlier revision is reviewed under an explicitly recorded shared-preset
+Historical source is materialized at the requested head before native startup,
+so project guidance imports come from that revision. The earlier revision is
+reviewed under an explicitly recorded shared-preset
 snapshot. Its bytes and provenance are inputs for every reviewer and validator;
 the test does not assert what an unversioned hosted URL served historically.
 Expectations remain in the driver and are not included in model prompts.
@@ -49,7 +53,9 @@ The optional final provider argument selects one lane for diagnosis. Keep the
 first failure, its source and logs. Retry only after diagnosing an environment
 failure or changing a relevant input; do not rerun a quality failure until green.
 A provider limit is incomplete qualification, never a clean review or PARK.
-OpenCode uses the supported 80-minute execution budget with sequential children.
+Each provider uses the existing 80-minute production execution budget; OpenCode
+runs children sequentially. Claude print mode keeps awaiting background reviewers
+under that bounded outer deadline, without its earlier ten-minute idle cutoff.
 
 Inspect `matrix.json` and each case's `run/evaluation.json`, `receipt.json`,
 `review.json`, native transcripts and manifest. Acceptance requires all four

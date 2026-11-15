@@ -4,10 +4,10 @@
   "cases": [
     {
       "id": "managed-review-dependency",
-      "pullRequest": 3364,
+      "pullRequest": "candidate",
       "head": "candidate",
       "coverage": "Real current-head PR review; capture publication without posting evaluation traffic.",
-      "expectation": "The inherited Renovate auto-merge defect is fixed. Do not report that defect against this revision; validate any other candidates independently."
+      "expectation": "Complete the actual candidate PR procedure and independently validate introduced defects."
     },
     {
       "id": "unqualified-upstream-update",
@@ -21,7 +21,7 @@
         "fixture": "review-fixtures/repo-tools-renovate-preset.json",
         "sha256": "cf71723cdfdc30a3d9f08bb0a7826e08b7fa3108d3b54a10ce9a1d1790519dc4"
       },
-      "coverage": "Blind replay of the actual earlier PR revision that had an independently confirmed defect; excludes future PR prose and memory.",
+      "coverage": "Exact-source historical regression under the current procedure and a recorded preset; excludes later PR prose and external memory.",
       "expectation": "Find and independently validate that enabling git-submodules inherits automatic merging for digest updates from the shared preset, allowing upstream review-command changes to merge without qualification."
     },
     {

@@ -17,6 +17,7 @@ export function evaluateReview({
   require(execution?.exitCode === 0 &&
     execution?.timedOut === false &&
     execution?.interrupted !== true, 'native-execution-failed');
+  require(execution?.sourceUnchanged !== false, 'review-source-changed');
   require(receipt?.complete === true, 'procedure-incomplete');
   require(receipt?.head === manifest.reviewedHead, 'receipt-head-mismatch');
   const reviewers = receipt?.reviewers ?? [];
@@ -109,4 +110,31 @@ export function readReviewEvidence(directory) {
     payload: read('review.json'),
     native: read('native-evidence.json'),
   });
+}
+
+// Native task-export schema observed from the pinned OpenCode CLI. Exporting
+// the store is read-only and preserves evidence across long JSON-stream gaps.
+export function completedOpenCodeChild(root, task, child) {
+  const metadata = task?.state?.metadata;
+  const assistant = child?.messages
+    ?.filter((message) => message.info?.role === 'assistant')
+    .at(-1);
+  return (
+    task?.tool === 'task' &&
+    task.state.status === 'completed' &&
+    metadata?.parentSessionId === root?.info?.id &&
+    metadata?.sessionId === child?.info?.id &&
+    child?.info?.parentID === root?.info?.id &&
+    child?.info?.id !== root?.info?.id &&
+    metadata?.truncated === false &&
+    metadata?.background !== true &&
+    assistant?.info?.finish === 'stop' &&
+    !assistant.info.error &&
+    assistant.parts?.some(
+      (part) =>
+        part.type === 'text' &&
+        typeof part.text === 'string' &&
+        part.text.trim().length > 0,
+    )
+  );
 }

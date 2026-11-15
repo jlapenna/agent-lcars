@@ -64,6 +64,10 @@ review and comment-quality guidance applies.
    schema). Give each reviewer only the common source inputs and its assigned
    role; give validators the common inputs and candidate to verify. Distinct
    session IDs alone do not establish independent contexts.
+   Share the run's remaining budget with each child and reserve time for
+   validators and publication. Use the supplied diff for complete new-file
+   content, and batch the additional reads needed for relevant context and
+   callers. Keep each pass focused on its assigned responsibility.
    Give the passes distinct responsibilities: guidance A checks scoped rules;
    guidance B checks mandatory workflow and operational contracts; bug A
    checks changed logic and concrete input/state failures; bug B traces the
