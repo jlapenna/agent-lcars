@@ -177,6 +177,25 @@ const canceller = os.use(async ({ context, next }) => {
   return next({ context: { principal } });
 });
 
+/** `get` serves `reader` principals and, for its own claw work alone, a
+ *  claw admitter: the report is the investigation's only output, so the
+ *  principal that asked must be able to read it. Which authority applies is
+ *  decided per item in the handler. */
+const getter = os.use(async ({ context, next }) => {
+  const { principal } = context;
+  if (
+    principal === undefined ||
+    (!principal.scopes.has('work.operator') &&
+      !principal.scopes.has('work.reaper') &&
+      !principal.scopes.has('work.claw.admit'))
+  ) {
+    throw new ORPCError('UNAUTHORIZED', {
+      message: 'work.operator, work.reaper or work.claw.admit scope required',
+    });
+  }
+  return next({ context: { principal } });
+});
+
 /** Claw cancellation authority: the stored Work's admitting principal,
  *  still holding the claw grant for its pipeline. */
 function ownsClawWork(
@@ -311,7 +330,26 @@ export const workRouter = os.router({
     },
   ),
 
-  get: reader.get.handler(async ({ input, context, errors }) => {
+  get: getter.get.handler(async ({ input, context, errors }) => {
+    const { principal } = context;
+    if (
+      !principal.scopes.has('work.operator') &&
+      !principal.scopes.has('work.reaper')
+    ) {
+      // A claw admitter reads only its own claw work. Every other item --
+      // missing, not claw, owned by another principal, or outside its
+      // repository binding -- answers the same 404, as cancel does.
+      const stored = await context.runtime.store.readTask({
+        workId: input.id,
+      });
+      if (
+        stored === undefined ||
+        !mayAccessStoredWork(principal, stored.task.work) ||
+        !ownsClawWork(principal, stored.task.work)
+      )
+        throw errors.NOT_FOUND();
+      return view(context, input.id, stored.task);
+    }
     const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
     return view(context, input.id, task.task);

@@ -353,6 +353,54 @@ describe('claw investigation admission', () => {
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
   });
 
+  it('lets a claw admitter read its own investigation and report, and nothing else', async () => {
+    const ctx = context({ principal: clawAdmitter });
+    const mine = await call(ctx, 'POST', '/claw/investigations', {
+      question,
+    });
+    const id = mine.json.id as string;
+    const read = await call(ctx, 'GET', `/items/${id}`);
+    expect(read.status).toBe(200);
+    expect(read.json.id).toBe(id);
+    expect(read.json.runs).toHaveLength(1);
+
+    const operatorCtx = { ...ctx, principal: operator };
+    expect(
+      (await call(operatorCtx, 'PUT', `/items/${ID}`, { spec })).status,
+    ).toBe(201);
+    const other = await call(ctx, 'GET', `/items/${ID}`);
+    const missing = await call(ctx, 'GET', `/items/${OTHER_ID}`);
+    expect(other).toMatchObject({ status: 404 });
+    expect(missing).toMatchObject({ status: 404 });
+    expect(other.json).toEqual(missing.json);
+
+    const gate = {
+      ...clawAdmitter,
+      principal: 'svc:alert-gate',
+      subject: 'alert-gate@agent-lcars.iam.gserviceaccount.com',
+    };
+    const foreign = await call(
+      { ...ctx, principal: gate },
+      'GET',
+      `/items/${id}`,
+    );
+    expect(foreign).toMatchObject({ status: 404 });
+    expect(foreign.json).toEqual(missing.json);
+    expect(JSON.stringify(foreign.json)).not.toContain(question);
+    // Listing stays operator and reaper only.
+    expect((await call(ctx, 'GET', '/items')).status).toBe(401);
+    // A principal without any reading scope is still refused outright.
+    expect(
+      (
+        await call(
+          { ...ctx, principal: clawZoneExecutor },
+          'GET',
+          `/items/${id}`,
+        )
+      ).status,
+    ).toBe(401);
+  });
+
   it("never lets one claw admitter cancel or read another principal's investigation", async () => {
     const ctx = context({ principal: clawAdmitter });
     const mine = await call(ctx, 'POST', '/claw/investigations', {
