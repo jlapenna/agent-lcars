@@ -18,11 +18,14 @@ fixed cost on every dispatch on every provider, and #1210 split these out so
 that cost stops including sections most runs never need. Section numbers are
 unchanged, so `§8`/`§10` cross-references from any repo still resolve.
 
-This directory is this repo's canonical, single source of the protocol.
+This directory (`agents/shared/skills/agent-protocol` in jlapenna/agent-lcars)
+is the fleet's canonical, single source of the protocol. Change fleet-wide
+behavior here; repository-local rules belong in that repository's `AGENTS.md`
+or development skill, never in a copy of this protocol.
 QueueExecutor's baked native runtime resolves
 `reference/agent-protocol.md` from its adjacent trusted skill tree; consumer
 repositories do not download or hardcode that path. Keep that resolution in
 lockstep with the runner image and its direct-runner contract test.
-`.agents/skills/agent-protocol` is a symlink to this directory, kept so
-interactive Claude Code and Codex dev sessions in this repo still
+Agent LCARS's `.agents/skills/agent-protocol` is a symlink to this directory,
+kept so interactive Claude Code and Codex dev sessions there still
 auto-discover it.
