@@ -33,7 +33,10 @@ The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
 providers use the caller's existing native authentication directory, mounted
 without copying rotating login state. The container drops to the caller's UID
-so those files retain their ownership. The image's normal runner UID and setup
+so those files retain their ownership. Hook registrations inside that directory
+(Claude `settings.json` and `settings.local.json`, Codex `hooks.json`) are
+overlaid read-only, so nothing a review runs can install a hook into the
+caller's live sessions (#3379). The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.

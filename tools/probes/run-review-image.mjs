@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runImageContainer } from './qualification-container.mjs';
+import { protectedConfigMounts } from './review-auth-mounts.mjs';
 
 const [provider, pull, imageId, output, historical] = process.argv.slice(2);
 if (
@@ -93,10 +94,13 @@ const args = [
 ];
 if (provider === 'opencode')
   args.push(...mount(auth, '/run/secrets/opencode-llm-api-key', true));
-else
+else {
+  const authTarget = provider === 'codex' ? auth : '/native/' + provider;
   args.push(
-    ...mount(auth, provider === 'codex' ? auth : '/native/' + provider),
+    ...mount(auth, authTarget),
+    ...protectedConfigMounts(provider, auth, authTarget),
   );
+}
 if (provider === 'codex') {
   const model = process.env.LCARS_REVIEW_CODEX_MODEL,
     effort = process.env.LCARS_REVIEW_CODEX_EFFORT;
