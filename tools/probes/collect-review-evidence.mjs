@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 // Collect private native receipts. Never turn a missing transcript into a pass.
 import {
   copyFileSync,
+  openSync,
+  closeSync,
+  statSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -16,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import {
   readReviewEvidence,
   completedOpenCodeChild,
+  antigravityChildIds,
 } from './review-evidence.mjs';
 
 const directory = resolve(process.argv[2] ?? '');
@@ -209,15 +213,7 @@ if (manifest.provider === 'codex') {
   }
 }
 if (manifest.provider === 'agy') {
-  const ids = new Set();
-  for (const event of trace) {
-    const step = event.step_update;
-    if (step?.tool_name !== 'manage_subagents' || step.state !== 'DONE')
-      continue;
-    const output = step.tool_info?.output ?? '';
-    for (const match of output.matchAll(/"conversationId":"([a-f0-9-]{36})"/g))
-      ids.add(match[1]);
-  }
+  const ids = antigravityChildIds(trace);
   for (const id of ids) {
     const child = archive(
       join(
@@ -244,29 +240,39 @@ if (manifest.provider === 'opencode') {
   const rootId = trace.find(
     (event) => typeof event.sessionID === 'string',
   )?.sessionID;
+  const exports = new Map();
   const exported = (id) => {
+    if (exports.has(id)) return exports.get(id);
     if (!/^ses_[a-zA-Z0-9]+$/.test(id ?? ''))
       throw new Error('Missing OpenCode native session binding');
-    const result = JSON.parse(
+    const name = 'native/opencode-' + id + '.json';
+    const destination = join(directory, name);
+    mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+    // The pinned native CLI can exit before piped stdout drains. A regular
+    // file preserves the complete supported export, including large sessions.
+    const fd = openSync(destination, 'wx', 0o600);
+    try {
       execFileSync(
         manifest.imageId ? '/usr/local/bin/opencode' : 'opencode',
         ['export', id],
         {
-          encoding: 'utf8',
           timeout: 10000,
-          maxBuffer: 32 * 1024 * 1024,
-          stdio: ['ignore', 'pipe', 'pipe'],
+          maxBuffer: 1024 * 1024,
+          stdio: ['ignore', fd, 'pipe'],
         },
-      ),
-    );
+      );
+    } finally {
+      closeSync(fd);
+    }
+    if (statSync(destination).size > 32 * 1024 * 1024)
+      throw new Error(
+        'OpenCode native export exceeded the evidence size limit',
+      );
+    const result = JSON.parse(readFileSync(destination, 'utf8'));
     if (result.info?.id !== id)
       throw new Error('OpenCode exported a different native session');
-    const name = 'native/opencode-' + id + '.json';
-    mkdirSync(join(directory, 'native'), { recursive: true, mode: 0o700 });
-    writeFileSync(join(directory, name), JSON.stringify(result), {
-      mode: 0o600,
-    });
     artifacts.push(name);
+    exports.set(id, result);
     return result;
   };
   try {

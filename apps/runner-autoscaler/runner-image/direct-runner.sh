@@ -1290,8 +1290,20 @@ elif [ "$PIPELINE" = "agy" ]; then
       local after_sessions="$RUNNER_TEMP/agy-after-first-round.txt"
       find "$HOME/.gemini/antigravity-cli/brain" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -u > "$after_sessions"
       mapfile -t new_agy_sessions < <(comm -13 "$AGY_BASELINE_SESSIONS" "$after_sessions")
-      if [ "${#new_agy_sessions[@]}" -eq 1 ]; then
-        printf '%s\n' "${new_agy_sessions[0]}"
+      # Native child conversations start with SYSTEM_MESSAGE, while this
+      # fresh coordinator starts with USER_EXPLICIT USER_INPUT (1.5.9).
+      # Four review children must not make the coordinator ambiguous.
+      local id transcript coordinator_sessions=()
+      for id in "${new_agy_sessions[@]}"; do
+        [[ "$id" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]] || continue
+        transcript="$HOME/.gemini/antigravity-cli/brain/$id/.system_generated/logs/transcript.jsonl"
+        if [ -r "$transcript" ] && head -n 1 "$transcript" |
+          jq -e '.source == "USER_EXPLICIT" and .type == "USER_INPUT"' >/dev/null 2>&1; then
+          coordinator_sessions+=("$id")
+        fi
+      done
+      if [ "${#coordinator_sessions[@]}" -eq 1 ]; then
+        printf '%s\n' "${coordinator_sessions[0]}"
       fi
     fi
   }

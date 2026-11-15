@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { evaluateReview, completedOpenCodeChild } from './review-evidence.mjs';
+import {
+  evaluateReview,
+  completedOpenCodeChild,
+  antigravityChildIds,
+} from './review-evidence.mjs';
 
 function completedReview() {
   const head = '1'.repeat(40);
@@ -189,4 +193,70 @@ test('a review that mutated its source checkout cannot pass', () => {
   const input = completedReview();
   input.execution.sourceUnchanged = false;
   assert.ok(evaluateReview(input).failures.includes('review-source-changed'));
+});
+
+// Field names and nesting captured from native Antigravity 1.5.9 stream JSON.
+function agySpawn(state = 'DONE') {
+  return {
+    step_update: {
+      tool_name: 'invoke_subagent',
+      state,
+      subagent_info: {
+        subagents: [
+          {
+            type_name: 'self',
+            role: 'Guidance Reviewer A',
+            conversation_id: '86866a02-80fd-455e-b17a-d5f647dda27c',
+            initial_prompt: 'Review the immutable source.',
+          },
+        ],
+      },
+    },
+  };
+}
+
+test('Antigravity registers a native spawned child without an optional listing', () => {
+  assert.deepEqual(antigravityChildIds([agySpawn()]), [
+    '86866a02-80fd-455e-b17a-d5f647dda27c',
+  ]);
+});
+
+test('Antigravity deduplicates spawn and optional listing evidence', () => {
+  const listing = {
+    step_update: {
+      tool_name: 'manage_subagents',
+      state: 'DONE',
+      tool_info: {
+        output:
+          '{"subagents":[{"conversationId": "86866a02-80fd-455e-b17a-d5f647dda27c"}]}',
+      },
+    },
+  };
+  assert.deepEqual(antigravityChildIds([listing]), [
+    '86866a02-80fd-455e-b17a-d5f647dda27c',
+  ]);
+  assert.deepEqual(antigravityChildIds([agySpawn(), listing]), [
+    '86866a02-80fd-455e-b17a-d5f647dda27c',
+  ]);
+});
+
+test('Antigravity ignores uncommitted invocations, unrelated output and malformed IDs', () => {
+  const wrongTool = agySpawn();
+  wrongTool.step_update.tool_name = 'view_file';
+  const invalid = agySpawn();
+  invalid.step_update.subagent_info.subagents[0].conversation_id =
+    '../../another-session';
+  const outputOnly = {
+    step_update: {
+      tool_name: 'invoke_subagent',
+      state: 'DONE',
+      tool_info: {
+        output: '{"conversationId":"86866a02-80fd-455e-b17a-d5f647dda27c"}',
+      },
+    },
+  };
+  assert.deepEqual(
+    antigravityChildIds([agySpawn('ACTIVE'), wrongTool, invalid, outputOnly]),
+    [],
+  );
 });

@@ -138,3 +138,34 @@ export function completedOpenCodeChild(root, task, child) {
     )
   );
 }
+
+// Antigravity 1.5.9 emits completed invocation IDs in structured subagent_info.
+// Listing is optional: spawning is not completion, so callers must still
+// verify each child's terminal native transcript.
+export function antigravityChildIds(trace) {
+  const ids = new Set();
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+  for (const event of trace) {
+    const step = event.step_update;
+    if (step?.state !== 'DONE') continue;
+    if (step.tool_name === 'invoke_subagent') {
+      for (const child of step.subagent_info?.subagents ?? []) {
+        if (
+          typeof child.conversation_id === 'string' &&
+          uuid.test(child.conversation_id)
+        )
+          ids.add(child.conversation_id);
+      }
+    }
+    if (
+      step.tool_name === 'manage_subagents' &&
+      typeof step.tool_info?.output === 'string'
+    ) {
+      for (const match of step.tool_info.output.matchAll(
+        /"conversationId"\s*:\s*"([a-f0-9-]{36})"/g,
+      ))
+        if (uuid.test(match[1])) ids.add(match[1]);
+    }
+  }
+  return [...ids];
+}

@@ -177,3 +177,132 @@ for (const format of ['v1', 'v2']) {
     );
   });
 }
+
+// Reproduces the native 1.19.5 large-export boundary: stdout must be a regular
+// file because the CLI can exit before a pipe drains. No inference is used.
+test('retains large native OpenCode exports and repeated child task references', () => {
+  const root = mkdtempSync(join(tmpdir(), 'lcars-review-opencode-export-'));
+  try {
+    const json = (path, value) => writeFileSync(path, JSON.stringify(value));
+    const roles = ['guidance-a', 'guidance-b', 'bugs-a', 'bugs-b'];
+    const reviewers = roles.map((role, i) => ({
+      role,
+      nativeSessionId: 'ses_child' + i,
+      complete: true,
+    }));
+    const head = '1'.repeat(40),
+      upstream = '2'.repeat(40),
+      marker = '<!-- native export -->';
+    const parent = 'ses_parent';
+    const exports = {
+      [parent]: {
+        info: { id: parent },
+        padding: 'x'.repeat(500000),
+        messages: [
+          {
+            parts: reviewers.map((child) => ({
+              tool: 'task',
+              state: {
+                status: 'completed',
+                metadata: {
+                  parentSessionId: parent,
+                  sessionId: child.nativeSessionId,
+                  truncated: false,
+                },
+              },
+            })),
+          },
+        ],
+      },
+    };
+    for (const child of reviewers)
+      exports[child.nativeSessionId] = {
+        info: { id: child.nativeSessionId, parentID: parent },
+        messages: [
+          {
+            info: { role: 'assistant', finish: 'stop' },
+            parts: [{ type: 'text', text: 'Completed review.' }],
+          },
+        ],
+      };
+    // A coordinator may continue a reviewer task: export its native session once.
+    exports[parent].messages[0].parts.push(
+      exports[parent].messages[0].parts[0],
+    );
+    json(join(root, 'exports.json'), exports);
+    const bin = join(root, 'bin');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'opencode'),
+      `#!/usr/bin/env node
+const fs = require('node:fs');
+const data = JSON.parse(fs.readFileSync(process.env.LCARS_TEST_EXPORT_FIXTURE, 'utf8'));
+process.stdout.write(JSON.stringify(data[process.argv[3]]));
+process.exit(0);
+`,
+      { mode: 0o700 },
+    );
+    json(join(root, 'manifest.json'), {
+      provider: 'opencode',
+      reviewedHead: head,
+      upstreamRevision: upstream,
+      marker,
+      publication: 'captured-not-posted',
+      environment: 'native-export-fixture',
+    });
+    json(join(root, 'execution.json'), {
+      exitCode: 0,
+      timedOut: false,
+      interrupted: false,
+    });
+    json(join(root, 'receipt.json'), {
+      head,
+      complete: true,
+      reviewers,
+      candidates: [],
+      validators: [],
+    });
+    json(join(root, 'review.json'), {
+      commit_id: head,
+      event: 'COMMENT',
+      body: upstream + marker,
+      comments: [],
+    });
+    writeFileSync(
+      join(root, 'trace.jsonl'),
+      JSON.stringify({ sessionID: parent }) + '\n',
+    );
+    const execution = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL('./collect-review-evidence.mjs', import.meta.url),
+        ),
+        root,
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: bin + ':' + process.env.PATH,
+          LCARS_TEST_EXPORT_FIXTURE: join(root, 'exports.json'),
+        },
+        encoding: 'utf8',
+        timeout: 10000,
+      },
+    );
+    assert.equal(execution.error, undefined);
+    const result = JSON.parse(
+      readFileSync(join(root, 'evaluation.json'), 'utf8'),
+    );
+    assert.equal(execution.status, 0, JSON.stringify(result));
+    assert.equal(result.passed, true);
+    assert.equal(
+      JSON.parse(
+        readFileSync(join(root, 'native/opencode-' + parent + '.json'), 'utf8'),
+      ).padding.length,
+      500000,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
