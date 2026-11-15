@@ -1,0 +1,32 @@
+{
+  "releases": [
+    {
+      "repository": "anomalyco/opencode",
+      "version": "v1.19.5",
+      "asset": "opencode-linux-x64-baseline.tar.gz",
+      "sha256": "17c200fd4b2289954cc01552559f9b6d03ec157b2ddfb5eb54144f491656333d",
+      "architecture": "amd64"
+    },
+    {
+      "repository": "anomalyco/opencode",
+      "version": "v1.19.5",
+      "asset": "opencode-linux-arm64.tar.gz",
+      "sha256": "fae5be262d693b7c5e562856cc473e59e741772936db0c0600ac0d5ed5bd088b",
+      "architecture": "arm64"
+    },
+    {
+      "repository": "google-antigravity/antigravity-cli",
+      "version": "1.5.9",
+      "asset": "agy_cli_linux_x64.tar.gz",
+      "sha256": "8b1f5e56779f2434a0af36f1b715a8392a084de550f8c68bc79821f95fabf3fa",
+      "architecture": "amd64"
+    },
+    {
+      "repository": "google-antigravity/antigravity-cli",
+      "version": "1.5.9",
+      "asset": "agy_cli_linux_arm64.tar.gz",
+      "sha256": "3a18c238c7ee6661e43df7e824a7d4c1bed78aeeda09430921a0f1dbfe825bca",
+      "architecture": "arm64"
+    }
+  ]
+}

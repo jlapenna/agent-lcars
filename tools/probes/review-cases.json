@@ -1,0 +1,35 @@
+{
+  "schema": "lcars-review-qualification-v1",
+  "providers": ["claude", "codex", "opencode", "agy"],
+  "cases": [
+    {
+      "id": "managed-review-dependency",
+      "pullRequest": 3364,
+      "head": "candidate",
+      "coverage": "Real current-head PR review; capture publication without posting evaluation traffic.",
+      "expectation": "The inherited Renovate auto-merge defect is fixed. Do not report that defect against this revision; validate any other candidates independently."
+    },
+    {
+      "id": "unqualified-upstream-update",
+      "pullRequest": 3364,
+      "head": "62f02037dacaff8fc069ddd651bafac82f81f18d",
+      "historicalSnapshot": true,
+      "dependencySnapshot": {
+        "repository": "jlapenna/repo-tools",
+        "revision": "7a0953ff1f517a976d567309d1b8c0e618b9437f",
+        "path": "renovate-preset.json",
+        "fixture": "review-fixtures/repo-tools-renovate-preset.json",
+        "sha256": "cf71723cdfdc30a3d9f08bb0a7826e08b7fa3108d3b54a10ce9a1d1790519dc4"
+      },
+      "coverage": "Blind replay of the actual earlier PR revision that had an independently confirmed defect; excludes future PR prose and memory.",
+      "expectation": "Find and independently validate that enabling git-submodules inherits automatic merging for digest updates from the shared preset, allowing upstream review-command changes to merge without qualification."
+    },
+    {
+      "id": "claw-file-mounts",
+      "pullRequest": 3355,
+      "head": "be2c45043d52f7a6b0e012d56b4919c6e08475c1",
+      "coverage": "Real historical PR that prompted this improvement; full source, scoped guidance and useful source review.",
+      "expectation": "Complete the procedure on the three-file change. Review per-item mount semantics and required agent.items against callers and validation. Findings require concrete introduced breakage; no predetermined verdict."
+    }
+  ]
+}

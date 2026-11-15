@@ -44,6 +44,7 @@ export async function finalizeNativeFailure(directory, context, env, budget) {
         {
           env: {
             ...env,
+            PIPELINE: context.provider,
             RUNNER_TEMP: directory,
             ATTEMPT_ID: context.attemptId,
             LCARS_WORKER_CONTEXT: join(directory, 'worker-policy-context.json'),

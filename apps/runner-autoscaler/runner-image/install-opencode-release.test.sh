@@ -20,16 +20,28 @@ assert_release() {
   local actual_asset actual_digest
 
   IFS=$'\t' read -r actual_asset actual_digest < <(
-    select_opencode_release v1.19.5 "$arch"
+    select_opencode_release v9.8.7 "$arch" "$tmp/releases.json"
   )
   [[ "$actual_asset" == "$expected_asset" && "$actual_digest" == "$expected_digest" ]] ||
     fail_test "wrong reviewed release selection for $arch"
 }
 
+# Distinct fixture digests catch swapped platform selection independently of
+# whichever vendor release Renovate currently locks.
+fixture_amd_digest="$(printf 'a%.0s' {1..64})"
+fixture_arm_digest="$(printf 'b%.0s' {1..64})"
+jq -n --arg amd "$fixture_amd_digest" --arg arm "$fixture_arm_digest" '{releases: [
+  {repository:"anomalyco/opencode",version:"v9.8.7",architecture:"amd64",asset:"opencode-linux-x64-baseline.tar.gz",sha256:$amd},
+  {repository:"anomalyco/opencode",version:"v9.8.7",architecture:"arm64",asset:"opencode-linux-arm64.tar.gz",sha256:$arm}
+]}' > "$tmp/releases.json"
 assert_release amd64 opencode-linux-x64-baseline.tar.gz \
-  17c200fd4b2289954cc01552559f9b6d03ec157b2ddfb5eb54144f491656333d
+  "$fixture_amd_digest"
 assert_release arm64 opencode-linux-arm64.tar.gz \
-  fae5be262d693b7c5e562856cc473e59e741772936db0c0600ac0d5ed5bd088b
+  "$fixture_arm_digest"
+# Both real platform locks must exist for the selector the image consumes.
+pinned_version="$(tr -d '\r\n' < "$here/opencode-version")"
+select_opencode_release "$pinned_version" amd64 >/dev/null
+select_opencode_release "$pinned_version" arm64 >/dev/null
 [[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 88080384 ]] ||
   fail_test 'OpenCode archive size cap is no longer the reviewed 84 MiB bound'
 [[ "$OPENCODE_RETRY_MAX_SECONDS" -eq 570 && "$OPENCODE_DOWNLOAD_BUDGET_SECONDS" -eq 600 ]] ||
@@ -40,10 +52,10 @@ grep -Fq -- '--retry-max-time "$OPENCODE_RETRY_MAX_SECONDS"' "$here/install-open
   fail_test 'OpenCode curl invocation is missing the aggregate retry bound'
 grep -Fq -- 'timeout -k 30s "${OPENCODE_DOWNLOAD_BUDGET_SECONDS}s"' "$here/install-opencode-release.sh" ||
   fail_test 'OpenCode curl invocation is missing the outer install budget'
-if (select_opencode_release v1.19.5 ppc64le) >/dev/null 2>&1; then
+if (select_opencode_release v9.8.7 ppc64le "$tmp/releases.json") >/dev/null 2>&1; then
   fail_test 'unsupported target architecture was accepted'
 fi
-if (select_opencode_release v1.19.6 amd64) >/dev/null 2>&1; then
+if (select_opencode_release v9.8.8 amd64 "$tmp/releases.json") >/dev/null 2>&1; then
   fail_test 'unreviewed version was accepted'
 fi
 

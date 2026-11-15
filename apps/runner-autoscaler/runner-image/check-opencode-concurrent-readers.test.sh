@@ -92,7 +92,7 @@ db.execute('CREATE TABLE session (id TEXT)')
 db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 db.close()
 PY
-  printf '1.19.5\n' > "$data/opencode/.lcars-baked-version"
+  printf '%s\n' "${pinned_version#v}" > "$data/opencode/.lcars-baked-version"
 }
 
 run_gate() {
@@ -107,8 +107,7 @@ run_gate() {
     bash "$here/check-opencode-concurrent-readers.sh" >"$tmp/$name/out" 2>&1
 }
 
-[ "$(tr -d '\r\n' < "$here/opencode-version")" = v1.19.5 ] ||
-  fail 'update the baked-version fixture alongside the pinned OpenCode version'
+pinned_version="$(tr -d '\r\n' < "$here/opencode-version")"
 
 make_store healthy
 run_gate healthy || {

@@ -404,6 +404,7 @@ ENV PATH=/usr/local/go/bin:${PATH}
 # and verify its reviewed SHA-256 before extraction. The consumer setup action
 # remains separately nonprivileged and may use OpenCode's supported installer.
 COPY opencode-version /usr/local/share/agent-lcars-tooling/opencode-version
+COPY runtime-releases.json /usr/local/lib/agent-lcars/runtime-releases.json
 COPY install-opencode-release.sh /usr/local/lib/agent-lcars/install-opencode-release.sh
 RUN set -eux; \
     OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)"; \
@@ -761,18 +762,19 @@ RUN chmod +x /usr/local/bin/lcars
 
 # The public repository-tools skill is a Codex plugin. Install the Codex CLI
 # before switching to the unprivileged runner user, then install the plugin
-# into that user's state below. This deliberately tracks the current CLI: the
-# runner is an integrated first-party delivery surface, not a pinned artifact.
+# into that user's state below. Renovate owns the image-only npm manifest and
+# lockfile, so external releases change a declared input and invalidate this
+# layer rather than waiting for an unrelated rebuild to rerun npm install.
 ENV FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true
-RUN npm install -g @openai/codex && codex --version
+COPY runtime-clis/package.json runtime-clis/package-lock.json /opt/runner-clis/
+RUN npm ci --prefix /opt/runner-clis --omit=dev --ignore-scripts && \
+    node /opt/runner-clis/node_modules/@anthropic-ai/claude-code/install.cjs && \
+    ln -s /opt/runner-clis/node_modules/.bin/codex /usr/bin/codex && \
+    ln -s /opt/runner-clis/node_modules/.bin/claude /usr/bin/claude && \
+    codex --version && claude --version
 # Native Codex protocol and read-only eval tooling are publication contracts.
 RUN --network=none REPO_EVAL_NATIVE_CODEX=1 node --test /opt/repo-tools/bin/skill-evals-codex.test.mjs
 
-# QueueExecutor direct mode invokes `claude` itself instead of the GitHub
-# Action that normally provisions that CLI. Keep it in the shared runner image
-# and execute its version command while building: a package that no longer
-# provides the expected executable must fail publication, not a claimed run.
-RUN npm install -g @anthropic-ai/claude-code && claude --version
 # NodeSource's system npm uses the /usr global prefix, so package binaries land
 # in /usr/bin (not /usr/local/bin, where this image's hand-installed CLIs live).
 RUN npm install -g @vectorize-io/hindsight-coding-agents@0.8.5 && \

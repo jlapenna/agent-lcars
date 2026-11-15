@@ -28,30 +28,30 @@ cleanup_opencode_temp_dir() {
 select_opencode_release() {
   local version="$1"
   local arch="$2"
-  local asset digest
+  local asset release
+  local manifest="${3:-$(dirname "${BASH_SOURCE[0]}")/runtime-releases.json}"
 
   case "$arch" in
     amd64)
       asset='opencode-linux-x64-baseline.tar.gz'
-      digest='17c200fd4b2289954cc01552559f9b6d03ec157b2ddfb5eb54144f491656333d'
       ;;
     arm64)
       asset='opencode-linux-arm64.tar.gz'
-      digest='fae5be262d693b7c5e562856cc473e59e741772936db0c0600ac0d5ed5bd088b'
       ;;
     *)
       fail "unsupported target architecture: $arch"
       ;;
   esac
 
-  # The checksum review is intentionally tied to the exact version below.
-  # A version bump must add its own reviewed digest rather than silently
-  # reusing these bytes.
-  if [[ "$version" != 'v1.19.5' ]]; then
-    fail "no reviewed OpenCode artifact digest for $version"
-  fi
-
-  printf '%s\t%s\n' "$asset" "$digest"
+  # Renovate updates the version and each platform digest together. A missing,
+  # ambiguous or mismatched lock entry fails before any download.
+  release="$(jq -er --arg version "$version" --arg arch "$arch" --arg asset "$asset" '
+    [.releases[] | select(.repository == "anomalyco/opencode" and .version == $version and .architecture == $arch)]
+    | if length == 1 then .[0] else error("expected one platform release") end
+    | select(.asset == $asset and (.sha256 | test("^[a-f0-9]{64}$")))
+    | [.asset, .sha256] | @tsv
+  ' "$manifest")" || fail "no reviewed OpenCode artifact digest for $version/$arch"
+  printf '%s\n' "$release"
 }
 
 validate_opencode_archive() {
