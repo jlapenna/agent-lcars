@@ -762,7 +762,7 @@ export async function executeHookCommand(
         ? await handleOpencodeHook(deps, inline)
         : await handleRuntimeHook(deps, subcommand, inline, fallbackEventName);
     }
-    if (subcommand === 'flush' || subcommand === '--flush') {
+    if (subcommand === 'flush') {
       await deps.runFlusher();
       return { action: 'flushed' };
     }

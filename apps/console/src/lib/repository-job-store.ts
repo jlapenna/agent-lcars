@@ -29,32 +29,18 @@ export const catalogJobSchema = z.strictObject({
   enabledBy: z.string().optional(),
   activationFloor: z.iso.datetime().optional(),
   /** The operator's sticky per-job veto: a principal while an explicit
-   * disable stands, null once an explicit enable clears it. Records written
-   * before automatic activation omit it (see `operatorVeto`). */
+   * disable stands, null once an explicit enable clears it. */
   vetoedBy: z.string().nullable().optional(),
   active: hash.optional(),
   latest: hash.optional(),
   baseline: z.strictObject({ occurrence: hash, comparison: hash }).optional(),
 });
 export type CatalogJob = z.infer<typeof catalogJobSchema>;
-// Storage compatibility only. New configuration still uses jobProfileSchema;
-// runtime authorization explicitly refuses legacy credential delivery, while
-// occurrences admitted with the retired Homelab Goose environment overlay
-// selector remain readable.
-const storedJobProfileBaseSchema = jobProfileSchema.safeExtend({
+// Storage compatibility only: occurrences admitted with the retired Homelab
+// Goose environment overlay selector remain readable.
+const storedJobProfileSchema = jobProfileSchema.safeExtend({
   environment: jobProfileNameSchema.optional(),
 });
-const storedJobProfileSchema = z.union([
-  storedJobProfileBaseSchema,
-  storedJobProfileBaseSchema
-    .safeExtend({
-      credentials: z.strictObject({ github: jobProfileNameSchema }),
-    })
-    .refine(
-      (profile) => !profile.credentialSet && !profile.crossRepo,
-      'Legacy credentials cannot be combined with current credential sets or crossRepo',
-    ),
-]);
 const sourceRefreshSchema = z.strictObject({
   repository: z.string(),
   refreshedAt: z.iso.datetime(),
@@ -83,7 +69,6 @@ export const jobOccurrenceSchema = z.strictObject({
   artifact: jobArtifactSchema.optional(),
   reconciledAt: z.iso.datetime().optional(),
   successful: z.boolean().optional(),
-  admissionFailure: z.literal('legacy-credentials').optional(),
 });
 export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 // Artifact contents are opaque JSON, not Firestore field values. This preserves

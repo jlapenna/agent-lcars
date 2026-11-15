@@ -277,54 +277,6 @@ it('re-activates a changed definition at a new floor but honors a sticky operato
   });
 });
 
-it('keeps legacy operator disables, but not source-failure disables, as vetoes', async () => {
-  const store = new MemoryJobStore();
-  const { manifest, recipe } = catalogFiles();
-  const definition = parseJobDefinition(
-    'owner/jobs',
-    'a'.repeat(40),
-    'audit',
-    manifest,
-    recipe,
-  );
-  for (const [name, error] of [
-    ['audit', undefined],
-    ['failed', 'Source refresh failed'],
-  ] as const)
-    store.rows.set(jobKey('owner/jobs', name), {
-      id: jobKey('owner/jobs', name),
-      repository: 'owner/jobs',
-      name,
-      definition,
-      enabled: false,
-      enabledBy: 'user:joe',
-      refreshedAt: '2026-10-27T11:00:00.000Z',
-      ...(error ? { error } : {}),
-    });
-  vi.stubGlobal(
-    'fetch',
-    github({
-      'owner/jobs': { audit: catalogFiles(), failed: catalogFiles() },
-    }),
-  );
-  await refreshJobCatalog(
-    store,
-    'owner/jobs',
-    tokens(),
-    new Date('2026-10-27T12:00:00.000Z'),
-    automation(store),
-  );
-  expect(store.rows.get(jobKey('owner/jobs', 'audit'))).toMatchObject({
-    enabled: false,
-    vetoedBy: 'user:joe',
-  });
-  expect(store.rows.get(jobKey('owner/jobs', 'failed'))).toMatchObject({
-    enabled: true,
-    enabledBy: 'svc:scheduler',
-    vetoedBy: null,
-  });
-});
-
 it('leaves invalid and unauthorized definitions visible and disabled', async () => {
   const store = new MemoryJobStore();
   vi.stubGlobal(

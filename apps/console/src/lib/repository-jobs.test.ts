@@ -885,48 +885,7 @@ it('settles terminal Work after credential or profile revocation without strandi
   ).toBeDefined();
 });
 
-it('decodes legacy profiles for stored reads and settlement while refusing new delivery/configuration', async () => {
-  const f = fixture();
-  const occurrence = await f.jobs.admit(
-    f.id,
-    'legacy-history',
-    'user:joe',
-    'manual',
-    f.definition.digest,
-  );
-  const legacy = jobOccurrenceSchema.parse({
-    ...occurrence,
-    profile: { ...occurrence.profile, credentials: { github: 'personal' } },
-  });
-  expect(() => jobProfileSchema.parse(legacy.profile)).toThrow();
-  expect(() => f.jobs.authorizeOccurrence(legacy)).toThrow(
-    'Legacy credential profile',
-  );
-  const document = { exists: true, data: () => structuredClone(legacy) };
-  const database = {
-    collection: () => ({
-      doc: () => ({ get: async () => document }),
-      where: () => ({
-        limit: () => ({ get: async () => ({ docs: [document] }) }),
-      }),
-    }),
-  };
-  const persisted = new FirestoreJobStore(
-    database as unknown as ConstructorParameters<typeof FirestoreJobStore>[0],
-  );
-  expect(await persisted.readOccurrence(legacy.id)).toEqual(legacy);
-  expect(await persisted.history(legacy.jobId)).toEqual([legacy]);
-  f.store.occurrences.set(legacy.id, legacy);
-  const run = (await f.native.listRuns({ workId: legacy.workId }))[0]!;
-  await f.orchestrator.report(run.runId, { ok: false });
-  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
-  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
-  expect((await f.store.readOccurrence(legacy.id))?.profile).toEqual(
-    legacy.profile,
-  );
-});
-
-it('decodes occurrences admitted with the retired Goose environment overlay', async () => {
+it('decodes occurrences admitted with the retired Goose environment overlay while rejecting legacy credentials', async () => {
   const f = fixture();
   const occurrence = await f.jobs.admit(
     f.id,
@@ -939,63 +898,37 @@ it('decodes occurrences admitted with the retired Goose environment overlay', as
     ...occurrence,
     profile: { ...occurrence.profile, environment: 'skill-evals' },
   };
-  expect(jobOccurrenceSchema.parse(stored).profile).toEqual(stored.profile);
-  const storedWithLegacyCredentials = {
-    ...occurrence,
-    profile: {
-      ...occurrence.profile,
-      credentials: { github: 'personal' },
-      environment: 'skill-evals',
-    },
+  const decoded = jobOccurrenceSchema.parse(stored);
+  expect(decoded.profile).toEqual(stored.profile);
+  const document = { exists: true, data: () => structuredClone(decoded) };
+  const database = {
+    collection: () => ({
+      doc: () => ({ get: async () => document }),
+      where: () => ({
+        limit: () => ({ get: async () => ({ docs: [document] }) }),
+      }),
+    }),
   };
-  expect(
-    jobOccurrenceSchema.parse(storedWithLegacyCredentials).profile,
-  ).toEqual(storedWithLegacyCredentials.profile);
+  const persisted = new FirestoreJobStore(
+    database as unknown as ConstructorParameters<typeof FirestoreJobStore>[0],
+  );
+  expect(await persisted.readOccurrence(decoded.id)).toEqual(decoded);
+  expect(await persisted.history(decoded.jobId)).toEqual([decoded]);
+  expect(() =>
+    jobOccurrenceSchema.parse({
+      ...occurrence,
+      profile: {
+        ...occurrence.profile,
+        credentials: { github: 'personal' },
+      },
+    }),
+  ).toThrow();
   expect(() =>
     jobOccurrenceSchema.parse({
       ...stored,
       profile: { ...stored.profile, environment: 'Skill Evals' },
     }),
   ).toThrow();
-});
-
-it('retires an unminted legacy reservation only after the existing backstop and admits its successor', async () => {
-  const f = fixture();
-  const legacy = jobOccurrenceSchema.parse({
-    id: 'b'.repeat(64),
-    jobId: f.id,
-    workId: '01JOBS00000000000000000000',
-    requestDigest: 'c'.repeat(64),
-    createdAt: '2026-10-27T06:00:00.000Z',
-    principal: 'user:joe',
-    trigger: 'manual',
-    skipped: false,
-    definition: f.definition,
-    profile: { ...f.profile, credentials: { github: 'personal' } },
-    comparison: 'd'.repeat(64),
-    parameters: {},
-  });
-  f.store.occurrences.set(legacy.id, legacy);
-  f.store.jobs.get(f.id)!.active = legacy.id;
-  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
-  expect(f.store.jobs.get(f.id)?.active).toBe(legacy.id);
-  expect(await f.native.listRuns({ workId: legacy.workId })).toEqual([]);
-  f.setTime('2026-10-27T10:00:00.000Z');
-  f.store.jobs.get(f.id)!.refreshedAt = '2026-10-27T10:00:00.000Z';
-  await f.jobs.reconcile(f.store.jobs.get(f.id)!);
-  expect(f.store.jobs.get(f.id)?.active).toBeUndefined();
-  expect((await f.store.readOccurrence(legacy.id))?.admissionFailure).toBe(
-    'legacy-credentials',
-  );
-  expect(await f.native.listRuns({ workId: legacy.workId })).toEqual([]);
-  const successor = await f.jobs.admit(
-    f.id,
-    'after-legacy-retirement',
-    'user:joe',
-    'manual',
-    f.definition.digest,
-  );
-  expect(await f.native.listRuns({ workId: successor.workId })).toHaveLength(1);
 });
 
 it('pins provider auth into the admitted recipe run and revokes it with the profile', async () => {

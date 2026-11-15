@@ -188,7 +188,7 @@ it('reads historical metadata after profile retirement without weakening reposit
   const occurrence = {
     id: 'c'.repeat(64),
     definition,
-    profile: { name: 'retired-personal', credentials: { github: 'personal' } },
+    profile: { name: 'retired-profile', environment: 'skill-evals' },
   };
   vi.spyOn(store, 'readOccurrence').mockResolvedValue(occurrence as never);
   const operator: WorkPrincipal = {
