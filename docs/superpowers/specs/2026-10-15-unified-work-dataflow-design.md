@@ -1,6 +1,6 @@
 # Unified work-item dataflow: declarative intent, observed verification, any agent
 
-Status: proposed design, revised 2026-10-27; execute adapter amended 2026-11-14 ([`claw`](#claw), replacing the laforge `openclaw` bridge). Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends native work items ([#1502](https://github.com/jlapenna/agent-lcars/issues/1502)) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; non-conversational OpenClaw agents run through one generic execution adapter, `claw`, as ephemeral k3s Jobs. Nothing ships until each [phase](#phases) lands with its own qualification.
+Status: proposed design, revised 2026-10-27; execute adapter amended 2026-11-14 ([`claw`](#claw), replacing the laforge `openclaw` bridge); on-call withdrawn from scope 2026-11-15 ([phase 3b](#phases)). Original proposal: [#2810](https://github.com/jlapenna/agent-lcars/pull/2810). It extends native work items ([#1502](https://github.com/jlapenna/agent-lcars/issues/1502)) and finishes that design's stated end state, in which "every issue-side affordance becomes a control-plane projection" and agents are GitHub-agnostic. The first consumers of generalized dispatch are event-driven fleet issue triage and LLM summaries; non-conversational OpenClaw agents run through one generic execution adapter, `claw`, as ephemeral k3s Jobs. Nothing ships until each [phase](#phases) lands with its own qualification.
 
 ## Problem
 
@@ -20,7 +20,7 @@ Every work item flows through the same four stages. Each stage selects its adapt
 
 | Stage      | Chosen by                                        | Adapters                                                                                       |
 | ---------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| 1. Intake  | `origin.channel`                                 | `github` (labels, replies), `slack`, `console`, `api`, `cron`, `alertmanager`                  |
+| 1. Intake  | `origin.channel`                                 | `github` (labels, replies), `slack`, `console`, `api`, `cron`                                  |
 | 2. Execute | `agent` → registry `runtime`                     | `model-call` (bounded inference), `cli` (coding Jobs), `claw` (ephemeral OpenClaw agent Jobs)  |
 | 3. Verify  | each `intent[].kind`                             | look up the referenced state (GitHub API for GitHub intents; the message for reports)          |
 | 4. Reply   | trusted `policy.delivery`, then `origin.channel` | `persist-only` → stored result; `reply-to-origin` → channel reply; console `/work/<id>` always |
@@ -152,9 +152,8 @@ Every non-conversational OpenClaw agent runs the same way: an executor claims
 the attempt and launches one k3s Job, and the Job runs one embedded agent turn
 with `openclaw agent exec`. No Gateway, paired node, long-lived pod or
 host-local volume is involved, so any eligible node can run any claw agent and
-a lost node costs one attempt instead of an outage. This replaces both the
-2026-10-27 laforge bridge and the paired `oncall-node` exec pod
-(jlapenna/homelab#3524, superseding jlapenna/jclaw#98).
+a lost node costs one attempt instead of an outage. This replaces the
+2026-10-27 laforge bridge.
 
 **Execution zones: credentials never move.** Agents that need no credential
 beyond their model key run on the existing QueueExecutor. Agents holding
@@ -163,14 +162,14 @@ QueueExecutor binary, deployed by Homelab in a Homelab-owned namespace, whose
 principal's `work.executor` grant admits only that zone's `claw/*` agents.
 LCARS owns admission, claims, leases, cancellation, retries policy and results
 for both. The zone's credentials stay namespace-private Secrets in Homelab
-custody. Each agent's Job mounts only that agent's own Secret keys: an investigator Job never receives the oncall key or `gh` identity, so the exec allowlist is not the only barrier. LCARS, its job-credential store,
+custody. Each agent's Job mounts only that agent's own Secret keys, so the exec allowlist is not the only barrier. LCARS, its job-credential store,
 its Console and the shared runner Jobs never obtain them, as the jclaw
 [oncall execution contract](https://github.com/jlapenna/jclaw/blob/main/docs/oncall-execution-identity.md)
 requires. No LCARS job-credential grant is used for claw agents.
 
-| Zone          | Executor                                       | Agents                             | Credentials (zone Secret)                                                                                    |
-| ------------- | ---------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `homelab-ops` | Homelab zone executor in a dedicated namespace | `claw/investigator`, `claw/oncall` | `homelab-oncall` controller SSH key, investigator SSH key, `gh` identity, the agents' dedicated LiteLLM keys |
+| Zone          | Executor                                       | Agents              | Credentials (zone Secret)                               |
+| ------------- | ---------------------------------------------- | ------------------- | ------------------------------------------------------- |
+| `homelab-ops` | Homelab zone executor in a dedicated namespace | `claw/investigator` | investigator SSH key, the agent's dedicated LiteLLM key |
 
 **Agent definition.** A claw agent is reviewed source pinned by commit, not live
 Gateway state. For zone agents the **zone deployment** (Homelab) pins each agent's definition commit and Secret binding; LCARS only selects among the agents a zone declares and supplies the brief, and has no write path to an agent's authorizing configuration. A definition is an OpenClaw config file (model route, provider whose API key is
@@ -231,9 +230,9 @@ k3s runner after reserves (Homelab `docs/k3s.md`); measure each agent's complete
 turn, including its tool commands, before choosing its envelope.
 
 **Retry follows authority.** Read-only agents retry `lost` and failed attempts
-under the finite retry policy. Agents with effect authority (`claw/oncall`)
+under the finite retry policy. Agents with effect authority
 treat `lost`, failed and timed-out attempts as terminal (repository jobs treat `lost` the same way): no automatic rerun of
-potentially effectful work. The next alert round, or a human, starts new work,
+potentially effectful work. A new admitted round, or a human, starts new work,
 and its brief carries the previous attempt's outcome.
 
 **QueueExecutor changes** this adapter needs: `work.executor` grants scoped by agent or zone rather than only by `pipelines` (`apps/console/src/lib/work-grants.ts`), so the shared executor can never claim zone work; per-runtime image selection,
@@ -248,12 +247,7 @@ today spawns investigator subagents, it calls the synchronous investigation
 gateway (agent-lcars#2572) instead.
 
 **Observability.** Claw attempts emit the existing LCARS run metrics labelled
-by agent and zone, with structured Job logs in Loki. Homelab's alert rules
-that read Gateway diagnostics (`OncallRunFailed` uses
-`openclaw_run_completed_total{provider="litellm-oncall"}`) move to the LCARS
-outcome signal for `claw/oncall` in the same change that cuts oncall over;
-`claw/oncall` keeps the `openclaw-oncall` LiteLLM key alias so
-`OncallInferenceFailed` is unchanged.
+by agent and zone, with structured Job logs in Loki.
 
 **First agent: `claw/investigator`** (zone `homelab-ops`). Read-only:
 
@@ -268,11 +262,8 @@ outcome signal for `claw/oncall` in the same change that cuts oncall over;
 - **Unchanged:** the #2572 investigation gateway remains the synchronous
   mid-run question path for workers.
 
-**Second agent: `claw/oncall`** (zone `homelab-ops`). Full operational
-authority through `ssh homelab` (the `homelab-oncall` account) and `gh`,
-admitted only from the `alertmanager` channel and, from phase 4, Joe's Slack
-and Console requests. It satisfies `report` and `none`; repairs go through
-Homelab's normal guarded workflows and PRs. `lost` is terminal.
+**On-call is not a claw agent.** Homelab on-call stays outside LCARS; see
+[phase 3b](#phases) for the 2026-11-15 decision.
 
 **Gating questions,** answered locally on 2026-11-14 in agent-lcars#3349 (a
 non-root container from the pod base image, capped at 2 CPU / 6 GiB, with both
@@ -298,10 +289,7 @@ OpenClaw versions above):
   - **CLI/API:** `lcars work create` (`apps/telemetry-watcher`) replaces `--pipeline`/`--fallback-pipelines` with `--agent claw/investigator`, `--fallback-agents` and `--intent report`. A new `--wait` polls `/work/<id>` and prints the message; otherwise the item ID is printed for later lookup.
   - **Slack:** the bot (sprinkles repo, HTTP-only consumer) accepts an agent prefix in the root message, for example `investigator: why did the backup alert fire?`. The prefix is resolved against the registry; no prefix keeps today's default agent. The reply goes to the thread through the existing outcome webhook (`AGENT_LCARS_OUTCOME_WEBHOOKS`), with no new mechanism.
 - **Cron.** Unchanged, apart from schedules naming `agent` and `intent` instead of `pipeline`. The disabled OpenClaw schedules (jlapenna/homelab#3180) move off the Gateway: hourly fleet triage becomes the phase 3 event path, and `onduty-daily` becomes cron Work for a `claw/onduty` agent defined when it is ported.
-- **Alertmanager.** Homelab's `oncall-alert-gate` becomes an intake adapter. It already re-queries live state and builds correlated groups; for each firing page or ticket group it admits one Work round `{agent: claw/oncall, operation: oncall-investigate:v1, source: {key: <group digest>}, sourceRevision: <verified fingerprints>}` through a dedicated internal-admission route (public mutation routes reject internal operations), instead of calling the OpenClaw hook. The gate gets its own principal in the [IAM contract](../../iam-contract.md) that can admit only that operation. Re-firing or new fingerprints advance the revision and coalesce like any event-derived work; resolution invalidates pending rounds.
-  - **Acknowledgement becomes admission plus a live attempt.** A page is acknowledged when its admission returns a receipt **and** an attempt for that source is running or starts within the ack window (today 300 s). A follow-up round that coalesces behind a live attempt for the same group counts as acknowledged by that attempt. A human is paged when admission fails (including when the Work API is unreachable: oncall then degrades to direct human paging, never silence) or no attempt is live in time. The zone executor serves only its own agents, which isolates oncall's claim queue from coding Jobs; it reserves no node capacity, so its Jobs still compete with ARC and coding Jobs for room and node contention can still page a human. Its `maxLiveClaims` matches the Gateway's current six concurrent oncall runs until measured otherwise. This changes Homelab's paging contract (`docs/observability.md` §5) and ships only with that contract's update and Joe's sign-off.
-  - **Replies.** Reports go to Slack `#oc-oncall` through the outcome webhook with a registered `alertmanager` channel target that posts to that channel, threaded per alert group (`reply-to-origin`). The gate is never the reply target, because the Console cannot reach LAN receivers.
-  - **Conversation.** Joe's direct requests to oncall in Slack stay on the Gateway `oncall` agent, without exec authority after cutover, until phase 4's Slack channel admits them as `claw/oncall` Work.
+- **Alertmanager.** Not an LCARS intake. Homelab's `oncall-alert-gate` keeps delivering to the Gateway `oncall` agent ([phase 3b](#phases)).
 - **Reply vs deliverable.** These stay separate. A Slack request that produces a PR replies in Slack with the PR link.
 
 ## Event admission and result publication
@@ -498,10 +486,10 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
    surface introduces an event store or claims to enumerate duplicate or ignored
    webhook deliveries; both render the existing admitted Work history.
 
-   Two follow-on slices introduce the `claw` runtime. Phase 3 itself does not
-   depend on them. Like phases 1 and 2, they admit internal operation
-   specifications (`investigate:v1`, `oncall-investigate:v1`) bound to their
-   agent by trusted configuration; the public `agent` field and the general
+   A follow-on slice introduces the `claw` runtime. Phase 3 itself does not
+   depend on it. Like phases 1 and 2, it admits an internal operation
+   specification (`investigate:v1`) bound to its agent by trusted
+   configuration; the public `agent` field and the general
    registry still arrive in phase 4.
 
    - **3a. `claw` adapter with `claw/investigator`.** Publish the pinned
@@ -511,32 +499,16 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
      principal and namespace-private Secrets. Qualify with real read-only
      investigations admitted through the internal operation: attempts settle
      with redacted reports, cancellation and lease loss settle through LCARS,
-     a Job deleted mid-turn retries on another node, and an investigator Job is shown to hold no oncall key or `gh` identity.
-   - **3b. `claw/oncall` from Alertmanager.** Add the `alertmanager` intake
-     adapter, the gate principal and the admission-plus-live-attempt
-     acknowledgement, with Homelab's paging contract, `OncallRunFailed` and
-     the gate's ack metrics and the jclaw oncall execution contract (which today names the Gateway as the authorization boundary) updated in the same change and reviewed by their owner. Run it in shadow first: the gate admits Work while the existing OpenClaw hook still delivers, and the reports are compared on real alerts. During shadow the legacy Gateway agent is the sole effect owner, and the shadow `claw/oncall` Job is read-only by enforcement, not by intent: its zone binding mounts only the investigator credential, and its config allowlists only read commands (`homelab-investigate`, read-only `gh`), so it holds neither the `homelab-oncall` key nor a write-capable `gh` identity. At cutover, stop the legacy hook, drain its in-flight turns, and only then bind the oncall key and write identity to the Job. Cut over only
-     after a real ticket and a real page are investigated and reported through
-     the Job path, including one while riker is cordoned. Then remove exec
-     authority from the Gateway `oncall` agent and retire its hook, the paired
-     `oncall-node` Deployment, its riker local volume and storage provisioner,
-     and `OncallExecNodeUnavailable`, through their owning repositories.
-
-     Shadow intake (agent-lcars, this phase's first step): `POST
-/api/work/v1/claw/oncall/alerts` (`admitOncallAlert`) admits a firing
-     group as `oncall-investigate:v1` Work on pipeline `claw-oncall`, origin
-     channel `alertmanager` with no thread (persisted only, never delivered).
-     The gate principal `svc:oncall-alert-gate` holds `work.claw.admit` for
-     `claw-oncall` alone, so it needs no new scope. The source key is the
-     gate's group key namespaced by principal; the sorted fingerprint set and
-     the firing episode (the group's earliest alert `startsAt`) are the
-     revision key, so a re-notification of the same set is the same round
-     whatever its rendered text, while a new set or a re-fire after
-     resolution supersedes a queued round. A `resolved` body invalidates the
-     pending round. `claw-oncall` claims at
-     most six live attempts and, read-only by enforcement during shadow,
-     retries like `claw-investigator`; the cutover adds it to the effectful
-     pipelines. The launcher requires tool evidence for both operations.
+     a Job deleted mid-turn retries on another node, and an investigator Job is shown to hold only its own Secret keys.
+   - **3b. Withdrawn (decided 2026-11-15): on-call stays outside LCARS.**
+     Homelab on-call remains a Homelab project with no LCARS dependency: the
+     Gateway `oncall` agent, fed by Homelab's `oncall-alert-gate`. Putting
+     LCARS (the Console, Firestore and the internet path to them) in the
+     outage-response critical path would let an LCARS outage disable
+     automated outage response, and would couple two independent systems. A
+     `claw/oncall` shadow intake shipped briefly (agent-lcars#3362,
+     jlapenna/homelab#3561) and was removed. `claw` stays generic for other
+     agents.
 
 4. **General agent surfaces and intent verification.** Expose permitted agents
    and operations through Console, CLI and Slack. Ship observed-state verification
@@ -569,6 +541,6 @@ and the planned Console requirements do not assert any adapter migration shipped
 - Drift tracking after an item is satisfied.
 - Judging the correctness of reports.
 - Budget accounting for `claw/*` runs beyond the per-agent LiteLLM key and `maxLiveClaims`.
-- Widening any agent's tool policy. Each claw config re-expresses the agent's existing policy, deny by default. (The Alertmanager → `oncall` path does change, in phase 3b, under its own qualification.)
-- Moving the conversational Gateway agents (`main`, `x1c`, `jarvis`, and `oncall`'s Slack conversation until phase 4). They keep live channels and session memory on the Gateway.
+- Widening any agent's tool policy. Each claw config re-expresses the agent's existing policy, deny by default.
+- Moving the conversational Gateway agents (`main`, `x1c`, `jarvis`, `oncall`). They keep live channels and session memory on the Gateway.
 - Multi-turn conversations across attempts (see the resumable-conversations design).

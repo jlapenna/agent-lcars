@@ -30,7 +30,7 @@ const queueRuntimeSecretMountPath = "/run/claw-secrets"
 const queueRuntimeWorkMountPath = "/work"
 
 // queueRuntimeNamePattern restricts declared runtimes to the claw adapter's
-// pipelines for now (claw-investigator, later claw-oncall). The pattern keeps
+// pipelines (claw-investigator today). The pattern keeps
 // a runtime from shadowing any legacy provider pipeline.
 var queueRuntimeNamePattern = regexp.MustCompile(`^claw-[a-z0-9-]+$`)
 
