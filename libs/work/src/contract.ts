@@ -640,6 +640,8 @@ export const itemsContract = {
         path: '/items/{id}',
         operationId: 'getItem',
         summary: 'Read a work item',
+        description:
+          'Requires `work.operator` or `work.reaper`, except claw work, which its admitting principal, holding `work.claw.admit` for its pipeline, may also read. A caller holding only `work.claw.admit` receives 404 for every item it may not read.',
       }),
     )
     .errors({ NOT_FOUND: { message: 'No such item' } })

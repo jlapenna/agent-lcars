@@ -207,8 +207,8 @@ Console grant.
 
 ## `claw-operator` (interactive claw admission)
 
-Interactive maintainer sessions admit and cancel read-only claw
-investigations as `claw-operator@agent-lcars.iam.gserviceaccount.com`. It has
+Interactive maintainer sessions admit, read (`GET /items/{id}`, own claw
+Work only) and cancel read-only claw investigations as `claw-operator@agent-lcars.iam.gserviceaccount.com`. It has
 no key and no project role; only `user:jlapenna@gmail.com` may impersonate it
 (`google_service_account_iam_member.claw_operator_token_creator`). Its Console
 grant, `svc:claw-operator`, carries only `work.claw.admit` for
