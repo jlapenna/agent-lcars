@@ -2,7 +2,6 @@ import 'server-only';
 
 import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
-  CLAW_INVESTIGATE_OPERATION,
   clawInvestigateInputSchema,
   formatAttemptId,
   parseRunGeneration,
@@ -689,7 +688,7 @@ export const runsRouter = os.router({
         },
         ...shared,
         mode: 'claw' as const,
-        claw: { operation: CLAW_INVESTIGATE_OPERATION, input: input.data },
+        claw: { operation: claw.operation, input: input.data },
       };
     }
     const target = anchorTarget(run, task.task);

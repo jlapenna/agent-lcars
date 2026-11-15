@@ -226,9 +226,8 @@ management was retired in that issue's Phase 3. What remains:
 
 - QueueExecutor direct-runner receives the admitted run identity; it does not
   re-admit the task.
-- The agent does not receive `github.token`. It receives its own App token,
-  separate telemetry credentials, and only the explicitly scoped rerun token
-  when configured.
+- The agent does not receive `github.token`. It receives its own App token and
+  separate telemetry credentials.
 - Deliverable evidence is a post-agent gate, not an orchestrator judgement.
 
 See [Deployment boundary](deployment-boundary.md) for credential and

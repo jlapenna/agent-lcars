@@ -1,6 +1,7 @@
 import {
   isLive,
   isRefusal,
+  type Run,
   RUN_LEASE_MS,
   RUN_PLACEMENT_WAIT_MAX_MS,
 } from '@agent-lcars/orchestrator';
@@ -62,9 +63,16 @@ function occurrenceComparison(
 
 /** Fallbacks one provider-limited occurrence may chain through. */
 const MAX_FALLBACKS = 2;
-/** The evaluator's own structured verdict that its provider ran out of quota
- * or hit a rate limit; never inferred from free-text reports. */
-function stoppedOnProviderLimit(occurrence: JobOccurrence): boolean {
+/** Structured verdict from either the settled Run (`provider-limit` when Goose
+ * itself exhausted provider quota/rate limits) or the evaluator's `result.json`
+ * (`partialReason: "provider-limit"`); never inferred from free-text reports. */
+function stoppedOnProviderLimit(
+  occurrence: JobOccurrence,
+  run?: Pick<Run, 'result'>,
+): boolean {
+  if (run?.result?.ok === false && run.result.summary === 'provider-limit') {
+    return true;
+  }
   const result = occurrence.artifact?.artifacts['result.json'];
   return (
     typeof result === 'object' &&
@@ -421,7 +429,7 @@ export class RepositoryJobs {
         RETIREMENT_BACKSTOP_MS
     )
       return;
-    const fallback = await this.reserveFallback(job, occurrence);
+    const fallback = await this.reserveFallback(job, occurrence, run);
     await this.deps.store.mutate(job.id, occurrence.id, (current, saved) => {
       if (!current || !saved || current.active !== occurrence.id) return {};
       const { active: _active, ...rest } = current;
@@ -469,6 +477,7 @@ export class RepositoryJobs {
   async reserveFallback(
     job: CatalogJob,
     occurrence: JobOccurrence,
+    run?: Pick<Run, 'result'>,
   ): Promise<string | undefined> {
     const fallbackProfile =
       'credentials' in occurrence.profile
@@ -488,7 +497,7 @@ export class RepositoryJobs {
       tried.length > MAX_FALLBACKS ||
       tried.includes(fallbackProfile) ||
       occurrence.artifact?.successful ||
-      !stoppedOnProviderLimit(occurrence)
+      !stoppedOnProviderLimit(occurrence, run)
     )
       return undefined;
     const id = jobDigest([occurrence.id, 'fallback', fallbackProfile]);

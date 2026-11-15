@@ -90,9 +90,6 @@
         "{workspaceRoot}/**/tsconfig.json"
       ]
     },
-    "serve": {
-      "options": {}
-    },
     "@nx/esbuild:esbuild": {
       "cache": true,
       "dependsOn": ["^build"],

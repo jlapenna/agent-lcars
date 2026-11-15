@@ -1,5 +1,6 @@
 import {
   CLAW_INVESTIGATE_OPERATION,
+  CLAW_ONCALL_INVESTIGATE_OPERATION,
   PIPELINE_CONTRACTS,
   QUEUE_PRIORITIES,
 } from '@agent-lcars/dispatch-contracts';
@@ -63,6 +64,8 @@ export type WorkSpec = z.input<typeof workSpecSchema>;
  *  literals -- the same relationship `PIPELINES` already has with
  *  `workSpecSchema.pipeline`. */
 export const WORK_CHANNELS = Object.freeze([
+  /** `oncall-alert-gate`'s Alertmanager intake (claw/oncall, phase 3b). */
+  'alertmanager',
   'api',
   'cron',
   'console',
@@ -99,7 +102,10 @@ export const SUMMARY_PIPELINES = Object.freeze([
 ] as const);
 /** Internal `claw` agents executed as one k3s Job per attempt. Each is
  * bound to its operation by trusted configuration, never by source text. */
-export const CLAW_PIPELINES = Object.freeze(['claw-investigator'] as const);
+export const CLAW_PIPELINES = Object.freeze([
+  'claw-investigator',
+  'claw-oncall',
+] as const);
 export type ClawPipeline = (typeof CLAW_PIPELINES)[number];
 /** Every pipeline a stored Work spec can name: the public coding pipelines,
  * then internal recipe, summary and claw work. */
@@ -133,14 +139,26 @@ export const recipeWorkSpecSchema = z.strictObject({
  * each round's question lives only in its revision input. Admitted only by the internal admission route
  * (`POST /claw/investigations`); public `create` validates `workSpecSchema`
  * and so rejects this shape. */
-export const clawWorkSpecSchema = z.strictObject({
+const clawWorkSpecFields = {
   title: z.string().min(1).max(WORK_TITLE_MAX),
   description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
-  pipeline: z.literal('claw-investigator'),
   priority: z.literal('background'),
-  operation: z.literal(CLAW_INVESTIGATE_OPERATION),
   sourceKey: z.string().min(1).max(256),
-});
+};
+/** Each claw pipeline is bound to exactly one operation. `claw-oncall`
+ * (phase 3b) is admitted only by `POST /claw/oncall/alerts`. */
+export const clawWorkSpecSchema = z.discriminatedUnion('pipeline', [
+  z.strictObject({
+    ...clawWorkSpecFields,
+    pipeline: z.literal('claw-investigator'),
+    operation: z.literal(CLAW_INVESTIGATE_OPERATION),
+  }),
+  z.strictObject({
+    ...clawWorkSpecFields,
+    pipeline: z.literal('claw-oncall'),
+    operation: z.literal(CLAW_ONCALL_INVESTIGATE_OPERATION),
+  }),
+]);
 export type ClawWorkSpec = z.infer<typeof clawWorkSpecSchema>;
 export const storedWorkSpecSchema = z.union([
   workSpecSchema,

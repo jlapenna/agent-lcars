@@ -138,6 +138,14 @@
         {
           "serviceAccount": "job-scheduler@agent-lcars.iam.gserviceaccount.com",
           "reason": "The dedicated Work scheduler credential (#3217; Homelab vault agent_lcars_scheduler_key_json, mounted as LCARS_SCHEDULER_CREDENTIALS) is consumed only by the homelab runner-autoscaler's schedule and maintenance ticker, which runs outside GitHub Actions and has no OIDC identity to federate. It is never mounted into runner pods, so the work.cron and repository-job automation authority stays off the executor key."
+        },
+        {
+          "serviceAccount": "claw-homelab-ops@agent-lcars.iam.gserviceaccount.com",
+          "reason": "The homelab-ops claw zone executor credential (agent-lcars#3349; Homelab vault claw_zone_executor_key_json) is consumed only by the zone's QueueExecutor instance on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. Its Work grant admits work.executor for the zone's claw pipelines only, and it is never mounted into claw Job pods."
+        },
+        {
+          "serviceAccount": "oncall-alert-gate@agent-lcars.iam.gserviceaccount.com",
+          "reason": "Homelab oncall-alert-gate's claw/oncall intake credential (agent-lcars phase 3b; Homelab vault oncall_alert_gate_lcars_key_json) is consumed only by the gate container on the homelab controller, which runs outside GitHub Actions and has no OIDC identity to federate. Its Work grant admits work.claw.admit for pipeline claw-oncall only."
         }
       ]
     },
@@ -174,6 +182,17 @@
               },
               "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/www.yml@') && assertion.ref=='refs/heads/main' && assertion.ref_type=='branch'",
               "_note": "The www site-deploy provider. Created outside Terraform and undeclared until this check caught it (homelab#1497); homelab#1511 then declared it in terraform/gcp_sprinkles_wif.tf and imported it (2 imported, 0 added, 0 changed). Modelled here only because it is now managed -- adding it while it was still hand-made would have silenced a true positive rather than fixing what the check found. Deliberately narrower than claude-agent-github: one workflow file, main only. The site moved into supersprinklesracing/sprinkles as apps/www (sprinkles#6484), so it now admits sprinkles' www.yml. It maps no attribute.repository, because claude-agent-readonly@ is bound to attribute.repository/supersprinklesracing/sprinkles in this pool and a token from this provider would inherit that; www-deploy@ is bound to workflow_class 'www-deploy' instead, a value claude-agent-github never produces."
+            },
+            "girosf-github": {
+              "state": "ACTIVE",
+              "issuerUri": "https://token.actions.githubusercontent.com",
+              "attributeMapping": {
+                "attribute.job_workflow_ref": "assertion.job_workflow_ref",
+                "attribute.workflow_class": "assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/girosf.yml@') ? 'girosf-deploy' : 'none'",
+                "google.subject": "assertion.sub"
+              },
+              "attributeCondition": "assertion.repository=='supersprinklesracing/sprinkles' && assertion.job_workflow_ref.startsWith('supersprinklesracing/sprinkles/.github/workflows/girosf.yml@') && assertion.ref=='refs/heads/main' && assertion.ref_type=='branch'",
+              "_note": "The GiroSF site deploy provider (supersprinklesracing/sprinkles#6496), declared in homelab terraform/gcp_sprinkles_wif.tf. Same shape as www-github: one workflow file (sprinkles' girosf.yml), main only, no attribute.repository mapping. It reaches only girosf-deploy@girosf (firebasehosting.admin + firebase.viewer, no keys), bound to workflow_class 'girosf-deploy'. It replaces the exported FIREBASE_SERVICE_ACCOUNT_GIROSF key."
             }
           }
         }
@@ -198,6 +217,14 @@
       "project": "agent-lcars",
       "serviceAccount": "work-reader@agent-lcars.iam.gserviceaccount.com",
       "rationale": "The read-only Work API identity for interactive maintainer sessions (jlapenna/agent-lcars#2502). Its Console grant carries work.reader (the issue-owner query) and costs.reader (the read-only fixed-selection budget assessment), and it holds no project role. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend Console reads to that principal. Declared by google_service_account_iam_member.work_reader_token_creator in infra/terraform/main.tf.",
+      "bindings": {
+        "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
+      }
+    },
+    {
+      "project": "agent-lcars",
+      "serviceAccount": "claw-operator@agent-lcars.iam.gserviceaccount.com",
+      "rationale": "The maintainer's claw admission identity for interactive sessions (agent-lcars#3349). Its Console grant carries only work.claw.admit for the claw pipelines (admit and cancel its own read-only investigations), and it holds no project role or key. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend claw admission to that principal. Declared by google_service_account_iam_member.claw_operator_token_creator in infra/terraform/main.tf.",
       "bindings": {
         "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
       }

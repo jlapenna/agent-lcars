@@ -675,6 +675,46 @@ resource "google_service_account" "job_scheduler" {
   display_name = "Agent LCARS schedule ticker and job automation caller"
 }
 
+# Homelab-ops claw zone executor (agent-lcars#3349; spec "### `claw`",
+# execution zones). It holds no project role and no resource grant: its only
+# use is minting a Google ID token for the Work API, where its grant admits
+# work.executor for the zone's own claw pipelines only. The key lives in the
+# Homelab vault (claw_zone_executor_key_json) and is mounted only into the
+# zone executor on the homelab controller, never into claw Job pods, so zone
+# Jobs cannot claim work and the shared executor key cannot claim zone work.
+resource "google_service_account" "claw_homelab_ops" {
+  account_id   = "claw-homelab-ops"
+  display_name = "Agent LCARS homelab-ops claw zone executor"
+}
+
+# Maintainer-only claw admission (agent-lcars#3349 phase 3a acceptance). It
+# holds no project role, no resource grant and no key: its only use is
+# minting a Google ID token whose email the Console resolves to the
+# `svc:claw-operator` Work grant, which carries work.claw.admit for the claw
+# pipelines and nothing else, so the Work CLI can admit and cancel read-only
+# claw investigations without a browser session. As with work_reader, only
+# the maintainer's own Google account may impersonate it.
+resource "google_service_account" "claw_operator" {
+  account_id   = "claw-operator"
+  display_name = "Agent LCARS maintainer claw admission"
+}
+
+resource "google_service_account_iam_member" "claw_operator_token_creator" {
+  service_account_id = google_service_account.claw_operator.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:jlapenna@gmail.com"
+}
+
+# Homelab oncall-alert-gate's Alertmanager intake for claw/oncall (phase 3b).
+# Like the zone executor it holds no project role: it only mints a Google ID
+# token for the Work API, where its grant admits work.claw.admit for pipeline
+# claw-oncall alone (POST /claw/oncall/alerts). The key lives in the Homelab
+# vault (oncall_alert_gate_lcars_key_json) and is mounted only into the gate.
+resource "google_service_account" "oncall_alert_gate" {
+  account_id   = "oncall-alert-gate"
+  display_name = "Agent LCARS oncall-alert-gate Alertmanager intake"
+}
+
 # QueueExecutor is the only supported Codex execution path. Its Console
 # broker owns the one rotating subscription lineage; hosted repository
 # identities receive no auth-object or refresh-lease grant.

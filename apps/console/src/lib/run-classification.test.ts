@@ -86,6 +86,20 @@ describe('classifyAgentRun', () => {
     );
     expect(result.status).toBe('succeeded');
   });
+
+  it('forwards outcomeSummary so a $0 provider-limit stop is not misdiagnosed as an expired credential', () => {
+    const result = classifyAgentRun(
+      makeRun({ conclusion: 'failure', outcomeSummary: 'provider-limit' }),
+      makeSessionDoc({
+        turns: 1,
+        totalCostUsd: 0,
+        result: { subtype: 'error_during_execution', isError: true },
+      }),
+    );
+    expect(result.status).toBe('failed');
+    expect(result.diagnosis).toContain('Provider quota, spend, or rate limit');
+    expect(result.diagnosis).not.toContain('expired or invalid OAuth token');
+  });
 });
 
 describe('deriveSilentErrorDiagnoses', () => {

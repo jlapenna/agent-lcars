@@ -230,8 +230,8 @@ The QueueExecutor uses its normal configured runner image and resources. Its who
 runner credential Secret supplies `goose-environment.json` (a string-valued map of
 provider environment variables) and `goose-config.yaml` (the operator-owned Goose
 configuration). Goose uses one shared tool environment across the fleet. A job
-class that needs its own credentials (for example the Claude token `claude
-plugin eval` uses in `skill-evals`) selects an LCARS credential set through its
+class that needs its own credentials (for example the provider or storage
+credentials `repo-skill-evals` uses in `skill-evals`) selects an LCARS credential set through its
 profile, as described below; credential sets do not change Goose tools.
 Do not add model credentials to repository recipes. The image publication lifecycle
 is the existing supported stack lifecycle; source merging does not bypass its publication or activation holds.
@@ -416,10 +416,11 @@ inference. It needs its own per-repository grants.
 ### Provider-limit fallback
 
 A profile may name a `fallbackProfile`. When an occurrence under it settles
-unsuccessfully and its `result.json` carries the evaluator's structured
-`partialReason: "provider-limit"` (repo-tools reports a Codex usage-limit,
-rate-limit or quota stop that way; free-text reports are never parsed),
-reconcile reserves a re-run of the same definition, parameters,
+unsuccessfully and either the settled Goose Run itself carries the structured
+`provider-limit` outcome summary or its `result.json` carries the evaluator's
+structured `partialReason: "provider-limit"` (repo-tools reports a Codex
+usage-limit, rate-limit or quota stop that way; free-text reports are never
+parsed), reconcile reserves a re-run of the same definition, parameters,
 trigger and principal under the fallback profile. It records `fallbackOf` on
 the new occurrence and hands the job's active slot to it in the same write that
 settles the original. The fallback is authorized and credential-pinned like

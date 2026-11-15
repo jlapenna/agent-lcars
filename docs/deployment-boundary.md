@@ -12,12 +12,12 @@ file is the map.
 
 ## Why there is no single deployment directory
 
-| Config                         | Where it must live                 | Why it can't move                                                                                                                                                                  |
-| ------------------------------ | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/console/apphosting.yaml` | the App Hosting backend's root dir | `firebase.json` sets `apphosting[0].rootDir: apps/console`, and App Hosting reads `apphosting.yaml` from that root. Moving it means the backend stops finding its own config.      |
-| `.github/workflows/*.yml`      | `.github/workflows/`               | GitHub only reads workflows from that exact path. There is no configuration that relocates it.                                                                                     |
-| `firebase.json`                | repo root (by convention)          | Movable with `--config`, but every caller (`apps/console/project.json`'s deploy target, `deploy-console.yml`, the e2e emulator command) would need the flag. Cost without benefit. |
-| `infra/terraform/`             | anywhere                           | Already separate — this one _is_ co-located, and always was.                                                                                                                       |
+| Config                         | Where it must live                 | Why it can't move                                                                                                                                                             |
+| ------------------------------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/console/apphosting.yaml` | the App Hosting backend's root dir | `firebase.json` sets `apphosting[0].rootDir: apps/console`, and App Hosting reads `apphosting.yaml` from that root. Moving it means the backend stops finding its own config. |
+| `.github/workflows/*.yml`      | `.github/workflows/`               | GitHub only reads workflows from that exact path. There is no configuration that relocates it.                                                                                |
+| `firebase.json`                | repo root (by convention)          | Movable with `--config`, but every caller (`deploy-console.yml`, the local SUT, and the e2e emulator command) would need the flag. Cost without benefit.                      |
+| `infra/terraform/`             | anywhere                           | Already separate — this one _is_ co-located, and always was.                                                                                                                  |
 
 ## Where instance identity actually lives
 
@@ -89,10 +89,10 @@ regardless of how it authenticated. A GitHub Actions caller's signed
 repository maps generically to `github-actions:<owner/repo>`; it is neither a
 Sprinkles-specific branch nor a provider-routing selector.
 
-| Value                    | Env var                     | This deployment                                                                                                                                                                                                                      |
-| ------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor (also `goose`), and the read-only `svc:work-reader`: `claude`, `codex`, `opencode`, `agy`; the `svc:job-scheduler` ticker: `goose` only |
-| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                                                                                   |
+| Value                    | Env var                     | This deployment                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| grants                   | `AGENT_LCARS_WORK_GRANTS`   | operators, allowed `github-actions:<owner/repo>` automation, `svc:telemetry-writer` executor (also `goose`), and the read-only `svc:work-reader`: `claude`, `codex`, `opencode`, `agy`; the `svc:job-scheduler` ticker: `goose` only; the `svc:claw-homelab-ops` zone executor: `claw-investigator` and `claw-oncall` only (`work.executor`); `user:jlapenna` and the maintainer-impersonated `svc:claw-operator` admit `claw-investigator` (`work.claw.admit`); Homelab's `svc:oncall-alert-gate` admits `claw-oncall` only (`work.claw.admit`, `POST /claw/oncall/alerts`) |
+| Google ID token audience | `AGENT_LCARS_WORK_AUDIENCE` | `agent-lcars-work`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 Authorized native Work creation, redispatch, replies, and due schedule slots
 enter the durable queue even when the fleet is full. QueueExecutor reserves
@@ -150,9 +150,10 @@ The current operator grants list all four supported coding pipelines (`claude`,
 Hosting service principal. Each declares `work.operator` explicitly. The
 published `work-create.yml` workflow is contract-tested against that list, so
 its provider canaries cannot fail at API admission. The telemetry-writer
-identity remains a provider-neutral executor and scheduler, distinct from an
-operator. Its executor grant and the direct runner's claim support cover every
-admitted provider; its cron scope only permits the server-owned schedule tick.
+identity remains a provider-neutral executor, distinct from an operator, whose
+executor grant and direct-runner claim support cover every admitted provider;
+the separate `svc:job-scheduler` identity holds `work.cron` exclusively for the
+server-owned schedule and maintenance ticks.
 
 `svc:work-reader` (`work-reader@agent-lcars.iam.gserviceaccount.com`) is the
 interactive-session identity for the issue-owner query (#2502). Its grant
@@ -372,17 +373,11 @@ may lack `actions: write`. Nothing exports `$ACTIONS_RERUN_TOKEN`. The
 retired hosted lane's `AGENT_CI_RERUN_TOKEN` repository secret was deleted
 on 2026-11-13.
 
-The credential must never be the dispatching workflow's own
-`GITHUB_TOKEN`: that is the control plane's credential, and handing it to
-agent code would let that code act as the controller
-([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
-
-No worker's agent step receives the job token under any name or spelling,
-including via inherited workflow/job-level `env:` — a `workflow-contract.spec.ts`
-in the now-deleted `apps/dispatch-broker` once asserted this mechanically;
-it was retired along with the canary/smoke-test scaffolding in #885 and has
-had no automated replacement since, so this invariant is presently
-maintained by workflow review rather than a test.
+The credential must never be an Actions workflow's own `GITHUB_TOKEN`: that is
+the control plane's credential, and handing it to agent code would let that
+code act as the controller ([#645](https://github.com/jlapenna/agent-lcars/issues/645)).
+QueueExecutor direct runs unset `GITHUB_TOKEN` and `GH_TOKEN` before spawning
+any provider process (`direct-runner.sh`, `goose-job.mjs`).
 
 ### 5. Terraform
 

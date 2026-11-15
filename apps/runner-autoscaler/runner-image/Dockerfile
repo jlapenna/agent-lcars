@@ -824,15 +824,12 @@ COPY prepare-opencode-store.sh check-opencode-store.sh check-opencode-concurrent
     /usr/local/lib/agent-lcars/
 COPY --from=telemetry-watcher-build \
     /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.py \
-    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
-    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
-    /repo/apps/runner-autoscaler/runner-image/opencode-version \
-    /usr/local/lib/agent-lcars/
-COPY --from=telemetry-watcher-build \
-    /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.py \
     /repo/apps/runner-autoscaler/runner-image/drain-hook-test-clients.test.py \
     /repo/apps/runner-autoscaler/runner-image/hook-telemetry.test.sh \
     /repo/apps/runner-autoscaler/runner-image/hook-telemetry-assertions.sh \
+    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.sh \
+    /repo/apps/runner-autoscaler/runner-image/opencode-continuation.test.py \
+    /repo/apps/runner-autoscaler/runner-image/opencode-version \
     /usr/local/lib/agent-lcars/
 
 USER runner

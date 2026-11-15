@@ -9,6 +9,7 @@ import { loadGooseEnvironment } from './goose-environment.mjs';
 import {
   cgroupAllocation,
   gooseExecutor,
+  settleGooseFailure,
   subprocess,
 } from './goose-executor.mjs';
 import { applyJobSecrets } from './job-secret-environment.mjs';
@@ -59,8 +60,7 @@ try {
   // Job-specific credentials arrive below from the profile's credential set.
   const environment = await loadGooseEnvironment();
   // GitHub authority is supplied by the shared renewable command wrappers.
-  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RERUN_TOKEN'])
-    delete environment[key];
+  for (const key of ['GH_TOKEN', 'GITHUB_TOKEN']) delete environment[key];
   home = await mkdtemp(join(tmpdir(), 'lcars-goose-profile-'));
   await mkdir(join(home, 'config'), { mode: 0o700 });
   await writeFile(
@@ -148,12 +148,19 @@ try {
     parameters: brief.parameters,
     signal: controller.signal,
   });
+  clearTimeout(timeout);
   controller.signal.throwIfAborted();
   if (codexAuth) await codexAuth.persist();
   await call('recipe', { result });
 } catch (error) {
-  console.error(error instanceof Error ? error.message : 'Goose recipe failed');
-  process.exitCode = 1;
+  const aborted = controller.signal.aborted;
+  clearTimeout(timeout);
+  const { settled } = await settleGooseFailure(error, {
+    aborted,
+    codexAuth,
+    complete: (payload) => call('complete', payload),
+  });
+  if (!settled) process.exitCode = 1;
 } finally {
   clearTimeout(timeout);
   claudeAuth?.close();

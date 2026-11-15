@@ -511,7 +511,7 @@ if [ -n "${FAKE_NATIVE_OUTCOME:-}" ]; then
   printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
     "$FAKE_NATIVE_OUTCOME" "$ATTEMPT_ID" "$ATTEMPT_ID" > "$NATIVE_WORK_OUTCOME_FILE"
 fi
-printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
+printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}|${GITHUB_TOKEN:-}${GH_TOKEN:-}" > "$CLAUDE_ENV_TOKEN_LOG"
 if [ -n "${FAKE_CREDENTIAL_USE_AFTER_SLEEP:-}" ]; then
   python3 "$FIXTURE_TIMING_HELPER" workload "$FAKE_CREDENTIAL_USE_AFTER_SLEEP" || exit $?
   git push
@@ -559,7 +559,7 @@ if [ -n "${FAKE_WORKER_ELAPSED:-}" ]; then
 fi
 if [ "${FAKE_WORKER_NO_THREAD:-}" != 1 ]; then echo '{"type":"thread.started","thread_id":"thread-codex-fixture"}'; fi
 if [ "${FAKE_WORKER_ERROR_EVENT:-}" = 1 ]; then echo '{"type":"error","message":"provider execution failed"}'; fi
-printf '%s' "${ACTIONS_RERUN_TOKEN:-}" > "$CODEX_ENV_LOG"
+printf '%s' "${GITHUB_TOKEN:-}${GH_TOKEN:-}" > "$CODEX_ENV_LOG"
 # Real codex writes the final message to the file named by
 # --output-last-message, not to stdout -- opt-in, mirroring the fake
 # claude's own FAKE_CLAUDE_STDOUT convention.
@@ -671,7 +671,7 @@ fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
-printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${ACTIONS_RERUN_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
+printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${GH_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
 printf '%s\n' "${LCARS_TELEMETRY_CREDENTIALS_FILE:-}|${LCARS_REPO:-}" > "$OPENCODE_ENV_LOG.hook"
 echo run >> "${OPENCODE_SEQUENCE_LOG:-/dev/null}"
 run_count=1

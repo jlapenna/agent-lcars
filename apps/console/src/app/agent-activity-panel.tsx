@@ -9,19 +9,16 @@ import {
   Alert,
   Anchor,
   Badge,
-  Card,
   Group,
   Progress,
   Stack,
   Text,
-  Title,
 } from '@mantine/core';
 
-import type { AgentActivity, AgentRun } from '../lib/agent-activity';
+import type { AgentRun } from '../lib/agent-activity';
 import {
   duplicateLivePipelineGroups,
   findStalledQueuedRun,
-  groupLiveRunsByIssue,
   MAX_TURNS_BUDGET,
   RUN_TIMEOUT_MINUTES,
 } from '../lib/agent-activity';
@@ -35,10 +32,8 @@ import {
 import { classifyAgentRun } from '../lib/run-classification';
 import { ArtifactPreviewToggle } from './artifact-viewer';
 import { BridgePaneLink } from './bridge-pane-link';
-import { bridgeSelectionHref, runKey, sessionKey } from './bridge-selection';
+import { runKey } from './bridge-selection';
 import { ExecutionStatus } from './execution-status';
-import { Eyebrow } from './eyebrow';
-import { FleetChip } from './fleet-status';
 import { formatCost, formatDuration } from './format';
 import { RelativeTime } from './relative-time';
 import { RepoScopeBadge } from './repo-scope-badge';
@@ -176,10 +171,6 @@ export function internalRunHref(run: AgentRun): string {
   return `/agents?${new URLSearchParams({ repo: repoKey(run.repo), sel: runKey(run) })}`;
 }
 
-function operationsRunTitle(run: AgentRun): string {
-  return run.displayTitle;
-}
-
 const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   claude: 'claude',
   codex: 'codex',
@@ -189,6 +180,7 @@ const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   'inbox-summary': 'inbox summary',
   'handoff-summary': 'handoff summary',
   'claw-investigator': 'claw investigator',
+  'claw-oncall': 'claw oncall',
 };
 
 const PIPELINE_COLORS: Record<StoredPipeline, string> = {
@@ -204,6 +196,7 @@ const PIPELINE_COLORS: Record<StoredPipeline, string> = {
   'handoff-summary': 'gray',
   // A read-only claw agent: an internal executor, not a coding provider.
   'claw-investigator': 'orange',
+  'claw-oncall': 'orange',
 };
 
 /**
@@ -356,8 +349,6 @@ export function LiveRunRow({
   run,
   item,
   session,
-  variant = 'detail',
-  selectHref,
 }: {
   run: AgentRun;
   item?: RunItemRef;
@@ -366,77 +357,8 @@ export function LiveRunRow({
    * the wall-clock bar. Undefined renders exactly as before this telemetry
    * existed (PRD user story 16) - no empty chrome, no "unavailable" noise. */
   session?: IssueAgentSessionDoc;
-  variant?: ActivityRowVariant;
-  selectHref?: string;
 }) {
   const budgetFraction = run.elapsedSeconds / (RUN_TIMEOUT_MINUTES * 60);
-
-  if (variant === 'operations') {
-    const taskHref = taskHrefForRun(run, item);
-    const actionHref = taskHref ?? internalRunHref(run);
-    return (
-      <div className="operations-row" data-testid="current-run-row">
-        <Stack gap={5} style={{ minWidth: 0 }}>
-          <RowTitle
-            text={
-              item ? `#${item.number} ${item.title}` : operationsRunTitle(run)
-            }
-            mobileHref={titleHrefForRun(run, item)}
-            selectHref={selectHref}
-          />
-          <Group gap="xs" wrap="wrap">
-            <ExecutionStatus
-              run={{
-                state: run.status === 'queued' ? 'pending' : run.status,
-                queue: run.queue,
-              }}
-            />
-            <RepoBadge repo={run.repo} />
-            {(taskHrefForRun(run, item) ?? workHrefForRun(run)) && (
-              <Anchor
-                size="xs"
-                href={`${taskHrefForRun(run, item) ?? workHrefForRun(run)}#run-${encodeURIComponent(run.id)}`}
-              >
-                Task/run
-              </Anchor>
-            )}
-            <Text size="xs" c="dimmed">
-              {run.status === 'running' ? (
-                <>
-                  <ScreenshotStableDuration seconds={run.elapsedSeconds} /> of{' '}
-                  {RUN_TIMEOUT_MINUTES}m budget used
-                </>
-              ) : (
-                <>
-                  queued for{' '}
-                  <ScreenshotStableDuration seconds={run.elapsedSeconds} />
-                </>
-              )}
-            </Text>
-          </Group>
-          {run.status === 'running' && (
-            <Progress
-              value={Math.min(100, budgetFraction * 100)}
-              color={budgetColor(budgetFraction)}
-              size="sm"
-              aria-label="Run wall-clock budget"
-            />
-          )}
-        </Stack>
-        <Group gap="xs" wrap="nowrap" className="operations-row__actions">
-          <BridgePaneLink
-            mobileHref={actionHref}
-            paneHref={selectHref ?? actionHref}
-            size="sm"
-            className="operations-primary-action"
-            data-testid="current-run-primary-action"
-          >
-            {taskHref ? 'Open task' : 'Inspect run'}
-          </BridgePaneLink>
-        </Group>
-      </div>
-    );
-  }
 
   return (
     <Stack gap={4} data-testid="current-run-row">
@@ -542,13 +464,12 @@ export function LiveRunRow({
 }
 
 /**
- * Every run in a `LiveRunGroupList` group is already live (queued/running -
- * that's this whole panel's scope), so a pipeline appearing more than once
- * in one group is unambiguously a duplicate dispatch, not a status-mix
- * artifact. Returns e.g. `"2 claude"` per duplicated pipeline, undefined
- * when the group's runs are each on a distinct pipeline (a genuine
- * cross-pipeline race, not an anomaly - see #306's LogicalWork model, which
- * treats these two cases distinctly for exactly this reason).
+ * Every run in a live-run group is already live (queued/running), so a
+ * pipeline appearing more than once in one group is unambiguously a duplicate
+ * dispatch, not a status-mix artifact. Returns e.g. `"2 claude"` per
+ * duplicated pipeline, undefined when the group's runs are each on a distinct
+ * pipeline (a genuine cross-pipeline race, not an anomaly - see #306's
+ * LogicalWork model, which treats these two cases distinctly).
  */
 export function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
   const duplicated = duplicateLivePipelineGroups(runs);
@@ -556,97 +477,6 @@ export function duplicatePipelineSummary(runs: AgentRun[]): string | undefined {
   return Array.from(duplicated.entries())
     .map(([pipeline, group]) => `${group.length} ${pipeline}`)
     .join(', ');
-}
-
-/**
- * Renders `liveRuns` clustered by the issue/PR they're working
- * (`groupLiveRunsByIssue`), so two runs racing the same item - a second
- * pipeline dispatched onto it, or a genuine duplicate dispatch on the same
- * pipeline - show up visibly together instead of scattered across the flat
- * list (#239) or, worse, silently reduced to one representative row (#306 -
- * `getAgentActivity` no longer collapses duplicates before this renders, so
- * every attempt this component receives is real evidence). A group of one
- * renders exactly as a bare `LiveRunRow` always has; only a group of two or
- * more gets the clustering chrome, so the overwhelmingly common single-run
- * case is unchanged.
- */
-export function LiveRunGroupList({
-  liveRuns,
-  itemsByRunId = {},
-  sessionsByRunId = {},
-  variant = 'detail',
-  selectHrefFor,
-}: {
-  liveRuns: AgentRun[];
-  itemsByRunId?: Record<string, RunItemRef>;
-  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
-  variant?: ActivityRowVariant;
-  selectHrefFor?: (run: AgentRun) => string;
-}) {
-  return (
-    <Stack gap="xs">
-      {groupLiveRunsByIssue(liveRuns).map((group) => {
-        const rows = group.runs.map((run) => (
-          <LiveRunRow
-            key={run.id}
-            run={run}
-            item={itemsByRunId[run.id]}
-            session={sessionsByRunId[run.id]}
-            variant={variant}
-            selectHref={selectHrefFor?.(run)}
-          />
-        ));
-        if (group.runs.length === 1) {
-          return rows[0];
-        }
-        const item = itemsByRunId[group.runs[0].id];
-        const duplicateSummary = duplicatePipelineSummary(group.runs);
-        const repo = group.runs[0].repo;
-        return (
-          <Stack
-            key={group.key}
-            gap={6}
-            data-testid={`live-run-group-${group.issueNumber}`}
-            style={{
-              borderLeft: `2px solid var(--mantine-color-${duplicateSummary ? 'red' : 'blue'}-4)`,
-              paddingLeft: 8,
-            }}
-          >
-            <Group gap={6} wrap="wrap">
-              <Text size="xs" c="dimmed" fw={600}>
-                {item
-                  ? `#${item.number} ${item.title}`
-                  : `#${group.issueNumber}`}{' '}
-                · {group.runs.length} runs
-              </Text>
-              {group.issueNumber !== undefined && (
-                <Anchor
-                  href={`/task/${repo.owner}/${repo.name}/${group.issueNumber}`}
-                  size="xs"
-                  c="dimmed"
-                  data-testid={`live-run-group-${group.issueNumber}-history`}
-                >
-                  attempt history
-                </Anchor>
-              )}
-            </Group>
-            {duplicateSummary && (
-              <Alert
-                color="red"
-                variant="light"
-                py={4}
-                data-testid={`live-run-group-${group.issueNumber}-duplicate`}
-              >
-                Duplicate attempts: {duplicateSummary} queued/running for this
-                task at once.
-              </Alert>
-            )}
-            <Stack gap="xs">{rows}</Stack>
-          </Stack>
-        );
-      })}
-    </Stack>
-  );
 }
 
 /**
@@ -666,62 +496,11 @@ export function LiveRunGroupList({
 export function FinishedRunRow({
   run,
   session,
-  variant = 'detail',
-  selectHref,
 }: {
   run: AgentRun;
   session?: IssueAgentSessionDoc;
-  variant?: ActivityRowVariant;
-  selectHref?: string;
 }) {
   const classification = classifyAgentRun(run, session);
-
-  if (variant === 'operations') {
-    const taskHref = taskHrefForRun(run);
-    const actionHref = taskHref ?? internalRunHref(run);
-    const successful = classification.status === 'succeeded';
-    return (
-      <div
-        className="operations-row"
-        data-testid="finished-run-row"
-        data-status={classification.status}
-      >
-        <Stack gap={5} style={{ minWidth: 0 }}>
-          <RowTitle
-            text={operationsRunTitle(run)}
-            mobileHref={titleHrefForRun(run)}
-            selectHref={selectHref}
-          />
-          <Group gap="xs" wrap="wrap">
-            <Badge
-              variant="light"
-              color={STATUS_COLORS[classification.status]}
-              size="xs"
-              style={{ flexShrink: 0 }}
-              data-testid="recent-run-conclusion"
-            >
-              {STATUS_LABELS[classification.status]}
-            </Badge>
-            <RepoBadge repo={run.repo} />
-          </Group>
-          {classification.diagnosis && (
-            <Text size="xs" c="orange" data-testid="finished-run-diagnosis">
-              {classification.diagnosis}
-            </Text>
-          )}
-        </Stack>
-        <BridgePaneLink
-          mobileHref={actionHref}
-          paneHref={selectHref ?? actionHref}
-          size="sm"
-          className="operations-primary-action"
-          data-testid="outcome-primary-action"
-        >
-          {successful ? 'View result' : 'Investigate'}
-        </BridgePaneLink>
-      </div>
-    );
-  }
 
   return (
     <Stack gap={2} data-testid="finished-run-row">
@@ -954,151 +733,5 @@ export function CliSessionRow({
         </Stack>
       )}
     </Stack>
-  );
-}
-
-/**
- * The Bridge's action-first operational summary. Work that can be acted on
- * now and the latest meaningful outcomes stay visible; historical CLI
- * sessions and full-fidelity run evidence live on their dedicated routes.
- */
-export function AgentActivityPanel({
-  activity,
-  cliSessions = [],
-  itemsByRunId = {},
-  sessionsByRunId = {},
-  repoFilter,
-  stoppedCursor,
-}: {
-  activity: AgentActivity;
-  cliSessions?: CliSession[];
-  itemsByRunId?: Record<string, RunItemRef>;
-  /** Joined `issue-agent` session docs, keyed by `AgentRun.id` - see
-   * `indexSessionsByRunId` in run-classification.ts. Absent/empty
-   * renders exactly as before this telemetry existed (PRD user story 16). */
-  sessionsByRunId?: Record<string, IssueAgentSessionDoc>;
-  /** Keep the Bridge's active repository scope when opening full history. */
-  repoFilter?: string;
-  stoppedCursor?: string;
-}) {
-  const { liveRuns, recentRuns, fleet } = activity;
-  const outcomesHref = repoFilter
-    ? `/agents?${new URLSearchParams({ repo: repoFilter })}`
-    : '/agents';
-
-  const activeSessions = cliSessions.filter(isActiveCliSession);
-
-  // The Bridge doubles as the master list of its two-panel view: each
-  // operational row's title links to its `?sel=` key so the right pane opens
-  // that row's detail without leaving the page. `repoFilter` is already the
-  // active repo *key*, so selection links preserve the scope.
-  const selectHrefFor = (run: AgentRun) =>
-    bridgeSelectionHref(runKey(run), repoFilter, stoppedCursor);
-
-  return (
-    <Card
-      withBorder
-      padding="md"
-      mb="xl"
-      className="lcars-panel operations-panel"
-    >
-      <Stack gap="md">
-        <Group justify="space-between" wrap="nowrap">
-          <Title order={2}>Operations</Title>
-          <Group gap={6} wrap="wrap" justify="flex-end">
-            <FleetChip fleet={fleet} />
-          </Group>
-        </Group>
-        <Text size="sm" c="dimmed" className="operations-panel__intro">
-          Act on current work and review the latest outcomes.
-        </Text>
-
-        <QueueHealthAlert liveRuns={liveRuns} />
-
-        <section className="operations-section" data-testid="current-work">
-          <Title order={3} size="h4" mb="xs">
-            Current Work
-          </Title>
-          {liveRuns.length === 0 && activeSessions.length === 0 ? (
-            <Text size="sm" c="dimmed">
-              No work is currently in flight.
-            </Text>
-          ) : (
-            <Stack gap="sm">
-              {liveRuns.length > 0 && (
-                <LiveRunGroupList
-                  liveRuns={liveRuns}
-                  itemsByRunId={itemsByRunId}
-                  sessionsByRunId={sessionsByRunId}
-                  variant="operations"
-                  selectHrefFor={selectHrefFor}
-                />
-              )}
-              {activeSessions.length > 0 && (
-                <Stack gap={0}>
-                  <Eyebrow>CLI sessions</Eyebrow>
-                  {activeSessions.map((session) => (
-                    <CliSessionRow
-                      key={session.sessionId}
-                      session={session}
-                      variant="operations"
-                      selectHref={bridgeSelectionHref(
-                        sessionKey(session),
-                        repoFilter,
-                        stoppedCursor,
-                      )}
-                    />
-                  ))}
-                </Stack>
-              )}
-            </Stack>
-          )}
-        </section>
-
-        {recentRuns.length > 0 && (
-          <section className="operations-section" data-testid="latest-outcomes">
-            <Title order={3} size="h4" mb={2}>
-              Latest Outcomes
-            </Title>
-            <Text size="sm" c="dimmed" mb="xs">
-              The five most recent agent results, with failures called out.
-            </Text>
-            <Stack gap={0}>
-              {recentRuns.slice(0, 5).map((run) => (
-                <FinishedRunRow
-                  key={run.id}
-                  run={run}
-                  session={sessionsByRunId[run.id]}
-                  variant="operations"
-                  selectHref={bridgeSelectionHref(
-                    runKey(run),
-                    repoFilter,
-                    stoppedCursor,
-                  )}
-                />
-              ))}
-            </Stack>
-            <Anchor
-              href={outcomesHref}
-              size="sm"
-              className="operations-more-link"
-            >
-              View all outcomes →
-            </Anchor>
-          </section>
-        )}
-
-        {recentRuns.length === 0 && (
-          <section className="operations-section">
-            <Title order={3} size="h4" mb="xs">
-              Latest Outcomes
-            </Title>
-            <Text size="sm" c="dimmed">
-              No recent agent outcomes.
-            </Text>
-          </section>
-        )}
-      </Stack>
-    </Card>
   );
 }

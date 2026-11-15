@@ -81,10 +81,10 @@
    need — the same login across interactive and headless sessions.
 
 5. A PR authored by one of the agent bot identities listed in the
-   `AGENT_BOT_LOGINS` repo variable (currently `claude[bot]` and
-   `agent-lcars[bot]`) squash-auto-merges once the ruleset's required
-   `Verify` check goes green (`.github/workflows/agent-automerge.yml`) — see
-   the [lcars](../../lcars/SKILL.md) skill for the exact mechanism and how
+   `AGENT_BOT_LOGINS` repo variable (`gh variable get AGENT_BOT_LOGINS`)
+   squash-auto-merges once the ruleset's required checks pass
+   (`.github/workflows/agent-automerge.yml`) — see the
+   [lcars](../../lcars/SKILL.md) skill for the exact mechanism and how
    to register a new pipeline's bot login.
 
    A PR pushed under the maintainer's own login — every interactive Claude

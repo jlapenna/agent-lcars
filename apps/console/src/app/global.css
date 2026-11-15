@@ -4026,19 +4026,6 @@ td.costs-repo-spend__num {
 
 /* Action-first Bridge rows: the result or task action has a stable right
    edge on desktop, then becomes a full-width tap target on phones. */
-.operations-panel__intro {
-  margin-top: -0.35rem;
-}
-
-.operations-section {
-  padding-top: 0.15rem;
-}
-
-.operations-section + .operations-section {
-  padding-top: var(--mantine-spacing-md);
-  border-top: 1px solid var(--mantine-color-default-border);
-}
-
 .operations-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

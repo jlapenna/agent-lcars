@@ -5,9 +5,11 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
+  classifyGooseProviderFailure,
   gooseExecutor,
   parseGooseResult,
   readGooseResultFile,
+  settleGooseFailure,
   subprocess,
 } from './goose-executor.mjs';
 
@@ -141,6 +143,163 @@ test('adapter validates before invoking and acknowledges actual provider spawn',
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('gooseExecutor tags provider-limit and provider-capacity failures on goose run only', async () => {
+  const directory = await mkdtemp('/tmp/lcars-goose-limit-');
+  try {
+    const executable = join(directory, 'goose');
+    const run = {
+      definition: {
+        recipeText: 'fixture',
+        job: { inputs: {}, execution: { resources: {} } },
+      },
+    };
+    const execute = gooseExecutor({
+      executable,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Process classification fixture. */
+      },
+    });
+    for (const [stderrLine, expected] of [
+      [
+        'Error: Rate limit exceeded after retries (secret-key)',
+        'provider-limit',
+      ],
+      ['AGY_ERROR: RESOURCE_EXHAUSTED (code 429)', 'provider-limit'],
+      [
+        'HTTP 400 service_spend_limit_reached (org_spend_cap_reached)',
+        'provider-limit',
+      ],
+      ['Error: model is at capacity right now', 'provider-capacity'],
+      ['Error: Server error 500 internal', undefined],
+    ]) {
+      await writeFile(
+        executable,
+        `#!${process.execPath}
+if (process.argv[2] !== 'recipe') {
+  console.error(${JSON.stringify(stderrLine)});
+  process.exit(1);
+}`,
+        { mode: 0o700 },
+      );
+      await assert.rejects(
+        execute({ run, baseline: null, signal: new AbortController().signal }),
+        (error) => {
+          assert.equal(error.providerOutcome, expected);
+          assert.ok(!error.message.includes('secret-key'));
+          return true;
+        },
+      );
+    }
+    // Recipe validation failures before `goose run` never masquerade as provider stops.
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+if (process.argv[2] === 'recipe') {
+  console.error('Rate limit exceeded');
+  process.exit(1);
+}`,
+      { mode: 0o700 },
+    );
+    await assert.rejects(
+      execute({ run, baseline: null, signal: new AbortController().signal }),
+      (error) => {
+        assert.equal(error.providerOutcome, undefined);
+        return true;
+      },
+    );
+    assert.equal(
+      classifyGooseProviderFailure(new Error('ordinary error')),
+      undefined,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('settleGooseFailure logs cause, persists Codex auth before completing, and falls back on abort or settlement error', async () => {
+  const events = [];
+  const logs = [];
+  const limitError = Object.assign(
+    new Error('Goose exited 1: Rate limit exceeded'),
+    { providerOutcome: 'provider-limit' },
+  );
+  const codexAuth = {
+    persistenceAttempted: false,
+    async persist() {
+      this.persistenceAttempted = true;
+      events.push('persist');
+    },
+  };
+  assert.deepEqual(
+    await settleGooseFailure(limitError, {
+      aborted: false,
+      codexAuth,
+      complete: async (payload) => {
+        events.push(['complete', payload]);
+      },
+      logError: (message) => logs.push(message),
+    }),
+    { settled: true, outcome: 'provider-limit' },
+  );
+  assert.deepEqual(events, [
+    'persist',
+    [
+      'complete',
+      {
+        outcome: 'provider-limit',
+        outcomeReference: null,
+        message: 'Goose exited 1: Rate limit exceeded',
+      },
+    ],
+  ]);
+  assert.deepEqual(logs, ['Goose exited 1: Rate limit exceeded']);
+
+  // Aborted runs never settle as provider-limit.
+  const abortedEvents = [];
+  assert.deepEqual(
+    await settleGooseFailure(limitError, {
+      aborted: true,
+      codexAuth: {
+        persistenceAttempted: false,
+        async persist() {
+          abortedEvents.push('persist');
+        },
+      },
+      complete: async () => {
+        abortedEvents.push('complete');
+      },
+      logError: () => {
+        /* captured elsewhere */
+      },
+    }),
+    { settled: false },
+  );
+  assert.deepEqual(abortedEvents, []);
+
+  // Settlement HTTP error logs both cause and settlement failure and returns settled: false.
+  const failedLogs = [];
+  assert.deepEqual(
+    await settleGooseFailure(limitError, {
+      aborted: false,
+      complete: async () => {
+        throw new Error('Work API HTTP 500');
+      },
+      logError: (message) => failedLogs.push(message),
+    }),
+    { settled: false },
+  );
+  assert.deepEqual(failedLogs, [
+    'Goose exited 1: Rate limit exceeded',
+    'Work API HTTP 500',
+  ]);
 });
 
 test('declared file preserves failed grades and nested fields instead of model copies', async () => {

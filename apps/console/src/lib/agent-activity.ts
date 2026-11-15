@@ -38,8 +38,8 @@ export const RUN_TIMEOUT_MINUTES = 120;
 // runs - see LiveRunRow in agent-activity-panel.tsx.
 export const MAX_TURNS_BUDGET = 200;
 
-/** Exported so the panel can label the list as "last N" when it fills. */
-export const RECENT_RUN_LIMIT = 8;
+/** Terminal outcome count projected onto AgentActivity.recentRuns. */
+const RECENT_RUN_LIMIT = 8;
 /** Small bounded overfetch allows the global feed to contain live runs while
  * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
@@ -64,6 +64,9 @@ export interface AgentRun {
   pipeline: StoredPipeline;
   status: AgentRunStatus;
   conclusion?: AgentRunConclusion;
+  /** Settled outcome summary (e.g. `provider-limit` or `provider-capacity`)
+   * projected from `OrchestratorRun.result.summary` when present. */
+  outcomeSummary?: string;
   url: string;
   /** Operator-facing task title projected from the owning Task record. */
   displayTitle: string;
@@ -221,7 +224,7 @@ export function issueUrlForRun(run: AgentRun): string | undefined {
  * isn't supplying it a runner - distinct from "zero runners registered",
  * which is a normal scaled-to-zero idle state on its own.
  */
-export const QUEUE_STALL_THRESHOLD_SECONDS = 300;
+const QUEUE_STALL_THRESHOLD_SECONDS = 300;
 
 /** The longest-stalled queued live run, if any - used to drive the queue
  * health warning (and its "queued for Xm" message). */
@@ -401,6 +404,9 @@ export function agentRunFromOrchestrator(
       pipeline: run.pipeline as StoredPipeline,
       status,
       conclusion: conclusionFor(run),
+      ...(run.result?.summary === undefined
+        ? {}
+        : { outcomeSummary: run.result.summary }),
       url: `https://github.com/${run.task.repo}/issues/${run.task.issue}`,
       displayTitle: `#${run.task.issue}: ${title}`,
       issueNumber: run.task.issue,
@@ -420,6 +426,9 @@ export function agentRunFromOrchestrator(
     pipeline: spec.pipeline,
     status,
     conclusion: conclusionFor(run),
+    ...(run.result?.summary === undefined
+      ? {}
+      : { outcomeSummary: run.result.summary }),
     url: `/work/${run.task.workId}`,
     workId: run.task.workId,
     displayTitle: spec.title,

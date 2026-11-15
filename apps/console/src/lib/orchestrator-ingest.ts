@@ -1,5 +1,6 @@
 import {
   AGENT_LABELS,
+  type AgentPipeline as Pipeline,
   parseTerminalQuickTaskBody,
   REPLY_COMMANDS,
   REVIEW_LABELS,
@@ -41,7 +42,7 @@ import { workPayloadFromGithub } from './work-from-github';
  * module only decides *whether* and *what*.
  */
 
-export type Pipeline = 'claude' | 'codex' | 'opencode' | 'agy';
+export type { Pipeline };
 
 export interface IngestReviewContext {
   requestedPipeline?: Pipeline;

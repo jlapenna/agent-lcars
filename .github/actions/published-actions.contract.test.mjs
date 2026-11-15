@@ -496,6 +496,31 @@ test('repo-validation requires xz without privilege in both tool modes', async (
   }
 });
 
+test('repo-validation pins REPO_TOOLS_SHA to the @jlapenna/repo-tools commit in pnpm-lock.yaml', async () => {
+  const [workflow, lockfile] = await Promise.all([
+    fs.readFile('.github/workflows/repo-validation.yml', 'utf8'),
+    fs.readFile('pnpm-lock.yaml', 'utf8'),
+  ]);
+  const lockMatch =
+    /https:\/\/codeload\.github\.com\/jlapenna\/repo-tools\/tar\.gz\/([0-9a-f]{40})/u.exec(
+      lockfile,
+    );
+  assert.ok(
+    lockMatch,
+    'expected @jlapenna/repo-tools commit hash in pnpm-lock.yaml',
+  );
+  const expectedSha = lockMatch[1];
+  const workflowShas = [
+    ...workflow.matchAll(/REPO_TOOLS_SHA:\s*([0-9a-f]{40})/gu),
+  ].map((match) => match[1]);
+  assert.equal(
+    workflowShas.length,
+    2,
+    'expected both runner-labels and schedules jobs to pin REPO_TOOLS_SHA',
+  );
+  assert.deepEqual(workflowShas, [expectedSha, expectedSha]);
+});
+
 let failures = 0;
 for (const { name, run } of tests) {
   try {

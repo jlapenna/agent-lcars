@@ -5,6 +5,12 @@ GitHub Support ticket #4758522 requested batch-level evidence on September 24,
 not prove those batches contained a particular stranded job, or what placement
 followed. The cause and an original-attempt recovery procedure remain unproven.
 
+> **Current platform note:** `apps/runner-autoscaler`'s custom GitHub scale-set
+> runner manager was retired onto official Actions Runner Controller (`homelab#1623`).
+> Live ARC scale-set logs now flow into Loki via `vector-arc` / `arc-systems`;
+> the September 2026 notes below preserve the original `runner-autoscaler`
+> observation record attached to ticket `#4758522`.
+
 At info level, the autoscaler records each decoded batch **before processing**,
 including synthetic initial statistics (`initial=true`, `message_id=-1`). Records
 carry `scale_set`, `session_id`, and `message_id`; idle reconciliation carries

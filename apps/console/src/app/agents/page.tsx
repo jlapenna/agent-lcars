@@ -357,7 +357,6 @@ async function AgentsPageBody({
             liveRuns={filteredActivity.liveRuns}
             itemsByRunId={itemsByRunId}
             activeSessions={filteredActiveSessions}
-            items={filteredItems}
             sessionsByRunId={sessionsByRunId}
             activityFetchedAt={activityFetchedAt}
           />
