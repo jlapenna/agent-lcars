@@ -257,10 +257,16 @@
 
    This repository's Anthropic review dependency is a Git submodule. Before
    guarded removal or parking, inspect its status, HEAD against the parent
-   gitlink, and local refs for private history. For a clean checkout at the
-   locked upstream revision with no private history, run
-   `git submodule deinit -- third_party/anthropic-plugins` from the task
-   worktree, then continue the shared guard below. Never force deinitialization.
+   gitlink, and local refs for private history. The setup script registers the
+   dependency in per-worktree Git configuration. For a clean checkout at the
+   locked upstream revision with no private history, first check
+   `git config --local --get-regexp '^submodule[.]third_party/anthropic-plugins[.]'`:
+   status 1 (no entry) is required. A shared entry or another error retains the
+   checkout until legacy registrations are migrated; never unregister a shared
+   entry while another worktree depends on it. Then run
+   `git submodule deinit -- third_party/anthropic-plugins` and
+   `git config --worktree --remove-section submodule.third_party/anthropic-plugins`
+   from the task worktree, then continue the shared guard below. Never force deinitialization.
    Preserve a modified, moved or privately committed dependency through the
    shared recovery workflow; retain and name that path if preservation cannot
    be verified. This prerequisite prevents the remover from mistaking an

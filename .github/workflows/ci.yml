@@ -332,7 +332,7 @@ jobs:
         run: node --test tools/probes/scratch.test.mjs
 
       - name: Test qualification evidence recording
-        run: node --test tools/probes/qualify-worker-image.test.mjs tools/probes/review-evidence.test.mjs tools/probes/collect-review-evidence.test.mjs tools/probes/materialize-review-source.test.mjs tools/probes/qualify-review-matrix.test.mjs
+        run: node --test tools/probes/qualify-worker-image.test.mjs tools/probes/review-evidence.test.mjs tools/probes/collect-review-evidence.test.mjs tools/probes/materialize-review-source.test.mjs tools/probes/qualify-review-matrix.test.mjs tools/setup-worktree.test.mjs
 
       - name: Test hermetic E2E environment
         run: node --test tools/e2e-hermetic-env.test.mjs tools/e2e/run-console-emulators.test.mjs
