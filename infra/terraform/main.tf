@@ -687,6 +687,24 @@ resource "google_service_account" "claw_homelab_ops" {
   display_name = "Agent LCARS homelab-ops claw zone executor"
 }
 
+# Maintainer-only claw admission (agent-lcars#3349 phase 3a acceptance). It
+# holds no project role, no resource grant and no key: its only use is
+# minting a Google ID token whose email the Console resolves to the
+# `svc:claw-operator` Work grant, which carries work.claw.admit for the claw
+# pipelines and nothing else, so the Work CLI can admit and cancel read-only
+# claw investigations without a browser session. As with work_reader, only
+# the maintainer's own Google account may impersonate it.
+resource "google_service_account" "claw_operator" {
+  account_id   = "claw-operator"
+  display_name = "Agent LCARS maintainer claw admission"
+}
+
+resource "google_service_account_iam_member" "claw_operator_token_creator" {
+  service_account_id = google_service_account.claw_operator.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "user:jlapenna@gmail.com"
+}
+
 # Homelab oncall-alert-gate's Alertmanager intake for claw/oncall (phase 3b).
 # Like the zone executor it holds no project role: it only mints a Google ID
 # token for the Work API, where its grant admits work.claw.admit for pipeline
