@@ -59,6 +59,12 @@ jobs:
           - full_name: jlapenna/dev
             owner: jlapenna
             repository: dev
+          - full_name: jlapenna/repo-tools
+            owner: jlapenna
+            repository: repo-tools
+          - full_name: jlapenna/fleet-runtime
+            owner: jlapenna
+            repository: fleet-runtime
 
     steps:
       - uses: actions/checkout@v7
