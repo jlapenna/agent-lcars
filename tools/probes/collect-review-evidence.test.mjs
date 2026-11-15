@@ -355,15 +355,88 @@ function collectClaude(mutation) {
               cwd: '/review/' + 'long-context/'.repeat(30),
             },
           ]),
-      {
-        type: 'user',
-        message: {
-          content: reviewers.map((reviewer) => ({
-            type: 'tool_result',
-            content: 'agentId: ' + reviewer.nativeSessionId,
-          })),
+      ...reviewers.flatMap((reviewer, index) => [
+        {
+          type: 'assistant',
+          parent_tool_use_id: null,
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                name:
+                  mutation === 'unregistered-agent' && index === 0
+                    ? 'Bash'
+                    : 'Agent',
+                id: 'agent-call-' + index,
+              },
+            ],
+          },
         },
-      },
+        {
+          type: 'user',
+          parent_tool_use_id: null,
+          tool_use_result: { agentId: reviewer.nativeSessionId },
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'agent-call-' + index,
+                content:
+                  'agentId: ' +
+                  reviewer.nativeSessionId +
+                  (mutation === 'foreign-agent-text'
+                    ? '\nQuoted agentId: deadbeef'
+                    : ''),
+              },
+            ],
+          },
+        },
+      ]),
+      ...(mutation === 'foreign-sidechain'
+        ? [
+            {
+              type: 'user',
+              parent_tool_use_id: 'agent-call-0',
+              tool_use_result: { agentId: 'deadbeef' },
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'child-read',
+                    content: 'old agentId: deadbeef',
+                  },
+                ],
+              },
+            },
+          ]
+        : []),
+      ...(mutation === 'foreign-bash'
+        ? [
+            {
+              type: 'assistant',
+              parent_tool_use_id: null,
+              message: {
+                content: [
+                  { type: 'tool_use', name: 'Bash', id: 'parent-read' },
+                ],
+              },
+            },
+            {
+              type: 'user',
+              parent_tool_use_id: null,
+              tool_use_result: { agentId: 'deadbeef' },
+              message: {
+                content: [
+                  {
+                    type: 'tool_result',
+                    tool_use_id: 'parent-read',
+                    content: 'old agentId: deadbeef',
+                  },
+                ],
+              },
+            },
+          ]
+        : []),
     ];
     writeFileSync(
       join(root, 'trace.jsonl'),
@@ -446,3 +519,21 @@ for (const mutation of ['ambiguous', 'missing-init'])
       );
     },
   );
+
+for (const mutation of [
+  'foreign-sidechain',
+  'foreign-bash',
+  'foreign-agent-text',
+])
+  test('Claude ignores unrelated agent IDs in ' + mutation, () => {
+    const result = collectClaude(mutation);
+    assert.equal(result.exit, 0);
+    assert.equal(result.native.errors.length, 0);
+    assert.equal(result.native.completedChildren.length, 4);
+  });
+test('Claude requires a coordinator Agent call for native child identity', () => {
+  const result = collectClaude('unregistered-agent');
+  assert.equal(result.exit, 1);
+  assert.equal(result.evaluation.passed, false);
+  assert.equal(result.native.completedChildren.length, 3);
+});

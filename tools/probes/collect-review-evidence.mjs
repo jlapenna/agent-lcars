@@ -61,15 +61,25 @@ const archive = (path, name) => {
 };
 if (manifest.provider === 'claude') {
   const session = trace.find((event) => event.subtype === 'init')?.session_id;
+  const agentCalls = new Set(
+    trace
+      .filter((event) => event.parent_tool_use_id == null)
+      .flatMap((event) => event.message?.content ?? [])
+      .filter((block) => block?.type === 'tool_use' && block.name === 'Agent')
+      .map((block) => block.id),
+  );
   const ids = new Set();
   for (const event of trace) {
-    for (const block of event.message?.content ?? []) {
-      if (typeof block !== 'object' || block.type !== 'tool_result') continue;
-      for (const match of JSON.stringify(block).matchAll(
-        /agentId:\s*([a-f0-9]{8,})/g,
-      ))
-        ids.add(match[1]);
-    }
+    if (event.parent_tool_use_id != null) continue;
+    const id = event.tool_use_result?.agentId;
+    if (typeof id !== 'string' || !/^[a-f0-9]{8,}$/.test(id)) continue;
+    if (
+      (event.message?.content ?? []).some(
+        (block) =>
+          block?.type === 'tool_result' && agentCalls.has(block.tool_use_id),
+      )
+    )
+      ids.add(id);
   }
   // Claude truncates/hashes long project paths. Bind to the observed native
   // parent session instead of reproducing that private path encoding.
