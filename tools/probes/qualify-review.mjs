@@ -284,9 +284,14 @@ if (provider === 'codex' && process.env.LCARS_REVIEW_CODEX_ISOLATE === '1') {
   );
 }
 if (provider === 'opencode') {
-  // This is the same per-review permission override as prepare-dispatch.sh.
+  // Match the direct runner's effective per-review configuration.
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     permission: { task: 'allow' },
+    provider: {
+      homelab: {
+        models: { default: { options: { reasoningEffort: 'medium' } } },
+      },
+    },
     instructions: [join(root, 'agents/opencode/instructions.md')],
   });
   env.MODE = 'review';

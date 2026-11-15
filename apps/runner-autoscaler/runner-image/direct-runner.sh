@@ -1387,7 +1387,10 @@ else
   opencode_proxy_config="$OPENCODE_CONFIG_DIR/opencode.json.tmp"
   jq --arg base_url "http://127.0.0.1:${OPENCODE_PROXY_PORT}/v1" --arg mode "$MODE" \
     '.provider.homelab.options.baseURL = $base_url |
-     if $mode == "review" then .permission.task = "allow" else . end' \
+     if $mode == "review" then
+       .permission.task = "allow" |
+       .provider.homelab.models.default.options.reasoningEffort = "medium"
+     else . end' \
     "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"

@@ -54,7 +54,11 @@ first failure, its source and logs. Retry only after diagnosing an environment
 failure or changing a relevant input; do not rerun a quality failure until green.
 A provider limit is incomplete qualification, never a clean review or PARK.
 Each provider uses the existing 80-minute production execution budget; OpenCode
-runs children sequentially. Claude print mode keeps awaiting background reviewers
+runs children sequentially with the same local model and an explicit `medium`
+reasoning budget in review mode. The native OpenAI-compatible request must carry
+`reasoning_effort: "medium"`; a CLI variant without a declared model variant is
+not sufficient. Other worker modes keep their existing model configuration.
+Claude print mode keeps awaiting background reviewers
 under that bounded outer deadline, without its earlier ten-minute idle cutoff.
 
 Inspect `matrix.json` and each case's `run/evaluation.json`, `receipt.json`,
