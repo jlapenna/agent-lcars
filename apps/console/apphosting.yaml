@@ -1,7 +1,7 @@
 # Settings for Agent LCARS Frontend (on Cloud Run).
 # See https://firebase.google.com/docs/app-hosting/configure#cloud-run
 scripts:
-  buildCommand: . tools/cloud-build-prebuild.sh && ./tools/nx bundle @agent-lcars/console --verbose
+  buildCommand: ./tools/nx bundle @agent-lcars/console --verbose
   runCommand: node dist/apps/console/.next/standalone/apps/console/server.js
 outputFiles:
   serverApp:
@@ -17,10 +17,6 @@ runConfig:
 env:
   # Defined Values
   - variable: CI
-    value: 'true'
-    availability:
-      - BUILD
-  - variable: CLOUD_BUILD
     value: 'true'
     availability:
       - BUILD

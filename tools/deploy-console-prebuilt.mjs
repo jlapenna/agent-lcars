@@ -21,7 +21,6 @@ const TERMINAL_ROLLOUT_STATES = new Set([
 ]);
 const CLOUD_BUILDER_VARIABLES = new Set([
   'CI',
-  'CLOUD_BUILD',
   'FORCE_COLOR',
   'NODE_OPTIONS',
   'NO_COLOR',
@@ -195,7 +194,6 @@ export async function loadAppHostingConfig(yamlPath, projectNumber) {
 
 export function prepareBuildEnv(config, ambientEnv = process.env) {
   const buildEnv = { ...ambientEnv };
-  delete buildEnv.CLOUD_BUILD;
   for (const variable of config.runtimeOnlyVariables) {
     delete buildEnv[variable];
   }

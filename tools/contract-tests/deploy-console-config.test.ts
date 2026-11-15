@@ -1,7 +1,5 @@
 import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
 import {
-  access,
   link,
   lstat,
   mkdir,
@@ -27,16 +25,6 @@ import {
 } from '../deploy-console-prebuilt.mjs';
 
 const execFileAsync = promisify(execFile);
-const workspaceRoot = path.resolve(import.meta.dirname, '../..');
-
-async function exists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 describe('console deployment workflow', () => {
   it('translates the App Hosting YAML into a local build contract', async () => {
@@ -47,14 +35,13 @@ describe('console deployment workflow', () => {
 
     const buildEnv = prepareBuildEnv(config, {
       PATH: '/runner/bin',
-      CLOUD_BUILD: 'true',
       AUTH_SECRET: 'must-not-leak',
     });
     expect(buildEnv).toMatchObject({
       PATH: '/runner/bin',
       PROJECT_ID: 'agent-lcars',
     });
-    expect(buildEnv).not.toHaveProperty('CLOUD_BUILD');
+    expect(buildEnv).not.toHaveProperty('CI');
     expect(buildEnv).not.toHaveProperty('AUTH_SECRET');
   });
 
@@ -187,50 +174,5 @@ describe('console deployment workflow', () => {
     );
 
     expect(invalid.map(({ variable }) => variable)).toEqual([]);
-  });
-
-  it('cleans stale Cloud Build outputs without erasing the local Nx cache', async () => {
-    const fixtureRoot = await mkdtemp(
-      path.join(os.tmpdir(), 'agent-lcars-cloud-build-prebuild-'),
-    );
-    const stalePaths = [
-      'dist/apps/console/stale-output',
-      'apps/console/dist/stale-output',
-      'libs/util/dist/stale-output',
-      'libs/util/stale.tsbuildinfo',
-    ];
-    const cacheEntry = path.join(fixtureRoot, '.nx/cache/cache-entry');
-
-    try {
-      for (const relativePath of stalePaths) {
-        const filePath = path.join(fixtureRoot, relativePath);
-        await mkdir(path.dirname(filePath), { recursive: true });
-        await writeFile(filePath, 'stale');
-      }
-      await mkdir(path.dirname(cacheEntry), { recursive: true });
-      await writeFile(cacheEntry, 'content-addressed-cache-entry');
-
-      await execFileAsync(
-        'bash',
-        [path.join(workspaceRoot, 'tools/cloud-build-prebuild.sh')],
-        {
-          cwd: fixtureRoot,
-          env: { ...process.env, CLOUD_BUILD: 'true' },
-        },
-      );
-
-      await expect(readFile(cacheEntry, 'utf8')).resolves.toBe(
-        'content-addressed-cache-entry',
-      );
-      await expect(
-        Promise.all(
-          stalePaths.map((stalePath) =>
-            exists(path.join(fixtureRoot, stalePath)),
-          ),
-        ),
-      ).resolves.toEqual(stalePaths.map(() => false));
-    } finally {
-      await rm(fixtureRoot, { recursive: true, force: true });
-    }
   });
 });

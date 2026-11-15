@@ -21,18 +21,6 @@ export type JobAuthorization = (
   definition: JobDefinition,
 ) => boolean;
 
-/** Null when no operator veto stands. A record written before automatic
- * activation has no `vetoedBy`. One that was enabled and is now disabled
- * without a source error was either an operator disable or a digest change
- * awaiting re-enablement; both kept it off pending an operator, so it stays a
- * veto. Records disabled by a source error activate again once healthy. */
-export function operatorVeto(job: CatalogJob | undefined): string | null {
-  if (job?.vetoedBy !== undefined) return job.vetoedBy;
-  return job && !job.enabled && job.enabledBy && !job.error
-    ? job.enabledBy
-    : null;
-}
-
 /** Fetch only committed regular blobs. One deadline covers the repository. */
 export async function refreshJobCatalog(
   store: JobStore,
@@ -170,7 +158,7 @@ export async function refreshJobCatalog(
       await store.mutate(row.id, undefined, (current) => {
         if (current && Date.parse(current.refreshedAt) > now.getTime())
           return {};
-        const vetoedBy = operatorVeto(current);
+        const vetoedBy = current?.vetoedBy ?? null;
         const unchanged = Boolean(
           current?.enabled &&
           !row.error &&
@@ -222,7 +210,7 @@ export async function refreshJobCatalog(
         return {
           job: {
             ...current!,
-            vetoedBy: operatorVeto(current),
+            vetoedBy: current?.vetoedBy ?? null,
             enabled: false,
             error: 'Definition removed',
             refreshedAt: now.toISOString(),
@@ -237,7 +225,7 @@ export async function refreshJobCatalog(
         return {
           job: {
             ...current!,
-            vetoedBy: operatorVeto(current),
+            vetoedBy: current?.vetoedBy ?? null,
             enabled: false,
             error: 'Source refresh failed',
             refreshedAt: now.toISOString(),

@@ -346,13 +346,8 @@ Credential values live in LCARS's dedicated Google Secret Manager project,
 independently of homegit and Homelab stores. Repository manifests contain no
 values or arbitrary backend references. The built-in `repository` profile keeps
 the GitHub App identity. `gitIdentity` controls authorship independently.
-
-The former `credentials.github` profile field and
-`AGENT_LCARS_JOB_GITHUB_CREDENTIALS` map are replaced by the registry, immutable
-sets and exact job grants. Migrate aliases explicitly through the administration
-workflow before changing a job's profile. Never copy personal host credentials
-implicitly. Source changes require Console deployment and runner-image adoption;
-credential provisioning and real recurring-job qualification are separate checks.
+Source changes require Console deployment and runner-image adoption; credential
+provisioning and real recurring-job qualification are separate checks.
 
 ### Codex tools inside recipes
 

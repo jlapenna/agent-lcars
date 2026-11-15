@@ -35,19 +35,6 @@ layer; that is what it is for.
 
 ### App Hosting production builds
 
-The console's managed Firebase App Hosting archive builds currently start in
-fresh workspaces. Two consecutive production deployments measured for #1030
-(`build-2026-08-14-007` and `build-2026-08-14-009`) each reported `0/18` Nx
-cache hits, even though the second build included the cache-preserving prebuild
-change. Preserving `.nx/cache` therefore does not create cross-deployment reuse
-in this build mode.
-
-`tools/cloud-build-prebuild.sh` still removes stale `dist` and `.tsbuildinfo`
-outputs while leaving `.nx/cache` intact. That is the correct cleanup boundary:
-if a build environment supplies an L1 entry, Nx must restore the complete
-declared output instead of inheriting stale files. It is not, by itself, a
-persistence mechanism.
-
 The production deployment workflow builds a native amd64 standalone Console and
 packages it with the pinned distroless `nonroot` base of the node base image's
 major using Crane, without a Docker daemon or
