@@ -153,7 +153,10 @@ export function briefMessage(question, brief) {
 // call is an unsupported answer. A tool call that failed and was then
 // resolved (for example a probe of a host that is down) is evidence, not a
 // runner failure; an unresolved tool error still fails the attempt.
-export const EVIDENCE_OPERATIONS = new Set(['investigate:v1']);
+export const EVIDENCE_OPERATIONS = new Set([
+  'investigate:v1',
+  'oncall-investigate:v1',
+]);
 
 export function settle(
   { code, timedOut, aborted, stdout },

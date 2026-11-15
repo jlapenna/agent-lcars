@@ -14,9 +14,10 @@ const workScopeSchema = z.enum([
   'work.reader',
   'work.executor',
   'work.cron',
-  /** Internal claw admission (`POST /claw/investigations`) for the claw
-   *  pipelines this same grant lists, and cancellation of that work. It
-   *  confers no other Work API read or mutation. */
+  /** Internal claw admission (`POST /claw/investigations` for
+   *  `claw-investigator`, `POST /claw/oncall/alerts` for `claw-oncall`) for
+   *  the claw pipelines this same grant lists, and cancellation of that
+   *  work. It confers no other Work API read or mutation. */
   'work.claw.admit',
 ]);
 

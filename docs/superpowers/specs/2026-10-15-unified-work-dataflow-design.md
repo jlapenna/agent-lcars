@@ -522,6 +522,22 @@ After the work-item and verification phases, GitHub tasks are re-keyed by `workI
      `oncall-node` Deployment, its riker local volume and storage provisioner,
      and `OncallExecNodeUnavailable`, through their owning repositories.
 
+     Shadow intake (agent-lcars, this phase's first step): `POST
+/api/work/v1/claw/oncall/alerts` (`admitOncallAlert`) admits a firing
+     group as `oncall-investigate:v1` Work on pipeline `claw-oncall`, origin
+     channel `alertmanager` with no thread (persisted only, never delivered).
+     The gate principal `svc:oncall-alert-gate` holds `work.claw.admit` for
+     `claw-oncall` alone, so it needs no new scope. The source key is the
+     gate's group key namespaced by principal; the sorted fingerprint set and
+     the firing episode (the group's earliest alert `startsAt`) are the
+     revision key, so a re-notification of the same set is the same round
+     whatever its rendered text, while a new set or a re-fire after
+     resolution supersedes a queued round. A `resolved` body invalidates the
+     pending round. `claw-oncall` claims at
+     most six live attempts and, read-only by enforcement during shadow,
+     retries like `claw-investigator`; the cutover adds it to the effectful
+     pipelines. The launcher requires tool evidence for both operations.
+
 4. **General agent surfaces and intent verification.** Expose permitted agents
    and operations through Console, CLI and Slack. Ship observed-state verification
    and remove obsolete marker verification together. Keep replies separate from

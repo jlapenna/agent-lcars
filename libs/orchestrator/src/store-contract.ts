@@ -203,6 +203,8 @@ export function runOrchestratorStoreContract(
     it('retries a lost read-only claw round under the finite budget, but never an effectful recipe', async () => {
       for (const [pipeline, retried] of [
         ['claw-investigator', 1],
+        // Shadow-stage claw-oncall is read-only by enforcement and retries.
+        ['claw-oncall', 1],
         ['goose', 0],
       ] as const) {
         const store = await makeStore();
@@ -3409,6 +3411,43 @@ export function runOrchestratorStoreContract(
         expect(claims.filter((run) => run !== undefined)).toHaveLength(2);
         expect((await store.listQueuedRuns()).map((run) => run.runId)).toEqual([
           runs[2]?.runId,
+        ]);
+      });
+
+      it('admits at most six live claw-oncall claims, only to a grant listing it', async () => {
+        const { store, orchestrator, clock } = await fixture();
+        const runs = [];
+        for (const value of [70, 71, 72, 73, 74, 75, 76]) {
+          const run = await queuedRun(orchestrator, `q${value}`, 'claw-oncall');
+          await store.enqueueRun({ runId: run.runId, now: clock.now() });
+          runs.push(run);
+          clock.advanceMinutes(1);
+        }
+        // A grant listing only claw-investigator never claims oncall work.
+        expect(
+          await store.claimQueuedRun({
+            pipelines: ['claw-investigator'],
+            now: clock.now(),
+            claimedBy: 'investigator-only',
+            claimedBySubject: 'zone@example.com',
+            tokenHash: '5'.repeat(64),
+          }),
+        ).toBeUndefined();
+        const claims = [];
+        for (const digit of ['1', '2', '3', '4', '6', '7', '8']) {
+          claims.push(
+            await store.claimQueuedRun({
+              pipelines: ['claw-investigator', 'claw-oncall'],
+              now: clock.now(),
+              claimedBy: `zone-runner-${digit}`,
+              claimedBySubject: 'zone@example.com',
+              tokenHash: digit.repeat(64),
+            }),
+          );
+        }
+        expect(claims.filter((run) => run !== undefined)).toHaveLength(6);
+        expect((await store.listQueuedRuns()).map((run) => run.runId)).toEqual([
+          runs[6]?.runId,
         ]);
       });
 
