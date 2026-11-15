@@ -48,9 +48,7 @@ The repository-job catalog reads agents the same way and with the same rules:
 - A failed refresh disables admission.
 - An agent activates on merge, and the operator veto is sticky.
 
-The only extension is reading a directory instead of two named files. The
-limits are 32 regular files, 64 KiB per file and 256 KiB in total. Symlinks
-and submodules are rejected.
+The only extension is reading a directory instead of two named files.
 
 - **Digest:** the definition digest covers the sorted `(path, content)` pairs.
 - **File modes:** git modes are ignored. The manifest's `executables` list is
@@ -92,7 +90,7 @@ see another agent's credentials its own profile and runtime.
   input must validate against that operation's schema.
 - **Reservation:** this reuses the repository-job reservation transaction. The
   occurrence pins:
-  - the definition snapshot (revision, digest and files);
+  - the definition (revision and digest, not file contents);
   - the profile;
   - the input.
 
@@ -104,9 +102,11 @@ see another agent's credentials its own profile and runtime.
     `claw-*` pipeline in place of a closed enum.
   - The claim ceiling is the manifest's `maxLiveClaims`.
   - Retry follows the manifest's `retry` setting.
-- **Delivery:** the Job fetches its snapshot with the run token from
-  `GET /runs/{id}/agent`, which returns `{revision, digest, files, operation,
-input}`. This is the counterpart of `GET /runs/{id}/recipe`. The launcher:
+- **Delivery:** the Job fetches its definition with the run token from
+  `GET /runs/{id}/agent`, the counterpart of `GET /runs/{id}/recipe`. LCARS
+  reads the agent directory from GitHub at the pinned revision and streams it
+  with the operation and input. Nothing is stored inline, so a definition's
+  size is not limited by the occurrence record. The launcher:
   - materializes the files into `/work/agent`, applying the executable modes;
   - checks the digest;
   - then runs today's sequence: `config validate`, `doctor` (which must change
