@@ -2990,37 +2990,37 @@
                             "total": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "ready": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "disabled": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "unpromoted": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "expired": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "expiring": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "unknown": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -14659,8 +14659,7 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       }
                     },
                     "files": {
@@ -14671,8 +14670,7 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       }
                     }
                   },
