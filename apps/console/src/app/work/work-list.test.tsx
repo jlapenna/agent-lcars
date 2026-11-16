@@ -215,5 +215,7 @@ describe('providerCeilingMeta', () => {
       providerCeilingMeta({ opencode: 1, codex: 2, claude: undefined }),
     ).toBe('codex ceiling 2 · opencode ceiling 1');
     expect(providerCeilingMeta({})).toBeUndefined();
+    // Codex is bounded only near a shared-login refresh, never statically.
+    expect(providerCeilingMeta()).not.toContain('codex');
   });
 });

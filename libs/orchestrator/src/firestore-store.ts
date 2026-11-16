@@ -56,8 +56,10 @@ import {
 } from './provider-cooldown';
 import { retainsPhysicalClaim } from './provider-routing';
 import {
+  parseCredentialWindow,
   parseProviderCooldown,
   projectQueueAdmissionStatus,
+  type ProviderCredentialWindow,
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
@@ -120,6 +122,7 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #githubAnchors: CollectionReference;
   readonly #trackerIssues: CollectionReference;
   readonly #providerCooldowns: CollectionReference;
+  readonly #credentialWindows: CollectionReference;
   readonly #priorityPositions: CollectionReference;
 
   constructor(options: FirestoreStoreOptions) {
@@ -143,6 +146,9 @@ export class FirestoreStore implements OrchestratorStore {
     this.#trackerIssues = this.#firestore.collection(`${prefix}issue-sources`);
     this.#providerCooldowns = this.#firestore.collection(
       `${prefix}provider-cooldowns`,
+    );
+    this.#credentialWindows = this.#firestore.collection(
+      `${prefix}provider-credential-windows`,
     );
     this.#priorityPositions = this.#firestore.collection(
       `${prefix}priority-positions`,
@@ -472,10 +478,15 @@ export class FirestoreStore implements OrchestratorStore {
         input.shouldReadQueueEligibility?.({ task, run }) !== false
       ) {
         const pipelines = [...new Set(input.queueEligibilityPipelines)];
-        const [cooldowns, live] = await Promise.all([
+        const [cooldowns, windows, live] = await Promise.all([
           Promise.all(
             pipelines.map((pipeline) =>
               tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+            ),
+          ),
+          Promise.all(
+            pipelines.map((pipeline) =>
+              tx.get(this.#credentialWindows.doc(encodeURIComponent(pipeline))),
             ),
           ),
           Promise.all(
@@ -495,6 +506,12 @@ export class FirestoreStore implements OrchestratorStore {
             pipelines.map((pipeline, index) => [
               pipeline,
               cooldowns[index]?.data(),
+            ]),
+          ),
+          credentialWindows: Object.fromEntries(
+            pipelines.map((pipeline, index) => [
+              pipeline,
+              windows[index]?.data(),
             ]),
           ),
           liveRuns: live.flatMap((snapshot) =>
@@ -938,22 +955,32 @@ export class FirestoreStore implements OrchestratorStore {
     const pipelines = [...new Set(input.pipelines)];
     return this.#firestore.runTransaction(
       async (tx) => {
-        const [snapshots, cooldownSnapshots] = await Promise.all([
-          Promise.all(
-            LIVE_STATES.map((state) =>
-              tx.get(
-                this.#runs
-                  .where('state', '==', state)
-                  .limit(QUEUE_ADMISSION_READ_LIMIT + 1),
+        const [snapshots, cooldownSnapshots, windowSnapshots] =
+          await Promise.all([
+            Promise.all(
+              LIVE_STATES.map((state) =>
+                tx.get(
+                  this.#runs
+                    .where('state', '==', state)
+                    .limit(QUEUE_ADMISSION_READ_LIMIT + 1),
+                ),
               ),
             ),
-          ),
-          Promise.all(
-            pipelines.map((pipeline) =>
-              tx.get(this.#providerCooldowns.doc(encodeURIComponent(pipeline))),
+            Promise.all(
+              pipelines.map((pipeline) =>
+                tx.get(
+                  this.#providerCooldowns.doc(encodeURIComponent(pipeline)),
+                ),
+              ),
             ),
-          ),
-        ]);
+            Promise.all(
+              pipelines.map((pipeline) =>
+                tx.get(
+                  this.#credentialWindows.doc(encodeURIComponent(pipeline)),
+                ),
+              ),
+            ),
+          ]);
         if (
           snapshots.some(
             (snapshot) => snapshot.size > QUEUE_ADMISSION_READ_LIMIT,
@@ -975,6 +1002,12 @@ export class FirestoreStore implements OrchestratorStore {
           cooldowns,
           pipelines,
           input.now,
+          Object.fromEntries(
+            pipelines.map((pipeline, index) => [
+              pipeline,
+              windowSnapshots[index]?.data(),
+            ]),
+          ),
         );
       },
       { readOnly: true },
@@ -1033,11 +1066,18 @@ export class FirestoreStore implements OrchestratorStore {
           !providerIsCoolingDown(cooldowns[index]?.data(), input.now),
       );
       if (granted.length === 0) return undefined;
-      const prioritySnapshots = await Promise.all(
-        granted.map((pipeline) =>
-          tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+      const [prioritySnapshots, windowSnapshots] = await Promise.all([
+        Promise.all(
+          granted.map((pipeline) =>
+            tx.get(this.#priorityPositions.doc(encodeURIComponent(pipeline))),
+          ),
         ),
-      );
+        Promise.all(
+          granted.map((pipeline) =>
+            tx.get(this.#credentialWindows.doc(encodeURIComponent(pipeline))),
+          ),
+        ),
+      ]);
       const priorityPositions = new Map(
         granted.map((pipeline, index) => [
           pipeline,
@@ -1082,6 +1122,12 @@ export class FirestoreStore implements OrchestratorStore {
         granted,
         input.now,
         priorityPositions,
+        Object.fromEntries(
+          granted.map((pipeline, index) => [
+            pipeline,
+            windowSnapshots[index]?.data(),
+          ]),
+        ),
       );
       const first = queued.find(({ run }) => run.runId === selected?.runId);
       if (first === undefined) return undefined;
@@ -1119,6 +1165,34 @@ export class FirestoreStore implements OrchestratorStore {
       .sort((a, b) => queueOrderAt(a).localeCompare(queueOrderAt(b)))
       .slice(0, limit);
   }
+  async readCredentialWindow(
+    pipeline: string,
+  ): Promise<ProviderCredentialWindow | undefined> {
+    return parseCredentialWindow(
+      (
+        await this.#credentialWindows.doc(encodeURIComponent(pipeline)).get()
+      ).data(),
+      pipeline,
+    );
+  }
+
+  async recordCredentialWindow(
+    window: ProviderCredentialWindow,
+  ): Promise<void> {
+    const ref = this.#credentialWindows.doc(
+      encodeURIComponent(window.pipeline),
+    );
+    await this.#firestore.runTransaction(async (tx) => {
+      const current = parseCredentialWindow(
+        (await tx.get(ref)).data(),
+        window.pipeline,
+      );
+      if (current !== undefined && current.observedAt >= window.observedAt)
+        return;
+      tx.set(ref, window);
+    });
+  }
+
   async readProviderCooldowns(
     pipelines: readonly string[],
   ): Promise<Readonly<Record<string, unknown>>> {

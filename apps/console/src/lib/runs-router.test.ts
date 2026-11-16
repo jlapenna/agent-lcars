@@ -3991,6 +3991,183 @@ describe('codexAuth', () => {
     expect(takeLease).not.toHaveBeenCalled();
   });
 
+  // #3392 follow-up: Codex reviews were serialized fleet-wide by this lease.
+  const codexJwt = (expMs: number) =>
+    [
+      'h',
+      Buffer.from(JSON.stringify({ exp: expMs / 1000 })).toString('base64url'),
+      's',
+    ].join('.');
+  const lineage = (expMs: number) =>
+    Buffer.from(
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { access_token: codexJwt(expMs), refresh_token: 'rt-secret' },
+        last_refresh: NOW,
+      }),
+    ).toString('base64');
+  const DAY = 24 * 60 * 60 * 1000;
+
+  async function secondCodexRun() {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('work-codex-shared-reader'),
+      pipeline: 'codex',
+      now: NOW,
+    });
+    const token = mintRunToken();
+    await f.store.claimQueuedRun({
+      pipelines: ['codex'],
+      now: NOW,
+      claimedBy: 'runner-2',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+      tokenHash: hashRunToken(token),
+    });
+    return { ...f, runId, token };
+  }
+  const busyLease = async () => ({
+    runId: 'github:jlapenna/agent-lcars:12345:1',
+    repository: 'jlapenna/agent-lcars',
+    expiresAt: '2026-08-28T12:00:00.000Z',
+    generation: '21',
+  });
+
+  it('lets a Codex run share a refresh-token-free copy outside the refresh window, even while another run holds the lease', async () => {
+    const { store, orchestrator, now, runId, token } = await secondCodexRun();
+    const dueAt = Date.parse(NOW) + 8 * DAY;
+    await store.recordCredentialWindow({
+      pipeline: 'codex',
+      refreshDueAt: new Date(dueAt).toISOString(),
+      observedAt: NOW,
+    });
+    const createLease = vi.fn(context.codexAuth.createLease);
+    const takeLease = vi.fn(context.codexAuth.takeLease);
+    const replace = vi.fn(context.codexAuth.replace);
+    const codexAuth = {
+      ...context.codexAuth,
+      read: async () => ({
+        authBase64: lineage(dueAt),
+        generation: '21',
+        sha256: 'a'.repeat(64),
+      }),
+      readLease: busyLease,
+      createLease,
+      takeLease,
+      replace,
+    };
+    const restored = await call(
+      { store, orchestrator, now, ...context, codexAuth, bearerToken: token },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+    expect(restored.status).toBe(200);
+    const body = restored.json as { authBase64: string; generation: string };
+    const copy = JSON.parse(Buffer.from(body.authBase64, 'base64').toString());
+    expect(copy.tokens.refresh_token).toBe('');
+    expect(copy.tokens.access_token).toBe(codexJwt(dueAt));
+    expect(body.generation).toBe('21');
+    expect(createLease).not.toHaveBeenCalled();
+    expect(takeLease).not.toHaveBeenCalled();
+
+    // Its persist never touches the lineage and needs no lease.
+    const persisted = await call(
+      { store, orchestrator, now, ...context, codexAuth, bearerToken: token },
+      'PUT',
+      runPath(runId, '/codex-auth'),
+      {
+        generation: '21',
+        restoredSha256: '0'.repeat(64),
+        authBase64: body.authBase64,
+      },
+    );
+    expect(persisted.status).toBe(200);
+    expect(persisted.json).toEqual({ status: 'unchanged' });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['inside the refresh window', 60 * 60 * 1000, 60 * 60 * 1000],
+    [
+      'with a stale record whose lineage is about to refresh',
+      8 * DAY,
+      60 * 60 * 1000,
+    ],
+  ])(
+    'keeps the exclusive lease %s',
+    async (_case, recordedInMs, lineageInMs) => {
+      const { store, orchestrator, now, runId, token } = await secondCodexRun();
+      await store.recordCredentialWindow({
+        pipeline: 'codex',
+        refreshDueAt: new Date(Date.parse(NOW) + recordedInMs).toISOString(),
+        observedAt: NOW,
+      });
+      const takeLease = vi.fn(context.codexAuth.takeLease);
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          bearerToken: token,
+          codexAuth: {
+            ...context.codexAuth,
+            read: async () => ({
+              authBase64: lineage(Date.parse(NOW) + lineageInMs),
+              generation: '21',
+              sha256: 'a'.repeat(64),
+            }),
+            readLease: busyLease,
+            takeLease,
+          },
+        },
+        'GET',
+        runPath(runId, '/codex-auth'),
+      );
+      expect(r.status).toBe(409);
+      expect(takeLease).not.toHaveBeenCalled();
+    },
+  );
+
+  it('records the refresh window from the lineage read under an exclusive lease', async () => {
+    const { store, orchestrator, now, runId, token } = await claimedCodexRun(
+      'jlapenna/agent-lcars',
+    );
+    const dueAt = Date.parse(NOW) + 9 * DAY;
+    const r = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        bearerToken: token,
+        codexAuth: {
+          ...context.codexAuth,
+          read: async () => ({
+            authBase64: lineage(dueAt),
+            generation: '7',
+            sha256: 'a'.repeat(64),
+          }),
+        },
+      },
+      'GET',
+      runPath(runId, '/codex-auth'),
+    );
+    expect(r.status).toBe(200);
+    // The exclusive holder receives the real refresh token.
+    const copy = JSON.parse(
+      Buffer.from(
+        (r.json as { authBase64: string }).authBase64,
+        'base64',
+      ).toString(),
+    );
+    expect(copy.tokens.refresh_token).toBe('rt-secret');
+    expect(await store.readCredentialWindow('codex')).toEqual({
+      pipeline: 'codex',
+      refreshDueAt: new Date(dueAt).toISOString(),
+      observedAt: expect.any(String),
+    });
+  });
+
   it('takes over the shared subscription lease only after its recorded expiry', async () => {
     const { store, orchestrator, now } = fixture();
     const secondRunId = await seedQueuedRun(store, orchestrator, {

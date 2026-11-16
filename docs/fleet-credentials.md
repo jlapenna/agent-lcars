@@ -284,6 +284,19 @@ unchanged.
 
 ### Shared Codex lease
 
+Most Codex runs do not take this lease. The single-use refresh token is the
+only thing that needs exclusivity, and Codex refreshes only when its access
+token expires (the lineage has rotated about every ten days, the token
+lifetime). The Console records that expiry as the `codex` credential window
+whenever it reads or rotates the lineage. A run whose start is earlier than
+the expiry minus `CODEX_EXCLUSIVE_WINDOW_MS` (the longest run plus a margin)
+is a shared reader: it receives a copy whose `refresh_token` is the empty
+string, takes no lease and persists nothing, so any number of Codex runs may
+execute concurrently and none can rotate the lineage. Persisting such a copy is
+always refused as a no-op. With no recorded window, a stale record, or inside
+the window, a run uses the exclusive lease below, and claim admission limits
+Codex to one live claim, as before (#3392).
+
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
 record serializes the single-use subscription refresh token. A run first takes
 that record with generation CAS, then restores the central object. Every

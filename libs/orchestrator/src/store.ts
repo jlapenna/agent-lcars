@@ -25,7 +25,8 @@ import { queueOrderAt, taskKey } from './model';
 import { providerIsCoolingDown } from './provider-cooldown';
 import {
   isQueueAdmissionCandidate,
-  QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+  pipelineLiveClaimCeiling,
+  type ProviderCredentialWindow,
   type QueueAdmissionStatus,
 } from './queue-admission-status';
 
@@ -74,13 +75,18 @@ export function queuePriorityTurnAfter(
 export function availableQueuePipelines(input: {
   pipelines: readonly string[];
   cooldowns: Readonly<Record<string, unknown>>;
+  credentialWindows?: Readonly<Record<string, unknown>>;
   liveRuns: readonly Run[];
   now: string;
 }): string[] {
   return [...new Set(input.pipelines)].filter((pipeline) => {
     if (providerIsCoolingDown(input.cooldowns[pipeline], input.now))
       return false;
-    const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+    const ceiling = pipelineLiveClaimCeiling(
+      pipeline,
+      input.now,
+      input.credentialWindows?.[pipeline],
+    );
     return (
       ceiling === undefined ||
       input.liveRuns.filter(
@@ -95,6 +101,8 @@ export function availableQueuePipelines(input: {
 
 export interface QueueEligibilitySnapshot {
   readonly cooldowns: Readonly<Record<string, unknown>>;
+  /** Shared-login refresh windows (pipelineLiveClaimCeiling). */
+  readonly credentialWindows?: Readonly<Record<string, unknown>>;
   readonly liveRuns: readonly Run[];
 }
 
@@ -114,6 +122,7 @@ export function selectFairQueuedRun(
   pipelines: readonly string[],
   now?: string,
   priorityPositions: ReadonlyMap<string, number> = new Map(),
+  credentialWindows: Readonly<Record<string, unknown>> = {},
 ): Run | undefined {
   const granted = new Set(pipelines);
   const pipelineOrder = new Map(
@@ -150,7 +159,11 @@ export function selectFairQueuedRun(
 
   const provider = [...heads.values()]
     .filter((run) => {
-      const ceiling = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[run.pipeline];
+      const ceiling = pipelineLiveClaimCeiling(
+        run.pipeline,
+        now,
+        credentialWindows[run.pipeline],
+      );
       return (
         ceiling === undefined || (occupancy.get(run.pipeline) ?? 0) < ceiling
       );
@@ -530,6 +543,12 @@ export interface OrchestratorStore {
   readProviderCooldowns(
     pipelines: readonly string[],
   ): Promise<Readonly<Record<string, unknown>>>;
+  /** Record when a provider's shared login next refreshes. Newer
+   * observations replace older ones; an older one is ignored. */
+  recordCredentialWindow(window: ProviderCredentialWindow): Promise<void>;
+  readCredentialWindow(
+    pipeline: string,
+  ): Promise<ProviderCredentialWindow | undefined>;
 }
 
 /** Generic durable request-binding metadata. Callers own the binding key and

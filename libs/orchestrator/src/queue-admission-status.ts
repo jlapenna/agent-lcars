@@ -18,6 +18,62 @@ export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   'claw-investigator': 2,
 });
 
+/** Codex runs share one subscription login. Outside this window before the
+ * login's next refresh, runs read a refresh-token-free copy and need no
+ * exclusive lease, so Codex is bounded only by host capacity. Inside it (the
+ * longest run lease plus a margin) a run may meet the refresh, so Codex
+ * falls back to the single exclusive lease the refresh token requires. */
+export const CODEX_EXCLUSIVE_WINDOW_MS = (2 * 60 + 30) * 60_000;
+
+/** When a provider's shared login next refreshes, recorded by the Console
+ * credential broker from the authoritative lineage it reads. */
+export interface ProviderCredentialWindow {
+  pipeline: string;
+  refreshDueAt: string;
+  observedAt: string;
+}
+
+/** A missing or bad record is no evidence of a shared window: it keeps the
+ * exclusive ceiling, never an unbounded one. */
+export function parseCredentialWindow(
+  value: unknown,
+  pipeline: string,
+): ProviderCredentialWindow | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    record['pipeline'] !== pipeline ||
+    typeof record['refreshDueAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(record['refreshDueAt'])) ||
+    typeof record['observedAt'] !== 'string' ||
+    !Number.isFinite(Date.parse(record['observedAt']))
+  )
+    return undefined;
+  return {
+    pipeline,
+    refreshDueAt: record['refreshDueAt'],
+    observedAt: record['observedAt'],
+  };
+}
+
+/** The live-claim ceiling actually in force for a pipeline now. */
+export function pipelineLiveClaimCeiling(
+  pipeline: string,
+  now: string | undefined,
+  credentialWindow?: unknown,
+): number | undefined {
+  if (pipeline === 'codex' && now !== undefined) {
+    const window = parseCredentialWindow(credentialWindow, pipeline);
+    if (
+      window !== undefined &&
+      Date.parse(window.refreshDueAt) - CODEX_EXCLUSIVE_WINDOW_MS >
+        Date.parse(now)
+    )
+      return undefined;
+  }
+  return QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+}
+
 /** Bound console reads at the datastore. Exceeding this bound is unavailable,
  * never a truncated count presented as the entire queue. */
 export const QUEUE_ADMISSION_READ_LIMIT = 1000;
@@ -84,6 +140,7 @@ export function projectQueueAdmissionStatus(
   cooldowns: ReadonlyMap<string, ProviderCooldown>,
   pipelines: readonly string[],
   now: string,
+  credentialWindows: Readonly<Record<string, unknown>> = {},
 ): QueueAdmissionStatus {
   if (!Number.isFinite(Date.parse(now)))
     throw new Error('Invalid observation time');
@@ -101,7 +158,11 @@ export function projectQueueAdmissionStatus(
       const liveClaims = live.filter(
         (run) => run.queue?.state === 'claimed',
       ).length;
-      const maxLiveClaims = QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
+      const maxLiveClaims = pipelineLiveClaimCeiling(
+        pipeline,
+        now,
+        credentialWindows[pipeline],
+      );
       const cooldown = cooldowns.get(pipeline);
       return {
         pipeline,
