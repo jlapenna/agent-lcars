@@ -1,21 +1,24 @@
-// A native review authenticates as the caller, but it must not reach the
-// caller's provider directory: everything else there (settings, hooks,
-// plugins, skills, rules, MCP servers, memory, sourced shell state) configures
-// the caller's live sessions (#3379: a reviewed test registered the scratch
-// repository's worker hook in the operator's settings.json).
+// A native review authenticates with the caller's subscriptions, but it must
+// not reach the caller's provider directories: they configure the caller's
+// live sessions (settings, hooks, plugins, skills, rules, MCP servers, memory,
+// sourced shell state), and a review once rewrote one (#3379). Each review
+// gets a fresh private provider home, and nothing it does can change a
+// rotating login the caller's sessions depend on:
 //
-// The review therefore gets a fresh private provider home, and only the
-// credential file is bound into it, read-only, from the caller's directory.
-// The bind target lives in the private home, so if the host replaces the
-// credential file during the run (which detaches the bind), the review sees
-// only its own placeholder; the caller's directory is never exposed.
+// - Claude uses the long-lived, non-rotating CLAUDE_CODE_OAUTH_TOKEN the fleet
+//   uses (`claude setup-token`; docs/fleet-credentials.md), mounted read-only.
+//   The caller's ~/.claude is not involved.
+// - Codex has no long-lived token, so the caller's auth.json is bound
+//   read-only. Codex refreshes its login at a known time (access-token expiry
+//   or last_refresh + 8 days); when that falls inside the run, the launcher
+//   first lets the refresh happen on the host, in the caller's own directory,
+//   and only then starts the review.
+// - Antigravity's token is bound read-only, as the fleet runner copies it; its
+//   refresh token does not rotate, so in-memory refreshes are harmless.
 //
-// A read-only credential cannot accept a refreshed token, and a refresh the
-// review cannot persist would leave the caller holding a used refresh token.
-// So the launch is refused unless no refresh can fall inside the run: Claude
-// refreshes as its access token nears expiresAt, and Codex refreshes when its
-// access token expires or its last_refresh is older than 8 days.
-// Antigravity's token file is used read-only, as the fleet runner does.
+// Bind targets live in the private home, so a host-side replace of a bound
+// file only detaches the review from it; the caller's directory is never
+// exposed.
 import {
   closeSync,
   constants,
@@ -27,11 +30,17 @@ import {
 import { join } from 'node:path';
 
 export const NATIVE_CREDENTIALS = {
-  claude: ['.credentials.json'],
+  claude: [],
   codex: ['auth.json'],
   agy: ['antigravity-oauth-token'],
   // The OpenCode lane binds a single key file, not a directory.
   opencode: null,
+};
+
+export const CLAUDE_TOKEN_SECRET = {
+  secret: 'CLAUDE_CODE_OAUTH_TOKEN',
+  project: 'agent-lcars',
+  target: '/run/secrets/claude-code-oauth-token',
 };
 
 function credentialsFor(provider) {
@@ -40,58 +49,16 @@ function credentialsFor(provider) {
   return NATIVE_CREDENTIALS[provider];
 }
 
-const CODEX_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
-const REFRESH_MARGIN_MS = 30 * 60 * 1000;
-
-// Milliseconds since the epoch of a JWT's exp, or null when it has none.
-function jwtExpiryMs(token) {
-  const payload = typeof token === 'string' ? token.split('.')[1] : undefined;
-  if (!payload) return null;
-  const exp = JSON.parse(Buffer.from(payload, 'base64url').toString()).exp;
-  return typeof exp === 'number' ? exp * 1000 : null;
-}
-
-// When the provider CLI will next refresh the caller's login, or null when
-// that cannot be determined.
-function nextRefreshMs(provider, auth) {
-  const read = (name) => JSON.parse(readFileSync(join(auth, name), 'utf8'));
-  if (provider === 'claude') {
-    const expiresAt = read('.credentials.json').claudeAiOauth?.expiresAt;
-    return typeof expiresAt === 'number' ? expiresAt : null;
-  }
-  if (provider === 'codex') {
-    const { tokens, last_refresh: lastRefresh } = read('auth.json');
-    const expiry = jwtExpiryMs(tokens?.access_token);
-    const refreshed = Date.parse(lastRefresh);
-    if (expiry === null || Number.isNaN(refreshed)) return null;
-    return Math.min(expiry, refreshed + CODEX_REFRESH_INTERVAL_MS);
-  }
-  return Infinity;
-}
-
-export function assertCredentialsOutliveRun(
-  provider,
-  auth,
-  runMs,
-  nowMs = Date.now(),
-) {
-  const next = nextRefreshMs(provider, auth);
-  if (next === null || next < nowMs + runMs + REFRESH_MARGIN_MS)
-    throw new Error(
-      `The ${provider} login ` +
-        (next === null
-          ? 'has no readable expiry'
-          : `refreshes at ${new Date(next).toISOString()}, inside this review`) +
-        ". Retry after the caller's own sessions have refreshed it.",
-    );
-}
-
 // Mounts for a private provider home at `target` holding only the caller's
-// credential files. privateHome must not exist yet.
+// read-only credential files. privateHome must not exist yet.
 export function nativeAuthMounts(provider, auth, privateHome, target) {
   const credentials = credentialsFor(provider);
   if (credentials === null) return [];
-  if ([auth, privateHome, target].some((path) => path.includes(',')))
+  if (
+    [privateHome, target, ...(credentials.length ? [auth] : [])].some((path) =>
+      path.includes(','),
+    )
+  )
     throw new Error('Unsupported bind-mount path');
   mkdirSync(privateHome, { mode: 0o700 });
   const mounts = [
@@ -122,4 +89,61 @@ export function nativeAuthMounts(provider, auth, privateHome, target) {
     );
   }
   return mounts;
+}
+
+const CODEX_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
+export const REFRESH_MARGIN_MS = 30 * 60 * 1000;
+
+function jwtExpiryMs(token) {
+  const payload = typeof token === 'string' ? token.split('.')[1] : undefined;
+  if (!payload) return null;
+  const exp = JSON.parse(Buffer.from(payload, 'base64url').toString()).exp;
+  return typeof exp === 'number' ? exp * 1000 : null;
+}
+
+// When Codex will next refresh the caller's login, or null if unreadable.
+export function codexRefreshDueMs(auth) {
+  const { tokens, last_refresh: lastRefresh } = JSON.parse(
+    readFileSync(join(auth, 'auth.json'), 'utf8'),
+  );
+  const expiry = jwtExpiryMs(tokens?.access_token);
+  const refreshed = Date.parse(lastRefresh);
+  if (expiry === null || Number.isNaN(refreshed)) return null;
+  return Math.min(expiry, refreshed + CODEX_REFRESH_INTERVAL_MS);
+}
+
+// Make sure no Codex refresh can fall inside the run. If one is due, wait for
+// it and let it happen on the host (a live session's next request, or a
+// minimal host request through `refresh`), then re-check. A launch fails only
+// when the host itself cannot refresh the login.
+export async function ensureCodexLoginOutlivesRun({
+  auth,
+  runMs,
+  refresh,
+  now = Date.now,
+  sleep = (ms) => new Promise((done) => setTimeout(done, ms)),
+  log = (message) => console.error(message),
+  attempts = 3,
+}) {
+  for (let attempt = 0; ; attempt += 1) {
+    const due = codexRefreshDueMs(auth);
+    if (due !== null && due >= now() + runMs + REFRESH_MARGIN_MS) return;
+    if (attempt >= attempts)
+      throw new Error(
+        'The Codex login could not be refreshed on the host before the review; ' +
+          'run any Codex command to check the login, then retry.',
+      );
+    if (due !== null && due > now()) {
+      log(
+        `Codex refreshes its login at ${new Date(due).toISOString()}, inside ` +
+          'this review; waiting for that refresh to happen on the host first.',
+      );
+      await sleep(due - now() + 60 * 1000);
+      // A live host session may refresh on its own first.
+      const after = codexRefreshDueMs(auth);
+      if (after !== null && after >= now() + runMs + REFRESH_MARGIN_MS) return;
+    }
+    log('Refreshing the Codex login on the host before the review.');
+    await refresh();
+  }
 }
