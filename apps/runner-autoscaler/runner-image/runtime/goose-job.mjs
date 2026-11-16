@@ -36,9 +36,9 @@ async function call(path, body) {
     redirect: 'error',
   });
   if (!response.ok) throw new Error(`Work API HTTP ${response.status}`);
-  // A memory guard, not a content bound: the Work API bounds the recipe brief
-  // and credential delivery by what it stores (Firestore documents and
-  // 16 Secret Manager payloads of 64 KiB, even fully JSON-escaped).
+  // The Work API refuses a recipe brief above REPOSITORY_JOB_BRIEF_MAX_BYTES
+  // (8 MiB); credential delivery is at most 16 Secret Manager payloads of
+  // 64 KiB, even fully JSON-escaped.
   const maximum = 8 * 1024 * 1024;
   let size = 0;
   const chunks = [];

@@ -16,8 +16,10 @@ introduce another execution state machine or daemon.
 ## Source and configuration
 
 The catalog reads regular blobs from an exact default-branch commit of a managed
-repository. YAML is bounded and rejects aliases, duplicate keys and unknown
-manifest fields. Invalid definitions remain visible with errors and cannot run.
+repository. YAML rejects aliases, duplicate keys and unknown manifest fields.
+The only size bound on `job.yaml` and `recipe.yaml` is storage: the parsed
+definition must fit one Firestore document (1 MiB) with room for its catalog
+entry's own fields. Invalid definitions remain visible with errors and cannot run.
 Deleted definitions stop new admission. Source refresh failure is an error, not
 permission to keep scheduling cached content. Existing admitted runs retain their
 immutable source, input, profile and baseline snapshot.
@@ -90,8 +92,10 @@ placement wait plus one run lease after settlement; run-token routes refuse a
 settled Run, so a late-placed worker cannot fetch its recipe. An operator may
 then explicitly invoke a new occurrence.
 
-Result artifacts are bounded, validated server-side and durably staged before
-settlement. A successful native completion binds their digest. Staged artifacts
+Result artifacts are validated server-side and durably staged before
+settlement. A result may be up to 4 MiB of JSON
+(`REPOSITORY_JOB_RESULT_MAX_BYTES`); within it, reports, findings and evidence
+have no separate count or length caps. A successful native completion binds their digest. Staged artifacts
 alone never establish success or advance the baseline. Reconciliation advances
 the baseline only from a matching successful native Run, then releases the job
 pointer. Failed, incomplete, canceled, timed-out and lost runs preserve the prior
@@ -157,7 +161,7 @@ writes the complete result. After Goose exits successfully with a completed
 conversation, the adapter submits that parsed file directly, preserving fields
 and failed grades without asking a model to copy them. The path must be under
 `/tmp`, must not use symbolic links, must not already exist when execution
-starts, and must produce a regular JSON file at most 256 KiB. A missing,
+starts, and must produce a regular JSON file at most 4 MiB. A missing,
 invalid or oversized file fails; there is no model-text fallback. Process,
 cancellation and resource failures still fail even if a file exists. The
 existing result contract and authorization remain server-enforced. Deploy and
@@ -284,13 +288,33 @@ be overridden. Required variable parameters need values; optional defaults are
 resolved and pinned at admission. Schedules require defaults for every required
 variable. Values are string data, not permission to choose tools,
 credentials, resources or repository scope. There is no count or per-value
-length cap: a resolved parameter map (defaults included) is limited to 256 KiB
-of compact JSON, the share of the occurrence's Firestore document left for it
+length cap: a resolved parameter map (defaults included) is limited to 512 KiB
+of compact JSON, half of the occurrence's Firestore document
 (`REPOSITORY_JOB_PARAMETERS_MAX_BYTES`). The same byte bound applies to manifest
 inputs and each profile input set. Job request bodies may carry that map plus a
 16 KiB envelope (`REPOSITORY_JOB_REQUEST_MAX_BYTES`), in the Console API and the
 `lcars` CLI alike. Admission refuses a catalog entry or occurrence that would
 exceed Firestore's 1 MiB document limit with an error naming the record.
+
+### Occurrence storage
+
+An occurrence document holds only its own record: identity, trigger, profile,
+credential snapshot, parameters and reconciliation state. Its pinned definition
+and staged artifact live out of line and are content-addressed, so neither
+competes with it for the 1 MiB limit:
+
+- `orchestrator-job-definitions/{sha256}` stores each definition's JSON once,
+  keyed by the SHA-256 of those bytes and verified on read. Every occurrence
+  pinned to it holds that `definitionKey`.
+- `orchestrator-job-artifact-chunks/{sha256}.{n}` stores the artifact's JSON as
+  bytes in chunks of about 1 MiB. The occurrence's `artifactRef` records the
+  SHA-256, byte length and chunk count, and reads verify them.
+
+Both are immutable and written before the occurrence that references them, so
+a retried transaction rewrites the same bytes. An aborted admission can leave an
+unreferenced copy, but never a dangling reference. Occurrences written before
+this layout embed `definition` and `artifactJson` and still read unchanged; the
+next write to such an occurrence moves its content out of line.
 
 The Jobs form renders these parameters. Existing event callers can instead use
 `POST /api/work/v1/jobs/invoke` with `repository`, `name`, `requestId` and

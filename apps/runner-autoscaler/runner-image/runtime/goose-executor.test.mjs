@@ -77,7 +77,7 @@ test('output overflow fails and cancellation terminates the child', async () => 
   await assert.rejects(
     subprocess(
       process.execPath,
-      ['-e', 'process.stdout.write("x".repeat(2*1024*1024))'],
+      ['-e', 'process.stdout.write("x".repeat(17*1024*1024))'],
       {
         cwd: '/tmp',
         signal: new AbortController().signal,
@@ -473,8 +473,12 @@ test('declared result rejects unsafe paths, links, nonfiles, invalid JSON and ov
       await assert.rejects(readGooseResultFile(invalid), /Invalid declared/);
     await writeFile(path, 'not JSON');
     await assert.rejects(readGooseResultFile(path), SyntaxError);
-    await writeFile(path, 'x'.repeat(262145));
-    await assert.rejects(readGooseResultFile(path), /256 KiB/);
+    // A result above the former 256 KiB cap is read in full.
+    const large = { data: 'r'.repeat(1024 * 1024) };
+    await writeFile(path, JSON.stringify(large));
+    assert.deepEqual(await readGooseResultFile(path), large);
+    await writeFile(path, 'x'.repeat(4 * 1024 * 1024 + 1));
+    await assert.rejects(readGooseResultFile(path), /4 MiB/);
     await rm(path);
     await mkdir(path);
     await assert.rejects(readGooseResultFile(path), /regular JSON file/);

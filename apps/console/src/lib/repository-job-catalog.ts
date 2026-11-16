@@ -1,6 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 import { z } from 'zod';
 
+import { FIRESTORE_DOCUMENT_MAX_BYTES } from './firestore-document-size';
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { readJobBody } from './repository-job-body';
 import {
@@ -125,13 +126,14 @@ export async function refreshJobCatalog(
             entry.mode !== '100644' ||
             entry.type !== 'blob' ||
             entry.size === undefined ||
-            entry.size > 65536
+            // A larger file cannot fit the definition's Firestore document.
+            entry.size > FIRESTORE_DOCUMENT_MAX_BYTES
           )
             throw new Error('Job files must be bounded regular blobs');
           const data = z
             .object({
               encoding: z.literal('base64'),
-              content: z.string().max(100000),
+              content: z.string(),
             })
             .parse(await get(`git/blobs/${entry.sha}`));
           return Buffer.from(data.content, 'base64').toString('utf8');
