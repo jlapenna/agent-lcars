@@ -36,7 +36,7 @@ importers:
         version: 7.3.1(supports-color@8.1.1)
       '@jlapenna/fleet-runtime':
         specifier: github:jlapenna/fleet-runtime#main
-        version: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/9674b311186740fc05e48ba97f7a6a1527ef4f0f(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0))(@testing-library/react@16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vitest@5.1.0)
+        version: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/64e399d8538e1df3a34ae8d3e3e07cff45f2f49a(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0))(@testing-library/react@16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vitest@5.1.0)
       '@mantine/core':
         specifier: ^9.0.2
         version: 9.8.0(@mantine/hooks@9.8.0(react@19.3.1))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -1764,8 +1764,8 @@ packages:
     resolution: {integrity: sha512-n5H8QLDJ47QqbCNn5SuFjCRDrOLEZ0h8vAHCK5RL9Ls7Xa8AQLa/YxAc9UjFqoEDM48muwtBGjtMY5cr0PLDCw==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
 
-  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/9674b311186740fc05e48ba97f7a6a1527ef4f0f':
-    resolution: {gitHosted: true, integrity: sha512-WSvCogcfHIHFWf+Wv4Yp7cP1oExUK1qr2sbtmhNwRsDzQapLUj4JqufwkGc/1XuWgNDRDPpinHsbRWs1isQc/g==, tarball: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/9674b311186740fc05e48ba97f7a6a1527ef4f0f}
+  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/64e399d8538e1df3a34ae8d3e3e07cff45f2f49a':
+    resolution: {gitHosted: true, integrity: sha512-1tPAH814MZcnpgsvyQjTH+ir6mdpjC4wpKvs5feGe5JDcKaWTqiIS7HOjTLs+Gz7Aof0BnlPE4jibqYEM/p6Ig==, tarball: https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/64e399d8538e1df3a34ae8d3e3e07cff45f2f49a}
     version: 0.0.0
     engines: {node: '>=24.22.1 <27', pnpm: 12.21.0}
     peerDependencies:
@@ -9299,7 +9299,7 @@ snapshots:
 
   '@jest/diff-sequences@30.0.1': {}
 
-  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/9674b311186740fc05e48ba97f7a6a1527ef4f0f(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0))(@testing-library/react@16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vitest@5.1.0)':
+  '@jlapenna/fleet-runtime@https://codeload.github.com/jlapenna/fleet-runtime/tar.gz/64e399d8538e1df3a34ae8d3e3e07cff45f2f49a(@testing-library/jest-dom@7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0))(@testing-library/react@16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(vitest@5.1.0)':
     optionalDependencies:
       '@testing-library/jest-dom': 7.0.1(@testing-library/dom@10.4.2)(vitest@5.1.0)
       '@testing-library/react': 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
