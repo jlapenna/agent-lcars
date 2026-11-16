@@ -182,9 +182,7 @@ describe('repository-owned agent runs', () => {
     revision: 'c'.repeat(40),
     digest: 'd'.repeat(64),
     manifest: manifest as { description: string },
-    files: [
-      { path: 'agent.yaml', mode: '100644' as const, sha: 'a'.repeat(40) },
-    ],
+    fileCount: 1,
   });
   function agents(
     rows: {
@@ -333,6 +331,25 @@ describe('repository-owned agent runs', () => {
     const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
     expect(runs).toHaveLength(1);
     expect(runs[0]!.sourceRevision?.input['revision']).toBe('c'.repeat(40));
+  });
+
+  it('replays a round that was coalesced away before it ran, after an unrelated commit', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const admit = (message: string) =>
+      call(ctx, 'POST', path, { message, sourceKey: 'k' });
+    const a = await admit('A');
+    await admit('B');
+    await admit('C');
+    const row = (await store.list())[0]!;
+    row.definition = { ...row.definition!, revision: 'f'.repeat(40) };
+    const replay = await admit('B');
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(a.json.id);
   });
 
   it.each([

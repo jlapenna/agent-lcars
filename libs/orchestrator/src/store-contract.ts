@@ -280,6 +280,49 @@ export function runOrchestratorStoreContract(
       expect(swept.retried).toHaveLength(0);
     });
 
+    it('still advances a newer round admitted behind a lost terminal round', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const taskId = { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4D' };
+      const round = (key: string) => ({
+        taskId,
+        requestId: key,
+        pipeline: 'claw-homelab-ops',
+        params: { mode: 'claw' },
+        work: TASK_WORK,
+        sourceRevision: {
+          key,
+          input: { message: key, retry: 'terminal' },
+        },
+      });
+      const first = await orchestrator.request(round('round-a'));
+      if (isRefusal(first)) throw new Error(first.reason);
+      // Round A is claimed, so round B is admitted behind it as the desired
+      // revision rather than replacing a queued run.
+      const runA = decidedRun(first);
+      await store.enqueueRun({ runId: runA.runId, now: T0 });
+      await orchestrator.confirmDispatch(runA.runId);
+      expect(
+        (
+          await store.claimQueuedRun({
+            pipelines: ['claw-homelab-ops'],
+            now: T0,
+            claimedBy: 'zone',
+            claimedBySubject: 'zone@example.com',
+            tokenHash: 'b'.repeat(64),
+          })
+        )?.runId,
+      ).toBe(runA.runId);
+      const second = await orchestrator.request(round('round-b'));
+      if (isRefusal(second)) throw new Error(second.reason);
+      clock.advanceMinutes(121);
+      const swept = await orchestrator.sweepExpired();
+      expect(swept.lost).toHaveLength(1);
+      const active = await store.readActiveRun(taskId);
+      expect(active?.sourceRevision?.key).toBe('round-b');
+    });
+
     it('finishes a source revision after its finite failed model attempts', async () => {
       const store = await makeStore();
       const orchestrator = new Orchestrator(store, new TestClock(T0));

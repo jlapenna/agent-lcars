@@ -1141,10 +1141,12 @@ function settleLostAndRetry(
 ): Decision | Refusal {
   if (lossRefused(loss)) return loss;
   const lost = loss;
-  // Effectful work (recipes) may already have performed effects. A new
-  // occurrence requires explicit admission after physical retirement, never
-  // recovery replay.
-  if (isEffectfulRun(decidedRun(lost))) return lost;
+  // Effectful work (recipes, terminal-retry agent rounds) may already have
+  // performed effects: the lost round itself is never replayed. A newer round
+  // that was explicitly admitted behind it (its desired revision) still
+  // advances, exactly as it would after a reported settlement.
+  if (isEffectfulRun(decidedRun(lost)))
+    return advanceSourceRevision(lost, input.now);
   const desired = advanceSourceRevision(lost, input.now);
   if (desired !== lost) return desired;
   if (lost.task.consecutiveLost > MAX_AUTO_RETRIES) {

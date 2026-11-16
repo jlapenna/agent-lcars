@@ -73,21 +73,6 @@ const agentRoundSchema = z.strictObject({
 });
 export type AgentRound = z.infer<typeof agentRoundSchema>;
 
-/** The input already admitted under `key` for this Work, from its desired
- * revision or any earlier run, so a repeat replays rather than conflicts. */
-async function admittedInput(
-  store: OrchestratorStore,
-  workId: string,
-  key: string,
-): Promise<Record<string, unknown> | undefined> {
-  const task = await store.readTask({ workId });
-  if (task?.task.desiredRevision?.key === key)
-    return task.task.desiredRevision.input;
-  const runs = await store.listRuns({ workId });
-  return runs.find((run) => run.sourceRevision?.key === key)?.sourceRevision
-    ?.input;
-}
-
 /** Refusals a caller can act on. */
 export class AgentAdmissionError extends Error {
   constructor(
@@ -193,13 +178,7 @@ export async function admitAgentRun(
       JSON.stringify([round.digest, round.message, round.requestId ?? null]),
     )
     .digest('hex');
-  // An idempotent repeat must present the input that was admitted under this
-  // key, even if an unrelated commit has since moved the definition's
-  // revision without changing its files.
-  const revision = workRevisionSchema.parse({
-    key,
-    input: (await admittedInput(deps.store, workId, key)) ?? round,
-  });
+  const revision = workRevisionSchema.parse({ key, input: round });
   const title = `${id}: ${request.message.split('\n')[0]}`;
   const spec = agentWorkSpecSchema.parse({
     title:
@@ -223,6 +202,11 @@ export async function admitAgentRun(
       spec,
     },
     sourceRevision: revision,
+    // The key (definition digest, message, request id) is the round's
+    // identity. A repeat after an unrelated commit moved the revision of an
+    // unchanged definition, or of a round coalesced away before it ran,
+    // replays the admitted receipt instead of conflicting with it.
+    isSameSourceRevision: (admitted, replay) => admitted.key === replay.key,
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;
