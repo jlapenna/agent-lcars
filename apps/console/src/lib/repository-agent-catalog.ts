@@ -83,8 +83,8 @@ export async function refreshAgentCatalog(
     // Publish after the complete read so a partial fetch cannot remove agents,
     // and only while no newer observation of this repository has published.
     if (!(await store.claimObservation(repository, at))) return;
-    for (const row of rows)
-      await store.mutate(
+    const publish = (row: CatalogAgent) =>
+      store.mutate(
         row.id,
         (current) => {
           if (newer(current)) return {};
@@ -99,6 +99,22 @@ export async function refreshAgentCatalog(
         },
         fence,
       );
+    for (const row of rows) {
+      try {
+        await publish(row);
+      } catch (error) {
+        // A definition storage cannot hold (for example a manifest larger
+        // than one catalog document) is this agent's own error: record it
+        // disabled without its definition, and keep publishing siblings.
+        const { definition: _definition, ...rest } = row;
+        await publish({
+          ...rest,
+          error: `Definition could not be stored: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+    }
     // Re-read after claiming: a row an older overlapping refresh published
     // after this refresh started must still be swept if this newer commit
     // removed it.

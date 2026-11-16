@@ -56,6 +56,9 @@ class MemoryAgentStore implements AgentStore {
     if (fence && observedAt && Date.parse(observedAt) > Date.parse(fence.at))
       return {};
     const next = change(this.rows.get(id));
+    // Firestore's document limit, as production storage enforces it.
+    if (next.agent && JSON.stringify(next.agent).length > 1_048_576)
+      throw new Error('Document exceeds 1 MiB');
     if (next.agent) this.rows.set(id, structuredClone(next.agent));
     return next;
   }
@@ -385,4 +388,23 @@ it('reads a recursive agent tree larger than any response cap', async () => {
   expect(agent.definition!.fileCount).toBeGreaterThan(3000);
   // The stored row stays small however many files the agent holds.
   expect(JSON.stringify(agent).length).toBeLessThan(64 * 1024);
+});
+
+it('keeps a definition storage cannot hold to its own error, publishing its siblings', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal(
+    'fetch',
+    github({
+      huge: investigator(`description: ${'x'.repeat(2 * 1024 * 1024)}\n`),
+      investigator: investigator(),
+    }),
+  );
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: true,
+  });
+  const huge = store.rows.get(agentKey('owner/repo', 'huge'))!;
+  expect(huge.enabled).toBe(false);
+  expect(huge.definition).toBeUndefined();
+  expect(huge.error).toMatch(/could not be stored/u);
 });
