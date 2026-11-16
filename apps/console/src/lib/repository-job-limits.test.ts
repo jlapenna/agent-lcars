@@ -314,6 +314,54 @@ describe('Firestore document size', () => {
     expect(set).toHaveBeenCalledOnce();
   });
 
+  it('lists a catalog and its sources beyond 500 rows', async () => {
+    const docs = (count: number, row: (index: number) => object) => ({
+      get: async () => ({
+        size: count,
+        docs: Array.from({ length: count }, (_, index) => ({
+          data: () => row(index),
+        })),
+      }),
+    });
+    const database = {
+      collection: (collection: string) =>
+        collection === 'orchestrator-jobs'
+          ? docs(600, (index) => ({
+              id: index.toString(16).padStart(64, '0'),
+              repository: 'octo/repo',
+              name: `job-${index}`,
+              error: 'Invalid YAML',
+              refreshedAt: new Date(0).toISOString(),
+              enabled: false,
+            }))
+          : docs(600, (index) => ({
+              repository: `octo/repo-${index}`,
+              refreshedAt: new Date(0).toISOString(),
+            })),
+    } as unknown as Firestore;
+    const store = new FirestoreJobStore(database);
+    expect(await store.list()).toHaveLength(600);
+    expect((await store.sourceRefreshes()).size).toBe(600);
+  });
+
+  it('stores a full result whose data is staged twice beyond the former 384 KiB', async () => {
+    const { database, set } = fakeDatabase();
+    const value = occurrence([{}]);
+    const definition = value.definition;
+    // ~250 KiB of data: within the 256 KiB result bound, ~500 KiB staged.
+    const artifact = validateJobResult(definition, {
+      report: 'Near-limit result',
+      complete: true,
+      data: { findings: 'f'.repeat(250 * 1024) },
+    });
+    await new FirestoreJobStore(database).mutate(
+      'b'.repeat(64),
+      'c'.repeat(64),
+      () => ({ occurrence: { ...value, parameters: {}, artifact } }),
+    );
+    expect(set).toHaveBeenCalledOnce();
+  });
+
   it('refuses an occurrence Firestore could not store, naming the record', async () => {
     const { database, set } = fakeDatabase();
     const sets = Array.from({ length: 4 }, (_, index) => ({
