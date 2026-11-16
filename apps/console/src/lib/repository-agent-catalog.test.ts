@@ -150,15 +150,7 @@ it('catalogs and enables a valid agent with only a description, pinning every fi
     revision: 'c'.repeat(40),
     manifest: { description: 'Read-only investigator.' },
   });
-  expect(agent.definition!.files.map((file) => [file.path, file.mode])).toEqual(
-    [
-      ['agent.yaml', '100644'],
-      ['approvals.json', '100644'],
-      ['config.json', '100644'],
-      ['workspace/AGENTS.md', '100644'],
-      ['workspace/tools/probe', '100755'],
-    ],
-  );
+  expect(agent.definition!.fileCount).toBe(5);
 });
 
 it('changes the digest when any file changes, including its mode', async () => {
@@ -390,5 +382,7 @@ it('reads a recursive agent tree larger than any response cap', async () => {
   await refreshAgentCatalog(store, 'owner/repo', tokens, now);
   const agent = [...store.rows.values()][0]!;
   expect(agent.enabled).toBe(true);
-  expect(agent.definition!.files.length).toBeGreaterThan(3000);
+  expect(agent.definition!.fileCount).toBeGreaterThan(3000);
+  // The stored row stays small however many files the agent holds.
+  expect(JSON.stringify(agent).length).toBeLessThan(64 * 1024);
 });

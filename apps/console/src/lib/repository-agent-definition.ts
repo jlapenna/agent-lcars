@@ -39,7 +39,10 @@ export const agentDefinitionSchema = z.strictObject({
   /** sha256 over every file's path, mode and blob SHA. */
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
   manifest: agentManifestSchema,
-  files: z.array(agentFileSchema).min(1),
+  /** How many files the digest covers. The file list itself is not stored:
+   * a definition can hold any number of files, and a run re-reads them at
+   * its pinned revision and checks this digest. */
+  fileCount: z.number().int().positive(),
 });
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 
@@ -104,8 +107,6 @@ export function parseAgentDefinition(
     revision,
     digest: agentDigest(pinned),
     manifest: parseAgentManifest(manifestText),
-    files: [...pinned].sort((left, right) =>
-      left.path.localeCompare(right.path),
-    ),
+    fileCount: pinned.length,
   });
 }
