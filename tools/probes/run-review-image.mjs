@@ -212,10 +212,13 @@ try {
       join(output, 'registration-changes.json'),
       JSON.stringify(findings, null, 2),
     );
+    const blocking = findings.some((finding) => finding.blocking);
     console.error(
-      "Review changed the caller's hook registrations; qualification fails: " +
+      (blocking
+        ? "Review run changed the caller's configuration; qualification fails: "
+        : 'Caller configuration changed on the host during the review: ') +
         JSON.stringify(findings),
     );
-    process.exitCode = 1;
+    if (blocking) process.exitCode = 1;
   }
 }

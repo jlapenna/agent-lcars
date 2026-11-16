@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -20,14 +21,25 @@ import {
   snapshotRegistrations,
 } from './review-auth-mounts.mjs';
 
+// Each fixture is an auth directory with a sibling private-state root.
+let privateRoot;
 function withAuthDir(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'review-auth-mounts-'));
+  const auth = join(dir, 'auth');
+  privateRoot = join(dir, 'private');
+  mkdirSync(auth);
   try {
-    return fn(dir);
+    return fn(auth);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+const isolated = (target, ...names) =>
+  names.flatMap((name) => [
+    '--mount',
+    `type=bind,source=${join(privateRoot, name)},target=${target}/${name}`,
+  ]);
 
 const readonly = (source, target) => [
   '--mount',
@@ -50,19 +62,26 @@ function claudeHome(auth) {
   symlinkSync('../.agents/AGENTS.md', join(auth, 'CLAUDE.md'));
 }
 
+const CLAUDE = '/native/claude';
+const claudeSessionState = () =>
+  isolated(CLAUDE, 'session-env', 'shell-snapshots');
+
 test('everything but Claude runtime state is overlaid read-only; symlinks are left to reconcile', () => {
   withAuthDir((auth) => {
     claudeHome(auth);
-    const target = '/native/claude';
-    assert.deepEqual(protectedConfigMounts('claude', auth, target), [
-      ...readonly(join(auth, 'hooks'), `${target}/hooks`),
-      ...readonly(join(auth, 'plugins'), `${target}/plugins`),
-      ...readonly(join(auth, 'settings.json'), `${target}/settings.json`),
-      ...readonly(
-        join(auth, 'statusline-command.sh'),
-        `${target}/statusline-command.sh`,
-      ),
-    ]);
+    assert.deepEqual(
+      protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
+      [
+        ...readonly(join(auth, 'hooks'), `${CLAUDE}/hooks`),
+        ...readonly(join(auth, 'plugins'), `${CLAUDE}/plugins`),
+        ...readonly(join(auth, 'settings.json'), `${CLAUDE}/settings.json`),
+        ...readonly(
+          join(auth, 'statusline-command.sh'),
+          `${CLAUDE}/statusline-command.sh`,
+        ),
+        ...claudeSessionState(),
+      ],
+    );
   });
 });
 
@@ -77,49 +96,41 @@ test('Codex keeps versioned state writable and protects its configuration in pla
       'lcars-hook.sh',
     ])
       writeFileSync(join(auth, file), '\n');
-    for (const dir of ['sessions', 'shell_snapshots', 'rules', 'plugins'])
+    for (const dir of ['sessions', 'rules', 'plugins'])
       mkdirSync(join(auth, dir));
-    const privateRoot = join(auth, '..', `${auth.split('/').pop()}-private`);
-    try {
-      assert.deepEqual(
-        protectedConfigMounts('codex', auth, auth, privateRoot),
-        [
-          ...readonly(join(auth, 'config.toml'), join(auth, 'config.toml')),
-          ...readonly(join(auth, 'hooks.json'), join(auth, 'hooks.json')),
-          ...readonly(join(auth, 'lcars-hook.sh'), join(auth, 'lcars-hook.sh')),
-          ...readonly(join(auth, 'plugins'), join(auth, 'plugins')),
-          ...readonly(join(auth, 'rules'), join(auth, 'rules')),
-          '--mount',
-          `type=bind,source=${join(privateRoot, 'shell_snapshots')},target=${join(auth, 'shell_snapshots')}`,
-        ],
-      );
-      assert.ok(existsSync(join(privateRoot, 'shell_snapshots')));
-    } finally {
-      rmSync(privateRoot, { recursive: true, force: true });
-    }
+    assert.deepEqual(protectedConfigMounts('codex', auth, auth, privateRoot), [
+      ...readonly(join(auth, 'config.toml'), join(auth, 'config.toml')),
+      ...readonly(join(auth, 'hooks.json'), join(auth, 'hooks.json')),
+      ...readonly(join(auth, 'lcars-hook.sh'), join(auth, 'lcars-hook.sh')),
+      ...readonly(join(auth, 'plugins'), join(auth, 'plugins')),
+      ...readonly(join(auth, 'rules'), join(auth, 'rules')),
+      ...isolated(auth, 'shell_snapshots'),
+    ]);
     assert.ok(isWritableState('codex', 'thread_history_1.sqlite-shm'));
     assert.ok(!isWritableState('codex', 'config.toml'));
   });
 });
 
-test('sourced session state gets a private overlay and requires a private root', () => {
+test('sourced session state always gets an empty private overlay and requires a private root', () => {
   withAuthDir((auth) => {
     mkdirSync(join(auth, 'shell-snapshots'));
     writeFileSync(join(auth, 'shell-snapshots', 'live.sh'), 'export X=1\n');
     assert.throws(
-      () => protectedConfigMounts('claude', auth, '/native/claude'),
+      () => protectedConfigMounts('claude', auth, CLAUDE),
       /private state directory is required/,
     );
-    const privateRoot = join(auth, 'private');
-    mkdirSync(privateRoot);
+    // Nothing is created on the host when the launch is refused.
+    assert.equal(existsSync(join(auth, 'session-env')), false);
     assert.deepEqual(
-      protectedConfigMounts('claude', auth, '/native/claude', privateRoot),
-      [
-        // The private root itself lives in this fixture's auth directory.
-        ...readonly(privateRoot, '/native/claude/private'),
-        '--mount',
-        `type=bind,source=${join(privateRoot, 'shell-snapshots')},target=/native/claude/shell-snapshots`,
-      ],
+      protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
+      claudeSessionState(),
+    );
+    // An absent directory is created so the overlay still applies.
+    assert.ok(existsSync(join(auth, 'session-env')));
+    assert.ok(existsSync(join(privateRoot, 'shell-snapshots')));
+    assert.equal(
+      existsSync(join(privateRoot, 'shell-snapshots', 'live.sh')),
+      false,
     );
   });
 });
@@ -129,15 +140,15 @@ test('a configuration symlink resolving into a writable binding refuses the laun
     writeFileSync(join(auth, 'history.jsonl'), '\n');
     symlinkSync(join(auth, 'history.jsonl'), join(auth, 'settings.json'));
     assert.throws(
-      () => protectedConfigMounts('claude', auth, '/native/claude'),
+      () => protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
       /resolves into a writable binding/,
     );
     // Dangling, or outside every writable binding: protected by reconcile.
     rmSync(join(auth, 'settings.json'));
     symlinkSync('../.agents/AGENTS.md', join(auth, 'CLAUDE.md'));
     assert.deepEqual(
-      protectedConfigMounts('claude', auth, '/native/claude'),
-      [],
+      protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
+      claudeSessionState(),
     );
   });
 });
@@ -146,7 +157,7 @@ test('unsupported entry names and types refuse the launch; OpenCode binds no dir
   withAuthDir((auth) => {
     writeFileSync(join(auth, 'odd,name'), '\n');
     assert.throws(
-      () => protectedConfigMounts('claude', auth, '/native/claude'),
+      () => protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
       /Unsupported configuration entry name/,
     );
   });
@@ -155,21 +166,85 @@ test('unsupported entry names and types refuse the launch; OpenCode binds no dir
   assert.throws(() => snapshotRegistrations('other', '/x'), /Unknown provider/);
 });
 
-test('a configuration entry created during the run is moved aside; new runtime state is left alone', () => {
+test('existing Claude memory directories are overlaid read-only inside writable projects/', () => {
+  withAuthDir((auth) => {
+    mkdirSync(join(auth, 'projects', '-home-op-p', 'memory'), {
+      recursive: true,
+    });
+    mkdirSync(join(auth, 'projects', '-home-op-q'), { recursive: true });
+    assert.deepEqual(
+      protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
+      [
+        ...readonly(
+          join(auth, 'projects', '-home-op-p', 'memory'),
+          `${CLAUDE}/projects/-home-op-p/memory`,
+        ),
+        ...claudeSessionState(),
+      ],
+    );
+  });
+});
+
+test('a symlink to a FIFO is snapshotted by its target without blocking', () => {
+  withAuthDir((auth) => {
+    const fifo = join(privateRoot, 'pipe');
+    mkdirSync(privateRoot);
+    execFileSync('mkfifo', [fifo]);
+    symlinkSync(fifo, join(auth, 'CLAUDE.md'));
+    assert.deepEqual(
+      snapshotRegistrations('claude', auth).entries['CLAUDE.md'],
+      {
+        kind: 'symlink',
+        target: fifo,
+        sha256: null,
+      },
+    );
+  });
+});
+
+test('Codex memories and goals stay protected; Antigravity cli.log is runtime state', () => {
+  for (const name of [
+    'memories_1.sqlite',
+    'memories_1.sqlite-wal',
+    'goals_1.sqlite',
+  ])
+    assert.ok(!isWritableState('codex', name), name);
+  for (const name of ['state_5.sqlite-wal', 'queue_1.sqlite', '.tmpWgLsAh'])
+    assert.ok(isWritableState('codex', name), name);
+  assert.ok(isWritableState('agy', 'cli.log'));
+  for (const name of ['security', 'remote', 'local', 'downloads'])
+    assert.ok(!isWritableState('claude', name), name);
+});
+
+test('a configuration entry created during the run is moved aside and fails the run; new runtime state is left alone', () => {
   withAuthDir((auth) => {
     claudeHome(auth);
     rmSync(join(auth, 'settings.json'));
     const before = snapshotRegistrations('claude', auth);
-    assert.equal(before['settings.json'], null);
+    assert.equal(before.entries['settings.json'], null);
     const hook = '{"hooks":{"PreToolUse":[]}} # lcars-worker-pretool:v1\n';
     writeFileSync(join(auth, 'settings.json'), hook);
     // A live session creating its own new state must not be disturbed.
     writeFileSync(join(auth, 'some-new-state.json'), '{}\n');
     mkdirSync(join(auth, 'projects', 'live-session'));
     const aside = join(auth, 'settings.json.review-qualification-42');
-    assert.deepEqual(reconcileRegistrations('claude', auth, before, 42), [
-      { path: join(auth, 'settings.json'), change: 'created', movedTo: aside },
-    ]);
+    const findings = reconcileRegistrations('claude', auth, before, 42);
+    assert.deepEqual(
+      findings.map(({ path, change, movedTo, blocking }) => ({
+        path,
+        change,
+        movedTo,
+        blocking,
+      })),
+      [
+        {
+          path: join(auth, 'settings.json'),
+          change: 'created',
+          movedTo: aside,
+          blocking: true,
+        },
+      ],
+    );
     assert.equal(existsSync(join(auth, 'settings.json')), false);
     assert.equal(readFileSync(aside, 'utf8'), hook);
     assert.ok(existsSync(join(auth, 'some-new-state.json')));
@@ -183,32 +258,72 @@ test('a replaced instruction symlink is restored and the replacement kept as evi
     rmSync(join(auth, 'CLAUDE.md'));
     writeFileSync(join(auth, 'CLAUDE.md'), 'injected instructions\n');
     const aside = join(auth, 'CLAUDE.md.review-qualification-7');
-    assert.deepEqual(reconcileRegistrations('claude', auth, before, 7), [
-      {
-        path: join(auth, 'CLAUDE.md'),
-        change: 'symlink-replaced',
-        restoredTarget: '../.agents/AGENTS.md',
-        movedTo: aside,
-      },
-    ]);
+    const [finding, ...rest] = reconcileRegistrations(
+      'claude',
+      auth,
+      before,
+      7,
+    );
+    assert.deepEqual(rest, []);
+    assert.equal(finding.change, 'symlink-replaced');
+    assert.equal(finding.movedTo, aside);
+    assert.equal(finding.blocking, true);
     assert.equal(readlinkSync(join(auth, 'CLAUDE.md')), '../.agents/AGENTS.md');
     assert.equal(readFileSync(aside, 'utf8'), 'injected instructions\n');
   });
 });
 
-test('an unchanged directory reconciles cleanly; a modified protected file is reported, not touched', () => {
+test('host-side changes to overlaid entries are reported without failing; new memory directories are reported in place', () => {
   withAuthDir((auth) => {
     claudeHome(auth);
     const before = snapshotRegistrations('claude', auth);
     writeFileSync(join(auth, 'history.jsonl'), 'live session history\n');
     assert.deepEqual(reconcileRegistrations('claude', auth, before), []);
     writeFileSync(join(auth, 'settings.json'), '{"changed":true}\n');
-    assert.deepEqual(reconcileRegistrations('claude', auth, before), [
-      { path: join(auth, 'settings.json'), change: 'modified' },
-    ]);
+    mkdirSync(join(auth, 'projects', '-home-op-new', 'memory'), {
+      recursive: true,
+    });
+    const findings = reconcileRegistrations('claude', auth, before);
+    assert.deepEqual(
+      findings.map(({ change, blocking }) => ({ change, blocking })),
+      [
+        { change: 'modified', blocking: false },
+        { change: 'instructions-created', blocking: false },
+      ],
+    );
     assert.equal(
       readFileSync(join(auth, 'settings.json'), 'utf8'),
       '{"changed":true}\n',
     );
+    assert.ok(existsSync(join(auth, 'projects', '-home-op-new', 'memory')));
+  });
+});
+
+test('one entry failing to reconcile does not stop the others', () => {
+  withAuthDir((auth) => {
+    const before = {
+      entries: { 'settings.json': null, 'keybindings.json': null },
+      instructionDirectories: [],
+    };
+    // A directory where a file is expected makes the move-aside of this one
+    // entry fail only if its aside path is occupied.
+    writeFileSync(join(auth, 'settings.json'), '{}\n');
+    mkdirSync(join(auth, 'settings.json.review-qualification-1'));
+    writeFileSync(
+      join(auth, 'settings.json.review-qualification-1', 'x'),
+      '\n',
+    );
+    writeFileSync(join(auth, 'keybindings.json'), '{}\n');
+    const findings = reconcileRegistrations('claude', auth, before, 1);
+    assert.deepEqual(
+      findings
+        .map(({ change, blocking }) => ({ change, blocking }))
+        .sort((a, b) => a.change.localeCompare(b.change)),
+      [
+        { change: 'created', blocking: true },
+        { change: 'error', blocking: true },
+      ],
+    );
+    assert.equal(existsSync(join(auth, 'keybindings.json')), false);
   });
 });

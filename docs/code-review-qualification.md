@@ -35,26 +35,32 @@ providers use the caller's existing native authentication directory, mounted
 without copying rotating login state. The container drops to the caller's UID
 so those files retain their ownership. The directory stays writable so rotating login state
 and its write lock remain shared with the caller's live sessions, but only the
-provider's own runtime state is writable inside it. `review-auth-mounts.mjs`
-holds a per-provider allowlist of state entries (credentials, transcripts,
-sessions, caches, databases); every other existing top-level entry is
-overlaid read-only, so a review cannot change the caller's settings, hooks,
-plugins, skills, rules, MCP configuration or instruction files (#3379).
-Session state that live sessions source before shell commands (Claude
-`shell-snapshots/` and `session-env/`, Codex `shell_snapshots/`) is overlaid
-with an empty private directory under the run's `private-state/`, so the
-review neither reads nor rewrites the caller's copies. A configuration symlink
-that resolves into a writable binding refuses the launch.
+provider's own runtime state is writable inside it (#3379).
+`review-auth-mounts.mjs` holds a per-provider allowlist of top-level state
+entries (credentials, transcripts, sessions, caches, bookkeeping databases).
+Every other existing top-level entry is overlaid read-only: settings, hooks,
+plugins, skills, rules, MCP configuration, instruction files, Codex memories
+and goals, and installed executables. Inside the allowlisted state, Claude's
+per-project `projects/*/memory` directories, which live sessions load as
+instructions, are overlaid read-only too. Session state that live sessions
+source before shell commands (Claude `shell-snapshots/` and `session-env/`,
+Codex `shell_snapshots/`) is replaced by an empty private directory under the
+run's `private-state/`. A configuration symlink that resolves into a writable
+binding refuses the launch.
 
-Two cases cannot be overlaid: a symlink (its target is outside the mount) and
-a configuration file that does not exist yet (the container runtime would
-create it on the host). The launcher snapshots both before the run. Afterwards
-it restores a replaced symlink, moves a created configuration entry aside to
-`<entry>.review-qualification-<time>`, records every change in
-`registration-changes.json` and fails the qualification. Live sessions started
-during the run can still observe such a change until the run ends. New
-entries under other names are left alone, because live sessions create their
-own state in the same directory. The image's normal runner UID and setup
+Some changes cannot be prevented by an overlay: replacing a symlink (its
+target is outside the mount), creating a configuration file that did not
+exist (the container runtime would create it on the host), and creating a new
+project memory directory. The launcher snapshots these before the run and
+reconciles them afterwards, recording each change in
+`registration-changes.json`. A created configuration entry is moved aside to
+`<entry>.review-qualification-<time>` and a replaced symlink is restored; both
+fail the qualification, because the launcher cannot tell whether the review or
+a host session made them. A new memory directory is reported and left in
+place. A change to an overlaid entry can only come from the host and is
+reported without failing. Live sessions started during the run can observe an
+unprevented change until the run ends, and allowlisted runtime state other
+than the protected subdirectories remains writable. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
