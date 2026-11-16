@@ -11,10 +11,13 @@ import (
 	"time"
 )
 
-// Unlike a small claim response, a brief includes the description in both
-// spec and anchor, the latest reply and context. Leave bounded headroom for
-// valid multibyte content rather than applying the claim's 64 KiB limit.
-const queueRunBriefBodyLimit = 1 << 20
+// Unlike a small claim response, a brief carries Work text: the description
+// in both spec and anchor (each up to the 256 KiB Work payload budget), the
+// latest reply and context (each up to 120 KiB) and source metadata. It is
+// assembled from the task, run and source-issue documents, each under
+// Firestore's 1 MiB limit, so 4 MiB always exceeds a valid brief while still
+// bounding a hostile or broken response.
+const queueRunBriefBodyLimit = 4 << 20
 
 // The brief route is already read-only and requires this exact run's token,
 // liveness and unexpired startup/execution deadline. It grants no new credential or Work authority.

@@ -12,6 +12,7 @@ import { parseArgs, promisify } from 'node:util';
 import {
   QUEUE_PRIORITIES,
   type QueuePriority,
+  WORK_PARAM_TEXT_MAX_BYTES,
 } from '@agent-lcars/dispatch-contracts';
 import {
   type AnchorOwner,
@@ -21,7 +22,6 @@ import {
   type ItemsContract,
   itemsContract,
   itemStateSchema,
-  WORK_DESCRIPTION_MAX,
   workIdSchema,
   workReplyRequestIdSchema,
   workReplyTextSchema,
@@ -141,12 +141,14 @@ function readDescription(rest: string[]): string | undefined {
   return file === undefined ? undefined : readFileSync(file, 'utf8');
 }
 
-/** Bound bytes before decoding and characters through the shared contract.
- * Nonblocking open plus a regular-file check also rejects FIFO input. */
+/** Bound raw bytes before decoding, then the serialized budget through the
+ * shared contract. A file over `WORK_PARAM_TEXT_MAX_BYTES` raw bytes cannot
+ * fit that budget. Nonblocking open plus a regular-file check also rejects
+ * FIFO input. */
 function readReplyFile(file: string): string {
   const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
-    const maxBytes = WORK_DESCRIPTION_MAX * 4;
+    const maxBytes = WORK_PARAM_TEXT_MAX_BYTES;
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new Error('--text-file must be a regular file');
     if (stat.size > maxBytes)

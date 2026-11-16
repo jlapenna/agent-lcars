@@ -1,6 +1,7 @@
 import {
   CLAW_OPERATIONS,
   clawInvestigateInputSchema,
+  fitsWorkParamText,
   humanNeededActionsSchema,
   issueCommentSchema,
   issueReferenceSchema,
@@ -9,6 +10,7 @@ import {
   trackerIssueProjectionSchema,
   trackerIssueSchema,
   triagePublicationSchema,
+  WORK_PARAM_TEXT_TOO_LARGE,
 } from '@agent-lcars/dispatch-contracts';
 import { oc } from '@orpc/contract';
 import { openapi, type OpenAPIV3_2 } from '@orpc/openapi';
@@ -24,7 +26,6 @@ import {
   fallbackPipelinesSchema,
   PIPELINES,
   storedWorkSpecSchema,
-  WORK_DESCRIPTION_MAX,
   WORK_TITLE_MAX,
   workOriginSchema,
   workSpecSchema,
@@ -43,7 +44,16 @@ import {
 export const WORK_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/u;
 
 export const workIdSchema = z.string().regex(WORK_ID_PATTERN);
-export const workReplyTextSchema = z.string().min(1).max(WORK_DESCRIPTION_MAX);
+/** Free text that becomes one run parameter (a reply or dispatch context).
+ * No character cap: only the runner's real per-argument limit
+ * (`WORK_PARAM_TEXT_MAX_BYTES`) bounds it, and oversize is refused. */
+export const workParamTextSchema = z.string().refine(fitsWorkParamText, {
+  message: `Text ${WORK_PARAM_TEXT_TOO_LARGE}`,
+});
+export const workReplyTextSchema = z
+  .string()
+  .min(1)
+  .refine(fitsWorkParamText, { message: `Reply ${WORK_PARAM_TEXT_TOO_LARGE}` });
 export const workReplyRequestIdSchema = z.string().min(1).max(128);
 
 const githubArtifactIdSchema = z.number().int().positive();
@@ -137,7 +147,7 @@ export const itemRunViewSchema = z.strictObject({
   /** The human turn that opened this round, for a `mode: reply` run.
    *  Round 1's human turn is `spec.description`, not a reply. Mirrors
    *  `@agent-lcars/work/derive`'s `ItemRunView`. */
-  reply: z.string().max(16_384).optional(),
+  reply: z.string().optional(),
   replyChannel: z.string().max(64).optional(),
   replyPrincipal: z.string().max(256).optional(),
   queue: z
@@ -736,8 +746,8 @@ export const itemsContract = {
     .input(
       z.strictObject({
         id: workIdSchema,
-        /** The human's turn. Bounded to WORK_DESCRIPTION_MAX: a reply is
-         *  the same kind of prose an item's description is. */
+        /** The human's turn. Bounded only by the serialized run-parameter
+         *  budget the runner can deliver (`WORK_PARAM_TEXT_MAX_BYTES`). */
         text: workReplyTextSchema,
         /** Retries with this key return the original admitted round. Scoped
          * to the item and authenticated principal; changed input conflicts. */
@@ -768,9 +778,8 @@ export type ItemsContract = typeof itemsContract;
 const githubDispatchModeSchema = z.enum(['implement', 'review']);
 
 /** GitHub permits issue and pull-request bodies up to 65,536 characters.
- * GitHub-anchor dispatch accepts that complete caller shape, then the server
- * normalizes it into the smaller stored `workSpecSchema` budget. Native Work
- * item creation deliberately keeps its own stricter description bound. */
+ * GitHub-anchor dispatch accepts that complete caller shape; the stored Work
+ * payload budget keeps any such body whole (see `WORK_PAYLOAD_MAX_BYTES`). */
 export const GITHUB_DISPATCH_DESCRIPTION_MAX = 65_536;
 
 /** The ingress-only spec for a GitHub anchor. Title, pipeline, and target use
@@ -835,9 +844,9 @@ export const dispatchesContract = {
         anchor: githubDispatchAnchorSchema,
         spec: githubDispatchSpecSchema,
         mode: githubDispatchModeSchema,
-        reply: z.string().max(8_192).optional(),
+        reply: workParamTextSchema.optional(),
         runbook: z.string().min(1).max(128).optional(),
-        context: z.string().max(4_096).optional(),
+        context: workParamTextSchema.optional(),
         /** Caller-controlled idempotency key. A retry with this same value
          * receives the existing durable run instead of minting another. */
         requestId: z.string().min(1).max(128),
@@ -869,9 +878,9 @@ export const dispatchesContract = {
       z.strictObject({
         anchor: githubDispatchAnchorSchema,
         mode: githubDispatchModeSchema,
-        reply: z.string().max(8_192).optional(),
+        reply: workParamTextSchema.optional(),
         runbook: z.string().min(1).max(128).optional(),
-        context: z.string().max(4_096).optional(),
+        context: workParamTextSchema.optional(),
         /** Caller-controlled idempotency key for this redispatch. */
         requestId: z.string().min(1).max(128),
         fallbackPipelines: fallbackPipelinesSchema.optional(),

@@ -348,6 +348,24 @@ describe('lcars work', () => {
       },
     );
 
+    it('sends a reply past the retired 16,384-character cap whole', async () => {
+      // A complete 65,536-character GitHub comment, under the byte budget.
+      const text = 'x'.repeat(65_536);
+      const d = deps({
+        [replyUrl]: (init) => {
+          expect(JSON.parse(String(init.body)).text).toBe(text);
+          return { ...item('running'), admittedRunId: 'r2', resumed: true };
+        },
+      });
+      expect(
+        await executeWorkCommand(
+          ['reply', id, '--text', text, '--request-id', 'long-turn'],
+          d,
+        ),
+      ).toEqual({ ok: true });
+      expect(d.calls).toEqual([replyUrl]);
+    });
+
     it('reads a real UTF-8 file and generates a retry key before HTTP', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'lcars-reply-'));
       try {
@@ -377,7 +395,7 @@ describe('lcars work', () => {
       ['reply', id],
       ['reply', 'bad-id', '--text', 'hi'],
       ['reply', id, '--text', ''],
-      ['reply', id, '--text', 'x'.repeat(WORK_DESCRIPTION_MAX + 1)],
+      ['reply', id, '--text', 'x'.repeat(WORK_PARAM_TEXT_MAX_BYTES)],
       ['reply', id, '--text', 'hi', '--text-file', '/unused'],
       ['reply', id, '--text', 'hi', '--pipeline', 'invalid'],
       ['reply', id, '--text', 'hi', '--request-id', ''],
@@ -399,7 +417,7 @@ describe('lcars work', () => {
       try {
         const file = join(dir, 'reply.txt');
         for (const bytes of [
-          Buffer.alloc(WORK_DESCRIPTION_MAX * 4 + 1, 120),
+          Buffer.alloc(WORK_PARAM_TEXT_MAX_BYTES + 1, 120),
           Buffer.from([0xff]),
         ]) {
           writeFileSync(file, bytes);
@@ -738,7 +756,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
+import { WORK_PARAM_TEXT_MAX_BYTES } from '@agent-lcars/dispatch-contracts';
 
 describe('canceled CLI delivery presentation', () => {
   it.each(['waiting'] as const)(

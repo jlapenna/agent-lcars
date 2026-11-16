@@ -1,3 +1,4 @@
+import { WORK_PARAM_TEXT_MAX_BYTES } from '@agent-lcars/dispatch-contracts';
 import { WORK_ID_RE } from '@agent-lcars/orchestrator';
 import type { OpenAPIV3_2 } from '@orpc/openapi';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +14,7 @@ import {
   schedulesContract,
   WORK_ID_PATTERN,
   workIdSchema,
+  workReplyTextSchema,
 } from './contract';
 import { generateWorkOpenApi } from './openapi';
 
@@ -199,6 +201,51 @@ describe('dispatchesContract.githubRedispatch', () => {
     };
     expect(shape?.parse(input)).toEqual(input);
     expect(() => shape?.parse({ ...input, spec: {} })).toThrow();
+  });
+});
+
+describe('reply and context text', () => {
+  // Retired caps: dispatch reply 8,192 and context 4,096 characters, native
+  // reply 16,384. Only the runner's per-string byte budget remains.
+  const fits = 'x'.repeat(WORK_PARAM_TEXT_MAX_BYTES - 2);
+  const anchor = { repo: 'jlapenna/agent-lcars', issue: 1633 };
+
+  it.each(['github', 'githubRedispatch'] as const)(
+    'accepts %s reply and context up to the byte budget and refuses past it',
+    (route) => {
+      const [rawShape] = dispatchesContract[route]['~orpc'].inputSchemas ?? [];
+      const shape = rawShape as z.ZodTypeAny | undefined;
+      const input = {
+        anchor,
+        ...(route === 'github'
+          ? {
+              spec: {
+                title: 'Dispatch an anchor',
+                description: 'Through Work API.',
+                pipeline: 'claude',
+                target: { repo: 'jlapenna/agent-lcars' },
+              },
+            }
+          : {}),
+        mode: 'implement',
+        requestId: 'workflow-run:123:dispatch:1633',
+      };
+      expect(
+        shape?.parse({ ...input, reply: 'r'.repeat(65_536), context: fits }),
+      ).toMatchObject({ reply: 'r'.repeat(65_536), context: fits });
+      expect(() => shape?.parse({ ...input, reply: `${fits}x` })).toThrow(
+        /serialized text budget/u,
+      );
+      expect(() => shape?.parse({ ...input, context: `${fits}x` })).toThrow(
+        /serialized text budget/u,
+      );
+    },
+  );
+
+  it('accepts a native reply up to the byte budget and refuses past it', () => {
+    expect(workReplyTextSchema.parse(fits)).toBe(fits);
+    expect(workReplyTextSchema.safeParse(`${fits}x`).success).toBe(false);
+    expect(workReplyTextSchema.safeParse('').success).toBe(false);
   });
 });
 

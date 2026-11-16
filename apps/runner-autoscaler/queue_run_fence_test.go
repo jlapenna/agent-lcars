@@ -25,19 +25,23 @@ func TestQueueRunFenceUsesOriginalCredentialAndIdentity(t *testing.T) {
 }
 
 func TestQueueRunFenceAcceptsValidLargeMultibyteBrief(t *testing.T) {
-	// Native briefs repeat a permitted description in spec and anchor; a
-	// valid latest reply may use 16,384 multibyte characters on top of it.
+	// Native briefs repeat a maximal description (the 256 KiB Work payload
+	// budget less 8 KiB) in spec and anchor, plus a maximal reply and
+	// context (120 KiB each) of multibyte text.
+	description := strings.Repeat("界", (262144-8192-2)/3)
+	param := strings.Repeat("界", (122880-2)/3)
 	body, err := json.Marshal(map[string]any{
 		"intentId": "work:startup/r1",
-		"spec":     map[string]string{"description": strings.Repeat("d", 16384)},
-		"anchor":   map[string]string{"body": strings.Repeat("d", 16384)},
-		"reply":    strings.Repeat("界", 16384),
+		"spec":     map[string]string{"description": description},
+		"anchor":   map[string]string{"body": description},
+		"reply":    param,
+		"context":  param,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(body) <= claimResponseBodyLimit {
-		t.Fatal("fixture does not cross old claim-response bound")
+	if len(body) < 750_000 {
+		t.Fatalf("fixture is not a maximal brief: %d bytes", len(body))
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
 	defer server.Close()

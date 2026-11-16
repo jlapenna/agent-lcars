@@ -3,6 +3,10 @@ import 'server-only';
 import { createHash } from 'node:crypto';
 
 import {
+  fitsWorkParamText,
+  WORK_PARAM_TEXT_TOO_LARGE,
+} from '@agent-lcars/dispatch-contracts';
+import {
   decidedRun,
   isRefusal,
   isWorkAnchor,
@@ -15,7 +19,6 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
   isSourceManagedWork,
   recipeWorkSpecSchema,
-  WORK_DESCRIPTION_MAX,
   type WorkOrigin,
   workPayloadSchema,
   type WorkSpec,
@@ -35,12 +38,6 @@ const RESUMABLE_PIPELINES: Record<string, string> = {
   opencode: 'opencode',
   agy: 'antigravity',
 };
-
-/** Bounded to match `WORK_DESCRIPTION_MAX`: a reply is the same kind of
- *  prose an item's description is (spec decision 5). `runSchema.params`'s
- *  per-value bound (`libs/orchestrator/src/model.ts`) was raised to match
- *  so a full-length reply can actually be persisted on `Run.params.reply`. */
-export const REPLY_MAX = WORK_DESCRIPTION_MAX;
 
 export interface ReplyRequest {
   /** The orchestrator's own anchor union: `{ workId }` for a native item,
@@ -67,14 +64,14 @@ export type ReplyOutcome =
   | { ok: true; runId: string; resumed: boolean }
   | {
       ok: false;
-      code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN';
+      code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN' | 'PAYLOAD_TOO_LARGE';
       message: string;
     };
 
 function sameReply(run: Run, request: ReplyRequest): boolean {
   return (
     run.params?.['mode'] === 'reply' &&
-    run.params['reply'] === request.text.slice(0, REPLY_MAX) &&
+    run.params['reply'] === request.text &&
     run.params['replyRequestId'] === request.requestId &&
     run.params['replyResumeRequested'] === String(request.resume ?? true) &&
     // Bind the caller's selection, including inheritance, rather than
@@ -171,6 +168,14 @@ export async function requestReply(
     return { ok: false, code: 'FORBIDDEN', message: 'no principal' };
   }
   const { principal } = context;
+  // Every ingress shares this check: a reply is never cut to fit. Text the
+  // runner cannot deliver whole is refused with the reason instead.
+  if (!fitsWorkParamText(request.text))
+    return {
+      ok: false,
+      code: 'PAYLOAD_TOO_LARGE',
+      message: `Reply ${WORK_PARAM_TEXT_TOO_LARGE}`,
+    };
 
   const task = await context.runtime.store.readTask(request.task);
   if (task === undefined)
@@ -300,7 +305,7 @@ export async function requestReply(
     ...(replaceQueuedRunId === undefined ? {} : { replaceQueuedRunId }),
     params: {
       mode: 'reply',
-      reply: request.text.slice(0, REPLY_MAX),
+      reply: request.text,
       replyChannel: request.channel,
       replyPrincipal: request.principal,
       ...(request.requestId === undefined

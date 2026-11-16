@@ -1,22 +1,25 @@
+import {
+  serializedJsonBytes,
+  WORK_PAYLOAD_MAX_BYTES,
+} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 import { WORK_ID_RE } from './model';
 
 const isoUtc = z.iso.datetime({ offset: false });
 
-/** Same bound `Task.work` uses (`WORK_PAYLOAD_MAX_BYTES` in `model.ts`) --
- *  a schedule's `spec` is exactly a `WorkSpec`, minted on every due slot,
- *  so it must fit inside the same budget a one-shot item's payload does. */
-export const SCHEDULE_SPEC_MAX_BYTES = 32_768;
+/** Same bound `Task.work` uses (`WORK_PAYLOAD_MAX_BYTES`) -- a schedule's
+ *  `spec` is exactly a `WorkSpec`, minted on every due slot, so it must fit
+ *  inside the same budget a one-shot item's payload does. The schedule
+ *  document holds it twice (`spec` and `pendingTick.spec`), which that
+ *  budget already allows for. */
+export const SCHEDULE_SPEC_MAX_BYTES = WORK_PAYLOAD_MAX_BYTES;
 
 const scheduleSpecSchema = z
   .record(z.string().max(64), z.unknown())
-  .refine(
-    (value) =>
-      new TextEncoder().encode(JSON.stringify(value)).length <=
-      SCHEDULE_SPEC_MAX_BYTES,
-    { message: `schedule spec exceeds ${SCHEDULE_SPEC_MAX_BYTES} bytes` },
-  );
+  .refine((value) => serializedJsonBytes(value) <= SCHEDULE_SPEC_MAX_BYTES, {
+    message: `schedule spec exceeds ${SCHEDULE_SPEC_MAX_BYTES} bytes`,
+  });
 
 /** A tick admitted atomically before an edit/disable/delete may finish with
  * this frozen configuration. Retained until mint settles, so a crash cannot

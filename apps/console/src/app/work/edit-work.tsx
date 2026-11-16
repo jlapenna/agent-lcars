@@ -1,6 +1,10 @@
 'use client';
 
-import { WORK_DESCRIPTION_MAX, WORK_TITLE_MAX } from '@agent-lcars/work';
+import {
+  fitsWorkDescription,
+  WORK_DESCRIPTION_TOO_LARGE,
+} from '@agent-lcars/dispatch-contracts';
+import { WORK_TITLE_MAX } from '@agent-lcars/work';
 import { Button, Group, Stack, Textarea, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
 import { useRouter } from 'next/navigation';
@@ -62,11 +66,14 @@ export function EditWork({
   const nextTitle = draftTitle.trim();
   const nextDescription = draftDescription.trim();
   const unchanged = nextTitle === title && nextDescription === description;
+  // A description has no character cap, only the serialized byte budget
+  // the Work API enforces; say so instead of silently stopping input.
+  const descriptionTooLarge = !fitsWorkDescription(nextDescription);
   const invalid =
     nextTitle.length === 0 ||
     nextTitle.length > WORK_TITLE_MAX ||
     nextDescription.length === 0 ||
-    nextDescription.length > WORK_DESCRIPTION_MAX;
+    descriptionTooLarge;
 
   const save = () => {
     startTransition(async () => {
@@ -96,7 +103,11 @@ export function EditWork({
       <Textarea
         label="Description"
         value={draftDescription}
-        maxLength={WORK_DESCRIPTION_MAX}
+        error={
+          descriptionTooLarge
+            ? `Description ${WORK_DESCRIPTION_TOO_LARGE}`
+            : undefined
+        }
         autosize
         minRows={4}
         onChange={(event) => setDraftDescription(event.currentTarget.value)}

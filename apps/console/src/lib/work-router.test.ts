@@ -5,14 +5,11 @@ import {
   MemoryStore,
   Orchestrator,
   taskSchema,
+  WORK_PARAM_TEXT_MAX_BYTES,
   WORK_PAYLOAD_MAX_BYTES,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
-import {
-  type ItemsContract,
-  itemsContract,
-  WORK_DESCRIPTION_MAX,
-} from '@agent-lcars/work';
+import { type ItemsContract, itemsContract } from '@agent-lcars/work';
 import { createORPCClient } from '@orpc/client';
 import type { RouterContractClient } from '@orpc/contract';
 import { OpenAPILink } from '@orpc/openapi/fetch';
@@ -252,7 +249,10 @@ describe('claw investigation admission', () => {
 
   it.each([
     ['a blank question', { question: '   ' }],
-    ['an oversized question', { question: 'q'.repeat(4_001) }],
+    [
+      'a question past the Work payload budget',
+      { question: 'q'.repeat(WORK_PAYLOAD_MAX_BYTES) },
+    ],
     ['a caller-chosen pipeline', { question, pipeline: 'claude' }],
     ['a target', { question, target: { repo: 'jlapenna/agent-lcars' } }],
   ])('rejects %s', async (_name, body) => {
@@ -260,6 +260,18 @@ describe('claw investigation admission', () => {
     expect((await call(ctx, 'POST', '/claw/investigations', body)).status).toBe(
       400,
     );
+  });
+
+  it('admits a question past the retired 4,000-character cap whole', async () => {
+    const ctx = context({ principal: clawAdmitter });
+    const long = 'q'.repeat(50_000);
+    const response = await call(ctx, 'POST', '/claw/investigations', {
+      question: long,
+    });
+    expect(response.status).toBe(202);
+    expect(response.json).toMatchObject({
+      runs: [{ sourceRevision: { input: { question: long } } }],
+    });
   });
 
   it('keeps public create rejecting the claw shape, even for an admitter with operator scope', async () => {
@@ -1213,6 +1225,35 @@ describe('items routes', () => {
     });
     expect(reply.status).toBe(200);
     expect(expireItemSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it('creates an item with a long description and takes a long reply whole, refusing only past the byte budgets', async () => {
+    const ctx = context();
+    // Both past the retired 16,384-character cap.
+    const description = '漢'.repeat(65_536);
+    const created = await call(ctx, 'PUT', `/items/${ID}`, {
+      spec: { ...spec, description },
+    });
+    expect(created.status).toBe(201);
+    expect(created.json.spec.description).toBe(description);
+    await ctx.runtime.orchestrator.report(`work:${ID}/r1`, {
+      ok: true,
+      summary: 'park',
+    });
+
+    const text = 'r'.repeat(65_536);
+    const reply = await call(ctx, 'POST', `/items/${ID}/reply`, { text });
+    expect(reply.status).toBe(200);
+    expect(reply.json.runs.at(-1)?.reply).toBe(text);
+
+    const tooLarge = await call(ctx, 'POST', `/items/${ID}/reply`, {
+      text: 'r'.repeat(WORK_PARAM_TEXT_MAX_BYTES),
+    });
+    expect(tooLarge.status).toBe(400);
+    const tooLargeItem = await call(ctx, 'PUT', `/items/${OTHER_ID}`, {
+      spec: { ...spec, description: 'x'.repeat(WORK_PAYLOAD_MAX_BYTES) },
+    });
+    expect(tooLargeItem.status).toBe(400);
   });
 
   it('does not touch session expiry when a parked item is redispatched', async () => {
@@ -2263,9 +2304,10 @@ describe('GitHub-anchor dispatch route', () => {
     );
   });
 
-  it('accepts an overlong GitHub body and stores the shared visible clamp', async () => {
+  it('stores a complete 65,536-character GitHub body whole', async () => {
     const ctx = context({ principal: githubActionsOperator });
-    const description = 'x'.repeat(WORK_DESCRIPTION_MAX + 3_616);
+    // GitHub's own body limit; the retired 16,384-character cap cut it.
+    const description = 'x'.repeat(65_536);
     const r = await call(ctx, 'POST', '/dispatches/github', {
       ...input,
       spec: { ...input.spec, description },
@@ -2274,17 +2316,21 @@ describe('GitHub-anchor dispatch route', () => {
 
     expect(r.status).toBe(200);
     expect((await ctx.runtime.store.readTask(anchor))?.task.work).toMatchObject(
-      {
-        spec: {
-          description: expect.stringContaining(
-            `truncated to ${WORK_DESCRIPTION_MAX} of ${description.length} characters`,
-          ),
-        },
-      },
+      { spec: { description } },
     );
   });
 
-  it('normalizes an empty body and keeps a multibyte body within the storage byte budget', async () => {
+  it("refuses a body past GitHub's 65,536-character limit", async () => {
+    const ctx = context({ principal: githubActionsOperator });
+    const r = await call(ctx, 'POST', '/dispatches/github', {
+      ...input,
+      spec: { ...input.spec, description: 'x'.repeat(65_537) },
+      requestId: 'workflow-run:too-long:1633',
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it('normalizes an empty body and keeps a complete multibyte body whole within the storage byte budget', async () => {
     const emptyCtx = context({ principal: githubActionsOperator });
     const empty = await call(emptyCtx, 'POST', '/dispatches/github', {
       ...input,
@@ -2301,7 +2347,7 @@ describe('GitHub-anchor dispatch route', () => {
     const multibyteCtx = context({ principal: githubActionsOperator });
     const multibyte = await call(multibyteCtx, 'POST', '/dispatches/github', {
       ...input,
-      spec: { ...input.spec, description: '漢'.repeat(12_000) },
+      spec: { ...input.spec, description: '漢'.repeat(65_536) },
       requestId: 'workflow-run:multibyte:1633',
     });
     expect(multibyte.status).toBe(200);
@@ -2309,18 +2355,18 @@ describe('GitHub-anchor dispatch route', () => {
     const storedDescription = (
       stored?.task.work as { spec?: { description?: string } } | undefined
     )?.spec?.description;
-    expect(storedDescription).toContain('12000 characters');
+    expect(storedDescription).toBe('漢'.repeat(65_536));
     expect(
       new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
     ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
   });
 
-  it('clamps JSON-escaped GitHub text before storage and reads the schema back', async () => {
+  it('clamps only JSON-escaped GitHub text past the byte budget and reads the schema back', async () => {
     const ctx = context({ principal: githubActionsOperator });
-    // `JSON.stringify` doubles each newline. The raw 16,384-byte body is
-    // valid GitHub input and character-bounded Work text, but the complete
-    // serialized payload is too large without route-side normalization.
-    const body = '\n'.repeat(WORK_DESCRIPTION_MAX);
+    // A C0 control character serializes as a six-byte escape: 65,536 of
+    // them are valid GitHub input yet exceed the serialized Work budget, the
+    // only GitHub-sized body that still gets the visible clamp.
+    const body = '\u0001'.repeat(65_536);
     const r = await call(ctx, 'POST', '/dispatches/github', {
       ...input,
       spec: { ...input.spec, description: body },
@@ -2334,7 +2380,7 @@ describe('GitHub-anchor dispatch route', () => {
     const storedDescription = (
       stored?.task.work as { spec?: { description?: string } } | undefined
     )?.spec?.description;
-    expect(storedDescription).toContain('serialized work payload');
+    expect(storedDescription).toContain('Read the full body');
     expect(
       new TextEncoder().encode(JSON.stringify(stored?.task.work)).length,
     ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);

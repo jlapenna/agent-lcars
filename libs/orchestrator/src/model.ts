@@ -5,7 +5,13 @@ import {
   runPlacementSchema,
   triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
-import { trackerIssueSchema } from '@agent-lcars/dispatch-contracts';
+import {
+  RUN_PARAMS_MAX_BYTES,
+  serializedJsonBytes,
+  trackerIssueSchema,
+  WORK_PARAM_TEXT_MAX_BYTES,
+  WORK_PAYLOAD_MAX_BYTES,
+} from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
 /**
@@ -21,6 +27,11 @@ import { z } from 'zod';
  */
 
 export { providerRoutingSchema } from '@agent-lcars/dispatch-contracts';
+export {
+  RUN_PARAMS_MAX_BYTES,
+  WORK_PARAM_TEXT_MAX_BYTES,
+  WORK_PAYLOAD_MAX_BYTES,
+} from '@agent-lcars/dispatch-contracts';
 
 const isoUtc = z.iso.datetime({ offset: false });
 
@@ -476,21 +487,15 @@ export type DeliveryBinding = z.infer<typeof deliveryBindingSchema>;
 /**
  * A native work item's payload -- who asked and what for. The orchestrator
  * stores it and never interprets it, exactly as it treats `Run.params`;
- * `libs/work` owns the shape. Bounded so a runaway caller cannot bloat the
- * task document towards Firestore's 1 MiB limit.
+ * `libs/work` owns the shape. `WORK_PAYLOAD_MAX_BYTES`
+ * (`@agent-lcars/dispatch-contracts`) keeps the task document, which can
+ * hold two payloads, within Firestore's 1 MiB limit.
  */
-export const WORK_PAYLOAD_MAX_BYTES = 32_768;
-
 export const workPayloadSchema = z
   .record(z.string().max(64), z.unknown())
-  .refine(
-    (value) =>
-      new TextEncoder().encode(JSON.stringify(value)).length <=
-      WORK_PAYLOAD_MAX_BYTES,
-    {
-      message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
-    },
-  );
+  .refine((value) => serializedJsonBytes(value) <= WORK_PAYLOAD_MAX_BYTES, {
+    message: `work payload exceeds ${WORK_PAYLOAD_MAX_BYTES} bytes`,
+  });
 export type WorkPayload = z.infer<typeof workPayloadSchema>;
 
 /** An immutable source revision; retries retain its key and input. */
@@ -515,12 +520,26 @@ export const runSchema = z.strictObject({
   requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here.
-   *  Value bound matches the native reply route's `REPLY_MAX`
-   *  (`work-reply.ts`, 16,384 bytes, the same budget `spec.description`
-   *  gets): raised from 8,192 so a full-length native reply can actually be
-   *  persisted here without a later `runSchema.parse` read throwing on the
-   *  run that stored it. */
-  params: z.record(z.string().max(64), z.string().max(16_384)).optional(),
+   *  Each value must fit `WORK_PARAM_TEXT_MAX_BYTES`, the bound the direct
+   *  runner's environment and prompt argument impose, and the whole record
+   *  `RUN_PARAMS_MAX_BYTES`, its share of the run document. The Work API
+   *  refuses oversized reply and context text before it reaches here. */
+  params: z
+    .record(
+      z.string().max(64),
+      z
+        .string()
+        .refine(
+          (value) => serializedJsonBytes(value) <= WORK_PARAM_TEXT_MAX_BYTES,
+          {
+            message: `run parameter exceeds ${WORK_PARAM_TEXT_MAX_BYTES} bytes`,
+          },
+        ),
+    )
+    .refine((value) => serializedJsonBytes(value) <= RUN_PARAMS_MAX_BYTES, {
+      message: `run parameters exceed ${RUN_PARAMS_MAX_BYTES} bytes`,
+    })
+    .optional(),
   issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),

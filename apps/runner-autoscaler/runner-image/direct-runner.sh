@@ -97,7 +97,12 @@ REPORT_DELIVERABLE=''
 if [ "$ANCHOR_TYPE" = work ] && jq -e '.spec.deliverable == "report"' <<<"$WORK" >/dev/null; then
   REPORT_DELIVERABLE=1
 fi
-export WORK ISSUE REPORT_DELIVERABLE
+# A complete Work description can exceed the 128 KiB Linux limit on one
+# environment string (MAX_ARG_STRLEN), so the payload reaches
+# prepare-dispatch.sh as a private file rather than an exported variable.
+WORK_FILE="$RUNNER_TEMP/agent-work.json"
+(umask 077; printf '%s' "$WORK" > "$WORK_FILE")
+export WORK_FILE ISSUE REPORT_DELIVERABLE
 case "$PIPELINE" in
   claude) AGENT_NAME=Claude ;;
   codex) AGENT_NAME=Codex ;;

@@ -1,3 +1,7 @@
+import {
+  WORK_DESCRIPTION_MAX_BYTES,
+  WORK_PAYLOAD_MAX_BYTES,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,7 +11,6 @@ import {
   readStoredWorkSpec,
   STORED_PIPELINES,
   storedClawWorkSpec,
-  WORK_DESCRIPTION_MAX,
   workOriginSchema,
   workPayloadSchema,
   workSpecSchema,
@@ -86,13 +89,41 @@ describe('workSpecSchema', () => {
     ).toThrow();
   });
 
-  it('bounds the description', () => {
+  it('accepts a description past the retired 16,384-character cap', () => {
+    // 65,536 three-byte characters: a complete GitHub-sized body.
+    const description = '漢'.repeat(65_536);
+    expect(workSpecSchema.parse({ ...spec, description }).description).toBe(
+      description,
+    );
+  });
+
+  it('bounds the description only by its serialized byte budget', () => {
+    // Two JSON quote bytes plus the characters fill the budget exactly.
+    const fits = 'x'.repeat(WORK_DESCRIPTION_MAX_BYTES - 2);
+    expect(
+      workSpecSchema.parse({ ...spec, description: fits }).description,
+    ).toBe(fits);
     expect(() =>
-      workSpecSchema.parse({
+      workSpecSchema.parse({ ...spec, description: `${fits}x` }),
+    ).toThrow(/byte serialized description budget/u);
+  });
+
+  it('keeps every within-budget description inside the Work payload budget', () => {
+    const payload = workPayloadSchema.parse({
+      origin: {
+        principal: 'x'.repeat(128),
+        channel: 'api',
+        thread: 'y'.repeat(512),
+      },
+      spec: {
         ...spec,
-        description: 'x'.repeat(WORK_DESCRIPTION_MAX + 1),
-      }),
-    ).toThrow();
+        title: 'z'.repeat(256),
+        description: 'x'.repeat(WORK_DESCRIPTION_MAX_BYTES - 2),
+      },
+    });
+    expect(
+      new TextEncoder().encode(JSON.stringify(payload)).length,
+    ).toBeLessThanOrEqual(WORK_PAYLOAD_MAX_BYTES);
   });
 
   it('rejects unknown keys (strict)', () => {

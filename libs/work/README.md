@@ -63,9 +63,11 @@ lcars work reply <id> --text 'Continue with this design.' --request-id turn-2
 lcars work reply <id> --text-file ./reply.txt --pipeline codex --fresh
 ```
 
-Supply exactly one of `--text` or `--text-file`. Replies are bounded to
-16,384 characters; file input must be a regular UTF-8 file and is read with
-a bounded buffer. `--pipeline` requests a provider allowed by the caller's
+Supply exactly one of `--text` or `--text-file`. Replies have no character
+cap; the server refuses one whose JSON-serialized UTF-8 form exceeds
+`WORK_PARAM_TEXT_MAX_BYTES` (120 KiB), the size the runner can pass to a
+provider process whole. File input must be a regular UTF-8 file and is read
+with a buffer of that size. `--pipeline` requests a provider allowed by the caller's
 current grant. `--fresh` disables resume; otherwise the server selects a
 resumable session from this item's own runs, or admits a fresh session.
 

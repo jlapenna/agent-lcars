@@ -71,10 +71,13 @@ describe('scheduleSchema', () => {
     ).toThrow();
   });
 
+  it('shares the Work payload budget', () => {
+    expect(SCHEDULE_SPEC_MAX_BYTES).toBe(262_144);
+  });
+
   it('accepts a spec whose serialized UTF-8 length is exactly SCHEDULE_SPEC_MAX_BYTES', () => {
-    // `{"blob":"` + n x's + `"}` = n + 11 bytes; n = 32_757 lands exactly on
-    // the 32,768-byte limit.
-    const spec = { blob: 'x'.repeat(32_757) };
+    // `{"blob":"` + n x's + `"}` = n + 11 bytes.
+    const spec = { blob: 'x'.repeat(SCHEDULE_SPEC_MAX_BYTES - 11) };
     expect(new TextEncoder().encode(JSON.stringify(spec)).length).toBe(
       SCHEDULE_SPEC_MAX_BYTES,
     );
@@ -82,7 +85,7 @@ describe('scheduleSchema', () => {
   });
 
   it('rejects a spec whose serialized UTF-8 length is one byte over SCHEDULE_SPEC_MAX_BYTES', () => {
-    const spec = { blob: 'x'.repeat(32_758) };
+    const spec = { blob: 'x'.repeat(SCHEDULE_SPEC_MAX_BYTES - 10) };
     expect(new TextEncoder().encode(JSON.stringify(spec)).length).toBe(
       SCHEDULE_SPEC_MAX_BYTES + 1,
     );
@@ -90,10 +93,10 @@ describe('scheduleSchema', () => {
   });
 
   it('counts UTF-8 bytes, not UTF-16 code units, for multi-byte characters', () => {
-    // 11,000 code units but 33,000 UTF-8 bytes (each '漢' is 3 bytes) --
+    // 100,000 code units but 300,000 UTF-8 bytes (each '漢' is 3 bytes) --
     // must be rejected even though `.length` (code units) is under the cap.
-    const spec = { blob: '漢'.repeat(11_000) };
-    expect(spec.blob.length).toBe(11_000);
+    const spec = { blob: '漢'.repeat(100_000) };
+    expect(spec.blob.length).toBeLessThan(SCHEDULE_SPEC_MAX_BYTES);
     expect(() => scheduleSchema.parse({ ...base, spec })).toThrow();
   });
 });
