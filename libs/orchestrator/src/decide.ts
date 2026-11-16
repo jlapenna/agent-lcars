@@ -127,6 +127,11 @@ export const MAX_PLACEMENT_WAITS = 6;
 export const PLACEMENT_WAIT_EXCEEDED_NOTE =
   'placement observation deadline exceeded';
 
+/** Loss-event note once MAX_PLACEMENT_WAITS is spent: still a Job that never
+ * placed, now charged like any loss. */
+export const PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE =
+  'placement wait budget exhausted';
+
 function placementStartDeadlineAt(now: string, claimedAt?: string): string {
   const renewed = Date.parse(runStartDeadlineAt(now));
   const bound =
@@ -1086,7 +1091,11 @@ function settleLost(
           ? {
               note: unplaced
                 ? PLACEMENT_WAIT_EXCEEDED_NOTE
-                : 'first heartbeat deadline exceeded',
+                : run.queue?.startupPlacement?.state === 'waiting' &&
+                    run.queue.startupPlacement.jobUid !== undefined &&
+                    run.queue.firstHeartbeatAt === undefined
+                  ? PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE
+                  : 'first heartbeat deadline exceeded',
             }
           : {}),
       },
@@ -1148,12 +1157,17 @@ function settleLostAndRetry(
       lostRun.sourceRevision === undefined
         ? undefined
         : (lostRun.revisionAttempt ?? 1) + (unplaced ? 0 : 1),
+    // A charged successor keeps the spent wait count, so the bound holds
+    // across charges and an unplaceable lineage parks within the lost-run
+    // budget instead of earning fresh free waits.
     ...(unplaced
       ? {
           queuedSince: queueOrderAt(lostRun),
           placementWaits: (lostRun.placementWaits ?? 0) + 1,
         }
-      : {}),
+      : lostRun.placementWaits === undefined
+        ? {}
+        : { placementWaits: lostRun.placementWaits }),
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}

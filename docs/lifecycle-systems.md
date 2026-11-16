@@ -279,7 +279,8 @@ original place in line (`queuedSince`, read through `queueOrderAt`; `createdAt`
 stays the run's own creation), it spends neither the task's lost-run budget
 nor the revision's attempt count, and only the first wait in a streak
 comments on the anchor, saying the run could not start for lack of room.
-`MAX_PLACEMENT_WAITS` (6) bounds a streak; past it, and for a claim the
+`MAX_PLACEMENT_WAITS` (6) bounds a streak; the count carries across charged retries and the
+loss is recorded as `placement wait budget exhausted`; past it, and for a claim the
 executor never reported on, the loss is charged as usual so an unplaceable
 run parks instead of holding the head of the queue. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
 7200-second execution limit is an independent backstop (a Pod runtime deadline

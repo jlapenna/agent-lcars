@@ -10,6 +10,7 @@ import {
   decidedRun,
   isRefusal,
   MAX_PLACEMENT_WAITS,
+  PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE,
   PLACEMENT_WAIT_EXCEEDED_NOTE,
   requestRun,
   runStartDeadlineAt,
@@ -2290,13 +2291,14 @@ export function runOrchestratorStoreContract(
             // Past the bound the wait is charged like any loss and the
             // successor queues from now, so it cannot hold the head forever.
             expect(sweep.lost[0]?.events.at(-1)?.note).toBe(
-              'first heartbeat deadline exceeded',
+              PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE,
             );
             expect(await f.store.readTask(TASK)).toMatchObject({
               task: { consecutiveLost: 1 },
             });
             expect(retry).not.toHaveProperty('queuedSince');
-            expect(retry).not.toHaveProperty('placementWaits');
+            // The spent count carries forward: no fresh free waits.
+            expect(retry?.placementWaits).toBe(MAX_PLACEMENT_WAITS);
             break;
           }
           expect(sweep.lost[0]?.events.at(-1)).toMatchObject({
