@@ -240,6 +240,58 @@ describe('Goose file-parameter recipe', () => {
     );
   });
 
+  it('keeps a fixed input referenced only by another default in use', () => {
+    // Goose refuses a declared parameter no template references, so the
+    // default's `{{ mode }}` must survive the default's removal.
+    const recipeText = [
+      'version: 1.0.0',
+      'title: t',
+      'description: d',
+      'prompt: "Target {{ target }} with {{ baseline }}"',
+      'parameters:',
+      '  - key: mode',
+      '    description: Fixed mode',
+      '    input_type: string',
+      '    requirement: required',
+      '  - key: target',
+      '    description: Target',
+      '    input_type: string',
+      '    requirement: optional',
+      "    default: '{{ mode }}'",
+      '  - key: baseline',
+      '    description: B',
+      '    input_type: string',
+      '    requirement: required',
+      '',
+    ].join('\n');
+    const rewritten = fileParameterRecipe(recipeText);
+    expect(rewritten).toContain('# {% if false %}{{ mode }}{% endif %}\n');
+    expect(rewritten).not.toContain('default:');
+    const definition = parseDefinition(
+      manifest({ inputs: { mode: 'report' } }),
+      recipeText,
+    );
+    expect(resolveJobParameters(definition, { target: 'override' })).toEqual({
+      target: 'override',
+    });
+  });
+
+  it('refuses at admission a default whose template statements it cannot keep', () => {
+    const recipeText = [
+      'prompt: "{{ target }}"',
+      'parameters:',
+      '  - key: target',
+      '    description: T',
+      '    input_type: string',
+      '    requirement: optional',
+      "    default: '{% if true %}x{% endif %}'",
+      '',
+    ].join('\n');
+    expect(() => fileParameterRecipe(recipeText)).toThrow(
+      /template statements/u,
+    );
+  });
+
   it('is validated when the catalog parses a definition', () => {
     expect(() => parseDefinition()).not.toThrow();
     expect(fileParameterRecipe(parseDefinition().recipeText)).toContain(
