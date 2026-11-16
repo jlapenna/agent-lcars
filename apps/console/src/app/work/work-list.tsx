@@ -375,11 +375,14 @@ export function WorkList({ items }: { items: ItemView[] }) {
 
 /** Server-rendered age for a panel caption; rows use RelativeTime. */
 /** The mockup's `codex & opencode ceiling 1`: the server-owned live-claim
- * ceilings, providers sharing a ceiling named together. */
+ * ceilings, providers sharing a ceiling named together. Codex's ceiling
+ * applies only near a shared-login refresh (pipelineLiveClaimCeiling), so the
+ * static caption omits it; live admission status reports the one in force. */
 export function providerCeilingMeta(
-  ceilings: Readonly<
-    Record<string, number | undefined>
-  > = QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+  ceilings: Readonly<Record<string, number | undefined>> = {
+    ...QUEUE_PIPELINE_MAX_LIVE_CLAIMS,
+    codex: undefined,
+  },
 ): string | undefined {
   const byCeiling = new Map<number, string[]>();
   for (const [pipeline, ceiling] of Object.entries(ceilings).sort()) {

@@ -151,6 +151,83 @@ export function runOrchestratorStoreContract(
       expect(await store.listRuns(taskId)).toHaveLength(3);
     });
 
+    // Codex runs share one subscription login; outside its refresh window
+    // they read a refresh-token-free copy and need no exclusive lease.
+    it.each([
+      ['with no recorded window', undefined, 1],
+      ['inside the refresh window', 60, 1],
+      // A run claimed now could still be executing 3 h later, too close.
+      ['within the claim-to-restore margin', 3 * 60, 1],
+      ['outside the refresh window', 8 * 24 * 60, 2],
+    ])(
+      'admits concurrent Codex claims only outside the shared-login refresh window (%s)',
+      async (_case, dueInMinutes, expectedClaims) => {
+        const store = await makeStore();
+        const clock = new TestClock(T0);
+        const orchestrator = new Orchestrator(store, clock);
+        if (dueInMinutes !== undefined)
+          await store.recordCredentialWindow({
+            pipeline: 'codex',
+            refreshDueAt: new Date(
+              Date.parse(T0) + dueInMinutes * 60_000,
+            ).toISOString(),
+            observedAt: T0,
+          });
+        for (const workId of [
+          '01J5Z3K9QX8F0N2B4V6C8D1E4A',
+          '01J5Z3K9QX8F0N2B4V6C8D1E4B',
+        ]) {
+          const requested = await orchestrator.request({
+            taskId: { workId },
+            requestId: workId,
+            pipeline: 'codex',
+            work: TASK_WORK,
+          });
+          if (isRefusal(requested)) throw new Error(requested.reason);
+          const run = decidedRun(requested);
+          await store.enqueueRun({ runId: run.runId, now: T0 });
+          await orchestrator.confirmDispatch(run.runId);
+        }
+        const claims = [];
+        for (const hash of ['a', 'b']) {
+          const claimed = await store.claimQueuedRun({
+            pipelines: ['codex'],
+            now: T0,
+            claimedBy: `runner-${hash}`,
+            claimedBySubject: 'executor@example.com',
+            tokenHash: hash.repeat(64),
+          });
+          if (claimed !== undefined) claims.push(claimed.runId);
+        }
+        expect(claims).toHaveLength(expectedClaims);
+        const status = await store.readQueueAdmissionStatus({
+          pipelines: ['codex'],
+          now: T0,
+        });
+        expect(status.providers[0]?.maxLiveClaims).toBe(
+          expectedClaims === 1 ? 1 : undefined,
+        );
+      },
+    );
+
+    it('keeps the newest credential window observation', async () => {
+      const store = await makeStore();
+      const window = (observedAt: string, refreshDueAt: string) => ({
+        pipeline: 'codex',
+        refreshDueAt,
+        observedAt,
+      });
+      await store.recordCredentialWindow(
+        window('2026-08-15T12:05:00.000Z', '2026-08-25T00:00:00.000Z'),
+      );
+      await store.recordCredentialWindow(
+        window('2026-08-15T12:00:00.000Z', '2026-08-16T00:00:00.000Z'),
+      );
+      expect(await store.readCredentialWindow('codex')).toEqual(
+        window('2026-08-15T12:05:00.000Z', '2026-08-25T00:00:00.000Z'),
+      );
+    });
+
     it('coalesces source revisions durably and fences stale publication across clients', async () => {
       const store = await makeStore();
       const clock = new TestClock(T0);

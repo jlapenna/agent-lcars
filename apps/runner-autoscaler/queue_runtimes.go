@@ -17,6 +17,10 @@ import (
 // queue Job's pod deadline sits at or below it, and a declared runtime's
 // strictly below it, so the kubelet ends an attempt before its lease can
 // expire under a still-running worker.
+// Codex shared readers rely on this bound: the Console hands out a
+// refresh-token-free login only when the login outlives claim + placement
+// wait (1 h) + this deadline (CODEX_SHARED_HORIZON_MS, 3.5 h, in
+// libs/orchestrator). Raise that horizon before raising this deadline.
 const queueRunLeaseSeconds = 2 * 60 * 60
 
 // queueRuntimeSecretMountPath is where a runtime Job sees its declared zone

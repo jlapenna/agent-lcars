@@ -41,6 +41,7 @@ import {
 import { retainsPhysicalClaim } from './provider-routing';
 import {
   projectQueueAdmissionStatus,
+  type ProviderCredentialWindow,
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
@@ -106,6 +107,7 @@ export class MemoryStore implements OrchestratorStore {
   }
   readonly #tasks = new Map<string, VersionedTask>();
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
+  readonly #credentialWindows = new Map<string, ProviderCredentialWindow>();
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #runMessageChunks = new Map<string, string>();
@@ -339,6 +341,12 @@ export class MemoryStore implements OrchestratorStore {
                 input.queueEligibilityPipelines.map((pipeline) => [
                   pipeline,
                   structuredClone(this.#providerCooldowns.get(pipeline)),
+                ]),
+              ),
+              credentialWindows: Object.fromEntries(
+                input.queueEligibilityPipelines.map((pipeline) => [
+                  pipeline,
+                  structuredClone(this.#credentialWindows.get(pipeline)),
                 ]),
               ),
               liveRuns: structuredClone(
@@ -726,6 +734,7 @@ export class MemoryStore implements OrchestratorStore {
         this.#providerCooldowns,
         input.pipelines,
         input.now,
+        Object.fromEntries(this.#credentialWindows),
       ),
     );
   }
@@ -784,6 +793,7 @@ export class MemoryStore implements OrchestratorStore {
       eligible,
       input.now,
       this.#priorityPositions,
+      Object.fromEntries(this.#credentialWindows),
     );
     if (candidate === undefined) return undefined;
     const claimed = claimQueuedRun(candidate, input);
@@ -836,6 +846,25 @@ export class MemoryStore implements OrchestratorStore {
         .slice(0, limit),
     );
   }
+  async readCredentialWindow(
+    pipeline: string,
+  ): Promise<ProviderCredentialWindow | undefined> {
+    return structuredClone(this.#credentialWindows.get(pipeline));
+  }
+
+  async recordCredentialWindow(
+    window: ProviderCredentialWindow,
+  ): Promise<void> {
+    const current = this.#credentialWindows.get(window.pipeline);
+    if (
+      current !== undefined &&
+      (current.observedAt >= window.observedAt ||
+        current.refreshDueAt === window.refreshDueAt)
+    )
+      return;
+    this.#credentialWindows.set(window.pipeline, structuredClone(window));
+  }
+
   async readProviderCooldowns(
     pipelines: readonly string[],
   ): Promise<Readonly<Record<string, unknown>>> {

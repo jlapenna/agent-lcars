@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { logger } from '@agent-lcars/logging';
 import {
   changeCredentialOperation,
+  codexRunSharesLogin,
   type CredentialMutation,
   type CredentialOperation,
   type CredentialWriteReceipt,
@@ -352,6 +353,78 @@ class ReservedCodexOperation {
   }
 }
 
+/** When the subscription login next refreshes: its access token's expiry.
+ * Codex refreshes when that token expires (the lineage rotated every ~10
+ * days, the token lifetime), so this is the only time a run can need the
+ * single-use refresh token. Undefined when it cannot be read. */
+export function codexRefreshDueAt(authBase64: string): string | undefined {
+  try {
+    const auth = JSON.parse(Buffer.from(authBase64, 'base64').toString('utf8'));
+    const payload = String(auth?.tokens?.access_token ?? '').split('.')[1];
+    if (!payload) return undefined;
+    const exp = JSON.parse(
+      Buffer.from(payload, 'base64url').toString('utf8'),
+    )?.exp;
+    return typeof exp === 'number' && Number.isFinite(exp)
+      ? new Date(exp * 1000).toISOString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True for a shared reader's copy (sharedReaderCopy), whose refresh token
+ * is exactly the empty string. Such a copy can never become the lineage:
+ * persisting it would brick every later run. */
+export function isSharedReaderCopy(authBase64: string): boolean {
+  try {
+    const auth = JSON.parse(Buffer.from(authBase64, 'base64').toString('utf8'));
+    return auth?.tokens?.refresh_token === '';
+  } catch {
+    return false;
+  }
+}
+
+/** The copy a shared reader receives: identical except that the single-use
+ * refresh token is removed, so no reader can rotate the lineage even if
+ * Codex unexpectedly tried to refresh. */
+function sharedReaderCopy(authBase64: string): {
+  authBase64: string;
+  sha256: string;
+} {
+  const auth = JSON.parse(Buffer.from(authBase64, 'base64').toString('utf8'));
+  const copy = Buffer.from(
+    JSON.stringify({ ...auth, tokens: { ...auth.tokens, refresh_token: '' } }),
+  );
+  return {
+    authBase64: copy.toString('base64'),
+    sha256: crypto.createHash('sha256').update(copy).digest('hex'),
+  };
+}
+
+/** Best effort: claim admission falls back to the exclusive ceiling when
+ * this record is missing or stale, so a failed write is never unsafe. */
+async function recordCodexWindow(
+  context: BrokerContext,
+  authBase64: string,
+): Promise<string | undefined> {
+  const refreshDueAt = codexRefreshDueAt(authBase64);
+  if (refreshDueAt === undefined) return undefined;
+  try {
+    await context.store.recordCredentialWindow({
+      pipeline: 'codex',
+      refreshDueAt,
+      observedAt: context.now().toISOString(),
+    });
+  } catch (error) {
+    logger.warn(
+      'agent-lcars: recording the Codex credential window failed: %s',
+      error instanceof Error ? error.message : 'unknown error',
+    );
+  }
+  return refreshDueAt;
+}
+
 function logUnresolved(runId: string): void {
   logger.error(
     'agent-lcars: credential operation for %s remains reserved pending generation fencing',
@@ -368,8 +441,44 @@ export async function restoreCodexCredential(
   await operation.begin('restore');
   let lease: CodexOwnedLease | undefined;
   try {
+    // Shared reader: when the recorded window says the login cannot refresh
+    // before any run started now could end, hand out a refresh-token-free
+    // copy without the lease, so concurrent Codex runs need nothing
+    // exclusive (#3392). The lineage itself is re-checked before use; with
+    // no record, or inside the window, the exclusive lease applies as before.
+    // Decided against the claim time, exactly as claim admission decided
+    // whether to lift the Codex ceiling, so time spent between claim and
+    // restore (placement, checkout) cannot change the answer.
+    const claimedAt = run.queue?.claimedAt ?? context.now().toISOString();
+    const outsideWindow = (dueAt: string | undefined) =>
+      codexRunSharesLogin(dueAt, claimedAt);
+    // A failed window read falls back to the exclusive lease, never fails.
+    const recorded = await context.store
+      .readCredentialWindow('codex')
+      .catch(() => undefined);
+    if (outsideWindow(recorded?.refreshDueAt)) {
+      const current = await context.codexAuth.read();
+      if (outsideWindow(await recordCodexWindow(context, current.authBase64))) {
+        const finished = await operation.finish();
+        if (finished.state === 'finished')
+          throw new ORPCError('UNAUTHORIZED', {
+            message: 'Run completed during credential restore',
+          });
+        logger.info(
+          'agent-lcars: Codex credential restored for %s as a shared reader',
+          run.runId,
+        );
+        return {
+          ...sharedReaderCopy(current.authBase64),
+          generation: current.generation,
+        };
+      }
+    }
     lease = await operation.acquire(repository);
     const snapshot = await context.codexAuth.read();
+    // Under the lease: record when this lineage next refreshes, so later
+    // runs can share it outside that window.
+    await recordCodexWindow(context, snapshot.authBase64);
     // Recovery may have fenced this operation while a read was in flight. Its
     // old caller then gets no credential response and cannot prepare more IO.
     const finished = await operation.finish(true);
@@ -529,6 +638,18 @@ export async function persistCodexCredential(
     ) {
       persisted = true;
       result = { status: 'updated' };
+    } else if (isSharedReaderCopy(input.authBase64)) {
+      // A shared reader's refresh-token-free copy: it holds no lease and can
+      // never replace the lineage, so there is nothing to persist.
+      if (input.authFailure !== undefined)
+        // The one signal that the shared-window assumption broke (a Codex
+        // upgrade, an early server-side refresh, a revoked token).
+        logger.error(
+          'agent-lcars: Codex shared reader %s reported an auth failure: %s',
+          run.runId,
+          input.authFailure,
+        );
+      result = { status: 'unchanged' };
     } else {
       const currentLease = await context.codexAuth.readLease();
       if (
@@ -570,6 +691,7 @@ export async function persistCodexCredential(
         );
         persisted = true;
         result = { status: 'updated' };
+        await recordCodexWindow(context, input.authBase64);
       }
     }
   } catch (error) {
