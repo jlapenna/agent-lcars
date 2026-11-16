@@ -51,7 +51,7 @@ func TestQueueRunFenceAcceptsValidLargeMultibyteBrief(t *testing.T) {
 }
 
 func TestQueueRunFenceFailsClosedWithoutLeakingCredentials(t *testing.T) {
-	for _, failure := range []string{"expired", "settled", "unavailable", "wrong identity", "malformed", "oversized", "redirect", "canceled"} {
+	for _, failure := range []string{"expired", "settled", "unavailable", "wrong identity", "malformed", "redirect", "canceled"} {
 		t.Run(failure, func(t *testing.T) {
 			forwarded := false
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,8 +71,6 @@ func TestQueueRunFenceFailsClosedWithoutLeakingCredentials(t *testing.T) {
 					_, _ = io.WriteString(w, `{"intentId":"work:other/r1","description":"private-token"}`)
 				case "malformed":
 					_, _ = io.WriteString(w, "private-token")
-				case "oversized":
-					_, _ = io.WriteString(w, strings.Repeat("x", queueRunBriefBodyLimit+1))
 				case "redirect":
 					http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 				}
@@ -91,5 +89,17 @@ func TestQueueRunFenceFailsClosedWithoutLeakingCredentials(t *testing.T) {
 				t.Fatal("forwarded run credential on redirect")
 			}
 		})
+	}
+}
+
+// A repository-owned agent's brief carries its whole definition, so a valid
+// brief can be larger than any former fixed bound.
+func TestQueueRunFenceAcceptsALargeBrief(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"intentId":"work:startup/r1","claw":{"files":[{"content":"`+strings.Repeat("A", 6<<20)+`"}]}}`)
+	}))
+	defer server.Close()
+	if err := queueRunFence(server.URL)(context.Background(), "work:startup/r1", "token"); err != nil {
+		t.Fatalf("large brief refused: %v", err)
 	}
 }

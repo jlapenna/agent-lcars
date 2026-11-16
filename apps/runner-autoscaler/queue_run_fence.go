@@ -4,21 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
-// Unlike a small claim response, a brief carries Work text: the description
-// in both spec and anchor (each up to the 256 KiB Work payload budget), the
-// latest reply and context (each up to 120 KiB) and source metadata. It is
-// assembled from the task, run and source-issue documents, each under
-// Firestore's 1 MiB limit, so 4 MiB always exceeds a valid brief while still
-// bounding a hostile or broken response.
-const queueRunBriefBodyLimit = 4 << 20
-
+// A brief carries Work text and, for a repository-owned claw agent, the
+// agent's whole pinned definition (docs/repository-agents.md), so it has no
+// fixed size. The fence needs only its intentId: it stream-decodes the body
+// instead of buffering it, bounded by the client timeout.
 // The brief route is already read-only and requires this exact run's token,
 // liveness and unexpired startup/execution deadline. It grants no new credential or Work authority.
 // The worker checks it again at bootstrap, fencing a settlement that races
@@ -39,14 +34,10 @@ func queueRunFence(consoleURL string) func(context.Context, string, string) erro
 		if response.StatusCode != http.StatusOK {
 			return fmt.Errorf("queue run-token fence returned HTTP %d", response.StatusCode)
 		}
-		body, err := io.ReadAll(io.LimitReader(response.Body, queueRunBriefBodyLimit+1))
-		if err != nil || len(body) > queueRunBriefBodyLimit {
-			return fmt.Errorf("queue run-token fence brief unavailable")
-		}
 		var brief struct {
 			IntentID string `json:"intentId"`
 		}
-		if json.Unmarshal(body, &brief) != nil || brief.IntentID != runID {
+		if json.NewDecoder(response.Body).Decode(&brief) != nil || brief.IntentID != runID {
 			return fmt.Errorf("queue run-token fence brief identity conflict")
 		}
 		return nil

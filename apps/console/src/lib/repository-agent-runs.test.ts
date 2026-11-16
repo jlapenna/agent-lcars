@@ -143,3 +143,15 @@ it('refuses a profile that names other principals', () => {
     ]),
   ).toThrow(/does not admit svc:me/u);
 });
+
+// The launcher (claw-image/claw-job.mjs agentDigest) recomputes this digest
+// before running an agent; both suites pin the same golden value.
+it('computes the definition digest the launcher verifies', () => {
+  expect(
+    agentDigest([
+      { path: 'workspace/b', mode: '100755', sha: 'b'.repeat(40) },
+      { path: 'agent.yaml', mode: '100644', sha: 'a'.repeat(40) },
+      { path: 'Workspace/A', mode: '100644', sha: 'c'.repeat(40) },
+    ]),
+  ).toBe('e8fd4d424a05d79440bb16eba22fff84eec22941ae4bee19a0b5fa38be3264fa');
+});
