@@ -22,6 +22,7 @@ import {
   type ItemsContract,
   itemsContract,
   itemStateSchema,
+  REPOSITORY_JOB_REQUEST_MAX_BYTES,
   workIdSchema,
   workReplyRequestIdSchema,
   workReplyTextSchema,
@@ -316,8 +317,10 @@ export async function executeWorkCommand(
               ? {}
               : { profile: values.profile }),
           });
-          if (Buffer.byteLength(body) > 16384)
-            throw new Error('Job request exceeds 16 KiB');
+          if (Buffer.byteLength(body) > REPOSITORY_JOB_REQUEST_MAX_BYTES)
+            throw new Error(
+              `Job request exceeds ${REPOSITORY_JOB_REQUEST_MAX_BYTES / 1024} KiB`,
+            );
           path = '/invoke';
         } else if (
           positionals[0] === 'get' &&

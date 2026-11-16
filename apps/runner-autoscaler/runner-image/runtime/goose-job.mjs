@@ -36,7 +36,10 @@ async function call(path, body) {
     redirect: 'error',
   });
   if (!response.ok) throw new Error(`Work API HTTP ${response.status}`);
-  const maximum = path === 'job-secrets' ? 2 * 1024 * 1024 : 262144;
+  // A memory guard, not a content bound: the Work API bounds the recipe brief
+  // and credential delivery by what it stores (Firestore documents and
+  // 16 Secret Manager payloads of 64 KiB, even fully JSON-escaped).
+  const maximum = 8 * 1024 * 1024;
   let size = 0;
   const chunks = [];
   for await (const chunk of response.body) {
@@ -143,7 +146,7 @@ try {
       call('heartbeat', { providerProcessStarted: true }),
   });
   const result = await execute({
-    run: { definition: brief.definition },
+    run: { definition: brief.definition, fileRecipeText: brief.fileRecipeText },
     baseline: brief.baseline,
     parameters: brief.parameters,
     signal: controller.signal,

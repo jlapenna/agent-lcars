@@ -2,6 +2,7 @@ import { jobSecretSnapshotSchema } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
+import { assertFirestoreDocumentFits } from './firestore-document-size';
 import {
   jobDefinitionSchema,
   jobDigest,
@@ -195,16 +196,21 @@ export class FirestoreJobStore implements JobStore {
         occurrence?.exists ? decodeOccurrence(occurrence.data()) : undefined,
       );
       // Strip undefined optional properties; Firestore cannot store them.
-      if (result.job)
-        transaction.set(
-          jobRef,
-          JSON.parse(JSON.stringify(catalogJobSchema.parse(result.job))),
+      // Size checks name the refused record instead of a bare RPC error.
+      if (result.job) {
+        const data = JSON.parse(
+          JSON.stringify(catalogJobSchema.parse(result.job)),
         );
-      if (result.occurrence && occurrenceRef)
-        transaction.set(
-          occurrenceRef,
-          JSON.parse(JSON.stringify(encodeOccurrence(result.occurrence))),
+        assertFirestoreDocumentFits(jobRef.path, data, 'Job catalog entry');
+        transaction.set(jobRef, data);
+      }
+      if (result.occurrence && occurrenceRef) {
+        const data = JSON.parse(
+          JSON.stringify(encodeOccurrence(result.occurrence)),
         );
+        assertFirestoreDocumentFits(occurrenceRef.path, data, 'Job occurrence');
+        transaction.set(occurrenceRef, data);
+      }
       return result;
     });
   }

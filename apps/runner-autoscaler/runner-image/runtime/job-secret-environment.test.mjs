@@ -69,3 +69,28 @@ test('refuses runtime overrides and path traversal before exposing any bindings'
     /bindings refused/u,
   );
 });
+test('accepts a full 64 KiB Secret Manager payload and refuses one byte more', async () => {
+  const root = await mkdtemp('/dev/shm/lcars-secrets-test-');
+  try {
+    const environment = {};
+    await applyJobSecrets(
+      { environment: {}, files: { bundle: 'x'.repeat(65536) } },
+      environment,
+      join(root, 'files'),
+    );
+    assert.equal(
+      (await readFile(join(root, 'files', 'bundle'), 'utf8')).length,
+      65536,
+    );
+    await assert.rejects(
+      applyJobSecrets(
+        { environment: { EXAMPLE_API_KEY: 'x'.repeat(65537) }, files: {} },
+        {},
+        join(root, 'other'),
+      ),
+      /bindings refused/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -100,8 +100,10 @@ successful baseline. A changed comparison scope starts without an old baseline.
 ## Execution and resource contract
 
 Requests equal enforced limits. Every complete allocation is at most 2 CPU,
-6 GiB RAM and 40 GiB storage, with smaller lane bounds taking precedence. The
-current direct-agent lane is 2 CPU / 6 GiB / 24 GiB. Setup, tools, process
+6 GiB RAM and 40 GiB storage, with smaller lane bounds taking precedence. Job
+manifests and the QueueExecutor's Goose path accept that whole ceiling (the
+executor reuses `queueRuntimeCeiling`); a profile's allocation must still equal
+the deployed lane exactly. The current direct-agent lane is 2 CPU / 6 GiB / 24 GiB. Setup, tools, process
 descendants, credentials, image layers, caches, scratch and artifacts are counted
 together. No accelerator or second host contributes capacity.
 
@@ -133,6 +135,19 @@ The adapter checks the admitted CPU/memory allocation, runs Goose once, forwards
 cancellation, bounds output and reports through the token-fenced recipe endpoint.
 The QueueExecutor's `max_concurrent`, storage accounting and retirement remain
 the owners of resource enforcement. A failed capped run remains failed.
+
+The worker passes every recipe value (fixed inputs, invocation parameters and
+the previous baseline) as a private file, not as a command-line argument. The
+Work API serves the admitted recipe with each declared parameter rewritten to a
+Goose `file` parameter (required, no default; only those declaration scalars
+change, so templates render byte-for-byte as before), and Goose reads each file
+into the template. Values are therefore not limited by Linux's 128 KiB
+per-argument limit. Goose itself still refuses more than 32 declared parameters
+(the fixed inputs and `baseline` included) and parameter declarations above
+128 KiB, so the catalog applies those limits when it parses a definition. A
+definition whose declarations cannot be rewritten is invalid; a worker image
+from before this change, or an occurrence pinned before it, passes values as
+arguments.
 
 The adapter requests Goose's JSON machine envelope, requires completed status,
 and normally validates only the final assistant result. Intermediate tool output
@@ -267,8 +282,15 @@ Goose's `recipe.yaml` parameter declarations also define variable invocation
 inputs. Manifest `inputs` and the `baseline` parameter remain fixed and cannot
 be overridden. Required variable parameters need values; optional defaults are
 resolved and pinned at admission. Schedules require defaults for every required
-variable. Values are bounded string data, not permission to choose tools,
-credentials, resources or repository scope.
+variable. Values are string data, not permission to choose tools,
+credentials, resources or repository scope. There is no count or per-value
+length cap: a resolved parameter map (defaults included) is limited to 256 KiB
+of compact JSON, the share of the occurrence's Firestore document left for it
+(`REPOSITORY_JOB_PARAMETERS_MAX_BYTES`). The same byte bound applies to manifest
+inputs and each profile input set. Job request bodies may carry that map plus a
+16 KiB envelope (`REPOSITORY_JOB_REQUEST_MAX_BYTES`), in the Console API and the
+`lcars` CLI alike. Admission refuses a catalog entry or occurrence that would
+exceed Firestore's 1 MiB document limit with an error naming the record.
 
 The Jobs form renders these parameters. Existing event callers can instead use
 `POST /api/work/v1/jobs/invoke` with `repository`, `name`, `requestId` and

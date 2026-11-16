@@ -96,8 +96,8 @@ export function validateJobResult(
     baseline = result.data;
     successful = result.complete;
   }
-  if (Buffer.byteLength(JSON.stringify(baseline)) > 49152)
-    throw new Error('Baseline exceeds 48 KiB');
+  // The baseline is part of the bounded result above. Workers receive it as a
+  // Goose parameter file, so argv limits do not apply.
   return {
     digest: jobDigest([successful, artifacts]),
     successful,

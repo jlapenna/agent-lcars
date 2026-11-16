@@ -9,13 +9,13 @@ export const jobCredentialObservationSchema = z.strictObject({
   dependency: z.enum(['disabled', 'idle', 'ready', 'unavailable', 'unknown']),
   counts: z
     .strictObject({
-      total: z.number().int().min(0).max(500),
-      ready: z.number().int().min(0).max(500),
-      disabled: z.number().int().min(0).max(500),
-      unpromoted: z.number().int().min(0).max(500),
-      expired: z.number().int().min(0).max(500),
-      expiring: z.number().int().min(0).max(500),
-      unknown: z.number().int().min(0).max(500),
+      total: z.number().int().min(0),
+      ready: z.number().int().min(0),
+      disabled: z.number().int().min(0),
+      unpromoted: z.number().int().min(0),
+      expired: z.number().int().min(0),
+      expiring: z.number().int().min(0),
+      unknown: z.number().int().min(0),
     })
     .optional(),
   deliveries: z
@@ -146,14 +146,16 @@ export const githubJobSecretSchema = z.strictObject({
   token: z.string().min(1).max(1024).regex(/^\S+$/u),
   expiresAt: z.iso.datetime().nullable(),
 });
+/** Secret Manager's maximum secret version payload. */
+export const JOB_SECRET_VALUE_MAX_BYTES = 64 * 1024;
 export const jobSecretValueSchema = z
   .string()
   .min(1)
-  .max(16384)
   .refine(
     (value) =>
-      !value.includes('\0') && new TextEncoder().encode(value).length <= 16384,
-    'Secret must be UTF-8 text without NUL and at most 16 KiB',
+      !value.includes('\0') &&
+      new TextEncoder().encode(value).length <= JOB_SECRET_VALUE_MAX_BYTES,
+    'Secret must be UTF-8 text without NUL and at most 64 KiB',
   );
 export const jobSecretDeliverySchema = z.strictObject({
   environment: z.record(environmentName, jobSecretValueSchema),

@@ -123,7 +123,7 @@ export class JobSecrets {
         this.store.list('secrets'),
         this.store.get('health', 'current'),
       ]);
-      const records = z.array(jobSecretRecordSchema).max(500).parse(raw);
+      const records = z.array(jobSecretRecordSchema).parse(raw);
       const count = z
         .number()
         .int()

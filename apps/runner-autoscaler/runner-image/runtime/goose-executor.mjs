@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
   lstat,
+  mkdir,
   mkdtemp,
   open,
   readFile,
@@ -49,7 +50,14 @@ export function gooseExecutor({
     const directory = await mkdtemp(join(tmpdir(), 'lcars-goose-'));
     try {
       const recipe = join(directory, 'recipe.yaml');
-      await writeFile(recipe, run.definition.recipeText, { mode: 0o600 });
+      // The Work API's file-parameter rewrite of the admitted recipe, when it
+      // supplies one, lets every value travel as a file instead of argv.
+      const fileParameters = typeof run.fileRecipeText === 'string';
+      await writeFile(
+        recipe,
+        fileParameters ? run.fileRecipeText : run.definition.recipeText,
+        { mode: 0o600 },
+      );
       await subprocess(executable, ['recipe', 'validate', recipe], {
         cwd: workingDirectory,
         signal,
@@ -68,10 +76,21 @@ export function gooseExecutor({
         ...run.definition.job.inputs,
         baseline: JSON.stringify(baseline),
       };
-      if (Buffer.byteLength(parameters.baseline) > 48 * 1024)
-        throw new Error('baseline exceeds 48 KiB bound');
-      for (const [key, value] of Object.entries(parameters))
-        args.push('--params', `${key}=${value}`);
+      if (fileParameters) {
+        // Goose reads each file parameter's contents into the template, so
+        // values are bounded by what LCARS stores, not by argv.
+        const values = join(directory, 'parameters');
+        await mkdir(values, { mode: 0o700 });
+        for (const [key, value] of Object.entries(parameters)) {
+          if (!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u.test(key))
+            throw new Error('Invalid recipe parameter name');
+          const path = join(values, key);
+          await writeFile(path, value, { mode: 0o600, flag: 'wx' });
+          args.push('--params', `${key}=${path}`);
+        }
+      } else
+        for (const [key, value] of Object.entries(parameters))
+          args.push('--params', `${key}=${value}`);
       let output;
       try {
         output = await subprocess(executable, args, {

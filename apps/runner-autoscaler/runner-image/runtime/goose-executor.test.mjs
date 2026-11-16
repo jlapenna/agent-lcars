@@ -145,6 +145,67 @@ test('adapter validates before invoking and acknowledges actual provider spawn',
   }
 });
 
+test('file-parameter recipes pass values larger than one argv string as files', async () => {
+  const directory = await mkdtemp('/tmp/lcars-goose-files-');
+  try {
+    const executable = join(directory, 'goose');
+    // The fixture echoes what Goose would read: each --params value is a path
+    // whose contents become the parameter, as for a Goose `file` parameter.
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+const { readFileSync } = require('node:fs');
+if (process.argv[2] === 'recipe') process.exit(0);
+const recipe = readFileSync(process.argv[process.argv.indexOf('--recipe') + 1], 'utf8');
+const values = {};
+for (let i = 0; i < process.argv.length; i++)
+  if (process.argv[i] === '--params') {
+    const [key, path] = process.argv[i + 1].split(/=(.*)/su);
+    values[key] = readFileSync(path, 'utf8');
+  }
+const text = JSON.stringify({ complete: true, recipe, values });
+console.log(JSON.stringify({ metadata: { status: 'completed' }, messages: [{ role: 'assistant', content: [{ type: 'text', text }] }] }));
+`,
+      { mode: 0o700 },
+    );
+    const execute = gooseExecutor({
+      executable,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Parameter transport fixture. */
+      },
+    });
+    // Each value alone exceeds Linux's 128 KiB MAX_ARG_STRLEN.
+    const baseline = { findings: 'b'.repeat(512 * 1024) };
+    const target = 't'.repeat(200 * 1024);
+    const result = await execute({
+      run: {
+        definition: {
+          recipeText: 'original',
+          job: { inputs: { mode: 'report' }, execution: { resources: {} } },
+        },
+        fileRecipeText: 'rewritten',
+      },
+      baseline,
+      parameters: { target },
+      signal: new AbortController().signal,
+    });
+    assert.equal(result.recipe, 'rewritten');
+    assert.deepEqual(result.values, {
+      target,
+      mode: 'report',
+      baseline: JSON.stringify(baseline),
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('gooseExecutor tags provider-limit and provider-capacity failures on goose run only', async () => {
   const directory = await mkdtemp('/tmp/lcars-goose-limit-');
   try {

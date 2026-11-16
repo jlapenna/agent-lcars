@@ -111,7 +111,7 @@ only the created version number. A GitHub value is a JSON record containing
 `token` and its actual `expiresAt` ISO timestamp, or explicit `null` for an
 issuer credential without expiry. The expected login is independent metadata.
 Opaque secrets contain the actual UTF-8 value, preserving newlines. Values are
-bounded to 16 KiB and cannot contain NUL.
+bounded to 64 KiB, Secret Manager's maximum payload, and cannot contain NUL.
 
 ## Provision and register
 
