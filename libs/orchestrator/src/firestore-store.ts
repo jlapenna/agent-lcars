@@ -1187,7 +1187,11 @@ export class FirestoreStore implements OrchestratorStore {
         (await tx.get(ref)).data(),
         window.pipeline,
       );
-      if (current !== undefined && current.observedAt >= window.observedAt)
+      if (
+        current !== undefined &&
+        (current.observedAt >= window.observedAt ||
+          current.refreshDueAt === window.refreshDueAt)
+      )
         return;
       tx.set(ref, window);
     });

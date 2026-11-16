@@ -294,8 +294,12 @@ is a shared reader: it receives a copy whose `refresh_token` is the empty
 string, takes no lease and persists nothing, so any number of Codex runs may
 execute concurrently and none can rotate the lineage. Persisting such a copy is
 always refused as a no-op. With no recorded window, a stale record, or inside
-the window, a run uses the exclusive lease below, and claim admission limits
-Codex to one live claim, as before (#3392).
+the window, a run uses the exclusive lease below. Claim admission limits Codex
+to one live claim from `CODEX_CLAIM_TO_RESTORE_MAX_MS` (45 minutes) before the
+window, so a run claimed without that limit still restores as a shared reader
+(#3392). A shared reader's reported auth failure is logged: it is the signal
+that the refresh-at-expiry assumption no longer holds. The pod deadline
+(`queueRunLeaseSeconds`) must stay below the window.
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
 record serializes the single-use subscription refresh token. A run first takes

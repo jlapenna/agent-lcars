@@ -25,6 +25,12 @@ export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
  * falls back to the single exclusive lease the refresh token requires. */
 export const CODEX_EXCLUSIVE_WINDOW_MS = (2 * 60 + 30) * 60_000;
 
+/** Claim admission lifts the Codex ceiling only this much earlier than the
+ * restore cutoff: a claimed run restores up to one pod start later, and a run
+ * claimed without the ceiling must still restore as a shared reader, or every
+ * such run but one would wait out the exclusive lease and fail. */
+export const CODEX_CLAIM_TO_RESTORE_MAX_MS = 45 * 60_000;
+
 /** When a provider's shared login next refreshes, recorded by the Console
  * credential broker from the authoritative lineage it reads. */
 export interface ProviderCredentialWindow {
@@ -66,7 +72,9 @@ export function pipelineLiveClaimCeiling(
     const window = parseCredentialWindow(credentialWindow, pipeline);
     if (
       window !== undefined &&
-      Date.parse(window.refreshDueAt) - CODEX_EXCLUSIVE_WINDOW_MS >
+      Date.parse(window.refreshDueAt) -
+        CODEX_EXCLUSIVE_WINDOW_MS -
+        CODEX_CLAIM_TO_RESTORE_MAX_MS >
         Date.parse(now)
     )
       return undefined;

@@ -449,7 +449,10 @@ export async function restoreCodexCredential(
     const outsideWindow = (dueAt: string | undefined) =>
       dueAt !== undefined &&
       Date.parse(dueAt) - CODEX_EXCLUSIVE_WINDOW_MS > context.now().getTime();
-    const recorded = await context.store.readCredentialWindow('codex');
+    // A failed window read falls back to the exclusive lease, never fails.
+    const recorded = await context.store
+      .readCredentialWindow('codex')
+      .catch(() => undefined);
     if (outsideWindow(recorded?.refreshDueAt)) {
       const current = await context.codexAuth.read();
       if (outsideWindow(await recordCodexWindow(context, current.authBase64))) {
@@ -458,6 +461,10 @@ export async function restoreCodexCredential(
           throw new ORPCError('UNAUTHORIZED', {
             message: 'Run completed during credential restore',
           });
+        logger.info(
+          'agent-lcars: Codex credential restored for %s as a shared reader',
+          run.runId,
+        );
         return {
           ...sharedReaderCopy(current.authBase64),
           generation: current.generation,
@@ -631,6 +638,14 @@ export async function persistCodexCredential(
     } else if (isSharedReaderCopy(input.authBase64)) {
       // A shared reader's refresh-token-free copy: it holds no lease and can
       // never replace the lineage, so there is nothing to persist.
+      if (input.authFailure !== undefined)
+        // The one signal that the shared-window assumption broke (a Codex
+        // upgrade, an early server-side refresh, a revoked token).
+        logger.error(
+          'agent-lcars: Codex shared reader %s reported an auth failure: %s',
+          run.runId,
+          input.authFailure,
+        );
       result = { status: 'unchanged' };
     } else {
       const currentLease = await context.codexAuth.readLease();

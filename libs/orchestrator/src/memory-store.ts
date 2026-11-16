@@ -856,7 +856,11 @@ export class MemoryStore implements OrchestratorStore {
     window: ProviderCredentialWindow,
   ): Promise<void> {
     const current = this.#credentialWindows.get(window.pipeline);
-    if (current !== undefined && current.observedAt >= window.observedAt)
+    if (
+      current !== undefined &&
+      (current.observedAt >= window.observedAt ||
+        current.refreshDueAt === window.refreshDueAt)
+    )
       return;
     this.#credentialWindows.set(window.pipeline, structuredClone(window));
   }

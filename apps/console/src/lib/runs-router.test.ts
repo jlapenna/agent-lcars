@@ -4085,6 +4085,61 @@ describe('codexAuth', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  it('carries a shared reader through heartbeat, persist and completion without ever touching the lease', async () => {
+    const { store, orchestrator, now, runId, token } = await secondCodexRun();
+    const dueAt = Date.parse(NOW) + 8 * DAY;
+    await store.recordCredentialWindow({
+      pipeline: 'codex',
+      refreshDueAt: new Date(dueAt).toISOString(),
+      observedAt: NOW,
+    });
+    const leaseWrites = {
+      createLease: vi.fn(context.codexAuth.createLease),
+      takeLease: vi.fn(context.codexAuth.takeLease),
+      releaseLease: vi.fn(context.codexAuth.releaseLease),
+      replace: vi.fn(context.codexAuth.replace),
+    };
+    const runCtx = {
+      store,
+      orchestrator,
+      now,
+      ...context,
+      bearerToken: token,
+      codexAuth: {
+        ...context.codexAuth,
+        ...leaseWrites,
+        read: async () => ({
+          authBase64: lineage(dueAt),
+          generation: '21',
+          sha256: 'a'.repeat(64),
+        }),
+        // Another run holds the exclusive lease throughout.
+        readLease: busyLease,
+      },
+    };
+    const restored = await call(runCtx, 'GET', runPath(runId, '/codex-auth'));
+    expect(restored.status).toBe(200);
+    expect(
+      (await call(runCtx, 'POST', runPath(runId, '/heartbeat'))).status,
+    ).toBe(200);
+    const persisted = await call(runCtx, 'PUT', runPath(runId, '/codex-auth'), {
+      generation: '21',
+      restoredSha256: '0'.repeat(64),
+      authBase64: (restored.json as { authBase64: string }).authBase64,
+      authFailure: 'codex-login-401',
+    });
+    expect(persisted.json).toEqual({ status: 'unchanged' });
+    const complete = await call(runCtx, 'POST', runPath(runId, '/complete'), {
+      outcome: 'no-op',
+      outcomeReference: null,
+      message: 'reviewed',
+    });
+    expect(complete.status).toBe(200);
+    expect((await store.readRun(runId))?.credentialOperation).toBeUndefined();
+    for (const write of Object.values(leaseWrites))
+      expect(write).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['inside the refresh window', 60 * 60 * 1000, 60 * 60 * 1000],
     [
