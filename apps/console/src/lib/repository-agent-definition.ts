@@ -4,8 +4,8 @@ import { z } from 'zod';
 import { jobDigest } from './repository-job-definition';
 
 /** A repository-owned claw agent (`.lcars/agents/<name>/`,
- * docs/repository-agents.md). Only `description` is required; everything
- * else falls back to the executor runtime's defaults. */
+ * docs/repository-agents.md). Only `description` is required. Concurrency
+ * and resources belong to the executor runtime the profile names. */
 const agentNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
 const repositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/u);
 
@@ -19,13 +19,6 @@ export const agentManifestSchema = z.strictObject({
   retry: z.enum(['finite', 'terminal']).optional(),
   /** A report produced without any tool call is a failed attempt. */
   requireToolEvidence: z.boolean().optional(),
-  maxLiveClaims: z.number().int().positive().optional(),
-  allocation: z
-    .strictObject({
-      cpu: z.union([z.string(), z.number()]).optional(),
-      memory: z.string().optional(),
-    })
-    .optional(),
 });
 export type AgentManifest = z.infer<typeof agentManifestSchema>;
 
