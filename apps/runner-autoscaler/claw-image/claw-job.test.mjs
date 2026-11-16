@@ -1,5 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- the claw image's suite runs under node --test without Vitest, like the runner-image runtime suites. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
@@ -12,8 +13,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-
-import { createHash } from 'node:crypto';
 
 import {
   agentDigest,

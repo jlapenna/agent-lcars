@@ -22,6 +22,7 @@
 //      no unresolved tool error; everything else is runner-failed.
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cp,
   mkdir,
@@ -32,7 +33,6 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
