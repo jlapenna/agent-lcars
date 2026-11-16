@@ -17,6 +17,7 @@ import {
   type OutboxEntry,
   type ProviderFallback,
   type ProviderFallbackRequest,
+  queueOrderAt,
   type QueuePriority,
   queuePrioritySchema,
   recoveryDeadlineElapsed,
@@ -115,6 +116,12 @@ export function runStartDeadlineAt(now: string): string {
  * startup loss (not a provider attempt), and the executor retires the Job that
  * never placed, so one unplaceable Job cannot hold admission indefinitely. */
 export const RUN_PLACEMENT_WAIT_MAX_MS = 60 * 60_000;
+
+/** Consecutive capacity waits a lineage may requeue through in place
+ * (about six hours at the one-hour placement bound). Past it the loss is
+ * charged like any other, so an unplaceable run eventually parks visibly
+ * instead of holding the head of the queue forever. */
+export const MAX_PLACEMENT_WAITS = 6;
 
 /** Loss-event note for a claim whose Job never placed (lostBeforePlacement). */
 export const PLACEMENT_WAIT_EXCEEDED_NOTE =
@@ -490,9 +497,9 @@ function mintRun(input: {
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
   sourceRevision?: WorkRevision;
   revisionAttempt?: number;
-  /** Queue order (FIFO within a priority class). Only a capacity-wait
-   * requeue passes its predecessor's, so it keeps its place in line. */
+  /** Only a capacity-wait requeue passes these (lostBeforePlacement). */
   queuedSince?: string;
+  placementWaits?: number;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -544,7 +551,13 @@ function mintRun(input: {
           : { intervention: input.intervention }),
       },
     ],
-    createdAt: input.queuedSince ?? now,
+    ...(input.queuedSince === undefined
+      ? {}
+      : { queuedSince: input.queuedSince }),
+    ...(input.placementWaits === undefined
+      ? {}
+      : { placementWaits: input.placementWaits }),
+    createdAt: now,
     updatedAt: now,
   };
   return {
@@ -1036,6 +1049,10 @@ export function lostBeforePlacement(run: Run, now: string): boolean {
   const queue = run.queue;
   return (
     queue?.startupPlacement?.state === 'waiting' &&
+    // The executor reported the Job Pending at least once. A claim it never
+    // reported on (Job never created, reporting broken) is not capacity.
+    queue.startupPlacement.jobUid !== undefined &&
+    (run.placementWaits ?? 0) < MAX_PLACEMENT_WAITS &&
     queue.firstHeartbeatAt === undefined &&
     queue.providerProcessStartedAt === undefined &&
     startDeadlineElapsed(run, now)
@@ -1131,7 +1148,12 @@ function settleLostAndRetry(
       lostRun.sourceRevision === undefined
         ? undefined
         : (lostRun.revisionAttempt ?? 1) + (unplaced ? 0 : 1),
-    ...(unplaced ? { queuedSince: lostRun.createdAt } : {}),
+    ...(unplaced
+      ? {
+          queuedSince: queueOrderAt(lostRun),
+          placementWaits: (lostRun.placementWaits ?? 0) + 1,
+        }
+      : {}),
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}

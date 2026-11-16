@@ -273,11 +273,15 @@ startup within twenty minutes; it records startup loss, not a model failure.
 A normal temporary capacity wait remains placement until that bound, renewed by
 each Pending observation for at most one hour from the claim; past that the
 sweep records a startup loss and the executor retires the Job that never
-placed. A Job that never placed is capacity contention, not an execution
-attempt (#3392): its successor keeps the original queue position
-(`createdAt`), it spends neither the task's lost-run budget nor the revision's
-attempt count, and the anchor comment says the run could not start for lack of
-room rather than reporting a lease expiry. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
+placed. A Job the executor reported Pending until that bound is capacity
+contention, not an execution attempt (#3392): its successor keeps the
+original place in line (`queuedSince`, read through `queueOrderAt`; `createdAt`
+stays the run's own creation), it spends neither the task's lost-run budget
+nor the revision's attempt count, and only the first wait in a streak
+comments on the anchor, saying the run could not start for lack of room.
+`MAX_PLACEMENT_WAITS` (6) bounds a streak; past it, and for a claim the
+executor never reported on, the loss is charged as usual so an unplaceable
+run parks instead of holding the head of the queue. Accepted worker heartbeats then use the renewable run lease. Kubernetes' unchanged
 7200-second execution limit is an independent backstop (a Pod runtime deadline
 on every executor Job; the executor negotiates placement on every claim), not
 permission to run after control-plane settlement. Exact-claim foreground retirement and Pod

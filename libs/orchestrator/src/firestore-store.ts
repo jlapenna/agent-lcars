@@ -35,6 +35,7 @@ import {
   type LeasedOutboxEntry,
   outboxEntrySchema,
   type OutboxSettlement,
+  queueOrderAt,
   type RequestSource,
   type Run,
   runRecoveryDeadline,
@@ -1076,7 +1077,7 @@ export class FirestoreStore implements OrchestratorStore {
     return snapshot.docs
       .map((doc) => runSchema.parse(doc.data()))
       .filter((run) => isLive(run.state))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .sort((a, b) => queueOrderAt(a).localeCompare(queueOrderAt(b)))
       .slice(0, limit);
   }
   async readProviderCooldowns(

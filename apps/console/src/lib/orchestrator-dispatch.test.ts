@@ -1649,6 +1649,18 @@ describe('describeLostOutcome', () => {
     expect(body).not.toMatch(/\(attempt \d/);
   });
 
+  it('posts once per capacity-wait streak', async () => {
+    const later = {
+      ...lostRun('placement observation deadline exceeded'),
+      placementWaits: 2,
+    } as Parameters<typeof describeLostOutcome>[1];
+    const { body } = await describeLostOutcome(store, later, {
+      ...task,
+      consecutiveLost: 0,
+    } as typeof task);
+    expect(body).toBeUndefined();
+  });
+
   it('keeps the lease-expiry wording and attempt count for a worker that was lost', async () => {
     const { body } = await describeLostOutcome(
       store,

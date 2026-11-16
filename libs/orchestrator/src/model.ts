@@ -546,6 +546,12 @@ export const runSchema = z.strictObject({
   issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),
+  /** Queue order when it differs from createdAt: a capacity-wait requeue
+   * keeps its predecessor's place in line (queueOrderAt). */
+  queuedSince: isoUtc.optional(),
+  /** Consecutive capacity waits this run's lineage has requeued through
+   * (lostBeforePlacement); bounded by MAX_PLACEMENT_WAITS. */
+  placementWaits: z.number().int().positive().optional(),
   /** Explicit provider alternatives and the exact fresh-attempt provenance. */
   providerFallback: providerFallbackSchema.optional(),
   /** Queue claim state -- see `runQueueSchema`. */
@@ -824,6 +830,14 @@ export function runRecoveryDeadline(run: Run): string | undefined {
     Date.parse(start) < Date.parse(run.leaseExpiresAt)
     ? start
     : run.leaseExpiresAt;
+}
+
+/** A run's place in the queue: a capacity-wait requeue keeps its
+ * predecessor's (queuedSince); every other run queues from its creation. */
+export function queueOrderAt(
+  run: Pick<Run, 'createdAt' | 'queuedSince'>,
+): string {
+  return run.queuedSince ?? run.createdAt;
 }
 
 export function startDeadlineElapsed(run: Run, now: string): boolean {

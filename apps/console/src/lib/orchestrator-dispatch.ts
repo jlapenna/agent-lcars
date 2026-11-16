@@ -643,6 +643,11 @@ async function handleReportOutcome(
           body: outcomeCommentBody(run, fallbackSuccessor, latestSubsequentRun),
           needsHumanLabel: run.state === 'finished' && runNeedsHumanLabel(run),
         };
+  if (outcome.body === undefined) {
+    await settleClaim(deps, entry, 'done');
+    result.reported.push(run.runId);
+    return;
+  }
   const url = `${githubApiBaseUrl(deps)}/repos/${target.repo}/issues/${target.issue}/comments`;
 
   let response: Response;
@@ -936,12 +941,12 @@ export async function describeLostOutcome(
   store: OrchestratorStore,
   run: Run,
   task: Task | undefined,
-): Promise<{ body: string; needsHumanLabel: boolean }> {
+): Promise<{ body: string | undefined; needsHumanLabel: boolean }> {
   // A Job that never placed is capacity contention, not a worker failure:
   // say so, and that its requeue kept its place and its retry budget.
   const unplaced = run.events.at(-1)?.note === PLACEMENT_WAIT_EXCEEDED_NOTE;
   const lostPrefix = unplaced
-    ? `⏳ Run ${run.runId} could not start: no cluster node had room for its job within an hour. `
+    ? `⏳ Run ${run.runId} could not start: no cluster node had room for its job. `
     : `⚠️ Run ${run.runId} was lost (no report before its lease expired). `;
   const activeRunId = task?.activeRunId;
   const activeRun =
@@ -952,6 +957,10 @@ export async function describeLostOutcome(
     activeRun?.requestSource === 'auto-retry' &&
     activeRun.requestId === `retry:${run.runId}`
   ) {
+    // One comment per capacity-wait streak: later waits in the same streak
+    // add nothing the first did not already say.
+    if ((run.placementWaits ?? 0) > 0)
+      return { body: undefined, needsHumanLabel: false };
     return {
       body:
         lostPrefix +

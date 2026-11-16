@@ -25,6 +25,7 @@ import {
   isClaimant,
   isLive,
   isWorkAnchor,
+  queueOrderAt,
   requestHistoryKey,
   runRecoveryDeadline,
   settleOutboxEntry,
@@ -801,7 +802,7 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(
       [...this.#runs.values()]
         .filter((run) => run.queue?.state === 'queued' && isLive(run.state))
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .sort((a, b) => queueOrderAt(a).localeCompare(queueOrderAt(b)))
         .slice(0, limit),
     );
   }
