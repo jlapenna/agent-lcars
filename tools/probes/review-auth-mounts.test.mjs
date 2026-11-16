@@ -65,7 +65,14 @@ function claudeHome(auth) {
 
 const CLAUDE = '/native/claude';
 const claudeSessionState = () =>
-  isolated(CLAUDE, 'projects', 'session-env', 'shell-snapshots');
+  isolated(
+    CLAUDE,
+    'projects',
+    'session-env',
+    'shell-snapshots',
+    'tasks',
+    'teams',
+  );
 
 test('everything but Claude runtime state is overlaid read-only; symlinks are left to reconcile', () => {
   withAuthDir((auth) => {
@@ -140,6 +147,17 @@ test('a configuration symlink resolving into a writable binding refuses the laun
   withAuthDir((auth) => {
     writeFileSync(join(auth, 'history.jsonl'), '\n');
     symlinkSync(join(auth, 'history.jsonl'), join(auth, 'settings.json'));
+    assert.throws(
+      () => protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
+      /resolves into a writable binding/,
+    );
+    // A dangling link whose target would be created inside a writable
+    // binding is refused too.
+    rmSync(join(auth, 'settings.json'));
+    symlinkSync(
+      join(auth, 'not-yet', 'settings.json'),
+      join(auth, 'settings.json'),
+    );
     assert.throws(
       () => protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
       /resolves into a writable binding/,

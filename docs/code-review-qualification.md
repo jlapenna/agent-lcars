@@ -41,12 +41,12 @@ entries (credentials, sessions, caches, bookkeeping databases). Every other
 existing top-level entry is overlaid read-only: settings, hooks, plugins,
 skills, rules, MCP configuration, instruction files, Codex memories and goals
 (with their SQLite sidecars, created empty when absent), and installed
-executables. State that live sessions load or source, Claude `projects/`
-(per-project memory) and `shell-snapshots/` and `session-env/`, and Codex
+executables. State that live sessions load or source, Claude `projects/` (per-project memory), `shell-snapshots/`, `session-env/`,
+`tasks/` and `teams/`, and Codex
 `shell_snapshots/`, is replaced by an empty private directory under the run's
 `private-state/`; the review's transcripts land there and the in-container
-evidence collector reads them from there. A configuration symlink that
-resolves into a writable binding refuses the launch.
+evidence collector reads them from there. A configuration symlink whose
+target is, or would be created, inside a writable binding refuses the launch.
 
 Two changes cannot be prevented by an overlay: replacing a symlink (its target
 is outside the mount) and creating a configuration file that did not exist

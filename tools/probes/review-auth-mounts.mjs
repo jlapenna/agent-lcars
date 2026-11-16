@@ -27,7 +27,7 @@ import {
   renameSync,
   symlinkSync,
 } from 'node:fs';
-import { join, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 const provider = (
   writable,
@@ -80,7 +80,6 @@ export const AUTH_DIRECTORY_POLICY = {
       'backups',
       'daemon',
       'jobs',
-      'teams',
       'usage-data',
       'shares',
       'state',
@@ -96,7 +95,6 @@ export const AUTH_DIRECTORY_POLICY = {
       'mcp-discovery-cache',
       'mcp-needs-auth-cache.json',
       'gh-pr-status-cache.json',
-      'tasks',
       'session-env',
       'image-cache',
       'paste-cache',
@@ -125,7 +123,9 @@ export const AUTH_DIRECTORY_POLICY = {
     // empty private copies instead of the caller's. The review's own
     // transcripts land in the private projects/, where the in-container
     // evidence collector reads them.
-    ['projects', 'shell-snapshots', 'session-env'],
+    // teams/ and tasks/ hold agent-team inboxes and shared task lists that
+    // live sessions read into prompts.
+    ['projects', 'shell-snapshots', 'session-env', 'tasks', 'teams'],
   ),
   codex: provider(
     [
@@ -264,6 +264,26 @@ function isolatedStateMounts(providerName, auth, target, privateRoot) {
   });
 }
 
+// Where a write through the link would land on the host, even when the
+// target does not exist yet: resolve it lexically, canonicalize the deepest
+// existing ancestor and rejoin the rest. Chained links resolve through the
+// ancestor's realpath; a missing component cannot itself be a link.
+function resolveLinkTarget(link) {
+  let path = resolve(dirname(link), readlinkSync(link));
+  const rest = [];
+  for (;;) {
+    try {
+      return join(realpathSync(path), ...rest);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      const parent = dirname(path);
+      if (parent === path) throw error;
+      rest.unshift(basename(path));
+      path = parent;
+    }
+  }
+}
+
 // writableRoots: every host path bound writable into the container.
 export function protectedConfigMounts(
   providerName,
@@ -285,14 +305,8 @@ export function protectedConfigMounts(
     // through the link reach the host; refuse that. Otherwise snapshot and
     // restore protect the link itself (see reconcileRegistrations).
     if (stat.isSymbolicLink()) {
-      let resolved = null;
-      try {
-        resolved = realpathSync(source);
-      } catch {
-        // Dangling: nothing on the host to write through to.
-      }
+      const resolved = resolveLinkTarget(source);
       if (
-        resolved &&
         writableRoots.some(
           (root) => resolved === root || resolved.startsWith(root + sep),
         )
