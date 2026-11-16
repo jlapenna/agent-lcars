@@ -41,11 +41,13 @@ const treeSchema = z.object({
 });
 
 /** Pin `repository`'s default branch and return a reader for that commit.
- * Every request shares `signal`. */
+ * Every request shares `signal`. API responses are read whole unless the
+ * caller sets `maxResponseBytes` (the job catalog keeps its own bound). */
 export async function openRepositorySource(
   repository: string,
   token: string,
   signal: AbortSignal,
+  options: { maxResponseBytes?: number } = {},
 ): Promise<RepositorySource> {
   const get = async (path: string): Promise<unknown> => {
     // GitHub answers `/repos/{owner}/{repo}/` (trailing slash) with 404, so
@@ -62,7 +64,10 @@ export async function openRepositorySource(
       },
     );
     if (!response.ok) throw new Error(`Catalog source HTTP ${response.status}`);
-    const text = await readJobBody(response, 2 * 1024 * 1024);
+    const text =
+      options.maxResponseBytes === undefined
+        ? await response.text()
+        : await readJobBody(response, options.maxResponseBytes);
     return JSON.parse(text);
   };
   const metadata = z

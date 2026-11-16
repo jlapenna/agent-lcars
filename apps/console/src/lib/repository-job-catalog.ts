@@ -39,6 +39,7 @@ export async function refreshJobCatalog(
       repository,
       await tokens.tokenFor(repository),
       signal,
+      { maxResponseBytes: 2 * 1024 * 1024 },
     );
     const jobsTree = await source.lcarsDirectory('jobs');
     const entries =

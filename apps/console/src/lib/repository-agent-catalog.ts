@@ -23,9 +23,8 @@ export async function refreshAgentCatalog(
     .catch((error: unknown) =>
       logger.error('Agent source attempt not recorded: %s', repository, error),
     );
-  const existing = (await store.list()).filter(
-    (agent) => agent.repository === repository,
-  );
+  const repositoryRows = async () =>
+    (await store.list()).filter((agent) => agent.repository === repository);
   // Every write is fenced by this observation: once a newer refresh of the
   // repository has claimed publication, nothing below writes.
   const fence = { repository, at };
@@ -100,7 +99,10 @@ export async function refreshAgentCatalog(
         },
         fence,
       );
-    for (const removed of existing.filter(
+    // Re-read after claiming: a row an older overlapping refresh published
+    // after this refresh started must still be swept if this newer commit
+    // removed it.
+    for (const removed of (await repositoryRows()).filter(
       (agent) => !rows.some((row) => row.id === agent.id),
     ))
       await store.mutate(
@@ -120,7 +122,7 @@ export async function refreshAgentCatalog(
       );
   } catch (error) {
     if (!(await store.claimObservation(repository, at))) throw error;
-    for (const agent of existing)
+    for (const agent of await repositoryRows())
       await store.mutate(
         agent.id,
         (current) =>

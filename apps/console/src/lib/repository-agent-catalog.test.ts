@@ -350,3 +350,45 @@ it('refreshes the least recently attempted repositories first across ticks', asy
   await refreshAgentCatalogs(store, repositories, () => tokens, oneBatch());
   expect(seen).toContain('e/5');
 });
+
+it('sweeps a row an older refresh published while a newer refresh was reading', async () => {
+  const store = new MemoryAgentStore();
+  const older = github({ investigator: investigator() });
+  const newer = github({});
+  let olderRan = false;
+  const interleaved = async (url: string): Promise<Response> => {
+    if (!olderRan && url.endsWith('git/trees/agents?recursive=1')) {
+      // The newer refresh is mid-read when the older one completes.
+      olderRan = true;
+      vi.stubGlobal('fetch', older);
+      await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+      vi.stubGlobal('fetch', interleaved);
+    }
+    return newer(url);
+  };
+  vi.stubGlobal('fetch', interleaved);
+  await refreshAgentCatalog(
+    store,
+    'owner/repo',
+    tokens,
+    new Date(now.getTime() + 1000),
+  );
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: false,
+    error: 'Definition removed',
+  });
+});
+
+it('reads a recursive agent tree larger than any response cap', async () => {
+  const store = new MemoryAgentStore();
+  const files = investigator();
+  for (let index = 0; index < 3000; index++)
+    files[`workspace/${'deep/'.repeat(120)}file-${index}.md`] = {
+      content: `${index}`,
+    };
+  vi.stubGlobal('fetch', github({ investigator: files }));
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  const agent = [...store.rows.values()][0]!;
+  expect(agent.enabled).toBe(true);
+  expect(agent.definition!.files.length).toBeGreaterThan(3000);
+});
