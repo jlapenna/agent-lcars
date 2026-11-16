@@ -502,6 +502,12 @@ test('runs a repository-owned agent from its verified brief, not the zone mount'
     join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools/probe'),
   );
   assert.equal(probe.mode & 0o777, 0o555);
+  const tools = await stat(join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools'));
+  assert.equal(tools.mode & 0o777, 0o555);
+  await assert.rejects(
+    writeFile(join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools/new'), 'x'),
+    /EACCES/,
+  );
 });
 
 test('readBrief returns an agent request with its evidence rule', () => {

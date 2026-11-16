@@ -24,6 +24,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmod,
   cp,
   mkdir,
   mkdtemp,
@@ -199,6 +200,20 @@ export async function materializeAgent(request, dir) {
       mode: file.mode === '100755' ? 0o555 : 0o444,
     });
   }
+  // Lock every directory too, deepest first, so the turn cannot add or
+  // replace definition files (a zone ConfigMap mount was read-only).
+  const directories = new Set([dir]);
+  for (const file of request.files) {
+    let parent = dirname(join(dir, normalize(file.path)));
+    while (parent.startsWith(dir) && parent !== dir) {
+      directories.add(parent);
+      parent = dirname(parent);
+    }
+  }
+  for (const directory of [...directories].sort(
+    (left, right) => right.length - left.length,
+  ))
+    await chmod(directory, 0o555);
   return dir;
 }
 
