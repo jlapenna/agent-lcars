@@ -3,6 +3,7 @@ import {
   jobSecretValueSchema,
   REPOSITORY_JOB_PARAMETERS_MAX_BYTES,
   REPOSITORY_JOB_REQUEST_MAX_BYTES,
+  REPOSITORY_JOB_RESULT_MAX_BYTES,
 } from '@agent-lcars/work';
 import type { Firestore } from '@google-cloud/firestore';
 import { describe, expect, it } from 'vitest';
@@ -518,22 +519,15 @@ describe('Firestore document size', () => {
     expect((await store.sourceRefreshes()).size).toBe(600);
   });
 
-  it('stores a full result whose data is staged twice beyond the former 384 KiB', async () => {
-    const { database, set } = fakeDatabase();
-    const value = occurrence([{}]);
-    const definition = value.definition;
-    // ~250 KiB of data: within the 256 KiB result bound, ~500 KiB staged.
-    const artifact = validateJobResult(definition, {
-      report: 'Near-limit result',
-      complete: true,
-      data: { findings: 'f'.repeat(250 * 1024) },
+  it('stores and reads a maximum result whose data is staged twice', async () => {
+    const { database } = memoryDatabase();
+    const store = new FirestoreJobStore(database);
+    // At the 4 MiB result bound; result.json and baseline repeat it (~8 MiB).
+    const value = occurrence([{}], {
+      findings: 'f'.repeat(REPOSITORY_JOB_RESULT_MAX_BYTES - 1024),
     });
-    await new FirestoreJobStore(database).mutate(
-      'b'.repeat(64),
-      'c'.repeat(64),
-      () => ({ occurrence: { ...value, parameters: {}, artifact } }),
-    );
-    expect(set).toHaveBeenCalledOnce();
+    await save(store, value);
+    expect(await store.readOccurrence(value.id)).toEqual(value);
   });
 
   it('refuses an occurrence Firestore could not store, naming the record', async () => {
