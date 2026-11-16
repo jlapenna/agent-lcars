@@ -8,7 +8,7 @@ const { enqueueGitHubWebhook } = vi.hoisted(() => ({
 
 vi.mock('@/lib/hosted-webhook-queue', () => ({ enqueueGitHubWebhook }));
 
-import { POST } from './route';
+import { GITHUB_WEBHOOK_MAX_BYTES, POST } from './route';
 
 const SECRET = 'test-webhook-secret';
 const HOME_REPO = 'jlapenna/agent-lcars';
@@ -132,4 +132,80 @@ describe('POST /api/control-plane/webhook repository admission', () => {
       expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('POST /api/control-plane/webhook body bound', () => {
+  function endlessBody() {
+    const chunk = new Uint8Array(1024 * 1024);
+    const state = { pulled: 0, cancelled: false };
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        state.pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+    return { stream, state };
+  }
+
+  it("rejects a body over GitHub's 25 MB cap without buffering the rest", async () => {
+    const { stream, state } = endlessBody();
+    const response = await POST(
+      new Request('https://console.test/api/control-plane/webhook', {
+        method: 'POST',
+        body: stream,
+        duplex: 'half',
+        headers: {
+          'x-github-delivery': 'e29e8f0a-7530-11f0-9f9d-8f1bc3e88820',
+          'x-github-event': 'issues',
+          'x-hub-signature-256': 'sha256=00',
+        },
+      } as RequestInit),
+    );
+    expect(response.status).toBe(413);
+    expect(state.cancelled).toBe(true);
+    expect(state.pulled).toBeLessThanOrEqual(
+      GITHUB_WEBHOOK_MAX_BYTES + 3 * 1024 * 1024,
+    );
+    expect(enqueueGitHubWebhook).not.toHaveBeenCalled();
+  });
+
+  it('rejects a declared Content-Length over the cap before reading', async () => {
+    const { stream, state } = endlessBody();
+    const response = await POST(
+      new Request('https://console.test/api/control-plane/webhook', {
+        method: 'POST',
+        body: stream,
+        duplex: 'half',
+        headers: {
+          'content-length': String(GITHUB_WEBHOOK_MAX_BYTES + 1),
+          'x-github-event': 'issues',
+        },
+      } as RequestInit),
+    );
+    expect(response.status).toBe(413);
+    expect(state.pulled).toBeLessThanOrEqual(2 * 1024 * 1024);
+  });
+
+  it('still admits a signed body larger than the old implicit default', async () => {
+    const rawBody = JSON.stringify({
+      repository: { full_name: HOME_REPO },
+      padding: 'p'.repeat(2 * 1024 * 1024),
+    });
+    const response = await POST(
+      new Request('https://console.test/api/control-plane/webhook', {
+        method: 'POST',
+        body: rawBody,
+        headers: {
+          'x-github-delivery': 'e29e8f0a-7530-11f0-9f9d-8f1bc3e88820',
+          'x-github-event': 'issues',
+          'x-hub-signature-256': sign(rawBody),
+        },
+      }),
+    );
+    expect(response.status).not.toBe(413);
+    expect(enqueueGitHubWebhook).toHaveBeenCalledTimes(1);
+  });
 });

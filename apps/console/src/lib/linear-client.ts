@@ -1,6 +1,8 @@
 import 'server-only';
 
 import {
+  TRACKER_ISSUE_DESCRIPTION_MAX,
+  TRACKER_ISSUE_TITLE_MAX,
   type TrackerIssue,
   trackerIssueSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -54,6 +56,11 @@ const issueSchema = z.object({
 });
 const ISSUE_FIELDS = `id identifier title description url updatedAt archivedAt trashed team { id } state { id name type } assignee { id name } labels(first: 250) { nodes { id name } pageInfo { hasNextPage } }`;
 
+/** Why a new brief cannot be built from an `oversized` issue snapshot. */
+export function oversizedIssueReason(identifier: string): string {
+  return `Linear issue ${identifier} exceeds LCARS tracker bounds (title ${TRACKER_ISSUE_TITLE_MAX}, description ${TRACKER_ISSUE_DESCRIPTION_MAX} characters); refusing to build a brief from a cut copy`;
+}
+
 export function linearIssueSnapshot(
   organizationId: string,
   value: unknown,
@@ -63,11 +70,19 @@ export function linearIssueSnapshot(
     throw new Error('Linear issue labels exceed the supported bound');
   if (new URL(issue.url).origin !== 'https://linear.app')
     throw new Error('Unexpected Linear issue URL');
+  // Identity, lifecycle and outcome paths still need an oversized issue; the
+  // snapshot drops its text and is flagged so no brief is built from it.
+  const oversized =
+    issue.title.length > TRACKER_ISSUE_TITLE_MAX ||
+    (issue.description ?? '').length > TRACKER_ISSUE_DESCRIPTION_MAX;
   return trackerIssueSchema.parse({
     reference: { tracker: 'linear', organizationId, issueId: issue.id },
     identifier: issue.identifier,
-    title: issue.title.slice(0, 256),
-    description: (issue.description ?? '').slice(0, 65_536),
+    title: oversized
+      ? issue.title.slice(0, TRACKER_ISSUE_TITLE_MAX)
+      : issue.title,
+    description: oversized ? '' : (issue.description ?? ''),
+    ...(oversized ? { oversized: true } : {}),
     url: issue.url,
     updatedAt: issue.updatedAt,
     teamId: issue.team.id,

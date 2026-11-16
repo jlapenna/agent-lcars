@@ -26,7 +26,11 @@ import {
   issueTracker,
   readSourceWorkBinding,
 } from './issue-trackers';
-import { listLinearIssues, readLinearIssue } from './linear-client';
+import {
+  listLinearIssues,
+  oversizedIssueReason,
+  readLinearIssue,
+} from './linear-client';
 import {
   linearConfig,
   linearIssueInRepository,
@@ -385,6 +389,10 @@ export async function dispatchIssueSource(
     );
   if (source.issue.state !== 'open')
     throw new ORPCError('CONFLICT', { message: 'Issue is closed' });
+  if (source.issue.oversized)
+    throw new ORPCError('BAD_REQUEST', {
+      message: oversizedIssueReason(source.issue.identifier),
+    });
   if (ref.tracker === 'github') {
     const anchor = { repo: ref.repo, issue: ref.issue };
     if (repo !== ref.repo) throw new ORPCError('FORBIDDEN');

@@ -1,9 +1,10 @@
 import 'server-only';
 
-import type {
-  FleetTriageReport,
-  TriageAnchor,
-  TriagePublication,
+import {
+  type FleetTriageReport,
+  TRIAGE_COMMENT_MAX,
+  type TriageAnchor,
+  type TriagePublication,
 } from '@agent-lcars/dispatch-contracts';
 import {
   type LeasedOutboxEntry,
@@ -27,6 +28,14 @@ import {
   recordTriagePublication,
 } from './fleet-triage-work';
 
+export class TriageCommentTooLargeError extends Error {
+  constructor(readonly length: number) {
+    super(
+      `Triage comment is ${length} characters; GitHub allows ${TRIAGE_COMMENT_MAX}`,
+    );
+  }
+}
+
 export function triageComment(
   run: Run,
   anchor: TriageAnchor,
@@ -39,8 +48,9 @@ export function triageComment(
     (dispatchedBefore && report.disposition === 'ready'
       ? '\n\nA coding dispatch was already issued for this issue; no automatic redispatch.'
       : '');
-  if (published.length > 16_384)
-    throw new Error('Triage comment exceeds its result bound');
+  // Refuse rather than cut: a partial triage comment would misstate evidence.
+  if (published.length > TRIAGE_COMMENT_MAX)
+    throw new TriageCommentTooLargeError(published.length);
   return published;
 }
 
@@ -78,7 +88,18 @@ export async function publishFleetTriage(
     )
       dispatchedBefore = await tracker.dispatchObserved(requested);
   }
-  const body = triageComment(run, anchor, report, dispatchedBefore);
+  let body: string;
+  try {
+    body = triageComment(run, anchor, report, dispatchedBefore);
+  } catch (error) {
+    if (!(error instanceof TriageCommentTooLargeError)) throw error;
+    // Deterministic for this report; retrying cannot make it fit.
+    await recordTriagePublication(store, entry.runId, {
+      state: 'failed',
+      error: error.message,
+    });
+    return;
+  }
   const checkLease = () => {
     if (Date.now() + 30_000 >= Date.parse(entry.leaseExpiresAt))
       throw new Error('Triage publisher lease has insufficient write budget');

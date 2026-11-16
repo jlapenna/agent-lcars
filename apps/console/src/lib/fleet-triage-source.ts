@@ -41,7 +41,10 @@ export function triageEligible(source: TriageSource): boolean {
     !source.openFixPr &&
     !source.owned &&
     !source.parked &&
-    !source.labels.some((label) => /^(agent|review):/u.test(label))
+    !source.labels.some((label) => /^(agent|review):/u.test(label)) &&
+    // An oversized snapshot carries no description, so the fingerprint could
+    // not notice an edit and a stale report could publish. Refuse it.
+    !source.issue?.oversized
   );
 }
 

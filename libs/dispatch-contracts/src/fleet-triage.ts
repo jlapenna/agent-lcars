@@ -20,7 +20,13 @@ export type TriageAnchor =
   | { repo: string; issue: number }
   | { repo: string; source: z.infer<typeof linearIssueReferenceSchema> };
 
-/** A report proposes effects; it never grants its own authority to write. */
+/** GitHub's issue comment body limit; the rendered triage comment must fit it. */
+export const TRIAGE_COMMENT_MAX = 65_536;
+
+/** A report proposes effects; it never grants its own authority to write.
+ * Fields carry no per-item caps: the run message bounds the whole report and
+ * {@link TRIAGE_COMMENT_MAX} bounds the comment rendered from it. Labels must
+ * name existing tracker labels, which the publisher checks. */
 export const fleetTriageReportSchema = z
   .strictObject({
     sourceRevision: z.string().min(1).max(128),
@@ -31,10 +37,10 @@ export const fleetTriageReportSchema = z
       'duplicate',
       'not-a-bug',
     ]),
-    summary: z.string().trim().min(1).max(2_000),
-    evidence: z.array(z.string().trim().min(1).max(1_000)).min(1).max(8),
-    acceptanceCriteria: z.array(z.string().trim().min(1).max(500)).max(8),
-    labels: z.array(z.string().trim().min(1).max(100)).max(12),
+    summary: z.string().trim().min(1),
+    evidence: z.array(z.string().trim().min(1)).min(1),
+    acceptanceCriteria: z.array(z.string().trim().min(1)),
+    labels: z.array(z.string().trim().min(1)),
   })
   .refine(
     (value) =>
@@ -49,7 +55,7 @@ export type FleetTriageReport = z.infer<typeof fleetTriageReportSchema>;
  * describe external effects, not a second delivery queue. */
 export const triagePublicationSchema = z.strictObject({
   state: z.enum(['pending', 'complete', 'superseded', 'failed']),
-  commentBody: z.string().max(16_384).optional(),
+  commentBody: z.string().max(TRIAGE_COMMENT_MAX).optional(),
   commentId: z.union([z.number().int().positive(), z.uuid()]).optional(),
   sourceComment: z
     .strictObject({
@@ -58,7 +64,7 @@ export const triagePublicationSchema = z.strictObject({
       updatedAt: z.iso.datetime(),
     })
     .optional(),
-  addedLabels: z.array(z.string().min(1).max(100)).max(20).optional(),
+  addedLabels: z.array(z.string().min(1)).optional(),
   dispatchRequested: z.iso.datetime().optional(),
   dispatchObserved: z.boolean().optional(),
   error: z.string().max(400).optional(),

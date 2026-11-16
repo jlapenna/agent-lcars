@@ -86,6 +86,31 @@ describe('Linear webhook HTTP boundary', () => {
     ).toBe(200);
     expect(enqueue).not.toHaveBeenCalled();
   });
+  it('stops reading an oversized body at 512 KiB before HMAC', async () => {
+    const chunk = new Uint8Array(64 * 1024);
+    const state = { pulled: 0, cancelled: false };
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        state.pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        state.cancelled = true;
+      },
+    });
+    const response = await POST(
+      new Request('https://console.example/api/control-plane/linear/webhook', {
+        method: 'POST',
+        body,
+        duplex: 'half',
+        headers: { 'linear-signature': '00' },
+      } as RequestInit),
+    );
+    expect(response.status).toBe(413);
+    expect(state.cancelled).toBe(true);
+    expect(state.pulled).toBeLessThanOrEqual(512 * 1024 + 4 * chunk.byteLength);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
   it('returns 503 while the integration is disabled', async () => {
     getConfig.mockReturnValue(undefined);
     expect((await POST(request())).status).toBe(503);

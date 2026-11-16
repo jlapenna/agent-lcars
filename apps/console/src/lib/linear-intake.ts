@@ -22,7 +22,11 @@ import {
   linearIssueThread,
   readSourceWorkBinding,
 } from './issue-trackers';
-import { readLinearComment, readLinearIssue } from './linear-client';
+import {
+  oversizedIssueReason,
+  readLinearComment,
+  readLinearIssue,
+} from './linear-client';
 import {
   type LinearConfig,
   linearIssueRouting,
@@ -180,6 +184,8 @@ export async function dispatchLinearIssue(
     await runtime.orchestrator.refreshIssue({ workId: id }, issue);
     return { status: 200, body: { outcome: 'existing', itemId: id } };
   }
+  // A new brief would be a cut copy. Lifecycle sync above still applies.
+  if (issue.oversized) return ignored(oversizedIssueReason(issue.identifier));
   const work = normalizeWorkPayload({
     origin: { principal: grant.principal, channel: 'linear', thread },
     spec: {
@@ -448,6 +454,8 @@ export async function admitLinearWebhook(
       admitted.body['itemId'] === binding.workId &&
       route.repo === binding.repo
     ) {
+      if (issue.oversized)
+        return ignored(oversizedIssueReason(issue.identifier));
       const grant = grantForPrincipal(route.principal);
       if (!grant)
         return { status: 403, body: { error: 'Linear grant required' } };

@@ -26,14 +26,24 @@ export function issueSourceKey(issue: IssueReference): string {
     : `linear:${issue.organizationId}:${issue.issueId}`;
 }
 
+/** GitHub's issue title and body limits. Linear documents none; a Linear issue
+ * beyond these is still tracked for identity and lifecycle (see `oversized`),
+ * but no new brief is built from it. */
+export const TRACKER_ISSUE_TITLE_MAX = 256;
+export const TRACKER_ISSUE_DESCRIPTION_MAX = 65_536;
+
 /** Current tracker facts on Task; copied onto Run at admission so an issue
  * edit cannot change the brief of an executing or retried conversation. */
 export const trackerIssueSchema = z.strictObject({
   reference: issueReferenceSchema,
   identifier: z.string().min(1).max(256),
   url: z.url().max(2048),
-  title: z.string().min(1).max(256),
-  description: z.string().max(65_536),
+  title: z.string().min(1).max(TRACKER_ISSUE_TITLE_MAX),
+  description: z.string().max(TRACKER_ISSUE_DESCRIPTION_MAX),
+  /** The source title or description exceeds the bounds above. The snapshot
+   * then carries no description and a bounded title, kept only for identity,
+   * lifecycle and outcome publication; admission and briefs refuse it. */
+  oversized: z.literal(true).optional(),
   state: z.enum(['open', 'closed']),
   updatedAt: z.iso.datetime(),
   teamId: z.uuid().optional(),

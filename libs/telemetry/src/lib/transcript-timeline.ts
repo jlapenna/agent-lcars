@@ -2,10 +2,6 @@ import { extractAntigravityUserRequest } from './antigravity-transcript-adapter'
 import { SessionAgent } from './types';
 import { asArray, asBoolean, asRecord, asString } from './unknown-value';
 
-/** ~2KB - roomy enough to read a real tool call/result at a glance, small
- * enough that one enormous Bash output or file read can't blow up the page. */
-const MAX_BLOCK_CHARS = 2000;
-
 /**
  * Agents whose archived transcripts {@link parseTranscriptTimeline} actually
  * understands. OpenCode exports use a single JSON envelope of message info
@@ -41,14 +37,6 @@ export function isRenderableTranscriptAgent(agent: SessionAgent): boolean {
   return RENDERABLE_TRANSCRIPT_AGENTS.includes(agent);
 }
 
-function truncate(text: string, max = MAX_BLOCK_CHARS): string {
-  if (text.length <= max) {
-    return text;
-  }
-  const omitted = text.length - max;
-  return `${text.slice(0, max)}\n… truncated (${omitted} more characters)`;
-}
-
 export interface TranscriptTextEvent {
   kind: 'text';
   role: 'user' | 'assistant';
@@ -59,15 +47,15 @@ export interface TranscriptTextEvent {
 export interface TranscriptToolUseEvent {
   kind: 'tool_use';
   name: string;
-  /** JSON-stringified input, truncated - never the live object, so a
-   * rendering layer never needs its own truncation logic. */
+  /** JSON-stringified input in full - never the live object. The rendering
+   * layer collapses long blocks; it never receives a cut copy. */
   inputJson: string;
   timestamp?: string;
 }
 
 export interface TranscriptToolResultEvent {
   kind: 'tool_result';
-  /** Stringified content, truncated - tool_result content can be a plain
+  /** Stringified content in full - tool_result content can be a plain
    * string or a content-block array; both are flattened to text here. */
   content: string;
   timestamp?: string;
@@ -152,7 +140,7 @@ function eventsFromMessage(
     if (type === 'text') {
       const text = asString(record['text']);
       if (text && (role === 'user' || role === 'assistant')) {
-        events.push({ kind: 'text', role, text: truncate(text), timestamp });
+        events.push({ kind: 'text', role, text, timestamp });
       }
       continue;
     }
@@ -163,7 +151,7 @@ function eventsFromMessage(
         events.push({
           kind: 'tool_use',
           name,
-          inputJson: truncate(JSON.stringify(record['input'] ?? {}, null, 2)),
+          inputJson: JSON.stringify(record['input'] ?? {}, null, 2),
           timestamp,
         });
       }
@@ -174,7 +162,7 @@ function eventsFromMessage(
       const text = contentToText(record['content']);
       events.push({
         kind: 'tool_result',
-        content: truncate(text ?? JSON.stringify(record)),
+        content: text ?? JSON.stringify(record),
         timestamp,
       });
       continue;
@@ -191,9 +179,7 @@ function codexTextEvent(
   timestamp: string | undefined,
 ): TranscriptTextEvent[] {
   const value = asString(text);
-  return value
-    ? [{ kind: 'text', role, text: truncate(value), timestamp }]
-    : [];
+  return value ? [{ kind: 'text', role, text: value, timestamp }] : [];
 }
 
 /** Converts a Codex rollout envelope into zero or more shared timeline events. */
@@ -247,9 +233,7 @@ function eventsFromCodexLine(
     const input = payload['arguments'] ?? payload['input'] ?? {};
     const inputJson =
       typeof input === 'string' ? input : JSON.stringify(input, null, 2);
-    return [
-      { kind: 'tool_use', name, inputJson: truncate(inputJson), timestamp },
-    ];
+    return [{ kind: 'tool_use', name, inputJson, timestamp }];
   }
 
   if (
@@ -260,7 +244,7 @@ function eventsFromCodexLine(
     return [
       {
         kind: 'tool_result',
-        content: truncate(output ?? JSON.stringify(payload['output'] ?? '')),
+        content: output ?? JSON.stringify(payload['output'] ?? ''),
         timestamp,
       },
     ];
@@ -282,7 +266,7 @@ function eventsFromAntigravityLine(
     if (!content) return [];
     const body = extractAntigravityUserRequest(content);
     if (!body) return [];
-    return [{ kind: 'text', role: 'user', text: truncate(body), timestamp }];
+    return [{ kind: 'text', role: 'user', text: body, timestamp }];
   }
 
   if (stepType === 'PLANNER_RESPONSE') {
@@ -291,7 +275,7 @@ function eventsFromAntigravityLine(
       events.push({
         kind: 'text',
         role: 'assistant',
-        text: truncate(content),
+        text: content,
         timestamp,
       });
     }
@@ -304,8 +288,8 @@ function eventsFromAntigravityLine(
         typeof args === 'string' ? args : JSON.stringify(args, null, 2);
       events.push({
         kind: 'tool_use',
-        name: truncate(name, 128),
-        inputJson: truncate(inputJson),
+        name,
+        inputJson,
         timestamp,
       });
     }
@@ -317,7 +301,7 @@ function eventsFromAntigravityLine(
     return [
       {
         kind: 'tool_result',
-        content: truncate(content),
+        content,
         timestamp,
       },
     ];
@@ -374,8 +358,7 @@ function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
       if (part['type'] === 'text') {
         const text = asString(part['text']);
         if (text === undefined) hadUnparseableLines = true;
-        else if (text)
-          events.push({ kind: 'text', role, text: truncate(text), timestamp });
+        else if (text) events.push({ kind: 'text', role, text, timestamp });
       } else if (part['type'] === 'tool') {
         const name = asString(part['tool']);
         // The metadata archive owner omits state when no timestamps exist,
@@ -389,22 +372,20 @@ function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
         const time = asRecord(state['time']);
         events.push({
           kind: 'tool_use',
-          name: truncate(name, 128),
-          inputJson: truncate(
+          name,
+          inputJson:
             state['input'] === undefined
               ? '[Tool input redacted or absent]'
               : JSON.stringify(state['input'], null, 2),
-          ),
           timestamp: isoTime(time?.['start']) ?? timestamp,
         });
         if (state['status'] === 'completed' || state['status'] === 'error') {
           events.push({
             kind: 'tool_result',
-            content: truncate(
+            content:
               asString(state['error']) ??
-                asString(state['output']) ??
-                '[Tool output redacted or absent]',
-            ),
+              asString(state['output']) ??
+              '[Tool output redacted or absent]',
             timestamp: isoTime(time?.['end']) ?? timestamp,
           });
         }
@@ -520,24 +501,25 @@ export function parseTranscriptTimeline(
   return { events, hadUnparseableLines };
 }
 
+/** A run of middle events the page renders collapsed behind an expander.
+ * It carries every event it stands for; nothing is dropped. */
 export interface TranscriptElisionDivider {
   kind: 'elision';
   elidedCount: number;
+  events: TranscriptTimelineEvent[];
 }
 
-/** Above this many top-level rendered events, the middle is elided. */
+/** Above this many top-level rendered events, the middle is collapsed. */
 const ELISION_THRESHOLD = 400;
 const ELISION_HEAD = 50;
 const ELISION_TAIL = 200;
 
 /**
- * Server-side elision for very long transcripts (a busy issue-agent run can
- * span thousands of turns): keeps the first {@link ELISION_HEAD} events (the
- * initial prompt/plan) and the last {@link ELISION_TAIL} (the outcome), with
- * a divider in between rather than truncating outright. No client-side
- * pagination in v1 - this is a read-only archive page, not a live feed, so
- * a single server-rendered page is simpler and sufficient; revisit only if
- * elided transcripts turn out to be a common need for the middle section.
+ * Collapses the middle of a very long transcript (a busy issue-agent run can
+ * span thousands of turns): the first {@link ELISION_HEAD} events (the
+ * initial prompt/plan) and the last {@link ELISION_TAIL} (the outcome) stay
+ * expanded and the rest move into one collapsed group the reader can open.
+ * The full transcript is still in the page; only its initial display folds.
  */
 export function elideTranscriptTimeline(
   events: TranscriptTimelineEvent[],
@@ -546,9 +528,13 @@ export function elideTranscriptTimeline(
     return events;
   }
   const head = events.slice(0, ELISION_HEAD);
+  const middle = events.slice(ELISION_HEAD, events.length - ELISION_TAIL);
   const tail = events.slice(events.length - ELISION_TAIL);
-  const elidedCount = events.length - ELISION_HEAD - ELISION_TAIL;
-  return [...head, { kind: 'elision', elidedCount }, ...tail];
+  return [
+    ...head,
+    { kind: 'elision', elidedCount: middle.length, events: middle },
+    ...tail,
+  ];
 }
 
 /** Type guard used by the rendering layer to distinguish an elision divider

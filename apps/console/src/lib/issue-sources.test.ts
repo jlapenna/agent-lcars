@@ -208,6 +208,18 @@ describe('first-class issue source operations', () => {
       ).toHaveLength(1);
     },
   );
+  it('refuses a new dispatch from an oversized Linear issue', async () => {
+    const f = fixture();
+    mock.read.mockResolvedValue({ ...issue, description: '', oversized: true });
+    await expect(
+      dispatchIssueSource(f.context, {
+        issue: issue.reference,
+        pipeline: 'codex',
+        requestId: 'oversized',
+      }),
+    ).rejects.toThrow('exceeds LCARS tracker bounds');
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
+  });
   it('recovers a completed/closed source receipt and rejects changed provider selection', async () => {
     const f = fixture();
     const input = {

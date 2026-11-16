@@ -2,6 +2,7 @@ import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 import { NextResponse } from 'next/server';
 
+import { readBoundedRequestBody } from '@/lib/bounded-request-body';
 import { isControlPlaneRepository } from '@/lib/deployment';
 import { verifyWebhookSignature } from '@/lib/github-webhook-auth';
 import { enqueueGitHubWebhook } from '@/lib/hosted-webhook-queue';
@@ -25,6 +26,11 @@ interface GitHubWebhookPayload {
   repository?: { id?: number; full_name?: string };
 }
 
+/** GitHub caps webhook payloads at 25 MB and drops larger deliveries, so no
+ * genuine delivery exceeds this; the bound stops an unsigned body from being
+ * buffered without limit before the HMAC check. */
+export const GITHUB_WEBHOOK_MAX_BYTES = 25 * 1024 * 1024;
+
 function header(request: Request, name: string): string {
   const value = request.headers.get(name)?.trim();
   if (!value) throw new Error(`${name} header is required`);
@@ -32,7 +38,17 @@ function header(request: Request, name: string): string {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const rawBody = Buffer.from(await request.arrayBuffer());
+  const rawBody = await readBoundedRequestBody(
+    request,
+    GITHUB_WEBHOOK_MAX_BYTES,
+  );
+  if (rawBody === undefined) {
+    logger.warn('agent-lcars: rejected oversized GitHub webhook');
+    return NextResponse.json(
+      { error: 'Payload exceeds GitHub webhook limit' },
+      { status: 413 },
+    );
+  }
   if (
     !verifyWebhookSignature(
       rawBody,

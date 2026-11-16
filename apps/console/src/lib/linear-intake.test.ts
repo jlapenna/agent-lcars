@@ -477,6 +477,32 @@ describe('Linear admission boundary', () => {
     await expect(f.admit()).rejects.toThrow('rate limited');
     expect(await f.store.listNativeTasks(10)).toHaveLength(0);
   });
+  it('refuses to admit a new brief from an oversized Linear issue', async () => {
+    const f = fixture(
+      snapshot({ title: 'Fix search', description: '', oversized: true }),
+    );
+    const result = await f.admit();
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      outcome: 'ignored',
+      reason: expect.stringContaining('ENG-42 exceeds LCARS tracker bounds'),
+    });
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
+  });
+  it('synchronizes closure of an admitted issue that grew past the bounds', async () => {
+    const f = fixture();
+    const result = await f.admit();
+    const id = { workId: result.body['itemId'] as string };
+    const first = (await f.store.listRuns(id))[0]!;
+    f.source.current = snapshot({
+      description: '',
+      oversized: true,
+      state: 'closed',
+      updatedAt: new Date(now + 1000).toISOString(),
+    });
+    expect((await f.admit()).body).not.toMatchObject({ outcome: 'ignored' });
+    expect((await f.store.readRun(first.runId))?.state).toBe('canceled');
+  });
   it.each([false, true])(
     'refuses conflicting repository and dispatch labels before admission or continuation (bound=%s)',
     async (bound) => {

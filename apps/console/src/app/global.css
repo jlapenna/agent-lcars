@@ -180,6 +180,11 @@ body:has(.console-header[data-current='costs']:not([data-streaming-fallback]))
   color: var(--mantine-color-dark-1);
 }
 
+/* A long message shows its preview until the reader expands the full text. */
+.lcars-transcript-long:has(> details[open]) > .lcars-transcript-preview {
+  display: none;
+}
+
 /* ---- Page header elbow ----
    The marquee LCARS structural device: one equal-weight band turning through
    a concentric quarter-circle. Building the elbow from the top and left

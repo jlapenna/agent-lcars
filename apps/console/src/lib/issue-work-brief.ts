@@ -15,6 +15,10 @@ export function workAtRun(run: Run, work: unknown): unknown {
   const parsed = workPayloadSchema.safeParse(work);
   if (!run.issue || !parsed.success || isSourceManagedWork(work)) return work;
   const issue = run.issue;
+  // The issue grew past the tracker bounds after admission. Keep the
+  // admitted payload byte-for-byte; any appended note could push it through
+  // the description clamp. `lcars work source` reports `oversized` itself.
+  if (issue.oversized) return work;
   return normalizeWorkPayload({
     origin: parsed.data.origin,
     spec: {

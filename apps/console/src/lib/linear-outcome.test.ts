@@ -17,7 +17,7 @@ const payload: OutcomeWebhookPayload = {
   consoleUrl: 'https://lcars.example/work/item',
 };
 afterEach(() => vi.unstubAllEnvs());
-function api() {
+function api(description = 'Fix search') {
   vi.stubEnv('AGENT_LCARS_LINEAR_API_KEY', 'test-api-key');
   const comments = new Map<string, string>();
   const archived = new Set<string>();
@@ -38,7 +38,7 @@ function api() {
             id: issueId,
             identifier: 'ENG-42',
             title: 'Search',
-            description: 'Fix search',
+            description,
             url: 'https://linear.app/example/issue/ENG-42',
             updatedAt: '2026-11-04T10:00:00Z',
             team: { id: org },
@@ -99,6 +99,12 @@ describe('Linear outcome delivery', () => {
     expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
       Authorization: 'test-api-key',
     });
+  });
+  it('publishes the outcome on an issue that grew past the tracker bounds', async () => {
+    const { fetchImpl, comments } = api('d'.repeat(65_537));
+    await deliverLinearOutcome(payload, fetchImpl);
+    expect(comments.size).toBe(1);
+    expect([...comments.values()][0]).toContain('Needs input');
   });
   it('deduplicates a write whose successful response was lost', async () => {
     const { fetchImpl, comments } = api();

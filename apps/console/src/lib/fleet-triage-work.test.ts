@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { TRIAGE_COMMENT_MAX } from '@agent-lcars/dispatch-contracts';
 import {
   isRefusal,
   MemoryStore,
@@ -7,8 +8,13 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { publishFleetTriage } from './fleet-triage-publish';
 import {
+  publishFleetTriage,
+  triageComment,
+  TriageCommentTooLargeError,
+} from './fleet-triage-publish';
+import {
+  triageEligible,
   triageMarker,
   type TriageSource,
   triageSourceKey,
@@ -336,6 +342,35 @@ describe('event-driven triage effects', () => {
     expect(await f.state()).toBe('done');
   });
 
+  it('supersedes a pending report once its Linear source grows past the tracker bounds', async () => {
+    const f = await fixture();
+    const entry = await f.settle(true);
+    f.source.issue = {
+      reference: {
+        tracker: 'linear',
+        organizationId: '11111111-1111-4111-8111-111111111111',
+        issueId: '44444444-4444-4444-8444-444444444444',
+      },
+      identifier: 'ENG-42',
+      url: 'https://linear.app/example/issue/ENG-42',
+      title: f.source.title,
+      description: '',
+      oversized: true,
+      updatedAt: new Date().toISOString(),
+      state: 'open',
+      labels: [],
+      assignees: [],
+    };
+    await publishFleetTriage(f.store, entry, f.load);
+    expect(github.issues.createComment).not.toHaveBeenCalled();
+    expect(github.issues.addLabels).not.toHaveBeenCalled();
+    expect((await f.store.readRun(f.run.runId))?.triagePublication?.state).toBe(
+      'superseded',
+    );
+    expect(triageEligible(f.source)).toBe(false);
+    expect(triageEligible({ ...f.source, issue: undefined })).toBe(true);
+  });
+
   it('performs no external writes when its outbox lease has insufficient time', async () => {
     const f = await fixture();
     const entry = await f.settle();
@@ -357,4 +392,49 @@ describe('event-driven triage effects', () => {
       expect(github.issues.createComment).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('triage report and comment bounds', () => {
+  it('accepts a report beyond the former per-item caps and publishes it whole', async () => {
+    const f = await fixture();
+    const evidence = Array.from(
+      { length: 12 },
+      (_, i) => `owner/repo@abc123 finding ${i}: ${'e'.repeat(1_200)}`,
+    );
+    const report = parseTriageReport(
+      f.run,
+      JSON.stringify({
+        sourceRevision: f.run.sourceRevision!.key,
+        disposition: 'needs-evidence',
+        summary: 's'.repeat(2_500),
+        evidence,
+        acceptanceCriteria: [],
+        labels: [],
+      }),
+    ).report;
+    const body = triageComment(f.run, f.anchor, report);
+    expect(body).toContain('s'.repeat(2_500));
+    for (const line of evidence) expect(body).toContain(line);
+  });
+
+  it("refuses, rather than cuts, a comment beyond GitHub's body limit", async () => {
+    const f = await fixture();
+    const report = {
+      sourceRevision: f.run.sourceRevision!.key,
+      disposition: 'needs-evidence' as const,
+      summary: 'x'.repeat(TRIAGE_COMMENT_MAX),
+      evidence: ['owner/repo@abc123'],
+      acceptanceCriteria: [],
+      labels: [],
+    };
+    expect(() => triageComment(f.run, f.anchor, report)).toThrow(
+      TriageCommentTooLargeError,
+    );
+    const fits = triageComment(f.run, f.anchor, {
+      ...report,
+      summary: 'x'.repeat(TRIAGE_COMMENT_MAX - 1_000),
+    });
+    expect(fits.length).toBeGreaterThan(16_384);
+    expect(fits).toContain('x'.repeat(TRIAGE_COMMENT_MAX - 1_000));
+  });
 });
