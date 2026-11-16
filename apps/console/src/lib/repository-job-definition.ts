@@ -282,14 +282,17 @@ export function parseJobDefinition(
     parameters,
     digest: jobDigest([jobText, recipeText]),
   });
-  // The only size bound: the catalog entry embeds the definition, and stored
-  // definitions are single documents. Reserve room for the entry's own fields.
+  // The only size bound: the catalog entry embeds the definition as fields
+  // (with room for the entry's own), and the occurrence store keeps it as one
+  // JSON string, where escapes cost more. Both forms must fit a document.
+  const id = '0'.repeat(64);
   if (
-    firestoreDocumentBytes(`orchestrator-jobs/${'0'.repeat(64)}`, {
-      definition,
-    }) +
+    firestoreDocumentBytes(`orchestrator-jobs/${id}`, { definition }) +
       CATALOG_ENTRY_RESERVE_BYTES >
-    FIRESTORE_DOCUMENT_MAX_BYTES
+      FIRESTORE_DOCUMENT_MAX_BYTES ||
+    firestoreDocumentBytes(`orchestrator-job-definitions/${id}`, {
+      json: JSON.stringify(definition),
+    }) > FIRESTORE_DOCUMENT_MAX_BYTES
   )
     throw new Error("Job definition exceeds Firestore's 1 MiB document limit");
   return definition;

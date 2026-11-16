@@ -303,9 +303,9 @@ credential snapshot, parameters and reconciliation state. Its pinned definition
 and staged artifact live out of line and are content-addressed, so neither
 competes with it for the 1 MiB limit:
 
-- `orchestrator-job-definitions/{digest}` stores each definition once, keyed by
-  its canonical digest. Every occurrence pinned to it holds that
-  `definitionKey`.
+- `orchestrator-job-definitions/{sha256}` stores each definition's JSON once,
+  keyed by the SHA-256 of those bytes and verified on read. Every occurrence
+  pinned to it holds that `definitionKey`.
 - `orchestrator-job-artifact-chunks/{sha256}.{n}` stores the artifact's JSON as
   bytes in chunks of about 1 MiB. The occurrence's `artifactRef` records the
   SHA-256, byte length and chunk count, and reads verify them.

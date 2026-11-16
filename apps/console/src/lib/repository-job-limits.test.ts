@@ -114,6 +114,16 @@ describe('repository job definition limits', () => {
     expect(definition.parameters[0]?.default).toBe(long);
   });
 
+  it('bounds definitions by the stored JSON form, not a fixed file size', () => {
+    // Far above the former 64 KiB file cap.
+    const large = recipe() + `# ${'c'.repeat(300 * 1024)}\n`;
+    expect(parseDefinition(manifest(), large).recipeText).toBe(large);
+    // Fits as Firestore fields, but each newline doubles in stored JSON.
+    expect(() =>
+      parseDefinition(manifest(), recipe() + '\n'.repeat(700 * 1024)),
+    ).toThrow(/1 MiB document limit/u);
+  });
+
   it('mirrors Goose: 32 declared parameters load and 33 do not', () => {
     const keys = (count: number) =>
       Array.from({ length: count }, (_, index) => `p${index}`);
@@ -334,6 +344,11 @@ describe('Firestore document size', () => {
         path,
         get: async () => snapshot(path),
         set: async (data: Record<string, unknown>) => write(path, data),
+        create: async (data: Record<string, unknown>) => {
+          if (rows.has(path))
+            throw Object.assign(new Error('ALREADY_EXISTS'), { code: 6 });
+          write(path, data);
+        },
       };
     };
     const database = {

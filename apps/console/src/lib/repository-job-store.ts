@@ -78,8 +78,8 @@ export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 // Occurrence documents hold the per-run record only. The pinned definition and
 // the staged artifact live out of line, content-addressed, so neither competes
 // with the occurrence for Firestore's 1 MiB document limit:
-// - `orchestrator-job-definitions/{jobDigest(definition)}` holds one definition
-//   shared by every occurrence pinned to it;
+// - `orchestrator-job-definitions/{sha256}` holds one definition's JSON, shared
+//   by every occurrence pinned to it and verified against the key on read;
 // - `orchestrator-job-artifact-chunks/{sha256}.{n}` holds the artifact's JSON as
 //   bytes in chunks, verified against the digest on read.
 // Both are immutable once written; a write repeated by a transaction retry is
@@ -218,10 +218,11 @@ export class FirestoreJobStore implements JobStore {
     const { json } = z
       .strictObject({ json: z.string() })
       .parse(snapshot.data());
-    const definition = jobDefinitionSchema.parse(JSON.parse(json));
-    if (jobDigest(definition) !== key)
+    // Verify the stored bytes, not a re-derived digest, so a later schema
+    // default cannot make an existing definition unreadable.
+    if (sha256(Buffer.from(json, 'utf8')) !== key)
       throw new Error('Stored job definition does not match its key');
-    return definition;
+    return jobDefinitionSchema.parse(JSON.parse(json));
   }
   private async readArtifact(
     ref: z.infer<typeof artifactRefSchema>,
@@ -253,12 +254,16 @@ export class FirestoreJobStore implements JobStore {
   ): Promise<PersistedOccurrence> {
     const { artifact, definition, ...occurrence } =
       jobOccurrenceSchema.parse(value);
-    const definitionKey = jobDigest(definition);
+    const definitionJson = JSON.stringify(definition);
+    const definitionKey = sha256(Buffer.from(definitionJson, 'utf8'));
     if (previous?.definitionKey !== definitionKey) {
       const ref = this.database.collection(DEFINITIONS).doc(definitionKey);
-      const data = { json: JSON.stringify(definition) };
+      const data = { json: definitionJson };
       assertFirestoreDocumentFits(ref.path, data, 'Job definition');
-      await ref.set(data);
+      // Content-addressed: an existing copy is already these exact bytes.
+      await ref.create(data).catch((error: unknown) => {
+        if ((error as { code?: unknown }).code !== 6) throw error;
+      });
     }
     let artifactRef: PersistedOccurrence['artifactRef'];
     if (artifact !== undefined) {

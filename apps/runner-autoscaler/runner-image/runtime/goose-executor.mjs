@@ -309,7 +309,8 @@ export async function subprocess(
       killTimer ??= setTimeout(() => kill('SIGKILL'), 1000);
     };
     const consume = (chunk, output) => {
-      bytes += chunk.length;
+      // stderr keeps only a 4 KiB tail, so only stdout counts toward the guard.
+      if (output) bytes += chunk.length;
       if (bytes > OUTPUT_MAX_BYTES) {
         failure = new Error('Goose output exceeds 16 MiB');
         stop();

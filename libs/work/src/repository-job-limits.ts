@@ -1,7 +1,9 @@
 /**
- * Repository-job request bounds shared by the Console Work API and the `lcars`
- * CLI. They are derived from what an admitted occurrence can store, not chosen
- * independently, so a request the API accepts always fits its occurrence.
+ * Repository-job bounds shared by the Console Work API, the `lcars` CLI and
+ * the runner. They are derived from what an admitted occurrence can store.
+ * They are budgets, not a guarantee: the occurrence also embeds its profile
+ * (whose input sets repeat the fixed inputs), so admission measures the whole
+ * document and refuses one Firestore could not store, naming it.
  */
 
 /**
@@ -28,7 +30,14 @@ export const REPOSITORY_JOB_RESULT_MAX_BYTES = 4 * 1024 * 1024;
 export const REPOSITORY_JOB_REQUEST_MAX_BYTES =
   REPOSITORY_JOB_PARAMETERS_MAX_BYTES + 16 * 1024;
 
-/** Compact-JSON UTF-8 bytes, the measure both bounds above use. */
+/**
+ * Compact-JSON bytes of a recipe brief: the pinned definition and its
+ * file-parameter rewrite (each at most one 1 MiB document), the parameters,
+ * the profile and the previous result's baseline. Workers read up to this.
+ */
+export const REPOSITORY_JOB_BRIEF_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Compact-JSON UTF-8 bytes, the measure the bounds above use. */
 export function repositoryJobJsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).length;
 }

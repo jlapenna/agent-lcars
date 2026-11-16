@@ -21,6 +21,8 @@ import {
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
 import {
+  REPOSITORY_JOB_BRIEF_MAX_BYTES,
+  repositoryJobJsonBytes,
   runsContract,
   storedClawWorkSpec,
   storedWorkPayloadSchema,
@@ -523,13 +525,19 @@ export const runsRouter = os.router({
       );
       fileRecipeText = undefined;
     }
-    return {
+    const brief = {
       definition: occurrence.definition,
       ...(fileRecipeText === undefined ? {} : { fileRecipeText }),
       parameters: occurrence.parameters,
       profile: occurrence.profile,
       baseline: previous?.artifact?.baseline ?? null,
     };
+    // Name an oversized brief here rather than leave the worker to refuse it.
+    if (repositoryJobJsonBytes(brief) > REPOSITORY_JOB_BRIEF_MAX_BYTES)
+      throw new ORPCError('FORBIDDEN', {
+        message: `Recipe brief exceeds ${REPOSITORY_JOB_BRIEF_MAX_BYTES / 1024 / 1024} MiB`,
+      });
+    return brief;
   }),
   recipeComplete: os.recipeComplete.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
