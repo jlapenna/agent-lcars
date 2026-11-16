@@ -17,7 +17,7 @@ test.afterAll(async () => {
   await resetCliSessions();
 });
 
-test('renders an archived OpenCode detail with bounded turns and safe tool disclosures', async ({
+test('renders an archived OpenCode detail with collapsed long turns and safe tool disclosures', async ({
   page,
 }) => {
   await page.goto('/sessions/e2e-opencode-full');
@@ -29,12 +29,19 @@ test('renders an archived OpenCode detail with bounded turns and safe tool discl
   await expect(
     timeline.getByText('Archive review complete.', { exact: false }),
   ).toBeVisible();
-  await expect(timeline.getByTestId('transcript-elision')).toContainText(
-    'events elided',
-  );
+  const collapsed = timeline.getByTestId('transcript-elision');
+  await expect(collapsed).toContainText('more events');
+  await collapsed.locator('summary').first().click();
   await expect(
-    timeline.getByText('Archived turn 449.', { exact: false }),
-  ).toContainText('truncated');
+    collapsed.getByText('Archived turn 100.', { exact: false }).first(),
+  ).toBeVisible();
+  const longTurn = timeline
+    .getByTestId('transcript-full-text')
+    .filter({ hasText: 'Archived turn 449.' });
+  await longTurn.locator('summary').click();
+  await expect(
+    longTurn.getByText('Archived turn 449.', { exact: false }),
+  ).toContainText('bounded content '.repeat(200).trim());
   await timeline.getByText('tool: bash', { exact: true }).click();
   await expect(
     timeline.getByText('"command": "inspect archive"', { exact: false }),

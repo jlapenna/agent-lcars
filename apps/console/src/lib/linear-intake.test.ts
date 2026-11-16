@@ -8,6 +8,7 @@ import {
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LinearIssueTooLargeError } from './linear-client';
 import { type LinearConfig, linearConfig } from './linear-config';
 import {
   admitLinearWebhook,
@@ -447,6 +448,17 @@ describe('Linear admission boundary', () => {
     const f = fixture();
     f.readIssue.mockRejectedValueOnce(new Error('rate limited'));
     await expect(f.admit()).rejects.toThrow('rate limited');
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
+  });
+  it('refuses an oversized Linear issue permanently instead of admitting a cut brief', async () => {
+    const f = fixture();
+    f.readIssue.mockRejectedValueOnce(new LinearIssueTooLargeError('ENG-42'));
+    const result = await f.admit();
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      outcome: 'ignored',
+      reason: expect.stringContaining('ENG-42 exceeds LCARS tracker bounds'),
+    });
     expect(await f.store.listNativeTasks(10)).toHaveLength(0);
   });
   it.each([false, true])(

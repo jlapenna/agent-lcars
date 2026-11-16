@@ -403,6 +403,9 @@ export const itemsContract = {
     .output(
       z.strictObject({
         refreshed: z.number().int().nonnegative(),
+        /** Linear issues refused whole because their title or description
+         * exceeds the tracker bounds; they were not refreshed. */
+        oversized: z.array(z.string()).optional(),
         nextCursor: z.string().optional(),
       }),
     ),

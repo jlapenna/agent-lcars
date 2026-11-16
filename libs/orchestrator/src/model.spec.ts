@@ -308,6 +308,18 @@ describe('persisted Run projection / Run.queue', () => {
     expect(runQueueSchema.parse(claimed)).toEqual(claimed);
   });
 
+  it('round-trips a run whose transition history passed the former 64-event cap', () => {
+    const events = Array.from({ length: 200 }, (_, i) => ({
+      at: new Date(Date.UTC(2026, 7, 27, 0, 0, i)).toISOString(),
+      to: i % 2 === 0 ? ('running' as const) : ('pending' as const),
+      by: 'dispatch' as const,
+    }));
+    const stored = JSON.parse(JSON.stringify({ ...base, events }));
+    const parsed = runSchema.parse(stored);
+    expect(parsed.events).toHaveLength(200);
+    expect(parsed.events).toEqual(events);
+  });
+
   it('rejects a tokenHash that is not a 64-character hex sha256', () => {
     expect(() =>
       runQueueSchema.parse({ state: 'claimed', tokenHash: 'short' }),

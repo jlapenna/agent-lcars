@@ -1,6 +1,7 @@
 import { logger } from '@agent-lcars/logging';
 import { required } from '@agent-lcars/util-server';
 
+import { readBoundedRequestBody } from '@/lib/bounded-request-body';
 import { enqueueLinearWebhook } from '@/lib/hosted-webhook-queue';
 import { linearConfig } from '@/lib/linear-config';
 import {
@@ -21,8 +22,8 @@ export async function POST(request: Request): Promise<Response> {
     const config = linearConfig();
     if (config === undefined)
       return respond({ error: 'Linear integration is disabled' }, 503);
-    const rawBody = Buffer.from(await request.arrayBuffer());
-    if (rawBody.length > 512 * 1024)
+    const rawBody = await readBoundedRequestBody(request, 512 * 1024);
+    if (rawBody === undefined)
       return respond({ error: 'Linear webhook exceeds 512 KiB' }, 413);
     if (
       !verifyLinearSignature(

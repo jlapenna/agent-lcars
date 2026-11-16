@@ -3,7 +3,10 @@ import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { TranscriptTimelineView } from './transcript-timeline-view';
+import {
+  TRANSCRIPT_PREVIEW_CHARS,
+  TranscriptTimelineView,
+} from './transcript-timeline-view';
 
 // react-markdown/remark-gfm are ESM-only (unified ecosystem) - stubbed here
 // rather than added to the jest.config esmModules allowlist, matching the
@@ -105,14 +108,37 @@ describe('TranscriptTimelineView', () => {
     ).toHaveClass('lcars-disclosure', 'lcars-transcript-disclosure');
   });
 
-  it('renders an elision divider with the elided count', () => {
+  it('renders the collapsed middle of a long timeline behind an expander', () => {
     renderTimeline([
       { kind: 'text', role: 'user', text: 'start' },
-      { kind: 'elision', elidedCount: 250 },
+      {
+        kind: 'elision',
+        elidedCount: 2,
+        events: [
+          { kind: 'text', role: 'assistant', text: 'middle one' },
+          { kind: 'text', role: 'assistant', text: 'middle two' },
+        ],
+      },
       { kind: 'text', role: 'assistant', text: 'end' },
     ]);
-    expect(screen.getByTestId('transcript-elision').textContent).toContain(
-      '250 events elided',
+    const collapsed = screen.getByTestId('transcript-elision');
+    expect(collapsed.tagName).toBe('DETAILS');
+    expect(collapsed.textContent).toContain('Show 2 more events');
+    expect(collapsed.textContent).toContain('middle one');
+    expect(collapsed.textContent).toContain('middle two');
+  });
+
+  it('shows a preview of a long message and keeps the full text behind an expander', () => {
+    const text = `${'a'.repeat(TRANSCRIPT_PREVIEW_CHARS)}TAIL-${'b'.repeat(3000)}`;
+    renderTimeline([{ kind: 'text', role: 'assistant', text }]);
+    expect(screen.getByTestId('transcript-preview').textContent).not.toContain(
+      'TAIL-',
+    );
+    const full = screen.getByTestId('transcript-full-text');
+    expect(full.tagName).toBe('DETAILS');
+    expect(full.textContent).toContain(text);
+    expect(full.textContent).toContain(
+      `Show full message (${text.length.toLocaleString('en-US')} characters)`,
     );
   });
 });

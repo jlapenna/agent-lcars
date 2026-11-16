@@ -8,6 +8,10 @@ import { Alert, Box, Stack, Text } from '@mantine/core';
 import { ConsoleMarkdown } from '../../console-markdown';
 import { Eyebrow } from '../../eyebrow';
 
+/** Characters of a long message shown before its expander. The full message is
+ * always in the page; this only sets how much is visible while collapsed. */
+export const TRANSCRIPT_PREVIEW_CHARS = 2000;
+
 const ROLE_BORDER_COLOR: Record<'user' | 'assistant', string> = {
   user: 'var(--mantine-color-blue-5)',
   assistant: 'var(--mantine-color-gray-5)',
@@ -25,9 +29,37 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
           }}
         >
           <Eyebrow>{event.role}</Eyebrow>
-          <Box fz="sm">
-            <ConsoleMarkdown>{event.text}</ConsoleMarkdown>
-          </Box>
+          {event.text.length <= TRANSCRIPT_PREVIEW_CHARS ? (
+            <Box fz="sm">
+              <ConsoleMarkdown>{event.text}</ConsoleMarkdown>
+            </Box>
+          ) : (
+            <Box className="lcars-transcript-long">
+              <Box
+                fz="sm"
+                className="lcars-transcript-preview"
+                data-testid="transcript-preview"
+              >
+                <ConsoleMarkdown>
+                  {`${event.text.slice(0, TRANSCRIPT_PREVIEW_CHARS)}…`}
+                </ConsoleMarkdown>
+              </Box>
+              <details
+                className="lcars-disclosure lcars-transcript-disclosure"
+                data-testid="transcript-full-text"
+              >
+                <summary className="lcars-disclosure__summary">
+                  <Text size="xs" c="dimmed" component="span">
+                    Show full message (
+                    {event.text.length.toLocaleString('en-US')} characters)
+                  </Text>
+                </summary>
+                <Box fz="sm">
+                  <ConsoleMarkdown>{event.text}</ConsoleMarkdown>
+                </Box>
+              </details>
+            </Box>
+          )}
         </Box>
       );
 
@@ -103,12 +135,10 @@ function TranscriptEventView({ event }: { event: TranscriptTimelineEvent }) {
 }
 
 /**
- * Renders a parsed+elided transcript timeline (see
- * @agent-lcars/telemetry's transcript-timeline.ts) turn by turn. Server
- * component throughout - the elision itself already happened server-side
- * (session-transcript.ts), so there's no client-side pagination to wire up
- * (see elideTranscriptTimeline's doc comment for why that's deliberate for
- * v1: this is a read-only archive page, not a live feed).
+ * Renders a parsed transcript timeline (see @agent-lcars/telemetry's
+ * transcript-timeline.ts) turn by turn. Server component throughout: long
+ * messages, tool blocks and the middle of a very long timeline render
+ * collapsed behind native disclosures, but every byte is in the page.
  */
 export function TranscriptTimelineView({
   events,
@@ -131,15 +161,22 @@ export function TranscriptTimelineView({
       )}
       {events.map((entry, i) =>
         isElisionDivider(entry) ? (
-          <Text
+          <details
             key={`elision-${i}`}
-            size="xs"
-            c="dimmed"
-            ta="center"
+            className="lcars-disclosure lcars-transcript-disclosure"
             data-testid="transcript-elision"
           >
-            … {entry.elidedCount} events elided …
-          </Text>
+            <summary className="lcars-disclosure__summary">
+              <Text size="xs" c="dimmed" component="span">
+                Show {entry.elidedCount} more events
+              </Text>
+            </summary>
+            <Stack gap="xs" mt="xs">
+              {entry.events.map((nested, j) => (
+                <TranscriptEventView key={j} event={nested} />
+              ))}
+            </Stack>
+          </details>
         ) : (
           <TranscriptEventView key={i} event={entry} />
         ),

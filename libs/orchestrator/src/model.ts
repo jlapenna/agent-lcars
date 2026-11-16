@@ -547,7 +547,10 @@ export const runSchema = z.strictObject({
   /** A live run must renew before this instant or it is presumed lost. */
   leaseExpiresAt: isoUtc,
   result: runResultSchema.optional(),
-  events: z.array(runEventSchema).max(64),
+  // Transitions append here for the run's whole life; a count cap would make
+  // a long-lived run unreadable. Events are small and the run document's
+  // 1 MiB limit is the real bound.
+  events: z.array(runEventSchema),
   createdAt: isoUtc,
   updatedAt: isoUtc,
 });

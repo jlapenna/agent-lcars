@@ -160,14 +160,18 @@ describe('first-class issue source operations', () => {
   });
   it('refreshes one bounded page as metadata without dispatch and preserves explicit cursor', async () => {
     const f = fixture();
-    mock.list.mockResolvedValue({ issues: [issue], nextCursor: 'page-two' });
+    mock.list.mockResolvedValue({
+      issues: [issue],
+      oversized: ['ENG-43'],
+      nextCursor: 'page-two',
+    });
     expect(
       await refreshIssueSources(f.context, {
         tracker: 'linear',
         teamId: team,
         cursor: 'page-one',
       }),
-    ).toEqual({ refreshed: 1, nextCursor: 'page-two' });
+    ).toEqual({ refreshed: 1, oversized: ['ENG-43'], nextCursor: 'page-two' });
     expect(mock.list).toHaveBeenCalledWith(org, team, 'page-one');
     expect(
       (await listIssueSources(f.context, { tracker: 'linear', limit: 1 }))

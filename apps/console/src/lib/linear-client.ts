@@ -1,6 +1,8 @@
 import 'server-only';
 
 import {
+  TRACKER_ISSUE_DESCRIPTION_MAX,
+  TRACKER_ISSUE_TITLE_MAX,
   type TrackerIssue,
   trackerIssueSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -54,6 +56,16 @@ const issueSchema = z.object({
 });
 const ISSUE_FIELDS = `id identifier title description url updatedAt archivedAt trashed team { id } state { id name type } assignee { id name } labels(first: 250) { nodes { id name } pageInfo { hasNextPage } }`;
 
+/** A Linear issue whose title or description exceeds the tracker bounds LCARS
+ * shares with GitHub. Refused whole: an agent must never work from a cut brief. */
+export class LinearIssueTooLargeError extends Error {
+  constructor(readonly identifier: string) {
+    super(
+      `Linear issue ${identifier} exceeds LCARS tracker bounds (title ${TRACKER_ISSUE_TITLE_MAX}, description ${TRACKER_ISSUE_DESCRIPTION_MAX} characters)`,
+    );
+  }
+}
+
 export function linearIssueSnapshot(
   organizationId: string,
   value: unknown,
@@ -63,11 +75,16 @@ export function linearIssueSnapshot(
     throw new Error('Linear issue labels exceed the supported bound');
   if (new URL(issue.url).origin !== 'https://linear.app')
     throw new Error('Unexpected Linear issue URL');
+  if (
+    issue.title.length > TRACKER_ISSUE_TITLE_MAX ||
+    (issue.description ?? '').length > TRACKER_ISSUE_DESCRIPTION_MAX
+  )
+    throw new LinearIssueTooLargeError(issue.identifier);
   return trackerIssueSchema.parse({
     reference: { tracker: 'linear', organizationId, issueId: issue.id },
     identifier: issue.identifier,
-    title: issue.title.slice(0, 256),
-    description: (issue.description ?? '').slice(0, 65_536),
+    title: issue.title,
+    description: issue.description ?? '',
     url: issue.url,
     updatedAt: issue.updatedAt,
     teamId: issue.team.id,
@@ -112,7 +129,13 @@ export async function listLinearIssues(
   teamId: string,
   cursor?: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ issues: TrackerIssue[]; nextCursor?: string }> {
+): Promise<{
+  issues: TrackerIssue[];
+  /** Identifiers refused as {@link LinearIssueTooLargeError}; one oversized
+   * issue must not block refreshing the rest of the page. */
+  oversized: string[];
+  nextCursor?: string;
+}> {
   const result = z
     .object({
       organization: z.object({ id: z.uuid() }),
@@ -138,10 +161,19 @@ export async function listLinearIssues(
   const page = result.team.issues;
   if (page.pageInfo.hasNextPage && !page.pageInfo.endCursor)
     throw new Error('Linear issue pagination is incomplete');
+  const issues: TrackerIssue[] = [];
+  const oversized: string[] = [];
+  for (const node of page.nodes) {
+    try {
+      issues.push(linearIssueSnapshot(organizationId, node));
+    } catch (error) {
+      if (!(error instanceof LinearIssueTooLargeError)) throw error;
+      oversized.push(error.identifier);
+    }
+  }
   return {
-    issues: page.nodes.map((issue) =>
-      linearIssueSnapshot(organizationId, issue),
-    ),
+    issues,
+    oversized,
     ...(page.pageInfo.hasNextPage
       ? { nextCursor: page.pageInfo.endCursor as string }
       : {}),

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { TRIAGE_COMMENT_MAX } from '@agent-lcars/dispatch-contracts';
 import {
   isRefusal,
   MemoryStore,
@@ -7,7 +8,11 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { publishFleetTriage } from './fleet-triage-publish';
+import {
+  publishFleetTriage,
+  triageComment,
+  TriageCommentTooLargeError,
+} from './fleet-triage-publish';
 import {
   triageMarker,
   type TriageSource,
@@ -357,4 +362,49 @@ describe('event-driven triage effects', () => {
       expect(github.issues.createComment).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('triage report and comment bounds', () => {
+  it('accepts a report beyond the former per-item caps and publishes it whole', async () => {
+    const f = await fixture();
+    const evidence = Array.from(
+      { length: 12 },
+      (_, i) => `owner/repo@abc123 finding ${i}: ${'e'.repeat(1_200)}`,
+    );
+    const report = parseTriageReport(
+      f.run,
+      JSON.stringify({
+        sourceRevision: f.run.sourceRevision!.key,
+        disposition: 'needs-evidence',
+        summary: 's'.repeat(2_500),
+        evidence,
+        acceptanceCriteria: [],
+        labels: [],
+      }),
+    ).report;
+    const body = triageComment(f.run, f.anchor, report);
+    expect(body).toContain('s'.repeat(2_500));
+    for (const line of evidence) expect(body).toContain(line);
+  });
+
+  it("refuses, rather than cuts, a comment beyond GitHub's body limit", async () => {
+    const f = await fixture();
+    const report = {
+      sourceRevision: f.run.sourceRevision!.key,
+      disposition: 'needs-evidence' as const,
+      summary: 'x'.repeat(TRIAGE_COMMENT_MAX),
+      evidence: ['owner/repo@abc123'],
+      acceptanceCriteria: [],
+      labels: [],
+    };
+    expect(() => triageComment(f.run, f.anchor, report)).toThrow(
+      TriageCommentTooLargeError,
+    );
+    const fits = triageComment(f.run, f.anchor, {
+      ...report,
+      summary: 'x'.repeat(TRIAGE_COMMENT_MAX - 1_000),
+    });
+    expect(fits.length).toBeGreaterThan(16_384);
+    expect(fits).toContain('x'.repeat(TRIAGE_COMMENT_MAX - 1_000));
+  });
 });

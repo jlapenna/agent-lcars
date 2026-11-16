@@ -26,7 +26,11 @@ import {
   issueTracker,
   readSourceWorkBinding,
 } from './issue-trackers';
-import { listLinearIssues, readLinearIssue } from './linear-client';
+import {
+  LinearIssueTooLargeError,
+  listLinearIssues,
+  readLinearIssue,
+} from './linear-client';
 import {
   linearConfig,
   linearIssueInRepository,
@@ -76,7 +80,12 @@ export async function lookupIssueSource(
     const config = linearConfig();
     if (!config)
       throw new ORPCError('NOT_FOUND', { message: 'Linear is not configured' });
-    issue = await readLinearIssue(config.organizationId, lookup.issue);
+    try {
+      issue = await readLinearIssue(config.organizationId, lookup.issue);
+    } catch (error) {
+      if (!(error instanceof LinearIssueTooLargeError)) throw error;
+      throw new ORPCError('BAD_REQUEST', { message: error.message });
+    }
     const team = issue?.teamId ? linearTeam(config, issue.teamId) : undefined;
     if (!issue || !team || !linearIssueInRepository(config, issue))
       throw new ORPCError('NOT_FOUND', {
@@ -308,6 +317,7 @@ export async function refreshIssueSources(
     await refreshLinearIssue(context.runtime, config, issue);
   return {
     refreshed: page.issues.length,
+    ...(page.oversized.length > 0 ? { oversized: page.oversized } : {}),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   };
 }

@@ -120,7 +120,7 @@ describe('parseTranscriptTimeline', () => {
     });
   });
 
-  it('bounds OpenCode text, tool input/output, and the rendered event count', () => {
+  it('keeps OpenCode text and tool input/output whole and collapses the middle of a long timeline', () => {
     const raw = JSON.stringify({
       info: { id: 'ses_long' },
       messages: Array.from({ length: 500 }, () => ({
@@ -142,11 +142,14 @@ describe('parseTranscriptTimeline', () => {
     const parsed = parseTranscriptTimeline(raw, 'opencode');
     expect(parsed.hadUnparseableLines).toBe(false);
     expect(parsed.events.slice(0, 3)).toMatchObject([
-      { text: expect.stringContaining('truncated') },
-      { inputJson: expect.stringContaining('truncated') },
-      { content: expect.stringContaining('truncated') },
+      { text: 'x'.repeat(5000) },
+      { inputJson: expect.stringContaining('y'.repeat(5000)) },
+      { content: 'z'.repeat(5000) },
     ]);
-    expect(elideTranscriptTimeline(parsed.events)).toHaveLength(251);
+    const elided = elideTranscriptTimeline(parsed.events);
+    expect(elided).toHaveLength(251);
+    const divider = elided.find(isElisionDivider)!;
+    expect(divider.events).toHaveLength(parsed.events.length - 250);
   });
 
   it('renders a representative Codex rollout as shared timeline events', () => {
@@ -303,7 +306,7 @@ describe('parseTranscriptTimeline', () => {
     });
   });
 
-  it('truncates an oversized tool_use input rather than rendering it in full', () => {
+  it('keeps an oversized tool_use input whole for the view to collapse', () => {
     const hugeInput = 'x'.repeat(5000);
     const line = JSON.stringify({
       type: 'assistant',
@@ -324,8 +327,8 @@ describe('parseTranscriptTimeline', () => {
       TranscriptTimelineEvent,
       { kind: 'tool_use' }
     >;
-    expect(toolUse.inputJson.length).toBeLessThan(hugeInput.length);
-    expect(toolUse.inputJson).toContain('truncated');
+    expect(toolUse.inputJson).toContain(hugeInput);
+    expect(toolUse.inputJson).not.toContain('truncated');
   });
 
   it('returns no events for an empty transcript', () => {
@@ -350,7 +353,7 @@ describe('elideTranscriptTimeline', () => {
     expect(elideTranscriptTimeline(events)).toBe(events);
   });
 
-  it('keeps the first 50 and last 200 events with a divider for the rest', () => {
+  it('keeps the first 50 and last 200 events expanded and collapses every other event', () => {
     const events = makeEvents(500);
 
     const result = elideTranscriptTimeline(events);
@@ -358,7 +361,11 @@ describe('elideTranscriptTimeline', () => {
     expect(result).toHaveLength(251);
     expect(result[0]).toEqual(events[0]);
     expect(result[49]).toEqual(events[49]);
-    expect(result[50]).toEqual({ kind: 'elision', elidedCount: 250 });
+    expect(result[50]).toEqual({
+      kind: 'elision',
+      elidedCount: 250,
+      events: events.slice(50, 300),
+    });
     expect(result[51]).toEqual(events[300]);
     expect(result.at(-1)).toEqual(events.at(-1));
   });

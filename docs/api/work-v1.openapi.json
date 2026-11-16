@@ -517,7 +517,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "maxLength": 65536
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -564,12 +564,10 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
-                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 100
+                                    "minLength": 1
                                   }
                                 },
                                 "dispatchRequested": {
@@ -1761,6 +1759,12 @@
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
+                    "oversized": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
                     "nextCursor": {
                       "type": "string"
                     }
@@ -2369,7 +2373,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "maxLength": 65536
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -2416,12 +2420,10 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
-                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 100
+                                    "minLength": 1
                                   }
                                 },
                                 "dispatchRequested": {
@@ -3950,7 +3952,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -3997,12 +3999,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -5099,7 +5099,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -5146,12 +5146,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -6253,7 +6251,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -6300,12 +6298,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -7418,7 +7414,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -7465,12 +7461,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -8635,7 +8629,7 @@
                                     },
                                     "commentBody": {
                                       "type": "string",
-                                      "maxLength": 16384
+                                      "maxLength": 65536
                                     },
                                     "commentId": {
                                       "anyOf": [
@@ -8682,12 +8676,10 @@
                                       "additionalProperties": false
                                     },
                                     "addedLabels": {
-                                      "maxItems": 20,
                                       "type": "array",
                                       "items": {
                                         "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 100
+                                        "minLength": 1
                                       }
                                     },
                                     "dispatchRequested": {
@@ -9775,7 +9767,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -9822,12 +9814,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -10966,7 +10956,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -11013,12 +11003,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -12188,7 +12176,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -12235,12 +12223,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
