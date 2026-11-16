@@ -1,10 +1,12 @@
 /* eslint-disable vitest/no-import-node-test -- the claw image's suite runs under node --test without Vitest, like the runner-image runtime suites. */
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   mkdir,
   mkdtemp,
   readFile,
+  stat,
   symlink,
   writeFile,
 } from 'node:fs/promises';
@@ -13,10 +15,13 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import {
-  briefQuestion,
+  agentDigest,
+  briefMessage,
   comparableConfig,
   main,
+  materializeAgent,
   MAX_REPORT_BYTES,
+  readBrief,
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
@@ -316,11 +321,11 @@ test('comparableConfig ignores only meta and wizard stamps', () => {
   assert.notEqual(comparableConfig({ a: 1 }), comparableConfig({ a: 2 }));
 });
 
-test('briefQuestion requires this run and a non-empty question', () => {
+test('readBrief requires this run and a non-empty question', () => {
   const env = { LCARS_RUN_ID: RUN_ID };
   assert.throws(
     () =>
-      briefQuestion(
+      readBrief(
         {
           intentId: 'other',
           pipeline: 'claw-investigator',
@@ -333,7 +338,7 @@ test('briefQuestion requires this run and a non-empty question', () => {
   );
   assert.throws(
     () =>
-      briefQuestion(
+      readBrief(
         {
           intentId: RUN_ID,
           pipeline: 'claw-investigator',
@@ -445,4 +450,128 @@ test('a ConfigMap-style symlinked agent directory is read and copied', async () 
     await readFile(join(env.CLAW_WORK_DIR, 'workspace', 'AGENTS.md'), 'utf8'),
     '# projected\n',
   );
+});
+
+const blobSha = (content) =>
+  createHash('sha1')
+    .update(`blob ${Buffer.byteLength(content)}\0`)
+    .update(content)
+    .digest('hex');
+function agentBrief(files, over = {}) {
+  const pinned = Object.entries(files).map(([path, { content, mode }]) => ({
+    path,
+    mode: mode ?? '100644',
+    sha: blobSha(content),
+    content: Buffer.from(content).toString('base64'),
+  }));
+  return {
+    intentId: RUN_ID,
+    pipeline: 'claw-default',
+    mode: 'claw',
+    claw: {
+      agent: 'owner/repo/investigator',
+      revision: 'c'.repeat(40),
+      digest: agentDigest(pinned),
+      requireToolEvidence: true,
+      message: 'Why is the disk alert firing?',
+      files: pinned,
+      ...over,
+    },
+  };
+}
+const agentFiles = {
+  'agent.yaml': { content: 'description: x\n' },
+  'config.json': {
+    content: JSON.stringify({
+      tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
+    }),
+  },
+  'approvals.json': { content: '{"version":1}' },
+  'workspace/AGENTS.md': { content: '# repository agent\n' },
+  'workspace/tools/probe': { content: '#!/bin/sh\necho ok\n', mode: '100755' },
+};
+
+test('runs a repository-owned agent from its verified brief, not the zone mount', async () => {
+  const { env, calls, fetchImpl } = await fixture({
+    brief: agentBrief(agentFiles),
+    env: { CLAW_AGENT_DIR: '/nonexistent' },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.equal(result.outcome, 'report');
+  assert.deepEqual(completion(calls), result);
+  const probe = await stat(
+    join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools/probe'),
+  );
+  assert.equal(probe.mode & 0o777, 0o555);
+  const tools = await stat(join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools'));
+  assert.equal(tools.mode & 0o777, 0o555);
+  await assert.rejects(
+    writeFile(join(env.CLAW_WORK_DIR, 'agent', 'workspace/tools/new'), 'x'),
+    /EACCES/,
+  );
+});
+
+test('readBrief returns an agent request with its evidence rule', () => {
+  const request = readBrief(agentBrief(agentFiles), { LCARS_RUN_ID: RUN_ID });
+  assert.equal(request.kind, 'agent');
+  assert.equal(request.requireTools, true);
+  assert.equal(request.message, 'Why is the disk alert firing?');
+});
+
+test('refuses agent files that do not match their blob, digest or directory', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'claw-agent-'));
+  const tampered = agentBrief(agentFiles).claw;
+  tampered.files[0] = {
+    ...tampered.files[0],
+    content: Buffer.from('description: evil\n').toString('base64'),
+  };
+  await assert.rejects(
+    materializeAgent(tampered, dir),
+    /does not match its blob/,
+  );
+  const wrongDigest = agentBrief(agentFiles, { digest: '0'.repeat(64) }).claw;
+  await assert.rejects(materializeAgent(wrongDigest, dir), /pinned digest/);
+  const escaping = agentBrief({ '../escape': { content: 'x' } }).claw;
+  await assert.rejects(
+    materializeAgent(escaping, dir),
+    /escapes its directory/,
+  );
+});
+
+// LCARS (apps/console repository-agent-definition.ts agentDigest) pins this
+// digest at admission; both suites assert the same golden value.
+test('agentDigest matches the digest LCARS pins', () => {
+  assert.equal(
+    agentDigest([
+      { path: 'workspace/b', mode: '100755', sha: 'b'.repeat(40) },
+      { path: 'agent.yaml', mode: '100644', sha: 'a'.repeat(40) },
+      { path: 'Workspace/A', mode: '100644', sha: 'c'.repeat(40) },
+    ]),
+    'e8fd4d424a05d79440bb16eba22fff84eec22941ae4bee19a0b5fa38be3264fa',
+  );
+});
+
+test('gives the agent a writable copy of its locked workspace', async () => {
+  const files = {
+    ...agentFiles,
+    'workspace/state/current.txt': { content: 'v1\n' },
+  };
+  const { env, fetchImpl } = await fixture({
+    brief: agentBrief(files),
+    env: { CLAW_AGENT_DIR: '/nonexistent' },
+  });
+  await main(env, { fetchImpl });
+  const copy = join(env.CLAW_WORK_DIR, 'workspace', 'state');
+  await writeFile(join(copy, 'current.txt'), 'v2\n');
+  await writeFile(join(copy, 'new.txt'), 'x');
+  await assert.rejects(
+    writeFile(join(env.CLAW_WORK_DIR, 'agent', 'workspace/state/new.txt'), 'x'),
+    /EACCES/,
+  );
+});
+
+test('sends a repository agent exactly its message, without the report wrapper', () => {
+  const brief = agentBrief(agentFiles, { message: 'Reply with JSON only.' });
+  const request = readBrief(brief, { LCARS_RUN_ID: RUN_ID });
+  assert.equal(briefMessage(request, brief), 'Reply with JSON only.');
 });

@@ -11,6 +11,20 @@ against its integrity hash), generic clients (`openssh-client`, `python3`)
 and the launcher, `claw-job.mjs`. It holds no agent definition, agent tool or
 credential: a zone executor's runtime table mounts those.
 
+## Where the agent definition comes from
+
+A repository-owned agent (`.lcars/agents/<name>/`,
+[docs/repository-agents.md](../../../docs/repository-agents.md)) arrives in the
+run brief: every file with its git mode, blob SHA and content, and the
+definition digest LCARS pinned at admission. The launcher writes the files to
+`/work/agent` only after each file's bytes hash to its blob SHA and the file
+list hashes to the pinned digest; paths cannot leave that directory, and
+executable files keep their mode. The executor's runtime mounts only Secret
+items for such an agent.
+
+A legacy zone agent (`claw-investigator`) still has its definition mounted
+from a zone ConfigMap, as below.
+
 ## What a zone mounts
 
 | Path                           | Source         | Contents                                                                                                                                                                    |
@@ -42,7 +56,8 @@ the whole OpenClaw process group and still settles the run.
 Each step fails the attempt closed with a `runner-failed` completion:
 
 1. Startup heartbeat must be acknowledged before anything else, then the
-   brief must be a `claw` brief for this run with a question.
+   brief must be a `claw` brief for this run: an agent round with its message
+   and verified definition, or a legacy operation with its question.
 2. Fresh state directory with a writable copy of the pinned config.
 3. `openclaw config validate --json` must report `valid: true`.
    `agent exec` itself silently ignores unknown keys.
@@ -55,8 +70,9 @@ Each step fails the attempt closed with a `runner-failed` completion:
    under the outer deadline. OpenClaw's stderr is never forwarded, because it
    can echo resolved configuration.
 7. Settle: `report` only when the envelope is `ok`, has a final message and
-   no `toolSummary.unresolvedError`; for evidence operations
-   (`investigate:v1`) at least one tool call is also required. A tool call
+   no `toolSummary.unresolvedError`. When the agent's manifest sets
+   `requireToolEvidence` (or the legacy operation is `investigate:v1`), at
+   least one tool call is also required. A tool call
    that failed and was resolved (a probe of a host that is down) is evidence,
    not a runner failure. `agent exec` exits 0 with `ok: true` even when every
    tool call was denied, so the exit code alone proves nothing.
