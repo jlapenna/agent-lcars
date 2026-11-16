@@ -10,6 +10,13 @@ export async function runImageContainer(
     timeout = 30000,
     commandTimeout = 30000,
     cleanupTimeout = 15000,
+    // Monotonic clock for the shared cleanup budget and the per-client
+    // deadline (returns a canceller); both are injectable for tests.
+    now = () => performance.now(),
+    clientDeadline = (child, expire, limit) => {
+      const timer = setTimeout(expire, Math.max(1, Math.floor(limit)));
+      return () => clearTimeout(timer);
+    },
   } = {},
 ) {
   // A known name survives a disconnected create client too.
@@ -46,13 +53,35 @@ export async function runImageContainer(
         let stdout = '';
         let stderr = '';
         let error;
+        let exited = false;
+        let closed = false;
         const fail = (reason) => {
           error ??= reason;
           hardKill(child);
         };
-        const timer = setTimeout(
-          () => fail(new Error('Docker client deadline exceeded')),
-          Math.max(1, Math.floor(limit)),
+        // A loop stalled past the deadline runs this timer before the poll
+        // phase that delivers what the kernel already queued (#3395). Count
+        // poll passes, not time: one to observe an exit, then one more for
+        // the EOF that a short pipe read defers. A client that exited with
+        // both pipes drained met its deadline and its close follows; one
+        // still running, or whose pipes outlive it, is cut.
+        const settle = (passes) =>
+          setImmediate(() => {
+            if (closed) return;
+            if (
+              exited &&
+              child.stdout.readableEnded &&
+              child.stderr.readableEnded
+            )
+              return;
+            if (!exited || passes === 0)
+              fail(new Error('Docker client deadline exceeded'));
+            else settle(passes - 1);
+          });
+        const cancelDeadline = clientDeadline(
+          child,
+          () => settle(exited ? 0 : 1),
+          limit,
         );
         for (const [stream, append] of [
           [
@@ -75,11 +104,15 @@ export async function runImageContainer(
               fail(new Error('Docker output exceeded limit'));
           });
         }
+        child.on('exit', () => {
+          exited = true;
+        });
         child.on('error', (cause) => {
           error ??= cause;
         });
         child.on('close', (status, signal) => {
-          clearTimeout(timer);
+          closed = true;
+          cancelDeadline();
           active = undefined;
           resolve({
             stdout,
@@ -121,9 +154,9 @@ export async function runImageContainer(
     cleaning = true;
     let cleanup;
     // One monotonic deadline bounds every cleanup subprocess together.
-    const deadline = performance.now() + cleanupTimeout;
+    const deadline = now() + cleanupTimeout;
     const cleanupCommand = async (args, cap = cleanupTimeout) => {
-      const remaining = deadline - performance.now();
+      const remaining = deadline - now();
       if (remaining <= 0) throw new Error('Container cleanup budget exhausted');
       return command(args, Math.min(remaining, cap));
     };
@@ -138,10 +171,12 @@ export async function runImageContainer(
     };
     try {
       let verified = false;
+      let unproven;
       try {
         verified = await stopped();
-      } catch {
+      } catch (error) {
         /* Unknown state requires termination. */
+        unproven = error;
       }
       if (!verified) {
         // A failed kill client can still have stopped the daemon workload.
@@ -153,13 +188,17 @@ export async function runImageContainer(
         for (let attempt = 0; attempt < 3 && !verified; attempt++) {
           try {
             verified = await stopped();
-          } catch {
+            unproven = undefined; // The daemon answered: still running.
+          } catch (error) {
             /* Retry only within the cleanup bound. */
+            unproven = error;
           }
         }
       }
       if (!verified)
-        throw new Error('Owned container stopped state is unproven');
+        throw new Error('Owned container stopped state is unproven', {
+          cause: unproven,
+        });
       if (collected) {
         await cleanupCommand(['rm', container]);
         removed = true;

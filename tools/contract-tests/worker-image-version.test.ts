@@ -11,6 +11,7 @@ import { join } from 'node:path';
 
 import { expect, it } from 'vitest';
 
+import { runImageContainer } from '../probes/qualification-container.mjs';
 import { imageScenario } from '../probes/qualification-scenario.mjs';
 import { imageVersion } from '../probes/qualification-version.mjs';
 
@@ -60,7 +61,7 @@ save() {
   printf 'running=%s inspections=%s removed=%s\n' "$running" "$inspections" "$removed" > "$state.sh"
   printf '{"Running":%s,"ExitCode":0,"inspections":%s,"removed":%s}' "$running" "$inspections" "$removed" > "$state"
 }
-hang() { while :; do sleep 1 & wait $!; done; }
+hang() { : > ${JSON.stringify(join(root, 'hang.'))}$$; while :; do sleep 1 & wait $!; done; }
 in_mode() { case " $* " in *" $mode "*) return 0 ;; esac; return 1; }
 case "$1" in
 create) save; echo "$3"; [ "$mode" != create-disconnect ] || exit 1 ;;
@@ -102,6 +103,24 @@ esac
         let failure: unknown;
         let value;
         const started = performance.now();
+        // Time is injected so a starved CI worker cannot change the outcome
+        // (#3395). The cleanup budget never advances; it has its own test
+        // below. A client's deadline expires exactly when the fake declares
+        // it will never answer (hang), and never for a client that answers,
+        // however slowly the host runs it.
+        const now = () => 0;
+        const clientDeadline = (
+          child: { pid?: number },
+          expire: () => void,
+        ): (() => void) => {
+          const declared = join(root, 'hang.' + child.pid);
+          const poll = setInterval(() => {
+            if (!existsSync(declared)) return;
+            clearInterval(poll);
+            expire();
+          }, 5);
+          return () => clearInterval(poll);
+        };
         try {
           value =
             kind === 'version'
@@ -115,6 +134,8 @@ esac
                   {
                     commandTimeout: 1000,
                     cleanupTimeout: 1500,
+                    now,
+                    clientDeadline,
                   },
                 )
               : await imageScenario(
@@ -128,6 +149,8 @@ esac
                     timeout: 1000,
                     cleanupTimeout: 1500,
                     commandTimeout: 1000,
+                    now,
+                    clientDeadline,
                   },
                 );
         } catch (error) {
@@ -214,6 +237,115 @@ esac
     10000,
   );
 }
+
+// A stopped, collected workload whose daemon answers every call at once.
+const writeStoppedDocker = (root: string) => {
+  const docker = join(root, 'docker.sh');
+  const callsPath = join(root, 'calls.jsonl');
+  writeFileSync(
+    docker,
+    `#!/usr/bin/env bash
+json_args=$(printf ',"%s"' "$@")
+printf '[%s]\n' "\${json_args#,}" >> ${JSON.stringify(callsPath)}
+case "$1" in
+create) echo "$3" ;;
+start) echo fixture ;;
+inspect) echo "$$" > ${JSON.stringify(join(root, 'inspect.pid'))}; echo '{"Running":false,"ExitCode":0}' ;;
+rm|kill) ;;
+*) exit 2 ;;
+esac
+`,
+    { mode: 0o700 },
+  );
+  return {
+    docker,
+    calls: () =>
+      readFileSync(callsPath, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)[0]),
+  };
+};
+
+it('stops cleanup when its shared budget is exhausted', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'policy-budget-test-'));
+  try {
+    const { docker, calls } = writeStoppedDocker(root);
+    // The clock starts the budget, then reads as long past its deadline.
+    let reads = 0;
+    const failure = await runImageContainer(
+      ['fixture'],
+      async () => 'collected',
+      { docker, cleanupTimeout: 1500, now: () => (reads++ ? 1e9 : 0) },
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      'Owned container stopped state is unproven',
+    );
+    expect(String((failure as Error).cause)).toBe(
+      'Error: Container cleanup budget exhausted',
+    );
+    // No cleanup client ran past the budget, so the container is retained.
+    expect(calls()).toEqual(['create', 'start']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A worker stalled past a client deadline resumes with that timer due and the
+// client's exit and EOF already queued. The timer can then fire before the
+// client's close is emitted (#3395). Stall from the check phase until the
+// fake has exited (a zombie awaiting reap) and its deadline is due.
+it.skipIf(process.platform !== 'linux')(
+  'keeps a client that finished before a stalled loop observed its deadline',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'policy-stall-test-'));
+    try {
+      const { docker, calls } = writeStoppedDocker(root);
+      const pidPath = join(root, 'inspect.pid');
+      const value = await runImageContainer(
+        ['fixture'],
+        async (container, _execution, command) => {
+          const limit = 50;
+          const readback = command(
+            ['inspect', '--format', '{{json .State}}', container],
+            limit,
+          );
+          // The client and its deadline timer exist once command() returns.
+          const armed = performance.now();
+          const exited = () => {
+            try {
+              const pid = readFileSync(pidPath, 'utf8').trim();
+              const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
+              return stat.slice(stat.lastIndexOf(')') + 2)[0] === 'Z';
+            } catch {
+              return false;
+            }
+          };
+          await new Promise<void>((resolve) =>
+            setImmediate(() => {
+              // Vitest cannot time out a synchronous loop; bound it here.
+              while (
+                (!exited() || performance.now() - armed <= 2 * limit) &&
+                performance.now() - armed < 5000
+              ) {
+                /* Synchronously stall the event loop like a starved worker. */
+              }
+              resolve();
+            }),
+          );
+          return JSON.parse(await readback);
+        },
+        { docker },
+      );
+      expect(value).toEqual({ Running: false, ExitCode: 0 });
+      expect(calls()).toEqual(['create', 'start', 'inspect', 'inspect', 'rm']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  10000,
+);
 
 it.each([
   ['version', 'SIGTERM', false],
