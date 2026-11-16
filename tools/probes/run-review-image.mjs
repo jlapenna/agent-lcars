@@ -2,13 +2,21 @@
 // Run the real candidate-image CLI with the caller's native authentication.
 // No image publication, copied rotating login, fake model or production dispatch.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runImageContainer } from './qualification-container.mjs';
 import {
-  assertCredentialsOutliveRun,
+  CLAUDE_TOKEN_SECRET,
+  ensureCodexLoginOutlivesRun,
   nativeAuthMounts,
 } from './review-auth-mounts.mjs';
 
@@ -48,14 +56,49 @@ const common = resolve(
 const uid = process.getuid(),
   gid = process.getgid();
 const paths = [source, common, output, join(homedir(), '.config/gh')];
+// Claude authenticates with the fleet's long-lived, non-rotating token, read
+// into a private temporary directory that is removed after the run.
+let claudeSecretDir;
+const claudeTokenFile = () => {
+  claudeSecretDir = mkdtempSync(join(tmpdir(), 'lcars-review-secret-'));
+  const file = join(claudeSecretDir, 'claude-code-oauth-token');
+  const token = process.env.LCARS_REVIEW_CLAUDE_TOKEN_FILE
+    ? readFileSync(process.env.LCARS_REVIEW_CLAUDE_TOKEN_FILE, 'utf8')
+    : execFileSync(
+        'gcloud',
+        [
+          'secrets',
+          'versions',
+          'access',
+          'latest',
+          '--secret=' + CLAUDE_TOKEN_SECRET.secret,
+          '--project=' + CLAUDE_TOKEN_SECRET.project,
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
+      );
+  if (!token.trim()) throw new Error('The Claude long-lived token is empty');
+  writeFileSync(file, token.trim(), { mode: 0o600 });
+  return file;
+};
 const auth =
   provider === 'codex'
     ? (process.env.CODEX_HOME ?? join(homedir(), '.codex'))
     : provider === 'claude'
-      ? (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'))
+      ? claudeTokenFile()
       : provider === 'agy'
         ? join(homedir(), '.gemini/antigravity-cli')
         : process.env.LCARS_REVIEW_OPENCODE_KEY_FILE;
+const removeClaudeSecret = () => {
+  if (claudeSecretDir)
+    rmSync(claudeSecretDir, { recursive: true, force: true });
+};
+process.on('exit', removeClaudeSecret);
+// A signal outside the container window must not leave the token behind.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
+  process.once(signal, () => {
+    removeClaudeSecret();
+    process.kill(process.pid, signal);
+  });
 if (!auth || !existsSync(auth))
   throw new Error('Caller-owned native authentication binding is unavailable');
 paths.push(auth);
@@ -66,8 +109,36 @@ if (
 )
   throw new Error('Unsupported bind-mount path');
 const runTimeoutMs = 82 * 60 * 1000;
-if (provider !== 'opencode')
-  assertCredentialsOutliveRun(provider, auth, runTimeoutMs);
+if (provider === 'codex')
+  await ensureCodexLoginOutlivesRun({
+    auth,
+    runMs: runTimeoutMs,
+    // A minimal request in the caller's own Codex home makes Codex refresh
+    // and persist the login there, exactly as a live session would.
+    refresh: async () => {
+      if (!process.env.LCARS_REVIEW_CODEX_MODEL)
+        throw new Error('Supply the caller-selected Codex model and effort');
+      execFileSync(
+        'codex',
+        [
+          'exec',
+          '--skip-git-repo-check',
+          '--ignore-user-config',
+          '-c',
+          'model=' + JSON.stringify(process.env.LCARS_REVIEW_CODEX_MODEL),
+          '-c',
+          'model_reasoning_effort="low"',
+          'Reply with the single word ok.',
+        ],
+        {
+          cwd: tmpdir(),
+          env: { ...process.env, CODEX_HOME: auth },
+          stdio: ['ignore', 'ignore', 'inherit'],
+          timeout: 5 * 60 * 1000,
+        },
+      );
+    },
+  });
 mkdirSync(output, { mode: 0o700 });
 const leaf = join(output, 'run');
 const mount = (from, to, readOnly = false) => [
@@ -100,6 +171,16 @@ const args = [
 ];
 if (provider === 'opencode')
   args.push(...mount(auth, '/run/secrets/opencode-llm-api-key', true));
+else if (provider === 'claude')
+  args.push(
+    ...mount(auth, CLAUDE_TOKEN_SECRET.target, true),
+    ...nativeAuthMounts(
+      'claude',
+      null,
+      join(output, 'native-home'),
+      '/native/claude',
+    ),
+  );
 else
   // A private provider home holding only the caller's credential file; the
   // rest of the caller's directory is never mounted (#3379).
@@ -142,6 +223,10 @@ cp /home/runner/.hindsight/coding-agent.json "$qual_home/.hindsight/coding-agent
 cp -R /home/runner/.hindsight/coding-agents "$qual_home/.hindsight/coding-agents"
 chown -R "$qual_uid:$qual_gid" "$qual_home"
 if [ "$qual_provider" = agy ]; then ln -s /native/agy "$qual_home/.gemini/antigravity-cli"; fi
+if [ "$qual_provider" = claude ]; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(cat ${CLAUDE_TOKEN_SECRET.target})"
+  export CLAUDE_CODE_OAUTH_TOKEN
+fi
 cd "$qual_source"
 exec setpriv --reuid="$qual_uid" --regid="$qual_gid" --clear-groups node "$qual_source/tools/probes/qualify-review.mjs" "$qual_provider" "$qual_pull" "$qual_output" "$@"
 `;

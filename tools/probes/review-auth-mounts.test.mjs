@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import {
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -14,7 +13,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
-  assertCredentialsOutliveRun,
+  codexRefreshDueMs,
+  ensureCodexLoginOutlivesRun,
   nativeAuthMounts,
 } from './review-auth-mounts.mjs';
 
@@ -22,38 +22,37 @@ function withDirs(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'review-auth-mounts-'));
   const auth = join(dir, 'auth');
   mkdirSync(auth);
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  let result;
   try {
-    return fn(auth, join(dir, 'native-home'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    result = fn(auth, join(dir, 'native-home'));
+  } catch (error) {
+    cleanup();
+    throw error;
   }
+  if (result instanceof Promise) return result.finally(cleanup);
+  cleanup();
+  return result;
 }
 
-// The caller's directory holds far more than credentials.
 function callerHome(auth, credential) {
   writeFileSync(join(auth, credential), '{}\n');
   writeFileSync(join(auth, 'settings.json'), '{"hooks":{}}\n');
   mkdirSync(join(auth, 'hooks'));
-  mkdirSync(join(auth, 'projects'));
 }
 
-test('Claude gets a private home with only its credential bound read-only', () => {
-  withDirs((auth, home) => {
-    callerHome(auth, '.credentials.json');
-    assert.deepEqual(nativeAuthMounts('claude', auth, home, '/native/claude'), [
+test('Claude gets an empty private home and no caller directory at all', () => {
+  withDirs((_auth, home) => {
+    assert.deepEqual(nativeAuthMounts('claude', null, home, '/native/claude'), [
       '--mount',
       `type=bind,source=${home},target=/native/claude`,
-      '--mount',
-      `type=bind,source=${join(auth, '.credentials.json')},target=/native/claude/.credentials.json,readonly`,
     ]);
-    // The private home holds only the mount point, never caller content.
-    assert.deepEqual(readdirSync(home), ['.credentials.json']);
-    assert.equal(statSync(join(home, '.credentials.json')).size, 0);
+    assert.deepEqual(readdirSync(home), []);
     assert.equal(statSync(home).mode & 0o777, 0o700);
   });
 });
 
-test('Codex and Antigravity credentials are bound read-only into a private home at the target', () => {
+test('Codex and Antigravity bind only their credential, read-only, into a private home', () => {
   withDirs((auth, home) => {
     callerHome(auth, 'auth.json');
     assert.deepEqual(nativeAuthMounts('codex', auth, home, auth), [
@@ -62,10 +61,11 @@ test('Codex and Antigravity credentials are bound read-only into a private home 
       '--mount',
       `type=bind,source=${join(auth, 'auth.json')},target=${join(auth, 'auth.json')},readonly`,
     ]);
+    assert.deepEqual(readdirSync(home), ['auth.json']);
   });
   withDirs((auth, home) => {
     callerHome(auth, 'antigravity-oauth-token');
-    assert.deepEqual(
+    assert.equal(
       nativeAuthMounts('agy', auth, home, '/native/agy').at(-1),
       `type=bind,source=${join(auth, 'antigravity-oauth-token')},target=/native/agy/antigravity-oauth-token,readonly`,
     );
@@ -75,25 +75,21 @@ test('Codex and Antigravity credentials are bound read-only into a private home 
 test('a missing, symlinked or pre-existing credential path refuses the launch', () => {
   withDirs((auth, home) => {
     assert.throws(
-      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
+      () => nativeAuthMounts('codex', auth, home, auth),
       /missing or not a regular file/,
     );
   });
   withDirs((auth, home) => {
     writeFileSync(join(auth, 'real.json'), '{}\n');
-    symlinkSync(join(auth, 'real.json'), join(auth, '.credentials.json'));
+    symlinkSync(join(auth, 'real.json'), join(auth, 'auth.json'));
     assert.throws(
-      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
+      () => nativeAuthMounts('codex', auth, home, auth),
       /missing or not a regular file/,
     );
   });
   withDirs((auth, home) => {
-    callerHome(auth, '.credentials.json');
     mkdirSync(home);
-    assert.throws(
-      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
-      /EEXIST/,
-    );
+    assert.throws(() => nativeAuthMounts('claude', null, home, '/x'), /EEXIST/);
   });
   assert.deepEqual(nativeAuthMounts('opencode', '/x', '/y', '/z'), []);
   assert.throws(
@@ -102,68 +98,116 @@ test('a missing, symlinked or pre-existing credential path refuses the launch', 
   );
 });
 
-const jwt = (exp) =>
-  ['h', Buffer.from(JSON.stringify({ exp })).toString('base64url'), 's'].join(
-    '.',
-  );
-const NOW = 1_800_000_000_000;
-const RUN = 82 * 60 * 1000;
+const jwt = (expSeconds) =>
+  [
+    'h',
+    Buffer.from(JSON.stringify({ exp: expSeconds })).toString('base64url'),
+    's',
+  ].join('.');
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
+const RUN = 82 * 60 * 1000;
+const writeCodexAuth = (auth, expMs, lastRefreshMs) =>
+  writeFileSync(
+    join(auth, 'auth.json'),
+    JSON.stringify({
+      tokens: { access_token: jwt(expMs / 1000) },
+      last_refresh: new Date(lastRefreshMs).toISOString(),
+    }),
+  );
 
-test('a Claude token that would refresh during the run refuses the launch', () => {
+test('Codex refreshes at the earlier of token expiry and last_refresh + 8 days', () => {
   withDirs((auth) => {
-    const write = (expiresAt) =>
-      writeFileSync(
-        join(auth, '.credentials.json'),
-        JSON.stringify({ claudeAiOauth: { expiresAt } }),
-      );
-    write(NOW + 6 * HOUR);
-    assertCredentialsOutliveRun('claude', auth, RUN, NOW);
-    write(NOW + 90 * 60 * 1000);
-    assert.throws(
-      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
-      /claude login refreshes at .* inside this review/,
-    );
-    writeFileSync(join(auth, '.credentials.json'), '{}');
-    assert.throws(
-      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
-      /no readable expiry/,
-    );
+    const now = 1_800_000_000_000;
+    writeCodexAuth(auth, now + 8 * DAY, now - 2 * DAY);
+    assert.equal(codexRefreshDueMs(auth), now + 6 * DAY);
+    writeCodexAuth(auth, now + HOUR, now - 2 * DAY);
+    assert.equal(codexRefreshDueMs(auth), now + HOUR);
+    writeFileSync(join(auth, 'auth.json'), JSON.stringify({ tokens: {} }));
+    assert.equal(codexRefreshDueMs(auth), null);
   });
 });
 
-test('a Codex token that would expire, or reach its 8-day refresh, during the run refuses the launch', () => {
-  withDirs((auth) => {
-    const write = (expMs, lastRefreshMs) =>
-      writeFileSync(
-        join(auth, 'auth.json'),
-        JSON.stringify({
-          tokens: { access_token: jwt(expMs / 1000) },
-          last_refresh: new Date(lastRefreshMs).toISOString(),
-        }),
-      );
-    write(NOW + 8 * DAY, NOW - 2 * DAY);
-    assertCredentialsOutliveRun('codex', auth, RUN, NOW);
-    // Access token about to expire.
-    write(NOW + HOUR, NOW - 2 * DAY);
-    assert.throws(
-      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
-      /codex login refreshes at/,
+test('a Codex login that outlives the run launches immediately', async () => {
+  await withDirs(async (auth) => {
+    const now = 1_800_000_000_000;
+    writeCodexAuth(auth, now + 9 * DAY, now - DAY);
+    let refreshed = 0;
+    await ensureCodexLoginOutlivesRun({
+      auth,
+      runMs: RUN,
+      now: () => now,
+      sleep: async () => assert.fail('must not wait'),
+      refresh: async () => (refreshed += 1),
+      log: () => {},
+    });
+    assert.equal(refreshed, 0);
+  });
+});
+
+test('a Codex refresh due inside the run is waited for and done on the host, never refused', async () => {
+  await withDirs(async (auth) => {
+    let clock = 1_800_000_000_000;
+    // last_refresh + 8 days lands 40 minutes from now.
+    writeCodexAuth(auth, clock + 2 * DAY, clock - 8 * DAY + 40 * 60 * 1000);
+    const waits = [];
+    let refreshed = 0;
+    await ensureCodexLoginOutlivesRun({
+      auth,
+      runMs: RUN,
+      now: () => clock,
+      sleep: async (ms) => {
+        waits.push(ms);
+        clock += ms;
+      },
+      // The host request makes Codex persist a fresh login.
+      refresh: async () => {
+        refreshed += 1;
+        writeCodexAuth(auth, clock + 10 * DAY, clock);
+      },
+      log: () => {},
+    });
+    assert.deepEqual(waits, [41 * 60 * 1000]);
+    assert.equal(refreshed, 1);
+  });
+});
+
+test('a live host session that refreshes during the wait makes the host request unnecessary', async () => {
+  await withDirs(async (auth) => {
+    let clock = 1_800_000_000_000;
+    writeCodexAuth(auth, clock + 30 * 60 * 1000, clock - DAY);
+    let refreshed = 0;
+    await ensureCodexLoginOutlivesRun({
+      auth,
+      runMs: RUN,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        writeCodexAuth(auth, clock + 10 * DAY, clock);
+      },
+      refresh: async () => (refreshed += 1),
+      log: () => {},
+    });
+    assert.equal(refreshed, 0);
+  });
+});
+
+test('only a host that cannot refresh the Codex login stops the launch', async () => {
+  await withDirs(async (auth) => {
+    const now = 1_800_000_000_000;
+    writeCodexAuth(auth, now - HOUR, now - 9 * DAY);
+    let refreshed = 0;
+    await assert.rejects(
+      ensureCodexLoginOutlivesRun({
+        auth,
+        runMs: RUN,
+        now: () => now,
+        sleep: async () => {},
+        refresh: async () => (refreshed += 1),
+        log: () => {},
+      }),
+      /could not be refreshed on the host/,
     );
-    // Token still valid for days, but last_refresh crosses 8 days mid-run.
-    write(NOW + 2 * DAY, NOW - 8 * DAY + HOUR);
-    assert.throws(
-      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
-      /codex login refreshes at/,
-    );
-    writeFileSync(join(auth, 'auth.json'), JSON.stringify({ tokens: {} }));
-    assert.throws(
-      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
-      /no readable expiry/,
-    );
-    // Antigravity's token is used read-only and never refreshed here.
-    assertCredentialsOutliveRun('agy', auth, RUN, NOW);
-    assert.equal(existsSync(join(auth, '.credentials.json')), false);
+    assert.equal(refreshed, 3);
   });
 });

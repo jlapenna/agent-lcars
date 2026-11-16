@@ -31,22 +31,31 @@ LCARS_REVIEW_OPENCODE_KEY_FILE=<protected-native-key-file> \
 
 The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
-providers use the caller's existing native login without copying rotating
-login state. The container drops to the caller's UID so those files retain
-their ownership. The caller's provider directory itself is never mounted: it
-configures the caller's live sessions (settings, hooks, plugins, skills,
-rules, MCP servers, memory, sourced shell state), and a review once rewrote it
-(#3379). Instead `review-auth-mounts.mjs` gives the review a fresh private
-provider home under the run's `native-home/` and binds only the credential
-file into it, read-only (Claude `.credentials.json`, Codex `auth.json`, the
-Antigravity token). A read-only credential cannot accept a refreshed token,
-so the launch is refused unless no refresh can fall inside the run: Claude
-refreshes as `expiresAt` nears, Codex when its access token expires or its
-`last_refresh` passes 8 days. Retry once the caller's own sessions have
-refreshed the login. The bind target lives in the private home, so a credential file the host
-replaces mid-run only detaches the review from it; nothing else of the caller
-is ever exposed. The review's transcripts land in the private home, where the
-in-container evidence collector reads them. The image's normal runner UID and setup
+providers authenticate with the maintainer's subscriptions, but a review
+never mounts the caller's provider directories: they configure the caller's
+live sessions (settings, hooks, plugins, skills, rules, MCP servers, memory,
+sourced shell state), and a review once rewrote one (#3379).
+`review-auth-mounts.mjs` gives each review a fresh private provider home under
+the run's `native-home/`, and no review can change a rotating login the
+caller's sessions depend on:
+
+- Claude uses the fleet's long-lived, non-rotating `CLAUDE_CODE_OAUTH_TOKEN`
+  ([fleet credentials](fleet-credentials.md)). The launcher reads it from
+  Secret Manager, which needs project-level access to `agent-lcars` (otherwise
+  supply a protected `LCARS_REVIEW_CLAUDE_TOKEN_FILE`), into a private
+  temporary file, mounts it read-only and removes it after the run.
+- Codex has no long-lived token, so the caller's `auth.json` is bound
+  read-only. Codex refreshes at a known time (access-token expiry or
+  `last_refresh` + 8 days). When that falls inside the run, the launcher waits
+  for it and lets the refresh happen on the host in the caller's own
+  directory (a live session's next request, or one minimal host request),
+  then starts the review. Only a host that cannot refresh stops the launch.
+- The Antigravity token is bound read-only, as the fleet runner copies it.
+
+Bind targets live in the private home, so a host-side replace of a bound file
+only detaches the review from it. The review's transcripts land in the private
+home, where the in-container evidence collector reads them. The container
+drops to the caller's UID. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
