@@ -215,6 +215,31 @@ describe('Goose file-parameter recipe', () => {
     );
   });
 
+  it('rewrites a default that opens its list item', () => {
+    const original = [
+      'prompt: "{{ a }}"',
+      'parameters:',
+      '  - default: |',
+      '      block',
+      '    key: a',
+      '    description: A',
+      '    input_type: string',
+      '    requirement: optional',
+      '',
+    ].join('\n');
+    expect(fileParameterRecipe(original)).toBe(
+      [
+        'prompt: "{{ a }}"',
+        'parameters:',
+        '  - key: a',
+        '    description: A',
+        '    input_type: file',
+        '    requirement: required',
+        '',
+      ].join('\n'),
+    );
+  });
+
   it('is validated when the catalog parses a definition', () => {
     expect(() => parseDefinition()).not.toThrow();
     expect(fileParameterRecipe(parseDefinition().recipeText)).toContain(

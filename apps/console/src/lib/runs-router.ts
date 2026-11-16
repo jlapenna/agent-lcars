@@ -515,7 +515,11 @@ export const runsRouter = os.router({
     let fileRecipeText: string | undefined;
     try {
       fileRecipeText = fileParameterRecipe(occurrence.definition.recipeText);
-    } catch {
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Recipe parameters stay on argv for this occurrence',
+      );
       fileRecipeText = undefined;
     }
     return {

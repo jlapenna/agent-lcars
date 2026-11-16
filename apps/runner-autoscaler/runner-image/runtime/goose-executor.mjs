@@ -89,8 +89,14 @@ export function gooseExecutor({
           args.push('--params', `${key}=${path}`);
         }
       } else
-        for (const [key, value] of Object.entries(parameters))
+        for (const [key, value] of Object.entries(parameters)) {
+          // Linux refuses one argument above MAX_ARG_STRLEN (128 KiB).
+          if (Buffer.byteLength(`${key}=${value}`) >= 128 * 1024)
+            throw new Error(
+              `Recipe parameter ${key} exceeds the 128 KiB argument limit; this occurrence cannot pass values as files`,
+            );
           args.push('--params', `${key}=${value}`);
+        }
       let output;
       try {
         output = await subprocess(executable, args, {

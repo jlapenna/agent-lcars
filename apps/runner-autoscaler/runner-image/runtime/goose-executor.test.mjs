@@ -206,6 +206,43 @@ console.log(JSON.stringify({ metadata: { status: 'completed' }, messages: [{ rol
   }
 });
 
+test('argv fallback refuses a value Linux cannot pass, naming the parameter', async () => {
+  const directory = await mkdtemp('/tmp/lcars-goose-argv-');
+  try {
+    const executable = join(directory, 'goose');
+    await writeFile(executable, `#!${process.execPath}\nprocess.exit(0);\n`, {
+      mode: 0o700,
+    });
+    const execute = gooseExecutor({
+      executable,
+      workingDirectory: directory,
+      environment: {
+        PATH: '/usr/bin:/bin',
+        HOME: directory,
+        GOOSE_PATH_ROOT: directory,
+      },
+      assertAllocation: async () => {
+        /* Argument guard fixture. */
+      },
+    });
+    await assert.rejects(
+      execute({
+        run: {
+          definition: {
+            recipeText: 'fixture',
+            job: { inputs: {}, execution: { resources: {} } },
+          },
+        },
+        baseline: { data: 'b'.repeat(200 * 1024) },
+        signal: new AbortController().signal,
+      }),
+      /Recipe parameter baseline exceeds the 128 KiB argument limit/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('gooseExecutor tags provider-limit and provider-capacity failures on goose run only', async () => {
   const directory = await mkdtemp('/tmp/lcars-goose-limit-');
   try {

@@ -55,13 +55,17 @@ export function fileParameterRecipe(recipeText: string): string {
           // A flow mapping separates entries with commas; drop this entry's.
           const following = /^\s*,/u.exec(recipeText.slice(end));
           if (following) end += following[0].length;
-        } else if (/^[ \t]*$/u.test(recipeText.slice(lineStart, start))) {
+        } else {
           // Remove whole lines in a block mapping, block scalars included.
-          start = lineStart;
+          const first = !/^[ \t]*$/u.test(recipeText.slice(lineStart, start));
+          if (!first) start = lineStart;
           if (recipeText[end - 1] !== '\n') {
             const newline = recipeText.indexOf('\n', end);
             end = newline === -1 ? recipeText.length : newline + 1;
           }
+          // `- default: ...` opens the item: pull the next key up onto the
+          // dash so it keeps the item's indentation.
+          if (first) end += /^[ \t]*/u.exec(recipeText.slice(end))![0].length;
         }
         edits.push({ start, end, text: '' });
       }
