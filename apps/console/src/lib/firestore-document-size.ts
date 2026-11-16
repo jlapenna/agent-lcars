@@ -12,6 +12,7 @@ function valueBytes(value: unknown): number {
     return 1;
   if (typeof value === 'number' || value instanceof Date) return 8;
   if (typeof value === 'string') return utf8(value) + 1;
+  if (ArrayBuffer.isView(value)) return value.byteLength;
   if (Array.isArray(value))
     return value.reduce<number>((sum, item) => sum + valueBytes(item), 0);
   if (typeof value === 'object')

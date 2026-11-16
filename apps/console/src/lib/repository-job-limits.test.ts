@@ -5,7 +5,7 @@ import {
   REPOSITORY_JOB_REQUEST_MAX_BYTES,
 } from '@agent-lcars/work';
 import type { Firestore } from '@google-cloud/firestore';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { parse, stringify } from 'yaml';
 
 import {
@@ -313,21 +313,68 @@ describe('Firestore document size', () => {
     ).toBe(147);
   });
 
-  function fakeDatabase() {
-    const set = vi.fn();
+  /** Enough of Firestore for FirestoreJobStore, enforcing the 1 MiB limit. */
+  function memoryDatabase() {
+    const rows = new Map<string, Record<string, unknown>>();
+    const write = (path: string, data: Record<string, unknown>) => {
+      // The real service refuses an oversized document the same way.
+      expect(firestoreDocumentBytes(path, data)).toBeLessThanOrEqual(
+        FIRESTORE_DOCUMENT_MAX_BYTES,
+      );
+      rows.set(path, structuredClone(data));
+    };
+    const snapshot = (path: string) => ({
+      exists: rows.has(path),
+      data: () =>
+        rows.has(path) ? structuredClone(rows.get(path)) : undefined,
+    });
+    const doc = (collection: string, id: string) => {
+      const path = `${collection}/${id}`;
+      return {
+        path,
+        get: async () => snapshot(path),
+        set: async (data: Record<string, unknown>) => write(path, data),
+      };
+    };
     const database = {
       collection: (collection: string) => ({
-        doc: (id: string) => ({ path: `${collection}/${id}` }),
+        doc: (id: string) => doc(collection, id),
       }),
-      runTransaction: async (run: (transaction: unknown) => Promise<unknown>) =>
-        run({ get: async () => ({ exists: false }), set }),
+      getAll: async (...refs: { path: string }[]) =>
+        refs.map((ref) => snapshot(ref.path)),
+      batch: () => {
+        const pending: [string, Record<string, unknown>][] = [];
+        return {
+          set: (ref: { path: string }, data: Record<string, unknown>) =>
+            pending.push([ref.path, data]),
+          commit: async () => {
+            for (const [path, data] of pending) write(path, data);
+          },
+        };
+      },
+      runTransaction: async (
+        run: (transaction: unknown) => Promise<unknown>,
+      ) => {
+        const pending: [string, Record<string, unknown>][] = [];
+        const result = await run({
+          get: async (ref: { path: string }) => snapshot(ref.path),
+          set: (ref: { path: string }, data: Record<string, unknown>) =>
+            pending.push([ref.path, data]),
+        });
+        for (const [path, data] of pending) write(path, data);
+        return result;
+      },
     } as unknown as Firestore;
-    return { database, set };
+    return { database, rows };
   }
-  function occurrence(inputSets: Record<string, string>[]): JobOccurrence {
+  function occurrence(
+    inputSets: Record<string, string>[] = [{}],
+    data: unknown = { findings: 'f'.repeat(3 * 1024 * 1024) },
+    id = 'c'.repeat(64),
+  ): JobOccurrence {
     const definition = parseDefinition();
     return {
-      id: 'c'.repeat(64),
+      id,
       jobId: 'b'.repeat(64),
       workId: 'work',
       requestDigest: 'd'.repeat(64),
@@ -350,20 +397,80 @@ describe('Firestore document size', () => {
       artifact: validateJobResult(definition, {
         report: 'Large result',
         complete: true,
-        // Staged results store data twice (result.json and baseline).
-        data: { findings: 'f'.repeat(150 * 1024) },
+        data,
       }),
     };
   }
+  const save = (store: FirestoreJobStore, value: JobOccurrence) =>
+    store.mutate(value.jobId, value.id, () => ({ occurrence: value }));
 
-  it('stores a maximum parameter map beside a large result', async () => {
-    const { database, set } = fakeDatabase();
-    await new FirestoreJobStore(database).mutate(
-      'b'.repeat(64),
-      'c'.repeat(64),
-      () => ({ occurrence: occurrence([{}]) }),
+  it('stores a multi-MiB result and maximum parameters out of line and reads them back', async () => {
+    const { database, rows } = memoryDatabase();
+    const store = new FirestoreJobStore(database);
+    // 3 MiB of data is staged twice (result.json and baseline): ~6 MiB.
+    const value = occurrence();
+    await save(store, value);
+    expect(await store.readOccurrence(value.id)).toEqual(value);
+    const stored = rows.get(`orchestrator-job-occurrences/${value.id}`)!;
+    expect(stored['definition']).toBeUndefined();
+    expect(stored['artifactJson']).toBeUndefined();
+    expect(stored['artifactRef']).toMatchObject({ chunks: 7 });
+    expect(
+      [...rows.keys()].filter((path) =>
+        path.startsWith('orchestrator-job-artifact-chunks/'),
+      ),
+    ).toHaveLength(7);
+  });
+
+  it('stores a definition once for every occurrence pinned to it', async () => {
+    const { database, rows } = memoryDatabase();
+    const store = new FirestoreJobStore(database);
+    await save(store, occurrence([{}], {}, 'c'.repeat(64)));
+    await save(store, occurrence([{}], {}, 'f'.repeat(64)));
+    expect(
+      [...rows.keys()].filter((path) =>
+        path.startsWith('orchestrator-job-definitions/'),
+      ),
+    ).toHaveLength(1);
+    expect((await store.readOccurrence('f'.repeat(64)))?.definition).toEqual(
+      parseDefinition(),
     );
-    expect(set).toHaveBeenCalledOnce();
+  });
+
+  it('reads occurrences written with an inline definition and artifact', async () => {
+    const { database, rows } = memoryDatabase();
+    const { artifact, ...legacy } = occurrence([{}], { kept: [[1, 2], [3]] });
+    rows.set(`orchestrator-job-occurrences/${legacy.id}`, {
+      ...JSON.parse(JSON.stringify(legacy)),
+      artifactJson: JSON.stringify(artifact),
+    });
+    const store = new FirestoreJobStore(database);
+    expect(await store.readOccurrence(legacy.id)).toEqual({
+      ...legacy,
+      artifact,
+    });
+    // Rewriting a legacy occurrence moves its content out of line.
+    await store.mutate(legacy.jobId, legacy.id, (_job, current) => ({
+      occurrence: { ...current!, reconciledAt: new Date(0).toISOString() },
+    }));
+    const stored = rows.get(`orchestrator-job-occurrences/${legacy.id}`)!;
+    expect(stored['definitionKey']).toBeDefined();
+    expect(stored['artifactJson']).toBeUndefined();
+    expect((await store.readOccurrence(legacy.id))?.artifact).toEqual(artifact);
+  });
+
+  it('refuses an artifact whose stored chunks do not match its digest', async () => {
+    const { database, rows } = memoryDatabase();
+    const store = new FirestoreJobStore(database);
+    const value = occurrence([{}], { small: true });
+    await save(store, value);
+    const chunk = [...rows.keys()].find((path) =>
+      path.startsWith('orchestrator-job-artifact-chunks/'),
+    )!;
+    rows.set(chunk, { data: Buffer.from('{"tampered":true}') });
+    await expect(store.readOccurrence(value.id)).rejects.toThrow(
+      /does not match its digest/u,
+    );
   });
 
   it('lists a catalog and its sources beyond 500 rows', async () => {
@@ -415,23 +522,21 @@ describe('Firestore document size', () => {
   });
 
   it('refuses an occurrence Firestore could not store, naming the record', async () => {
-    const { database, set } = fakeDatabase();
-    const sets = Array.from({ length: 4 }, (_, index) => ({
+    const { database, rows } = memoryDatabase();
+    const sets = Array.from({ length: 3 }, (_, index) => ({
       [`k${index}`]: 'x'.repeat(200 * 1024),
     }));
     await expect(
-      new FirestoreJobStore(database).mutate(
-        'b'.repeat(64),
-        'c'.repeat(64),
-        () => ({ occurrence: occurrence(sets) }),
-      ),
+      save(new FirestoreJobStore(database), occurrence(sets)),
     ).rejects.toThrow(
       new RegExp(
         `Job occurrence is \\d+ bytes, above Firestore's ${FIRESTORE_DOCUMENT_MAX_BYTES}-byte`,
         'u',
       ),
     );
-    expect(set).not.toHaveBeenCalled();
+    expect(rows.has(`orchestrator-job-occurrences/${'c'.repeat(64)}`)).toBe(
+      false,
+    );
   });
 });
 

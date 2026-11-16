@@ -13,6 +13,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+// Same bound as the Work API's REPOSITORY_JOB_RESULT_MAX_BYTES.
+export const RESULT_MAX_BYTES = 4 * 1024 * 1024;
+// Goose's JSON envelope carries the whole conversation around the final
+// result, so its memory guard leaves room beyond one maximum result.
+const OUTPUT_MAX_BYTES = 4 * RESULT_MAX_BYTES;
+
 // The adapter runs ONLY inside a caller-owned, enforced job allocation. The
 // caller supplies its admission proof; an unguarded workstation invocation is
 // refused, never silently upgraded into a larger allocation.
@@ -180,10 +186,10 @@ export async function readGooseResultFile(path) {
   );
   try {
     const info = await file.stat();
-    const maximum = 262144; // Same bound as the Work recipe-result endpoint.
+    const maximum = RESULT_MAX_BYTES;
     if (!info.isFile() || info.size > maximum)
       throw new Error(
-        'Declared Goose result must be a regular JSON file within 256 KiB',
+        'Declared Goose result must be a regular JSON file within 4 MiB',
       );
     const buffer = Buffer.alloc(maximum + 1);
     let size = 0;
@@ -197,8 +203,7 @@ export async function readGooseResultFile(path) {
       if (!bytesRead) break;
       size += bytesRead;
     }
-    if (size > maximum)
-      throw new Error('Declared Goose result exceeds 256 KiB');
+    if (size > maximum) throw new Error('Declared Goose result exceeds 4 MiB');
     return JSON.parse(buffer.subarray(0, size).toString('utf8'));
   } finally {
     await file.close();
@@ -305,8 +310,8 @@ export async function subprocess(
     };
     const consume = (chunk, output) => {
       bytes += chunk.length;
-      if (bytes > 1024 * 1024) {
-        failure = new Error('Goose output exceeds 1 MiB');
+      if (bytes > OUTPUT_MAX_BYTES) {
+        failure = new Error('Goose output exceeds 16 MiB');
         stop();
       } else if (output) stdout.push(chunk);
       else stderr = (stderr + chunk.toString('utf8')).slice(-4096);

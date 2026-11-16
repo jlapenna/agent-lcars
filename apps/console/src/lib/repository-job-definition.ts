@@ -10,6 +10,10 @@ import {
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
+import {
+  FIRESTORE_DOCUMENT_MAX_BYTES,
+  firestoreDocumentBytes,
+} from './firestore-document-size';
 import { fileParameterRecipe } from './repository-job-recipe';
 
 const name = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
@@ -128,7 +132,7 @@ export const jobDefinitionSchema = z.strictObject({
   revision: z.string().regex(/^[a-f0-9]{40}$/u),
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
   job: repositoryJobSchema,
-  recipeText: z.string().max(65536),
+  recipeText: z.string(),
   parameters: z.array(recipeParameterSchema).default([]),
 });
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
@@ -212,9 +216,9 @@ export function jobDigest(value: unknown): string {
 export function jobKey(repo: string, jobName: string): string {
   return jobDigest([repository.parse(repo), name.parse(jobName)]);
 }
+/** Catalog fields beside the definition: identity, state and a bounded error. */
+const CATALOG_ENTRY_RESERVE_BYTES = 8 * 1024;
 function yaml(text: string): unknown {
-  if (Buffer.byteLength(text) > 65536)
-    throw new Error('Document exceeds 64 KiB');
   const document = parseDocument(text, { uniqueKeys: true });
   if (document.errors.length) throw new Error('Invalid YAML');
   return document.toJS({ maxAliasCount: 0 });
@@ -269,7 +273,7 @@ export function parseJobDefinition(
   // Workers pass every value as a Goose file parameter; refuse a recipe whose
   // declarations cannot be rewritten that way now, not at run time.
   fileParameterRecipe(recipeText);
-  return jobDefinitionSchema.parse({
+  const definition = jobDefinitionSchema.parse({
     repository: repo,
     revision,
     name: jobName,
@@ -278,6 +282,17 @@ export function parseJobDefinition(
     parameters,
     digest: jobDigest([jobText, recipeText]),
   });
+  // The only size bound: the catalog entry embeds the definition, and stored
+  // definitions are single documents. Reserve room for the entry's own fields.
+  if (
+    firestoreDocumentBytes(`orchestrator-jobs/${'0'.repeat(64)}`, {
+      definition,
+    }) +
+      CATALOG_ENTRY_RESERVE_BYTES >
+    FIRESTORE_DOCUMENT_MAX_BYTES
+  )
+    throw new Error("Job definition exceeds Firestore's 1 MiB document limit");
+  return definition;
 }
 export function authorizeJob(
   definition: JobDefinition,

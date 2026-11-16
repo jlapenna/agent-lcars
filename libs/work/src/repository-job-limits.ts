@@ -6,11 +6,20 @@
 
 /**
  * Compact-JSON bytes of an invocation's parameter map (or a manifest's fixed
- * inputs, or one profile input set). The occurrence document stores the
- * parameters next to its pinned definition and staged result inside
- * Firestore's 1 MiB document limit; this is the share left for parameters.
+ * inputs, or one profile input set). The pinned definition and staged result
+ * live outside the occurrence document, so the parameters may use half of
+ * Firestore's 1 MiB document limit; the rest holds the pinned profile and the
+ * occurrence's own fields.
  */
-export const REPOSITORY_JOB_PARAMETERS_MAX_BYTES = 256 * 1024;
+export const REPOSITORY_JOB_PARAMETERS_MAX_BYTES = 512 * 1024;
+
+/**
+ * Compact-JSON bytes of one recipe result. Results are stored out of line in
+ * chunks, so Firestore does not bound them; this keeps a result, the baseline
+ * copy staged with it and the next run's brief within ordinary request and
+ * worker-memory sizes.
+ */
+export const REPOSITORY_JOB_RESULT_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
  * A job request body: the parameter map plus its small envelope

@@ -1,3 +1,7 @@
+import {
+  REPOSITORY_JOB_RESULT_MAX_BYTES,
+  repositoryJobJsonBytes,
+} from '@agent-lcars/work';
 import { z } from 'zod';
 
 import { type JobDefinition, jobDigest } from './repository-job-definition';
@@ -7,35 +11,25 @@ import type { JobArtifact } from './repository-job-store';
 // must fail the run, not become the next run's baseline.
 const stub = /^(?:placeholder|todo|tbd|\.\.\.|…|<[^>]*>)$/iu;
 const substantive = (value: string) => !stub.test(value.trim());
-const report = z
-  .string()
-  .trim()
-  .min(1)
-  .max(65536)
-  .refine(substantive, 'Placeholder text');
+// Only the whole result is bounded (REPOSITORY_JOB_RESULT_MAX_BYTES); a
+// report, finding or evidence list may use as much of it as it needs.
+const report = z.string().trim().min(1).refine(substantive, 'Placeholder text');
 const evidence = z
-  .array(z.string().min(1).max(4096).refine(substantive, 'Placeholder text'))
-  .min(1)
-  .max(32);
+  .array(z.string().min(1).refine(substantive, 'Placeholder text'))
+  .min(1);
 const securityResult = z.strictObject({
   report,
   findings: z.strictObject({
     version: z.literal(1),
-    items: z
-      .array(
-        z.strictObject({
-          key: z.string().min(1).max(256),
-          severity: z.enum(['info', 'low', 'medium', 'high', 'critical']),
-          summary: z
-            .string()
-            .min(1)
-            .max(4096)
-            .refine(substantive, 'Placeholder text'),
-          evidence,
-          disposition: z.enum(['new', 'existing', 'resolved']),
-        }),
-      )
-      .max(1000),
+    items: z.array(
+      z.strictObject({
+        key: z.string().min(1),
+        severity: z.enum(['info', 'low', 'medium', 'high', 'critical']),
+        summary: z.string().min(1).refine(substantive, 'Placeholder text'),
+        evidence,
+        disposition: z.enum(['new', 'existing', 'resolved']),
+      }),
+    ),
   }),
   coverage: z.strictObject({
     version: z.literal(1),
@@ -61,8 +55,10 @@ export function validateJobResult(
   definition: JobDefinition,
   value: unknown,
 ): JobArtifact {
-  if (Buffer.byteLength(JSON.stringify(value)) > 262144)
-    throw new Error('Result exceeds 256 KiB');
+  if (repositoryJobJsonBytes(value) > REPOSITORY_JOB_RESULT_MAX_BYTES)
+    throw new Error(
+      `Result exceeds ${REPOSITORY_JOB_RESULT_MAX_BYTES / 1024 / 1024} MiB`,
+    );
   let artifacts: Record<string, unknown>;
   let baseline: unknown;
   let successful: boolean;
