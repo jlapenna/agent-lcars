@@ -48,6 +48,24 @@ describe('RecentOutcomesSection', () => {
     ).toBeNull();
   });
 
+  it('keeps older history reachable when no newest outcome matches', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={[]}
+          olderHref="/agents?outcomes=ghi"
+        />
+      </MantineProvider>,
+    );
+    const panel = screen.getByTestId('recent-outcomes');
+    expect(panel).toHaveTextContent(
+      'No matching outcomes among the newest runs.',
+    );
+    expect(
+      within(panel).getByRole('link', { name: 'Older outcomes →' }),
+    ).toHaveAttribute('href', '/agents?outcomes=ghi');
+  });
+
   it('keeps an empty history page navigable', () => {
     render(
       <MantineProvider>

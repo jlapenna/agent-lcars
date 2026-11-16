@@ -33,8 +33,14 @@ export function RecentOutcomesSection({
   // Recent outcomes are useful evidence only when there is evidence to
   // inspect. Suppressing the empty panel keeps the first viewport focused on
   // activity and exceptions, without hiding any actionable state. A page of
-  // the history always renders, so its navigation stays reachable.
-  if (recentRuns.length === 0 && newestHref === undefined) return null;
+  // the history, or an empty newest page with older history behind it,
+  // always renders, so its navigation stays reachable.
+  if (
+    recentRuns.length === 0 &&
+    newestHref === undefined &&
+    olderHref === undefined
+  )
+    return null;
 
   const pager =
     olderHref || newestHref ? (
@@ -64,7 +70,9 @@ export function RecentOutcomesSection({
         <>
           {recentRuns.length === 0 && (
             <Text size="sm" c="dimmed">
-              No matching outcomes on this page of the history.
+              {newestHref
+                ? 'No matching outcomes on this page of the history.'
+                : 'No matching outcomes among the newest runs.'}
             </Text>
           )}
           {pager}

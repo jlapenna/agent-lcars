@@ -410,7 +410,8 @@ async function AgentsPageBody({
       hasSecondary={
         filteredClaimedIdle.length > 0 ||
         shownOutcomes.length > 0 ||
-        outcomePage !== undefined
+        outcomePage !== undefined ||
+        olderOutcomes !== undefined
       }
       claimedIdle={
         filteredClaimedIdle.length > 0 ? (
@@ -423,7 +424,7 @@ async function AgentsPageBody({
         ) : null
       }
       recentOutcomes={
-        shownOutcomes.length > 0 || outcomePage ? (
+        shownOutcomes.length > 0 || outcomePage || olderOutcomes ? (
           <RecentOutcomesSection
             recentRuns={shownOutcomes}
             olderHref={
