@@ -19,7 +19,8 @@ export async function applyJobSecrets(delivery, environment, directory) {
       typeof value === 'string' &&
       value.length > 0 &&
       !value.includes('\0') &&
-      Buffer.byteLength(value) <= 16384;
+      // Secret Manager's maximum payload, the bound LCARS stores.
+      Buffer.byteLength(value) <= 65536;
     for (const [key, value] of environmentEntries) {
       if (
         !/^[A-Z][A-Z0-9_]{0,127}$/u.test(key) ||

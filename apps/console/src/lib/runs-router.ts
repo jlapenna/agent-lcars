@@ -55,6 +55,7 @@ import {
   UnqualifiedDeliveryError,
 } from './ready-delivery';
 import type { JobProfile } from './repository-job-definition';
+import { fileParameterRecipe } from './repository-job-recipe';
 import { validateJobResult } from './repository-job-result';
 import type { JobOccurrence } from './repository-job-store';
 import type { RepositoryJobs } from './repository-jobs';
@@ -509,8 +510,22 @@ export const runsRouter = os.router({
       occurrence.baselineOccurrence === undefined
         ? undefined
         : await jobs.deps.store.readOccurrence(occurrence.baselineOccurrence);
+    // Workers pass parameter values as Goose file parameters through this
+    // rewritten recipe. A definition admitted before the rewrite existed may
+    // not support it; those workers keep passing values as arguments.
+    let fileRecipeText: string | undefined;
+    try {
+      fileRecipeText = fileParameterRecipe(occurrence.definition.recipeText);
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'Recipe parameters stay on argv for this occurrence',
+      );
+      fileRecipeText = undefined;
+    }
     return {
       definition: occurrence.definition,
+      ...(fileRecipeText === undefined ? {} : { fileRecipeText }),
       parameters: occurrence.parameters,
       profile: occurrence.profile,
       baseline: previous?.artifact?.baseline ?? null,

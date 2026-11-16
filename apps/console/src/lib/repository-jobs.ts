@@ -352,7 +352,9 @@ export class RepositoryJobs {
         },
         spec: {
           title: `${occurrence.definition.name} · ${occurrence.definition.repository}`,
-          description: occurrence.definition.job.description,
+          // The occurrence pins the definition and its description, which
+          // may be longer than a Work description; reference it instead.
+          description: `Repository job occurrence ${occurrence.id}. Its pinned definition, parameters and results are at /api/work/v1/jobs/occurrences/${occurrence.id}.`,
           pipeline: 'goose',
           priority: 'background',
           target: { repo: occurrence.definition.repository },

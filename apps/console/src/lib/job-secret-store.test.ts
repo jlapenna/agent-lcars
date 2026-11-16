@@ -55,13 +55,10 @@ it('uses commit clocks under reversed writes and normalizes them for every metad
   const database = {
     collection: (kind: string) => ({
       doc: (id = String(auditId++)) => ref(`${kind}/${id}`),
-      limit: () => ({
-        get: async () => ({
-          size: rows.size,
-          docs: [...rows]
-            .filter(([path]) => path.startsWith(`${kind}/`))
-            .map(([, value]) => ({ data: () => ({ ...value }) })),
-        }),
+      get: async () => ({
+        docs: [...rows]
+          .filter(([path]) => path.startsWith(`${kind}/`))
+          .map(([, value]) => ({ data: () => ({ ...value }) })),
       }),
     }),
     batch: () => {

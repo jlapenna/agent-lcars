@@ -47,9 +47,8 @@ export class FirestoreJobSecretStore implements JobSecretStore {
     return doc.exists ? this.decode(kind, doc.data()) : undefined;
   }
   async list(kind: JobSecretCollection) {
-    const result = await this.collection(kind).limit(501).get();
-    if (result.size > 500)
-      throw new Error('Credential registry exceeds supported bound');
+    // Registry records are small metadata (never values); read them all.
+    const result = await this.collection(kind).get();
     return result.docs.map((doc) => this.decode(kind, doc.data()));
   }
   async put(

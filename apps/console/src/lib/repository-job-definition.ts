@@ -4,12 +4,19 @@ import {
   credentialSetReferenceSchema,
   latestDueSlot,
   parseCron,
+  REPOSITORY_JOB_PARAMETERS_MAX_BYTES,
+  repositoryJobJsonBytes,
 } from '@agent-lcars/work';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
+import { fileParameterRecipe } from './repository-job-recipe';
+
 const name = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
 const repository = z.string().regex(/^[\w.-]+\/[\w.-]+$/u);
+// Every complete allocation fits the per-Job k3s ceiling of 2 CPU, 6 GiB and
+// 40 GiB that the QueueExecutor also enforces (`queueRuntimeCeiling`). A
+// profile still has to match the deployed lane exactly (`authorizeJob`).
 const allocation = z.strictObject({
   cpu: z
     .number()
@@ -20,17 +27,21 @@ const allocation = z.strictObject({
   storage: z
     .string()
     .regex(/^[1-9][0-9]*Gi$/u)
-    .refine((value) => parseInt(value, 10) <= 24),
+    .refine((value) => parseInt(value, 10) <= 40),
 });
+// Values reach Goose as parameter files, not argv, so only the bytes the
+// occurrence document can hold bound them; there is no count or length cap.
 export const jobInputsSchema = z
-  .record(
-    z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u),
-    z.string().max(2048),
-  )
-  .refine((value) => Object.keys(value).length <= 32 && !('baseline' in value));
+  .record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/u), z.string())
+  .refine((value) => !('baseline' in value), 'baseline is reserved')
+  .refine(
+    (value) =>
+      repositoryJobJsonBytes(value) <= REPOSITORY_JOB_PARAMETERS_MAX_BYTES,
+    `Parameters exceed ${REPOSITORY_JOB_PARAMETERS_MAX_BYTES / 1024} KiB`,
+  );
 export const repositoryJobSchema = z.strictObject({
   version: z.literal(1),
-  description: z.string().min(1).max(1024),
+  description: z.string().min(1),
   triggers: z.strictObject({
     manual: z.boolean(),
     schedule: z
@@ -109,7 +120,7 @@ const recipeParameterSchema = z.strictObject({
   description: z.string().min(1),
   input_type: z.literal('string'),
   requirement: z.enum(['required', 'optional']),
-  default: z.string().max(2048).optional(),
+  default: z.string().optional(),
 });
 export const jobDefinitionSchema = z.strictObject({
   repository,
@@ -118,7 +129,7 @@ export const jobDefinitionSchema = z.strictObject({
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
   job: repositoryJobSchema,
   recipeText: z.string().max(65536),
-  parameters: z.array(recipeParameterSchema).max(32).default([]),
+  parameters: z.array(recipeParameterSchema).default([]),
 });
 export type JobDefinition = z.infer<typeof jobDefinitionSchema>;
 export const jobProfileNameSchema = name;
@@ -169,7 +180,7 @@ export const jobProfileSchema = z
     gitIdentity: jobGitIdentitySchema.optional(),
     allocation,
     // Exact approved input sets keep network and write scopes operator-owned.
-    inputSets: z.array(jobInputsSchema).min(1).max(100),
+    inputSets: z.array(jobInputsSchema).min(1),
   })
   .refine(
     (profile) => !(profile.credentialSet && profile.crossRepo),
@@ -223,7 +234,17 @@ export function parseJobDefinition(
       description: z.string().min(1),
       prompt: z.string().min(1),
       instructions: z.string().optional(),
-      parameters: z.array(recipeParameterSchema).max(33),
+      // Goose's own recipe validation (v1.56 `MAX_PARAMETERS`) refuses more
+      // than 32 declared parameters, the fixed inputs and baseline included,
+      // and serialized declarations above 128 KiB. Mirror the executor's
+      // limits here so the catalog shows the error instead of the run.
+      parameters: z
+        .array(recipeParameterSchema)
+        .max(32)
+        .refine(
+          (value) => Buffer.byteLength(JSON.stringify(value)) <= 128 * 1024,
+          'Recipe parameter declarations exceed Goose 128 KiB limit',
+        ),
       response: z.record(z.string(), z.unknown()).optional(),
     })
     .parse(yaml(recipeText));
@@ -245,6 +266,9 @@ export function parseJobDefinition(
     )
   )
     throw new Error('Scheduled recipe parameters need defaults');
+  // Workers pass every value as a Goose file parameter; refuse a recipe whose
+  // declarations cannot be rewritten that way now, not at run time.
+  fileParameterRecipe(recipeText);
   return jobDefinitionSchema.parse({
     repository: repo,
     revision,
@@ -322,12 +346,15 @@ export function resolveJobParameters(
   );
   if (Object.keys(values).some((key) => !declared.has(key)))
     throw new Error('Unknown parameter or attempt to override fixed input');
-  return Object.fromEntries(
-    definition.parameters.map((parameter) => {
-      const value = values[parameter.key] ?? parameter.default;
-      if (value === undefined && parameter.requirement === 'required')
-        throw new Error(`Missing recipe parameter: ${parameter.key}`);
-      return [parameter.key, value ?? ''];
-    }),
+  // Resolved defaults count too: the occurrence stores the resolved map.
+  return jobInputsSchema.parse(
+    Object.fromEntries(
+      definition.parameters.map((parameter) => {
+        const value = values[parameter.key] ?? parameter.default;
+        if (value === undefined && parameter.requirement === 'required')
+          throw new Error(`Missing recipe parameter: ${parameter.key}`);
+        return [parameter.key, value ?? ''];
+      }),
+    ),
   );
 }

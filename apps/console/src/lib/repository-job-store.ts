@@ -2,6 +2,7 @@ import { jobSecretSnapshotSchema } from '@agent-lcars/work';
 import { Firestore } from '@google-cloud/firestore';
 import { z } from 'zod';
 
+import { assertFirestoreDocumentFits } from './firestore-document-size';
 import {
   jobDefinitionSchema,
   jobDigest,
@@ -76,10 +77,9 @@ export type JobOccurrence = z.infer<typeof jobOccurrenceSchema>;
 const persistedOccurrenceSchema = jobOccurrenceSchema
   .omit({ artifact: true })
   .extend({
-    artifactJson: z
-      .string()
-      .refine((value) => Buffer.byteLength(value) <= 384 * 1024)
-      .optional(),
+    // A staged artifact repeats its data (result.json and baseline), so only
+    // the whole-document check in mutate bounds it, with a named error.
+    artifactJson: z.string().optional(),
   });
 function decodeOccurrence(value: unknown): JobOccurrence {
   const { artifactJson, ...occurrence } =
@@ -124,21 +124,15 @@ export interface JobStore {
 export class FirestoreJobStore implements JobStore {
   constructor(private readonly database: Firestore) {}
   async list(): Promise<CatalogJob[]> {
-    const snapshot = await this.database
-      .collection('orchestrator-jobs')
-      .limit(501)
-      .get();
-    if (snapshot.size > 500)
-      throw new Error('Job catalog exceeds supported bound');
+    // No ceiling: one repository may publish any number of jobs, invalid
+    // ones included, and the catalog must stay readable.
+    const snapshot = await this.database.collection('orchestrator-jobs').get();
     return snapshot.docs.map((doc) => catalogJobSchema.parse(doc.data()));
   }
   async sourceRefreshes(): Promise<Map<string, string>> {
     const snapshot = await this.database
       .collection('orchestrator-job-sources')
-      .limit(501)
       .get();
-    if (snapshot.size > 500)
-      throw new Error('Job sources exceed supported bound');
     return new Map(
       snapshot.docs.map((doc) => {
         const source = sourceRefreshSchema.parse(doc.data());
@@ -195,16 +189,21 @@ export class FirestoreJobStore implements JobStore {
         occurrence?.exists ? decodeOccurrence(occurrence.data()) : undefined,
       );
       // Strip undefined optional properties; Firestore cannot store them.
-      if (result.job)
-        transaction.set(
-          jobRef,
-          JSON.parse(JSON.stringify(catalogJobSchema.parse(result.job))),
+      // Size checks name the refused record instead of a bare RPC error.
+      if (result.job) {
+        const data = JSON.parse(
+          JSON.stringify(catalogJobSchema.parse(result.job)),
         );
-      if (result.occurrence && occurrenceRef)
-        transaction.set(
-          occurrenceRef,
-          JSON.parse(JSON.stringify(encodeOccurrence(result.occurrence))),
+        assertFirestoreDocumentFits(jobRef.path, data, 'Job catalog entry');
+        transaction.set(jobRef, data);
+      }
+      if (result.occurrence && occurrenceRef) {
+        const data = JSON.parse(
+          JSON.stringify(encodeOccurrence(result.occurrence)),
         );
+        assertFirestoreDocumentFits(occurrenceRef.path, data, 'Job occurrence');
+        transaction.set(occurrenceRef, data);
+      }
       return result;
     });
   }

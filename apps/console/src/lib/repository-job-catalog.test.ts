@@ -624,3 +624,20 @@ it.each(['success', 'removal', 'failure'] as const)(
     expect(store.rows.get(id)?.enabled).toBe(true);
   },
 );
+
+it('refreshes a repository with more than the former 50-job cap', async () => {
+  const store = new MemoryJobStore();
+  const jobs = Object.fromEntries(
+    Array.from({ length: 60 }, (_, index) => [`job-${index}`, catalogFiles()]),
+  );
+  vi.stubGlobal('fetch', github({ 'owner/jobs': jobs }));
+  await refreshJobCatalog(
+    store,
+    'owner/jobs',
+    tokens(),
+    new Date(),
+    automation(store),
+  );
+  expect(store.rows.size).toBe(60);
+  expect([...store.rows.values()].every((row) => row.definition)).toBe(true);
+});

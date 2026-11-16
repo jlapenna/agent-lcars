@@ -70,6 +70,7 @@ function fixture(
     default?: string;
   }[] = [],
   profileName = 'audit',
+  description = 'Audit inventory',
 ) {
   let at = new Date('2026-10-27T06:00:00.000Z');
   const allocation = { cpu: 2, memory: '6Gi', storage: '24Gi' };
@@ -79,7 +80,7 @@ function fixture(
     'audit',
     stringify({
       version: 1,
-      description: 'Audit inventory',
+      description,
       triggers: {
         manual: true,
         ...(parameters.length
@@ -625,6 +626,24 @@ describe('production repository job admission', () => {
       ),
     ).toBe('failed');
   });
+});
+
+it('mints Work that references the occurrence instead of copying a long job description', async () => {
+  const description = 'd'.repeat(40 * 1024);
+  const f = fixture([], 'audit', description);
+  const occurrence = await f.jobs.admit(
+    f.id,
+    'manual-1',
+    'user:joe',
+    'manual',
+    f.definition.digest,
+  );
+  const task = (await f.native.readTask({ workId: occurrence.workId }))!.task;
+  expect(JSON.stringify(task)).not.toContain(description);
+  expect(JSON.stringify(task)).toContain(
+    `/api/work/v1/jobs/occurrences/${occurrence.id}`,
+  );
+  expect(occurrence.definition.job.description).toBe(description);
 });
 
 describe('recipe invocation parameters', () => {

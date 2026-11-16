@@ -1,3 +1,4 @@
+import { REPOSITORY_JOB_REQUEST_MAX_BYTES } from '@agent-lcars/work';
 import { z } from 'zod';
 
 import { createDispatchTokenProvider } from './github-app-tokens';
@@ -74,7 +75,8 @@ export async function repositoryJobsHttp(
     }
     if (request.method !== 'POST')
       return Response.json({ error: 'Not found' }, { status: 404 });
-    const text = await readJobBody(request, 16384);
+    // Sized from the parameter budget so every storable request fits.
+    const text = await readJobBody(request, REPOSITORY_JOB_REQUEST_MAX_BYTES);
     const body: unknown = JSON.parse(text);
     if (path === '/refresh') {
       const { repository } = z

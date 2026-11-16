@@ -51,6 +51,30 @@ func TestGooseJobUsesSupportedRunnerAndCredentials(t *testing.T) {
 	}
 }
 
+// Goose shares the 2 CPU / 6 GiB / 40 GiB per-Job k3s ceiling with every
+// declared runtime: a full-ceiling recipe builds, one beyond it does not.
+func TestGooseJobStorageCeilingMatchesRuntimeCeiling(t *testing.T) {
+	q, _ := kubeQueueFixture()
+	launch := directRunnerLaunch{runID: "work:recipe/r1", pipeline: "goose"}
+	q.config.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "40Gi"}
+	q.config.Limits = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "40Gi"}
+	if _, err := q.job(launch); err != nil {
+		t.Fatalf("40Gi recipe job refused: %v", err)
+	}
+	q.config.Requests["ephemeral-storage"] = "41Gi"
+	q.config.Limits["ephemeral-storage"] = "41Gi"
+	if _, err := q.job(launch); err == nil {
+		t.Fatal("recipe job above the 40Gi ceiling accepted")
+	}
+	q.config.Requests["ephemeral-storage"] = "40Gi"
+	q.config.Limits["ephemeral-storage"] = "40Gi"
+	q.config.Requests["memory"] = "7Gi"
+	q.config.Limits["memory"] = "7Gi"
+	if _, err := q.job(launch); err == nil {
+		t.Fatal("recipe job above the 6Gi memory ceiling accepted")
+	}
+}
+
 // A claim whose Job cannot even be built has no worker: the executor reports
 // the exit at once instead of holding the claim until its start deadline.
 func TestUnbuildableJobReportsItsClaimExited(t *testing.T) {

@@ -670,11 +670,12 @@ func (q *kubernetesQueue) legacyJobShape(l directRunnerLaunch, runTokenEnv core.
 	case "agy":
 		providerKey = "antigravity-oauth-token"
 	case "goose":
-		for name, ceiling := range map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "24Gi"} {
+		// Recipes share the per-Job k3s ceiling every declared runtime uses.
+		for name, ceiling := range queueRuntimeCeiling {
 			request, requestErr := resource.ParseQuantity(q.config.Requests[name])
 			limit, limitErr := resource.ParseQuantity(q.config.Limits[name])
 			if requestErr != nil || limitErr != nil || request.Sign() <= 0 || request.Cmp(limit) != 0 || limit.Cmp(resource.MustParse(ceiling)) > 0 {
-				return queueJobShape{}, fmt.Errorf("goose requests and limits must match within the direct-agent ceiling")
+				return queueJobShape{}, fmt.Errorf("goose requests and limits must match within the per-Job k3s ceiling")
 			}
 		}
 		// Only a recipe admitted under a Claude- or Antigravity-harness profile

@@ -1,8 +1,10 @@
+import { REPOSITORY_JOB_REQUEST_MAX_BYTES } from '@agent-lcars/work';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { stringify } from 'yaml';
 
 import { parseJobDefinition } from './repository-job-definition';
 import type { CatalogJob, JobStore } from './repository-job-store';
+import { RepositoryJobs } from './repository-jobs';
 import { repositoryJobsHttp } from './repository-jobs-http';
 import type { WorkPrincipal } from './work-auth';
 
@@ -212,4 +214,36 @@ it('reads historical metadata after profile retirement without weakening reposit
     source,
   );
   expect(denied.status).toBe(409);
+});
+
+it('accepts invoke bodies sized by the parameter budget, far above 16 KiB', async () => {
+  const invoke = vi
+    .spyOn(RepositoryJobs.prototype, 'invoke')
+    .mockResolvedValue({ skipped: true } as never);
+  const target = 'x'.repeat(200 * 1024);
+  const response = await repositoryJobsHttp(
+    request('/invoke', {
+      repository: 'octo/source',
+      name: 'audit',
+      requestId: 'event',
+      parameters: { target },
+    }),
+    source,
+  );
+  expect(await response.json()).toMatchObject({ outcome: 'busy' });
+  expect(invoke.mock.calls[0]?.[4]).toEqual({ target });
+  const oversized = await repositoryJobsHttp(
+    request('/invoke', {
+      repository: 'octo/source',
+      name: 'audit',
+      requestId: 'event',
+      parameters: { target: 'x'.repeat(REPOSITORY_JOB_REQUEST_MAX_BYTES) },
+    }),
+    source,
+  );
+  expect(oversized.status).toBe(409);
+  expect(await oversized.json()).toEqual({
+    error: 'Job response/request too large',
+  });
+  invoke.mockRestore();
 });

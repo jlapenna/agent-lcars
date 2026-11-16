@@ -1,6 +1,10 @@
 import 'server-only';
 
-import { jobSecretNameSchema, jobSecretValueSchema } from '@agent-lcars/work';
+import {
+  JOB_SECRET_VALUE_MAX_BYTES,
+  jobSecretNameSchema,
+  jobSecretValueSchema,
+} from '@agent-lcars/work';
 import { GoogleAuth, Impersonated } from 'google-auth-library';
 import { z } from 'zod';
 
@@ -99,7 +103,12 @@ export class GoogleJobSecretBackend implements JobSecretBackend {
       .regex(/^[1-9][0-9]*$/u)
       .parse(version);
     const result = z
-      .object({ payload: z.object({ data: z.string().max(32768) }) })
+      .object({
+        payload: z.object({
+          // Base64 of at most one maximum Secret Manager payload.
+          data: z.string().max(Math.ceil(JOB_SECRET_VALUE_MAX_BYTES / 3) * 4),
+        }),
+      })
       .parse(
         await this.request(`${this.resource(name)}/versions/${version}:access`),
       );

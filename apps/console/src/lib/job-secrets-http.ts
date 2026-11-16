@@ -2,6 +2,7 @@ import 'server-only';
 
 import {
   credentialSetSchema,
+  JOB_SECRET_VALUE_MAX_BYTES,
   jobCredentialGrantSchema,
   jobSecretNameSchema,
   jobSecretRecordSchema,
@@ -54,7 +55,10 @@ export async function jobSecretsHttp(
     }
     if (request.method !== 'POST')
       return Response.json({ error: 'Not found' }, { status: 404 });
-    const body: unknown = JSON.parse(await readJobBody(request, 131072));
+    // A maximum 64 KiB secret even when every byte is JSON-escaped (\u00XX).
+    const body: unknown = JSON.parse(
+      await readJobBody(request, JOB_SECRET_VALUE_MAX_BYTES * 6 + 16 * 1024),
+    );
     const actor = principal.principal;
     if (path === '/secrets') {
       const input = z

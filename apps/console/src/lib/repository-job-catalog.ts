@@ -102,7 +102,6 @@ export async function refreshJobCatalog(
     const manifests = entries.filter((entry) =>
       /^[^/]+\/job\.yaml$/u.test(entry.path),
     );
-    if (manifests.length > 50) throw new Error('Repository exceeds 50 jobs');
     const rows: CatalogJob[] = [];
     for (const manifest of manifests) {
       const jobName = manifest.path.split('/')[0]!;
