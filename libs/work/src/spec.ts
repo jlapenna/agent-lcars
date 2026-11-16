@@ -169,7 +169,7 @@ const clawWorkSpecFields = {
  * its revision input, so the immutable spec admits new rounds. */
 export const agentWorkSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  description: workDescriptionSchema,
   priority: z.literal('background'),
   pipeline: z
     .string()

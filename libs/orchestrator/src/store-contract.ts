@@ -266,9 +266,12 @@ export function runOrchestratorStoreContract(
         taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4C' },
         requestId: 'round',
         pipeline: 'claw-homelab-ops',
-        params: { mode: 'claw', retry: 'terminal' },
+        params: { mode: 'claw' },
         work: TASK_WORK,
-        sourceRevision: { key: 'round', input: { message: 'fix it' } },
+        sourceRevision: {
+          key: 'round',
+          input: { message: 'fix it', retry: 'terminal' },
+        },
       });
       if (isRefusal(admitted)) throw new Error(admitted.reason);
       clock.advanceMinutes(121);

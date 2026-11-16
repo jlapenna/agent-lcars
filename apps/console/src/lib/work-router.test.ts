@@ -247,13 +247,14 @@ describe('repository-owned agent runs', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({
       pipeline: 'claw-default',
-      params: { mode: 'claw', retry: 'finite' },
+      params: { mode: 'claw' },
       sourceRevision: {
         input: {
           agent: 'owner/repo/investigator',
           revision: 'c'.repeat(40),
           digest: 'd'.repeat(64),
           requireToolEvidence: false,
+          retry: 'finite',
           message: 'Why?',
         },
       },
@@ -282,8 +283,9 @@ describe('repository-owned agent runs', () => {
     });
     expect(run).toMatchObject({
       pipeline: 'claw-homelab-ops',
-      params: { retry: 'terminal' },
-      sourceRevision: { input: { requireToolEvidence: true } },
+      sourceRevision: {
+        input: { requireToolEvidence: true, retry: 'terminal' },
+      },
     });
   });
 
@@ -305,6 +307,32 @@ describe('repository-owned agent runs', () => {
     expect(
       await ctx.runtime.store.listRuns({ workId: first.json.id }),
     ).toHaveLength(1);
+  });
+
+  it('replays the admitted round after an unrelated commit moves the definition revision', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const first = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    expect(first.status).toBe(202);
+    // A commit outside the agent directory: same files and digest, new revision.
+    const row = (await store.list())[0]!;
+    row.definition = { ...row.definition!, revision: 'f'.repeat(40) };
+    const again = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    expect(again.status).toBe(202);
+    expect(again.json.id).toBe(first.json.id);
+    const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sourceRevision?.input['revision']).toBe('c'.repeat(40));
   });
 
   it.each([

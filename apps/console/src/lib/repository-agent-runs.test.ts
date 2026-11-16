@@ -68,6 +68,7 @@ const round = (digest = agentDigest(pinned)) => ({
   revision,
   digest,
   requireToolEvidence: true,
+  retry: 'finite' as const,
   message: 'Why?',
 });
 

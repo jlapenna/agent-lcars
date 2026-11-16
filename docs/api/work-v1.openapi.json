@@ -415,6 +415,10 @@
                                   "type": "string",
                                   "maxLength": 65536
                                 },
+                                "oversized": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
                                 "state": {
                                   "type": "string",
                                   "enum": ["open", "closed"]
@@ -517,7 +521,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "maxLength": 65536
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -564,12 +568,10 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
-                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 100
+                                    "minLength": 1
                                   }
                                 },
                                 "dispatchRequested": {
@@ -688,7 +690,39 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                },
+                                "messageOverflow": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sha256": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "chars": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "bytes": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "chunks": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "sha256",
+                                    "chars",
+                                    "bytes",
+                                    "chunks"
+                                  ],
+                                  "additionalProperties": false,
+                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -803,8 +837,7 @@
                               "additionalProperties": false
                             },
                             "reply": {
-                              "type": "string",
-                              "maxLength": 16384
+                              "type": "string"
                             },
                             "replyChannel": {
                               "type": "string",
@@ -1203,6 +1236,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -1522,6 +1559,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -2267,6 +2308,10 @@
                                   "type": "string",
                                   "maxLength": 65536
                                 },
+                                "oversized": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
                                 "state": {
                                   "type": "string",
                                   "enum": ["open", "closed"]
@@ -2369,7 +2414,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "maxLength": 65536
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -2416,12 +2461,10 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
-                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 100
+                                    "minLength": 1
                                   }
                                 },
                                 "dispatchRequested": {
@@ -2540,7 +2583,39 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                },
+                                "messageOverflow": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sha256": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "chars": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "bytes": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "chunks": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "sha256",
+                                    "chars",
+                                    "bytes",
+                                    "chunks"
+                                  ],
+                                  "additionalProperties": false,
+                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -2655,8 +2730,7 @@
                               "additionalProperties": false
                             },
                             "reply": {
-                              "type": "string",
-                              "maxLength": 16384
+                              "type": "string"
                             },
                             "replyChannel": {
                               "type": "string",
@@ -2992,37 +3066,37 @@
                             "total": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "ready": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "disabled": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "unpromoted": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "expired": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "expiring": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             },
                             "unknown": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 500
+                              "maximum": 9007199254740991
                             }
                           },
                           "required": [
@@ -3229,8 +3303,7 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       },
                       "pipeline": {
                         "type": "string",
@@ -3316,8 +3389,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -3375,8 +3447,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -3411,8 +3482,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -3460,8 +3530,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -3501,8 +3570,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -3630,6 +3698,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -3885,6 +3957,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -3987,7 +4063,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -4034,12 +4110,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -4158,7 +4232,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -4273,8 +4379,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -4502,8 +4607,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -4561,8 +4665,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -4597,8 +4700,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -4646,8 +4748,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -4687,8 +4788,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -4816,6 +4916,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -5071,6 +5175,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -5173,7 +5281,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -5220,12 +5328,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -5344,7 +5450,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -5459,8 +5597,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -5650,8 +5787,7 @@
                   },
                   "description": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 16384
+                    "minLength": 1
                   }
                 },
                 "required": ["title", "description"]
@@ -5693,8 +5829,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -5752,8 +5887,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -5788,8 +5922,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -5837,8 +5970,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -5878,8 +6010,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -6007,6 +6138,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -6262,6 +6397,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -6364,7 +6503,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -6411,12 +6550,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -6535,7 +6672,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -6650,8 +6819,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -6845,8 +7013,7 @@
                 "properties": {
                   "question": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 4000
+                    "minLength": 1
                   },
                   "sourceKey": {
                     "type": "string",
@@ -6895,8 +7062,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -6954,8 +7120,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -6990,8 +7155,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -7039,8 +7203,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -7080,8 +7243,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -7209,6 +7371,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -7464,6 +7630,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -7566,7 +7736,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -7613,12 +7783,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -7737,7 +7905,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -7852,8 +8052,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -8126,8 +8325,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -8185,8 +8383,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -8221,8 +8418,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -8270,8 +8466,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -8311,8 +8506,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -8440,6 +8634,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -8695,6 +8893,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -8797,7 +8999,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -8844,12 +9046,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -8968,7 +9168,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -9083,8 +9315,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -9379,8 +9610,7 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 16384
+                                    "minLength": 1
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -9448,8 +9678,7 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 16384
+                                    "minLength": 1
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -9484,8 +9713,7 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 16384
+                                    "minLength": 1
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -9533,8 +9761,7 @@
                                       },
                                       "description": {
                                         "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 16384
+                                        "minLength": 1
                                       },
                                       "priority": {
                                         "type": "string",
@@ -9574,8 +9801,7 @@
                                       },
                                       "description": {
                                         "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 16384
+                                        "minLength": 1
                                       },
                                       "priority": {
                                         "type": "string",
@@ -9703,6 +9929,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -9966,6 +10196,10 @@
                                       "type": "string",
                                       "maxLength": 65536
                                     },
+                                    "oversized": {
+                                      "type": "boolean",
+                                      "const": true
+                                    },
                                     "state": {
                                       "type": "string",
                                       "enum": ["open", "closed"]
@@ -10068,7 +10302,7 @@
                                     },
                                     "commentBody": {
                                       "type": "string",
-                                      "maxLength": 16384
+                                      "maxLength": 65536
                                     },
                                     "commentId": {
                                       "anyOf": [
@@ -10115,12 +10349,10 @@
                                       "additionalProperties": false
                                     },
                                     "addedLabels": {
-                                      "maxItems": 20,
                                       "type": "array",
                                       "items": {
                                         "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 100
+                                        "minLength": 1
                                       }
                                     },
                                     "dispatchRequested": {
@@ -10239,7 +10471,39 @@
                                     },
                                     "message": {
                                       "type": "string",
-                                      "maxLength": 16384
+                                      "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                    },
+                                    "messageOverflow": {
+                                      "type": "object",
+                                      "properties": {
+                                        "sha256": {
+                                          "type": "string",
+                                          "pattern": "^[a-f0-9]{64}$"
+                                        },
+                                        "chars": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "bytes": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "chunks": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        }
+                                      },
+                                      "required": [
+                                        "sha256",
+                                        "chars",
+                                        "bytes",
+                                        "chunks"
+                                      ],
+                                      "additionalProperties": false,
+                                      "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                     },
                                     "humanNeededActions": {
                                       "minItems": 2,
@@ -10354,8 +10618,7 @@
                                   "additionalProperties": false
                                 },
                                 "reply": {
-                                  "type": "string",
-                                  "maxLength": 16384
+                                  "type": "string"
                                 },
                                 "replyChannel": {
                                   "type": "string",
@@ -10574,8 +10837,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -10633,8 +10895,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -10669,8 +10930,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -10718,8 +10978,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -10759,8 +11018,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -10888,6 +11146,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -11143,6 +11405,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -11245,7 +11511,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -11292,12 +11558,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -11416,7 +11680,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -11531,8 +11827,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -11802,8 +12097,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -11861,8 +12155,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -11897,8 +12190,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -11946,8 +12238,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -11987,8 +12278,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -12116,6 +12406,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -12371,6 +12665,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -12473,7 +12771,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -12520,12 +12818,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -12644,7 +12940,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -12759,8 +13087,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -12998,8 +13325,7 @@
                 "properties": {
                   "text": {
                     "type": "string",
-                    "minLength": 1,
-                    "maxLength": 16384
+                    "minLength": 1
                   },
                   "requestId": {
                     "type": "string",
@@ -13061,8 +13387,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -13120,8 +13445,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -13156,8 +13480,7 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1,
-                              "maxLength": 16384
+                              "minLength": 1
                             },
                             "pipeline": {
                               "type": "string",
@@ -13205,8 +13528,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -13246,8 +13568,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -13375,6 +13696,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -13630,6 +13955,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -13732,7 +14061,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "maxLength": 65536
                               },
                               "commentId": {
                                 "anyOf": [
@@ -13779,12 +14108,10 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
-                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 100
+                                  "minLength": 1
                                 }
                               },
                               "dispatchRequested": {
@@ -13903,7 +14230,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -14018,8 +14377,7 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string",
-                            "maxLength": 16384
+                            "type": "string"
                           },
                           "replyChannel": {
                             "type": "string",
@@ -14262,8 +14620,7 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       },
                       "pipeline": {
                         "type": "string",
@@ -14339,8 +14696,7 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 16384
+                          "minLength": 1
                         },
                         "pipeline": {
                           "type": "string",
@@ -14545,8 +14901,7 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       },
                       "pipeline": {
                         "type": "string",
@@ -14622,8 +14977,7 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 16384
+                          "minLength": 1
                         },
                         "pipeline": {
                           "type": "string",
@@ -14961,8 +15315,7 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 16384
+                          "minLength": 1
                         },
                         "pipeline": {
                           "type": "string",
@@ -15141,8 +15494,7 @@
                               },
                               "description": {
                                 "type": "string",
-                                "minLength": 1,
-                                "maxLength": 16384
+                                "minLength": 1
                               },
                               "pipeline": {
                                 "type": "string",
@@ -15319,8 +15671,7 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 16384
+                          "minLength": 1
                         },
                         "pipeline": {
                           "type": "string",
@@ -15560,8 +15911,7 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1,
-                          "maxLength": 16384
+                          "minLength": 1
                         },
                         "pipeline": {
                           "type": "string",
@@ -15905,8 +16255,7 @@
                     "enum": ["implement", "review"]
                   },
                   "reply": {
-                    "type": "string",
-                    "maxLength": 8192
+                    "type": "string"
                   },
                   "runbook": {
                     "type": "string",
@@ -15914,8 +16263,7 @@
                     "maxLength": 128
                   },
                   "context": {
-                    "type": "string",
-                    "maxLength": 4096
+                    "type": "string"
                   },
                   "requestId": {
                     "type": "string",
@@ -16080,8 +16428,7 @@
                     "enum": ["implement", "review"]
                   },
                   "reply": {
-                    "type": "string",
-                    "maxLength": 8192
+                    "type": "string"
                   },
                   "runbook": {
                     "type": "string",
@@ -16089,8 +16436,7 @@
                     "maxLength": 128
                   },
                   "context": {
-                    "type": "string",
-                    "maxLength": 4096
+                    "type": "string"
                   },
                   "requestId": {
                     "type": "string",
@@ -16261,8 +16607,7 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       }
                     },
                     "files": {
@@ -16273,8 +16618,7 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 16384
+                        "minLength": 1
                       }
                     }
                   },
@@ -16450,6 +16794,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -16609,6 +16957,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -17139,8 +17491,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -17203,8 +17554,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -17239,8 +17589,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -17288,8 +17637,7 @@
                                     },
                                     "description": {
                                       "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 16384
+                                      "minLength": 1
                                     },
                                     "priority": {
                                       "type": "string",
@@ -17329,8 +17677,7 @@
                                     },
                                     "description": {
                                       "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 16384
+                                      "minLength": 1
                                     },
                                     "priority": {
                                       "type": "string",
@@ -17465,6 +17812,10 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
+                            },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -17658,8 +18009,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -17787,6 +18137,10 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
+                            },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -17960,8 +18314,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -18001,8 +18354,7 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 16384
+                                  "minLength": 1
                                 },
                                 "priority": {
                                   "type": "string",
@@ -18131,6 +18483,10 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
+                            },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -18283,8 +18639,7 @@
                                   "properties": {
                                     "question": {
                                       "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 4000
+                                      "minLength": 1
                                     }
                                   },
                                   "required": ["question"],
@@ -19264,7 +19619,7 @@
                   "outcomeReference": {},
                   "message": {
                     "type": "string",
-                    "maxLength": 16384
+                    "description": "The whole final message, stored and returned whole; at most 4194304 UTF-8 bytes."
                   }
                 },
                 "required": ["outcome"]

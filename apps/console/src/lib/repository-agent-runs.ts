@@ -65,10 +65,28 @@ const agentRoundSchema = z.strictObject({
   revision: z.string(),
   digest: z.string(),
   requireToolEvidence: z.boolean(),
+  /** The admitted definition's retry policy, pinned with the round so a
+   * coalesced successor runs under its own round's policy. */
+  retry: z.enum(['finite', 'terminal']).optional(),
   message: z.string().min(1),
   requestId: z.string().optional(),
 });
 export type AgentRound = z.infer<typeof agentRoundSchema>;
+
+/** The input already admitted under `key` for this Work, from its desired
+ * revision or any earlier run, so a repeat replays rather than conflicts. */
+async function admittedInput(
+  store: OrchestratorStore,
+  workId: string,
+  key: string,
+): Promise<Record<string, unknown> | undefined> {
+  const task = await store.readTask({ workId });
+  if (task?.task.desiredRevision?.key === key)
+    return task.task.desiredRevision.input;
+  const runs = await store.listRuns({ workId });
+  return runs.find((run) => run.sourceRevision?.key === key)?.sourceRevision
+    ?.input;
+}
 
 /** Refusals a caller can act on. */
 export class AgentAdmissionError extends Error {
@@ -164,18 +182,23 @@ export async function admitAgentRun(
     revision: definition.revision,
     digest: definition.digest,
     requireToolEvidence: definition.manifest.requireToolEvidence ?? false,
+    retry: definition.manifest.retry ?? 'finite',
     message: request.message,
     ...(request.requestId === undefined
       ? {}
       : { requestId: request.requestId }),
   });
+  const key = createHash('sha256')
+    .update(
+      JSON.stringify([round.digest, round.message, round.requestId ?? null]),
+    )
+    .digest('hex');
+  // An idempotent repeat must present the input that was admitted under this
+  // key, even if an unrelated commit has since moved the definition's
+  // revision without changing its files.
   const revision = workRevisionSchema.parse({
-    key: createHash('sha256')
-      .update(
-        JSON.stringify([round.digest, round.message, round.requestId ?? null]),
-      )
-      .digest('hex'),
-    input: round,
+    key,
+    input: (await admittedInput(deps.store, workId, key)) ?? round,
   });
   const title = `${id}: ${request.message.split('\n')[0]}`;
   const spec = agentWorkSpecSchema.parse({
@@ -194,10 +217,7 @@ export async function admitAgentRun(
     requestId: revision.key,
     pipeline,
     priority: spec.priority,
-    params: {
-      mode: 'claw',
-      retry: definition.manifest.retry ?? 'finite',
-    },
+    params: { mode: 'claw' },
     work: {
       origin: { principal: request.principal, channel: 'console' },
       spec,

@@ -202,16 +202,19 @@ export function isEffectfulPipeline(pipeline: string): boolean {
 }
 
 /** Whether a run may already have performed external effects: its pipeline
- *  is effectful, or its trusted admission marked it `retry: terminal` (a
- *  repository-owned agent whose manifest declares effect authority,
- *  docs/repository-agents.md). Such runs settle lost and failed attempts
- *  terminally. */
+ *  is effectful, or the source revision it executes was admitted with
+ *  `retry: terminal` (a repository-owned agent whose manifest declares
+ *  effect authority, docs/repository-agents.md). The policy travels with the
+ *  pinned revision, so a coalesced successor always runs under its own
+ *  round's policy, never its predecessor's. Such runs settle lost and failed
+ *  attempts terminally. */
 export function isEffectfulRun(run: {
   pipeline: string;
-  params?: Readonly<Record<string, string>> | undefined;
+  sourceRevision?: { input: Readonly<Record<string, unknown>> } | undefined;
 }): boolean {
   return (
-    isEffectfulPipeline(run.pipeline) || run.params?.['retry'] === 'terminal'
+    isEffectfulPipeline(run.pipeline) ||
+    run.sourceRevision?.input['retry'] === 'terminal'
   );
 }
 
