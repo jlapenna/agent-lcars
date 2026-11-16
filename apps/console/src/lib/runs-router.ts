@@ -46,6 +46,7 @@ import type {
   DispatchTokenProvider,
   ExpiringDispatchTokenProvider,
 } from './github-app-tokens';
+import { createDispatchTokenProvider } from './github-app-tokens';
 import { issueReferenceForTask, issueTracker } from './issue-trackers';
 import { workAtRun } from './issue-work-brief';
 import type { JobSecrets } from './job-secrets';
@@ -56,6 +57,7 @@ import {
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
+import { agentRunBrief } from './repository-agent-runs';
 import type { JobProfile } from './repository-job-definition';
 import { fileParameterRecipe } from './repository-job-recipe';
 import { validateJobResult } from './repository-job-result';
@@ -686,6 +688,38 @@ export const runsRouter = os.router({
       });
     }
     const { spec } = parsed.data;
+    if (claw !== undefined && 'agent' in claw) {
+      // A repository-owned agent: the round pins the definition and message;
+      // the brief carries the pinned files read back from GitHub.
+      const workId = run.task.workId;
+      const agent = await agentRunBrief(
+        run.sourceRevision?.input,
+        createDispatchTokenProvider(process.env, { contents: 'read' }),
+      ).catch((error: unknown) => {
+        logger.error('agent-lcars: agent run brief unavailable', {
+          runId: run.runId,
+          workId,
+          error,
+        });
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: 'agent definition unavailable',
+        });
+      });
+      return {
+        id: run.task.workId,
+        spec: claw,
+        anchor: {
+          type: 'work' as const,
+          id: run.task.workId,
+          title: claw.title,
+          body: agent.message,
+          html_url: `${consoleUrl()}/work/${run.task.workId}`,
+        },
+        ...shared,
+        mode: 'claw' as const,
+        claw: agent,
+      };
+    }
     if (claw !== undefined) {
       // The question exists only in the executing round's revision input:
       // the immutable spec carries none, so the brief never holds two.

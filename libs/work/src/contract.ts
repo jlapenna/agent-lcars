@@ -606,6 +606,44 @@ export const itemsContract = {
       }),
     )
     .output(itemViewSchema),
+  /** Admit one round of a repository-owned claw agent
+   *  (docs/repository-agents.md). Requires `work.claw.admit` and a grant
+   *  listing the runtime pipeline of the agent's profile. */
+  admitAgentRun: base
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/claw/agents/{owner}/{repo}/{name}/runs',
+        operationId: 'admitAgentRun',
+        summary:
+          'Admit a run of a repository-owned claw agent (work.claw.admit required)',
+        description:
+          'Runs the agent cataloged at `.lcars/agents/{name}` of ' +
+          '`{owner}/{repo}`. The round pins the enabled definition and the ' +
+          'message. `sourceKey` names one Work item per caller: the same ' +
+          'message (and `requestId`) returns its existing round, and a new ' +
+          'one supersedes a queued round. Without `sourceKey` every call ' +
+          'admits a new item. The report is the settled run message.',
+        successStatus: 202,
+        successDescription: 'Admitted, or the existing round for this input.',
+      }),
+    )
+    .errors({
+      FORBIDDEN: { message: 'Principal may not run this agent' },
+      NOT_FOUND: { message: 'No enabled agent by that name' },
+      CONFLICT: { message: 'Source key names incompatible Work' },
+    })
+    .input(
+      z.strictObject({
+        owner: z.string().regex(/^[\w.-]+$/u),
+        repo: z.string().regex(/^[\w.-]+$/u),
+        name: z.string().regex(/^[a-z][a-z0-9-]*$/u),
+        message: z.string().min(1),
+        requestId: z.string().min(1).optional(),
+        sourceKey: z.string().min(1).optional(),
+      }),
+    )
+    .output(itemViewSchema),
   get: base
     .meta(
       openapi({
@@ -1257,6 +1295,27 @@ const githubRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
 });
 
+/** A repository-owned agent's round (docs/repository-agents.md): the pinned
+ * definition read from GitHub by blob SHA, and the message that is the
+ * agent's brief. The launcher materializes `files` (base64 content, git
+ * mode) and verifies `digest` before running the agent. */
+export const agentRunBriefSchema = z.strictObject({
+  agent: z.string(),
+  revision: z.string().regex(/^[a-f0-9]{40}$/u),
+  digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  requireToolEvidence: z.boolean(),
+  message: z.string().min(1),
+  files: z.array(
+    z.strictObject({
+      path: z.string().min(1),
+      mode: z.enum(['100644', '100755']),
+      sha: z.string().regex(/^[a-f0-9]{40}$/u),
+      content: z.string(),
+    }),
+  ),
+});
+export type AgentRunBrief = z.infer<typeof agentRunBriefSchema>;
+
 /** A claw run reads its zone, not a repository: its anchor names no
  * `target_repo`. `claw` carries the admitted operation input the launcher
  * hands to the agent's single turn. */
@@ -1272,10 +1331,13 @@ const clawRunBriefSchema = z.strictObject({
   }),
   ...runBriefSharedSchema,
   mode: z.literal('claw'),
-  claw: z.strictObject({
-    operation: z.enum(CLAW_OPERATIONS),
-    input: clawInvestigateInputSchema,
-  }),
+  claw: z.union([
+    z.strictObject({
+      operation: z.enum(CLAW_OPERATIONS),
+      input: clawInvestigateInputSchema,
+    }),
+    agentRunBriefSchema,
+  ]),
 });
 
 export const runBriefSchema = z.union([

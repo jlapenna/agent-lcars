@@ -147,6 +147,16 @@ export interface RequestInput {
    * caller-specific payload schema.
    */
   isStoredWorkCompatible?: (stored: WorkPayload, task: Task) => boolean;
+  /** Whether a replayed request names the same round as the source revision
+   * already admitted under its `requestId`. Defaults to exact equality of the
+   * whole revision. A caller whose revision key is the round's identity (a
+   * repository-owned agent: definition digest, message and request id) can
+   * compare by key, so an incidental input such as the commit an unchanged
+   * definition was observed at cannot turn a replay into a conflict. */
+  isSameSourceRevision?: (
+    admitted: WorkRevision,
+    replay: WorkRevision,
+  ) => boolean;
 }
 
 export class Orchestrator {
@@ -201,11 +211,16 @@ export class Orchestrator {
           return refused('work-spec-mismatch');
         }
         if (previousSourceRevision !== undefined) {
-          if (
-            JSON.stringify(previousSourceRevision) !==
-            JSON.stringify(input.sourceRevision)
-          )
-            return refused('work-spec-mismatch');
+          const same =
+            input.sourceRevision !== undefined &&
+            input.isSameSourceRevision !== undefined
+              ? input.isSameSourceRevision(
+                  previousSourceRevision,
+                  input.sourceRevision,
+                )
+              : JSON.stringify(previousSourceRevision) ===
+                JSON.stringify(input.sourceRevision);
+          if (!same) return refused('work-spec-mismatch');
           return refused('duplicate-request', previousRun);
         }
         const storedPipeline =

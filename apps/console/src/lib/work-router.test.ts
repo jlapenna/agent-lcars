@@ -17,6 +17,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { CliSession } from './cli-sessions';
 import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
+import { agentKey } from './repository-agent-definition';
+import type { AgentStore, CatalogAgent } from './repository-agent-store';
 
 vi.mock('./lifecycle-cost-metrics', () => ({
   readLifecycleCostMetrics: vi.fn(
@@ -169,6 +171,253 @@ const clawZoneExecutor = {
   pipelines: ['claw-investigator'],
   via: 'google' as const,
 };
+
+describe('repository-owned agent runs', () => {
+  const definition = (
+    manifest: Record<string, unknown> = { description: 'Reads things.' },
+    name = 'investigator',
+  ) => ({
+    repository: 'owner/repo',
+    name,
+    revision: 'c'.repeat(40),
+    digest: 'd'.repeat(64),
+    manifest: manifest as { description: string },
+    fileCount: 1,
+  });
+  function agents(
+    rows: {
+      name?: string;
+      enabled?: boolean;
+      manifest?: Record<string, unknown>;
+      error?: string;
+    }[],
+  ): AgentStore {
+    const map = new Map<string, CatalogAgent>();
+    for (const row of rows) {
+      const name = row.name ?? 'investigator';
+      const id = agentKey('owner/repo', name);
+      map.set(id, {
+        id,
+        repository: 'owner/repo',
+        name,
+        refreshedAt: '2026-08-26T10:00:00.000Z',
+        enabled: row.enabled ?? true,
+        ...(row.error ? { error: row.error } : {}),
+        ...(row.enabled === false && !row.manifest
+          ? {}
+          : { definition: definition(row.manifest, name) }),
+      });
+    }
+    return {
+      list: async () => [...map.values()],
+      read: async (id) => map.get(id),
+      sources: async () => [],
+      recordAttempt: async () => undefined,
+      claimObservation: async () => true,
+      mutate: async () => ({}),
+    };
+  }
+  const caller = {
+    principal: 'svc:claw-operator',
+    subject: 'claw-operator@agent-lcars.iam.gserviceaccount.com',
+    scopes: new Set(['work.claw.admit'] as const),
+    pipelines: ['claw-default', 'claw-homelab-ops'],
+    via: 'google' as const,
+  };
+  const profiles = () => [
+    {
+      name: 'homelab-ops',
+      runtime: 'claw-homelab-ops',
+      repositories: ['owner/repo'],
+    },
+  ];
+  const path = '/claw/agents/owner/repo/investigator/runs';
+
+  it('admits an agent without a profile on the default runtime, pinning the definition and message', async () => {
+    const ctx = context({
+      principal: caller,
+      agents: agents([{}]),
+      agentProfiles: profiles,
+    });
+    const response = await call(ctx, 'POST', path, { message: 'Why?' });
+    expect(response.status).toBe(202);
+    const runs = await ctx.runtime.store.listRuns({ workId: response.json.id });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      pipeline: 'claw-default',
+      params: { mode: 'claw' },
+      sourceRevision: {
+        input: {
+          agent: 'owner/repo/investigator',
+          revision: 'c'.repeat(40),
+          digest: 'd'.repeat(64),
+          requireToolEvidence: false,
+          retry: 'finite',
+          message: 'Why?',
+        },
+      },
+    });
+  });
+
+  it('runs a profiled agent on its runtime and carries terminal retry', async () => {
+    const ctx = context({
+      principal: caller,
+      agents: agents([
+        {
+          manifest: {
+            description: 'Ops.',
+            profile: 'homelab-ops',
+            retry: 'terminal',
+            requireToolEvidence: true,
+          },
+        },
+      ]),
+      agentProfiles: profiles,
+    });
+    const response = await call(ctx, 'POST', path, { message: 'Fix it' });
+    expect(response.status).toBe(202);
+    const [run] = await ctx.runtime.store.listRuns({
+      workId: response.json.id,
+    });
+    expect(run).toMatchObject({
+      pipeline: 'claw-homelab-ops',
+      sourceRevision: {
+        input: { requireToolEvidence: true, retry: 'terminal' },
+      },
+    });
+  });
+
+  it('returns the same round for the same message under one sourceKey', async () => {
+    const ctx = context({
+      principal: caller,
+      agents: agents([{}]),
+      agentProfiles: profiles,
+    });
+    const first = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    const again = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    expect(again.json.id).toBe(first.json.id);
+    expect(
+      await ctx.runtime.store.listRuns({ workId: first.json.id }),
+    ).toHaveLength(1);
+  });
+
+  it('replays the admitted round after an unrelated commit moves the definition revision', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const first = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    expect(first.status).toBe(202);
+    // A commit outside the agent directory: same files and digest, new revision.
+    const row = (await store.list())[0]!;
+    row.definition = { ...row.definition!, revision: 'f'.repeat(40) };
+    const again = await call(ctx, 'POST', path, {
+      message: 'Why?',
+      sourceKey: 'k',
+    });
+    expect(again.status).toBe(202);
+    expect(again.json.id).toBe(first.json.id);
+    const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.sourceRevision?.input['revision']).toBe('c'.repeat(40));
+  });
+
+  it('replays a round that was coalesced away before it ran, after an unrelated commit', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const admit = (message: string) =>
+      call(ctx, 'POST', path, { message, sourceKey: 'k' });
+    const a = await admit('A');
+    await admit('B');
+    await admit('C');
+    const row = (await store.list())[0]!;
+    row.definition = { ...row.definition!, revision: 'f'.repeat(40) };
+    const replay = await admit('B');
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(a.json.id);
+  });
+
+  it.each([
+    ['an unknown agent', [], 404],
+    ['a disabled agent', [{ enabled: false, error: 'Invalid YAML' }], 404],
+    [
+      'a profile that does not exist',
+      [{ manifest: { description: 'x', profile: 'nope' } }],
+      403,
+    ],
+  ] as const)('refuses %s', async (_name, rows, status) => {
+    const ctx = context({
+      principal: caller,
+      agents: agents([...rows]),
+      agentProfiles: profiles,
+    });
+    expect((await call(ctx, 'POST', path, { message: 'Why?' })).status).toBe(
+      status,
+    );
+  });
+
+  it('refuses a profile that does not admit the repository, and a grant without the runtime', async () => {
+    const elsewhere = () => [
+      { ...profiles()[0]!, repositories: ['other/repo'] },
+    ];
+    const ctx = context({
+      principal: caller,
+      agents: agents([
+        { manifest: { description: 'x', profile: 'homelab-ops' } },
+      ]),
+      agentProfiles: elsewhere,
+    });
+    expect((await call(ctx, 'POST', path, { message: 'Why?' })).status).toBe(
+      403,
+    );
+    const narrow = { ...caller, pipelines: ['claw-homelab-ops'] };
+    const ctx2 = context({
+      principal: narrow,
+      agents: agents([{}]),
+      agentProfiles: profiles,
+    });
+    expect((await call(ctx2, 'POST', path, { message: 'Why?' })).status).toBe(
+      403,
+    );
+  });
+
+  it('lets only its admitting principal read the run', async () => {
+    const ctx = context({
+      principal: caller,
+      agents: agents([{}]),
+      agentProfiles: profiles,
+    });
+    const admitted = await call(ctx, 'POST', path, { message: 'Why?' });
+    expect((await call(ctx, 'GET', `/items/${admitted.json.id}`)).status).toBe(
+      200,
+    );
+    const other = { ...caller, principal: 'svc:someone-else' };
+    expect(
+      (
+        await call(
+          { ...ctx, principal: other },
+          'GET',
+          `/items/${admitted.json.id}`,
+        )
+      ).status,
+    ).toBe(404);
+  });
+});
 
 describe('claw investigation admission', () => {
   const question = 'Why did the backup alert fire?';

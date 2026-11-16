@@ -13,7 +13,7 @@ import {
   workRevisionSchema,
 } from '@agent-lcars/orchestrator';
 import {
-  clawWorkSpecSchema,
+  investigatorWorkSpecSchema,
   storedWorkPayloadSchema,
   ulid,
   WORK_TITLE_MAX,
@@ -80,7 +80,7 @@ export async function admitInvestigation(
       .digest('hex'),
     input: revisionInput,
   });
-  const spec = clawWorkSpecSchema.parse({
+  const spec = investigatorWorkSpecSchema.parse({
     ...investigationText(sourceKey),
     pipeline: CLAW_INVESTIGATOR_PIPELINE,
     priority: 'background',
@@ -102,7 +102,7 @@ export async function admitInvestigation(
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;
       if (parsed.data.origin?.principal !== request.principal) return false;
-      const claw = clawWorkSpecSchema.safeParse(parsed.data.spec);
+      const claw = investigatorWorkSpecSchema.safeParse(parsed.data.spec);
       return (
         claw.success &&
         claw.data.pipeline === CLAW_INVESTIGATOR_PIPELINE &&

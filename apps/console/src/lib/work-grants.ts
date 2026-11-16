@@ -1,6 +1,11 @@
 import 'server-only';
 
-import { CLAW_PIPELINES, PIPELINES, WORK_CHANNELS } from '@agent-lcars/work';
+import {
+  CLAW_PIPELINES,
+  CLAW_RUNTIME_PIPELINE,
+  PIPELINES,
+  WORK_CHANNELS,
+} from '@agent-lcars/work';
 import { z } from 'zod';
 
 const workScopeSchema = z.enum([
@@ -24,7 +29,12 @@ const workScopeSchema = z.enum([
  *  requires (`libs/work/src/spec.ts`'s `PIPELINES`) -- so a typo in
  *  `AGENT_LCARS_WORK_GRANTS` is a startup config error, not a silently inert
  *  grant discovered later by a principal who mysteriously has no access. */
-const pipelineNameSchema = z.enum([...PIPELINES, 'goose', ...CLAW_PIPELINES]);
+const pipelineNameSchema = z.union([
+  z.enum([...PIPELINES, 'goose', ...CLAW_PIPELINES]),
+  // Repository-owned claw agents run on executor runtimes named by
+  // operator profiles (docs/repository-agents.md); any `claw-*` runtime.
+  z.string().regex(CLAW_RUNTIME_PIPELINE),
+]);
 
 /** A channel checked against the same closed set `workOriginSchema.channel`
  *  requires (`libs/work/src/spec.ts`'s `WORK_CHANNELS`) -- the same

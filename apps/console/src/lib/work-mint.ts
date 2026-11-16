@@ -25,6 +25,8 @@ import { ORPCError } from '@orpc/server';
 import type { CliSessionsResult } from './cli-sessions';
 import { withHandoffActions } from './handoff-summary-work';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
+import type { AgentProfile } from './repository-agent-runs';
+import type { AgentStore } from './repository-agent-store';
 import type { WorkPrincipal } from './work-auth';
 import {
   mayAccessStoredWork,
@@ -70,6 +72,11 @@ export interface WorkContext {
   /** Injected clock: the tick handler's "latest due slot" computation must
    *  be deterministic under test, not tied to wall-clock `Date.now()`. */
   now: () => Date;
+  /** Repository-owned agent catalog and operator profiles
+   *  (docs/repository-agents.md); production defaults to Firestore and
+   *  `AGENT_LCARS_AGENT_PROFILES`. */
+  agents?: AgentStore;
+  agentProfiles?: () => AgentProfile[];
 }
 
 /** Common item lookup for API reads and mutations, before side effects. */

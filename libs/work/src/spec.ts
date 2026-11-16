@@ -129,7 +129,12 @@ export const STORED_PIPELINES = Object.freeze([
   ...SUMMARY_PIPELINES,
   ...CLAW_PIPELINES,
 ] as const);
-export type StoredPipeline = (typeof STORED_PIPELINES)[number];
+/** A repository-owned claw agent's pipeline: the executor runtime its
+ * profile names (docs/repository-agents.md). */
+export const CLAW_RUNTIME_PIPELINE = /^claw-[a-z0-9-]+$/u;
+export type ClawRuntimePipeline = `claw-${string}`;
+export type StoredPipeline =
+  (typeof STORED_PIPELINES)[number] | ClawRuntimePipeline;
 
 /** Internal reading work. Public coding admission continues to use workSpecSchema. */
 export const summaryWorkSpecSchema = z.strictObject({
@@ -159,13 +164,32 @@ const clawWorkSpecFields = {
   priority: z.literal('background'),
   sourceKey: z.string().min(1).max(256),
 };
-/** Each claw pipeline is bound to exactly one operation. */
-export const clawWorkSpecSchema = z.discriminatedUnion('pipeline', [
-  z.strictObject({
-    ...clawWorkSpecFields,
-    pipeline: z.literal('claw-investigator'),
-    operation: z.literal(CLAW_INVESTIGATE_OPERATION),
-  }),
+/** A run of a repository-owned claw agent (docs/repository-agents.md). The
+ * spec names the agent; each round's pinned definition and message live in
+ * its revision input, so the immutable spec admits new rounds. */
+export const agentWorkSpecSchema = z.strictObject({
+  title: z.string().min(1).max(WORK_TITLE_MAX),
+  description: workDescriptionSchema,
+  priority: z.literal('background'),
+  pipeline: z
+    .string()
+    .regex(CLAW_RUNTIME_PIPELINE)
+    .transform((pipeline) => pipeline as ClawRuntimePipeline),
+  /** `<owner>/<repo>/<name>`. */
+  agent: z.string().regex(/^[\w.-]+\/[\w.-]+\/[a-z][a-z0-9-]*$/u),
+  sourceKey: z.string().min(1),
+});
+export type AgentWorkSpec = z.infer<typeof agentWorkSpecSchema>;
+/** Legacy `claw/investigator` work (phase 3a), bound to its operation. */
+export const investigatorWorkSpecSchema = z.strictObject({
+  ...clawWorkSpecFields,
+  pipeline: z.literal('claw-investigator'),
+  operation: z.literal(CLAW_INVESTIGATE_OPERATION),
+});
+/** Every claw run shape: target-less, executed as one k3s Job per attempt. */
+export const clawWorkSpecSchema = z.union([
+  investigatorWorkSpecSchema,
+  agentWorkSpecSchema,
 ]);
 export type ClawWorkSpec = z.infer<typeof clawWorkSpecSchema>;
 export const storedWorkSpecSchema = z.union([

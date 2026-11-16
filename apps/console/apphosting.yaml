@@ -161,6 +161,16 @@ env:
     availability:
       - RUNTIME
 
+  # Not sensitive - operator-owned profiles for repository-owned claw agents
+  # (docs/repository-agents.md). A profile names the executor runtime that
+  # holds an agent's credentials; repository content can never create one.
+  # homelab-ops: jlapenna/homelab's agents run on the Homelab zone's
+  # claw-investigator runtime (its investigator SSH key and LiteLLM key).
+  - variable: AGENT_LCARS_AGENT_PROFILES
+    value: '[{"name":"homelab-ops","runtime":"claw-investigator","repositories":["jlapenna/homelab"]}]'
+    availability:
+      - RUNTIME
+
   # Not sensitive - the audience the work API requires on Google ID tokens.
   - variable: AGENT_LCARS_WORK_AUDIENCE
     value: 'agent-lcars-work'

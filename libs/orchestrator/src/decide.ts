@@ -201,6 +201,23 @@ export function isEffectfulPipeline(pipeline: string): boolean {
   return EFFECTFUL_PIPELINES.has(pipeline);
 }
 
+/** Whether a run may already have performed external effects: its pipeline
+ *  is effectful, or the source revision it executes was admitted with
+ *  `retry: terminal` (a repository-owned agent whose manifest declares
+ *  effect authority, docs/repository-agents.md). The policy travels with the
+ *  pinned revision, so a coalesced successor always runs under its own
+ *  round's policy, never its predecessor's. Such runs settle lost and failed
+ *  attempts terminally. */
+export function isEffectfulRun(run: {
+  pipeline: string;
+  sourceRevision?: { input: Readonly<Record<string, unknown>> } | undefined;
+}): boolean {
+  return (
+    isEffectfulPipeline(run.pipeline) ||
+    run.sourceRevision?.input['retry'] === 'terminal'
+  );
+}
+
 export interface RequestRunInput {
   now: string;
   task: Task | undefined;
@@ -463,7 +480,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     !superseded &&
     run.state === 'finished' &&
     run.result?.ok === false &&
-    !isEffectfulPipeline(run.pipeline) &&
+    !isEffectfulRun(run) &&
     (run.revisionAttempt ?? 1) <= MAX_AUTO_RETRIES;
   if (!superseded && !retry) return decision;
   const next = mintRun({
@@ -1124,10 +1141,12 @@ function settleLostAndRetry(
 ): Decision | Refusal {
   if (lossRefused(loss)) return loss;
   const lost = loss;
-  // Effectful work (recipes) may already have performed effects. A new
-  // occurrence requires explicit admission after physical retirement, never
-  // recovery replay.
-  if (isEffectfulPipeline(decidedRun(lost).pipeline)) return lost;
+  // Effectful work (recipes, terminal-retry agent rounds) may already have
+  // performed effects: the lost round itself is never replayed. A newer round
+  // that was explicitly admitted behind it (its desired revision) still
+  // advances, exactly as it would after a reported settlement.
+  if (isEffectfulRun(decidedRun(lost)))
+    return advanceSourceRevision(lost, input.now);
   const desired = advanceSourceRevision(lost, input.now);
   if (desired !== lost) return desired;
   if (lost.task.consecutiveLost > MAX_AUTO_RETRIES) {

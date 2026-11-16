@@ -40,14 +40,15 @@ const treeSchema = z.object({
   ),
 });
 
-/** Pin `repository`'s default branch and return a reader for that commit.
- * Every request shares `signal`. API responses are read whole unless the
- * caller sets `maxResponseBytes` (the job catalog keeps its own bound). */
+/** Pin `repository`'s default branch, or `options.revision`, and return a
+ * reader for that commit. Every request shares `signal`. API responses are
+ * read whole unless the caller sets `maxResponseBytes` (the job catalog keeps
+ * its own bound). */
 export async function openRepositorySource(
   repository: string,
   token: string,
   signal: AbortSignal,
-  options: { maxResponseBytes?: number } = {},
+  options: { maxResponseBytes?: number; revision?: string } = {},
 ): Promise<RepositorySource> {
   const get = async (path: string): Promise<unknown> => {
     // GitHub answers `/repos/{owner}/{repo}/` (trailing slash) with 404, so
@@ -70,15 +71,19 @@ export async function openRepositorySource(
         : await readJobBody(response, options.maxResponseBytes);
     return JSON.parse(text);
   };
-  const metadata = z
-    .object({ default_branch: z.string() })
-    .parse(await get(''));
+  const { revision } = options;
+  const ref =
+    revision ??
+    z.object({ default_branch: z.string() }).parse(await get(''))
+      .default_branch;
   const commit = z
     .object({
       sha: z.string().regex(/^[a-f0-9]{40}$/u),
       commit: z.object({ tree: z.object({ sha: z.string() }) }),
     })
-    .parse(await get(`commits/${encodeURIComponent(metadata.default_branch)}`));
+    .parse(await get(`commits/${encodeURIComponent(ref)}`));
+  if (revision !== undefined && commit.sha !== revision)
+    throw new Error('Pinned revision did not resolve to itself');
   const readTree = async (sha: string, recursive = false) => {
     const tree = treeSchema.parse(
       await get(`git/trees/${sha}${recursive ? '?recursive=1' : ''}`),
