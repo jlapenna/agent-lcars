@@ -5,10 +5,11 @@ import type {
   TriageAnchor,
   TriagePublication,
 } from '@agent-lcars/dispatch-contracts';
-import type {
-  LeasedOutboxEntry,
-  OrchestratorStore,
-  Run,
+import {
+  type LeasedOutboxEntry,
+  type OrchestratorStore,
+  readFullRunMessage,
+  type Run,
 } from '@agent-lcars/orchestrator';
 
 import {
@@ -50,7 +51,10 @@ export async function publishFleetTriage(
 ): Promise<void> {
   let run = await store.readRun(entry.runId);
   if (run?.triagePublication?.state !== 'pending') return;
-  const { input, report } = parseTriageReport(run, run.result?.message);
+  const { input, report } = parseTriageReport(
+    run,
+    await readFullRunMessage(store, run),
+  );
   const anchor: TriageAnchor =
     'source' in input
       ? { repo: input.repo, source: input.source }

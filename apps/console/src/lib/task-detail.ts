@@ -1,7 +1,8 @@
 import { logger } from '@agent-lcars/logging';
-import type {
-  GithubAnchorProjection,
-  Run as OrchestratorRun,
+import {
+  type GithubAnchorProjection,
+  type Run as OrchestratorRun,
+  withFullRunMessages,
 } from '@agent-lcars/orchestrator';
 import type { WorkSpec } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
@@ -132,6 +133,7 @@ export async function getTaskDetail(
   const item = actionItemFromGithubAnchorProjection(projection, repo);
 
   const state = authoritative.states.get(key);
+  const { store } = createOrchestratorRuntime();
   return {
     status: 'ok',
     work: task,
@@ -146,9 +148,14 @@ export async function getTaskDetail(
       : {
           history: {
             ...state.item,
-            runs: await withHandoffActions(
-              createOrchestratorRuntime().store,
-              state.item.runs,
+            runs: await withFullRunMessages(
+              store,
+              await withHandoffActions(store, state.item.runs),
+              (runId) =>
+                logger.error(
+                  'agent-lcars: stored final message unreadable for run %s; serving its preview',
+                  runId,
+                ),
             ),
             sessions: await sessionsForRuns(state.runs.map((run) => run.runId)),
           },

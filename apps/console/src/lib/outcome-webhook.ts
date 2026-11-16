@@ -31,8 +31,13 @@ export interface OutcomeWebhookPayload {
   state: 'finished' | 'canceled' | 'lost';
   ok: boolean;
   parked: boolean;
-  /** `Run.result.message`. */
+  /** `Run.result.message`: the whole final message, or its first 16,384
+   *  characters when it is longer (then `messageTruncated`). A webhook stays
+   *  deliberately small; the whole message is at `consoleUrl` and
+   *  `GET /items/{itemId}`. */
   message?: string;
+  /** Present only when `message` is the inline preview of a longer message. */
+  messageTruncated?: true;
   /** `Run.result.ref`, e.g. the PR URL. */
   ref?: string;
   /** `origin.thread`, echoed back for the adapter to route on. */

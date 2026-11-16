@@ -1,3 +1,8 @@
+import {
+  RUN_MESSAGE_MAX_BYTES,
+  RUN_MESSAGE_PREVIEW_MAX,
+  runMessageBytes,
+} from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -21,6 +26,11 @@ import {
   WORK_PAYLOAD_MAX_BYTES,
 } from './model';
 import { type Clock, Orchestrator } from './orchestrator';
+import {
+  externalizeRunMessage,
+  readFullRunMessage,
+  withFullRunMessages,
+} from './run-message';
 import type { Schedule, ScheduleStore } from './schedule-store';
 import {
   type OrchestratorStore,
@@ -1490,6 +1500,42 @@ export function runOrchestratorStoreContract(
 
       const read = await store.readTask(TASK);
       expect(read?.task.work).toEqual(work);
+    });
+
+    it('stores a whole final message out of line and settles only its preview inline', async () => {
+      const { store, orchestrator } = await fixture();
+      const { run } = await started(orchestrator);
+      // Multi-byte content lands chunk cuts inside code points, and the size
+      // needs several chunk documents.
+      const message = 'report 漢字 😀 line\n'.repeat(60_000);
+      expect(runMessageBytes(message)).toBeLessThanOrEqual(
+        RUN_MESSAGE_MAX_BYTES,
+      );
+      const result = await externalizeRunMessage(store, run.runId, {
+        ok: true,
+        summary: 'report',
+        message,
+      });
+      expect(result.message?.length).toBeLessThanOrEqual(
+        RUN_MESSAGE_PREVIEW_MAX,
+      );
+      expect(result.messageOverflow?.chunks).toBeGreaterThan(1);
+      await orchestrator.report(run.runId, result);
+
+      const settled = await store.readRun(run.runId);
+      expect(settled?.result?.message).toBe(result.message);
+      expect(settled?.result?.messageOverflow).toEqual(result.messageOverflow);
+      expect(await readFullRunMessage(store, settled!)).toBe(message);
+      const [restored] = await withFullRunMessages(store, [settled!]);
+      expect(restored?.result?.message).toBe(message);
+      expect(restored?.result?.messageOverflow).toBeUndefined();
+      // A mismatched digest never returns another message's text.
+      expect(
+        await store.readRunMessage({
+          runId: run.runId,
+          overflow: { ...result.messageOverflow!, sha256: 'f'.repeat(64) },
+        }),
+      ).toBeUndefined();
     });
 
     describe('the outbox', () => {

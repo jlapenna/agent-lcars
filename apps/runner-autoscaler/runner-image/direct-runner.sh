@@ -697,9 +697,9 @@ write. When the report is finished, write these two lines to
 <!-- agent-result:v1:report:$ATTEMPT_ID -->
 <!-- attempt-claim:$ATTEMPT_ID -->
 
-Then end with $report_final as your final response (at most 16384
-characters): that response is the deliverable, and a longer one is
-refused, never truncated.
+Then end with $report_final as your final response: that response is the
+deliverable and is stored whole, never truncated, however long it is (the
+only bound is 4 MiB).
 A finished report is not a park. Park only for a real blocker.$report_followup"
     # Only the last round's final message is kept, so a correction round must
     # repeat the report rather than acknowledge the record.
@@ -1623,11 +1623,19 @@ if [ "$OUTCOME" = no-deliverable ] && grep -q 'FAILED lookup' "$VERIFY_OUTPUT"; 
 fi
 
 payload_file="$RUNNER_TEMP/complete-payload.json"
-# The tail, not the head: a park's blocker line and a PR summary both live
-# at the end of the final message. Missing or unreadable (every non-Claude
-# pipeline today; no message captured) is not an error -- the round still
-# has a real outcome, it just renders without a turn.
-AGENT_MESSAGE="$(tail -c 16384 "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+# The whole final message: the Work API stores any message within
+# RUN_MESSAGE_MAX_BYTES whole (worker-completion.sh), so it is never cut to
+# fit storage. Only a non-report message past that bound keeps its tail -- a
+# park's blocker line and a PR summary both live at the end -- with margin
+# for a cut multi-byte character; a report is refused below instead.
+# Missing or unreadable (no message captured) is not an error -- the round
+# still has a real outcome, it just renders without a turn.
+if [ "$(stat -c %s "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || echo 0)" -gt "$RUN_MESSAGE_MAX_BYTES" ]; then
+  echo "::warning::Final message exceeds $RUN_MESSAGE_MAX_BYTES bytes; a non-report outcome keeps its tail" >&2
+  AGENT_MESSAGE="$(tail -c "$((RUN_MESSAGE_MAX_BYTES - 16))" "$LAST_MESSAGE_FILE" 2>/dev/null || true)"
+else
+  AGENT_MESSAGE="$(cat "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
+fi
 # The provider's own structured failure events, when it emitted any. These are
 # the only honest provider cause for a round that stopped before its final
 # message (#2537); they are never task or tool output, so quoted text in a
@@ -1651,12 +1659,12 @@ if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_
 fi
 PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # A report's message is its deliverable: send it whole, or refuse it when it
-# is blank or overflows the message contract (never a truncated tail).
+# is blank or past the completion bound (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
   if report_message_usable "${LAST_MESSAGE_FILE:-}"; then
     AGENT_MESSAGE="$(cat "$LAST_MESSAGE_FILE")"
   else
-    echo "::error::Report final message is blank or exceeds 16384 characters; refusing it" >&2
+    echo "::error::Report final message is blank or exceeds $RUN_MESSAGE_MAX_BYTES bytes; refusing it" >&2
     OUTCOME=no-deliverable
   fi
 fi
@@ -1733,8 +1741,12 @@ if worker_control_failed; then
       ;;
   esac
 fi
+# A file, not --arg: a long message would overflow the kernel's per-argument
+# limit (MAX_ARG_STRLEN, 128 KiB).
+message_file="$RUNNER_TEMP/complete-message.txt"
+printf '%s' "$AGENT_MESSAGE" > "$message_file"
 jq -cn --arg outcome "$OUTCOME" --argjson ref "$OUTCOME_REFERENCE" \
-  --arg message "$AGENT_MESSAGE" \
+  --rawfile message "$message_file" \
   '{outcome: $outcome, outcomeReference: $ref}
    + (if $message == "" then {} else {message: $message} end)' > "$payload_file"
 

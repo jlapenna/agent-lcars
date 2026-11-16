@@ -809,7 +809,12 @@ async function deliverNativeOutcome(
         }
       : run.result?.message === undefined
         ? {}
-        : { message: run.result.message }),
+        : {
+            message: run.result.message,
+            ...(run.result.messageOverflow === undefined
+              ? {}
+              : { messageTruncated: true as const }),
+          }),
     ...(run.result?.ref === undefined ? {} : { ref: run.result.ref }),
     thread: origin.thread,
     consoleUrl: `${consoleUrl()}/work/${run.task.workId}`,

@@ -14,19 +14,16 @@ monotonic_seconds() {
 }
 
 # A report's final message is its deliverable (#2845). It is usable only when
-# nonblank and at most 16384 UTF-16 code units: the Work API's own Zod/JS
-# string-length message contract, inclusive. Capture files are read within a
-# 65536-byte envelope (16384 BMP units need at most 49152 UTF-8 bytes); a
-# larger file already overflows, so it is refused rather than truncated.
+# nonblank and within the Work API's completion bound, RUN_MESSAGE_MAX_BYTES
+# (4 MiB of UTF-8, libs/dispatch-contracts/src/run-message.ts). The Work API
+# stores a message of any size up to that bound whole, so a longer report is
+# the only one refused here (earning the correction round), never truncated.
+RUN_MESSAGE_MAX_BYTES="${RUN_MESSAGE_MAX_BYTES:-4194304}"
 report_message_usable() {
   [ -f "${1:-}" ] || return 1
-  node -e '
-const fs = require("fs");
-const file = process.argv[1];
-if (fs.statSync(file).size > 65536) process.exit(1);
-const text = fs.readFileSync(file, "utf8");
-process.exit(text.trim() !== "" && text.length <= 16384 ? 0 : 1);
-' "$1"
+  [ "$(stat -c %s "$1")" -le "$RUN_MESSAGE_MAX_BYTES" ] || return 1
+  # JavaScript's trim(), exactly as the Work API judges a blank report.
+  node -e 'process.exit(require("fs").readFileSync(process.argv[1], "utf8").trim() !== "" ? 0 : 1)' "$1"
 }
 
 # The optional third argument names the round's final-message file. Given

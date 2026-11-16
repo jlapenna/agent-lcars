@@ -1,13 +1,14 @@
+import { RUN_MESSAGE_MAX_BYTES } from '@agent-lcars/dispatch-contracts';
 import * as fs from 'fs';
 
 /**
- * UTF-8 envelope for the extracted text. The Work API message contract is
- * 16,384 JavaScript string units, which can take up to 49,152 UTF-8 bytes;
- * this envelope keeps every valid message whole so the direct runner can
- * measure a report exactly (#2845). Anything cut here already overflows.
- * Other outcomes still send only the runner's 16,384-byte tail.
+ * UTF-8 envelope for the extracted text: twice the Work API's whole-message
+ * completion bound (`RUN_MESSAGE_MAX_BYTES`, 4 MiB). Every message the Work
+ * API accepts is kept whole, so the direct runner measures a report exactly
+ * (#2845); anything cut here is already more than twice over that bound and
+ * still measures as oversize, so it is refused, never settled truncated.
  */
-export const OPENCODE_LAST_MESSAGE_MAX_BYTES = 65_536;
+export const OPENCODE_LAST_MESSAGE_MAX_BYTES = 2 * RUN_MESSAGE_MAX_BYTES;
 
 function boundUtf8Bytes(text: string, maxBytes: number): string {
   const buffer = Buffer.from(text, 'utf8');

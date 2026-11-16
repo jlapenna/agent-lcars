@@ -79,6 +79,9 @@ export async function deliverLinearOutcome(
     '<!-- agent-lcars:outcome -->',
     `**LCARS — ${status}**`,
     payload.message,
+    payload.messageTruncated
+      ? `_The message continues; read it whole at ${payload.consoleUrl}._`
+      : undefined,
     payload.ref ? `Result: ${payload.ref}` : undefined,
     `Work: ${payload.consoleUrl}`,
     `Run: \`${payload.runId}\``,

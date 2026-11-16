@@ -597,11 +597,17 @@ printf '%s' "${GITHUB_TOKEN:-}${GH_TOKEN:-}" > "$CODEX_ENV_LOG"
 # Real codex writes the final message to the file named by
 # --output-last-message, not to stdout -- opt-in, mirroring the fake
 # claude's own FAKE_CLAUDE_STDOUT convention.
-if [ -n "${FAKE_CODEX_LAST_MESSAGE:-}" ]; then
+# FAKE_CODEX_LAST_MESSAGE_FILE supplies a message too long for one
+# environment string (the kernel bounds each at 128 KiB).
+if [ -n "${FAKE_CODEX_LAST_MESSAGE:-}${FAKE_CODEX_LAST_MESSAGE_FILE:-}" ]; then
   prev=''
   for arg in "$@"; do
     if [ "$prev" = "--output-last-message" ]; then
-      printf '%s' "$FAKE_CODEX_LAST_MESSAGE" > "$arg"
+      if [ -n "${FAKE_CODEX_LAST_MESSAGE_FILE:-}" ]; then
+        cp "$FAKE_CODEX_LAST_MESSAGE_FILE" "$arg"
+      else
+        printf '%s' "$FAKE_CODEX_LAST_MESSAGE" > "$arg"
+      fi
       break
     fi
     prev="$arg"
@@ -1968,6 +1974,31 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
 
 echo "scenario codex-native-park: OK"
 
+# A non-report message within the completion bound is sent byte-for-byte,
+# including at exactly the bound; only one past it keeps a shortened tail and
+# warns. The bound is lowered so the fixtures stay small.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=park RUN_MESSAGE_MAX_BYTES=1000
+for size in 999 1000 1001; do
+  park_message="$tmp/park-message-$size.txt"
+  python3 -c 'import sys; n = int(sys.argv[1]); sys.stdout.write("H" + "x" * (n - 2) + "T")' "$size" > "$park_message"
+  export FAKE_CODEX_LAST_MESSAGE_FILE="$park_message"
+  run_scenario "codex-native-park-bound-$size" codex
+  if [ "$size" -le 1000 ]; then
+    jq -e --rawfile want "$park_message" '.outcome == "park" and .message == $want' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+      fail "codex native park bound $size: a message within the bound was not sent whole ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+    if grep -Fq 'Final message exceeds' "$scenario_log"; then
+      fail "codex native park bound $size: a message within the bound warned as oversized"
+    fi
+  else
+    jq -e '.outcome == "park" and (.message | length) == 984 and (.message | endswith("T")) and (.message | startswith("H") | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+      fail "codex native park bound $size: an oversized message did not keep its bounded tail ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+    grep -Fq 'Final message exceeds 1000 bytes' "$scenario_log" ||
+      fail "codex native park bound $size: no oversize warning"
+  fi
+done
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME RUN_MESSAGE_MAX_BYTES FAKE_CODEX_LAST_MESSAGE_FILE
+echo "scenario codex-native-park-bound: OK"
+
 # Temporary #2845 bridge to #2810's `intent: report`: only a native item
 # whose stored spec opts into `deliverable: report` may settle a report, and
 # its nonblank final message is the deliverable, with no GitHub reference.
@@ -2002,12 +2033,25 @@ jq -e '.outcome == "report" and (.message | contains("RESOURCE_EXHAUSTED"))' < <
   fail "codex native report quota prose: report discussing quota errors was reclassified ($(cat "$COMPLETE_LOG"))"
 echo "scenario codex-native-report-quota-prose: OK"
 
-# The message capture keeps only the tail; an oversized report is refused
-# rather than settled without its head.
-export FAKE_CODEX_LAST_MESSAGE="# Title$(printf '%*s' 16400 '' | tr ' ' x)"
+# A long report settles whole: 200 KB of multi-byte text, far past the former
+# 16,384-unit cap and past the kernel's 128 KiB per-argument limit that the
+# completion payload must not pass through argv.
+long_report="$tmp/long-report.md"
+python3 -c 'import sys; sys.stdout.write("# Long findings\n" + "監視 finding line 😀 detail\n" * 8000 + "end of report")' > "$long_report"
+[ "$(stat -c %s "$long_report")" -gt 200000 ] || fail "codex native report long: fixture is not 200 KB"
+export FAKE_CODEX_LAST_MESSAGE_FILE="$long_report"
+run_scenario codex-native-report-long codex
+jq -e --rawfile want "$long_report" '.outcome == "report" and .message == $want' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report long: a 200 KB report was refused or cut ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+echo "scenario codex-native-report-long: OK"
+
+# Only a report past the completion bound is refused (never cut); the bound is
+# lowered here so the fixture stays small.
+export RUN_MESSAGE_MAX_BYTES=100000
 run_scenario codex-native-report-oversized codex
+unset RUN_MESSAGE_MAX_BYTES FAKE_CODEX_LAST_MESSAGE_FILE
 jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "codex native report oversized: a truncated report settled ($(cat "$COMPLETE_LOG"))"
+  fail "codex native report oversized: a report past the bound settled ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome}'))"
 echo "scenario codex-native-report-oversized: OK"
 unset FAKE_CODEX_LAST_MESSAGE
 
@@ -2054,15 +2098,14 @@ done
 unset FAKE_BRIEF_NO_RESUME FAKE_OPENCODE_LAST_MESSAGE
 echo "scenario opencode-native-report-export-failure: OK"
 
-# The message contract is <=16384 JavaScript string units, inclusive, not
-# bytes: an exact-boundary ASCII report and a multi-byte CJK report settle
-# whole, while one supplementary character past the boundary is refused.
-export FAKE_OPENCODE_LAST_MESSAGE="# Title$(printf '%*s' 16377 '' | tr ' ' x)"
-run_scenario opencode-native-report-boundary opencode
+# The former 16,384-unit message cap is gone: a longer report settles whole
+# on every provider path.
+export FAKE_OPENCODE_LAST_MESSAGE="# Title$(printf '%*s' 40000 '' | tr ' ' x)"
+run_scenario opencode-native-report-long opencode
 unset FAKE_OPENCODE_LAST_MESSAGE
-jq -e '.outcome == "report" and (.message | length) == 16384 and (.message | startswith("# Title"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "opencode native report boundary: an exact-limit report was refused or cut ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
-echo "scenario opencode-native-report-boundary: OK"
+jq -e '.outcome == "report" and (.message | length) == 40007 and (.message | startswith("# Title"))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "opencode native report long: a 40,007-character report was refused or cut ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+echo "scenario opencode-native-report-long: OK"
 
 export FAKE_CODEX_LAST_MESSAGE=$' \n '
 run_scenario codex-native-report-blank codex
@@ -2077,14 +2120,10 @@ jq -e --arg cjk "$cjk" '.outcome == "report" and .message == $cjk' < <(tail -n1 
   fail "codex native report cjk: a 6000-character, 18000-byte report was refused or cut"
 echo "scenario codex-native-report-cjk: OK"
 
-export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192, end="")')"
-run_scenario codex-native-report-surrogate-boundary codex
-jq -e '.outcome == "report" and (.message | length) == 8192' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "codex native report surrogate boundary: 16384 UTF-16 units were refused"
 export FAKE_CODEX_LAST_MESSAGE="$(python3 -c 'print("😀" * 8192 + "x", end="")')"
-run_scenario codex-native-report-surrogate-overflow codex
-jq -e '.outcome != "report"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
-  fail "codex native report surrogate overflow: 16385 UTF-16 units settled"
+run_scenario codex-native-report-surrogate codex
+jq -e '.outcome == "report" and (.message | length) == 8193' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex native report surrogate: 16385 UTF-16 units were refused or cut"
 echo "scenario codex-native-report-surrogate: OK"
 
 unset FAKE_SPEC_EXTRA

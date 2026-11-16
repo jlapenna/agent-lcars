@@ -323,7 +323,9 @@ rule wins:
   model reported it is at capacity), `worker-control-failed`, `runner-failed`,
   and `summary-unavailable`.
 
-`RunResult = {ok, summary ≤4 KiB, ref?, relatedRefs?, message ≤16 KiB}`.
+`RunResult = {ok, summary ≤4 KiB, ref?, relatedRefs?, message ≤16 KiB preview, messageOverflow?}`;
+the whole final message (≤4 MiB) is stored out of line beside the run when it
+exceeds the preview (`libs/dispatch-contracts/src/run-message.ts`).
 The runner carries the exact bot-authored, attempt-marker-verified PR,
 comment or review permalink through completion into `ref`. Structured
 GitHub park/no-op comments retain their own permalink; a parked partial PR

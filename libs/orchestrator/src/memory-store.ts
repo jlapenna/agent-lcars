@@ -16,6 +16,7 @@ import type {
   OutboxSettlement,
   RequestSource,
   Run,
+  RunMessageOverflow,
   TaskId,
   WorkRevision,
 } from './model';
@@ -41,6 +42,7 @@ import {
   projectQueueAdmissionStatus,
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
+import { joinRunMessage } from './run-message';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
@@ -105,6 +107,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #providerCooldowns = new Map<string, ProviderCooldown>();
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
+  readonly #runMessageChunks = new Map<string, string>();
   readonly #sourceWorkIds = new Map<string, string>();
   readonly #sourceRevisions = new Map<string, WorkRevision>();
   readonly #requestRuns = new Map<string, string>();
@@ -159,6 +162,33 @@ export class MemoryStore implements OrchestratorStore {
     const id = this.#sourceWorkIds.get(sourceKey) ?? candidateWorkId;
     this.#sourceWorkIds.set(sourceKey, id);
     return id;
+  }
+
+  async writeRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+    chunks: readonly string[];
+  }): Promise<void> {
+    input.chunks.forEach((chunk, index) =>
+      this.#runMessageChunks.set(
+        `${input.runId}\0${input.overflow.sha256}\0${index}`,
+        chunk,
+      ),
+    );
+  }
+
+  async readRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+  }): Promise<string | undefined> {
+    return joinRunMessage(
+      input.overflow,
+      Array.from({ length: input.overflow.chunks }, (_, index) =>
+        this.#runMessageChunks.get(
+          `${input.runId}\0${input.overflow.sha256}\0${index}`,
+        ),
+      ),
+    );
   }
 
   async readRun(runId: string): Promise<Run | undefined> {

@@ -16,6 +16,7 @@ import type {
   QueuePriority,
   RequestSource,
   Run,
+  RunMessageOverflow,
   Task,
   TaskId,
   WorkRevision,
@@ -248,6 +249,20 @@ export interface OrchestratorStore {
   /** The task's live run, if its `activeRunId` points at one. */
   readActiveRun(id: TaskId): Promise<Run | undefined>;
   listRuns(id: TaskId): Promise<Run[]>;
+  /** Store a run's whole final message out of line, as the chunks
+   * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
+   * idempotent; never changes the run document. */
+  writeRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+    chunks: readonly string[];
+  }): Promise<void>;
+  /** The whole message `overflow` names, or undefined when any chunk is
+   * missing or the joined text does not match its digest. */
+  readRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+  }): Promise<string | undefined>;
 
   /**
    * Atomically reads a task's current lock and the one matching durable

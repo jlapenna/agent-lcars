@@ -39,7 +39,6 @@ export const clawInvestigateInputSchema = z.strictObject({
 });
 export type ClawInvestigateInput = z.infer<typeof clawInvestigateInputSchema>;
 
-/** The report is the completion message itself, with no structured
- * artifact. Equal to the existing `/runs/{runId}/complete` and stored
- * `Run.result.message` bound, so a report is never silently truncated. */
-export const CLAW_REPORT_MAX = 16_384;
+/* The report is the completion message itself, with no structured artifact.
+ * It shares every run's message contract (`./run-message`): stored whole,
+ * never truncated, bounded only by `RUN_MESSAGE_MAX_BYTES`. */

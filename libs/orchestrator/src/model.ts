@@ -2,6 +2,8 @@ import {
   humanNeededActionsSchema,
   providerRoutingSchema,
   QUEUE_PRIORITIES,
+  RUN_MESSAGE_MAX_BYTES,
+  RUN_MESSAGE_PREVIEW_MAX,
   runPlacementSchema,
   triagePublicationSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -266,6 +268,18 @@ export function deliveryWaiting(task: {
  * Whatever the run reported, recorded verbatim and never interpreted.
  * `summary` is bounded so a runaway report cannot bloat the record.
  */
+/** Names the whole final message stored out of line beside its run: the
+ * SHA-256 of its UTF-8 bytes and how it was split. Content-addressed, so a
+ * refused or duplicate completion can never replace a settled message. */
+export const runMessageOverflowSchema = z.strictObject({
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  /** Whole-message length in JavaScript string units. */
+  chars: z.number().int().positive(),
+  bytes: z.number().int().positive().max(RUN_MESSAGE_MAX_BYTES),
+  chunks: z.number().int().positive().max(64),
+});
+export type RunMessageOverflow = z.infer<typeof runMessageOverflowSchema>;
+
 export const runResultSchema = z.strictObject({
   ok: z.boolean(),
   summary: z.string().max(4_096).optional(),
@@ -279,8 +293,15 @@ export const runResultSchema = z.strictObject({
    * writing one gets the runner's redacted tail of its output instead.
    * Durable so every surface can render the round without reading a
    * transcript. Opaque to the orchestrator, exactly like `summary` and `ref`.
+   *
+   * Inline it is at most a preview: a longer message keeps its first
+   * `RUN_MESSAGE_PREVIEW_MAX` characters here and the whole text out of line
+   * (`messageOverflow`, `./run-message`). Never a truncated deliverable.
    */
-  message: z.string().max(16_384).optional(),
+  message: z.string().max(RUN_MESSAGE_PREVIEW_MAX).optional(),
+  /** Present only when `message` is a preview of a longer message stored
+   * beside this run. Absent on every run whose message fit inline. */
+  messageOverflow: runMessageOverflowSchema.optional(),
   /** Optional LLM reading aid derived by Console from this parked message. */
   humanNeededActions: humanNeededActionsSchema.optional(),
 });

@@ -11,6 +11,7 @@ import { usesCodexCredentials } from '@agent-lcars/orchestrator';
 import {
   type DeliveryBinding,
   deliveryWaiting,
+  externalizeRunMessage,
   isLive,
   isRefusal,
   isWorkAnchor,
@@ -536,14 +537,14 @@ export const runsRouter = os.router({
     await jobs.stage(occurrence, artifact);
     const settled = await context.orchestrator.report(
       run.runId,
-      {
+      await externalizeRunMessage(context.store, run.runId, {
         ok: artifact.successful,
         ref: `job-result:${artifact.digest}`,
         summary: artifact.successful
           ? 'Recipe completed'
           : 'Recipe coverage incomplete',
-        message: String(artifact.artifacts['report.md']).slice(0, 16384),
-      },
+        message: String(artifact.artifacts['report.md']),
+      }),
       run.queue?.tokenHash ?? '',
     );
     if (isRefusal(settled))
@@ -1036,9 +1037,12 @@ export const runsRouter = os.router({
         );
       }
     }
+    // The whole message goes out of line when it overflows the inline
+    // preview, before settlement: it is content-addressed, so a refused or
+    // duplicate completion can never replace a settled run's message.
     const settled = await context.orchestrator.report(
       run.runId,
-      result,
+      await externalizeRunMessage(context.store, run.runId, result),
       run.queue?.tokenHash ?? '',
       undefined,
       delivery,

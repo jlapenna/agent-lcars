@@ -19,6 +19,7 @@ export {
 } from './orchestrator';
 export * from './provider-fallback';
 export * from './queue-admission-status';
+export * from './run-message';
 export * from './schedule-store';
 export * from './store';
 export {
