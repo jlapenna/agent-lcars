@@ -13,7 +13,11 @@ import type { WorkOrigin } from '@agent-lcars/work';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { drainOutbox, outcomeCommentBody } from './orchestrator-dispatch';
+import {
+  describeLostOutcome,
+  drainOutbox,
+  outcomeCommentBody,
+} from './orchestrator-dispatch';
 import type {
   OutcomeWebhookPayload,
   OutcomeWebhookTarget,
@@ -1640,4 +1644,71 @@ describe('native delivery finalization reuses terminal outcome and session expir
       expect((await f.store.readRun(f.run.runId))!.result).toEqual(f.original);
     },
   );
+});
+
+describe('describeLostOutcome', () => {
+  const lostRun = (note?: string) =>
+    ({
+      runId: 'owner/repo#7/r1',
+      events: [
+        { at: '2026-11-16T01:18:00.000Z', to: 'pending', by: 'request' },
+        {
+          at: '2026-11-16T02:19:00.000Z',
+          to: 'lost',
+          by: 'expiry',
+          ...(note === undefined ? {} : { note }),
+        },
+      ],
+    }) as unknown as Parameters<typeof describeLostOutcome>[1];
+  const retry = {
+    runId: 'owner/repo#7/r2',
+    requestSource: 'auto-retry',
+    requestId: 'retry:owner/repo#7/r1',
+  };
+  const store = {
+    readRun: async (id: string) => (id === retry.runId ? retry : undefined),
+  } as unknown as Parameters<typeof describeLostOutcome>[0];
+  const task = {
+    activeRunId: retry.runId,
+    consecutiveLost: 1,
+  } as unknown as Parameters<typeof describeLostOutcome>[2];
+
+  // #3392: a Job no node had room for was reported as a lease expiry.
+  it('reports a run that never placed as a capacity wait requeued in place', async () => {
+    const { body } = await describeLostOutcome(
+      store,
+      lostRun('placement observation deadline exceeded'),
+      { ...task, consecutiveLost: 0 } as typeof task,
+    );
+    expect(body).toContain('could not start: no cluster node had room');
+    expect(body).toContain(
+      'Requeued as run owner/repo#7/r2 at its original place',
+    );
+    expect(body).not.toContain('lease expired');
+    expect(body).not.toMatch(/\(attempt \d/);
+  });
+
+  it('posts once per capacity-wait streak', async () => {
+    const later = {
+      ...lostRun('placement observation deadline exceeded'),
+      placementWaits: 2,
+    } as Parameters<typeof describeLostOutcome>[1];
+    const { body } = await describeLostOutcome(store, later, {
+      ...task,
+      consecutiveLost: 0,
+    } as typeof task);
+    expect(body).toBeUndefined();
+  });
+
+  it('keeps the lease-expiry wording and attempt count for a worker that was lost', async () => {
+    const { body } = await describeLostOutcome(
+      store,
+      lostRun('first heartbeat deadline exceeded'),
+      task,
+    );
+    expect(body).toContain('was lost (no report before its lease expired)');
+    expect(body).toContain(
+      'Retrying automatically as run owner/repo#7/r2 (attempt 2 of 3)',
+    );
+  });
 });

@@ -21,7 +21,7 @@ import type {
   TaskId,
   WorkRevision,
 } from './model';
-import { taskKey } from './model';
+import { queueOrderAt, taskKey } from './model';
 import { providerIsCoolingDown } from './provider-cooldown';
 import {
   isQueueAdmissionCandidate,
@@ -141,8 +141,8 @@ export function selectFairQueuedRun(
     const current = heads.get(run.pipeline);
     if (
       current === undefined ||
-      run.createdAt < current.createdAt ||
-      (run.createdAt === current.createdAt && run.runId < current.runId)
+      queueOrderAt(run) < queueOrderAt(current) ||
+      (queueOrderAt(run) === queueOrderAt(current) && run.runId < current.runId)
     ) {
       heads.set(run.pipeline, run);
     }
@@ -161,7 +161,7 @@ export function selectFairQueuedRun(
         (occupancy.get(right.pipeline) ?? 0);
       return (
         occupied ||
-        left.createdAt.localeCompare(right.createdAt) ||
+        queueOrderAt(left).localeCompare(queueOrderAt(right)) ||
         (pipelineOrder.get(left.pipeline) ?? 0) -
           (pipelineOrder.get(right.pipeline) ?? 0) ||
         left.runId.localeCompare(right.runId)
@@ -172,7 +172,7 @@ export function selectFairQueuedRun(
   return selectPriorityQueuedRun(
     providerRuns.sort(
       (left, right) =>
-        left.createdAt.localeCompare(right.createdAt) ||
+        queueOrderAt(left).localeCompare(queueOrderAt(right)) ||
         (left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0),
     ),
     priorityPositions.get(provider.pipeline) ?? 0,

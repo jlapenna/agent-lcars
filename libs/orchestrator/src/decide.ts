@@ -17,6 +17,7 @@ import {
   type OutboxEntry,
   type ProviderFallback,
   type ProviderFallbackRequest,
+  queueOrderAt,
   type QueuePriority,
   queuePrioritySchema,
   recoveryDeadlineElapsed,
@@ -115,6 +116,21 @@ export function runStartDeadlineAt(now: string): string {
  * startup loss (not a provider attempt), and the executor retires the Job that
  * never placed, so one unplaceable Job cannot hold admission indefinitely. */
 export const RUN_PLACEMENT_WAIT_MAX_MS = 60 * 60_000;
+
+/** Consecutive capacity waits a lineage may requeue through in place
+ * (about six hours at the one-hour placement bound). Past it the loss is
+ * charged like any other, so an unplaceable run eventually parks visibly
+ * instead of holding the head of the queue forever. */
+export const MAX_PLACEMENT_WAITS = 6;
+
+/** Loss-event note for a claim whose Job never placed (lostBeforePlacement). */
+export const PLACEMENT_WAIT_EXCEEDED_NOTE =
+  'placement observation deadline exceeded';
+
+/** Loss-event note once MAX_PLACEMENT_WAITS is spent: still a Job that never
+ * placed, now charged like any loss. */
+export const PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE =
+  'placement wait budget exhausted';
 
 function placementStartDeadlineAt(now: string, claimedAt?: string): string {
   const renewed = Date.parse(runStartDeadlineAt(now));
@@ -486,6 +502,9 @@ function mintRun(input: {
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
   sourceRevision?: WorkRevision;
   revisionAttempt?: number;
+  /** Only a capacity-wait requeue passes these (lostBeforePlacement). */
+  queuedSince?: string;
+  placementWaits?: number;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -537,6 +556,12 @@ function mintRun(input: {
           : { intervention: input.intervention }),
       },
     ],
+    ...(input.queuedSince === undefined
+      ? {}
+      : { queuedSince: input.queuedSince }),
+    ...(input.placementWaits === undefined
+      ? {}
+      : { placementWaits: input.placementWaits }),
     createdAt: now,
     updatedAt: now,
   };
@@ -1021,11 +1046,30 @@ function executorLoss(input: {
   return settleLost(input, 'executor');
 }
 
+/** A placement-aware claim whose Job never placed within
+ * RUN_PLACEMENT_WAIT_MAX_MS: no node had room. That is capacity contention,
+ * not an execution attempt -- no worker started, so nothing can have run --
+ * and it must not consume the retry budget or the run's place in line. */
+export function lostBeforePlacement(run: Run, now: string): boolean {
+  const queue = run.queue;
+  return (
+    queue?.startupPlacement?.state === 'waiting' &&
+    // The executor reported the Job Pending at least once. A claim it never
+    // reported on (Job never created, reporting broken) is not capacity.
+    queue.startupPlacement.jobUid !== undefined &&
+    (run.placementWaits ?? 0) < MAX_PLACEMENT_WAITS &&
+    queue.firstHeartbeatAt === undefined &&
+    queue.providerProcessStartedAt === undefined &&
+    startDeadlineElapsed(run, now)
+  );
+}
+
 function settleLost(
   input: { now: string; task: Task; run: Run },
   by: 'expiry' | 'executor',
 ): Decision {
   const { now, task, run } = input;
+  const unplaced = by === 'expiry' && lostBeforePlacement(run, now);
   const settled: Run = {
     ...run,
     // The executor reports an exit only after observing its worker's Job
@@ -1045,9 +1089,12 @@ function settleLost(
         by,
         ...(by === 'expiry' && startDeadlineElapsed(run, now)
           ? {
-              note:
-                run.queue?.startupPlacement?.state === 'waiting'
-                  ? 'placement observation deadline exceeded'
+              note: unplaced
+                ? PLACEMENT_WAIT_EXCEEDED_NOTE
+                : run.queue?.startupPlacement?.state === 'waiting' &&
+                    run.queue.startupPlacement.jobUid !== undefined &&
+                    run.queue.firstHeartbeatAt === undefined
+                  ? PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE
                   : 'first heartbeat deadline exceeded',
             }
           : {}),
@@ -1057,7 +1104,12 @@ function settleLost(
   };
   const released = releaseLock(task, run.runId, now);
   return settle(
-    { ...released, consecutiveLost: task.consecutiveLost + 1 },
+    {
+      ...released,
+      consecutiveLost: unplaced
+        ? task.consecutiveLost
+        : task.consecutiveLost + 1,
+    },
     settled,
     now,
   );
@@ -1082,10 +1134,13 @@ function settleLostAndRetry(
     return lost;
   }
   const lostRun = decidedRun(lost);
+  // The settled run's last event is the loss; its note says whether the Job
+  // ever placed (settleLost marks only expiry losses that way).
+  const unplaced = lostRun.events.at(-1)?.note === PLACEMENT_WAIT_EXCEEDED_NOTE;
   if (
     lostRun.sourceRevision !== undefined &&
     (lost.task.desiredRevision === undefined ||
-      (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)
+      (!unplaced && (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES))
   )
     return lost;
   const retry = mintRun({
@@ -1101,7 +1156,18 @@ function settleLostAndRetry(
     revisionAttempt:
       lostRun.sourceRevision === undefined
         ? undefined
-        : (lostRun.revisionAttempt ?? 1) + 1,
+        : (lostRun.revisionAttempt ?? 1) + (unplaced ? 0 : 1),
+    // A charged successor keeps the spent wait count, so the bound holds
+    // across charges and an unplaceable lineage parks within the lost-run
+    // budget instead of earning fresh free waits.
+    ...(unplaced
+      ? {
+          queuedSince: queueOrderAt(lostRun),
+          placementWaits: (lostRun.placementWaits ?? 0) + 1,
+        }
+      : lostRun.placementWaits === undefined
+        ? {}
+        : { placementWaits: lostRun.placementWaits }),
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}

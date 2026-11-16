@@ -14,6 +14,9 @@ import {
   confirmDispatch,
   decidedRun,
   isRefusal,
+  MAX_PLACEMENT_WAITS,
+  PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE,
+  PLACEMENT_WAIT_EXCEEDED_NOTE,
   requestRun,
   runStartDeadlineAt,
 } from './decide';
@@ -2306,6 +2309,111 @@ export function runOrchestratorStoreContract(
         const sweep = await f.orchestrator.sweepExpired();
         expect(sweep.lost.map((run) => run.runId)).toEqual([f.run.runId]);
         expect(sweep.retried).toHaveLength(1);
+      });
+
+      // #3392: a review Job that no node had room for was settled "lost",
+      // charged a failed attempt and requeued at the back of the line.
+      it('requeues a reported capacity wait in place, bounded by MAX_PLACEMENT_WAITS', async () => {
+        const f = await placementFixture();
+        const original = await f.store.readRun(f.run.runId);
+        let runId = f.run.runId;
+        let claimant = f.claimant;
+        for (let wait = 1; wait <= MAX_PLACEMENT_WAITS + 1; wait += 1) {
+          for (let minute = 10; minute <= 60; minute += 10) {
+            f.clock.advanceMinutes(10);
+            await f.orchestrator.observeStartupPlacement(runId, claimant, {
+              jobUid: `job-${wait}`,
+              observedAt: f.clock.now(),
+              placed: false,
+            });
+          }
+          f.clock.advanceMinutes(5);
+          const sweep = await f.orchestrator.sweepExpired();
+          expect(sweep.lost.map((run) => run.runId)).toEqual([runId]);
+          expect(sweep.retried).toHaveLength(1);
+          const next = sweep.retried[0]?.newRunId as string;
+          const retry = await f.store.readRun(next);
+          if (wait > MAX_PLACEMENT_WAITS) {
+            // Past the bound the wait is charged like any loss and the
+            // successor queues from now, so it cannot hold the head forever.
+            expect(sweep.lost[0]?.events.at(-1)?.note).toBe(
+              PLACEMENT_WAIT_BUDGET_EXHAUSTED_NOTE,
+            );
+            expect(await f.store.readTask(TASK)).toMatchObject({
+              task: { consecutiveLost: 1 },
+            });
+            expect(retry).not.toHaveProperty('queuedSince');
+            // The spent count carries forward: no fresh free waits.
+            expect(retry?.placementWaits).toBe(MAX_PLACEMENT_WAITS);
+            break;
+          }
+          expect(sweep.lost[0]?.events.at(-1)).toMatchObject({
+            to: 'lost',
+            by: 'expiry',
+            note: PLACEMENT_WAIT_EXCEEDED_NOTE,
+          });
+          expect(retry).toMatchObject({
+            requestId: `retry:${runId}`,
+            requestSource: 'auto-retry',
+            // Its own creation time; the original place in line.
+            createdAt: f.clock.now(),
+            queuedSince: original?.createdAt,
+            placementWaits: wait,
+          });
+          expect(await f.store.readTask(TASK)).toMatchObject({
+            task: { activeRunId: next, consecutiveLost: 0 },
+          });
+          expect(
+            (await f.store.listQueuedRuns()).map((run) => run.runId),
+          ).toEqual([]);
+          await f.store.enqueueRun({ runId: next, now: f.clock.now() });
+          expect((await f.store.listQueuedRuns())[0]?.runId).toBe(next);
+          await f.orchestrator.confirmDispatch(next);
+          const token = String(wait).repeat(64).slice(0, 64);
+          await f.store.claimQueuedRun({
+            pipelines: ['claude'],
+            now: f.clock.now(),
+            claimedBy: 'executor',
+            claimedBySubject: 'executor@example.com',
+            tokenHash: token,
+            placementAware: true,
+          });
+          runId = next;
+          claimant = { ...claimant, claimFingerprint: token };
+        }
+      });
+
+      it('charges a placement wait the executor never reported, which is not evidence of capacity', async () => {
+        const f = await placementFixture();
+        f.clock.advanceMinutes(16);
+        const sweep = await f.orchestrator.sweepExpired();
+        expect(sweep.lost.map((run) => run.runId)).toEqual([f.run.runId]);
+        expect(sweep.lost[0]?.events.at(-1)?.note).toBe(
+          'first heartbeat deadline exceeded',
+        );
+        expect(await f.store.readTask(TASK)).toMatchObject({
+          task: { consecutiveLost: 1 },
+        });
+      });
+
+      it('still charges a placed worker that never heartbeats against the retry budget', async () => {
+        const f = await placementFixture();
+        f.clock.advanceMinutes(1);
+        await f.orchestrator.observeStartupPlacement(f.run.runId, f.claimant, {
+          jobUid: 'original-job',
+          observedAt: f.clock.now(),
+          placed: true,
+        });
+        f.clock.advanceMinutes(16);
+        const sweep = await f.orchestrator.sweepExpired();
+        expect(sweep.lost[0]?.events.at(-1)).toMatchObject({
+          note: 'first heartbeat deadline exceeded',
+        });
+        expect(await f.store.readTask(TASK)).toMatchObject({
+          task: { consecutiveLost: 1 },
+        });
+        const retry = await f.store.readRun(sweep.retried[0]?.newRunId ?? '');
+        expect(retry?.createdAt).toBe(f.clock.now());
       });
 
       it('refuses stale, replayed, wrong-owner and replacement-Job observations without reviving expired claims', async () => {
