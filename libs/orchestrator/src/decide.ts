@@ -116,6 +116,10 @@ export function runStartDeadlineAt(now: string): string {
  * never placed, so one unplaceable Job cannot hold admission indefinitely. */
 export const RUN_PLACEMENT_WAIT_MAX_MS = 60 * 60_000;
 
+/** Loss-event note for a claim whose Job never placed (lostBeforePlacement). */
+export const PLACEMENT_WAIT_EXCEEDED_NOTE =
+  'placement observation deadline exceeded';
+
 function placementStartDeadlineAt(now: string, claimedAt?: string): string {
   const renewed = Date.parse(runStartDeadlineAt(now));
   const bound =
@@ -486,6 +490,9 @@ function mintRun(input: {
   providerFallback?: ProviderFallbackRequest | ProviderFallback;
   sourceRevision?: WorkRevision;
   revisionAttempt?: number;
+  /** Queue order (FIFO within a priority class). Only a capacity-wait
+   * requeue passes its predecessor's, so it keeps its place in line. */
+  queuedSince?: string;
 }): Decision {
   const { now, taskId, task, requestId, requestSource, pipeline, params } =
     input;
@@ -537,7 +544,7 @@ function mintRun(input: {
           : { intervention: input.intervention }),
       },
     ],
-    createdAt: now,
+    createdAt: input.queuedSince ?? now,
     updatedAt: now,
   };
   return {
@@ -1021,11 +1028,26 @@ function executorLoss(input: {
   return settleLost(input, 'executor');
 }
 
+/** A placement-aware claim whose Job never placed within
+ * RUN_PLACEMENT_WAIT_MAX_MS: no node had room. That is capacity contention,
+ * not an execution attempt -- no worker started, so nothing can have run --
+ * and it must not consume the retry budget or the run's place in line. */
+export function lostBeforePlacement(run: Run, now: string): boolean {
+  const queue = run.queue;
+  return (
+    queue?.startupPlacement?.state === 'waiting' &&
+    queue.firstHeartbeatAt === undefined &&
+    queue.providerProcessStartedAt === undefined &&
+    startDeadlineElapsed(run, now)
+  );
+}
+
 function settleLost(
   input: { now: string; task: Task; run: Run },
   by: 'expiry' | 'executor',
 ): Decision {
   const { now, task, run } = input;
+  const unplaced = by === 'expiry' && lostBeforePlacement(run, now);
   const settled: Run = {
     ...run,
     // The executor reports an exit only after observing its worker's Job
@@ -1045,10 +1067,9 @@ function settleLost(
         by,
         ...(by === 'expiry' && startDeadlineElapsed(run, now)
           ? {
-              note:
-                run.queue?.startupPlacement?.state === 'waiting'
-                  ? 'placement observation deadline exceeded'
-                  : 'first heartbeat deadline exceeded',
+              note: unplaced
+                ? PLACEMENT_WAIT_EXCEEDED_NOTE
+                : 'first heartbeat deadline exceeded',
             }
           : {}),
       },
@@ -1057,7 +1078,12 @@ function settleLost(
   };
   const released = releaseLock(task, run.runId, now);
   return settle(
-    { ...released, consecutiveLost: task.consecutiveLost + 1 },
+    {
+      ...released,
+      consecutiveLost: unplaced
+        ? task.consecutiveLost
+        : task.consecutiveLost + 1,
+    },
     settled,
     now,
   );
@@ -1082,10 +1108,13 @@ function settleLostAndRetry(
     return lost;
   }
   const lostRun = decidedRun(lost);
+  // The settled run's last event is the loss; its note says whether the Job
+  // ever placed (settleLost marks only expiry losses that way).
+  const unplaced = lostRun.events.at(-1)?.note === PLACEMENT_WAIT_EXCEEDED_NOTE;
   if (
     lostRun.sourceRevision !== undefined &&
     (lost.task.desiredRevision === undefined ||
-      (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES)
+      (!unplaced && (lostRun.revisionAttempt ?? 1) > MAX_AUTO_RETRIES))
   )
     return lost;
   const retry = mintRun({
@@ -1101,7 +1130,8 @@ function settleLostAndRetry(
     revisionAttempt:
       lostRun.sourceRevision === undefined
         ? undefined
-        : (lostRun.revisionAttempt ?? 1) + 1,
+        : (lostRun.revisionAttempt ?? 1) + (unplaced ? 0 : 1),
+    ...(unplaced ? { queuedSince: lostRun.createdAt } : {}),
     ...(lostRun.params === undefined ? {} : { params: lostRun.params }),
     ...(lostRun.providerFallback === undefined
       ? {}
