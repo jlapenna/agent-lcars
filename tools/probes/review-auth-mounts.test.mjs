@@ -79,15 +79,66 @@ test('Codex keeps versioned state writable and protects its configuration in pla
       writeFileSync(join(auth, file), '\n');
     for (const dir of ['sessions', 'shell_snapshots', 'rules', 'plugins'])
       mkdirSync(join(auth, dir));
-    assert.deepEqual(protectedConfigMounts('codex', auth, auth), [
-      ...readonly(join(auth, 'config.toml'), join(auth, 'config.toml')),
-      ...readonly(join(auth, 'hooks.json'), join(auth, 'hooks.json')),
-      ...readonly(join(auth, 'lcars-hook.sh'), join(auth, 'lcars-hook.sh')),
-      ...readonly(join(auth, 'plugins'), join(auth, 'plugins')),
-      ...readonly(join(auth, 'rules'), join(auth, 'rules')),
-    ]);
+    const privateRoot = join(auth, '..', `${auth.split('/').pop()}-private`);
+    try {
+      assert.deepEqual(
+        protectedConfigMounts('codex', auth, auth, privateRoot),
+        [
+          ...readonly(join(auth, 'config.toml'), join(auth, 'config.toml')),
+          ...readonly(join(auth, 'hooks.json'), join(auth, 'hooks.json')),
+          ...readonly(join(auth, 'lcars-hook.sh'), join(auth, 'lcars-hook.sh')),
+          ...readonly(join(auth, 'plugins'), join(auth, 'plugins')),
+          ...readonly(join(auth, 'rules'), join(auth, 'rules')),
+          '--mount',
+          `type=bind,source=${join(privateRoot, 'shell_snapshots')},target=${join(auth, 'shell_snapshots')}`,
+        ],
+      );
+      assert.ok(existsSync(join(privateRoot, 'shell_snapshots')));
+    } finally {
+      rmSync(privateRoot, { recursive: true, force: true });
+    }
     assert.ok(isWritableState('codex', 'thread_history_1.sqlite-shm'));
     assert.ok(!isWritableState('codex', 'config.toml'));
+  });
+});
+
+test('sourced session state gets a private overlay and requires a private root', () => {
+  withAuthDir((auth) => {
+    mkdirSync(join(auth, 'shell-snapshots'));
+    writeFileSync(join(auth, 'shell-snapshots', 'live.sh'), 'export X=1\n');
+    assert.throws(
+      () => protectedConfigMounts('claude', auth, '/native/claude'),
+      /private state directory is required/,
+    );
+    const privateRoot = join(auth, 'private');
+    mkdirSync(privateRoot);
+    assert.deepEqual(
+      protectedConfigMounts('claude', auth, '/native/claude', privateRoot),
+      [
+        // The private root itself lives in this fixture's auth directory.
+        ...readonly(privateRoot, '/native/claude/private'),
+        '--mount',
+        `type=bind,source=${join(privateRoot, 'shell-snapshots')},target=/native/claude/shell-snapshots`,
+      ],
+    );
+  });
+});
+
+test('a configuration symlink resolving into a writable binding refuses the launch', () => {
+  withAuthDir((auth) => {
+    writeFileSync(join(auth, 'history.jsonl'), '\n');
+    symlinkSync(join(auth, 'history.jsonl'), join(auth, 'settings.json'));
+    assert.throws(
+      () => protectedConfigMounts('claude', auth, '/native/claude'),
+      /resolves into a writable binding/,
+    );
+    // Dangling, or outside every writable binding: protected by reconcile.
+    rmSync(join(auth, 'settings.json'));
+    symlinkSync('../.agents/AGENTS.md', join(auth, 'CLAUDE.md'));
+    assert.deepEqual(
+      protectedConfigMounts('claude', auth, '/native/claude'),
+      [],
+    );
   });
 });
 

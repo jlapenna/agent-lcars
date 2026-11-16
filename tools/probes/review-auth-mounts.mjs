@@ -17,18 +17,21 @@
 import { createHash } from 'node:crypto';
 import {
   lstatSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   renameSync,
   symlinkSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 
-const provider = (writable, writablePatterns, config) => ({
+const provider = (writable, writablePatterns, config, isolated = []) => ({
   writable: new Set(writable),
   writablePatterns,
   config: new Set(config),
+  isolated: new Set(isolated),
 });
 
 export const AUTH_DIRECTORY_POLICY = {
@@ -47,7 +50,6 @@ export const AUTH_DIRECTORY_POLICY = {
       'projects',
       'sessions',
       'todos',
-      'shell-snapshots',
       'statsig',
       'file-history',
       'history.jsonl',
@@ -83,7 +85,9 @@ export const AUTH_DIRECTORY_POLICY = {
       'security',
       'remote',
     ],
-    [/^policy-limits\.json/, /^remote-settings\.json/],
+    // remote-settings.json is managed settings and can carry hooks, so it is
+    // protected rather than allowlisted.
+    [/^policy-limits\.json/],
     [
       'settings.json',
       'settings.local.json',
@@ -97,6 +101,9 @@ export const AUTH_DIRECTORY_POLICY = {
       'keybindings.json',
       'mcp',
     ],
+    // Live sessions source these before every shell command; the review gets
+    // empty private copies instead of the caller's.
+    ['shell-snapshots', 'session-env'],
   ),
   codex: provider(
     [
@@ -109,7 +116,6 @@ export const AUTH_DIRECTORY_POLICY = {
       'cache',
       'sessions',
       'archived_sessions',
-      'shell_snapshots',
       'history.jsonl',
       'session_index.jsonl',
       'session_index.jsonl.lock',
@@ -139,6 +145,7 @@ export const AUTH_DIRECTORY_POLICY = {
       'prompts',
       '.hook-trust',
     ],
+    ['shell_snapshots'],
   ),
   agy: provider(
     [
@@ -191,20 +198,75 @@ export function isWritableState(providerName, entry) {
 }
 
 function protectedEntries(providerName, auth) {
-  if (policyFor(providerName) === null) return [];
+  const policy = policyFor(providerName);
+  if (policy === null) return [];
   return readdirSync(auth)
-    .filter((entry) => !isWritableState(providerName, entry))
+    .filter(
+      (entry) =>
+        !isWritableState(providerName, entry) && !policy.isolated.has(entry),
+    )
     .sort();
 }
 
-export function protectedConfigMounts(providerName, auth, target) {
-  return protectedEntries(providerName, auth).flatMap((entry) => {
-    if (entry.includes(',') || entry.includes(':'))
+const unsupportedName = (entry) =>
+  entry.includes(',') || entry.includes(':') || entry.includes('=');
+
+// Executable session state the caller's live sessions source: overlay each
+// existing directory with an empty private one under privateRoot.
+function isolatedStateMounts(providerName, auth, target, privateRoot) {
+  const policy = policyFor(providerName);
+  if (policy === null) return [];
+  return [...policy.isolated].sort().flatMap((entry) => {
+    const stat = lstatSync(join(auth, entry), { throwIfNoEntry: false });
+    if (!stat) return [];
+    if (!stat.isDirectory())
+      throw new Error('Unsupported session state entry: ' + join(auth, entry));
+    if (!privateRoot || unsupportedName(privateRoot))
+      throw new Error('A private state directory is required for ' + entry);
+    const source = join(privateRoot, entry);
+    mkdirSync(source, { recursive: true, mode: 0o700 });
+    return [
+      '--mount',
+      `type=bind,source=${source},target=${join(target, entry)}`,
+    ];
+  });
+}
+
+// writableRoots: every host path bound writable into the container.
+export function protectedConfigMounts(
+  providerName,
+  auth,
+  target,
+  privateRoot,
+  writableRoots = [auth],
+) {
+  const readOnly = protectedEntries(providerName, auth).flatMap((entry) => {
+    if (unsupportedName(entry))
       throw new Error('Unsupported configuration entry name: ' + entry);
     const source = join(auth, entry);
     const stat = lstatSync(source);
-    // Snapshot and restore protect symlinks; see reconcileRegistrations.
-    if (stat.isSymbolicLink()) return [];
+    // A symlink cannot be overlaid. Its target is outside the container
+    // unless it resolves into a writable binding, which would let a write
+    // through the link reach the host; refuse that. Otherwise snapshot and
+    // restore protect the link itself (see reconcileRegistrations).
+    if (stat.isSymbolicLink()) {
+      let resolved = null;
+      try {
+        resolved = realpathSync(source);
+      } catch {
+        // Dangling: nothing on the host to write through to.
+      }
+      if (
+        resolved &&
+        writableRoots.some(
+          (root) => resolved === root || resolved.startsWith(root + sep),
+        )
+      )
+        throw new Error(
+          'Configuration symlink resolves into a writable binding: ' + source,
+        );
+      return [];
+    }
     if (!stat.isFile() && !stat.isDirectory())
       throw new Error('Unsupported configuration entry type: ' + source);
     return [
@@ -212,13 +274,24 @@ export function protectedConfigMounts(providerName, auth, target) {
       `type=bind,source=${source},target=${join(target, entry)},readonly`,
     ];
   });
+  return [
+    ...readOnly,
+    ...isolatedStateMounts(providerName, auth, target, privateRoot),
+  ];
 }
 
 function describe(path) {
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat) return null;
-  if (stat.isSymbolicLink())
-    return { kind: 'symlink', target: readlinkSync(path) };
+  if (stat.isSymbolicLink()) {
+    let sha256 = null;
+    try {
+      sha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
+    } catch {
+      // A dangling or unreadable link still has a comparable target.
+    }
+    return { kind: 'symlink', target: readlinkSync(path), sha256 };
+  }
   if (stat.isFile())
     return {
       kind: 'file',

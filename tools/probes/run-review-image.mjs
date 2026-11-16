@@ -2,7 +2,7 @@
 // Run the real candidate-image CLI with the caller's native authentication.
 // No image publication, copied rotating login, fake model or production dispatch.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,7 +102,13 @@ else {
   const authTarget = provider === 'codex' ? auth : '/native/' + provider;
   args.push(
     ...mount(auth, authTarget),
-    ...protectedConfigMounts(provider, auth, authTarget),
+    ...protectedConfigMounts(
+      provider,
+      auth,
+      authTarget,
+      join(output, 'private-state'),
+      [auth, output].map((path) => realpathSync(path)),
+    ),
   );
 }
 if (provider === 'codex') {

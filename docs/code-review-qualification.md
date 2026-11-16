@@ -40,6 +40,11 @@ holds a per-provider allowlist of state entries (credentials, transcripts,
 sessions, caches, databases); every other existing top-level entry is
 overlaid read-only, so a review cannot change the caller's settings, hooks,
 plugins, skills, rules, MCP configuration or instruction files (#3379).
+Session state that live sessions source before shell commands (Claude
+`shell-snapshots/` and `session-env/`, Codex `shell_snapshots/`) is overlaid
+with an empty private directory under the run's `private-state/`, so the
+review neither reads nor rewrites the caller's copies. A configuration symlink
+that resolves into a writable binding refuses the launch.
 
 Two cases cannot be overlaid: a symlink (its target is outside the mount) and
 a configuration file that does not exist yet (the container runtime would
