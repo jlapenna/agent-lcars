@@ -16,14 +16,15 @@
 // state into the same directory while the review runs.
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
   lstatSync,
+  openSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
-  statSync,
   symlinkSync,
 } from 'node:fs';
 import { join, sep } from 'node:path';
@@ -33,27 +34,27 @@ const provider = (
   writablePatterns,
   config,
   isolated = [],
-  nested = () => [],
+  prepare = () => {},
 ) => ({
   writable: new Set(writable),
   writablePatterns,
   config: new Set(config),
   isolated: new Set(isolated),
-  nested,
+  prepare,
 });
 
-// Directories inside allowlisted state that live sessions load as
-// instructions: Claude auto memory, projects/<key>/memory.
-function claudeMemoryDirectories(auth) {
-  const projects = join(auth, 'projects');
-  const stat = lstatSync(projects, { throwIfNoEntry: false });
-  if (!stat?.isDirectory()) return [];
-  return readdirSync(projects)
-    .map((key) => join('projects', key, 'memory'))
-    .filter((path) =>
-      lstatSync(join(auth, path), { throwIfNoEntry: false })?.isDirectory(),
-    )
-    .sort();
+// A protected SQLite database (Codex memories, goals) is overlaid read-only,
+// but SQLite also replays a -wal or -journal file next to it, which would be
+// writable if it did not exist at launch. Create any missing sidecar empty
+// (SQLite treats an empty sidecar as having nothing to replay) so it is
+// overlaid read-only too. Opening with 'a' never truncates a sidecar a host
+// session creates concurrently.
+function createProtectedSqliteSidecars(auth) {
+  for (const entry of readdirSync(auth)) {
+    if (!entry.endsWith('.sqlite') || isWritableState('codex', entry)) continue;
+    for (const suffix of ['-wal', '-shm', '-journal'])
+      closeSync(openSync(join(auth, entry + suffix), 'a', 0o600));
+  }
 }
 
 export const AUTH_DIRECTORY_POLICY = {
@@ -69,7 +70,6 @@ export const AUTH_DIRECTORY_POLICY = {
       '.session_ingress_token',
       '.last-cleanup',
       '.last-update-result.json',
-      'projects',
       'sessions',
       'todos',
       'statsig',
@@ -120,10 +120,12 @@ export const AUTH_DIRECTORY_POLICY = {
       'mcp',
       'remote-settings.json',
     ],
-    // Live sessions source these before every shell command; the review gets
-    // empty private copies instead of the caller's.
-    ['shell-snapshots', 'session-env'],
-    claudeMemoryDirectories,
+    // Live sessions source shell-snapshots and session-env before every shell
+    // command and load projects/<key>/memory as instructions; the review gets
+    // empty private copies instead of the caller's. The review's own
+    // transcripts land in the private projects/, where the in-container
+    // evidence collector reads them.
+    ['projects', 'shell-snapshots', 'session-env'],
   ),
   codex: provider(
     [
@@ -172,6 +174,7 @@ export const AUTH_DIRECTORY_POLICY = {
       '.hook-trust',
     ],
     ['shell_snapshots'],
+    createProtectedSqliteSidecars,
   ),
   agy: provider(
     [
@@ -269,6 +272,7 @@ export function protectedConfigMounts(
   privateRoot,
   writableRoots = [auth],
 ) {
+  policyFor(providerName)?.prepare(auth);
   const readOnly = protectedEntries(providerName, auth).flatMap((entry) => {
     if (unsupportedName(entry))
       throw new Error('Unsupported configuration entry name: ' + entry);
@@ -305,41 +309,20 @@ export function protectedConfigMounts(
       `type=bind,source=${source},target=${join(target, entry)},readonly`,
     ];
   });
-  const nested = (policyFor(providerName)?.nested(auth) ?? []).flatMap(
-    (path) => {
-      if (unsupportedName(path))
-        throw new Error('Unsupported instruction path: ' + path);
-      return [
-        '--mount',
-        `type=bind,source=${join(auth, path)},target=${join(target, path)},readonly`,
-      ];
-    },
-  );
   return [
     ...readOnly,
-    ...nested,
     ...isolatedStateMounts(providerName, auth, target, privateRoot),
   ];
 }
 
-const MAX_LINK_TARGET_BYTES = 4 * 1024 * 1024;
-
 function describe(path) {
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat) return null;
-  if (stat.isSymbolicLink()) {
-    // Hash only a regular-file target of bounded size: a link to a FIFO,
-    // device or huge file must not block or exhaust the launcher.
-    let sha256 = null;
-    try {
-      const target = statSync(path);
-      if (target.isFile() && target.size <= MAX_LINK_TARGET_BYTES)
-        sha256 = createHash('sha256').update(readFileSync(path)).digest('hex');
-    } catch {
-      // A dangling or unreadable link still has a comparable target.
-    }
-    return { kind: 'symlink', target: readlinkSync(path), sha256 };
-  }
+  // Only the link itself: a launch whose link resolves into a writable
+  // binding is refused, so a change to the target's content came from the
+  // host, and reading it could block on a FIFO or device.
+  if (stat.isSymbolicLink())
+    return { kind: 'symlink', target: readlinkSync(path) };
   if (stat.isFile()) {
     try {
       return {
@@ -370,7 +353,6 @@ export function snapshotRegistrations(providerName, auth) {
     entries: Object.fromEntries(
       [...names].sort().map((entry) => [entry, describe(join(auth, entry))]),
     ),
-    instructionDirectories: policy.nested(auth),
   };
 }
 
@@ -430,24 +412,6 @@ export function reconcileRegistrations(
         blocking: true,
       });
     }
-  }
-  try {
-    const known = new Set(before.instructionDirectories ?? []);
-    for (const path of policyFor(providerName)?.nested(auth) ?? [])
-      if (!known.has(path))
-        findings.push({
-          path: join(auth, path),
-          change: 'instructions-created',
-          blocking: false,
-          note: 'New instruction directory: created by the review or a host session; left in place for review.',
-        });
-  } catch (error) {
-    findings.push({
-      path: auth,
-      change: 'error',
-      error: error.message,
-      blocking: true,
-    });
   }
   return findings;
 }

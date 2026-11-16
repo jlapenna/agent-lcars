@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   rmSync,
   symlinkSync,
@@ -64,7 +65,7 @@ function claudeHome(auth) {
 
 const CLAUDE = '/native/claude';
 const claudeSessionState = () =>
-  isolated(CLAUDE, 'session-env', 'shell-snapshots');
+  isolated(CLAUDE, 'projects', 'session-env', 'shell-snapshots');
 
 test('everything but Claude runtime state is overlaid read-only; symlinks are left to reconcile', () => {
   withAuthDir((auth) => {
@@ -166,22 +167,45 @@ test('unsupported entry names and types refuse the launch; OpenCode binds no dir
   assert.throws(() => snapshotRegistrations('other', '/x'), /Unknown provider/);
 });
 
-test('existing Claude memory directories are overlaid read-only inside writable projects/', () => {
+test('Claude projects/ (transcripts and per-project memory) is private to the review', () => {
   withAuthDir((auth) => {
     mkdirSync(join(auth, 'projects', '-home-op-p', 'memory'), {
       recursive: true,
     });
-    mkdirSync(join(auth, 'projects', '-home-op-q'), { recursive: true });
+    writeFileSync(
+      join(auth, 'projects', '-home-op-p', 'memory', 'MEMORY.md'),
+      'live\n',
+    );
     assert.deepEqual(
       protectedConfigMounts('claude', auth, CLAUDE, privateRoot),
-      [
-        ...readonly(
-          join(auth, 'projects', '-home-op-p', 'memory'),
-          `${CLAUDE}/projects/-home-op-p/memory`,
-        ),
-        ...claudeSessionState(),
-      ],
+      claudeSessionState(),
     );
+    // The review starts from an empty projects/; the caller's memory is
+    // neither visible nor reachable, including by renaming a parent.
+    assert.deepEqual(readdirSync(join(privateRoot, 'projects')), []);
+  });
+});
+
+test('missing SQLite sidecars of protected Codex databases are created empty and overlaid', () => {
+  withAuthDir((auth) => {
+    writeFileSync(join(auth, 'memories_1.sqlite'), 'db');
+    writeFileSync(join(auth, 'memories_1.sqlite-wal'), 'live wal');
+    writeFileSync(join(auth, 'state_5.sqlite'), 'db');
+    const mounts = protectedConfigMounts('codex', auth, auth, privateRoot);
+    for (const suffix of ['', '-journal', '-shm', '-wal'])
+      assert.ok(
+        mounts.includes(
+          `type=bind,source=${join(auth, 'memories_1.sqlite' + suffix)},target=${join(auth, 'memories_1.sqlite' + suffix)},readonly`,
+        ),
+        suffix,
+      );
+    // An existing sidecar is never truncated; writable databases get none.
+    assert.equal(
+      readFileSync(join(auth, 'memories_1.sqlite-wal'), 'utf8'),
+      'live wal',
+    );
+    assert.equal(readFileSync(join(auth, 'memories_1.sqlite-shm'), 'utf8'), '');
+    assert.equal(existsSync(join(auth, 'state_5.sqlite-wal')), false);
   });
 });
 
@@ -196,7 +220,6 @@ test('a symlink to a FIFO is snapshotted by its target without blocking', () => 
       {
         kind: 'symlink',
         target: fifo,
-        sha256: null,
       },
     );
   });
@@ -273,29 +296,25 @@ test('a replaced instruction symlink is restored and the replacement kept as evi
   });
 });
 
-test('host-side changes to overlaid entries are reported without failing; new memory directories are reported in place', () => {
+test('host-side changes to overlaid entries and symlink targets are reported without failing', () => {
   withAuthDir((auth) => {
     claudeHome(auth);
     const before = snapshotRegistrations('claude', auth);
     writeFileSync(join(auth, 'history.jsonl'), 'live session history\n');
     assert.deepEqual(reconcileRegistrations('claude', auth, before), []);
     writeFileSync(join(auth, 'settings.json'), '{"changed":true}\n');
-    mkdirSync(join(auth, 'projects', '-home-op-new', 'memory'), {
-      recursive: true,
-    });
+    // homegit rewriting the file behind CLAUDE.md is not a link change.
+    mkdirSync(join(auth, '..', '.agents'), { recursive: true });
+    writeFileSync(join(auth, '..', '.agents', 'AGENTS.md'), 'edited on host\n');
     const findings = reconcileRegistrations('claude', auth, before);
     assert.deepEqual(
       findings.map(({ change, blocking }) => ({ change, blocking })),
-      [
-        { change: 'modified', blocking: false },
-        { change: 'instructions-created', blocking: false },
-      ],
+      [{ change: 'modified', blocking: false }],
     );
     assert.equal(
       readFileSync(join(auth, 'settings.json'), 'utf8'),
       '{"changed":true}\n',
     );
-    assert.ok(existsSync(join(auth, 'projects', '-home-op-new', 'memory')));
   });
 });
 
