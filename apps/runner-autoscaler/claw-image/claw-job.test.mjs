@@ -16,10 +16,11 @@ import { test } from 'node:test';
 
 import {
   agentDigest,
+  briefMessage,
   comparableConfig,
   main,
-  MAX_REPORT_BYTES,
   materializeAgent,
+  MAX_REPORT_BYTES,
   readBrief,
   secretEnvironment,
   settle,
@@ -548,4 +549,29 @@ test('agentDigest matches the digest LCARS pins', () => {
     ]),
     'e8fd4d424a05d79440bb16eba22fff84eec22941ae4bee19a0b5fa38be3264fa',
   );
+});
+
+test('gives the agent a writable copy of its locked workspace', async () => {
+  const files = {
+    ...agentFiles,
+    'workspace/state/current.txt': { content: 'v1\n' },
+  };
+  const { env, fetchImpl } = await fixture({
+    brief: agentBrief(files),
+    env: { CLAW_AGENT_DIR: '/nonexistent' },
+  });
+  await main(env, { fetchImpl });
+  const copy = join(env.CLAW_WORK_DIR, 'workspace', 'state');
+  await writeFile(join(copy, 'current.txt'), 'v2\n');
+  await writeFile(join(copy, 'new.txt'), 'x');
+  await assert.rejects(
+    writeFile(join(env.CLAW_WORK_DIR, 'agent', 'workspace/state/new.txt'), 'x'),
+    /EACCES/,
+  );
+});
+
+test('sends a repository agent exactly its message, without the report wrapper', () => {
+  const brief = agentBrief(agentFiles, { message: 'Reply with JSON only.' });
+  const request = readBrief(brief, { LCARS_RUN_ID: RUN_ID });
+  assert.equal(briefMessage(request, brief), 'Reply with JSON only.');
 });
