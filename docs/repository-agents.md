@@ -118,7 +118,8 @@ another's credentials gets its own profile.
   (`lcars investigate`) through `POST /runs/{runId}/agents/{owner}/{repo}/{name}`
   and read its rounds back through `GET /runs/{runId}/agent-runs/{workId}`, as
   principal `run:<runId>`, only when the agent's profile sets
-  `runCallers: true`. A run reads back only the rounds it admitted.
+  `runCallers: true`. A run reads back only the rounds it admitted, and an
+  agent's own run cannot invoke agents, so agent Jobs never chain.
 
 Trust follows from this:
 

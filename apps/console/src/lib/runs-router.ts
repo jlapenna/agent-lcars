@@ -23,6 +23,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import {
   type AgentRunStatus,
+  CLAW_RUNTIME_PIPELINE,
   REPOSITORY_JOB_BRIEF_MAX_BYTES,
   repositoryJobJsonBytes,
   runsContract,
@@ -364,7 +365,11 @@ async function agentRunStatus(
 
 export const runsRouter = os.router({
   invokeAgent: os.invokeAgent.handler(async ({ input, context, errors }) => {
-    await requireRunToken(context, input.runId);
+    const caller = await requireRunToken(context, input.runId);
+    // Agents never invoke agents: a claw run's own token cannot start another
+    // round, so no chain of agent Jobs can feed itself.
+    if (CLAW_RUNTIME_PIPELINE.test(caller.pipeline))
+      throw errors.FORBIDDEN({ message: 'Agent runs may not invoke agents' });
     const principal = runCaller(input.runId);
     let admitted: { workId: string };
     try {

@@ -6792,6 +6792,35 @@ describe('run-invoked agents', () => {
     expect(read.json).toMatchObject({ workId: status.workId });
   });
 
+  it('refuses an agent run as a caller, so agents never invoke agents', async () => {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('agent-caller'),
+      pipeline: 'claw-investigator',
+      now: NOW,
+    });
+    const claim = await call(
+      { ...f, ...context, principal: executorPrincipal(['claw-investigator']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'zone' },
+    );
+    const token = (claim.json as { token: string }).token;
+    const response = await call(
+      {
+        ...f,
+        ...context,
+        bearerToken: token,
+        agents,
+        agentProfiles: profiles(true),
+      },
+      'POST',
+      runPath(runId, invoke),
+      { requestId: 'x', message: 'Why?' },
+    );
+    expect(response.status).toBe(403);
+  });
+
   it('refuses a profile that does not opt in to run callers', async () => {
     const f = await claimed();
     const response = await call(
