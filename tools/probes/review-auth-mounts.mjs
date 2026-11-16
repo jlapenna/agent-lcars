@@ -1,94 +1,125 @@
-// The native review binds the caller's real provider directory read-write so
-// rotating login state stays current. Hook registrations in that directory run
-// before every tool call of every live session the caller owns, so a review
-// must never rewrite them (#3379: a reviewed test registered the scratch
-// repository's worker hook in the operator's settings.json). Overlay each
-// existing registration read-only; a write then fails inside the container
-// instead of reaching the caller's live sessions. A registration file that
-// does not exist cannot be overlaid without the container runtime creating it
-// on the host, so the launcher also compares snapshots taken before and after
-// the run and undoes a file the run created.
-import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, renameSync } from 'node:fs';
+// A native review authenticates as the caller, but it must not reach the
+// caller's provider directory: everything else there (settings, hooks,
+// plugins, skills, rules, MCP servers, memory, sourced shell state) configures
+// the caller's live sessions (#3379: a reviewed test registered the scratch
+// repository's worker hook in the operator's settings.json).
+//
+// The review therefore gets a fresh private provider home, and only the
+// credential file is bound into it, read-only, from the caller's directory.
+// The bind target lives in the private home, so if the host replaces the
+// credential file during the run (which detaches the bind), the review sees
+// only its own placeholder; the caller's directory is never exposed.
+//
+// A read-only credential cannot accept a refreshed token, and a refresh the
+// review cannot persist would leave the caller holding a used refresh token.
+// So the launch is refused unless no refresh can fall inside the run: Claude
+// refreshes as its access token nears expiresAt, and Codex refreshes when its
+// access token expires or its last_refresh is older than 8 days.
+// Antigravity's token file is used read-only, as the fleet runner does.
+import {
+  closeSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
-// `file` entries are installer targets; `dir` entries hold the scripts those
-// registrations execute.
-export const HOOK_REGISTRATIONS = {
-  claude: [
-    { name: 'settings.json', kind: 'file' },
-    { name: 'settings.local.json', kind: 'file' },
-    { name: 'hooks', kind: 'dir' },
-  ],
-  codex: [{ name: 'hooks.json', kind: 'file' }],
-  agy: [],
-  opencode: [],
+export const NATIVE_CREDENTIALS = {
+  claude: ['.credentials.json'],
+  codex: ['auth.json'],
+  agy: ['antigravity-oauth-token'],
+  // The OpenCode lane binds a single key file, not a directory.
+  opencode: null,
 };
 
-function registrations(provider) {
-  const entries = HOOK_REGISTRATIONS[provider];
-  if (!entries) throw new Error('Unknown provider: ' + provider);
-  return entries;
+function credentialsFor(provider) {
+  if (!(provider in NATIVE_CREDENTIALS))
+    throw new Error('Unknown provider: ' + provider);
+  return NATIVE_CREDENTIALS[provider];
 }
 
-export function protectedConfigMounts(provider, auth, target) {
-  return registrations(provider).flatMap(({ name, kind }) => {
-    const source = join(auth, name);
-    const stat = lstatSync(source, { throwIfNoEntry: false });
-    if (!stat) return [];
-    if (kind === 'file' ? !stat.isFile() : !stat.isDirectory())
-      throw new Error(
-        `Hook registration is not a regular ${kind} and cannot be protected: ${source}`,
-      );
-    return [
-      '--mount',
-      `type=bind,source=${source},target=${join(target, name)},readonly`,
-    ];
-  });
+const CODEX_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
+const REFRESH_MARGIN_MS = 30 * 60 * 1000;
+
+// Milliseconds since the epoch of a JWT's exp, or null when it has none.
+function jwtExpiryMs(token) {
+  const payload = typeof token === 'string' ? token.split('.')[1] : undefined;
+  if (!payload) return null;
+  const exp = JSON.parse(Buffer.from(payload, 'base64url').toString()).exp;
+  return typeof exp === 'number' ? exp * 1000 : null;
 }
 
-// File content hashes (null when absent) for the registration files.
-export function snapshotRegistrations(provider, auth) {
-  return Object.fromEntries(
-    registrations(provider)
-      .filter(({ kind }) => kind === 'file')
-      .map(({ name }) => {
-        const path = join(auth, name);
-        const stat = lstatSync(path, { throwIfNoEntry: false });
-        if (!stat) return [name, null];
-        if (!stat.isFile()) return [name, 'non-regular'];
-        return [
-          name,
-          createHash('sha256').update(readFileSync(path)).digest('hex'),
-        ];
-      }),
-  );
+// When the provider CLI will next refresh the caller's login, or null when
+// that cannot be determined.
+function nextRefreshMs(provider, auth) {
+  const read = (name) => JSON.parse(readFileSync(join(auth, name), 'utf8'));
+  if (provider === 'claude') {
+    const expiresAt = read('.credentials.json').claudeAiOauth?.expiresAt;
+    return typeof expiresAt === 'number' ? expiresAt : null;
+  }
+  if (provider === 'codex') {
+    const { tokens, last_refresh: lastRefresh } = read('auth.json');
+    const expiry = jwtExpiryMs(tokens?.access_token);
+    const refreshed = Date.parse(lastRefresh);
+    if (expiry === null || Number.isNaN(refreshed)) return null;
+    return Math.min(expiry, refreshed + CODEX_REFRESH_INTERVAL_MS);
+  }
+  return Infinity;
 }
 
-// Compare snapshots. A registration the run created is moved aside (kept as
-// evidence) so the caller's directory returns to its prior state; any other
-// change cannot be undone safely and is reported for the operator.
-export function reconcileRegistrations(
+export function assertCredentialsOutliveRun(
   provider,
   auth,
-  before,
-  stamp = Date.now(),
+  runMs,
+  nowMs = Date.now(),
 ) {
-  const after = snapshotRegistrations(provider, auth);
-  const findings = [];
-  for (const [name, previous] of Object.entries(before)) {
-    if (after[name] === previous) continue;
-    const path = join(auth, name);
-    if (previous === null) {
-      const aside = `${path}.review-qualification-${stamp}`;
-      renameSync(path, aside);
-      findings.push({ path, change: 'created', movedTo: aside });
-    } else {
-      findings.push({
-        path,
-        change: after[name] === null ? 'removed' : 'modified',
-      });
-    }
+  const next = nextRefreshMs(provider, auth);
+  if (next === null || next < nowMs + runMs + REFRESH_MARGIN_MS)
+    throw new Error(
+      `The ${provider} login ` +
+        (next === null
+          ? 'has no readable expiry'
+          : `refreshes at ${new Date(next).toISOString()}, inside this review`) +
+        ". Retry after the caller's own sessions have refreshed it.",
+    );
+}
+
+// Mounts for a private provider home at `target` holding only the caller's
+// credential files. privateHome must not exist yet.
+export function nativeAuthMounts(provider, auth, privateHome, target) {
+  const credentials = credentialsFor(provider);
+  if (credentials === null) return [];
+  if ([auth, privateHome, target].some((path) => path.includes(',')))
+    throw new Error('Unsupported bind-mount path');
+  mkdirSync(privateHome, { mode: 0o700 });
+  const mounts = [
+    '--mount',
+    `type=bind,source=${privateHome},target=${target}`,
+  ];
+  for (const name of credentials) {
+    const source = join(auth, name);
+    const stat = lstatSync(source, { throwIfNoEntry: false });
+    if (!stat?.isFile())
+      throw new Error(
+        'Native credential is missing or not a regular file: ' + source,
+      );
+    // The bind needs a mount point; it lives in the private home.
+    closeSync(
+      openSync(
+        join(privateHome, name),
+        constants.O_WRONLY |
+          constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_NOFOLLOW,
+        0o600,
+      ),
+    );
+    mounts.push(
+      '--mount',
+      `type=bind,source=${source},target=${join(target, name)},readonly`,
+    );
   }
-  return findings;
+  return mounts;
 }

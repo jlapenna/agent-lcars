@@ -3,8 +3,9 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -13,111 +14,156 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
-  protectedConfigMounts,
-  reconcileRegistrations,
-  snapshotRegistrations,
+  assertCredentialsOutliveRun,
+  nativeAuthMounts,
 } from './review-auth-mounts.mjs';
 
-function withAuthDir(fn) {
+function withDirs(fn) {
   const dir = mkdtempSync(join(tmpdir(), 'review-auth-mounts-'));
+  const auth = join(dir, 'auth');
+  mkdirSync(auth);
   try {
-    return fn(dir);
+    return fn(auth, join(dir, 'native-home'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
-const readonly = (source, target) => [
-  '--mount',
-  `type=bind,source=${source},target=${target},readonly`,
-];
+// The caller's directory holds far more than credentials.
+function callerHome(auth, credential) {
+  writeFileSync(join(auth, credential), '{}\n');
+  writeFileSync(join(auth, 'settings.json'), '{"hooks":{}}\n');
+  mkdirSync(join(auth, 'hooks'));
+  mkdirSync(join(auth, 'projects'));
+}
 
-test('existing Claude registrations and hook scripts are overlaid read-only at the container path', () => {
-  withAuthDir((auth) => {
-    writeFileSync(join(auth, 'settings.json'), '{}\n');
-    writeFileSync(join(auth, '.credentials.json'), '{}\n');
-    mkdirSync(join(auth, 'hooks'));
-    assert.deepEqual(protectedConfigMounts('claude', auth, '/native/claude'), [
-      ...readonly(join(auth, 'settings.json'), '/native/claude/settings.json'),
-      ...readonly(join(auth, 'hooks'), '/native/claude/hooks'),
+test('Claude gets a private home with only its credential bound read-only', () => {
+  withDirs((auth, home) => {
+    callerHome(auth, '.credentials.json');
+    assert.deepEqual(nativeAuthMounts('claude', auth, home, '/native/claude'), [
+      '--mount',
+      `type=bind,source=${home},target=/native/claude`,
+      '--mount',
+      `type=bind,source=${join(auth, '.credentials.json')},target=/native/claude/.credentials.json,readonly`,
+    ]);
+    // The private home holds only the mount point, never caller content.
+    assert.deepEqual(readdirSync(home), ['.credentials.json']);
+    assert.equal(statSync(join(home, '.credentials.json')).size, 0);
+    assert.equal(statSync(home).mode & 0o777, 0o700);
+  });
+});
+
+test('Codex and Antigravity credentials are bound read-only into a private home at the target', () => {
+  withDirs((auth, home) => {
+    callerHome(auth, 'auth.json');
+    assert.deepEqual(nativeAuthMounts('codex', auth, home, auth), [
+      '--mount',
+      `type=bind,source=${home},target=${auth}`,
+      '--mount',
+      `type=bind,source=${join(auth, 'auth.json')},target=${join(auth, 'auth.json')},readonly`,
     ]);
   });
-});
-
-test('Codex hooks.json is protected in place; absent entries add no mount', () => {
-  withAuthDir((auth) => {
-    assert.deepEqual(protectedConfigMounts('codex', auth, auth), []);
-    writeFileSync(join(auth, 'hooks.json'), '{}\n');
+  withDirs((auth, home) => {
+    callerHome(auth, 'antigravity-oauth-token');
     assert.deepEqual(
-      protectedConfigMounts('codex', auth, auth),
-      readonly(join(auth, 'hooks.json'), join(auth, 'hooks.json')),
+      nativeAuthMounts('agy', auth, home, '/native/agy').at(-1),
+      `type=bind,source=${join(auth, 'antigravity-oauth-token')},target=/native/agy/antigravity-oauth-token,readonly`,
     );
   });
 });
 
-test('a registration of the wrong kind refuses the launch', () => {
-  withAuthDir((auth) => {
-    mkdirSync(join(auth, 'real'));
-    writeFileSync(join(auth, 'real', 'settings.json'), '{}\n');
-    symlinkSync(
-      join(auth, 'real', 'settings.json'),
-      join(auth, 'settings.json'),
-    );
+test('a missing, symlinked or pre-existing credential path refuses the launch', () => {
+  withDirs((auth, home) => {
     assert.throws(
-      () => protectedConfigMounts('claude', auth, '/native/claude'),
-      /not a regular file/,
+      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
+      /missing or not a regular file/,
     );
   });
-  withAuthDir((auth) => {
-    writeFileSync(join(auth, 'hooks'), 'not a directory\n');
+  withDirs((auth, home) => {
+    writeFileSync(join(auth, 'real.json'), '{}\n');
+    symlinkSync(join(auth, 'real.json'), join(auth, '.credentials.json'));
     assert.throws(
-      () => protectedConfigMounts('claude', auth, '/native/claude'),
-      /not a regular dir/,
+      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
+      /missing or not a regular file/,
     );
   });
-});
-
-test('providers without a writable auth directory need no overlay', () => {
-  assert.deepEqual(protectedConfigMounts('opencode', '/unused', '/unused'), []);
-  assert.deepEqual(protectedConfigMounts('agy', '/unused', '/unused'), []);
-  assert.deepEqual(snapshotRegistrations('opencode', '/unused'), {});
+  withDirs((auth, home) => {
+    callerHome(auth, '.credentials.json');
+    mkdirSync(home);
+    assert.throws(
+      () => nativeAuthMounts('claude', auth, home, '/native/claude'),
+      /EEXIST/,
+    );
+  });
+  assert.deepEqual(nativeAuthMounts('opencode', '/x', '/y', '/z'), []);
   assert.throws(
-    () => protectedConfigMounts('other', '/x', '/x'),
+    () => nativeAuthMounts('other', '/x', '/y', '/z'),
     /Unknown provider/,
   );
 });
 
-test('a registration created during the run is moved aside and reported', () => {
-  withAuthDir((auth) => {
-    const before = snapshotRegistrations('claude', auth);
-    assert.deepEqual(before, {
-      'settings.json': null,
-      'settings.local.json': null,
-    });
-    const hook = '{"hooks":{"PreToolUse":[]}} # lcars-worker-pretool:v1\n';
-    writeFileSync(join(auth, 'settings.json'), hook);
-    const findings = reconcileRegistrations('claude', auth, before, 42);
-    const aside = join(auth, 'settings.json.review-qualification-42');
-    assert.deepEqual(findings, [
-      { path: join(auth, 'settings.json'), change: 'created', movedTo: aside },
-    ]);
-    assert.equal(existsSync(join(auth, 'settings.json')), false);
-    assert.equal(readFileSync(aside, 'utf8'), hook);
+const jwt = (exp) =>
+  ['h', Buffer.from(JSON.stringify({ exp })).toString('base64url'), 's'].join(
+    '.',
+  );
+const NOW = 1_800_000_000_000;
+const RUN = 82 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
+test('a Claude token that would refresh during the run refuses the launch', () => {
+  withDirs((auth) => {
+    const write = (expiresAt) =>
+      writeFileSync(
+        join(auth, '.credentials.json'),
+        JSON.stringify({ claudeAiOauth: { expiresAt } }),
+      );
+    write(NOW + 6 * HOUR);
+    assertCredentialsOutliveRun('claude', auth, RUN, NOW);
+    write(NOW + 90 * 60 * 1000);
+    assert.throws(
+      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
+      /claude login refreshes at .* inside this review/,
+    );
+    writeFileSync(join(auth, '.credentials.json'), '{}');
+    assert.throws(
+      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
+      /no readable expiry/,
+    );
   });
 });
 
-test('unchanged registrations reconcile cleanly; a modified one is reported, not touched', () => {
-  withAuthDir((auth) => {
-    writeFileSync(join(auth, 'settings.json'), '{}\n');
-    const before = snapshotRegistrations('claude', auth);
-    assert.deepEqual(reconcileRegistrations('claude', auth, before), []);
-    writeFileSync(join(auth, 'settings.json'), '{"changed":true}\n');
-    assert.deepEqual(reconcileRegistrations('claude', auth, before), [
-      { path: join(auth, 'settings.json'), change: 'modified' },
-    ]);
-    assert.equal(
-      readFileSync(join(auth, 'settings.json'), 'utf8'),
-      '{"changed":true}\n',
+test('a Codex token that would expire, or reach its 8-day refresh, during the run refuses the launch', () => {
+  withDirs((auth) => {
+    const write = (expMs, lastRefreshMs) =>
+      writeFileSync(
+        join(auth, 'auth.json'),
+        JSON.stringify({
+          tokens: { access_token: jwt(expMs / 1000) },
+          last_refresh: new Date(lastRefreshMs).toISOString(),
+        }),
+      );
+    write(NOW + 8 * DAY, NOW - 2 * DAY);
+    assertCredentialsOutliveRun('codex', auth, RUN, NOW);
+    // Access token about to expire.
+    write(NOW + HOUR, NOW - 2 * DAY);
+    assert.throws(
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /codex login refreshes at/,
     );
+    // Token still valid for days, but last_refresh crosses 8 days mid-run.
+    write(NOW + 2 * DAY, NOW - 8 * DAY + HOUR);
+    assert.throws(
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /codex login refreshes at/,
+    );
+    writeFileSync(join(auth, 'auth.json'), JSON.stringify({ tokens: {} }));
+    assert.throws(
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /no readable expiry/,
+    );
+    // Antigravity's token is used read-only and never refreshed here.
+    assertCredentialsOutliveRun('agy', auth, RUN, NOW);
+    assert.equal(existsSync(join(auth, '.credentials.json')), false);
   });
 });

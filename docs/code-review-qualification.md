@@ -31,17 +31,22 @@ LCARS_REVIEW_OPENCODE_KEY_FILE=<protected-native-key-file> \
 
 The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
-providers use the caller's existing native authentication directory, mounted
-without copying rotating login state. The container drops to the caller's UID
-so those files retain their ownership. The hook registrations LCARS's worker installer
-writes, and the scripts they run, are overlaid read-only when present: Claude
-`settings.json`, `settings.local.json` and `hooks/`, and Codex `hooks.json`.
-The launcher also snapshots those registration files before the run. If the
-run created one, it is moved aside to `<file>.review-qualification-<time>` and
-the qualification fails; any other change fails the qualification and is
-recorded in `registration-changes.json` (#3379). The rest of the directory
-stays writable for rotating login state, so Claude `plugins/` and Codex
-`config.toml` are not protected by this guard. The image's normal runner UID and setup
+providers use the caller's existing native login without copying rotating
+login state. The container drops to the caller's UID so those files retain
+their ownership. The caller's provider directory itself is never mounted: it
+configures the caller's live sessions (settings, hooks, plugins, skills,
+rules, MCP servers, memory, sourced shell state), and a review once rewrote it
+(#3379). Instead `review-auth-mounts.mjs` gives the review a fresh private
+provider home under the run's `native-home/` and binds only the credential
+file into it, read-only (Claude `.credentials.json`, Codex `auth.json`, the
+Antigravity token). A read-only credential cannot accept a refreshed token,
+so the launch is refused unless no refresh can fall inside the run: Claude
+refreshes as `expiresAt` nears, Codex when its access token expires or its
+`last_refresh` passes 8 days. Retry once the caller's own sessions have
+refreshed the login. The bind target lives in the private home, so a credential file the host
+replaces mid-run only detaches the review from it; nothing else of the caller
+is ever exposed. The review's transcripts land in the private home, where the
+in-container evidence collector reads them. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
