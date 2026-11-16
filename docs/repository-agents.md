@@ -29,9 +29,10 @@ description: Read-only Homelab fleet investigator.
 profile: homelab-ops # credentials; omitted = the default profile
 retry: finite # finite (default) | terminal, for agents with effect authority
 requireToolEvidence: true # a report with no tool call is a failed attempt
-maxLiveClaims: 2 # default: the runtime's
-allocation: { cpu: '2', memory: 3Gi } # default: the runtime's
 ```
+
+Concurrency and resources are not agent fields: the executor runtime the
+profile names sizes and bounds its Jobs.
 
 The agent ID is `<owner>/<repo>/<name>`, for example
 `jlapenna/homelab/investigator`.
@@ -88,25 +89,22 @@ another's credentials gets its own profile.
   and a grant covering the agent's runtime, and the agent must be enabled.
   `lcars investigate` becomes this call against
   `jlapenna/homelab/investigator`.
-- **Reservation:** this reuses the repository-job reservation transaction. The
-  occurrence pins:
-  - the definition's revision and digest;
-  - the profile;
-  - the message.
-
-  A repeated `requestId` replays its receipt, and `sourceKey` coalesces rounds
-  on one subject.
+- **Pinning:** the round's revision input pins the definition (revision,
+  digest, each file's path, mode and blob SHA), `requireToolEvidence` and the
+  message. A later merge cannot change a round already admitted. A repeated
+  `requestId` with the same message is the same round, and `sourceKey`
+  coalesces rounds on one subject. Admission needs no reservation transaction:
+  claims already bound concurrency.
 
 - **Execution:**
   - Work runs on the profile's runtime pipeline. Grants and stored specs accept
     any `claw-*` pipeline instead of a closed enum.
-  - The claim ceiling and retry follow the manifest, then the runtime defaults.
+  - The manifest's `retry: terminal` makes lost and failed attempts terminal.
 - **Delivery:**
-  - The Job fetches its definition and message with its run token from
-    `GET /runs/{id}/agent`, the counterpart of `GET /runs/{id}/recipe`.
-  - LCARS reads the directory from GitHub at the pinned revision, so nothing
-    large is stored inline. A report too large for the run record is stored out
-    of line, not truncated.
+  - The Job's existing run brief (`GET /runs/{id}/brief`) carries the pinned
+    definition and the message. LCARS reads each file from GitHub by its blob
+    SHA, so nothing large is stored inline. A report too large for the run
+    record is stored out of line, not truncated.
   - The launcher materializes the files into `/work/agent` and checks the
     digest. It then runs today's sequence: `config validate`, `doctor` (which
     must change nothing, proving the reviewed config is what runs),

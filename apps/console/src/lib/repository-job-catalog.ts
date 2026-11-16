@@ -1,15 +1,14 @@
 import { logger } from '@agent-lcars/logging';
-import { z } from 'zod';
 
 import { FIRESTORE_DOCUMENT_MAX_BYTES } from './firestore-document-size';
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { readJobBody } from './repository-job-body';
 import {
   type JobDefinition,
   jobKey,
   parseJobDefinition,
 } from './repository-job-definition';
 import type { CatalogJob, JobStore } from './repository-job-store';
+import { openRepositorySource } from './repository-source';
 
 /** The principal an automatic activation is attributed to, or undefined when
  * the definition's execution profile does not admit automatic activation. */
@@ -35,71 +34,16 @@ export async function refreshJobCatalog(
     (job) => job.repository === repository,
   );
   const signal = AbortSignal.timeout(20000);
-  let token: string;
-  const get = async (path: string): Promise<unknown> => {
-    // GitHub answers `/repos/{owner}/{repo}/` (trailing slash) with 404, so
-    // the repository metadata request must omit the separator.
-    const response = await fetch(
-      `https://api.github.com/repos/${repository}${path ? `/${path}` : ''}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-        },
-        signal,
-        cache: 'no-store',
-      },
-    );
-    if (!response.ok) throw new Error(`Catalog source HTTP ${response.status}`);
-    const text = await readJobBody(response, 2 * 1024 * 1024);
-    return JSON.parse(text);
-  };
   try {
-    token = await tokens.tokenFor(repository);
-    const metadata = z
-      .object({ default_branch: z.string() })
-      .parse(await get(''));
-    const commit = z
-      .object({
-        sha: z.string().regex(/^[a-f0-9]{40}$/u),
-        commit: z.object({ tree: z.object({ sha: z.string() }) }),
-      })
-      .parse(
-        await get(`commits/${encodeURIComponent(metadata.default_branch)}`),
-      );
-    const treeSchema = z.object({
-      truncated: z.boolean().optional(),
-      tree: z.array(
-        z.object({
-          path: z.string(),
-          mode: z.string(),
-          type: z.string(),
-          sha: z.string(),
-          size: z.number().optional(),
-        }),
-      ),
-    });
-    const readTree = async (sha: string, recursive = false) => {
-      const tree = treeSchema.parse(
-        await get(`git/trees/${sha}${recursive ? '?recursive=1' : ''}`),
-      );
-      if (tree.truncated) throw new Error('Catalog tree truncated');
-      return tree.tree;
-    };
-    // Walk to `.lcars/jobs` one level at a time instead of reading the whole
-    // repository tree: a repository without jobs costs one small root read.
-    const directory = async (sha: string | undefined, name: string) =>
-      sha === undefined
-        ? undefined
-        : (await readTree(sha)).find(
-            (entry) => entry.path === name && entry.type === 'tree',
-          )?.sha;
-    const jobsTree = await directory(
-      await directory(commit.commit.tree.sha, '.lcars'),
-      'jobs',
+    const source = await openRepositorySource(
+      repository,
+      await tokens.tokenFor(repository),
+      signal,
+      { maxResponseBytes: 2 * 1024 * 1024 },
     );
+    const jobsTree = await source.lcarsDirectory('jobs');
     const entries =
-      jobsTree === undefined ? [] : await readTree(jobsTree, true);
+      jobsTree === undefined ? [] : await source.readTree(jobsTree, true);
     const manifests = entries.filter((entry) =>
       /^[^/]+\/job\.yaml$/u.test(entry.path),
     );
@@ -130,17 +74,11 @@ export async function refreshJobCatalog(
             entry.size > FIRESTORE_DOCUMENT_MAX_BYTES
           )
             throw new Error('Job files must be bounded regular blobs');
-          const data = z
-            .object({
-              encoding: z.literal('base64'),
-              content: z.string(),
-            })
-            .parse(await get(`git/blobs/${entry.sha}`));
-          return Buffer.from(data.content, 'base64').toString('utf8');
+          return (await source.readBlob(entry.sha)).toString('utf8');
         };
         row.definition = parseJobDefinition(
           repository,
-          commit.sha,
+          source.revision,
           jobName,
           await blob(manifest),
           await blob(recipe),
