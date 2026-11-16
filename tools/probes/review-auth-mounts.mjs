@@ -1,92 +1,280 @@
-// The native review binds the caller's real provider directory read-write so
-// rotating login state stays current. Hook registrations in that directory run
-// before every tool call of every live session the caller owns, so a review
-// must never rewrite them (#3379: a reviewed test registered the scratch
-// repository's worker hook in the operator's settings.json). Overlay each
-// existing registration read-only; a write then fails inside the container
-// instead of reaching the caller's live sessions. A registration file that
-// does not exist cannot be overlaid without the container runtime creating it
-// on the host, so the launcher also compares snapshots taken before and after
-// the run and undoes a file the run created.
+// The native review binds the caller's real provider directory read-write:
+// rotating login state and its write lock must stay shared with the caller's
+// live sessions. Everything else in that directory configures those live
+// sessions (hooks, settings, plugins, skills, rules, instructions, MCP
+// servers), so a review must never change it (#3379: a reviewed test
+// registered the scratch repository's worker hook in the operator's
+// settings.json).
+//
+// The guard is an allowlist. Each top-level entry that is not the provider's
+// own runtime state is overlaid read-only. A symlink cannot be overlaid (its
+// target is outside the mount), and a missing configuration file cannot be
+// overlaid without the container runtime creating it on the host, so the
+// launcher also snapshots before the run and afterwards undoes a replaced
+// symlink or a configuration entry the run created. Entries created under
+// other names are left alone: the caller's live sessions write their own new
+// state into the same directory while the review runs.
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, renameSync } from 'node:fs';
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  renameSync,
+  symlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
-// `file` entries are installer targets; `dir` entries hold the scripts those
-// registrations execute.
-export const HOOK_REGISTRATIONS = {
-  claude: [
-    { name: 'settings.json', kind: 'file' },
-    { name: 'settings.local.json', kind: 'file' },
-    { name: 'hooks', kind: 'dir' },
-  ],
-  codex: [{ name: 'hooks.json', kind: 'file' }],
-  agy: [],
-  opencode: [],
+const provider = (writable, writablePatterns, config) => ({
+  writable: new Set(writable),
+  writablePatterns,
+  config: new Set(config),
+});
+
+export const AUTH_DIRECTORY_POLICY = {
+  // Claude's own state list (its host-config snapshot exclusions) plus the
+  // credential write lock.
+  claude: provider(
+    [
+      '.claude.json',
+      '.claude.json.backup',
+      '.credentials.json',
+      '.storage-write',
+      '.device-keys.json',
+      '.session_ingress_token',
+      '.last-cleanup',
+      '.last-update-result.json',
+      'projects',
+      'sessions',
+      'todos',
+      'shell-snapshots',
+      'statsig',
+      'file-history',
+      'history.jsonl',
+      'ide',
+      'logs',
+      'backups',
+      'daemon',
+      'jobs',
+      'teams',
+      'usage-data',
+      'shares',
+      'state',
+      'uploads',
+      'feedback',
+      'feedback-bundles',
+      'plans',
+      'telemetry',
+      'debug',
+      'traces',
+      'startup-perf',
+      'cache',
+      'mcp-discovery-cache',
+      'mcp-needs-auth-cache.json',
+      'gh-pr-status-cache.json',
+      'tasks',
+      'local',
+      'session-env',
+      'image-cache',
+      'paste-cache',
+      'file-transfers',
+      'stats-cache.json',
+      'downloads',
+      'security',
+      'remote',
+    ],
+    [/^policy-limits\.json/, /^remote-settings\.json/],
+    [
+      'settings.json',
+      'settings.local.json',
+      'CLAUDE.md',
+      'hooks',
+      'plugins',
+      'commands',
+      'agents',
+      'skills',
+      'output-styles',
+      'keybindings.json',
+      'mcp',
+    ],
+  ),
+  codex: provider(
+    [
+      'auth.json',
+      'auth.json.lock',
+      'auth.lock',
+      '.credentials.json',
+      '.tmp',
+      'tmp',
+      'cache',
+      'sessions',
+      'archived_sessions',
+      'shell_snapshots',
+      'history.jsonl',
+      'session_index.jsonl',
+      'session_index.jsonl.lock',
+      'log',
+      'models_cache.json',
+      'version.json',
+      'installation_id',
+      'mention_usage.json',
+      'mention_usage.lock',
+      'generated_images',
+      'mcp-oauth-locks',
+      'thread-writer-locks',
+      'app-server-control',
+      'app-server-daemon',
+      '.sandbox_migration',
+      '.sqlite-maintenance.lock',
+    ],
+    [/\.sqlite(?:-shm|-wal)?$/, /^tui-/],
+    [
+      'config.toml',
+      'hooks.json',
+      'AGENTS.md',
+      'AGENTS.override.md',
+      'rules',
+      'skills',
+      'plugins',
+      'prompts',
+      '.hook-trust',
+    ],
+  ),
+  agy: provider(
+    [
+      'antigravity-oauth-token',
+      'annotations',
+      'brain',
+      'cache',
+      'conversation_summaries.db',
+      'conversations',
+      'crashes',
+      'history.jsonl',
+      'implicit',
+      'installation_id',
+      'jetbox_summaries_proto.pb',
+      'jetski_state.pbtxt',
+      'last_check.timestamp',
+      'log',
+      'presence',
+      'plugin_data',
+      'updater',
+    ],
+    [],
+    [
+      'settings.json',
+      'skills',
+      'mcp',
+      'bin',
+      'builtin',
+      'plugins',
+      'hooks.json',
+    ],
+  ),
+  // The OpenCode lane binds a single key file, not a directory.
+  opencode: null,
 };
 
-function registrations(provider) {
-  const entries = HOOK_REGISTRATIONS[provider];
-  if (!entries) throw new Error('Unknown provider: ' + provider);
-  return entries;
+function policyFor(name) {
+  if (!(name in AUTH_DIRECTORY_POLICY))
+    throw new Error('Unknown provider: ' + name);
+  return AUTH_DIRECTORY_POLICY[name];
 }
 
-export function protectedConfigMounts(provider, auth, target) {
-  return registrations(provider).flatMap(({ name, kind }) => {
-    const source = join(auth, name);
-    const stat = lstatSync(source, { throwIfNoEntry: false });
-    if (!stat) return [];
-    if (kind === 'file' ? !stat.isFile() : !stat.isDirectory())
-      throw new Error(
-        `Hook registration is not a regular ${kind} and cannot be protected: ${source}`,
-      );
+export function isWritableState(providerName, entry) {
+  const policy = policyFor(providerName);
+  return (
+    policy !== null &&
+    (policy.writable.has(entry) ||
+      policy.writablePatterns.some((pattern) => pattern.test(entry)))
+  );
+}
+
+function protectedEntries(providerName, auth) {
+  if (policyFor(providerName) === null) return [];
+  return readdirSync(auth)
+    .filter((entry) => !isWritableState(providerName, entry))
+    .sort();
+}
+
+export function protectedConfigMounts(providerName, auth, target) {
+  return protectedEntries(providerName, auth).flatMap((entry) => {
+    if (entry.includes(',') || entry.includes(':'))
+      throw new Error('Unsupported configuration entry name: ' + entry);
+    const source = join(auth, entry);
+    const stat = lstatSync(source);
+    // Snapshot and restore protect symlinks; see reconcileRegistrations.
+    if (stat.isSymbolicLink()) return [];
+    if (!stat.isFile() && !stat.isDirectory())
+      throw new Error('Unsupported configuration entry type: ' + source);
     return [
       '--mount',
-      `type=bind,source=${source},target=${join(target, name)},readonly`,
+      `type=bind,source=${source},target=${join(target, entry)},readonly`,
     ];
   });
 }
 
-// File content hashes (null when absent) for the registration files.
-export function snapshotRegistrations(provider, auth) {
+function describe(path) {
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat) return null;
+  if (stat.isSymbolicLink())
+    return { kind: 'symlink', target: readlinkSync(path) };
+  if (stat.isFile())
+    return {
+      kind: 'file',
+      sha256: createHash('sha256').update(readFileSync(path)).digest('hex'),
+    };
+  if (stat.isDirectory()) return { kind: 'dir' };
+  return { kind: 'other' };
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// Every protected entry present at launch, plus each known configuration
+// name (null when absent, so a creation is detectable).
+export function snapshotRegistrations(providerName, auth) {
+  const policy = policyFor(providerName);
+  if (policy === null) return {};
+  const names = new Set([
+    ...protectedEntries(providerName, auth),
+    ...policy.config,
+  ]);
   return Object.fromEntries(
-    registrations(provider)
-      .filter(({ kind }) => kind === 'file')
-      .map(({ name }) => {
-        const path = join(auth, name);
-        const stat = lstatSync(path, { throwIfNoEntry: false });
-        if (!stat) return [name, null];
-        if (!stat.isFile()) return [name, 'non-regular'];
-        return [
-          name,
-          createHash('sha256').update(readFileSync(path)).digest('hex'),
-        ];
-      }),
+    [...names].sort().map((entry) => [entry, describe(join(auth, entry))]),
   );
 }
 
-// Compare snapshots. A registration the run created is moved aside (kept as
-// evidence) so the caller's directory returns to its prior state; any other
-// change cannot be undone safely and is reported for the operator.
+// Undo what can be undone safely and report every change. A created entry is
+// moved aside (kept as evidence) and a replaced symlink is restored; a changed
+// file or directory cannot be restored safely and is only reported.
 export function reconcileRegistrations(
-  provider,
+  providerName,
   auth,
   before,
   stamp = Date.now(),
 ) {
-  const after = snapshotRegistrations(provider, auth);
   const findings = [];
-  for (const [name, previous] of Object.entries(before)) {
-    if (after[name] === previous) continue;
-    const path = join(auth, name);
+  for (const [entry, previous] of Object.entries(before)) {
+    const path = join(auth, entry);
+    const current = describe(path);
+    if (same(current, previous)) continue;
+    const aside = `${path}.review-qualification-${stamp}`;
     if (previous === null) {
-      const aside = `${path}.review-qualification-${stamp}`;
       renameSync(path, aside);
       findings.push({ path, change: 'created', movedTo: aside });
+    } else if (previous.kind === 'symlink') {
+      if (current !== null) renameSync(path, aside);
+      symlinkSync(previous.target, path);
+      findings.push({
+        path,
+        change: 'symlink-replaced',
+        restoredTarget: previous.target,
+        ...(current === null ? {} : { movedTo: aside }),
+      });
     } else {
       findings.push({
         path,
-        change: after[name] === null ? 'removed' : 'modified',
+        change: current === null ? 'removed' : 'modified',
       });
     }
   }

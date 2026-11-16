@@ -33,15 +33,23 @@ The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
 providers use the caller's existing native authentication directory, mounted
 without copying rotating login state. The container drops to the caller's UID
-so those files retain their ownership. The hook registrations LCARS's worker installer
-writes, and the scripts they run, are overlaid read-only when present: Claude
-`settings.json`, `settings.local.json` and `hooks/`, and Codex `hooks.json`.
-The launcher also snapshots those registration files before the run. If the
-run created one, it is moved aside to `<file>.review-qualification-<time>` and
-the qualification fails; any other change fails the qualification and is
-recorded in `registration-changes.json` (#3379). The rest of the directory
-stays writable for rotating login state, so Claude `plugins/` and Codex
-`config.toml` are not protected by this guard. The image's normal runner UID and setup
+so those files retain their ownership. The directory stays writable so rotating login state
+and its write lock remain shared with the caller's live sessions, but only the
+provider's own runtime state is writable inside it. `review-auth-mounts.mjs`
+holds a per-provider allowlist of state entries (credentials, transcripts,
+sessions, caches, databases); every other existing top-level entry is
+overlaid read-only, so a review cannot change the caller's settings, hooks,
+plugins, skills, rules, MCP configuration or instruction files (#3379).
+
+Two cases cannot be overlaid: a symlink (its target is outside the mount) and
+a configuration file that does not exist yet (the container runtime would
+create it on the host). The launcher snapshots both before the run. Afterwards
+it restores a replaced symlink, moves a created configuration entry aside to
+`<entry>.review-qualification-<time>`, records every change in
+`registration-changes.json` and fails the qualification. Live sessions started
+during the run can still observe such a change until the run ends. New
+entries under other names are left alone, because live sessions create their
+own state in the same directory. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.
