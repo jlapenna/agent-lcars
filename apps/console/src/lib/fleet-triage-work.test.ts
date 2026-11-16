@@ -14,6 +14,7 @@ import {
   TriageCommentTooLargeError,
 } from './fleet-triage-publish';
 import {
+  triageEligible,
   triageMarker,
   type TriageSource,
   triageSourceKey,
@@ -339,6 +340,35 @@ describe('event-driven triage effects', () => {
     expect(f.source.labels).not.toContain('agent:opencode');
     expect(f.source.comments[0]?.body).toContain('no automatic redispatch');
     expect(await f.state()).toBe('done');
+  });
+
+  it('supersedes a pending report once its Linear source grows past the tracker bounds', async () => {
+    const f = await fixture();
+    const entry = await f.settle(true);
+    f.source.issue = {
+      reference: {
+        tracker: 'linear',
+        organizationId: '11111111-1111-4111-8111-111111111111',
+        issueId: '44444444-4444-4444-8444-444444444444',
+      },
+      identifier: 'ENG-42',
+      url: 'https://linear.app/example/issue/ENG-42',
+      title: f.source.title,
+      description: '',
+      oversized: true,
+      updatedAt: new Date().toISOString(),
+      state: 'open',
+      labels: [],
+      assignees: [],
+    };
+    await publishFleetTriage(f.store, entry, f.load);
+    expect(github.issues.createComment).not.toHaveBeenCalled();
+    expect(github.issues.addLabels).not.toHaveBeenCalled();
+    expect((await f.store.readRun(f.run.runId))?.triagePublication?.state).toBe(
+      'superseded',
+    );
+    expect(triageEligible(f.source)).toBe(false);
+    expect(triageEligible({ ...f.source, issue: undefined })).toBe(true);
   });
 
   it('performs no external writes when its outbox lease has insufficient time', async () => {
