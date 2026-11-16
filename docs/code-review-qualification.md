@@ -38,12 +38,12 @@ configures the caller's live sessions (settings, hooks, plugins, skills,
 rules, MCP servers, memory, sourced shell state), and a review once rewrote it
 (#3379). Instead `review-auth-mounts.mjs` gives the review a fresh private
 provider home under the run's `native-home/` and binds only the credential
-file into it. Claude's `.credentials.json` is bound read-write because Claude
-rotates it often; when its rename onto the bound file fails with `EBUSY`,
-Claude rewrites the file in place, so a rotation reaches the caller's
-sessions. Codex `auth.json` and the Antigravity token are bound read-only, and
-the launch is refused when the Codex access token would expire during the run.
-The bind target lives in the private home, so a credential file the host
+file into it, read-only (Claude `.credentials.json`, Codex `auth.json`, the
+Antigravity token). A read-only credential cannot accept a refreshed token,
+so the launch is refused unless no refresh can fall inside the run: Claude
+refreshes as `expiresAt` nears, Codex when its access token expires or its
+`last_refresh` passes 8 days. Retry once the caller's own sessions have
+refreshed the login. The bind target lives in the private home, so a credential file the host
 replaces mid-run only detaches the review from it; nothing else of the caller
 is ever exposed. The review's transcripts land in the private home, where the
 in-container evidence collector reads them. The image's normal runner UID and setup

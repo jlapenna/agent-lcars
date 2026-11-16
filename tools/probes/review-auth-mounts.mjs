@@ -5,18 +5,17 @@
 // repository's worker hook in the operator's settings.json).
 //
 // The review therefore gets a fresh private provider home, and only the
-// credential file is bound into it from the caller's directory. The bind
-// target lives in the private home, so if the host replaces the credential
-// file during the run (which detaches the bind), the review sees only its own
-// placeholder; the caller's directory is never exposed.
+// credential file is bound into it, read-only, from the caller's directory.
+// The bind target lives in the private home, so if the host replaces the
+// credential file during the run (which detaches the bind), the review sees
+// only its own placeholder; the caller's directory is never exposed.
 //
-// Claude rotates its OAuth token often, so its credential is bound
-// read-write: Claude stages a temporary file and, when the rename onto the
-// bound file fails with EBUSY, rewrites the file in place, so a rotation
-// reaches the caller's sessions. Codex refreshes only when its access token is
-// old, so the launch is refused when that token would expire during the run
-// and the file is bound read-only. Antigravity's token file is used read-only,
-// as the fleet runner does.
+// A read-only credential cannot accept a refreshed token, and a refresh the
+// review cannot persist would leave the caller holding a used refresh token.
+// So the launch is refused unless no refresh can fall inside the run: Claude
+// refreshes as its access token nears expiresAt, and Codex refreshes when its
+// access token expires or its last_refresh is older than 8 days.
+// Antigravity's token file is used read-only, as the fleet runner does.
 import {
   closeSync,
   constants,
@@ -28,9 +27,9 @@ import {
 import { join } from 'node:path';
 
 export const NATIVE_CREDENTIALS = {
-  claude: [{ name: '.credentials.json', writable: true }],
-  codex: [{ name: 'auth.json', writable: false }],
-  agy: [{ name: 'antigravity-oauth-token', writable: false }],
+  claude: ['.credentials.json'],
+  codex: ['auth.json'],
+  agy: ['antigravity-oauth-token'],
   // The OpenCode lane binds a single key file, not a directory.
   opencode: null,
 };
@@ -41,31 +40,49 @@ function credentialsFor(provider) {
   return NATIVE_CREDENTIALS[provider];
 }
 
-// Seconds until a JWT's exp, or null when it carries none.
-function jwtSecondsLeft(token, nowMs) {
+const CODEX_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
+const REFRESH_MARGIN_MS = 30 * 60 * 1000;
+
+// Milliseconds since the epoch of a JWT's exp, or null when it has none.
+function jwtExpiryMs(token) {
   const payload = typeof token === 'string' ? token.split('.')[1] : undefined;
   if (!payload) return null;
   const exp = JSON.parse(Buffer.from(payload, 'base64url').toString()).exp;
-  return typeof exp === 'number' ? exp - nowMs / 1000 : null;
+  return typeof exp === 'number' ? exp * 1000 : null;
 }
 
-// Codex persists a refreshed token, which a read-only credential cannot
-// accept. Require the access token to outlive the run with a margin.
+// When the provider CLI will next refresh the caller's login, or null when
+// that cannot be determined.
+function nextRefreshMs(provider, auth) {
+  const read = (name) => JSON.parse(readFileSync(join(auth, name), 'utf8'));
+  if (provider === 'claude') {
+    const expiresAt = read('.credentials.json').claudeAiOauth?.expiresAt;
+    return typeof expiresAt === 'number' ? expiresAt : null;
+  }
+  if (provider === 'codex') {
+    const { tokens, last_refresh: lastRefresh } = read('auth.json');
+    const expiry = jwtExpiryMs(tokens?.access_token);
+    const refreshed = Date.parse(lastRefresh);
+    if (expiry === null || Number.isNaN(refreshed)) return null;
+    return Math.min(expiry, refreshed + CODEX_REFRESH_INTERVAL_MS);
+  }
+  return Infinity;
+}
+
 export function assertCredentialsOutliveRun(
   provider,
   auth,
   runMs,
   nowMs = Date.now(),
 ) {
-  if (provider !== 'codex') return;
-  const tokens = JSON.parse(
-    readFileSync(join(auth, 'auth.json'), 'utf8'),
-  ).tokens;
-  const left = jwtSecondsLeft(tokens?.access_token, nowMs);
-  if (left === null || left < runMs / 1000 + 30 * 60)
+  const next = nextRefreshMs(provider, auth);
+  if (next === null || next < nowMs + runMs + REFRESH_MARGIN_MS)
     throw new Error(
-      'The Codex access token expires before this review could finish. ' +
-        'Run any Codex command to refresh the login, then retry.',
+      `The ${provider} login ` +
+        (next === null
+          ? 'has no readable expiry'
+          : `refreshes at ${new Date(next).toISOString()}, inside this review`) +
+        ". Retry after the caller's own sessions have refreshed it.",
     );
 }
 
@@ -81,7 +98,7 @@ export function nativeAuthMounts(provider, auth, privateHome, target) {
     '--mount',
     `type=bind,source=${privateHome},target=${target}`,
   ];
-  for (const { name, writable } of credentials) {
+  for (const name of credentials) {
     const source = join(auth, name);
     const stat = lstatSync(source, { throwIfNoEntry: false });
     if (!stat?.isFile())
@@ -101,7 +118,7 @@ export function nativeAuthMounts(provider, auth, privateHome, target) {
     );
     mounts.push(
       '--mount',
-      `type=bind,source=${source},target=${join(target, name)}${writable ? '' : ',readonly'}`,
+      `type=bind,source=${source},target=${join(target, name)},readonly`,
     );
   }
   return mounts;

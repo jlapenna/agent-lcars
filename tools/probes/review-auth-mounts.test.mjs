@@ -37,14 +37,14 @@ function callerHome(auth, credential) {
   mkdirSync(join(auth, 'projects'));
 }
 
-test('Claude gets a private home with only its credential bound read-write', () => {
+test('Claude gets a private home with only its credential bound read-only', () => {
   withDirs((auth, home) => {
     callerHome(auth, '.credentials.json');
     assert.deepEqual(nativeAuthMounts('claude', auth, home, '/native/claude'), [
       '--mount',
       `type=bind,source=${home},target=/native/claude`,
       '--mount',
-      `type=bind,source=${join(auth, '.credentials.json')},target=/native/claude/.credentials.json`,
+      `type=bind,source=${join(auth, '.credentials.json')},target=/native/claude/.credentials.json,readonly`,
     ]);
     // The private home holds only the mount point, never caller content.
     assert.deepEqual(readdirSync(home), ['.credentials.json']);
@@ -106,30 +106,64 @@ const jwt = (exp) =>
   ['h', Buffer.from(JSON.stringify({ exp })).toString('base64url'), 's'].join(
     '.',
   );
+const NOW = 1_800_000_000_000;
+const RUN = 82 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
-test('a Codex access token that would expire during the run refuses the launch', () => {
+test('a Claude token that would refresh during the run refuses the launch', () => {
   withDirs((auth) => {
-    const now = 1_800_000_000_000;
-    const runMs = 82 * 60 * 1000;
-    const write = (exp) =>
+    const write = (expiresAt) =>
+      writeFileSync(
+        join(auth, '.credentials.json'),
+        JSON.stringify({ claudeAiOauth: { expiresAt } }),
+      );
+    write(NOW + 6 * HOUR);
+    assertCredentialsOutliveRun('claude', auth, RUN, NOW);
+    write(NOW + 90 * 60 * 1000);
+    assert.throws(
+      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
+      /claude login refreshes at .* inside this review/,
+    );
+    writeFileSync(join(auth, '.credentials.json'), '{}');
+    assert.throws(
+      () => assertCredentialsOutliveRun('claude', auth, RUN, NOW),
+      /no readable expiry/,
+    );
+  });
+});
+
+test('a Codex token that would expire, or reach its 8-day refresh, during the run refuses the launch', () => {
+  withDirs((auth) => {
+    const write = (expMs, lastRefreshMs) =>
       writeFileSync(
         join(auth, 'auth.json'),
-        JSON.stringify({ tokens: { access_token: jwt(exp) } }),
+        JSON.stringify({
+          tokens: { access_token: jwt(expMs / 1000) },
+          last_refresh: new Date(lastRefreshMs).toISOString(),
+        }),
       );
-    write(now / 1000 + 8 * 24 * 3600);
-    assertCredentialsOutliveRun('codex', auth, runMs, now);
-    write(now / 1000 + 60 * 60);
+    write(NOW + 8 * DAY, NOW - 2 * DAY);
+    assertCredentialsOutliveRun('codex', auth, RUN, NOW);
+    // Access token about to expire.
+    write(NOW + HOUR, NOW - 2 * DAY);
     assert.throws(
-      () => assertCredentialsOutliveRun('codex', auth, runMs, now),
-      /expires before this review could finish/,
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /codex login refreshes at/,
+    );
+    // Token still valid for days, but last_refresh crosses 8 days mid-run.
+    write(NOW + 2 * DAY, NOW - 8 * DAY + HOUR);
+    assert.throws(
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /codex login refreshes at/,
     );
     writeFileSync(join(auth, 'auth.json'), JSON.stringify({ tokens: {} }));
     assert.throws(
-      () => assertCredentialsOutliveRun('codex', auth, runMs, now),
-      /expires before/,
+      () => assertCredentialsOutliveRun('codex', auth, RUN, NOW),
+      /no readable expiry/,
     );
-    // Claude rotates its own credential in place; nothing to check.
-    assertCredentialsOutliveRun('claude', auth, runMs, now);
+    // Antigravity's token is used read-only and never refreshed here.
+    assertCredentialsOutliveRun('agy', auth, RUN, NOW);
     assert.equal(existsSync(join(auth, '.credentials.json')), false);
   });
 });
