@@ -36,14 +36,22 @@ describe('workAtRun', () => {
     expect(brief.spec.description).toContain('Search returns no results.');
   });
 
-  it('keeps the admitted brief whole when the issue grew past the bounds', () => {
+  it('returns the admitted payload unchanged when the issue grew past the bounds', () => {
+    const admitted = {
+      ...work,
+      spec: { ...work.spec, description: 'a'.repeat(16_384) },
+    };
     const brief = workAtRun(
       {
-        issue: { ...issue, description: '', oversized: true },
+        issue: {
+          ...issue,
+          title: 't'.repeat(256),
+          description: '',
+          oversized: true,
+        },
       } as unknown as Run,
-      work,
-    ) as typeof work;
-    expect(brief.spec.description).toContain('Linear issue: admitted text');
-    expect(brief.spec.description).toContain(issue.url);
+      admitted,
+    );
+    expect(brief).toBe(admitted);
   });
 });

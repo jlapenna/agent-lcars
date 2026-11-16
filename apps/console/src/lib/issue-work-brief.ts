@@ -15,16 +15,10 @@ export function workAtRun(run: Run, work: unknown): unknown {
   const parsed = workPayloadSchema.safeParse(work);
   if (!run.issue || !parsed.success || isSourceManagedWork(work)) return work;
   const issue = run.issue;
-  // The issue grew past the tracker bounds after admission. Keep the admitted
-  // brief whole rather than rebuilding it from a snapshot without its text.
-  if (issue.oversized)
-    return normalizeWorkPayload({
-      origin: parsed.data.origin,
-      spec: {
-        ...parsed.data.spec,
-        description: `${parsed.data.spec.description}\n\nNote: ${issue.identifier} has since grown past LCARS's tracker bounds, so this is its admitted text. Read the current issue at ${issue.url}.`,
-      },
-    });
+  // The issue grew past the tracker bounds after admission. Keep the
+  // admitted payload byte-for-byte; any appended note could push it through
+  // the description clamp. `lcars work source` reports `oversized` itself.
+  if (issue.oversized) return work;
   return normalizeWorkPayload({
     origin: parsed.data.origin,
     spec: {
