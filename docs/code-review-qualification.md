@@ -31,34 +31,22 @@ LCARS_REVIEW_OPENCODE_KEY_FILE=<protected-native-key-file> \
 
 The key file is a protected consuming-process binding for the existing named
 `OPENCODE_LLM_API_KEY`, never a committed file or a value in argv. Other
-providers use the caller's existing native authentication directory, mounted
-without copying rotating login state. The container drops to the caller's UID
-so those files retain their ownership. The directory stays writable so rotating login state
-and its write lock remain shared with the caller's live sessions, but only the
-provider's own runtime state is writable inside it (#3379).
-`review-auth-mounts.mjs` holds a per-provider allowlist of top-level state
-entries (credentials, sessions, caches, bookkeeping databases). Every other
-existing top-level entry is overlaid read-only: settings, hooks, plugins,
-skills, rules, MCP configuration, instruction files, Codex memories and goals
-(with their SQLite sidecars, created empty when absent), and installed
-executables. State that live sessions load or source, Claude `projects/` (per-project memory), `shell-snapshots/`, `session-env/`,
-`tasks/` and `teams/`, and Codex
-`shell_snapshots/`, is replaced by an empty private directory under the run's
-`private-state/`; the review's transcripts land there and the in-container
-evidence collector reads them from there. A configuration symlink whose
-target is, or would be created, inside a writable binding refuses the launch.
-
-Two changes cannot be prevented by an overlay: replacing a symlink (its target
-is outside the mount) and creating a configuration file that did not exist
-(the container runtime would create it on the host). The launcher snapshots
-both before the run and reconciles them afterwards, recording each change in
-`registration-changes.json`. A created configuration entry is moved aside to
-`<entry>.review-qualification-<time>` and a replaced symlink is restored; both
-fail the qualification, because the launcher cannot tell whether the review or
-a host session made them. A change to an overlaid entry, or to a symlink's
-target, can only come from the host and is reported without failing. Live
-sessions started during the run can observe an unprevented change until the
-run ends. The image's normal runner UID and setup
+providers use the caller's existing native login without copying rotating
+login state. The container drops to the caller's UID so those files retain
+their ownership. The caller's provider directory itself is never mounted: it
+configures the caller's live sessions (settings, hooks, plugins, skills,
+rules, MCP servers, memory, sourced shell state), and a review once rewrote it
+(#3379). Instead `review-auth-mounts.mjs` gives the review a fresh private
+provider home under the run's `native-home/` and binds only the credential
+file into it. Claude's `.credentials.json` is bound read-write because Claude
+rotates it often; when its rename onto the bound file fails with `EBUSY`,
+Claude rewrites the file in place, so a rotation reaches the caller's
+sessions. Codex `auth.json` and the Antigravity token are bound read-only, and
+the launch is refused when the Codex access token would expire during the run.
+The bind target lives in the private home, so a credential file the host
+replaces mid-run only detaches the review from it; nothing else of the caller
+is ever exposed. The review's transcripts land in the private home, where the
+in-container evidence collector reads them. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
 models to evade an exhausted provider quota.

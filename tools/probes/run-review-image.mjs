@@ -2,15 +2,14 @@
 // Run the real candidate-image CLI with the caller's native authentication.
 // No image publication, copied rotating login, fake model or production dispatch.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runImageContainer } from './qualification-container.mjs';
 import {
-  protectedConfigMounts,
-  reconcileRegistrations,
-  snapshotRegistrations,
+  assertCredentialsOutliveRun,
+  nativeAuthMounts,
 } from './review-auth-mounts.mjs';
 
 const [provider, pull, imageId, output, historical] = process.argv.slice(2);
@@ -66,6 +65,9 @@ if (
   )
 )
   throw new Error('Unsupported bind-mount path');
+const runTimeoutMs = 82 * 60 * 1000;
+if (provider !== 'opencode')
+  assertCredentialsOutliveRun(provider, auth, runTimeoutMs);
 mkdirSync(output, { mode: 0o700 });
 const leaf = join(output, 'run');
 const mount = (from, to, readOnly = false) => [
@@ -98,19 +100,17 @@ const args = [
 ];
 if (provider === 'opencode')
   args.push(...mount(auth, '/run/secrets/opencode-llm-api-key', true));
-else {
-  const authTarget = provider === 'codex' ? auth : '/native/' + provider;
+else
+  // A private provider home holding only the caller's credential file; the
+  // rest of the caller's directory is never mounted (#3379).
   args.push(
-    ...mount(auth, authTarget),
-    ...protectedConfigMounts(
+    ...nativeAuthMounts(
       provider,
       auth,
-      authTarget,
-      join(output, 'private-state'),
-      [auth, output].map((path) => realpathSync(path)),
+      join(output, 'native-home'),
+      provider === 'codex' ? auth : '/native/' + provider,
     ),
   );
-}
 if (provider === 'codex') {
   const model = process.env.LCARS_REVIEW_CODEX_MODEL,
     effort = process.env.LCARS_REVIEW_CODEX_EFFORT;
@@ -175,7 +175,6 @@ writeFileSync(
     2,
   ),
 );
-const registrationsBefore = snapshotRegistrations(provider, auth);
 try {
   const succeeded = await runImageContainer(
     args,
@@ -191,7 +190,7 @@ try {
       return !execution.error && execution.status === 0;
     },
     {
-      timeout: 82 * 60 * 1000,
+      timeout: runTimeoutMs,
       cleanupTimeout: 30000,
     },
   );
@@ -203,22 +202,4 @@ try {
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
-} finally {
-  // Runs on success and failure alike: a review must leave the caller's hook
-  // registrations exactly as it found them.
-  const findings = reconcileRegistrations(provider, auth, registrationsBefore);
-  if (findings.length) {
-    writeFileSync(
-      join(output, 'registration-changes.json'),
-      JSON.stringify(findings, null, 2),
-    );
-    const blocking = findings.some((finding) => finding.blocking);
-    console.error(
-      (blocking
-        ? "Review run changed the caller's configuration; qualification fails: "
-        : 'Caller configuration changed on the host during the review: ') +
-        JSON.stringify(findings),
-    );
-    if (blocking) process.exitCode = 1;
-  }
 }
