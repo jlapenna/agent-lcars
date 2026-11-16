@@ -1974,6 +1974,31 @@ printf '<!-- agent-result:v1:park:g1:work:01DIRECTRUNNERTESTFIXTURE1/r1 -->\n<!-
 
 echo "scenario codex-native-park: OK"
 
+# A non-report message within the completion bound is sent byte-for-byte,
+# including at exactly the bound; only one past it keeps a shortened tail and
+# warns. The bound is lowered so the fixtures stay small.
+export FAKE_GH_NO_MATCH=1 FAKE_NATIVE_OUTCOME=park RUN_MESSAGE_MAX_BYTES=1000
+for size in 999 1000 1001; do
+  park_message="$tmp/park-message-$size.txt"
+  python3 -c 'import sys; n = int(sys.argv[1]); sys.stdout.write("H" + "x" * (n - 2) + "T")' "$size" > "$park_message"
+  export FAKE_CODEX_LAST_MESSAGE_FILE="$park_message"
+  run_scenario "codex-native-park-bound-$size" codex
+  if [ "$size" -le 1000 ]; then
+    jq -e --rawfile want "$park_message" '.outcome == "park" and .message == $want' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+      fail "codex native park bound $size: a message within the bound was not sent whole ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+    if grep -Fq 'Final message exceeds' "$scenario_log"; then
+      fail "codex native park bound $size: a message within the bound warned as oversized"
+    fi
+  else
+    jq -e '.outcome == "park" and (.message | length) == 984 and (.message | endswith("T")) and (.message | startswith("H") | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+      fail "codex native park bound $size: an oversized message did not keep its bounded tail ($(tail -n1 "$COMPLETE_LOG" | jq -c '{outcome, n: (.message | length)}'))"
+    grep -Fq 'Final message exceeds 1000 bytes' "$scenario_log" ||
+      fail "codex native park bound $size: no oversize warning"
+  fi
+done
+unset FAKE_GH_NO_MATCH FAKE_NATIVE_OUTCOME RUN_MESSAGE_MAX_BYTES FAKE_CODEX_LAST_MESSAGE_FILE
+echo "scenario codex-native-park-bound: OK"
+
 # Temporary #2845 bridge to #2810's `intent: report`: only a native item
 # whose stored spec opts into `deliverable: report` may settle a report, and
 # its nonblank final message is the deliverable, with no GitHub reference.

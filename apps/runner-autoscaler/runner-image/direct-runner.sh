@@ -1632,8 +1632,10 @@ payload_file="$RUNNER_TEMP/complete-payload.json"
 # still has a real outcome, it just renders without a turn.
 if [ "$(stat -c %s "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || echo 0)" -gt "$RUN_MESSAGE_MAX_BYTES" ]; then
   echo "::warning::Final message exceeds $RUN_MESSAGE_MAX_BYTES bytes; a non-report outcome keeps its tail" >&2
+  AGENT_MESSAGE="$(tail -c "$((RUN_MESSAGE_MAX_BYTES - 16))" "$LAST_MESSAGE_FILE" 2>/dev/null || true)"
+else
+  AGENT_MESSAGE="$(cat "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
 fi
-AGENT_MESSAGE="$(tail -c "$((RUN_MESSAGE_MAX_BYTES - 16))" "${LAST_MESSAGE_FILE:-/dev/null}" 2>/dev/null || true)"
 # The provider's own structured failure events, when it emitted any. These are
 # the only honest provider cause for a round that stopped before its final
 # message (#2537); they are never task or tool output, so quoted text in a
