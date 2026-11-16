@@ -6,9 +6,11 @@ import * as path from 'path';
 
 import { extractLastAssistantText } from './opencode-last-message';
 
-const LIST_LIMIT = 100;
-const SESSION_LIMIT = 20;
-const LIST_MAX_BYTES = 1024 * 1024;
+/** The session list is read whole (no `--max-count`): a count cap silently
+ * dropped this workspace's older sessions once other directories' sessions
+ * filled it. This byte bound only protects the sidecar's memory; one JSON
+ * entry is a few hundred bytes, so it holds tens of thousands of sessions. */
+const LIST_MAX_BYTES = 16 * 1024 * 1024;
 const EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 10_000;
 
@@ -339,8 +341,7 @@ function parseSessionList(
         },
       ];
     })
-    .sort((a, b) => b.updated - a.updated)
-    .slice(0, SESSION_LIMIT);
+    .sort((a, b) => b.updated - a.updated);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -534,15 +535,7 @@ export async function captureOpenCodeExports(
   let listOutput: string;
   try {
     listOutput = await runOpenCode(
-      [
-        '--pure',
-        'session',
-        'list',
-        '--format',
-        'json',
-        '-n',
-        String(LIST_LIMIT),
-      ],
+      ['--pure', 'session', 'list', '--format', 'json'],
       { timeout: commandTimeoutMs, maxBytes: LIST_MAX_BYTES },
     );
   } catch (error) {
@@ -706,9 +699,9 @@ export async function captureOpenCodeExports(
     }
   }
 
-  // The capture directory is task-owned scratch space. Keeping only this
-  // pass's bounded selection prevents a long-lived process from accumulating
-  // more files than SESSION_LIMIT as sessions age out of the CLI list.
+  // The capture directory is task-owned scratch space. Keeping only the
+  // sessions this pass listed removes files for sessions OpenCode no longer
+  // reports, so a long-lived process does not accumulate stale captures.
   try {
     for (const entry of fs.readdirSync(sessionsDir, { withFileTypes: true })) {
       if (
@@ -731,8 +724,6 @@ export async function captureOpenCodeExports(
 }
 
 export const OPENCODE_CAPTURE_LIMITS = {
-  list: LIST_LIMIT,
-  sessions: SESSION_LIMIT,
   listBytes: LIST_MAX_BYTES,
   exportBytes: EXPORT_MAX_BYTES,
   timeoutMs: COMMAND_TIMEOUT_MS,

@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getWatchedRepos } from '../../lib/github-client';
@@ -34,7 +34,7 @@ describe('LedgerTables', () => {
     expect(screen.queryByTestId('session-ledger')).toBeNull();
   });
 
-  it('admits when the issue ledger is windowed instead of looking complete', () => {
+  it('keeps every issue past the top rows one disclosure away', () => {
     renderLedger({
       byIssue: Array.from({ length: 18 }, (_, i) => ({
         issueNumber: i + 1,
@@ -45,7 +45,15 @@ describe('LedgerTables', () => {
       })),
       byWeek: [],
     });
-    expect(screen.getByText('Showing 15 of 18')).toBeTruthy();
+    const remainder = screen.getByTestId('ledger-issue-remainder');
+    expect(remainder.tagName).toBe('DETAILS');
+    expect(remainder).not.toHaveAttribute('open');
+    expect(within(remainder).getByText(/Showing 15 of 18/)).toHaveTextContent(
+      'Showing 15 of 18 · show 3 more issues',
+    );
+    expect(within(remainder).getAllByTestId('ledger-issue-row')).toHaveLength(
+      3,
+    );
   });
 
   it('renders no truncation note while the window still fits', () => {
@@ -55,7 +63,8 @@ describe('LedgerTables', () => {
       ],
       byWeek: [],
     });
-    expect(screen.queryByText(/^Showing \d+ of \d+$/)).toBeNull();
+    expect(screen.queryByTestId('ledger-issue-remainder')).toBeNull();
+    expect(screen.queryByText(/Showing \d+ of \d+/)).toBeNull();
   });
 
   it('labels telemetry-only issue buckets as GitHub links without requiring a task projection, in both tables', () => {
@@ -108,7 +117,7 @@ describe('LedgerTables', () => {
     expect(screen.getAllByText('$2.50')).toHaveLength(2);
   });
 
-  it('caps each table at the top 15 rows in both the full and compact variants', () => {
+  it('shows the top 15 rows and discloses the rest in both the full and compact variants', () => {
     const byIssue = Array.from({ length: 20 }, (_, i) => ({
       issueNumber: i + 1,
       sessions: 1,
@@ -118,8 +127,18 @@ describe('LedgerTables', () => {
     }));
     renderLedger({ byIssue, byWeek: [] });
 
-    expect(screen.getAllByTestId('ledger-issue-row')).toHaveLength(15);
-    expect(screen.getAllByTestId('ledger-issue-row-compact')).toHaveLength(15);
+    const remainder = screen.getByTestId('ledger-issue-remainder');
+    const outside = (testId: string) =>
+      screen.getAllByTestId(testId).filter((row) => !remainder.contains(row));
+    expect(outside('ledger-issue-row')).toHaveLength(15);
+    expect(outside('ledger-issue-row-compact')).toHaveLength(15);
+    expect(within(remainder).getAllByTestId('ledger-issue-row')).toHaveLength(
+      5,
+    );
+    expect(
+      within(remainder).getAllByTestId('ledger-issue-row-compact'),
+    ).toHaveLength(5);
+    expect(screen.getAllByTestId('ledger-issue-row')).toHaveLength(20);
   });
 
   it('labels an estimated cost total beyond its visual tilde and leaves a fully-measured total unmarked', () => {

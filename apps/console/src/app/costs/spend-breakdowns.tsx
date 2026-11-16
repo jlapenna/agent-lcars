@@ -19,29 +19,26 @@ import {
 } from '../../lib/session-spend';
 import { formatCost } from '../format';
 import { OpsPanel } from '../ops-primitives';
+import { RemainderDisclosure } from '../remainder-disclosure';
 
 const money = (value: number | undefined) =>
   value === undefined ? '—' : formatCost(value);
 
-function Breakdown({
+/** Rows each breakdown and the deliverable list show before their
+ * disclosure; every row stays reachable and counted. */
+const TOP_ROWS = 15;
+
+function BreakdownRows({
   title,
   label,
   rows,
 }: {
   title: string;
-  /** The identity column's header: what one row is. */
   label: string;
   rows: SpendBreakdown[];
 }) {
-  const shown = rows.slice(0, 15);
   return (
-    <OpsPanel
-      title={title}
-      count={rows.length}
-      meta="reported · estimated · per merged PR"
-      className="costs-ledger-section"
-      aria-label={title}
-    >
+    <>
       <TableScrollContainer
         minWidth={600}
         visibleFrom="sm"
@@ -60,7 +57,7 @@ function Breakdown({
             </TableTr>
           </TableThead>
           <TableTbody>
-            {shown.map((row) => (
+            {rows.map((row) => (
               <TableTr key={row.key}>
                 <TableTd>
                   <span className="costs-spend-identity">{row.key}</span>
@@ -94,7 +91,7 @@ function Breakdown({
         </Table>
       </TableScrollContainer>
       <div className="costs-ledger-mobile-list" role="list" aria-label={title}>
-        {shown.map((row) => (
+        {rows.map((row) => (
           <article
             key={row.key}
             className="costs-ledger-mobile-row"
@@ -124,12 +121,77 @@ function Breakdown({
           </article>
         ))}
       </div>
-      {rows.length > shown.length && (
-        <Text size="xs" c="dimmed">
-          Showing {shown.length} of {rows.length}; summary includes all groups.
-        </Text>
-      )}
+    </>
+  );
+}
+
+function Breakdown({
+  title,
+  label,
+  rows,
+}: {
+  title: string;
+  /** The identity column's header: what one row is. */
+  label: string;
+  rows: SpendBreakdown[];
+}) {
+  const shown = rows.slice(0, TOP_ROWS);
+  return (
+    <OpsPanel
+      title={title}
+      count={rows.length}
+      meta="reported · estimated · per merged PR"
+      className="costs-ledger-section"
+      aria-label={title}
+    >
+      <BreakdownRows title={title} label={label} rows={shown} />
+      <RemainderDisclosure
+        shown={shown.length}
+        total={rows.length}
+        noun="groups"
+        data-testid="spend-breakdown-remainder"
+      >
+        <BreakdownRows
+          title={`${title} (remaining)`}
+          label={label}
+          rows={rows.slice(TOP_ROWS)}
+        />
+      </RemainderDisclosure>
     </OpsPanel>
+  );
+}
+
+function DeliverableRows({
+  label,
+  rows,
+}: {
+  label: string;
+  rows: SessionSpend['deliverables'];
+}) {
+  return (
+    <div role="list" aria-label={label}>
+      {rows.map((row) => (
+        <div key={row.key} role="listitem" className="costs-spend-deliverable">
+          <Anchor
+            href={row.url}
+            target="_blank"
+            rel="noreferrer"
+            className="costs-spend-identity"
+          >
+            GitHub {row.key}
+          </Anchor>
+          <Text size="sm">
+            {row.status} · {row.sessions} sessions · reported{' '}
+            {money(row.reportedCostUsd)} · estimated{' '}
+            {money(row.estimatedCostUsd)} ·{' '}
+            {row.unpricedShares.toLocaleString('en-US', {
+              maximumFractionDigits: 2,
+            })}{' '}
+            unpriced session shares
+          </Text>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -211,39 +273,21 @@ export function SpendBreakdowns({
           {money(spend.withoutPR.costUsd)} known spend,{' '}
           {spend.withoutPR.unpricedSessions} unpriced.
         </Text>
-        <div role="list" aria-label="Costs by deliverable">
-          {spend.deliverables.slice(0, 15).map((row) => (
-            <div
-              key={row.key}
-              role="listitem"
-              className="costs-spend-deliverable"
-            >
-              <Anchor
-                href={row.url}
-                target="_blank"
-                rel="noreferrer"
-                className="costs-spend-identity"
-              >
-                GitHub {row.key}
-              </Anchor>
-              <Text size="sm">
-                {row.status} · {row.sessions} sessions · reported{' '}
-                {money(row.reportedCostUsd)} · estimated{' '}
-                {money(row.estimatedCostUsd)} ·{' '}
-                {row.unpricedShares.toLocaleString('en-US', {
-                  maximumFractionDigits: 2,
-                })}{' '}
-                unpriced session shares
-              </Text>
-            </div>
-          ))}
-        </div>
-        {spend.deliverables.length > 15 && (
-          <Text size="xs" c="dimmed">
-            Showing 15 of {spend.deliverables.length}; summary includes all
-            deliverables.
-          </Text>
-        )}
+        <DeliverableRows
+          label="Costs by deliverable"
+          rows={spend.deliverables.slice(0, TOP_ROWS)}
+        />
+        <RemainderDisclosure
+          shown={Math.min(TOP_ROWS, spend.deliverables.length)}
+          total={spend.deliverables.length}
+          noun="deliverables"
+          data-testid="deliverable-remainder"
+        >
+          <DeliverableRows
+            label="Costs by deliverable (remaining)"
+            rows={spend.deliverables.slice(TOP_ROWS)}
+          />
+        </RemainderDisclosure>
       </OpsPanel>
     </Stack>
   );

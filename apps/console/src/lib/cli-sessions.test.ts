@@ -2,11 +2,10 @@ import type { CliSessionDoc } from '@agent-lcars/telemetry';
 import { listSessionDocs } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
-import {
-  getCliSessions,
-  MAX_SESSIONS,
-  OWNER_WINDOW_HOURS,
-} from './cli-sessions';
+import { getCliSessions, OWNER_WINDOW_HOURS } from './cli-sessions';
+
+/** The former render cap; tests read past it to prove nothing is dropped. */
+const FORMER_CAP = 20;
 
 const MAX_LIST_LIMIT = 200;
 
@@ -63,12 +62,12 @@ describe('getCliSessions', () => {
 
   it('reads uncapped CLI activity for fleet totals and discloses a full page', async () => {
     (listSessionDocs as Mock).mockResolvedValue(
-      Array.from({ length: MAX_SESSIONS + 9 }, (_, index) =>
+      Array.from({ length: FORMER_CAP + 9 }, (_, index) =>
         makeCliDoc({ sessionId: `s-${index}` }),
       ),
     );
     const result = await getCliSessions({ exhaustive: true });
-    expect(result.sessions).toHaveLength(MAX_SESSIONS + 9);
+    expect(result.sessions).toHaveLength(FORMER_CAP + 9);
     expect(result.warnings).toEqual([]);
     expect(listSessionDocs).toHaveBeenCalledWith(undefined, {
       source: 'cli',
@@ -197,9 +196,9 @@ describe('getCliSessions', () => {
     expect(byId.get('frozen')).toBe('ended');
   });
 
-  it('caps the list while keeping active sessions ahead of ended ones', async () => {
+  it('keeps every CLI session in the window and discloses a full store page', async () => {
     const docs = [
-      ...Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
+      ...Array.from({ length: FORMER_CAP + 5 }, (_, index) =>
         makeCliDoc({
           sessionId: `ended-${index}`,
           liveness: 'ended',
@@ -210,24 +209,39 @@ describe('getCliSessions', () => {
     ];
     (listSessionDocs as Mock).mockResolvedValue(docs);
 
-    const { sessions } = await getCliSessions();
+    const { sessions, warnings } = await getCliSessions();
 
-    expect(sessions).toHaveLength(MAX_SESSIONS);
-    expect(sessions.map((session) => session.sessionId)).toContain('live-tail');
+    expect(sessions).toHaveLength(FORMER_CAP + 6);
+    expect(sessions[0]?.sessionId).toBe('live-tail');
+    expect(warnings).toEqual([]);
+    expect(listSessionDocs).toHaveBeenCalledWith(undefined, {
+      source: 'cli',
+      limit: MAX_LIST_LIMIT,
+      activeSince: expect.any(String),
+    });
+
+    (listSessionDocs as Mock).mockResolvedValue(
+      Array.from({ length: MAX_LIST_LIMIT }, (_, index) =>
+        makeCliDoc({ sessionId: `s-${index}` }),
+      ),
+    );
+    expect((await getCliSessions()).warnings).toEqual([
+      `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
+    ]);
   });
 
   const REPO = { owner: 'jlapenna', name: 'agent-lcars' };
 
   it("reads one repository's CLI docs over the wider window, uncapped, complete under the limit", async () => {
     (listSessionDocs as Mock).mockResolvedValue(
-      Array.from({ length: MAX_SESSIONS + 5 }, (_, index) =>
+      Array.from({ length: FORMER_CAP + 5 }, (_, index) =>
         makeCliDoc({ sessionId: `live-${index}`, repo: REPO }),
       ),
     );
 
     const { sessions, warnings } = await getCliSessions({ repo: REPO });
 
-    expect(sessions).toHaveLength(MAX_SESSIONS + 5);
+    expect(sessions).toHaveLength(FORMER_CAP + 5);
     expect(warnings).toEqual([]);
     // A canonical lowercase spelling needs exactly one query.
     expect(listSessionDocs).toHaveBeenCalledTimes(1);

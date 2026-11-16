@@ -6,6 +6,7 @@ import {
   duplicateLiveGroups,
   fleetFromAutoscalerStatuses,
   getAgentActivity,
+  getRecentOutcomesPage,
   queueFromLiveRuns,
 } from './agent-activity';
 import { getAutoscalerStatuses } from './autoscaler-status';
@@ -324,7 +325,7 @@ describe('getAgentActivity', () => {
     });
     expect(activity.queue).toEqual({ queued: 0, claimed: 0, running: 1 });
     expect(store.listLiveRuns).toHaveBeenCalledTimes(1);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100, undefined);
     expect(store.readTask).toHaveBeenCalledTimes(2);
   });
 
@@ -360,7 +361,7 @@ describe('getAgentActivity', () => {
     expect(activity.recentRuns.map((entry) => entry.id)).toEqual([
       finished.runId,
     ]);
-    expect(store.listRecentRuns).toHaveBeenCalledWith(100);
+    expect(store.listRecentRuns).toHaveBeenCalledWith(100, undefined);
     expect(store.readTask).toHaveBeenCalledTimes(1);
     expect(store).not.toHaveProperty('listTasks');
     expect(store).not.toHaveProperty('listRuns');
@@ -610,7 +611,38 @@ describe('getAgentActivity run history', () => {
     ]);
   });
 
-  it('withholds the history when the bounded read stops short of 30 minutes', async () => {
+  it('pages the feed back past 30 minutes when more than one page ran since', async () => {
+    const finished = (issue: number, minutes: number) =>
+      run({
+        runId: `octo/example#${issue}/r1`,
+        task: { repo: 'octo/example', issue },
+        state: 'finished',
+        result: { ok: true },
+        updatedAt: minutesAgo(minutes),
+      });
+    const firstPage = Array.from({ length: 100 }, (_, i) => finished(i + 1, 5));
+    const secondPage = [finished(101, 20), finished(102, 45)];
+    store.listRecentRuns.mockImplementation(
+      async (_limit: number, before?: { runId: string }) =>
+        before === undefined ? firstPage : secondPage,
+    );
+    store.readTask.mockImplementation(async (task: Task['task']) => ({
+      task: githubTask('issue' in task ? task.issue : 1),
+      revision: 1,
+    }));
+
+    const history = (await getAgentActivity()).runHistory;
+
+    expect(store.listRecentRuns).toHaveBeenNthCalledWith(2, 100, {
+      updatedAt: minutesAgo(5),
+      runId: 'octo/example#100/r1',
+    });
+    // Every run updated inside the window, across both pages; not the
+    // run from before it.
+    expect(history).toHaveLength(101);
+  });
+
+  it('withholds the history when the feed stops advancing short of 30 minutes', async () => {
     store.listRecentRuns.mockResolvedValue(
       Array.from({ length: 100 }, (_, i) =>
         run({
@@ -682,5 +714,61 @@ describe('getAgentActivity run history', () => {
 
     expect(activity.runHistory).toBeUndefined();
     expect(activity.warnings).toEqual([]);
+  });
+});
+
+describe('getRecentOutcomesPage', () => {
+  it('projects the terminal runs after a cursor and continues from the last run read', async () => {
+    const before = { updatedAt: T0, runId: 'octo/example#1/r1' };
+    const page = [
+      run({
+        runId: 'octo/example#2/r1',
+        task: { repo: 'octo/example', issue: 2 },
+        state: 'finished',
+        result: { ok: true },
+      }),
+      run({
+        runId: 'octo/example#3/r1',
+        task: { repo: 'octo/example', issue: 3 },
+        state: 'running',
+      }),
+      run({
+        runId: 'octo/example#4/r1',
+        task: { repo: 'octo/example', issue: 4 },
+        state: 'finished',
+        result: { ok: false, summary: 'agent-failed' },
+      }),
+    ];
+    store.listRecentRuns.mockResolvedValue(page);
+    store.readTask.mockImplementation(async (task: Task['task']) => ({
+      task: githubTask('issue' in task ? task.issue : 1),
+      revision: 1,
+    }));
+
+    const result = await getRecentOutcomesPage(before, 3);
+
+    expect(store.listRecentRuns).toHaveBeenCalledWith(3, before);
+    expect(result.runs.map((outcome) => outcome.id)).toEqual([
+      'octo/example#2/r1',
+      'octo/example#4/r1',
+    ]);
+    expect(result.nextCursor).toEqual({
+      updatedAt: T0,
+      runId: 'octo/example#4/r1',
+    });
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('ends the history at a short page and reports a failed read', async () => {
+    store.listRecentRuns.mockResolvedValue([]);
+    expect(await getRecentOutcomesPage({ updatedAt: T0, runId: 'x' })).toEqual({
+      runs: [],
+      warnings: [],
+    });
+    store.listRecentRuns.mockRejectedValue(new Error('unavailable'));
+    expect(await getRecentOutcomesPage({ updatedAt: T0, runId: 'x' })).toEqual({
+      runs: [],
+      warnings: ['Older run outcomes unavailable.'],
+    });
   });
 });

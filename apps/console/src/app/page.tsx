@@ -70,6 +70,7 @@ import {
   sessionKey,
 } from './bridge-selection';
 import { DataWarnings } from './console-header';
+import { repoScopedConsoleHrefs } from './console-hrefs';
 import { ConsoleReadouts } from './console-readouts';
 import {
   ConsoleToolbar,
@@ -131,6 +132,8 @@ async function getParkedWork(
 ): Promise<{
   items: WorkSummary[];
   eventItems: WorkSummary[];
+  /** Tasks read to find `eventItems`, and whether older ones exist. */
+  eventWindow?: { size: number; windowed: boolean };
   hasMoreTasks: boolean;
   nextCursor?: TaskListCursor;
   error?: string;
@@ -155,8 +158,7 @@ async function getParkedWork(
           (!repo || workRepository(item.spec) === repo) &&
           matchesWorkView(item, parseWorkViewFilters(view), Date.now()),
       )
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, 10);
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const items = await excludeClosedGithubAnchors(
       work.runtime.store,
       page.items.filter(
@@ -168,6 +170,10 @@ async function getParkedWork(
     return {
       items,
       eventItems,
+      eventWindow: {
+        size: recent.items.length,
+        windowed: recent.nextCursor !== undefined,
+      },
       hasMoreTasks: page.nextCursor !== undefined,
       nextCursor: page.nextCursor,
     };
@@ -237,6 +243,7 @@ async function IndexBody({
     {
       items: parkedWorkItems,
       eventItems,
+      eventWindow,
       hasMoreTasks: hasMoreParkedTasks,
       nextCursor: stoppedNextCursor,
       error: stoppedError,
@@ -525,6 +532,8 @@ async function IndexBody({
             />
             <EventWorkActivity
               items={eventItems}
+              windowSize={eventWindow?.size}
+              windowed={eventWindow?.windowed}
               error={stoppedError}
               repo={repoFilterKey}
               view={view}
@@ -560,6 +569,9 @@ async function IndexBody({
           <div className="bridge-stack">
             <DecisionInboxPanel
               rows={decisionRows(decisionCards, repoFilterKey)}
+              inboxHref={
+                repoScopedConsoleHrefs(repoFilterKey)?.inbox ?? '/inbox'
+              }
             />
             <RunnerFleetPanel
               lanes={autoscaler.lanes}

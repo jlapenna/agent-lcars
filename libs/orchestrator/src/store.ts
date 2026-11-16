@@ -253,7 +253,8 @@ export interface OrchestratorStore {
     limit: number;
     cursor?: string;
   }): Promise<{ issues: TrackerIssueProjection[]; nextCursor?: string }>;
-  /** Bounded, read-only durable feeds; any overflow marks the snapshot incomplete. */
+  /** Read-only durable feeds, each read to exhaustion (paged at the
+   *  datastore), so the snapshot is complete. */
   readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords>;
@@ -485,9 +486,9 @@ export interface OrchestratorStore {
     limit: number;
   }): Promise<Run[]>;
 
-  /** Read-only consistent snapshot of durable provider admission. Each live
-   * state is bounded at QUEUE_ADMISSION_READ_LIMIT; overflow or invalid data
-   * rejects instead of implying an empty/partial queue. */
+  /** Read-only consistent snapshot of durable provider admission. Every live
+   * run is read (paged at the datastore); invalid data rejects instead of
+   * implying an empty or partial queue. */
   readQueueAdmissionStatus(input: {
     pipelines: readonly string[];
     now: string;
@@ -497,8 +498,10 @@ export interface OrchestratorStore {
    * The most recently updated runs across every anchor, newest first and
    * bounded at the datastore. This is the console activity feed: unlike
    * `listRuns`, it never requires scanning tasks or repositories first.
+   * `before` names the final run of a prior page (newest-first by
+   * `updatedAt`, ties by run id), so a reader can page back through history.
    */
-  listRecentRuns(limit: number): Promise<Run[]>;
+  listRecentRuns(limit: number, before?: RunListCursor): Promise<Run[]>;
 
   /** Writes `run.queue = { state: 'queued' }` on a QueueExecutor run the
    *  drain is handling. Idempotent: a run already `queued`
@@ -559,6 +562,12 @@ export interface RequestBinding {
   readonly canonicalRequestId: string;
 }
 
+/** Cursor for the global recent-run feed: the final run of a prior page. */
+export interface RunListCursor {
+  readonly updatedAt: string;
+  readonly runId: string;
+}
+
 /** Opaque-at-the-API-boundary cursor for the all-anchor task feed. */
 export interface TaskListCursor {
   readonly updatedAt: string;
@@ -583,9 +592,6 @@ export interface RequestTransactionState {
   readonly previousRun: Run | undefined;
   readonly previousSourceRevision?: WorkRevision;
 }
-
-/** Fail closed rather than omit an owner from label routing. */
-export const PROVIDER_ROUTING_CLAIM_READ_LIMIT = 1000;
 
 /** Thrown by `apply` when the compare-and-set loses. Callers retry by
  *  re-reading and re-deciding; they never force the write. */

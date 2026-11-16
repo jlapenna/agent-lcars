@@ -53,6 +53,36 @@ describe('strict persisted Task/Run/Outbox schemas', () => {
   });
 });
 
+describe('MemoryStore exhaustive reads', () => {
+  it('computes lifecycle metrics and queue admission from more than 1,000 runs', async () => {
+    const now = '2026-08-15T12:00:00.000Z';
+    const store = new MemoryStore();
+    const orchestrator = new Orchestrator(store, { now: () => now });
+    for (let issue = 1; issue <= 1001; issue++) {
+      const result = await orchestrator.request({
+        taskId: { repo: 'octo/example', issue },
+        requestId: `many-${issue}`,
+        pipeline: 'claude',
+        work: { spec: { title: 'exhaustive read regression' } },
+      });
+      if (isRefusal(result)) throw new Error('unexpected refusal');
+      await store.enqueueRun({ runId: decidedRun(result).runId, now });
+    }
+    const records = await store.readLifecycleMetricRecords({
+      since: now,
+      until: now,
+    });
+    expect(records.complete).toBe(true);
+    expect(records.recentRuns).toHaveLength(1001);
+    expect(records.liveRuns).toHaveLength(1001);
+    expect(records.outstandingOutbox).toHaveLength(1001);
+    expect(
+      (await store.readQueueAdmissionStatus({ pipelines: ['claude'], now }))
+        .providers[0],
+    ).toMatchObject({ queued: 1001 });
+  });
+});
+
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 
 if (
@@ -128,7 +158,7 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
     }
   });
 
-  it('rejects malformed cooldowns and over-bound admission reads instead of presenting partial zeros', async () => {
+  it('rejects malformed cooldowns and counts every live run across read pages', async () => {
     const prefix = `admission-bounds-${Date.now()}-`;
     const firestore = new Firestore({
       projectId: 'demo-orchestrator',
@@ -168,6 +198,7 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
       'Invalid provider cooldown',
     );
     await cooldown.delete();
+    // 1,000 queued copies plus the original: more than one default read page.
     for (let batchIndex = 0; batchIndex < 2; batchIndex++) {
       const batch = firestore.batch();
       for (let index = 0; index < 500; index++) {
@@ -175,13 +206,41 @@ describe.skipIf(emulatorHost === undefined)('FirestoreStore (emulator)', () => {
         batch.set(firestore.collection(`${prefix}runs`).doc(id), {
           ...run,
           runId: id,
+          queue: { state: 'queued' },
         });
       }
       await batch.commit();
     }
-    await expect(store.readQueueAdmissionStatus(input)).rejects.toThrow(
-      'exceeds read bound',
-    );
+    expect(
+      (await store.readQueueAdmissionStatus(input)).providers[0],
+    ).toMatchObject({ queued: 1000 });
+    const records = await store.readLifecycleMetricRecords({
+      since: now,
+      until: now,
+    });
+    expect(records).toMatchObject({ complete: true });
+    expect(records.recentRuns).toHaveLength(1001);
+    expect(records.liveRuns).toHaveLength(1001);
+    // A small page size walks the same reads across many cursor pages.
+    const paged = new FirestoreStore({
+      projectId: 'demo-orchestrator',
+      databaseId: '(default)',
+      collectionPrefix: prefix,
+      emulatorHost: emulatorHost ?? 'localhost:8080',
+      readPageSize: 7,
+    });
+    expect(
+      (await paged.readQueueAdmissionStatus(input)).providers[0],
+    ).toMatchObject({ queued: 1000 });
+    const pagedRecords = await paged.readLifecycleMetricRecords({
+      since: now,
+      until: now,
+    });
+    expect(pagedRecords.recentRuns).toHaveLength(1001);
+    expect(pagedRecords.liveRuns).toHaveLength(1001);
+    expect(
+      new Set(pagedRecords.recentRuns.map((record) => record.runId)).size,
+    ).toBe(1001);
     await firestore.terminate();
   });
 

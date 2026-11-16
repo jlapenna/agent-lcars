@@ -22,6 +22,7 @@ import type {
 import { RepoBadge } from '../agent-activity-panel';
 import { formatCost } from '../format';
 import { OpsPanel } from '../ops-primitives';
+import { RemainderDisclosure } from '../remainder-disclosure';
 
 /** Cost cell contents for a ledger row - `~$1.23` when the total includes
  * at least one published-rate estimate (see LedgerTotals.costEstimated's
@@ -51,22 +52,10 @@ function CostCell({ row }: { row: LedgerTotals }) {
 }
 
 /** Each ledger is already fully sorted (cost desc, then tokens desc) by
- * aggregateSessionLedger - this just windows the display, since a busy
- * multi-week archive can have far more distinct issues/weeks than are
- * useful to show at once. */
+ * aggregateSessionLedger. A busy multi-week archive can have far more
+ * distinct issues/weeks than are useful to scan at once, so each panel
+ * shows the top rows and keeps the rest one disclosure away. */
 const MAX_LEDGER_ROWS = 15;
-
-/** Truthful footer for a windowed ledger - a capped list that looks
- * complete reads as "covered everything" when it is not. Renders nothing
- * while the window still fits. */
-function TruncationNote({ shown, total }: { shown: number; total: number }) {
-  if (total <= shown) return null;
-  return (
-    <Text size="xs" c="dimmed" mt={4}>
-      Showing {shown} of {total}
-    </Text>
-  );
-}
 
 /** React key for an issue-ledger row - the bare issue number collides once
  * two watched repos can each have their own #42 (same class of bug Codex
@@ -297,7 +286,9 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
   }
 
   const byIssue = ledger.byIssue.slice(0, MAX_LEDGER_ROWS);
+  const moreIssues = ledger.byIssue.slice(MAX_LEDGER_ROWS);
   const byWeek = ledger.byWeek.slice(0, MAX_LEDGER_ROWS);
+  const moreWeeks = ledger.byWeek.slice(MAX_LEDGER_ROWS);
 
   return (
     <Stack gap={0} data-testid="session-ledger">
@@ -311,10 +302,15 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
         >
           <IssueLedgerTable rows={byIssue} />
           <IssueLedgerTableCompact rows={byIssue} />
-          <TruncationNote
+          <RemainderDisclosure
             shown={byIssue.length}
             total={ledger.byIssue.length}
-          />
+            noun="issues"
+            data-testid="ledger-issue-remainder"
+          >
+            <IssueLedgerTable rows={moreIssues} />
+            <IssueLedgerTableCompact rows={moreIssues} />
+          </RemainderDisclosure>
         </OpsPanel>
         <OpsPanel
           title="By week"
@@ -325,7 +321,15 @@ export function LedgerTables({ ledger }: { ledger: SessionLedger }) {
         >
           <WeekLedgerTable rows={byWeek} />
           <WeekLedgerTableCompact rows={byWeek} />
-          <TruncationNote shown={byWeek.length} total={ledger.byWeek.length} />
+          <RemainderDisclosure
+            shown={byWeek.length}
+            total={ledger.byWeek.length}
+            noun="weeks"
+            data-testid="ledger-week-remainder"
+          >
+            <WeekLedgerTable rows={moreWeeks} />
+            <WeekLedgerTableCompact rows={moreWeeks} />
+          </RemainderDisclosure>
         </OpsPanel>
       </div>
       <Text size="xs" c="dimmed" className="costs-ledger-note">

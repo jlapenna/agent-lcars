@@ -321,6 +321,31 @@ test.describe('populated dashboard', () => {
     ).toBeVisible();
   });
 
+  test('pages the Agents outcome history behind the newest outcomes', async ({
+    page,
+  }) => {
+    // A cursor after every seeded run reads the whole fixture feed as one
+    // older page, through the store's real cursor query.
+    const cursor = Buffer.from(
+      JSON.stringify(['9999-12-31T23:59:59.999Z', 'zzzz']),
+    ).toString('base64url');
+    await page.goto(`/agents?outcomes=${cursor}`);
+
+    const outcomes = page
+      .getByRole('region', { name: 'Agent operations' })
+      .getByTestId('recent-outcomes');
+    await expect(outcomes).toContainText('Earlier completions');
+    expect(
+      await outcomes.getByTestId('finished-run-row').count(),
+    ).toBeGreaterThan(0);
+    const newest = outcomes.getByRole('link', { name: '← Newest outcomes' });
+    await expect(newest).toHaveAttribute('href', '/agents');
+    // The fixture feed fits one page, so the history ends here.
+    await expect(
+      outcomes.getByRole('link', { name: 'Older outcomes →' }),
+    ).toHaveCount(0);
+  });
+
   test('the primary Open task action opens the selected run in the desktop Bridge pane', async ({
     page,
   }) => {

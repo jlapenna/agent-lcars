@@ -3,7 +3,12 @@ import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentRun } from '../lib/agent-activity';
-import { ActiveDispatchesPanel, RecentCompletionsPanel } from './ops-panels';
+import {
+  ActiveDispatchesPanel,
+  DecisionInboxPanel,
+  type DecisionRow,
+  RecentCompletionsPanel,
+} from './ops-panels';
 
 const now = Date.parse('2026-10-14T08:00:00Z');
 
@@ -77,5 +82,41 @@ describe('RecentCompletionsPanel', () => {
     expect(screen.getByTestId('latest-outcomes')).toHaveTextContent(
       '0 succeeded · last 0',
     );
+  });
+});
+
+describe('DecisionInboxPanel', () => {
+  const decision = (index: number): DecisionRow => ({
+    key: `d${index}`,
+    reason: 'Needs input',
+    title: `Decision ${index}`,
+    ref: `#${index}`,
+    refHref: `/work/${index}`,
+    waitingSince: '2026-10-14T07:00:00Z',
+    respondHref: `/inbox?select=${index}`,
+  });
+
+  it('lists the first rows and links to every waiting decision in the Inbox', () => {
+    render(
+      <MantineProvider>
+        <DecisionInboxPanel
+          rows={Array.from({ length: 8 }, (_, i) => decision(i + 1))}
+          inboxHref="/inbox?repo=octo%2Fexample"
+        />
+      </MantineProvider>,
+    );
+    expect(screen.getAllByTestId('decision-row')).toHaveLength(5);
+    const more = screen.getByTestId('decision-inbox-more');
+    expect(more).toHaveTextContent('Showing 5 of 8 · view all in Inbox →');
+    expect(more).toHaveAttribute('href', '/inbox?repo=octo%2Fexample');
+  });
+
+  it('omits the Inbox link while every decision is listed', () => {
+    render(
+      <MantineProvider>
+        <DecisionInboxPanel rows={[decision(1)]} />
+      </MantineProvider>,
+    );
+    expect(screen.queryByTestId('decision-inbox-more')).toBeNull();
   });
 });

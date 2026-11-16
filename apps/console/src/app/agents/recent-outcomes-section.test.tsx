@@ -30,6 +30,47 @@ function makeAgentRun(overrides: Partial<AgentRun> = {}): AgentRun {
 }
 
 describe('RecentOutcomesSection', () => {
+  it('links to the older outcome history from the newest outcomes', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={[makeAgentRun()]}
+          olderHref="/agents?outcomes=abc"
+        />
+      </MantineProvider>,
+    );
+    const pager = screen.getByTestId('outcome-history-pager');
+    expect(
+      within(pager).getByRole('link', { name: 'Older outcomes →' }),
+    ).toHaveAttribute('href', '/agents?outcomes=abc');
+    expect(
+      within(pager).queryByRole('link', { name: '← Newest outcomes' }),
+    ).toBeNull();
+  });
+
+  it('keeps an empty history page navigable', () => {
+    render(
+      <MantineProvider>
+        <RecentOutcomesSection
+          recentRuns={[]}
+          newestHref="/agents"
+          olderHref="/agents?outcomes=def"
+        />
+      </MantineProvider>,
+    );
+    const panel = screen.getByTestId('recent-outcomes');
+    expect(panel).toHaveTextContent('Earlier completions');
+    expect(panel).toHaveTextContent(
+      'No matching outcomes on this page of the history.',
+    );
+    expect(
+      within(panel).getByRole('link', { name: '← Newest outcomes' }),
+    ).toHaveAttribute('href', '/agents');
+    expect(
+      within(panel).getByRole('link', { name: 'Older outcomes →' }),
+    ).toHaveAttribute('href', '/agents?outcomes=def');
+  });
+
   it('omits itself when there are no recent runs', () => {
     render(
       <MantineProvider>

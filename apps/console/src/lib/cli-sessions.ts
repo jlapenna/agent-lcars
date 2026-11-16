@@ -26,12 +26,6 @@ const ACTIVE_WINDOW_HOURS = 24;
  * `exhaustive`). Exported so its contract can name the bound. */
 export const OWNER_WINDOW_HOURS = 72;
 
-/** Hard cap on rendered sessions even within the window - a busy fleet day
- * produces 40+ session docs in 24h, and rows past this many are archive
- * material, not activity. Active (live/idle) sessions are kept first.
- * Exported so the panel can say the list is capped when it fills. */
-export const MAX_SESSIONS = 20;
-
 export interface JoinedPr {
   number: number;
   url: string;
@@ -75,10 +69,6 @@ function repoSpellings(repo: SessionRepository): SessionRepository[] {
   return lower.owner === repo.owner && lower.name === repo.name
     ? [repo]
     : [repo, lower];
-}
-
-function isActive(liveness: SessionLiveness): boolean {
-  return liveness === 'live' || liveness === 'idle';
 }
 
 function toCliSession(doc: CliSessionDoc, now: string): CliSession {
@@ -143,9 +133,9 @@ export interface CliSessionsResult {
  * A store-level failure (e.g. no telemetry infra reachable) degrades to an
  * empty list rather than crashing the dashboard.
  *
- * `exhaustive` is for fleet readouts: use the wider owner window and the
- * store maximum, restrict the query to CLI docs, and skip the render cap. A
- * full store page is disclosed as incomplete, never reported as an exact count.
+ * Every read is restricted to CLI docs at the store maximum, and a full store
+ * page is disclosed as incomplete, never reported as an exact count.
+ * `exhaustive` is for fleet readouts: it uses the wider owner window.
  *
  * `repo` is for the anchor-owner query (`anchor-owner.ts`), where a session
  * missing from the list reads as "nobody is working this". It reads only
@@ -182,13 +172,14 @@ export async function getCliSessions({
     const firestore = await getAgentTelemetryReaderFirestore();
     let recentDocs: SessionDoc[];
     if (repo === undefined) {
+      // CLI docs only, at the store maximum: a smaller all-source page let
+      // runner sessions crowd CLI sessions out of the window.
       recentDocs = await listSessionDocs(firestore, {
         activeSince,
-        ...(exhaustive
-          ? { source: 'cli' as const, limit: MAX_LIST_LIMIT }
-          : {}),
+        source: 'cli',
+        limit: MAX_LIST_LIMIT,
       });
-      if (exhaustive && recentDocs.length >= MAX_LIST_LIMIT) {
+      if (recentDocs.length >= MAX_LIST_LIMIT) {
         warnings.push(
           `CLI session listing hit the ${MAX_LIST_LIMIT}-session page limit and may be incomplete.`,
         );
@@ -228,17 +219,8 @@ export async function getCliSessions({
   }
 
   const nowIso = now.toISOString();
-  const sessionsByDoc = docs.map(
-    (doc) => [doc, toCliSession(doc, nowIso)] as const,
-  );
-  // Keep active sessions ahead of the cap; listSessionDocs already returns
-  // newest-activity first within each group.
-  const capped = [
-    ...sessionsByDoc.filter(([, session]) => isActive(session.liveness)),
-    ...sessionsByDoc.filter(([, session]) => !isActive(session.liveness)),
-  ].slice(0, repo === undefined && !exhaustive ? MAX_SESSIONS : undefined);
-
-  const sessions = capped.map(([doc, session]) => {
+  const sessions = docs.map((doc) => {
+    const session = toCliSession(doc, nowIso);
     const pr = prFromDeliverables(doc);
     return { ...session, ...(pr === undefined ? {} : { pr }) };
   });

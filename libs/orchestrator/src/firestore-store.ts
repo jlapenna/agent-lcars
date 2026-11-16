@@ -10,6 +10,9 @@ import {
   FieldPath,
   FieldValue,
   Firestore,
+  type Query,
+  type QueryDocumentSnapshot,
+  type QuerySnapshot,
   type Transaction,
 } from '@google-cloud/firestore';
 import { z } from 'zod';
@@ -60,18 +63,17 @@ import {
   parseProviderCooldown,
   projectQueueAdmissionStatus,
   type ProviderCredentialWindow,
-  QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
-  PROVIDER_ROUTING_CLAIM_READ_LIMIT,
   queuePriorityCursorSchema,
   queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
+  type RunListCursor,
   type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
@@ -82,6 +84,30 @@ import {
 /** Live states, derived from the schema rather than re-listed by hand so it
  *  can never drift from `model.ts`'s own notion of "live". */
 const LIVE_STATES = runStateSchema.options.filter(isLive);
+
+/** Documents per query page for reads that must see every match (metrics,
+ * admission status, physical-claim inventory). It bounds one round trip, not
+ * the result: `readAllPages` follows the cursor until the query is exhausted. */
+export const FIRESTORE_READ_PAGE_SIZE = 1000;
+
+/** Every document `query` matches, read `pageSize` at a time. `get` runs each
+ * page, so a transaction can read all pages under its own snapshot. */
+async function readAllPages(
+  query: Query,
+  pageSize: number,
+  get: (page: Query) => Promise<QuerySnapshot> = (page) => page.get(),
+): Promise<QueryDocumentSnapshot[]> {
+  const docs: QueryDocumentSnapshot[] = [];
+  let last: QueryDocumentSnapshot | undefined;
+  for (;;) {
+    const page = await get(
+      (last === undefined ? query : query.startAfter(last)).limit(pageSize),
+    );
+    docs.push(...page.docs);
+    last = page.docs.at(-1);
+    if (page.size < pageSize || last === undefined) return docs;
+  }
+}
 
 const taskDocSchema = taskDocumentSchema;
 const requestBindingSchema = z.strictObject({
@@ -99,6 +125,9 @@ export interface FirestoreStoreOptions {
   readonly collectionPrefix?: string;
   /** Set to talk to a local Firestore emulator instead of the real service. */
   readonly emulatorHost?: string;
+  /** Page size for exhaustive reads; defaults to
+   *  {@link FIRESTORE_READ_PAGE_SIZE}. Tests lower it to exercise paging. */
+  readonly readPageSize?: number;
 }
 
 /**
@@ -124,8 +153,12 @@ export class FirestoreStore implements OrchestratorStore {
   readonly #providerCooldowns: CollectionReference;
   readonly #credentialWindows: CollectionReference;
   readonly #priorityPositions: CollectionReference;
+  readonly #readPageSize: number;
 
   constructor(options: FirestoreStoreOptions) {
+    this.#readPageSize = options.readPageSize ?? FIRESTORE_READ_PAGE_SIZE;
+    if (!Number.isInteger(this.#readPageSize) || this.#readPageSize < 1)
+      throw new Error('readPageSize must be a positive integer');
     const prefix = options.collectionPrefix ?? 'orchestrator-';
     const firestoreOptions = {
       projectId: options.projectId,
@@ -174,35 +207,32 @@ export class FirestoreStore implements OrchestratorStore {
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords> {
     validateLifecycleMetricRead(input);
-    // Automatic single-field indexes only: no infra change or full-table read.
+    // Automatic single-field indexes only: no infra change or full-table
+    // read. Each feed is read to exhaustion so no metric is computed from a
+    // truncated window.
     const [recent, live, outbox] = await Promise.all([
-      this.#runs
-        .where('updatedAt', '>=', input.since)
-        .where('updatedAt', '<=', input.until)
-        .limit(input.limit + 1)
-        .get(),
-      this.#runs
-        .where('state', 'in', LIVE_STATES)
-        .limit(input.limit + 1)
-        .get(),
-      this.#outbox
-        .where('state', 'in', ['pending', 'leased', 'failed'])
-        .limit(input.limit + 1)
-        .get(),
+      readAllPages(
+        this.#runs
+          .where('updatedAt', '>=', input.since)
+          .where('updatedAt', '<=', input.until),
+        this.#readPageSize,
+      ),
+      readAllPages(
+        this.#runs.where('state', 'in', LIVE_STATES),
+        this.#readPageSize,
+      ),
+      readAllPages(
+        this.#outbox.where('state', 'in', ['pending', 'leased', 'failed']),
+        this.#readPageSize,
+      ),
     ]);
     return {
-      recentRuns: recent.docs
-        .slice(0, input.limit)
-        .map((doc) => runSchema.parse(doc.data())),
-      liveRuns: live.docs
-        .slice(0, input.limit)
-        .map((doc) => runSchema.parse(doc.data())),
-      outstandingOutbox: outbox.docs
-        .slice(0, input.limit)
-        .map((doc) => outboxEntrySchema.parse(doc.data())),
-      complete: [recent, live, outbox].every(
-        (feed) => feed.size <= input.limit,
+      recentRuns: recent.map((doc) => runSchema.parse(doc.data())),
+      liveRuns: live.map((doc) => runSchema.parse(doc.data())),
+      outstandingOutbox: outbox.map((doc) =>
+        outboxEntrySchema.parse(doc.data()),
       ),
+      complete: true,
     };
   }
 
@@ -347,10 +377,14 @@ export class FirestoreStore implements OrchestratorStore {
               tx.get(
                 this.#runRef(`${taskKey(input.taskId)}/r${task.task.runCount}`),
               ),
-              tx.get(
-                this.#runsForTask(input.taskId)
-                  .where('queue.state', '==', 'claimed')
-                  .limit(PROVIDER_ROUTING_CLAIM_READ_LIMIT + 1),
+              readAllPages(
+                this.#runsForTask(input.taskId).where(
+                  'queue.state',
+                  '==',
+                  'claimed',
+                ),
+                this.#readPageSize,
+                (page) => tx.get(page),
               ),
             ])
           : undefined;
@@ -365,15 +399,12 @@ export class FirestoreStore implements OrchestratorStore {
               latestRun: routing[0].exists
                 ? runSchema.parse(routing[0].data())
                 : undefined,
-              // Read every claimed candidate: an older remnant must not hide
-              // a later credential owner behind limit(1).
-              // Persist a refusal for incomplete inventory; never admit a partial read.
-              retainedClaims:
-                routing[1].size <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
-                  ? routing[1].docs
-                      .map((doc) => runSchema.parse(doc.data()))
-                      .filter((run) => retainsPhysicalClaim(run))
-                  : undefined,
+              // Read every claimed candidate, page by page in this
+              // transaction: an older remnant must not hide a later
+              // credential owner behind a bounded read.
+              retainedClaims: routing[1]
+                .map((doc) => runSchema.parse(doc.data()))
+                .filter((run) => retainsPhysicalClaim(run)),
             }),
         task,
         activeRun,
@@ -936,13 +967,20 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
-  async listRecentRuns(limit: number): Promise<Run[]> {
+  async listRecentRuns(limit: number, before?: RunListCursor): Promise<Run[]> {
     // A global updatedAt order needs only Firestore's automatic single-field
     // index. Do not add a state filter here: filtering another field before
     // ordering would require a composite index and turn this bounded console
-    // read into deployment configuration.
-    const snapshot = await this.#runs
+    // read into deployment configuration. The document-id tiebreak matches
+    // the index's implicit `__name__` order, so it needs no index either.
+    const ordered = this.#runs
       .orderBy('updatedAt', 'desc')
+      .orderBy(FieldPath.documentId(), 'desc');
+    const snapshot = await (
+      before === undefined
+        ? ordered
+        : ordered.startAfter(before.updatedAt, encodeURIComponent(before.runId))
+    )
       .limit(limit)
       .get();
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
@@ -955,14 +993,14 @@ export class FirestoreStore implements OrchestratorStore {
     const pipelines = [...new Set(input.pipelines)];
     return this.#firestore.runTransaction(
       async (tx) => {
-        const [snapshots, cooldownSnapshots, windowSnapshots] =
+        const [liveRunDocs, cooldownSnapshots, windowSnapshots] =
           await Promise.all([
             Promise.all(
               LIVE_STATES.map((state) =>
-                tx.get(
-                  this.#runs
-                    .where('state', '==', state)
-                    .limit(QUEUE_ADMISSION_READ_LIMIT + 1),
+                readAllPages(
+                  this.#runs.where('state', '==', state),
+                  this.#readPageSize,
+                  (page) => tx.get(page),
                 ),
               ),
             ),
@@ -981,12 +1019,6 @@ export class FirestoreStore implements OrchestratorStore {
               ),
             ),
           ]);
-        if (
-          snapshots.some(
-            (snapshot) => snapshot.size > QUEUE_ADMISSION_READ_LIMIT,
-          )
-        )
-          throw new Error('Queue admission snapshot exceeds read bound');
         const cooldowns = new Map();
         for (const [index, pipeline] of pipelines.entries()) {
           const cooldown = parseProviderCooldown(
@@ -996,8 +1028,8 @@ export class FirestoreStore implements OrchestratorStore {
           if (cooldown !== undefined) cooldowns.set(pipeline, cooldown);
         }
         return projectQueueAdmissionStatus(
-          snapshots.flatMap((snapshot) =>
-            snapshot.docs.map((doc) => runSchema.parse(doc.data())),
+          liveRunDocs.flatMap((docs) =>
+            docs.map((doc) => runSchema.parse(doc.data())),
           ),
           cooldowns,
           pipelines,

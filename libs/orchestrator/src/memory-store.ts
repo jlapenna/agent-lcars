@@ -42,17 +42,16 @@ import { retainsPhysicalClaim } from './provider-routing';
 import {
   projectQueueAdmissionStatus,
   type ProviderCredentialWindow,
-  QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
 import { joinRunMessage } from './run-message';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
   type OrchestratorStore,
-  PROVIDER_ROUTING_CLAIM_READ_LIMIT,
   queuePriorityTurnAfter,
   type RequestBinding,
   type RequestTransactionState,
+  type RunListCursor,
   type RunTransactionState,
   selectFairQueuedRun,
   StoreConflict,
@@ -133,24 +132,15 @@ export class MemoryStore implements OrchestratorStore {
   ): Promise<LifecycleMetricRecords> {
     validateLifecycleMetricRead(input);
     const runs = [...this.#runs.values()];
-    const recent = runs
-      .filter(
-        (run) => run.updatedAt >= input.since && run.updatedAt <= input.until,
-      )
-      .slice(0, input.limit + 1);
-    const live = runs
-      .filter((run) => isLive(run.state))
-      .slice(0, input.limit + 1);
-    const outbox = [...this.#outbox.values()]
-      .filter((entry) => entry.state !== 'done')
-      .slice(0, input.limit + 1);
     return structuredClone({
-      recentRuns: recent.slice(0, input.limit),
-      liveRuns: live.slice(0, input.limit),
-      outstandingOutbox: outbox.slice(0, input.limit),
-      complete: [recent, live, outbox].every(
-        (feed) => feed.length <= input.limit,
+      recentRuns: runs.filter(
+        (run) => run.updatedAt >= input.since && run.updatedAt <= input.until,
       ),
+      liveRuns: runs.filter((run) => isLive(run.state)),
+      outstandingOutbox: [...this.#outbox.values()].filter(
+        (entry) => entry.state !== 'done',
+      ),
+      complete: true,
     });
   }
 
@@ -279,16 +269,11 @@ export class MemoryStore implements OrchestratorStore {
                 : structuredClone(
                     this.#runs.get(`${key}/r${task.task.runCount}`),
                   ),
-            // Incomplete inventory is durable refusal evidence, not a retryable error.
-            retainedClaims:
-              claimedCandidates !== undefined &&
-              claimedCandidates.length <= PROVIDER_ROUTING_CLAIM_READ_LIMIT
-                ? structuredClone(
-                    claimedCandidates.filter((run) =>
-                      retainsPhysicalClaim(run),
-                    ),
-                  )
-                : undefined,
+            retainedClaims: structuredClone(
+              (claimedCandidates ?? []).filter((run) =>
+                retainsPhysicalClaim(run),
+              ),
+            ),
           }
         : {}),
     });
@@ -704,14 +689,21 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 
-  async listRecentRuns(limit: number): Promise<Run[]> {
+  async listRecentRuns(limit: number, before?: RunListCursor): Promise<Run[]> {
+    const newestFirst = (
+      left: Pick<Run, 'updatedAt' | 'runId'>,
+      right: Pick<Run, 'updatedAt' | 'runId'>,
+    ) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.runId.localeCompare(left.runId);
+    const cursor =
+      before === undefined
+        ? undefined
+        : { updatedAt: before.updatedAt, runId: before.runId };
     return structuredClone(
       [...this.#runs.values()]
-        .sort(
-          (left, right) =>
-            right.updatedAt.localeCompare(left.updatedAt) ||
-            right.runId.localeCompare(left.runId),
-        )
+        .filter((run) => cursor === undefined || newestFirst(cursor, run) < 0)
+        .sort(newestFirst)
         .slice(0, limit),
     );
   }
@@ -721,13 +713,6 @@ export class MemoryStore implements OrchestratorStore {
     now: string;
   }) {
     const runs = [...this.#runs.values()].filter((run) => isLive(run.state));
-    for (const state of ['pending', 'running']) {
-      if (
-        runs.filter((run) => run.state === state).length >
-        QUEUE_ADMISSION_READ_LIMIT
-      )
-        throw new Error('Queue admission snapshot exceeds read bound');
-    }
     return structuredClone(
       projectQueueAdmissionStatus(
         runs,
