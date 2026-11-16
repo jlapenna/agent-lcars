@@ -114,6 +114,12 @@ another's credentials gets its own profile.
 
   Zone ConfigMaps carrying agent definitions are retired.
 
+- **Run callers:** a dispatched run may invoke an agent with its run token
+  (`lcars investigate`) through `POST /runs/{runId}/agents/{owner}/{repo}/{name}`
+  and read its rounds back through `GET /runs/{runId}/agent-runs/{workId}`, as
+  principal `run:<runId>`, only when the agent's profile sets
+  `runCallers: true`. A run reads back only the rounds it admitted.
+
 Trust follows from this:
 
 - The definition is reviewed default-branch source, pinned by commit.

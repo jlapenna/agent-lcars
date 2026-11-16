@@ -165,9 +165,10 @@ env:
   # (docs/repository-agents.md). A profile names the executor runtime that
   # holds an agent's credentials; repository content can never create one.
   # homelab-ops: jlapenna/homelab's agents run on the Homelab zone's
-  # claw-investigator runtime (its investigator SSH key and LiteLLM key).
+  # claw-investigator runtime (its investigator SSH key and LiteLLM key), and
+  # dispatched runs may invoke them (`lcars investigate`).
   - variable: AGENT_LCARS_AGENT_PROFILES
-    value: '[{"name":"homelab-ops","runtime":"claw-investigator","repositories":["jlapenna/homelab"]}]'
+    value: '[{"name":"homelab-ops","runtime":"claw-investigator","repositories":["jlapenna/homelab"],"runCallers":true}]'
     availability:
       - RUNTIME
 

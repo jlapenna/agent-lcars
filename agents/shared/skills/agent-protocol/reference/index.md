@@ -125,24 +125,28 @@ lcars investigate --request-id backup-timer-1 \
   [--context '<what you already observed>']
 ```
 
-- It uses your run's own `LCARS_RUN_ID`/`LCARS_RUN_TOKEN`; no other credential
-  exists or is needed. Each run gets **three** requests and one at a time, so
-  ask one specific, answerable question per request. Questions are capped at
-  4 KiB and context at 16 KiB (`--question-file`/`--context-file` read longer
-  text from files); never put secrets in either.
-- `--request-id` is an idempotency key: reuse it only to re-send the same
-  question and context; use a new key for a new question.
-- Success prints one JSON object on stdout. Cite a finding by its evidence
-  `id`, `host`, `probe` and `ts`; those come from real catalogued probe runs.
-  `could_not_answer` entries (`no-probe-exists:`, `needs-mutation:`,
-  `needs-human:`) say what it could not observe.
-- Failure prints `investigate failed: <code>` on stderr and exits non-zero.
-  `investigation-unavailable` and `investigator-unavailable` mean the gateway
-  is not serving; `unauthorized` or `worker-fenced` mean your run is no longer
-  current — stop rather than retry. The client never retries; do not loop.
+- It runs Homelab's repository-owned investigator agent
+  (`jlapenna/homelab/investigator`) as one round on your behalf, using your
+  run's own `LCARS_RUN_ID`/`LCARS_RUN_TOKEN`; no other credential exists or is
+  needed. A round is one agent Job, so expect minutes, not seconds: the command
+  waits for it (up to 20 minutes by default).
+- Ask one specific, answerable question per request; never put secrets in the
+  question or context (`--question-file`/`--context-file` read them from files).
+- `--request-id` is the round's identity for your run: re-sending the same key
+  with the same question returns the same round; use a new key for a new
+  question.
+- It prints one JSON object on stdout: `{workId, state, ok, summary, report}`.
+  `report` is the investigator's own JSON report; cite a finding by the probe
+  `id`, `host` and `ts` its evidence names. Its `could_not_answer` entries say
+  what it could not observe.
+- Failure prints `investigate failed: <code>` on stderr and exits non-zero
+  (`unauthorized`: your run is no longer current, stop; `agent-forbidden` or
+  `agent-not-found`: the investigator is not offered to runs;
+  `deadline-exceeded` and `investigation-unavailable`: no answer). A settled
+  round that produced no report also exits non-zero but still prints its
+  status. Do not loop.
 - If the investigator cannot answer, park (§4) or proceed as before, and quote
   the failure code or `could_not_answer` reason so the human knows what is
   missing. Never treat a failed or partial investigation as an observed fact.
 
-The wire contract is `libs/work/src/investigation-contract.ts`; operator
-notes are in `OPERATIONS.md` (Worker investigation client).
+Operator notes are in `OPERATIONS.md` (Worker investigation client).

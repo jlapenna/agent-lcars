@@ -38,6 +38,9 @@ export const agentProfileSchema = z.strictObject({
   /** Principals that may run these agents; omitted means any principal whose
    * grant covers the runtime. */
   principals: z.array(z.string().min(1)).optional(),
+  /** Whether a dispatched run may invoke these agents with its run token
+   * (`lcars investigate`), as `run:<runId>`. Off unless the operator opts in. */
+  runCallers: z.boolean().optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -88,8 +91,16 @@ export interface AgentAdmissionDeps {
   orchestrator: Orchestrator;
   agents: AgentStore;
   profiles: () => AgentProfile[];
-  /** Whether the principal's grant admits claw work on `pipeline`. */
-  mayAdmit: (pipeline: string) => boolean;
+  /** Whether the caller may admit work on the resolved runtime: a principal's
+   * grant must list the pipeline; a dispatched run needs a profile that opts
+   * in to run callers. */
+  mayAdmit: (runtime: ResolvedAgentRuntime) => boolean;
+}
+
+export interface ResolvedAgentRuntime {
+  pipeline: string;
+  /** The profile admits dispatched runs as callers. */
+  runCallers: boolean;
 }
 
 /** Resolve the runtime an agent runs on, refusing a profile that does not
@@ -98,9 +109,10 @@ export function resolveAgentRuntime(
   definition: AgentDefinition,
   principal: string,
   profiles: readonly AgentProfile[],
-): string {
+): ResolvedAgentRuntime {
   const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
-  if (name === DEFAULT_AGENT_PROFILE) return DEFAULT_AGENT_RUNTIME;
+  if (name === DEFAULT_AGENT_PROFILE)
+    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false };
   const profile = profiles.find((candidate) => candidate.name === name);
   if (!profile)
     throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
@@ -114,7 +126,7 @@ export function resolveAgentRuntime(
       'FORBIDDEN',
       `Profile ${name} does not admit ${principal}`,
     );
-  return profile.runtime;
+  return { pipeline: profile.runtime, runCallers: profile.runCallers === true };
 }
 
 /** Admit one round of a repository-owned agent. Like investigations, a
@@ -145,15 +157,16 @@ export async function admitAgentRun(
         : `No enabled agent ${id}`,
     );
   const definition = agent.definition;
-  const pipeline = resolveAgentRuntime(
+  const runtime = resolveAgentRuntime(
     definition,
     request.principal,
     deps.profiles(),
   );
-  if (!deps.mayAdmit(pipeline))
+  const { pipeline } = runtime;
+  if (!deps.mayAdmit(runtime))
     throw new AgentAdmissionError(
       'FORBIDDEN',
-      `Principal may not run agents on ${pipeline}`,
+      `${request.principal} may not run agents on ${pipeline}`,
     );
   const sourceKey = request.sourceKey ?? `adhoc:${request.requestId ?? ulid()}`;
   // Keys are scoped to the agent and the caller: one caller's key never

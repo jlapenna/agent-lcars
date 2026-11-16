@@ -309,6 +309,8 @@ describe('runsContract', () => {
         'recipeBrief',
         'jobSecrets',
         'recipeComplete',
+        'invokeAgent',
+        'agentRun',
       ].sort(),
     );
   });
@@ -666,6 +668,8 @@ describe('generateWorkOpenApi', () => {
         '/runs/{runId}/complete',
         '/runs/{runId}/checkout-token',
         '/runs/{runId}/job-secrets',
+        '/runs/{runId}/agents/{owner}/{repo}/{name}',
+        '/runs/{runId}/agent-runs/{workId}',
         '/runs/{runId}/codex-auth',
         '/runs/{runId}/recipe',
       ].sort(),
@@ -691,7 +695,7 @@ describe('generateWorkOpenApi', () => {
           },
         ),
       );
-    expect(operations).toHaveLength(15);
+    expect(operations).toHaveLength(17);
     for (const { path, method, operation } of operations)
       expect(operation.parameters, `${method.toUpperCase()} ${path}`).toEqual(
         expect.arrayContaining([
@@ -707,7 +711,7 @@ describe('generateWorkOpenApi', () => {
         (scheme: Record<string, unknown>) => 'runToken' in scheme,
       ),
     );
-    expect(workers).toHaveLength(11);
+    expect(workers).toHaveLength(13);
   });
   it('gives tick a distinct presentation: the cron tag and bearer security', async () => {
     // `tick` is a service operation guarded by the server-owned work.cron
@@ -806,6 +810,14 @@ describe('generateWorkOpenApi', () => {
       'POST /runs/{runId}/exit': ['200', '401', '403', '404'],
       'POST /runs/{runId}/complete': ['200', '401', '409'],
       'GET /runs/{runId}/job-secrets': ['200', '401', '403', '409'],
+      'POST /runs/{runId}/agents/{owner}/{repo}/{name}': [
+        '202',
+        '401',
+        '403',
+        '404',
+        '409',
+      ],
+      'GET /runs/{runId}/agent-runs/{workId}': ['200', '401', '404'],
       'GET /runs/{runId}/checkout-token': ['200', '401', '403', '409'],
       'GET /runs/{runId}/codex-auth': ['200', '401', '404', '409', '500'],
       'PUT /runs/{runId}/codex-auth': ['200', '400', '401', '409', '500'],

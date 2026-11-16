@@ -17,10 +17,12 @@ import {
   isWorkAnchor,
   type Orchestrator,
   type OrchestratorStore,
+  readFullRunMessage,
   type Run,
   runRecoveryDeadline,
 } from '@agent-lcars/orchestrator';
 import {
+  type AgentRunStatus,
   REPOSITORY_JOB_BRIEF_MAX_BYTES,
   repositoryJobJsonBytes,
   runsContract,
@@ -28,6 +30,7 @@ import {
   storedWorkPayloadSchema,
   workPayloadSchema,
 } from '@agent-lcars/work';
+import { deriveItemState } from '@agent-lcars/work/derive';
 import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
@@ -57,7 +60,15 @@ import {
   readyDeliveryBinding,
   UnqualifiedDeliveryError,
 } from './ready-delivery';
-import { agentRunBrief } from './repository-agent-runs';
+import {
+  admitAgentRun,
+  AgentAdmissionError,
+  type AgentProfile,
+  agentProfiles,
+  agentRunBrief,
+} from './repository-agent-runs';
+import type { AgentStore } from './repository-agent-store';
+import { repositoryAgentStore } from './repository-agents-runtime';
 import type { JobProfile } from './repository-job-definition';
 import { fileParameterRecipe } from './repository-job-recipe';
 import { validateJobResult } from './repository-job-result';
@@ -95,6 +106,10 @@ export interface RunsContext {
    *  file already constructs for `work-router.ts` (see
    *  `app/api/work/v1/[[...rest]]/route.ts`). */
   drain: () => Promise<DrainOutboxResult>;
+  /** Repository-owned agents a run may invoke (docs/repository-agents.md);
+   *  production defaults to Firestore and `AGENT_LCARS_AGENT_PROFILES`. */
+  agents?: AgentStore;
+  agentProfiles?: () => AgentProfile[];
   loadReadyDeliveryBinding?: typeof readyDeliveryBinding;
   /** Exact lifecycle read before exposing a claimed GitHub implementation
    * run to a worker. Undefined is allowed for isolated callers/tests. */
@@ -310,7 +325,95 @@ function clawRunSpec(
     : undefined;
 }
 
+/** The principal a dispatched run invokes agents as. */
+function runCaller(runId: string): string {
+  return `run:${runId}`;
+}
+
+/** An agent round as the run that invoked it sees it; undefined for any item
+ * that run did not admit, so the route is no existence oracle. */
+async function agentRunStatus(
+  context: RunsContext,
+  workId: string,
+  principal: string,
+): Promise<AgentRunStatus | undefined> {
+  const stored = await context.store.readTask({ workId });
+  const origin = storedWorkPayloadSchema.safeParse(stored?.task.work).data
+    ?.origin;
+  if (stored === undefined || origin?.principal !== principal) return undefined;
+  const runs = await context.store.listRuns({ workId });
+  const latest = runs.at(-1);
+  const result = latest?.state === 'finished' ? latest.result : undefined;
+  // A report too large for the run record is stored whole out of line.
+  const report =
+    latest !== undefined && result !== undefined
+      ? await readFullRunMessage(context.store, latest)
+      : undefined;
+  return {
+    workId,
+    state: deriveItemState(stored.task, runs),
+    ...(result === undefined
+      ? {}
+      : {
+          ok: result.ok,
+          ...(result.summary === undefined ? {} : { summary: result.summary }),
+          ...(report === undefined ? {} : { report }),
+        }),
+  };
+}
+
 export const runsRouter = os.router({
+  invokeAgent: os.invokeAgent.handler(async ({ input, context, errors }) => {
+    await requireRunToken(context, input.runId);
+    const principal = runCaller(input.runId);
+    let admitted: { workId: string };
+    try {
+      admitted = await admitAgentRun(
+        {
+          store: context.store,
+          orchestrator: context.orchestrator,
+          agents: context.agents ?? repositoryAgentStore(),
+          profiles: context.agentProfiles ?? (() => agentProfiles()),
+          // A dispatched run has no grant: the agent's profile must opt in.
+          mayAdmit: ({ runCallers }) => runCallers,
+        },
+        {
+          repository: `${input.owner}/${input.repo}`,
+          name: input.name,
+          message: input.message,
+          requestId: input.requestId,
+          sourceKey: input.requestId,
+          principal,
+        },
+      );
+    } catch (error) {
+      if (error instanceof AgentAdmissionError) {
+        if (error.code === 'NOT_FOUND')
+          throw errors.NOT_FOUND({ message: error.message });
+        if (error.code === 'FORBIDDEN')
+          throw errors.FORBIDDEN({ message: error.message });
+        throw errors.CONFLICT({ message: error.message });
+      }
+      throw error;
+    }
+    await context.drain();
+    const status = await agentRunStatus(context, admitted.workId, principal);
+    if (status === undefined)
+      throw new ORPCError('INTERNAL_SERVER_ERROR', {
+        message: 'Admitted agent round is missing',
+      });
+    return status;
+  }),
+  agentRun: os.agentRun.handler(async ({ input, context, errors }) => {
+    await requireRunToken(context, input.runId);
+    const status = await agentRunStatus(
+      context,
+      input.workId,
+      runCaller(input.runId),
+    );
+    if (status === undefined) throw errors.NOT_FOUND();
+    return status;
+  }),
   jobSecrets: os.jobSecrets.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
     if (run.pipeline !== 'goose' || !('workId' in run.task))

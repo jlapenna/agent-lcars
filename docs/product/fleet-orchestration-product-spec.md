@@ -75,7 +75,7 @@ The core promises:
 | Slack bot             | Sprinkles App Hosting service account, channel `slack`                                 | Creates items; receives outcomes over webhook                                                                            |
 | Production verifier   | `svc:production-verifier`                                                              | Authenticated live verification with `work.operator`                                                                     |
 | Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                          | Read-only item access (`work.reaper`) to expire sessions of closed items                                                 |
-| Homelab               | Platform operator                                                                      | Runs k3s, ARC, QueueExecutor, and `investigate.lan.jlapenna.net`; holds host and execution bootstrap credentials         |
+| Homelab               | Platform operator                                                                      | Runs k3s, ARC, QueueExecutor and the claw zone; holds host and execution bootstrap credentials                           |
 
 ## 3. Goals and non-goals
 
@@ -618,10 +618,11 @@ consumed by every dispatched run in every member repository.
   When a dispatched worker needs read-only Homelab host, systemd, pod, or
   endpoint facts to diagnose an issue without parking for a human, it calls
   `lcars investigate --request-id <key> --question ...` using its run token.
-  The Homelab investigation service (`https://investigate.lan.jlapenna.net/v1/investigations`)
-  verifies the active run claim through `GET /api/work/v1/runs/{runId}/introspect`
-  (`runIntrospectionSchema`) and returns a bounded `completed`, `park`, or
-  `refused` report (`<= 16 KiB`).
+  The command admits one round of Homelab's repository-owned investigator
+  agent (`jlapenna/homelab/investigator`, [repository agents](../repository-agents.md))
+  as `run:<runId>` through `POST /runs/{runId}/agents/{owner}/{repo}/{name}`,
+  allowed only when the agent's operator profile opts in to run callers, and
+  waits for the round's report through `GET /runs/{runId}/agent-runs/{workId}`.
 
 ## 8. Completion, review, and merge
 
