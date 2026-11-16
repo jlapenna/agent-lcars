@@ -7,7 +7,11 @@ import {
   refreshAgentCatalogs,
 } from './repository-agent-catalog';
 import { agentKey } from './repository-agent-definition';
-import type { AgentStore, CatalogAgent } from './repository-agent-store';
+import type {
+  AgentSource,
+  AgentStore,
+  CatalogAgent,
+} from './repository-agent-store';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -15,13 +19,42 @@ afterEach(() => {
 
 class MemoryAgentStore implements AgentStore {
   rows = new Map<string, CatalogAgent>();
+  sourceRows = new Map<string, AgentSource>();
   async list() {
     return [...this.rows.values()];
   }
   async read(id: string) {
     return this.rows.get(id);
   }
-  async mutate(id: string, change: Parameters<AgentStore['mutate']>[1]) {
+  async sources() {
+    return [...this.sourceRows.values()];
+  }
+  async recordAttempt(repository: string, at: string) {
+    this.sourceRows.set(repository, {
+      ...this.sourceRows.get(repository),
+      repository,
+      attemptedAt: at,
+    });
+  }
+  async claimObservation(repository: string, at: string) {
+    const observedAt = this.sourceRows.get(repository)?.observedAt;
+    if (observedAt && Date.parse(observedAt) > Date.parse(at)) return false;
+    this.sourceRows.set(repository, {
+      ...this.sourceRows.get(repository),
+      repository,
+      observedAt: at,
+    });
+    return true;
+  }
+  async mutate(
+    id: string,
+    change: Parameters<AgentStore['mutate']>[1],
+    fence?: Parameters<AgentStore['mutate']>[2],
+  ) {
+    const observedAt =
+      fence && this.sourceRows.get(fence.repository)?.observedAt;
+    if (fence && observedAt && Date.parse(observedAt) > Date.parse(fence.at))
+      return {};
     const next = change(this.rows.get(id));
     if (next.agent) this.rows.set(id, structuredClone(next.agent));
     return next;
@@ -82,12 +115,7 @@ function github(
         ],
       });
     if (path.startsWith('git/blobs/'))
-      return Response.json({
-        encoding: 'base64',
-        content: Buffer.from(
-          blobs.get(path.slice('git/blobs/'.length))!,
-        ).toString('base64'),
-      });
+      return new Response(blobs.get(path.slice('git/blobs/'.length))!);
     return new Response('Not Found', { status: 404 });
   });
 }
@@ -264,4 +292,61 @@ it('treats a repository without .lcars/agents as having none, and never lets an 
     new Date(now.getTime() - 1000),
   );
   expect(store.rows.get(id)).toEqual(newer);
+});
+
+it('records a malformed agent name as its own error without disabling valid siblings', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal(
+    'fetch',
+    github({ my_agent: investigator(), investigator: investigator() }),
+  );
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: true,
+  });
+  const malformed = store.rows.get(agentKey('owner/repo', 'my_agent'))!;
+  expect(malformed.enabled).toBe(false);
+  expect(malformed.error).toBeDefined();
+});
+
+it('never lets an older observation resurrect what a newer refresh removed', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal('fetch', github({}));
+  await refreshAgentCatalog(
+    store,
+    'owner/repo',
+    tokens,
+    new Date(now.getTime() + 1000),
+  );
+  vi.stubGlobal('fetch', github({ investigator: investigator() }));
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect(store.rows.size).toBe(0);
+});
+
+it('reads a manifest larger than any response cap', async () => {
+  const store = new MemoryAgentStore();
+  const big = `# ${'x'.repeat(3 * 1024 * 1024)}\ndescription: Large.\n`;
+  vi.stubGlobal('fetch', github({ investigator: investigator(big) }));
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect([...store.rows.values()][0]).toMatchObject({ enabled: true });
+});
+
+it('refreshes the least recently attempted repositories first across ticks', async () => {
+  const store = new MemoryAgentStore();
+  const seen: string[] = [];
+  const fetch = github({ investigator: investigator() });
+  vi.stubGlobal('fetch', async (url: string) => {
+    const repository = /repos\/([^/]+\/[^/]+)/u.exec(url)![1]!;
+    if (!seen.includes(repository)) seen.push(repository);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return fetch(url);
+  });
+  const repositories = ['a/1', 'b/2', 'c/3', 'd/4', 'e/5'];
+  // Room for exactly one batch of four per tick.
+  const oneBatch = () => Date.now() + 25_002;
+  await refreshAgentCatalogs(store, repositories, () => tokens, oneBatch());
+  expect(seen.sort()).toEqual(['a/1', 'b/2', 'c/3', 'd/4']);
+  seen.length = 0;
+  await refreshAgentCatalogs(store, repositories, () => tokens, oneBatch());
+  expect(seen).toContain('e/5');
 });

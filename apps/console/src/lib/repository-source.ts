@@ -96,11 +96,23 @@ export async function openRepositorySource(
     directory,
     lcarsDirectory: async (kind) =>
       directory(await directory(commit.commit.tree.sha, '.lcars'), kind),
+    // Raw media type: the bytes themselves, with no JSON envelope or
+    // response cap, so a file is read whole.
     readBlob: async (sha) => {
-      const data = z
-        .object({ encoding: z.literal('base64'), content: z.string() })
-        .parse(await get(`git/blobs/${sha}`));
-      return Buffer.from(data.content, 'base64');
+      const response = await fetch(
+        `https://api.github.com/repos/${repository}/git/blobs/${sha}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/vnd.github.raw',
+          },
+          signal,
+          cache: 'no-store',
+        },
+      );
+      if (!response.ok)
+        throw new Error(`Catalog source HTTP ${response.status}`);
+      return Buffer.from(await response.arrayBuffer());
     },
   };
 }

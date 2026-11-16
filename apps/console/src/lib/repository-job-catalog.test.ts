@@ -143,12 +143,9 @@ function github(
         ),
       );
     if (path.startsWith('git/blobs/'))
-      return Response.json({
-        encoding: 'base64',
-        content: Buffer.from(
-          blobs.get(decodeURIComponent(path.slice('git/blobs/'.length)))!,
-        ).toString('base64'),
-      });
+      return new Response(
+        blobs.get(decodeURIComponent(path.slice('git/blobs/'.length)))!,
+      );
     return new Response('Not Found', { status: 404 });
   });
 }

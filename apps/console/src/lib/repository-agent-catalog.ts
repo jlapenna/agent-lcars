@@ -16,9 +16,19 @@ export async function refreshAgentCatalog(
   tokens: DispatchTokenProvider,
   now: Date,
 ): Promise<void> {
+  const at = now.toISOString();
+  // Fairness bookkeeping only: a lost write makes this source look older.
+  await store
+    .recordAttempt(repository, at)
+    .catch((error: unknown) =>
+      logger.error('Agent source attempt not recorded: %s', repository, error),
+    );
   const existing = (await store.list()).filter(
     (agent) => agent.repository === repository,
   );
+  // Every write is fenced by this observation: once a newer refresh of the
+  // repository has claimed publication, nothing below writes.
+  const fence = { repository, at };
   // Never let a slower, older observation replace a newer one.
   const newer = (current: CatalogAgent | undefined) =>
     current !== undefined && Date.parse(current.refreshedAt) > now.getTime();
@@ -37,6 +47,8 @@ export async function refreshAgentCatalog(
       .sort();
     const rows: CatalogAgent[] = [];
     for (const name of names) {
+      // The key never validates: a malformed name is recorded with its
+      // error here instead of failing every agent in the repository.
       const row: CatalogAgent = {
         id: agentKey(repository, name),
         repository,
@@ -69,54 +81,70 @@ export async function refreshAgentCatalog(
       }
       rows.push(row);
     }
-    // Publish after the complete read so a partial fetch cannot remove agents.
+    // Publish after the complete read so a partial fetch cannot remove agents,
+    // and only while no newer observation of this repository has published.
+    if (!(await store.claimObservation(repository, at))) return;
     for (const row of rows)
-      await store.mutate(row.id, (current) => {
-        if (newer(current)) return {};
-        const vetoedBy = current?.vetoedBy ?? null;
-        return {
-          agent: {
-            ...row,
-            vetoedBy,
-            enabled: row.definition !== undefined && vetoedBy === null,
-          },
-        };
-      });
+      await store.mutate(
+        row.id,
+        (current) => {
+          if (newer(current)) return {};
+          const vetoedBy = current?.vetoedBy ?? null;
+          return {
+            agent: {
+              ...row,
+              vetoedBy,
+              enabled: row.definition !== undefined && vetoedBy === null,
+            },
+          };
+        },
+        fence,
+      );
     for (const removed of existing.filter(
       (agent) => !rows.some((row) => row.id === agent.id),
     ))
-      await store.mutate(removed.id, (current) =>
-        newer(current) || current === undefined
-          ? {}
-          : {
-              agent: {
-                ...current,
-                enabled: false,
-                error: 'Definition removed',
-                refreshedAt: now.toISOString(),
+      await store.mutate(
+        removed.id,
+        (current) =>
+          newer(current) || current === undefined
+            ? {}
+            : {
+                agent: {
+                  ...current,
+                  enabled: false,
+                  error: 'Definition removed',
+                  refreshedAt: now.toISOString(),
+                },
               },
-            },
+        fence,
       );
   } catch (error) {
+    if (!(await store.claimObservation(repository, at))) throw error;
     for (const agent of existing)
-      await store.mutate(agent.id, (current) =>
-        newer(current) || current === undefined
-          ? {}
-          : {
-              agent: {
-                ...current,
-                enabled: false,
-                error: 'Source refresh failed',
-                refreshedAt: now.toISOString(),
+      await store.mutate(
+        agent.id,
+        (current) =>
+          newer(current) || current === undefined
+            ? {}
+            : {
+                agent: {
+                  ...current,
+                  enabled: false,
+                  error: 'Source refresh failed',
+                  refreshedAt: now.toISOString(),
+                },
               },
-            },
+        fence,
       );
     throw error;
   }
 }
 
-/** Refresh every control-plane repository's agents, four at a time, starting
- * a batch only while its 20-second fetch budget fits before `deadline`. */
+/** Refresh every control-plane repository's agents, least recently attempted
+ * first (never-attempted repositories lead), four at a time, starting a batch
+ * only while its 20-second fetch budget fits before `deadline`. Recorded
+ * attempts persist the rotation across ticks and processes, so a bounded tick
+ * cannot starve later repositories. */
 export async function refreshAgentCatalogs(
   store: AgentStore,
   repositories: readonly string[],
@@ -127,7 +155,17 @@ export async function refreshAgentCatalogs(
   // still reaches those records.
   const known = new Set(repositories);
   for (const agent of await store.list()) known.add(agent.repository);
-  const ordered = [...known].sort();
+  const attempted = new Map(
+    (await store.sources()).map((source) => [
+      source.repository,
+      Date.parse(source.attemptedAt ?? '') || 0,
+    ]),
+  );
+  const ordered = [...known].sort(
+    (left, right) =>
+      (attempted.get(left) ?? 0) - (attempted.get(right) ?? 0) ||
+      left.localeCompare(right),
+  );
   for (let offset = 0; offset < ordered.length; offset += 4) {
     if (Date.now() + 25_000 > deadline) break;
     await Promise.all(

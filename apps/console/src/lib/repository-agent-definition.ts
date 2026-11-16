@@ -56,8 +56,11 @@ export function agentId(repository: string, name: string): string {
 }
 
 /** Stable storage key for an agent ID. */
+/** Stable storage key for an agent directory. It never validates, so a
+ * malformed name is still recorded (with its error) instead of failing the
+ * repository's whole refresh. */
 export function agentKey(repository: string, name: string): string {
-  return jobDigest(['agent', agentId(repository, name)]);
+  return jobDigest(['agent', `${repository}/${name}`]);
 }
 
 export function agentDigest(files: readonly AgentFile[]): string {
@@ -83,6 +86,7 @@ export function parseAgentDefinition(
   files: readonly { path: string; mode: string; type: string; sha: string }[],
   manifestText: string,
 ): AgentDefinition {
+  agentId(repository, name);
   for (const entry of files)
     if (entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode))
       throw new Error(
