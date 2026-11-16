@@ -6,6 +6,8 @@ import {
   issueCommentSchema,
   issueReferenceSchema,
   providerRoutingSchema,
+  RUN_MESSAGE_MAX_BYTES,
+  runMessageBytes,
   runPlacementSchema,
   trackerIssueProjectionSchema,
   trackerIssueSchema,
@@ -87,10 +89,32 @@ const runResultSchema = z.strictObject({
   ref: z.string().max(1_024).optional(),
   /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
   relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
-  /** The agent's final message for this round, e.g. its question when it
-   *  parked, or the runner's redacted output tail for a provider that failed
-   *  before one. Mirrors `@agent-lcars/orchestrator`'s `runResultSchema`. */
-  message: z.string().max(16_384).optional(),
+  /** The agent's final message for this round, e.g. its report, its
+   *  question when it parked, or the runner's redacted output tail for a
+   *  provider that failed before one. Single-item reads (`GET /items/{id}`
+   *  and every route answering one item) return it whole. A listing returns
+   *  the first 16,384 characters of a longer message together with
+   *  `messageOverflow`; read the item for the rest. */
+  message: z
+    .string()
+    .describe(
+      'The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present.',
+    )
+    .optional(),
+  /** Present only when `message` is a preview: names the whole message's
+   *  size and digest. Mirrors `@agent-lcars/orchestrator`'s
+   *  `runMessageOverflowSchema`. */
+  messageOverflow: z
+    .strictObject({
+      sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+      chars: z.number().int().positive(),
+      bytes: z.number().int().positive(),
+      chunks: z.number().int().positive(),
+    })
+    .describe(
+      'Present only when message is a preview; GET /items/{id} returns the whole message.',
+    )
+    .optional(),
   /** Optional LLM reading aid derived by Console from this parked message. */
   humanNeededActions: humanNeededActionsSchema.optional(),
 });
@@ -1584,10 +1608,18 @@ export const runsContract = {
         runId: runIdSchema,
         outcome: z.unknown(),
         outcomeReference: z.unknown().optional(),
-        /** The agent's final message for this round (spec: "Runner
-         *  changes"). Bounded here as well as in `toRunResult` so an
-         *  oversized body is refused at the boundary, not silently cut. */
-        message: z.string().max(16_384).optional(),
+        /** The agent's whole final message for this round (spec: "Runner
+         *  changes"), stored whole and never truncated. Bounded only by
+         *  `RUN_MESSAGE_MAX_BYTES` UTF-8 bytes, refused at the boundary. */
+        message: z
+          .string()
+          .refine((value) => runMessageBytes(value) <= RUN_MESSAGE_MAX_BYTES, {
+            message: `Message exceeds ${RUN_MESSAGE_MAX_BYTES} UTF-8 bytes`,
+          })
+          .describe(
+            `The whole final message, stored and returned whole; at most ${RUN_MESSAGE_MAX_BYTES} UTF-8 bytes.`,
+          )
+          .optional(),
       }),
     )
     .output(z.strictObject({ runId: runIdSchema, state: z.string() })),

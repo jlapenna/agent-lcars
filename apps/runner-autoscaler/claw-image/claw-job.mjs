@@ -34,9 +34,13 @@ import {
 import { join } from 'node:path';
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
-// The Console stores at most CLAW_REPORT_MAX (16,384) characters.
-export const MAX_REPORT_CHARS = 16_000;
-const MAX_ENVELOPE_BYTES = 4 * 1024 * 1024;
+// The Work API stores a report of any size whole, up to its completion bound
+// (RUN_MESSAGE_MAX_BYTES, libs/dispatch-contracts/src/run-message.ts). A
+// longer one is a failed attempt, never a truncated report.
+export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
+// OpenClaw's JSON envelope carries the report plus metadata and escaping;
+// keep room for a maximal report so it is measured, not misparsed.
+const MAX_ENVELOPE_BYTES = 4 * MAX_REPORT_BYTES;
 const MAX_RESPONSE_CHARS = 4 * 1024 * 1024;
 const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RESERVED_ENV =
@@ -198,12 +202,18 @@ export function settle(
     !unresolved &&
     (code === 0 || code === 1)
   ) {
-    const report = truncateReport(final);
     const cleanup =
       code === 1
         ? '\n\n(OpenClaw reported a cleanup failure after this result.)'
         : '';
-    return { outcome: 'report', message: report + cleanup };
+    const report = final + cleanup;
+    const bytes = Buffer.byteLength(report, 'utf8');
+    if (bytes > MAX_REPORT_BYTES)
+      return {
+        outcome: 'runner-failed',
+        message: `Claw report is ${bytes} bytes; the completion bound is ${MAX_REPORT_BYTES}.`,
+      };
+    return { outcome: 'report', message: report };
   }
   if (code === 2)
     return {
@@ -218,11 +228,6 @@ export function settle(
         ? `OpenClaw exited ${code}`
         : 'empty result';
   return { outcome: 'runner-failed', message: `Claw turn failed: ${reason}.` };
-}
-
-function truncateReport(text) {
-  if (text.length <= MAX_REPORT_CHARS) return text;
-  return `${text.slice(0, MAX_REPORT_CHARS - 200)}\n\n[report truncated]`;
 }
 
 // Runs one OpenClaw command in its own process group, so a deadline or a

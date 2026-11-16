@@ -120,6 +120,18 @@ final message, so an empty last message cannot degrade it to a generic agent fai
 provider for exactly one bounded probe and never parses a reset, and it keeps the provider's cause
 in the reported message. A cross-provider successor still requires the explicit policy and current
 grant above; without them the attempt stays failed and the only change is an honest cause.
+A round's final message (a report's whole deliverable, a parked question, a PR summary) is never
+truncated for storage. `POST /runs/{runId}/complete` accepts it whole up to `RUN_MESSAGE_MAX_BYTES`
+(4 MiB of UTF-8, `libs/dispatch-contracts/src/run-message.ts`); only a message past that bound is
+refused, and the direct runner refuses such a report before sending it so the round keeps its
+correction. The run document keeps the first 16,384 characters in `result.message`. A longer message
+is written before settlement, content-addressed, to `runs/{runId}/message-chunks/{sha256}.{index}`
+(at most 512 KiB per document) and named by `result.messageOverflow`; a refused or duplicate
+completion therefore cannot replace a settled message. Single-item reads (`GET /items/{id}` and every
+route answering one item, the Console item view, Inbox cards, triage publication) return the whole
+message. `GET /items` returns the preview with `messageOverflow`, and the outcome webhook stays small:
+it carries the preview with `messageTruncated` and the Console link. Runs settled before this
+contract have no `messageOverflow` and are read unchanged.
 Claimed Codex terminal transitions reserve exact cleanup authority in the same
 transaction as the original result, successor and outbox. Completion handlers
 reload that reservation under the authenticated claim fingerprint before

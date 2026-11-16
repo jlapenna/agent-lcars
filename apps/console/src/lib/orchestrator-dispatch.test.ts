@@ -2,6 +2,7 @@
 
 import {
   decidedRun,
+  externalizeRunMessage,
   isRefusal,
   MemoryStore,
   Orchestrator,
@@ -309,6 +310,44 @@ describe('drainOutbox native outcome webhook delivery', () => {
       thread: THREAD,
       consoleUrl: 'https://lcars.jlapenna.net/work/01J5Z3K9QX8F0N2B4V6C8D1E4H',
     });
+  });
+
+  it('keeps the outcome webhook small and marks a longer message as continued', async () => {
+    process.env['AGENT_LCARS_OUTCOME_WEBHOOKS'] = JSON.stringify({
+      slack: SLACK_TARGET,
+    });
+    const { store, orchestrator } = fixture();
+    const run = await requestedWithOrigin(orchestrator, {
+      principal: 'svc:sprinkles-lcars-bot',
+      channel: 'slack',
+      thread: THREAD,
+    });
+    const report = 'r'.repeat(50_000);
+    await orchestrator.report(
+      run.runId,
+      await externalizeRunMessage(store, run.runId, {
+        ok: true,
+        summary: 'park',
+        message: report,
+      }),
+    );
+
+    const deliverOutcomeWebhook = vi.fn().mockResolvedValue(undefined);
+    await drainOutbox({
+      store,
+      orchestrator,
+      tokens,
+      fetchImpl: vi.fn() as typeof fetch,
+      deliverOutcomeWebhook,
+    });
+
+    expect(deliverOutcomeWebhook).toHaveBeenCalledWith(
+      SLACK_TARGET,
+      expect.objectContaining({
+        message: report.slice(0, 16_384),
+        messageTruncated: true,
+      }),
+    );
   });
 
   it('does not deliver when the origin has no thread', async () => {

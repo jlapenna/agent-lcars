@@ -688,7 +688,39 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                },
+                                "messageOverflow": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sha256": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "chars": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "bytes": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "chunks": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "sha256",
+                                    "chars",
+                                    "bytes",
+                                    "chunks"
+                                  ],
+                                  "additionalProperties": false,
+                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -2539,7 +2571,39 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "maxLength": 16384
+                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                },
+                                "messageOverflow": {
+                                  "type": "object",
+                                  "properties": {
+                                    "sha256": {
+                                      "type": "string",
+                                      "pattern": "^[a-f0-9]{64}$"
+                                    },
+                                    "chars": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "bytes": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "chunks": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": [
+                                    "sha256",
+                                    "chars",
+                                    "bytes",
+                                    "chunks"
+                                  ],
+                                  "additionalProperties": false,
+                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -4114,7 +4178,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -5258,7 +5354,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -6406,7 +6534,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -7565,7 +7725,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -8777,7 +8969,39 @@
                                     },
                                     "message": {
                                       "type": "string",
-                                      "maxLength": 16384
+                                      "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                                    },
+                                    "messageOverflow": {
+                                      "type": "object",
+                                      "properties": {
+                                        "sha256": {
+                                          "type": "string",
+                                          "pattern": "^[a-f0-9]{64}$"
+                                        },
+                                        "chars": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "bytes": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "chunks": {
+                                          "type": "integer",
+                                          "exclusiveMinimum": 0,
+                                          "maximum": 9007199254740991
+                                        }
+                                      },
+                                      "required": [
+                                        "sha256",
+                                        "chars",
+                                        "bytes",
+                                        "chunks"
+                                      ],
+                                      "additionalProperties": false,
+                                      "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                                     },
                                     "humanNeededActions": {
                                       "minItems": 2,
@@ -9912,7 +10136,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -11098,7 +11354,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -12314,7 +12602,39 @@
                               },
                               "message": {
                                 "type": "string",
-                                "maxLength": 16384
+                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
+                              },
+                              "messageOverflow": {
+                                "type": "object",
+                                "properties": {
+                                  "sha256": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{64}$"
+                                  },
+                                  "chars": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "chunks": {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  }
+                                },
+                                "required": [
+                                  "sha256",
+                                  "chars",
+                                  "bytes",
+                                  "chunks"
+                                ],
+                                "additionalProperties": false,
+                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -17515,7 +17835,7 @@
                   "outcomeReference": {},
                   "message": {
                     "type": "string",
-                    "maxLength": 16384
+                    "description": "The whole final message, stored and returned whole; at most 4194304 UTF-8 bytes."
                   }
                 },
                 "required": ["outcome"]

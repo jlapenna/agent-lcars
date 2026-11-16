@@ -2,7 +2,11 @@ import 'server-only';
 
 import { fleetTriageReportSchema } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
-import type { OrchestratorStore } from '@agent-lcars/orchestrator';
+import {
+  type OrchestratorStore,
+  readFullRunMessage,
+  withFullRunMessages,
+} from '@agent-lcars/orchestrator';
 import { isSourceManagedWork } from '@agent-lcars/work';
 import { toWorkSummary } from '@agent-lcars/work/derive';
 
@@ -50,8 +54,11 @@ export async function getNativeInboxCards(
       let triageDecision = false;
       if (sourceManaged && work.issue?.reference.tracker === 'linear') {
         try {
+          const latest = work.runs.at(-1);
           const report = fleetTriageReportSchema.parse(
-            JSON.parse(work.runs.at(-1)?.result?.message ?? ''),
+            JSON.parse(
+              (latest && (await readFullRunMessage(store, latest))) ?? '',
+            ),
           );
           triageDecision = ['needs-owner', 'needs-evidence'].includes(
             report.disposition,
@@ -84,7 +91,17 @@ export async function getNativeInboxCards(
       if (work.spec.pipeline === 'goose') continue;
       cards.push({
         humanNeededActions,
-        work: { ...work, anchor: work.anchor },
+        // A card shows the whole report or question, never the preview.
+        work: {
+          ...work,
+          anchor: work.anchor,
+          runs: await withFullRunMessages(store, work.runs, (runId) =>
+            logger.error(
+              'agent-lcars: stored final message unreadable for run %s; serving its preview',
+              runId,
+            ),
+          ),
+        },
         kind: report ? 'report' : 'decision',
         queued: !closedSource && (work.state === 'parked' || freshReport),
         // A follow-up on a report starts a new round, as a reply to a park does.

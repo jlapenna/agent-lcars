@@ -77,6 +77,16 @@ function api() {
   return { fetchImpl, comments, archived };
 }
 describe('Linear outcome delivery', () => {
+  it('links the whole message when the outcome carries only its preview', async () => {
+    const { fetchImpl, comments } = api();
+    await deliverLinearOutcome(
+      { ...payload, message: 'preview', messageTruncated: true },
+      fetchImpl,
+    );
+    expect([...comments.values()][0]).toContain(
+      `read it whole at ${payload.consoleUrl}`,
+    );
+  });
   it('posts the outcome once and rediscovers it on outbox retry', async () => {
     const { fetchImpl, comments } = api();
     await deliverLinearOutcome(payload, fetchImpl);

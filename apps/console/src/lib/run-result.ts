@@ -1,4 +1,3 @@
-import { CLAW_REPORT_MAX } from '@agent-lcars/dispatch-contracts';
 import { type RunResult } from '@agent-lcars/orchestrator';
 import { outcomeReferenceSchema } from '@agent-lcars/work';
 
@@ -55,8 +54,8 @@ function artifactUrl(
     : undefined;
 }
 
-/** Converts the QueueExecutor's Work API completion report into the durable
- * run result. The `runs-router` contract test exercises the public
+/** Converts the QueueExecutor's Work API completion report into the run
+ * result, carrying the whole message (never truncated) for storage. The `runs-router` contract test exercises the public
  * `/runs/{runId}/complete` boundary, including its result and item state. */
 export function toRunResult(
   repo: string,
@@ -83,11 +82,10 @@ export function toRunResult(
         })
       : undefined;
   // A runner that sends no message, or a malformed one, is not an error:
-  // the round is still a real outcome, it just has no rendered turn.
+  // the round is still a real outcome, it just has no rendered turn. The
+  // message is kept whole; `externalizeRunMessage` decides how it is stored.
   const finalMessage =
-    typeof message === 'string' && message.length > 0
-      ? message.slice(0, 16_384)
-      : undefined;
+    typeof message === 'string' && message.length > 0 ? message : undefined;
   // Temporary bridge to #2810's `intent: report`: a report succeeds only for
   // an item that opted in, with a nonblank message, and an opted-in
   // read-only item succeeds only as a report, park or no-op -- never as a PR
@@ -120,9 +118,7 @@ export function toClawRunResult(
   message?: unknown,
 ): RunResult {
   const finalMessage =
-    typeof message === 'string' && message.length > 0
-      ? message.slice(0, CLAW_REPORT_MAX)
-      : undefined;
+    typeof message === 'string' && message.length > 0 ? message : undefined;
   const ok = outcome === 'report' && (finalMessage?.trim() ?? '') !== '';
   // Only two summaries are ever stored for claw work. Any other outcome --
   // including the reserved `park`, which item-state derivation treats as a

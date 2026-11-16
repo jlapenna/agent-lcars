@@ -1,5 +1,9 @@
 import crypto from 'node:crypto';
 
+import {
+  RUN_MESSAGE_MAX_BYTES,
+  RUN_MESSAGE_PREVIEW_MAX,
+} from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   changeCredentialOperation,
@@ -32,7 +36,7 @@ import { createRunsHandler, type RunsContext } from './runs-router';
 import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
 import { truncatedDescription } from './work-from-github';
 import { requestReply } from './work-reply';
-import type { WorkContext } from './work-router';
+import { createWorkHandler, type WorkContext } from './work-router';
 
 /**
  * `requireRunToken` (`runs-router.ts`) now reads its "is this lease still
@@ -1394,6 +1398,134 @@ describe('claim -> brief -> heartbeat -> complete', () => {
       expect(deriveItemState(task!.task, runs)).toBe(state);
     },
   );
+});
+
+describe('a report longer than the inline preview', () => {
+  // The former 16,384-character cap silently cut or refused such reports.
+  it('round-trips a 200 KB report whole from completion to GET /items/{id}', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-report-long'),
+      now: NOW,
+      spec: {
+        title: 't',
+        description: 'd',
+        pipeline: 'claude',
+        deliverable: 'report',
+        target: { repo: 'jlapenna/agent-lcars' },
+      },
+    });
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const { token, workId } = claimed.json as {
+      token: string;
+      workId: string;
+    };
+    const report = `# Findings\n${'監視 finding 😀 detail line\n'.repeat(9_000)}end`;
+    expect(Buffer.byteLength(report)).toBeGreaterThan(200_000);
+    const complete = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      { outcome: 'report', outcomeReference: null, message: report },
+    );
+    expect(complete.status).toBe(200);
+
+    // The run document keeps a bounded preview; the whole report lives
+    // beside it and settles the round as a successful report.
+    const settled = await store.readRun(runId);
+    expect(settled?.result).toMatchObject({ ok: true, summary: 'report' });
+    expect(settled?.result?.message).toBe(
+      report.slice(0, RUN_MESSAGE_PREVIEW_MAX),
+    );
+    expect(settled?.result?.messageOverflow?.chars).toBe(report.length);
+    const task = await store.readTask({ workId });
+    expect(deriveItemState(task!.task, await store.listRuns({ workId }))).toBe(
+      'done',
+    );
+
+    const workCtx = {
+      principal: operatorPrincipal(),
+      runtime: { store, orchestrator } as unknown as WorkContext['runtime'],
+      sessionsFor: async () => [],
+      getSessionDoc: async () => undefined,
+      sessionDocsForRuns: async () => [],
+      cliSessions: async () => ({ sessions: [], warnings: [] }),
+      scheduleStore: new MemoryScheduleStore(),
+      grants: () => [],
+      now,
+    } as WorkContext;
+    const read = async (path: string) => {
+      const { response } = await createWorkHandler().handle(
+        new Request(`https://lcars.test/api/work/v1${path}`),
+        { prefix: '/api/work/v1', context: workCtx },
+      );
+      return {
+        status: response?.status,
+        json: (await response?.json()) as {
+          runs?: { result?: Record<string, unknown> }[];
+          items?: { runs: { result?: Record<string, unknown> }[] }[];
+        },
+      };
+    };
+    const item = await read(`/items/${workId}`);
+    expect(item.status).toBe(200);
+    expect(item.json.runs?.at(-1)?.result?.['message']).toBe(report);
+    expect(item.json.runs?.at(-1)?.result).not.toHaveProperty(
+      'messageOverflow',
+    );
+    // A listing stays small and says the message continues.
+    const list = await read('/items');
+    expect(list.status).toBe(200);
+    const listed = list.json.items?.[0]?.runs.at(-1)?.result;
+    expect(listed?.['message']).toHaveLength(RUN_MESSAGE_PREVIEW_MAX);
+    expect(listed?.['messageOverflow']).toMatchObject({
+      chars: report.length,
+    });
+  });
+
+  it('refuses a message past the completion bound instead of cutting it', async () => {
+    const { store, orchestrator, now } = fixture();
+    const runId = await seedQueuedRun(store, orchestrator, {
+      workId: wid('work-report-oversized'),
+      now: NOW,
+    });
+    const claimed = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      '/runs/claim',
+      { runner: 'runner-1' },
+    );
+    const { token } = claimed.json as { token: string };
+    const complete = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'POST',
+      runPath(runId, '/complete'),
+      {
+        outcome: 'park',
+        outcomeReference: null,
+        message: 'x'.repeat(RUN_MESSAGE_MAX_BYTES + 1),
+      },
+    );
+    expect(complete.status).toBe(400);
+    expect((await store.readRun(runId))?.state).toBe('running');
+  });
 });
 
 describe('report deliverable across a provider fallback', () => {

@@ -16,6 +16,7 @@ import {
   briefQuestion,
   comparableConfig,
   main,
+  MAX_REPORT_BYTES,
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
@@ -279,12 +280,27 @@ test('settle maps envelopes conservatively', () => {
       .message,
     'OpenClaw model attempt timed out.',
   );
+  // A long report settles whole: 200 KB, far past the former 16,000 cut.
+  const long = '# Findings\n' + '監視 report line 😀\n'.repeat(10_000) + 'end';
+  assert.ok(Buffer.byteLength(long) > 200_000);
   const huge = settle({
     code: 0,
     timedOut: false,
-    stdout: JSON.stringify({ ok: true, final: 'x'.repeat(100_000) }),
+    stdout: JSON.stringify({ ok: true, final: long }),
   });
-  assert.ok(huge.message.length <= 16_384);
+  assert.equal(huge.outcome, 'report');
+  assert.equal(huge.message, long);
+  // Past the completion bound it is a failed attempt, never a truncated report.
+  const oversized = settle({
+    code: 0,
+    timedOut: false,
+    stdout: JSON.stringify({
+      ok: true,
+      final: 'x'.repeat(MAX_REPORT_BYTES + 1),
+    }),
+  });
+  assert.equal(oversized.outcome, 'runner-failed');
+  assert.match(oversized.message, /completion bound/);
 });
 
 test('comparableConfig ignores only meta and wizard stamps', () => {

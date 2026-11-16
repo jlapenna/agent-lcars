@@ -37,6 +37,7 @@ import {
   type OutboxSettlement,
   type RequestSource,
   type Run,
+  type RunMessageOverflow,
   runRecoveryDeadline,
   runSchema,
   runStateSchema,
@@ -58,6 +59,7 @@ import {
   projectQueueAdmissionStatus,
   QUEUE_ADMISSION_READ_LIMIT,
 } from './queue-admission-status';
+import { joinRunMessage } from './run-message';
 import {
   type OpenGithubAnchorProjectionCursor,
   type OpenGithubAnchorProjectionPage,
@@ -195,6 +197,43 @@ export class FirestoreStore implements OrchestratorStore {
         (feed) => feed.size <= input.limit,
       ),
     };
+  }
+
+  async writeRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+    chunks: readonly string[];
+  }): Promise<void> {
+    // One commit: the chunks stay well under Firestore's 10 MiB request
+    // bound because the message itself is bounded by RUN_MESSAGE_MAX_BYTES.
+    const batch = this.#firestore.batch();
+    input.chunks.forEach((text, index) =>
+      batch.set(this.#runMessageChunkRef(input.runId, input.overflow, index), {
+        sha256: input.overflow.sha256,
+        index,
+        count: input.chunks.length,
+        text,
+      }),
+    );
+    await batch.commit();
+  }
+
+  async readRunMessage(input: {
+    runId: string;
+    overflow: RunMessageOverflow;
+  }): Promise<string | undefined> {
+    const snapshots = await this.#firestore.getAll(
+      ...Array.from({ length: input.overflow.chunks }, (_, index) =>
+        this.#runMessageChunkRef(input.runId, input.overflow, index),
+      ),
+    );
+    return joinRunMessage(
+      input.overflow,
+      snapshots.map((snapshot) => {
+        const text: unknown = snapshot.get('text');
+        return snapshot.exists && typeof text === 'string' ? text : undefined;
+      }),
+    );
   }
 
   async readRun(runId: string): Promise<Run | undefined> {
@@ -1153,6 +1192,18 @@ export class FirestoreStore implements OrchestratorStore {
 
   #runRef(runId: string): DocumentReference {
     return this.#runs.doc(encodeURIComponent(runId));
+  }
+
+  /** `runs/{runId}/message-chunks/{sha256}.{index}`: beside the run it
+   * belongs to, never read by run listings or queries. */
+  #runMessageChunkRef(
+    runId: string,
+    overflow: RunMessageOverflow,
+    index: number,
+  ): DocumentReference {
+    return this.#runRef(runId)
+      .collection('message-chunks')
+      .doc(`${overflow.sha256}.${index}`);
   }
 
   #outboxRef(entryId: string): DocumentReference {

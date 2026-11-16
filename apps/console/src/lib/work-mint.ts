@@ -1,10 +1,12 @@
 import 'server-only';
 
 import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
+import { logger } from '@agent-lcars/logging';
 import {
   isRefusal,
   type ScheduleStore,
   type Task,
+  withFullRunMessages,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
@@ -86,12 +88,23 @@ export async function view(
   workId: string,
   task: Task,
 ): Promise<ItemView> {
-  const runs = await context.runtime.store.listRuns({ workId });
+  const { store } = context.runtime;
+  const runs = await store.listRuns({ workId });
   const sessions = await context.sessionsFor(runs.map((run) => run.runId));
   return toItemView({
     workId,
     task,
-    runs: await withHandoffActions(context.runtime.store, runs),
+    // One item's view carries every round's whole message; listings keep
+    // the inline preview and its `messageOverflow` marker.
+    runs: await withFullRunMessages(
+      store,
+      await withHandoffActions(store, runs),
+      (runId) =>
+        logger.error(
+          'agent-lcars: stored final message unreadable for run %s; serving its preview',
+          runId,
+        ),
+    ),
     sessions,
   });
 }

@@ -260,9 +260,8 @@ describe('toClawRunResult', () => {
     expect(result.summary).toBe('runner-failed');
   });
 
-  it('keeps the existing completion bound', () => {
-    expect(toClawRunResult('report', 'x'.repeat(20_000)).message).toHaveLength(
-      16_384,
-    );
+  it('keeps a long report whole for out-of-line storage', () => {
+    const report = 'x'.repeat(200_000);
+    expect(toClawRunResult('report', report).message).toBe(report);
   });
 });

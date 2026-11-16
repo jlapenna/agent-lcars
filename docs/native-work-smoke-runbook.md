@@ -36,7 +36,7 @@ discard useful delivery to end a run sooner.
   change. Successful report delivery requires its private
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in
   the same private outcome file **and** the complete
-  final findings in the same round (at most 16,384 characters; oversize is refused, not truncated) —
+  final findings in the same round (stored whole at any length up to 4 MiB; never truncated) —
   a final message alone is insufficient, and a PR fails a report item. Only
   stored `deliverable: report` opt-in enables this contract; do not infer it
   from task text.
@@ -77,13 +77,13 @@ nor completion. See [the owning derivation](../libs/work/src/derive.ts).
 Preserve actual delivery ownership: a Task is complete when its bound PR merges
 and the binding records `state: complete` with the merge commit.
 
-| Observation                 | What you actually look at                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Admission                   | `PUT /items/{id}` returns `201` with the item view and initial `work:<id>/r1` Run. A queued, unclaimed Run proves admission only.                                                                                                                                                                                                                                        |
-| Provider execution          | the direct worker claims the native Run and records actual provider-process start and session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required.                                                                                          |
-| PR publication (run result) | the latest Run settles `state: finished` with `result.ok: true`, `result.summary: pull-request`, and `result.ref` = the PR URL; the fleet-login PR references `Work: work:<id>`. This records publication independently of item state and landing.                                                                                                                       |
-| Protected landing           | observe required CI and the protected merge **on the PR itself** — required checks going green and the merge commit on the base branch. A finished publication Run is insufficient; landing alone does not complete a delivery binding with remaining runtime acceptance.                                                                                                |
-| Report completion           | a `deliverable: report` item requires the private `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in the same outcome file **and** complete final findings in the same round (at most 16,384 characters; oversize refused, never truncated). A bare final message is insufficient and a PR fails it; verify the actual accepted Run outcome. |
+| Observation                 | What you actually look at                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Admission                   | `PUT /items/{id}` returns `201` with the item view and initial `work:<id>/r1` Run. A queued, unclaimed Run proves admission only.                                                                                                                                                                                                                                   |
+| Provider execution          | the direct worker claims the native Run and records actual provider-process start and session history against that Run id; the item brief has `anchor.type: work`; `GET /items/{id}` and the console show the Run lifecycle. No GitHub Actions run or title marker is required.                                                                                     |
+| PR publication (run result) | the latest Run settles `state: finished` with `result.ok: true`, `result.summary: pull-request`, and `result.ref` = the PR URL; the fleet-login PR references `Work: work:<id>`. This records publication independently of item state and landing.                                                                                                                  |
+| Protected landing           | observe required CI and the protected merge **on the PR itself** — required checks going green and the merge commit on the base branch. A finished publication Run is insufficient; landing alone does not complete a delivery binding with remaining runtime acceptance.                                                                                           |
+| Report completion           | a `deliverable: report` item requires the private `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in the same outcome file **and** complete final findings in the same round (stored whole at any length up to 4 MiB; never truncated). A bare final message is insufficient and a PR fails it; verify the actual accepted Run outcome. |
 
 On the PR path, a successful `finished` Run with its `pull-request` result and
 PR reference proves publication. Watch required CI and protected merge on the
@@ -151,7 +151,7 @@ path, not as one green light:
 - **Report path:** confirm the private
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` record with the attempt claim in
   the same private outcome file **and** complete final findings in the same
-  round (at most 16,384 characters; oversize is refused, not truncated).
+  round (stored whole at any length up to 4 MiB; never truncated).
   Verify the accepted Run outcome; a bare final message settles nothing, and
   a PR fails a report item.
 

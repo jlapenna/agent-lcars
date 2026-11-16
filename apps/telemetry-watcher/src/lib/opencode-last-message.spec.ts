@@ -122,9 +122,10 @@ describe('extractLastAssistantText', () => {
     );
   });
 
-  it('keeps a whole maximal Work message in its UTF-8 envelope', () => {
-    // 16,384 JavaScript string units of three-byte text is 49,152 bytes.
-    const maximal = '監'.repeat(16_384);
+  it('keeps a whole long Work message in its UTF-8 envelope', () => {
+    // A 200,000-character report of three-byte text is 600,000 bytes, far
+    // past the former 16,384-unit message bound.
+    const maximal = '監'.repeat(200_000);
     const file = writeExport(
       JSON.stringify({
         info: { id: 'ses_1' },
