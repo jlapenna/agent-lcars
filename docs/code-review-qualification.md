@@ -41,7 +41,8 @@ caller's sessions depend on:
 
 - Claude uses the fleet's long-lived, non-rotating `CLAUDE_CODE_OAUTH_TOKEN`
   ([fleet credentials](fleet-credentials.md)). The launcher reads it from
-  Secret Manager (or `LCARS_REVIEW_CLAUDE_TOKEN_FILE`) into a private
+  Secret Manager, which needs project-level access to `agent-lcars` (otherwise
+  supply a protected `LCARS_REVIEW_CLAUDE_TOKEN_FILE`), into a private
   temporary file, mounts it read-only and removes it after the run.
 - Codex has no long-lived token, so the caller's `auth.json` is bound
   read-only. Codex refreshes at a known time (access-token expiry or

@@ -89,10 +89,17 @@ const auth =
       : provider === 'agy'
         ? join(homedir(), '.gemini/antigravity-cli')
         : process.env.LCARS_REVIEW_OPENCODE_KEY_FILE;
-process.on('exit', () => {
+const removeClaudeSecret = () => {
   if (claudeSecretDir)
     rmSync(claudeSecretDir, { recursive: true, force: true });
-});
+};
+process.on('exit', removeClaudeSecret);
+// A signal outside the container window must not leave the token behind.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
+  process.once(signal, () => {
+    removeClaudeSecret();
+    process.kill(process.pid, signal);
+  });
 if (!auth || !existsSync(auth))
   throw new Error('Caller-owned native authentication binding is unavailable');
 paths.push(auth);
