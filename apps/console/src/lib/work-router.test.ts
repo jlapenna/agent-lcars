@@ -213,6 +213,9 @@ describe('repository-owned agent runs', () => {
     return {
       list: async () => [...map.values()],
       read: async (id) => map.get(id),
+      sources: async () => [],
+      recordAttempt: async () => undefined,
+      claimObservation: async () => true,
       mutate: async () => ({}),
     };
   }
