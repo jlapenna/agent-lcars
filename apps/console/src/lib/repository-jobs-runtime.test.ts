@@ -15,6 +15,9 @@ vi.mock('./repository-jobs', () => ({
   },
 }));
 vi.mock('./repository-job-store', () => ({ FirestoreJobStore: class {} }));
+vi.mock('./repository-agents-runtime', () => ({
+  maintainRepositoryAgents: async () => undefined,
+}));
 vi.mock('@google-cloud/firestore', () => ({ Firestore: class {} }));
 
 import type { OrchestratorRouteDeps } from './orchestrator-routes';

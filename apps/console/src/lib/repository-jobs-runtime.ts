@@ -9,6 +9,7 @@ import { controlPlaneRepositories } from './deployment';
 import { createDispatchTokenProvider } from './github-app-tokens';
 import { jobSecrets } from './job-secrets-runtime';
 import type { OrchestratorRouteDeps } from './orchestrator-routes';
+import { maintainRepositoryAgents } from './repository-agents-runtime';
 import { refreshJobCatalogs } from './repository-job-catalog';
 import { jobProfileSchema } from './repository-job-definition';
 import { FirestoreJobStore } from './repository-job-store';
@@ -90,6 +91,7 @@ export async function maintainRepositoryJobs(
         (principal, definition) => jobs.authorizes(definition, principal),
       ))(),
     tick(),
+    maintainRepositoryAgents(deadline),
   ]);
   for (const result of results)
     if (result.status === 'rejected') throw result.reason;
