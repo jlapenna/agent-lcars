@@ -88,6 +88,13 @@ export async function attemptTaggedReplyResume(
     },
   );
 
+  // An oversized reply is refused for every path, so it must not fall
+  // through to ordinary admission, which would store the same text.
+  if (!outcome.ok && outcome.code === 'PAYLOAD_TOO_LARGE')
+    return {
+      status: 200,
+      body: { refused: 'reply-too-large', message: outcome.message },
+    };
   if (!outcome.ok) return undefined;
   return {
     status: 200,

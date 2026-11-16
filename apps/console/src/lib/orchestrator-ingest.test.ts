@@ -813,6 +813,18 @@ describe('interpretDelivery', () => {
       expected: { kind: 'ignore', reason: 'no-reply-command' },
     },
     {
+      name: 'trusted reply command past the runner byte budget -> reply-too-large',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          // Within GitHub's 65,536-character limit, past the byte budget.
+          body: `@claude ${'漢'.repeat(50_000)}`,
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'reply-too-large' },
+    },
+    {
       name: 'reply mention from a MEMBER bot -> untrusted-author',
       event: 'issue_comment',
       payload: issueCommentPayload({

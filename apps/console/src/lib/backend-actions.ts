@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import {
+  fitsWorkParamText,
   formatQuickTaskMarker,
   parseTerminalQuickTaskBody,
   quickTaskDigest as sharedQuickTaskDigest,
+  WORK_PARAM_TEXT_TOO_LARGE,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import type { Task } from '@agent-lcars/orchestrator';
@@ -327,6 +329,11 @@ export async function postComment(
   // arguments are still untrusted at the network boundary.
   if (assignedPipeline !== undefined) {
     requireAgentIntegration(repo, assignedPipeline);
+    // A dispatched comment becomes the run's reply parameter; refuse one
+    // the runner cannot deliver whole before posting anything.
+    if (!fitsWorkParamText(body)) {
+      throw new ActionError(`Reply ${WORK_PARAM_TEXT_TOO_LARGE}`, 413);
+    }
   }
   const data = await postOperatorComment(repo, issueNumber, body, actor);
   const result = await dispatchPostedReply(

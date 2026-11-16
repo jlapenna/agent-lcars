@@ -209,6 +209,36 @@ describe('the per-task mutex', () => {
   });
 });
 
+describe('run params byte budget', () => {
+  it('refuses oversized params for any admission path and keeps the task readable', async () => {
+    const { store, orchestrator } = fixture();
+    const first = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'first',
+      pipeline: 'claude',
+      work: TASK_WORK,
+    });
+    if (isRefusal(first)) throw new Error('unexpected refusal');
+    await orchestrator.report(decidedRun(first).runId, {
+      ok: true,
+      summary: 'park',
+    });
+
+    // 50,000 CJK characters: within GitHub's 65,536-character comment
+    // limit, past the per-parameter byte budget.
+    const oversized = await orchestrator.request({
+      taskId: TASK,
+      requestId: 'reply:oversized',
+      pipeline: 'claude',
+      params: { mode: 'reply', reply: '漢'.repeat(50_000) },
+    });
+
+    expect(oversized).toEqual({ refused: true, reason: 'params-too-large' });
+    expect(await store.listRuns(TASK)).toHaveLength(1);
+    expect((await store.readTask(TASK))?.task.activeRunId).toBeUndefined();
+  });
+});
+
 describe('the run lifecycle', () => {
   it('records the full transition history on the run', async () => {
     const { orchestrator } = fixture();

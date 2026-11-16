@@ -124,6 +124,39 @@ describe('attemptTaggedReplyResume', () => {
     expect(result?.body['runId']).toBeDefined();
   });
 
+  it('refuses an oversized tagged reply terminally instead of falling through to admission', async () => {
+    const { orchestrator, deps, store } = fixture();
+    await parkTask(orchestrator);
+    // 50,000 CJK characters: within GitHub's 65,536-character comment limit
+    // but past the runner's byte budget for one reply.
+    const body = `@claude ${'漢'.repeat(50_000)}`;
+
+    const result = await attemptTaggedReplyResume(deps, delivery({ body }));
+
+    expect(result).toMatchObject({
+      status: 200,
+      body: { refused: 'reply-too-large' },
+    });
+    // Nothing persisted; the parked task and its one run still read back.
+    const runs = await store.listRuns({ repo: REPO, issue: ISSUE });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.params?.['reply']).toBeUndefined();
+    const task = await store.readTask({ repo: REPO, issue: ISSUE });
+    expect(task?.task.activeRunId).toBeUndefined();
+  });
+
+  it('keeps a long tagged reply whole', async () => {
+    const { orchestrator, deps, store } = fixture();
+    await parkTask(orchestrator);
+    const body = `@claude ${'x'.repeat(65_000)}`;
+
+    expect(
+      await attemptTaggedReplyResume(deps, delivery({ body })),
+    ).toMatchObject({ status: 200 });
+    const runs = await store.listRuns({ repo: REPO, issue: ISSUE });
+    expect(runs.at(-1)?.params?.['reply']).toBe(body);
+  });
+
   it('falls through (undefined) when the anchor has no task at all -- NOT_FOUND', async () => {
     const { deps } = fixture();
 

@@ -506,6 +506,26 @@ export const workRevisionSchema = z.strictObject({
 });
 export type WorkRevision = z.infer<typeof workRevisionSchema>;
 
+/** `Run.params`: each value fits `WORK_PARAM_TEXT_MAX_BYTES`, the bound the
+ * direct runner's environment and prompt argument impose, and the record
+ * fits `RUN_PARAMS_MAX_BYTES`, its share of the run document. `requestRun`
+ * refuses params outside it, so no path can persist an unreadable run. */
+export const runParamsSchema = z
+  .record(
+    z.string().max(64),
+    z
+      .string()
+      .refine(
+        (value) => serializedJsonBytes(value) <= WORK_PARAM_TEXT_MAX_BYTES,
+        {
+          message: `run parameter exceeds ${WORK_PARAM_TEXT_MAX_BYTES} bytes`,
+        },
+      ),
+  )
+  .refine((value) => serializedJsonBytes(value) <= RUN_PARAMS_MAX_BYTES, {
+    message: `run parameters exceed ${RUN_PARAMS_MAX_BYTES} bytes`,
+  });
+
 export const runSchema = z.strictObject({
   runId: z.string().min(1).max(RUN_ID_MAX_LENGTH),
   task: taskIdSchema,
@@ -520,26 +540,9 @@ export const runSchema = z.strictObject({
   requestSource: requestSourceSchema,
   /** Opaque dispatch parameters (e.g. mode, reply text) recorded at request
    *  time and handed verbatim to the executor. Never interpreted here.
-   *  Each value must fit `WORK_PARAM_TEXT_MAX_BYTES`, the bound the direct
-   *  runner's environment and prompt argument impose, and the whole record
-   *  `RUN_PARAMS_MAX_BYTES`, its share of the run document. The Work API
-   *  refuses oversized reply and context text before it reaches here. */
-  params: z
-    .record(
-      z.string().max(64),
-      z
-        .string()
-        .refine(
-          (value) => serializedJsonBytes(value) <= WORK_PARAM_TEXT_MAX_BYTES,
-          {
-            message: `run parameter exceeds ${WORK_PARAM_TEXT_MAX_BYTES} bytes`,
-          },
-        ),
-    )
-    .refine((value) => serializedJsonBytes(value) <= RUN_PARAMS_MAX_BYTES, {
-      message: `run parameters exceed ${RUN_PARAMS_MAX_BYTES} bytes`,
-    })
-    .optional(),
+   *  Bounded by `runParamsSchema`; the Work API refuses oversized reply
+   *  and context text before it reaches here. */
+  params: runParamsSchema.optional(),
   issue: trackerIssueSchema.optional(),
   sourceRevision: workRevisionSchema.optional(),
   revisionAttempt: z.number().int().positive().optional(),
