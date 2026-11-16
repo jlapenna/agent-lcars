@@ -4,6 +4,7 @@ import { createHmac } from 'node:crypto';
 import {
   issueSourceKey,
   type TrackerIssue,
+  WORK_PARAM_TEXT_MAX_BYTES,
 } from '@agent-lcars/dispatch-contracts';
 import { MemoryStore, Orchestrator } from '@agent-lcars/orchestrator';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -388,6 +389,33 @@ describe('Linear admission boundary', () => {
     await f.admit(raw);
     expect(await f.store.listNativeTasks(10)).toHaveLength(1);
     expect(await f.store.listRuns({ workId: reservedId })).toHaveLength(1);
+  });
+  const commandEvent = (body: string) =>
+    event({
+      type: 'Comment',
+      action: 'create',
+      actor: { id: actor, type: 'user' },
+      data: { id: commentId, issueId, body },
+    });
+  it('keeps a long initial comment command whole', async () => {
+    const f = fixture(snapshot({ labels: [] }));
+    // Past the retired 16,384-character slice.
+    const body = `/codex ${'x'.repeat(65_536)}`;
+    f.readComment.mockResolvedValueOnce({ ...(await f.readComment()), body });
+    const result = await f.admit(commandEvent(body));
+    const id = { workId: result.body['itemId'] as string };
+    expect((await f.store.listRuns(id))[0]?.params?.['reply']).toBe(body);
+  });
+  it('refuses an initial comment command past the runner byte budget', async () => {
+    const f = fixture(snapshot({ labels: [] }));
+    const body = `/codex ${'x'.repeat(WORK_PARAM_TEXT_MAX_BYTES)}`;
+    f.readComment.mockResolvedValueOnce({ ...(await f.readComment()), body });
+    const result = await f.admit(commandEvent(body));
+    expect(result.body).toMatchObject({
+      outcome: 'refused',
+      reason: expect.stringContaining('serialized text budget'),
+    });
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
   });
   it('deduplicates an initial comment command even after its run settles', async () => {
     const f = fixture(snapshot({ labels: [] }));

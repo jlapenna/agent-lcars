@@ -23,6 +23,7 @@ import {
   requestHistoryKey,
   type RequestSource,
   type Run,
+  runParamsSchema,
   runRecoveryDeadline,
   runRequestHistoryKey,
   type RunResult,
@@ -70,6 +71,7 @@ export interface Refusal {
     | 'stale-lease' // renew/report from a run that already lost the lock
     | 'task-closed' // closeTask set closedAt; no further runs
     | 'missing-work' // strict Task documents always carry the Work payload
+    | 'params-too-large' // run params exceed the byte budget a run document and the runner hold
     | 'work-spec-mismatch' // caller's immutable Work validation rejected it
     | 'unknown-task' // close on a task that was never created
     | 'stale-issue-source'
@@ -238,6 +240,14 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
     return refused('task-busy');
   const work = input.task?.work ?? input.work;
   if (work === undefined) return refused('missing-work');
+  // The store persists a decided run without re-validating it; a run whose
+  // params later fail `runSchema` would be unreadable. Refuse it here, for
+  // every admission path, instead.
+  if (
+    input.params !== undefined &&
+    !runParamsSchema.safeParse(input.params).success
+  )
+    return refused('params-too-large');
   const previousIssue = input.task?.issue;
   if (
     previousIssue &&

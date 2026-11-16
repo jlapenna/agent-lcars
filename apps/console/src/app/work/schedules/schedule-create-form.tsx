@@ -1,10 +1,18 @@
 'use client';
 
 import {
+  fitsWorkDescription,
   QUEUE_PRIORITIES,
   type QueuePriority,
+  WORK_DESCRIPTION_TOO_LARGE,
 } from '@agent-lcars/dispatch-contracts';
-import { parseCron, PIPELINES, ulid, type WorkSpec } from '@agent-lcars/work';
+import {
+  parseCron,
+  PIPELINES,
+  ulid,
+  WORK_TITLE_MAX,
+  type WorkSpec,
+} from '@agent-lcars/work';
 import {
   Button,
   Group,
@@ -110,6 +118,10 @@ export function ScheduleCreateForm({
       setError('must be a valid 5-field UTC cron expression');
       return;
     }
+    if (!fitsWorkDescription(description)) {
+      setError(`Description ${WORK_DESCRIPTION_TOO_LARGE}`);
+      return;
+    }
     const id = ulid();
     onPendingChange?.(true);
     startTransition(async () => {
@@ -165,7 +177,7 @@ export function ScheduleCreateForm({
           disabled={isPending}
           label="Title"
           required
-          maxLength={256}
+          maxLength={WORK_TITLE_MAX}
           value={title}
           onChange={(e) => setTitle(e.currentTarget.value)}
         />
@@ -175,7 +187,11 @@ export function ScheduleCreateForm({
           required
           autosize
           minRows={3}
-          maxLength={16_384}
+          error={
+            fitsWorkDescription(description)
+              ? undefined
+              : `Description ${WORK_DESCRIPTION_TOO_LARGE}`
+          }
           value={description}
           onChange={(e) => setDescription(e.currentTarget.value)}
         />

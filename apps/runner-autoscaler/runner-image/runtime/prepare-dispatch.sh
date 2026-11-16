@@ -12,23 +12,11 @@ command -v gh >/dev/null || { echo '::error::gh is required' >&2; exit 1; }
 
 bash "$RUNTIME_HELPERS_DIR/assert-consumer-boundaries.sh" "$WORKSPACE" "$REPOSITORY"
 
-# Character budgets for the untrusted prose the brief carries. Deliberately
-# constants, not action inputs: the brief is a contract every lane and every
-# provider reads identically, and a per-caller knob is exactly how one lane
-# quietly grows a preamble the others do not pay. Raising a budget is a
-# reviewed edit here. See the jq that applies them for the rationale on the
-# values.
-MAX_ANCHOR_BODY_CHARACTERS=6000
-MAX_REPLY_CHARACTERS=16384
-MAX_CONTEXT_CHARACTERS=2000
-MAX_RESULT_BODY_CHARACTERS=2000
-MAX_ACCEPTANCE_CRITERIA=40
-# A label redispatch carries only the previous run timestamp through the
-# existing `context` workflow input. Keep the newly-visible thread delta
-# beneath the normal prompt budget: five comments at 1,000 characters each
-# add at most ~5k characters, and every truncation is visible in the brief.
-MAX_NEW_COMMENTS=5
-MAX_NEW_COMMENT_BODY_CHARACTERS=1000
+# The brief carries Work and GitHub text whole. The Work API already bounds
+# its text by real storage and process limits, and GitHub bounds issue and
+# comment bodies at 65,536 characters, so this helper adds no prompt budget
+# of its own. Large values travel through files, never a single argument or
+# environment string, which Linux limits to 128 KiB (MAX_ARG_STRLEN).
 
 # Do not add a workflow_dispatch input just for this control-plane-only
 # marker: every fleet consumer already forwards `context`. Strip the exact
@@ -71,47 +59,56 @@ if [ "${MODE:-implement}" = review ]; then
 fi
 
 mkdir -p "$dispatch_dir"
+anchor_path="$dispatch_dir/anchor.json"
+comments_path="$dispatch_dir/comments.json"
 
-if [ -n "${WORK:-}" ] && [ -z "${ISSUE:-}" ]; then
+# The Work payload arrives as a file: a complete description can exceed the
+# per-string limit an environment variable has.
+if [ -z "${WORK_FILE:-}" ] || [ ! -s "$WORK_FILE" ]; then
+  echo "::error::WORK_FILE is required for every dispatch" >&2
+  exit 1
+fi
+
+if [ -z "${ISSUE:-}" ]; then
   # Native work item: the anchor is the dispatch input itself. No GitHub
   # reads -- there is no issue, thread, or label to consult. WORK is a
   # dispatch-time input under caller control, not untrusted GitHub prose,
   # but a malformed payload here is a caller bug, not a retryable
   # condition, so it fails the dispatch outright rather than limping on
   # with a partially-built anchor.
-  if ! jq -e '.id and .spec.title and .spec.target.repo' <<<"$WORK" >/dev/null 2>&1; then
+  if ! jq -e '.id and .spec.title and .spec.target.repo' "$WORK_FILE" >/dev/null 2>&1; then
     echo "::error::WORK is malformed: expected {id, spec:{title, target:{repo}}}" >&2
     exit 1
   fi
-  work_json="$(jq -c . <<<"$WORK")"
-  anchor_json="$(jq -cn --argjson w "$work_json" --arg console "${CONSOLE_URL:?CONSOLE_URL is required}" '{
+  jq -c --arg console "${CONSOLE_URL:?CONSOLE_URL is required}" '{
     type: "work",
-    id: $w.id,
-    title: $w.spec.title,
-    body: $w.spec.description,
-    target_repo: $w.spec.target.repo,
-    html_url: ($console + "/work/" + $w.id),
+    id: .id,
+    title: .spec.title,
+    body: .spec.description,
+    target_repo: .spec.target.repo,
+    html_url: ($console + "/work/" + .id),
     labels: [], assignees: [], state: "open", state_reason: null
-  }')"
-  comments_json='[]'
+  }' "$WORK_FILE" > "$anchor_path"
+  echo '[]' > "$comments_path"
   # A native anchor has no GitHub thread, but it does have a maintainer
   # channel now: POST /items/{id}/reply puts the human's turn on
   # `Run.params.reply`, and the brief is where the agent reads it. (This
   # used to force REPLY='' because there was no such channel.)
-elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
+else
   # A GitHub-anchored task carries a Work payload.
   # The task text comes from WORK.spec -- the issue is evidence for
   # linking (number, html_url, labels, assignees, state, and -- via the
   # merge below -- whether this anchor is actually a PR) and, in reply
   # mode, for the comment thread; it is not the source of the brief's
   # title/body.
-  if ! jq -e '.spec.title and .spec.target.repo' <<<"$WORK" >/dev/null 2>&1; then
+  if ! jq -e '.spec.title and .spec.target.repo' "$WORK_FILE" >/dev/null 2>&1; then
     echo "::error::WORK is malformed: expected {spec:{title, target:{repo}}}" >&2
     exit 1
   fi
-  work_json="$(jq -c . <<<"$WORK")"
-  issue_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE")"
-  comments_json="$(gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate)"
+  issue_path="$dispatch_dir/issue.json"
+  gh api "repos/$REPOSITORY/issues/$ISSUE" > "$issue_path"
+  # One JSON array per page; the brief flattens them.
+  gh api "repos/$REPOSITORY/issues/$ISSUE/comments?per_page=100" --paginate > "$comments_path"
   # Merge, right side wins: every field the raw issue/PR response carries
   # (number, labels, assignees, state, state_reason, html_url, and --
   # load-bearing -- pull_request) survives untouched, with only
@@ -120,27 +117,17 @@ elif [ -n "${WORK:-}" ] && [ -n "${ISSUE:-}" ]; then
   # $anchor.pull_request then "pull-request" else "issue" end)) infers it
   # from the merged $anchor.pull_request, so a PR-backed anchor keeps its
   # "pull-request" type instead of being hardcoded to "issue".
-  anchor_json="$(jq -cn --argjson w "$work_json" --argjson i "$issue_json" \
-    '$i + { title: $w.spec.title, body: $w.spec.description }')"
-else
-  echo "::error::WORK is required for every dispatch" >&2
-  exit 1
+  jq -c --slurpfile w "$WORK_FILE" \
+    '. + { title: $w[0].spec.title, body: $w[0].spec.description }' \
+    "$issue_path" > "$anchor_path"
 fi
 
 now_epoch="${NOW_EPOCH:-$(date -u +%s)}"
 started_at="$(date -u -d "@$now_epoch" +%Y-%m-%dT%H:%M:%SZ)"
 deadline="$(date -u -d "@$((now_epoch + BUDGET_MINUTES * 60))" +%Y-%m-%dT%H:%M:%SZ)"
 
-# Every field below that carries GitHub- or maintainer-authored prose is
-# clamped to a character budget. The brief is what a headless agent reads
-# *before* it can do anything else, so its size is a fixed tax on every
-# dispatch, paid again on every provider - and on the homelab LLM server it
-# is the difference between a served and a refused prompt
-# (agent-lcars#1202). Unbounded assembly also fails open: a single 32KB
-# issue body (this repo's observed maximum) silently becomes 8k tokens of
-# preamble. The budgets below sit above this repo's p99 issue body (~10k
-# characters) so a typical dispatch is byte-identical to the unclamped
-# brief, while the tail is bounded and told exactly where to read the rest.
+# Every untrusted text field is carried whole: the Work API and GitHub bound
+# their sizes, and the agent reads this file with its own tools.
 jq -n \
   --arg agent "$AGENT" \
   --arg repository "$REPOSITORY" \
@@ -151,39 +138,20 @@ jq -n \
   --arg runbook "$RUNBOOK" \
   --arg context "$CONTEXT" \
   --arg comment_since "$COMMENT_SINCE" \
-  --argjson anchor "$anchor_json" \
-  --argjson source_issue "$(jq -c '(.issue // null) | if . == null then . else del(.description, .labels, .assignees) end' <<<"$WORK")" \
-  --argjson comments "$comments_json" \
+  --slurpfile anchor_doc "$anchor_path" \
+  --argjson source_issue "$(jq -c '(.issue // null) | if . == null then . else del(.description, .labels, .assignees) end' "$WORK_FILE")" \
+  --slurpfile comment_pages "$comments_path" \
   --arg started_at "$started_at" \
   --arg deadline "$deadline" \
   --argjson budget_minutes "$BUDGET_MINUTES" \
-  --argjson max_anchor_body "$MAX_ANCHOR_BODY_CHARACTERS" \
-  --argjson max_reply "$MAX_REPLY_CHARACTERS" \
-  --argjson max_context "$MAX_CONTEXT_CHARACTERS" \
-  --argjson max_result_body "$MAX_RESULT_BODY_CHARACTERS" \
-  --argjson max_criteria "$MAX_ACCEPTANCE_CRITERIA" \
-  --argjson max_new_comments "$MAX_NEW_COMMENTS" \
-  --argjson max_new_comment_body "$MAX_NEW_COMMENT_BODY_CHARACTERS" \
-  '# Clamp untrusted prose to $limit characters, appending a marker that says
-   # how much was dropped and where the agent can read the rest on demand.
-   # The marker is our own text, appended after the untrusted content - it
-   # never grants that content any authority it did not already have.
-   def clamp($limit; $hint):
-     if length > $limit
-     then .[0:$limit] + "\n\n[dispatch-brief: truncated to \($limit) of \(length) characters. \($hint)]"
-     else . end;
-   def over($limit): length > $limit;
-
+  '$anchor_doc[0] as $anchor |
+   # `gh api --paginate` writes one array per page.
+   [$comment_pages[][]] as $comments |
    ($anchor.body // "") as $body |
-   ($anchor.html_url // "") as $anchor_url |
    [
      $comments[] |
      select($comment_since != "" and ((.created_at // "") > $comment_since))
    ] as $new_comments |
-   # The GitHub REST list is oldest-first. If a busy thread exceeds the
-   # window, keep the most recent human update rather than spending the
-   # whole budget on the first bot/status chatter after the prior run.
-   ($new_comments[-$max_new_comments:]) as $comment_window |
    [
      ($body | split("\n")[]) |
      select(test("^[[:space:]]*[-*][[:space:]]+\\[[ xX]\\][[:space:]]+")) |
@@ -212,13 +180,11 @@ jq -n \
       state: $anchor.state,
       state_reason: ($anchor.state_reason // null),
       title: $anchor.title,
-      body: ($body | clamp($max_anchor_body; "Read the full body at \($anchor_url).")),
+      body: $body,
       labels: [($anchor.labels // [])[] | if type == "string" then . else .name end],
       assignees: [($anchor.assignees // [])[] | .login],
       html_url: $anchor.html_url,
-      # Extracted from the full body, not the clamped one: the checklist is
-      # the highest-signal part of an issue and must survive truncation.
-      acceptance_criteria: $criteria[0:$max_criteria]
+      acceptance_criteria: $criteria
     },
     # Absent on first dispatches, preserving their existing prompt shape.
     # On a label redispatch every item carries its GitHub author and URL so
@@ -226,7 +192,7 @@ jq -n \
     new_comments: (
       if $comment_since == "" then null
       else [
-        $comment_window[] |
+        $new_comments[] |
         {
           id,
           html_url,
@@ -234,19 +200,16 @@ jq -n \
           updated_at,
           author: (.user.login // "unknown"),
           author_type: (.user.type // "unknown"),
-          body: (. as $comment | ($comment.body // "") | clamp($max_new_comment_body; "Read the full comment at \($comment.html_url // $anchor_url)."))
+          body: (.body // "")
         }
       ]
       end
     ),
     mode: $mode,
-    reply: ($reply | clamp($max_reply; "Read the full reply on the anchor thread at \($anchor_url).")),
+    reply: $reply,
     runbook: $runbook,
-    context: ($context | clamp($max_context; "Read the full router context in the dispatching workflow run.")),
-    latest_agent_result: (
-      if $result == null then null
-      else $result | .body = ($result.body | clamp($max_result_body; "Read the full comment at \($result.html_url).")) end
-    ),
+    context: $context,
+    latest_agent_result: $result,
     requested_results: (
       # A native work item has no issue thread, but a marker-bound terminal
       # artifact is now a first-class park/no-op outcome. It remains
@@ -259,15 +222,6 @@ jq -n \
       elif $mode == "reply" then ["comment", "pull-request", "park", "no-op"]
       else ["pull-request", "park", "no-op"] end
     ),
-    # Names every field the budget actually shortened, so an agent can tell
-    # "this is the whole story" from "fetch the rest" without parsing prose.
-    truncated: [
-      (if $body | over($max_anchor_body) then "anchor.body" else empty end),
-      (if ($criteria | length) > $max_criteria then "anchor.acceptance_criteria" else empty end),
-      (if $reply | over($max_reply) then "reply" else empty end),
-      (if $context | over($max_context) then "context" else empty end),
-      (if ($result != null) and ($result.body | over($max_result_body)) then "latest_agent_result.body" else empty end)
-    ],
     runtime: {
       started_at: $started_at,
       deadline: $deadline,
@@ -277,13 +231,7 @@ jq -n \
    | if $source_issue == null then . else . + {source_issue: $source_issue} end
    | if $comment_since == "" then del(.new_comments)
      else . + {new_comments_since: $comment_since}
-     end
-   | .truncated += [
-       (if $comment_since != "" and (
-         ($new_comments | length) > $max_new_comments or
-         any($comment_window[]; ((.body // "") | over($max_new_comment_body)))
-       ) then "new_comments" else empty end)
-     ]' \
+     end' \
   > "$context_path"
 
 {

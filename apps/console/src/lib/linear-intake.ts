@@ -3,9 +3,11 @@ import 'server-only';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 import {
+  fitsWorkParamText,
   issueSourceKey,
   REPLY_COMMANDS,
   type TrackerIssue,
+  WORK_PARAM_TEXT_TOO_LARGE,
 } from '@agent-lcars/dispatch-contracts';
 import { isRefusal } from '@agent-lcars/orchestrator';
 import {
@@ -188,6 +190,16 @@ export async function dispatchLinearIssue(
     },
   });
   const reply = command?.reply;
+  // The reply is the human's turn: refuse text the runner cannot deliver
+  // whole rather than cut it.
+  if (reply && !fitsWorkParamText(reply.text))
+    return {
+      status: 200,
+      body: {
+        outcome: 'refused',
+        reason: `Reply ${WORK_PARAM_TEXT_TOO_LARGE}`,
+      },
+    };
   const result = await mintItem(
     {
       runtime: {
@@ -206,7 +218,7 @@ export async function dispatchLinearIssue(
         ? {
             params: {
               mode: 'reply',
-              reply: reply.text.slice(0, 16_384),
+              reply: reply.text,
               replyChannel: 'linear',
               replyPrincipal: reply.principal,
             },

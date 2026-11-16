@@ -1,7 +1,12 @@
 import {
   CLAW_INVESTIGATE_OPERATION,
+  fitsWorkDescription,
   PIPELINE_CONTRACTS,
   QUEUE_PRIORITIES,
+  serializedJsonBytes,
+  WORK_DESCRIPTION_TOO_LARGE,
+  WORK_PAYLOAD_MAX_BYTES,
+  WORK_PAYLOAD_TOO_LARGE,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
 
@@ -10,10 +15,18 @@ import { z } from 'zod';
  * orchestrator as `Task.work` (see the design spec, "Data model"), and
  * delivered to the worker as the `work` workflow input (Plan 3).
  */
+/** GitHub's own issue and pull-request title limit. */
 export const WORK_TITLE_MAX = 256;
-/** Fits the workflow_dispatch input budget (65,535 chars across all
- *  inputs) with room for the other inputs. */
-export const WORK_DESCRIPTION_MAX = 16_384;
+
+/** A description has no character cap. Only its serialized size is bounded
+ *  (`WORK_DESCRIPTION_MAX_BYTES`, `@agent-lcars/dispatch-contracts`), so the
+ *  whole Work payload fits its Firestore budget. */
+export const workDescriptionSchema = z
+  .string()
+  .min(1)
+  .refine(fitsWorkDescription, {
+    message: `Description ${WORK_DESCRIPTION_TOO_LARGE}`,
+  });
 
 export const PIPELINES = Object.freeze(
   Object.keys(PIPELINE_CONTRACTS) as ['claude', 'codex', 'opencode', 'agy'],
@@ -34,7 +47,7 @@ export const fallbackPipelinesSchema = z
 export const workSpecSchema = z
   .strictObject({
     title: z.string().min(1).max(WORK_TITLE_MAX),
-    description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+    description: workDescriptionSchema,
     /** Required: invoking a pipeline is a granted capability. */
     pipeline: z.enum(PIPELINES),
     /** Every operator may select priority; absence preserves historical FIFO. */
@@ -87,10 +100,17 @@ export const workOriginSchema = z.strictObject({
 });
 export type WorkOrigin = z.infer<typeof workOriginSchema>;
 
-export const workPayloadSchema = z.strictObject({
-  origin: workOriginSchema,
-  spec: workSpecSchema,
-});
+const fitsWorkPayload = (payload: unknown) =>
+  serializedJsonBytes(payload) <= WORK_PAYLOAD_MAX_BYTES;
+
+export const workPayloadSchema = z
+  .strictObject({
+    origin: workOriginSchema,
+    spec: workSpecSchema,
+  })
+  .refine(fitsWorkPayload, {
+    message: `Work payload ${WORK_PAYLOAD_TOO_LARGE}`,
+  });
 export type WorkPayload = z.infer<typeof workPayloadSchema>;
 
 export const SUMMARY_PIPELINES = Object.freeze([
@@ -114,14 +134,14 @@ export type StoredPipeline = (typeof STORED_PIPELINES)[number];
 /** Internal reading work. Public coding admission continues to use workSpecSchema. */
 export const summaryWorkSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  description: workDescriptionSchema,
   pipeline: z.enum(SUMMARY_PIPELINES),
   priority: z.literal('background'),
   sourceKey: z.string().min(1).max(256),
 });
 export const recipeWorkSpecSchema = z.strictObject({
   title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  description: workDescriptionSchema,
   pipeline: z.literal('goose'),
   priority: z.literal('background'),
   target: workTargetSchema,
@@ -135,7 +155,7 @@ export const recipeWorkSpecSchema = z.strictObject({
  * and so rejects this shape. */
 const clawWorkSpecFields = {
   title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: z.string().min(1).max(WORK_DESCRIPTION_MAX),
+  description: workDescriptionSchema,
   priority: z.literal('background'),
   sourceKey: z.string().min(1).max(256),
 };
@@ -155,10 +175,14 @@ export const storedWorkSpecSchema = z.union([
   clawWorkSpecSchema,
 ]);
 export type StoredWorkSpec = z.infer<typeof storedWorkSpecSchema>;
-export const storedWorkPayloadSchema = z.strictObject({
-  origin: workOriginSchema,
-  spec: storedWorkSpecSchema,
-});
+export const storedWorkPayloadSchema = z
+  .strictObject({
+    origin: workOriginSchema,
+    spec: storedWorkSpecSchema,
+  })
+  .refine(fitsWorkPayload, {
+    message: `Work payload ${WORK_PAYLOAD_TOO_LARGE}`,
+  });
 
 /** The stored claw spec of a Work payload, or undefined for every other
  * shape. Run routes use it to serve target-less claw runs without relaxing

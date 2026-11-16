@@ -1,6 +1,7 @@
 import {
   AGENT_LABELS,
   type AgentPipeline as Pipeline,
+  fitsWorkParamText,
   parseTerminalQuickTaskBody,
   REPLY_COMMANDS,
   REVIEW_LABELS,
@@ -543,6 +544,10 @@ function interpretIssueCommentEvent(
   ) {
     return ignore('untrusted-author');
   }
+  // The comment becomes `params.reply`, which the runner must deliver whole.
+  // Refuse one past that byte budget here, before resume or admission can
+  // persist it; GitHub's 65,536-character comment limit does not bound bytes.
+  if (!fitsWorkParamText(comment.body)) return ignore('reply-too-large');
 
   // Derived from the ISSUE being replied to, not the comment -- the
   // comment text is already `params.reply`, a separate field the brief

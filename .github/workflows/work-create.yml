@@ -28,7 +28,7 @@ on:
         default: ''
         type: string
       description:
-        description: create — what the agent should do (≤16384 chars)
+        description: create — what the agent should do (GitHub caps all dispatch inputs together at 65,535 chars)
         required: false
         default: ''
         type: string

@@ -5,12 +5,14 @@ import {
   isWorkAnchor,
   outboxEntrySchema,
   RUN_ID_MAX_LENGTH,
+  RUN_PARAMS_MAX_BYTES,
   runQueueSchema,
   runSchema,
   taskIdSchema,
   taskKey,
   taskSchema,
   WORK_ID_RE,
+  WORK_PARAM_TEXT_MAX_BYTES,
   WORK_PAYLOAD_MAX_BYTES,
 } from './model';
 
@@ -186,13 +188,9 @@ describe('strict persisted-shape fixtures', () => {
   // byte bound `truncatedDescription`'s byte-aware clamp (item 3) exists
   // to keep out of storage: a 3-bytes-per-character description (CJK)
   // packed with this fixture's other fields to land exactly on
-  // WORK_PAYLOAD_MAX_BYTES (32,768) when serialized.
+  // WORK_PAYLOAD_MAX_BYTES when serialized.
   it('parses a GitHub-anchored task carrying a work payload exactly at the real byte bound', () => {
-    // '漢' is 3 bytes in UTF-8; 10,868 characters is the largest count
-    // that, together with this fixture's origin/title/pipeline/target and
-    // JSON structure, serializes to exactly 32,768 bytes -- one more
-    // character would overflow WORK_PAYLOAD_MAX_BYTES.
-    const description = '漢'.repeat(10_868);
+    const description = multibyteDescriptionFilling(WORK_PAYLOAD_MAX_BYTES);
     const work = {
       origin: { principal: 'github:jlapenna', channel: 'github' },
       spec: {
@@ -238,24 +236,29 @@ describe('taskSchema work payload', () => {
     expect(parsed.closedAt).toBe(T);
   });
 
-  it('rejects a work payload over 32 KiB serialized', () => {
-    expect(() =>
-      taskSchema.parse({ ...base, work: { blob: 'x'.repeat(33_000) } }),
-    ).toThrow();
+  it("is a documented share of Firestore's 1 MiB document limit", () => {
+    // The task document can hold two payloads (work and desiredRevision).
+    expect(WORK_PAYLOAD_MAX_BYTES).toBe(262_144);
+    expect(2 * WORK_PAYLOAD_MAX_BYTES).toBeLessThanOrEqual(1_048_576 / 2);
   });
 
-  it('accepts a work payload whose serialized UTF-8 length is exactly 32,768 bytes', () => {
-    // `{"blob":"` + n x's + `"}` = n + 11 bytes; n = 32_757 lands exactly on
-    // the 32,768-byte limit.
-    const work = { blob: 'x'.repeat(32_757) };
+  it('accepts a payload far past the retired 32 KiB bound', () => {
+    expect(() =>
+      taskSchema.parse({ ...base, work: { blob: 'x'.repeat(200_000) } }),
+    ).not.toThrow();
+  });
+
+  it('accepts a work payload whose serialized UTF-8 length is exactly the bound', () => {
+    // `{"blob":"` + n x's + `"}` = n + 11 bytes.
+    const work = { blob: 'x'.repeat(WORK_PAYLOAD_MAX_BYTES - 11) };
     expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
       WORK_PAYLOAD_MAX_BYTES,
     );
     expect(() => taskSchema.parse({ ...base, work })).not.toThrow();
   });
 
-  it('rejects a work payload whose serialized UTF-8 length is 32,769 bytes', () => {
-    const work = { blob: 'x'.repeat(32_758) };
+  it('rejects a work payload whose serialized UTF-8 length is one byte over the bound', () => {
+    const work = { blob: 'x'.repeat(WORK_PAYLOAD_MAX_BYTES - 10) };
     expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
       WORK_PAYLOAD_MAX_BYTES + 1,
     );
@@ -263,11 +266,46 @@ describe('taskSchema work payload', () => {
   });
 
   it('counts UTF-8 bytes, not UTF-16 code units, for multi-byte characters', () => {
-    // 11,000 code units but 33,000 UTF-8 bytes (each '漢' is 3 bytes) --
+    // 100,000 code units but 300,000 UTF-8 bytes (each '漢' is 3 bytes) --
     // must be rejected even though `.length` (code units) is under the cap.
-    const work = { blob: '漢'.repeat(11_000) };
-    expect(work.blob.length).toBe(11_000);
+    const work = { blob: '漢'.repeat(100_000) };
+    expect(work.blob.length).toBeLessThan(WORK_PAYLOAD_MAX_BYTES);
     expect(() => taskSchema.parse({ ...base, work })).toThrow();
+  });
+});
+
+describe('runSchema params byte budget', () => {
+  const base = {
+    runId: 'work:01M107KR3X6VDH7NZ4JDXZNSS2/r1',
+    task: { workId: '01M107KR3X6VDH7NZ4JDXZNSS2' },
+    state: 'pending' as const,
+    pipeline: 'claude',
+    requestId: 'req-1',
+    requestSource: 'caller' as const,
+    leaseExpiresAt: '2026-08-15T12:00:00.000Z',
+    events: [],
+    createdAt: '2026-08-15T12:00:00.000Z',
+    updatedAt: '2026-08-15T12:00:00.000Z',
+  };
+  // Two JSON quote bytes plus the characters fill one parameter exactly.
+  const fullText = 'x'.repeat(WORK_PARAM_TEXT_MAX_BYTES - 2);
+
+  it('keeps a reply and context far past the retired 16,384-character cap', () => {
+    const params = { mode: 'reply', reply: fullText, context: fullText };
+    expect(runSchema.parse({ ...base, params }).params).toEqual(params);
+  });
+
+  it('refuses one parameter past the runner per-string budget', () => {
+    expect(() =>
+      runSchema.parse({ ...base, params: { reply: `${fullText}x` } }),
+    ).toThrow(/run parameter exceeds/u);
+  });
+
+  it('refuses a parameter record past its share of the run document', () => {
+    const params = { a: fullText, b: fullText, c: fullText };
+    expect(() => runSchema.parse({ ...base, params })).toThrow(
+      new RegExp(`run parameters exceed ${RUN_PARAMS_MAX_BYTES}`, 'u'),
+    );
   });
 });
 
@@ -314,3 +352,26 @@ describe('persisted Run projection / Run.queue', () => {
     ).toThrow();
   });
 });
+
+/** A '漢'-dense description (3 UTF-8 bytes each) that makes the GitHub
+ *  fixture payload below serialize to exactly `bytes`. */
+function multibyteDescriptionFilling(bytes: number): string {
+  const overhead = new TextEncoder().encode(
+    JSON.stringify(githubFixtureWork('')),
+  ).length;
+  const room = bytes - overhead;
+  const wide = Math.floor(room / 3);
+  return '漢'.repeat(wide) + 'x'.repeat(room - wide * 3);
+}
+
+function githubFixtureWork(description: string) {
+  return {
+    origin: { principal: 'github:jlapenna', channel: 'github' },
+    spec: {
+      title: 'Fix the thing',
+      description,
+      pipeline: 'claude',
+      target: { repo: 'octo/example' },
+    },
+  };
+}

@@ -1466,11 +1466,17 @@ export function runOrchestratorStoreContract(
         origin: { principal: 'github:jlapenna', channel: 'github' },
         spec: {
           title: 'Fix the thing',
-          description: '漢'.repeat(10_868),
+          description: '',
           pipeline: 'claude',
           target: { repo: 'octo/example' },
         },
       };
+      // '漢' is 3 UTF-8 bytes: fill the rest of the budget exactly.
+      const room =
+        WORK_PAYLOAD_MAX_BYTES -
+        new TextEncoder().encode(JSON.stringify(work)).length;
+      work.spec.description =
+        '漢'.repeat(Math.floor(room / 3)) + 'x'.repeat(room % 3);
       expect(new TextEncoder().encode(JSON.stringify(work)).length).toBe(
         WORK_PAYLOAD_MAX_BYTES,
       );

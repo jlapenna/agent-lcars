@@ -1,3 +1,4 @@
+import { WORK_PARAM_TEXT_MAX_BYTES } from '@agent-lcars/dispatch-contracts';
 import {
   decidedRun,
   isRefusal,
@@ -422,6 +423,45 @@ describe('requestReply', () => {
       replyChannel: 'github',
       replyPrincipal: 'github:jlapenna',
     });
+  });
+
+  it('stores a complete GitHub-sized reply whole', async () => {
+    const { store, orchestrator, context } = fixture();
+    await parkGithubTask(orchestrator);
+    // A 65,536-character GitHub comment; the retired slice kept 16,384.
+    const text = 'x'.repeat(65_536);
+
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text,
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'https://github.com/octo/example/issues/42#issuecomment-2',
+    });
+
+    expect(outcome).toMatchObject({ ok: true });
+    const runId = (outcome as { ok: true; runId: string }).runId;
+    expect((await store.readRun(runId))?.params?.['reply']).toBe(text);
+  });
+
+  it('refuses a reply past the runner byte budget instead of cutting it', async () => {
+    const { store, orchestrator, context } = fixture();
+    await parkGithubTask(orchestrator);
+
+    const outcome = await requestReply(context, {
+      task: ANCHOR,
+      text: 'x'.repeat(WORK_PARAM_TEXT_MAX_BYTES),
+      channel: 'github',
+      principal: 'github:jlapenna',
+      ref: 'https://github.com/octo/example/issues/42#issuecomment-3',
+    });
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      code: 'PAYLOAD_TOO_LARGE',
+      message: expect.stringContaining('serialized text budget'),
+    });
+    expect(await store.listRuns(ANCHOR)).toHaveLength(1);
   });
 
   it('admits an authorized OpenCode reply after a settled OpenCode run whose PR delivery is still waiting', async () => {

@@ -1386,6 +1386,33 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
     });
   });
 
+  it('refuses an oversized multibyte tagged reply on a parked anchor without admitting or persisting it', async () => {
+    const { deps, store } = fixture();
+    const parkedRunId = await parkedRun(deps);
+    // 50,000 CJK characters fit GitHub's 65,536-character comment limit
+    // but exceed the runner's per-reply byte budget.
+    const body = `@claude ${'漢'.repeat(50_000)}`;
+
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'oversized-tagged-reply',
+      payload: taggedCommentPayload({
+        comment: {
+          body,
+          author_association: 'MEMBER',
+          html_url: `https://github.com/${REPO}/issues/${ISSUE.issue}#issuecomment-9`,
+        },
+      }),
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body['runId']).toBeUndefined();
+    const runs = await store.listRuns(ISSUE);
+    expect(runs.map((run) => run.runId)).toEqual([parkedRunId]);
+    const task = await store.readTask(ISSUE);
+    expect(task?.task.activeRunId).toBeUndefined();
+  });
+
   it.each([
     ['/oc', 'opencode'],
     ['/codex', 'codex'],

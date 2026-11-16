@@ -37,6 +37,7 @@ export const HEARTBEAT_INTERVAL_MS = 300_000;
 // The Console stores at most CLAW_REPORT_MAX (16,384) characters.
 export const MAX_REPORT_CHARS = 16_000;
 const MAX_ENVELOPE_BYTES = 4 * 1024 * 1024;
+const MAX_RESPONSE_CHARS = 4 * 1024 * 1024;
 const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RESERVED_ENV =
   /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
@@ -69,7 +70,9 @@ export function workClient(env, { signal, fetchImpl = fetch } = {}) {
       redirect: 'error',
     });
     const text = await response.text();
-    if (text.length > 262_144)
+    // Matches the executor's brief fence (queue_run_fence.go): a claw brief
+    // carries the question twice, each up to the 256 KiB Work payload budget.
+    if (text.length > MAX_RESPONSE_CHARS)
       throw new ClawFailure('Work API response exceeds supported size');
     if (!response.ok)
       throw new ClawFailure(`Work API ${path} HTTP ${response.status}`);

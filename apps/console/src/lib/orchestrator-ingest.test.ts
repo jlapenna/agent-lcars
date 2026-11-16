@@ -1,4 +1,3 @@
-import { WORK_DESCRIPTION_MAX } from '@agent-lcars/work';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { withConsoleReplyMarker } from './console-reply-marker';
@@ -76,18 +75,9 @@ function issueCommentPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// The overlong-body case's raw fixture body, and the description
-// `truncatedDescription` (work-from-github.ts) derives from it: sliced to
-// leave room for the marker, so the total lands exactly at
-// WORK_DESCRIPTION_MAX -- see that function's own coverage in
-// work-from-github.test.ts for the truncation math itself.
-const OVERLONG_BODY = 'x'.repeat(20_000);
-const OVERLONG_MARKER =
-  `\n\n[work: truncated to ${WORK_DESCRIPTION_MAX} of ${OVERLONG_BODY.length} ` +
-  `characters. Read the full body on the issue.]`;
-const OVERLONG_DESCRIPTION =
-  OVERLONG_BODY.slice(0, WORK_DESCRIPTION_MAX - OVERLONG_MARKER.length) +
-  OVERLONG_MARKER;
+// A complete GitHub-sized body (65,536 characters, GitHub's own limit). The
+// retired 16,384-character cap cut it; the Work byte budget keeps it whole.
+const GITHUB_MAX_BODY = 'x'.repeat(65_536);
 
 describe('interpretDelivery', () => {
   it.each([
@@ -394,14 +384,14 @@ describe('interpretDelivery', () => {
       expected: { kind: 'ignore', reason: 'malformed-payload' },
     },
     {
-      name: 'issues labeled with an overlong body truncates the work description',
+      name: 'issues labeled with a GitHub-maximum body keeps the work description whole',
       event: 'issues',
       payload: issuesLabeledPayload({
         issue: {
           state: 'open',
           number: 42,
           title: 'Fix the thing',
-          body: OVERLONG_BODY,
+          body: GITHUB_MAX_BODY,
         },
         sender: { login: 'jlapenna' },
       }),
@@ -415,7 +405,7 @@ describe('interpretDelivery', () => {
           origin: { principal: 'github:jlapenna', channel: 'github' },
           spec: {
             title: 'Fix the thing',
-            description: OVERLONG_DESCRIPTION,
+            description: GITHUB_MAX_BODY,
             pipeline: 'claude',
             target: { repo: REPO },
           },
@@ -821,6 +811,18 @@ describe('interpretDelivery', () => {
         },
       }),
       expected: { kind: 'ignore', reason: 'no-reply-command' },
+    },
+    {
+      name: 'trusted reply command past the runner byte budget -> reply-too-large',
+      event: 'issue_comment',
+      payload: issueCommentPayload({
+        comment: {
+          // Within GitHub's 65,536-character limit, past the byte budget.
+          body: `@claude ${'漢'.repeat(50_000)}`,
+          author_association: 'OWNER',
+        },
+      }),
+      expected: { kind: 'ignore', reason: 'reply-too-large' },
     },
     {
       name: 'reply mention from a MEMBER bot -> untrusted-author',

@@ -1,8 +1,10 @@
 import 'server-only';
 
-import { WORK_PAYLOAD_MAX_BYTES } from '@agent-lcars/orchestrator';
 import {
-  WORK_DESCRIPTION_MAX,
+  fitsWorkDescription,
+  WORK_PAYLOAD_MAX_BYTES,
+} from '@agent-lcars/dispatch-contracts';
+import {
   WORK_TITLE_MAX,
   type WorkOrigin,
   type WorkPayload,
@@ -21,56 +23,30 @@ type Pipeline = WorkSpec['pipeline'];
 const EMPTY_DESCRIPTION = '(no description)';
 
 /**
- * `WORK_DESCRIPTION_MAX` (16,384) bounds *characters*, sized for the
- * `workflow_dispatch` input budget (65,535 chars across all inputs). It is
- * not the bound that matters for storage, though: `taskSchema.work`
- * (`@agent-lcars/orchestrator`) caps the SERIALIZED payload at
- * `WORK_PAYLOAD_MAX_BYTES` (32,768) UTF-8 bytes. A multi-byte body (CJK,
- * emoji, etc.) can pack up to 4 bytes per character, so a description well
- * under the 16,384-character bound can still blow the byte bound on its
- * own -- e.g. ~10.9k three-byte characters already reach 32,768 bytes
- * before `origin`/`title`/JSON structure are even counted. A payload that
- * clears `workPayloadSchema` (`@agent-lcars/work`, character-bounded) but
- * misses `taskSchema`'s byte bound gets written unvalidated by
- * `FirestoreStore.apply` and then permanently refused by `readTask` --
- * the drain retries that task forever and the task page 500s. This is the
- * body-only first pass; `normalizeWorkPayload` below must then check
- * the actual serialized payload, including JSON escape expansion.
+ * Adapter-derived descriptions (GitHub, Linear) have no character cap. The
+ * only bound is the serialized Work payload, `WORK_PAYLOAD_MAX_BYTES`, which
+ * is sized so a complete GitHub body (65,536 characters, GitHub's own limit)
+ * always fits whole. A source whose text still overflows it -- a Linear
+ * description longer than GitHub allows, or a body dominated by C0 control
+ * characters that JSON expands to six-byte escapes -- is cut to the largest
+ * prefix that fits, with a visible marker naming the kept length and
+ * pointing at the source. The source tracker remains authoritative.
  *
- * `DESCRIPTION_BYTE_HEADROOM` reserves room in the byte budget for the
- * rest of the payload this description gets embedded in: `title` (up to
- * `WORK_TITLE_MAX` chars, up to 4 bytes each worst case), `origin`
- * (`principal`/`channel`, comfortably under a few hundred bytes),
- * `spec.target.repo`, and the JSON object structure itself. 2,048 bytes
- * comfortably covers all of that with margin -- with one caveat:
- * `workTargetSchema.repo` (`@agent-lcars/work`) has no `.max()`, so it is
- * unbounded in the schema itself. This accounting assumes a real GitHub
- * `owner/name` full name, which GitHub itself caps around ~140
- * characters (39-char max login + `/` + 100-char max repo name); this
- * callers either source `repo` from a real webhook delivery's
- * `repository.full_name` or from `githubDispatchAnchorSchema`, which caps it
- * at 140 characters. That keeps the byte accounting valid in practice.
+ * The description's own budget, `WORK_DESCRIPTION_MAX_BYTES`, already
+ * reserves room for the title, origin, target and JSON structure around it;
+ * `normalizeWorkPayload` below then checks the actual serialized payload.
  */
-const DESCRIPTION_BYTE_HEADROOM = 2_048;
-const DESCRIPTION_MAX_BYTES =
-  WORK_PAYLOAD_MAX_BYTES - DESCRIPTION_BYTE_HEADROOM;
-
 const textEncoder = new TextEncoder();
 
-function byteLength(text: string): number {
-  return textEncoder.encode(text).length;
-}
-
 function serializedWorkPayloadBytes(payload: WorkPayload): number {
-  return byteLength(JSON.stringify(payload));
+  return textEncoder.encode(JSON.stringify(payload)).length;
 }
 
-/** Binary-searches the largest character prefix of `text` whose UTF-8
- *  encoding, plus a marker naming how much was kept, still fits within
- *  `DESCRIPTION_MAX_BYTES`. Slicing mid-surrogate-pair is safe: `TextEncoder`
- *  replaces a lone surrogate with U+FFFD (3 bytes), never throws. */
+/** Binary-searches the largest character prefix of `text` whose serialized
+ *  form, plus a marker naming how much was kept, still fits
+ *  `WORK_DESCRIPTION_MAX_BYTES`. */
 function clampToByteBudget(text: string, originalChars: number): string {
-  if (byteLength(text) <= DESCRIPTION_MAX_BYTES) return text;
+  if (fitsWorkDescription(text)) return text;
 
   const markerFor = (keptChars: number) =>
     `\n\n[work: truncated to ${keptChars} of ${originalChars} characters ` +
@@ -81,8 +57,7 @@ function clampToByteBudget(text: string, originalChars: number): string {
   let hi = text.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
-    const candidate = text.slice(0, mid) + markerFor(mid);
-    if (byteLength(candidate) <= DESCRIPTION_MAX_BYTES) {
+    if (fitsWorkDescription(text.slice(0, mid) + markerFor(mid))) {
       lo = mid;
     } else {
       hi = mid - 1;
@@ -91,33 +66,18 @@ function clampToByteBudget(text: string, originalChars: number): string {
   return text.slice(0, lo) + markerFor(lo);
 }
 
-/** Mirrors `prepare.sh`'s own clamp-and-marker shape for `anchor.body`, so
- *  a task derived here and a brief later built from an unrelated overlong
- *  body degrade the same visible way -- then always re-clamps to the real
- *  byte budget `taskSchema.work` enforces (see `DESCRIPTION_MAX_BYTES`
- *  above), since a multi-byte body can miss that bound even while staying
- *  under the character-count bound below. */
+/** The adapter's description: the source text unchanged when the payload
+ *  can hold it, which includes every complete GitHub body; only a body over
+ *  the byte budget gets the marked byte clamp above. */
 export function truncatedDescription(body: string | null | undefined): string {
-  // Preserve nonempty GitHub text exactly until a documented clamp is needed:
-  // automation dispatch supplies the fetched anchor body directly, and a
-  // whitespace change is still a change to the anchor. Only null/empty
-  // GitHub bodies need normalization because Work descriptions require one
-  // character.
+  // Preserve nonempty source text exactly: automation dispatch supplies the
+  // fetched anchor body directly, and a whitespace change is still a change
+  // to the anchor. Only null/empty bodies need normalization because Work
+  // descriptions require one character.
   if (body === null || body === undefined || body.length === 0) {
     return EMPTY_DESCRIPTION;
   }
-  const text = body;
-  let charClamped = text;
-  if (text.length > WORK_DESCRIPTION_MAX) {
-    const marker =
-      `\n\n[work: truncated to ${WORK_DESCRIPTION_MAX} of ${text.length} ` +
-      `characters. Read the full body on the issue.]`;
-    // Slice leaves room for the marker itself, so the total stays within
-    // WORK_DESCRIPTION_MAX -- appending the marker after a full-length slice
-    // would push the result over the bound `workPayloadSchema` enforces.
-    charClamped = text.slice(0, WORK_DESCRIPTION_MAX - marker.length) + marker;
-  }
-  return clampToByteBudget(charClamped, text.length);
+  return clampToByteBudget(body, body.length);
 }
 
 /**

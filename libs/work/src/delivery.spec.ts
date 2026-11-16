@@ -474,7 +474,7 @@ describe('native item cancellation intent preserves run-only semantics', () => {
   });
 });
 
-it('bounds generated correction context while preserving delivery identity and dispatchability', async () => {
+it('keeps long generated correction context whole while preserving delivery identity and dispatchability', async () => {
   const f = await handedOff();
   const original = await f.store.readRun(f.runId);
   const decision = await f.orchestrator.observeDelivery(
@@ -490,7 +490,11 @@ it('bounds generated correction context while preserving delivery identity and d
   if (isRefusal(decision)) throw new Error(decision.reason);
   const correction = decision.additionalRuns![0]!;
   const parsed = runSchema.parse(await f.store.readRun(correction.runId));
-  expect(parsed.params?.context).toHaveLength(16_384);
+  // 50,000 characters: past the retired 16,384-character slice, and still
+  // whole rather than silently cut.
+  expect(parsed.params?.context).toContain(
+    'long-required-check-name,'.repeat(2000),
+  );
   expect(parsed.params?.context).toMatch(
     /^Correct delivery https:\/\/github\.com\/octo\/example\/pull\/12 at /,
   );
