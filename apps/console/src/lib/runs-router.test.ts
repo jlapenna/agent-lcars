@@ -1445,9 +1445,10 @@ describe('a report longer than the inline preview', () => {
     // beside it and settles the round as a successful report.
     const settled = await store.readRun(runId);
     expect(settled?.result).toMatchObject({ ok: true, summary: 'report' });
-    expect(settled?.result?.message).toBe(
-      report.slice(0, RUN_MESSAGE_PREVIEW_MAX),
-    );
+    const preview = settled?.result?.message ?? '';
+    expect(preview.length).toBeLessThanOrEqual(RUN_MESSAGE_PREVIEW_MAX);
+    expect(preview.startsWith('# Findings')).toBe(true);
+    expect(preview.endsWith('end')).toBe(true);
     expect(settled?.result?.messageOverflow?.chars).toBe(report.length);
     const task = await store.readTask({ workId });
     expect(deriveItemState(task!.task, await store.listRuns({ workId }))).toBe(
@@ -1488,7 +1489,7 @@ describe('a report longer than the inline preview', () => {
     const list = await read('/items');
     expect(list.status).toBe(200);
     const listed = list.json.items?.[0]?.runs.at(-1)?.result;
-    expect(listed?.['message']).toHaveLength(RUN_MESSAGE_PREVIEW_MAX);
+    expect(listed?.['message']).toBe(preview);
     expect(listed?.['messageOverflow']).toMatchObject({
       chars: report.length,
     });

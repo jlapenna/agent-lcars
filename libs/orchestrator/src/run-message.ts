@@ -19,11 +19,29 @@ export interface SplitRunMessage {
   overflow?: { ref: RunMessageOverflow; chunks: string[] };
 }
 
-/** Cut at most `max` string units without splitting a surrogate pair. */
-function previewOf(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const code = text.charCodeAt(max - 1);
-  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+/** Characters of a preview's tail. A park's blocker line and a PR summary
+ * live at the end of a message, so the preview keeps both ends. */
+export const RUN_MESSAGE_PREVIEW_TAIL = 4_096;
+
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+/** At most `RUN_MESSAGE_PREVIEW_MAX` units: the head, an omission marker and
+ * the tail, never splitting a surrogate pair. */
+function previewOf(text: string): string {
+  const marker = (omitted: number) =>
+    `\n\n[… ${omitted} characters omitted from this preview; the whole message is stored with the run …]\n\n`;
+  let tailStart = text.length - RUN_MESSAGE_PREVIEW_TAIL;
+  if (isLowSurrogate(text.charCodeAt(tailStart))) tailStart += 1;
+  // Size the marker for the largest omission; the real one is never longer.
+  let headEnd =
+    RUN_MESSAGE_PREVIEW_MAX -
+    (text.length - tailStart) -
+    marker(text.length).length;
+  if (isHighSurrogate(text.charCodeAt(headEnd - 1))) headEnd -= 1;
+  return (
+    text.slice(0, headEnd) + marker(tailStart - headEnd) + text.slice(tailStart)
+  );
 }
 
 /** Split UTF-8 bytes at code-point boundaries into chunks of at most
@@ -58,7 +76,7 @@ export function splitRunMessage(message: string): SplitRunMessage {
     );
   const chunks = chunksOf(bytes);
   return {
-    preview: previewOf(whole, RUN_MESSAGE_PREVIEW_MAX),
+    preview: previewOf(whole),
     overflow: {
       ref: {
         sha256: createHash('sha256').update(bytes).digest('hex'),

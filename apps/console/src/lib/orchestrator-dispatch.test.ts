@@ -344,7 +344,7 @@ describe('drainOutbox native outcome webhook delivery', () => {
     expect(deliverOutcomeWebhook).toHaveBeenCalledWith(
       SLACK_TARGET,
       expect.objectContaining({
-        message: report.slice(0, 16_384),
+        message: expect.stringMatching(/omitted from this preview/u),
         messageTruncated: true,
       }),
     );

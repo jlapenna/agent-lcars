@@ -1516,12 +1516,14 @@ export function runOrchestratorStoreContract(
         summary: 'report',
         message,
       });
-      expect(result.message).toBe(message.slice(0, RUN_MESSAGE_PREVIEW_MAX));
+      expect(result.message?.length).toBeLessThanOrEqual(
+        RUN_MESSAGE_PREVIEW_MAX,
+      );
       expect(result.messageOverflow?.chunks).toBeGreaterThan(1);
       await orchestrator.report(run.runId, result);
 
       const settled = await store.readRun(run.runId);
-      expect(settled?.result?.message).toHaveLength(RUN_MESSAGE_PREVIEW_MAX);
+      expect(settled?.result?.message).toBe(result.message);
       expect(settled?.result?.messageOverflow).toEqual(result.messageOverflow);
       expect(await readFullRunMessage(store, settled!)).toBe(message);
       const [restored] = await withFullRunMessages(store, [settled!]);

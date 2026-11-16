@@ -19,11 +19,22 @@ describe('splitRunMessage', () => {
     expect(splitRunMessage(message)).toEqual({ preview: message });
   });
 
-  it('never splits a surrogate pair at the preview edge', () => {
-    const message = `${'x'.repeat(RUN_MESSAGE_PREVIEW_MAX - 1)}😀tail`;
+  it('keeps both ends of a long message within the preview bound', () => {
+    const message = `HEAD${'x'.repeat(50_000)}blocker: need the deploy key`;
     const { preview, overflow } = splitRunMessage(message);
-    expect(preview).toBe('x'.repeat(RUN_MESSAGE_PREVIEW_MAX - 1));
+    expect(preview.length).toBeLessThanOrEqual(RUN_MESSAGE_PREVIEW_MAX);
+    expect(preview.startsWith('HEAD')).toBe(true);
+    expect(preview.endsWith('blocker: need the deploy key')).toBe(true);
+    expect(preview).toMatch(/characters omitted from this preview/u);
     expect(overflow?.ref.chars).toBe(message.length);
+  });
+
+  it('never splits a surrogate pair at either preview edge', () => {
+    const message = '😀'.repeat(20_000);
+    const { preview } = splitRunMessage(message);
+    expect(preview.length).toBeLessThanOrEqual(RUN_MESSAGE_PREVIEW_MAX);
+    // A lone surrogate would not survive a UTF-8 round trip.
+    expect(Buffer.from(preview, 'utf8').toString('utf8')).toBe(preview);
   });
 
   it('cuts chunks only at code-point boundaries and rejoins them exactly', () => {
@@ -69,7 +80,7 @@ describe('externalizeRunMessage', () => {
       summary: 'report',
       message: report,
     });
-    expect(result.message).toHaveLength(RUN_MESSAGE_PREVIEW_MAX);
+    expect(result.message?.length).toBeLessThanOrEqual(RUN_MESSAGE_PREVIEW_MAX);
     const [view] = await withFullRunMessages(store, [{ runId: 'run', result }]);
     expect(view?.result?.message).toBe(report);
     expect(view?.result).not.toHaveProperty('messageOverflow');

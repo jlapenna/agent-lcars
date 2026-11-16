@@ -95,12 +95,16 @@ export async function getNativeInboxCards(
         work: {
           ...work,
           anchor: work.anchor,
-          runs: await withFullRunMessages(store, work.runs, (runId) =>
-            logger.error(
-              'agent-lcars: stored final message unreadable for run %s; serving its preview',
-              runId,
-            ),
-          ),
+          // Only the latest round is shown (its report or parked question).
+          runs: [
+            ...work.runs.slice(0, -1),
+            ...(await withFullRunMessages(store, work.runs.slice(-1), (runId) =>
+              logger.error(
+                'agent-lcars: stored final message unreadable for run %s; serving its preview',
+                runId,
+              ),
+            )),
+          ],
         },
         kind: report ? 'report' : 'decision',
         queued: !closedSource && (work.state === 'parked' || freshReport),
