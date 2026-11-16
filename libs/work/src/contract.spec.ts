@@ -31,6 +31,7 @@ describe('WORK_ID_PATTERN', () => {
 describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
+      'admitAgentRun',
       'admitClawInvestigation',
       'anchorOwner',
       'cancel',
@@ -632,6 +633,7 @@ describe('generateWorkOpenApi', () => {
     expect(Object.keys(doc.paths).sort()).toEqual(
       [
         '/anchors/github/owner',
+        '/claw/agents/{owner}/{repo}/{name}/runs',
         '/claw/investigations',
         '/dispatches/github',
         '/dispatches/github/redispatch',
@@ -764,6 +766,12 @@ describe('generateWorkOpenApi', () => {
       'PATCH /items/{id}': ['200', '404', '409'],
       'POST /items/{id}/cancel': ['200', '403', '404', '409'],
       'POST /claw/investigations': ['202', '403', '409'],
+      'POST /claw/agents/{owner}/{repo}/{name}/runs': [
+        '202',
+        '403',
+        '404',
+        '409',
+      ],
       'POST /items/{id}/redispatch': ['200', '400', '403', '404', '409'],
       'POST /items/{id}/reply': ['200', '403', '404', '409'],
       'POST /maintenance/tick': ['200'],

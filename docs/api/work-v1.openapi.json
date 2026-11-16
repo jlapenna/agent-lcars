@@ -415,10 +415,6 @@
                                   "type": "string",
                                   "maxLength": 65536
                                 },
-                                "oversized": {
-                                  "type": "boolean",
-                                  "const": true
-                                },
                                 "state": {
                                   "type": "string",
                                   "enum": ["open", "closed"]
@@ -521,7 +517,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 65536
+                                  "maxLength": 16384
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -568,10 +564,12 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
+                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "minLength": 1,
+                                    "maxLength": 100
                                   }
                                 },
                                 "dispatchRequested": {
@@ -690,39 +688,7 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                                },
-                                "messageOverflow": {
-                                  "type": "object",
-                                  "properties": {
-                                    "sha256": {
-                                      "type": "string",
-                                      "pattern": "^[a-f0-9]{64}$"
-                                    },
-                                    "chars": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    },
-                                    "bytes": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    },
-                                    "chunks": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    }
-                                  },
-                                  "required": [
-                                    "sha256",
-                                    "chars",
-                                    "bytes",
-                                    "chunks"
-                                  ],
-                                  "additionalProperties": false,
-                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                  "maxLength": 16384
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -837,7 +803,8 @@
                               "additionalProperties": false
                             },
                             "reply": {
-                              "type": "string"
+                              "type": "string",
+                              "maxLength": 16384
                             },
                             "replyChannel": {
                               "type": "string",
@@ -1236,10 +1203,6 @@
                           "type": "string",
                           "maxLength": 65536
                         },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
-                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -1559,10 +1522,6 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
-                              },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -2308,10 +2267,6 @@
                                   "type": "string",
                                   "maxLength": 65536
                                 },
-                                "oversized": {
-                                  "type": "boolean",
-                                  "const": true
-                                },
                                 "state": {
                                   "type": "string",
                                   "enum": ["open", "closed"]
@@ -2414,7 +2369,7 @@
                                 },
                                 "commentBody": {
                                   "type": "string",
-                                  "maxLength": 65536
+                                  "maxLength": 16384
                                 },
                                 "commentId": {
                                   "anyOf": [
@@ -2461,10 +2416,12 @@
                                   "additionalProperties": false
                                 },
                                 "addedLabels": {
+                                  "maxItems": 20,
                                   "type": "array",
                                   "items": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "minLength": 1,
+                                    "maxLength": 100
                                   }
                                 },
                                 "dispatchRequested": {
@@ -2583,39 +2540,7 @@
                                 },
                                 "message": {
                                   "type": "string",
-                                  "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                                },
-                                "messageOverflow": {
-                                  "type": "object",
-                                  "properties": {
-                                    "sha256": {
-                                      "type": "string",
-                                      "pattern": "^[a-f0-9]{64}$"
-                                    },
-                                    "chars": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    },
-                                    "bytes": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    },
-                                    "chunks": {
-                                      "type": "integer",
-                                      "exclusiveMinimum": 0,
-                                      "maximum": 9007199254740991
-                                    }
-                                  },
-                                  "required": [
-                                    "sha256",
-                                    "chars",
-                                    "bytes",
-                                    "chunks"
-                                  ],
-                                  "additionalProperties": false,
-                                  "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                  "maxLength": 16384
                                 },
                                 "humanNeededActions": {
                                   "minItems": 2,
@@ -2730,7 +2655,8 @@
                               "additionalProperties": false
                             },
                             "reply": {
-                              "type": "string"
+                              "type": "string",
+                              "maxLength": 16384
                             },
                             "replyChannel": {
                               "type": "string",
@@ -3066,37 +2992,37 @@
                             "total": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "ready": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "disabled": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "unpromoted": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "expired": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "expiring": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             },
                             "unknown": {
                               "type": "integer",
                               "minimum": 0,
-                              "maximum": 9007199254740991
+                              "maximum": 500
                             }
                           },
                           "required": [
@@ -3303,7 +3229,8 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "maxLength": 16384
                       },
                       "pipeline": {
                         "type": "string",
@@ -3389,7 +3316,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -3447,7 +3375,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -3482,7 +3411,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -3519,7 +3449,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -3530,7 +3460,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -3557,6 +3488,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -3662,10 +3630,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -3921,10 +3885,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -4027,7 +3987,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -4074,10 +4034,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -4196,39 +4158,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -4343,7 +4273,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -4571,7 +4502,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -4629,7 +4561,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -4664,7 +4597,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -4701,7 +4635,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -4712,7 +4646,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -4739,6 +4674,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -4844,10 +4816,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -5103,10 +5071,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -5209,7 +5173,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -5256,10 +5220,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -5378,39 +5344,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -5525,7 +5459,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -5715,7 +5650,8 @@
                   },
                   "description": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 16384
                   }
                 },
                 "required": ["title", "description"]
@@ -5757,7 +5693,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -5815,7 +5752,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -5850,7 +5788,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -5887,7 +5826,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -5898,7 +5837,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -5925,6 +5865,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -6030,10 +6007,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -6289,10 +6262,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -6395,7 +6364,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -6442,10 +6411,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -6564,39 +6535,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -6711,7 +6650,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -6905,7 +6845,8 @@
                 "properties": {
                   "question": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 4000
                   },
                   "sourceKey": {
                     "type": "string",
@@ -6954,7 +6895,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -7012,7 +6954,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -7047,7 +6990,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -7084,7 +7028,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -7095,7 +7039,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -7122,6 +7067,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -7227,10 +7209,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -7486,10 +7464,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -7592,7 +7566,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -7639,10 +7613,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -7761,39 +7737,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -7908,7 +7852,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -8087,6 +8032,1254 @@
         ]
       }
     },
+    "/claw/agents/{owner}/{repo}/{name}/runs": {
+      "post": {
+        "operationId": "admitAgentRun",
+        "summary": "Admit a run of a repository-owned claw agent (work.claw.admit required)",
+        "description": "Runs the agent cataloged at `.lcars/agents/{name}` of `{owner}/{repo}`. The round pins the enabled definition and the message. `sourceKey` names one Work item per caller: the same message (and `requestId`) returns its existing round, and a new one supersedes a queued round. Without `sourceKey` every call admits a new item. The report is the settled run message.",
+        "tags": ["items"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "owner",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w.-]+$"
+            }
+          },
+          {
+            "in": "path",
+            "required": true,
+            "name": "repo",
+            "schema": {
+              "type": "string",
+              "pattern": "^[\\w.-]+$"
+            }
+          },
+          {
+            "in": "path",
+            "required": true,
+            "name": "name",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "requestId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sourceKey": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": ["message"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Admitted, or the existing round for this input.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "done",
+                        "parked",
+                        "failed",
+                        "canceled"
+                      ]
+                    },
+                    "spec": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "enum": ["claude", "codex", "opencode", "agy"]
+                            },
+                            "priority": {
+                              "default": "normal",
+                              "type": "string",
+                              "enum": ["urgent", "normal", "background"]
+                            },
+                            "fallbackPipelines": {
+                              "maxItems": 3,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": ["claude", "codex", "opencode", "agy"]
+                              }
+                            },
+                            "deliveryRuntime": {
+                              "type": "string",
+                              "enum": ["none", "required"]
+                            },
+                            "deliverable": {
+                              "type": "string",
+                              "enum": ["report"]
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "enum": ["inbox-summary", "handoff-summary"]
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "description": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 16384
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "const": "goose"
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "repo": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                }
+                              },
+                              "required": ["repo"],
+                              "additionalProperties": false
+                            },
+                            "jobOccurrence": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            }
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "pipeline",
+                            "priority",
+                            "target",
+                            "jobOccurrence"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "pipeline": {
+                                  "type": "string",
+                                  "const": "claw-investigator"
+                                },
+                                "operation": {
+                                  "type": "string",
+                                  "const": "investigate:v1"
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "sourceKey",
+                                "pipeline",
+                                "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "origin": {
+                      "type": "object",
+                      "properties": {
+                        "principal": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "channel": {
+                          "type": "string",
+                          "enum": [
+                            "api",
+                            "cron",
+                            "console",
+                            "github",
+                            "linear",
+                            "slack"
+                          ]
+                        },
+                        "thread": {
+                          "type": "string",
+                          "maxLength": 512
+                        }
+                      },
+                      "required": ["principal", "channel"],
+                      "additionalProperties": false
+                    },
+                    "issue": {
+                      "type": "object",
+                      "properties": {
+                        "reference": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "tracker": {
+                                  "type": "string",
+                                  "const": "github"
+                                },
+                                "repo": {
+                                  "type": "string",
+                                  "maxLength": 140,
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                },
+                                "issue": {
+                                  "type": "integer",
+                                  "exclusiveMinimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["tracker", "repo", "issue"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "tracker": {
+                                  "type": "string",
+                                  "const": "linear"
+                                },
+                                "organizationId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "issueId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                }
+                              },
+                              "required": [
+                                "tracker",
+                                "organizationId",
+                                "issueId"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        "identifier": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "url": {
+                          "type": "string",
+                          "maxLength": 2048,
+                          "format": "uri"
+                        },
+                        "title": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        },
+                        "description": {
+                          "type": "string",
+                          "maxLength": 65536
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": ["open", "closed"]
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "teamId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "status": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
+                            },
+                            "name": {
+                              "type": "string",
+                              "maxLength": 256
+                            },
+                            "type": {
+                              "type": "string",
+                              "maxLength": 128
+                            }
+                          },
+                          "required": ["id", "name", "type"],
+                          "additionalProperties": false
+                        },
+                        "labels": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "name": {
+                                "type": "string",
+                                "maxLength": 256
+                              }
+                            },
+                            "required": ["id", "name"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "assignees": {
+                          "maxItems": 256,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "name": {
+                                "type": "string",
+                                "maxLength": 256
+                              }
+                            },
+                            "required": ["id", "name"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "reference",
+                        "identifier",
+                        "url",
+                        "title",
+                        "description",
+                        "state",
+                        "updatedAt",
+                        "labels",
+                        "assignees"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "createdAt": {
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "type": "string"
+                    },
+                    "closedAt": {
+                      "type": "string"
+                    },
+                    "providerRouting": {
+                      "type": "object",
+                      "properties": {
+                        "requestId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "requestedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "actor": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "requestedPipeline": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "effectivePipeline": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": ["accepted", "refused"]
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "fromRunId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        },
+                        "acceptedGeneration": {
+                          "type": "object",
+                          "properties": {
+                            "runId": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 1024
+                            },
+                            "requestedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            },
+                            "pipeline": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 128
+                            }
+                          },
+                          "required": ["runId", "requestedAt", "pipeline"],
+                          "additionalProperties": false
+                        },
+                        "successorRunId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": [
+                        "requestId",
+                        "requestedAt",
+                        "actor",
+                        "requestedPipeline",
+                        "effectivePipeline",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "issue": {
+                            "type": "object",
+                            "properties": {
+                              "reference": {
+                                "oneOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "tracker": {
+                                        "type": "string",
+                                        "const": "github"
+                                      },
+                                      "repo": {
+                                        "type": "string",
+                                        "maxLength": 140,
+                                        "pattern": "^[\\w.-]+\\/[\\w.-]+$"
+                                      },
+                                      "issue": {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": ["tracker", "repo", "issue"],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "tracker": {
+                                        "type": "string",
+                                        "const": "linear"
+                                      },
+                                      "organizationId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      },
+                                      "issueId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    },
+                                    "required": [
+                                      "tracker",
+                                      "organizationId",
+                                      "issueId"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              },
+                              "identifier": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "url": {
+                                "type": "string",
+                                "maxLength": 2048,
+                                "format": "uri"
+                              },
+                              "title": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256
+                              },
+                              "description": {
+                                "type": "string",
+                                "maxLength": 65536
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": ["open", "closed"]
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "teamId": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "status": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 256
+                                  },
+                                  "type": {
+                                    "type": "string",
+                                    "maxLength": 128
+                                  }
+                                },
+                                "required": ["id", "name", "type"],
+                                "additionalProperties": false
+                              },
+                              "labels": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 256
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "maxLength": 256
+                                    }
+                                  },
+                                  "required": ["id", "name"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "assignees": {
+                                "maxItems": 256,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 256
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "maxLength": 256
+                                    }
+                                  },
+                                  "required": ["id", "name"],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": [
+                              "reference",
+                              "identifier",
+                              "url",
+                              "title",
+                              "description",
+                              "state",
+                              "updatedAt",
+                              "labels",
+                              "assignees"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "triagePublication": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": [
+                                  "pending",
+                                  "complete",
+                                  "superseded",
+                                  "failed"
+                                ]
+                              },
+                              "commentBody": {
+                                "type": "string",
+                                "maxLength": 16384
+                              },
+                              "commentId": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer",
+                                    "exclusiveMinimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  }
+                                ]
+                              },
+                              "sourceComment": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "anyOf": [
+                                      {
+                                        "type": "integer",
+                                        "exclusiveMinimum": 0,
+                                        "maximum": 9007199254740991
+                                      },
+                                      {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                      }
+                                    ]
+                                  },
+                                  "body": {
+                                    "type": "string",
+                                    "maxLength": 65536
+                                  },
+                                  "updatedAt": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["id", "body", "updatedAt"],
+                                "additionalProperties": false
+                              },
+                              "addedLabels": {
+                                "maxItems": 20,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 100
+                                }
+                              },
+                              "dispatchRequested": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "dispatchObserved": {
+                                "type": "boolean"
+                              },
+                              "error": {
+                                "type": "string",
+                                "maxLength": 400
+                              }
+                            },
+                            "required": ["state"],
+                            "additionalProperties": false
+                          },
+                          "delivery": {
+                            "type": "object",
+                            "properties": {
+                              "runId": {
+                                "type": "string"
+                              },
+                              "repo": {
+                                "type": "string"
+                              },
+                              "number": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "baseRef": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 255
+                              },
+                              "head": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{40}$"
+                              },
+                              "state": {
+                                "type": "string",
+                                "enum": ["waiting", "complete"]
+                              },
+                              "correctionRunId": {
+                                "type": "string"
+                              },
+                              "observedAt": {
+                                "type": "string"
+                              },
+                              "mergeCommit": {
+                                "type": "string",
+                                "pattern": "^[a-f0-9]{40}$"
+                              }
+                            },
+                            "required": [
+                              "runId",
+                              "repo",
+                              "number",
+                              "baseRef",
+                              "head",
+                              "state",
+                              "observedAt"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "running",
+                              "finished",
+                              "canceled",
+                              "lost"
+                            ]
+                          },
+                          "pipeline": {
+                            "type": "string"
+                          },
+                          "priority": {
+                            "default": "normal",
+                            "type": "string",
+                            "enum": ["urgent", "normal", "background"]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "result": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "summary": {
+                                "type": "string",
+                                "maxLength": 4096
+                              },
+                              "ref": {
+                                "type": "string",
+                                "maxLength": 1024
+                              },
+                              "relatedRefs": {
+                                "maxItems": 1,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 1024
+                                }
+                              },
+                              "message": {
+                                "type": "string",
+                                "maxLength": 16384
+                              },
+                              "humanNeededActions": {
+                                "minItems": 2,
+                                "maxItems": 3,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 400
+                                    },
+                                    "command": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": ["text"],
+                                  "additionalProperties": false
+                                }
+                              }
+                            },
+                            "required": ["ok"],
+                            "additionalProperties": false
+                          },
+                          "sourceRevision": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "input": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {}
+                              },
+                              "observedAt": {
+                                "type": "object",
+                                "propertyNames": {
+                                  "type": "string"
+                                },
+                                "additionalProperties": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                }
+                              }
+                            },
+                            "required": ["key", "input"],
+                            "additionalProperties": false
+                          },
+                          "revisionAttempt": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "providerFallback": {
+                            "type": "object",
+                            "properties": {
+                              "allowedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "attemptedPipelines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "originalRunId": {
+                                "type": "string"
+                              },
+                              "fromRunId": {
+                                "type": "string"
+                              },
+                              "trigger": {
+                                "type": "object",
+                                "properties": {
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "provider-limit",
+                                      "provider-cooldown"
+                                    ]
+                                  },
+                                  "failureRunId": {
+                                    "type": "string"
+                                  },
+                                  "limitedPipeline": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "reason",
+                                  "failureRunId",
+                                  "limitedPipeline"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": [
+                              "allowedPipelines",
+                              "attemptedPipelines",
+                              "originalRunId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "reply": {
+                            "type": "string",
+                            "maxLength": 16384
+                          },
+                          "replyChannel": {
+                            "type": "string",
+                            "maxLength": 64
+                          },
+                          "replyPrincipal": {
+                            "type": "string",
+                            "maxLength": 256
+                          },
+                          "queue": {
+                            "type": "object",
+                            "properties": {
+                              "state": {
+                                "type": "string",
+                                "enum": ["queued", "claimed", "retired"]
+                              },
+                              "claimedBy": {
+                                "type": "string"
+                              },
+                              "claimedAt": {
+                                "type": "string"
+                              },
+                              "firstHeartbeatAt": {
+                                "type": "string"
+                              },
+                              "providerProcessStartedAt": {
+                                "type": "string"
+                              },
+                              "startDeadlineAt": {
+                                "type": "string"
+                              },
+                              "placement": {
+                                "type": "object",
+                                "properties": {
+                                  "phase": {
+                                    "type": "string",
+                                    "enum": [
+                                      "waiting-for-placement",
+                                      "bootstrapping",
+                                      "unavailable"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string",
+                                    "enum": [
+                                      "pending",
+                                      "unschedulable",
+                                      "scheduled",
+                                      "inventory-unavailable",
+                                      "launch-pending"
+                                    ]
+                                  },
+                                  "observedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  },
+                                  "jobCreatedAt": {
+                                    "type": "string",
+                                    "maxLength": 32,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                  }
+                                },
+                                "required": ["phase", "reason", "observedAt"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": ["state"],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "runId",
+                          "state",
+                          "pipeline",
+                          "priority",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sessionId": {
+                            "type": "string"
+                          },
+                          "runId": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string"
+                          },
+                          "lastActivityAt": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "transcriptGcsUri": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "sessionId",
+                          "runId",
+                          "startedAt",
+                          "lastActivityAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "state",
+                    "spec",
+                    "origin",
+                    "createdAt",
+                    "updatedAt",
+                    "runs",
+                    "sessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Principal may not run this agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Forbidden"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No enabled agent by that name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/NotFound"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Source key names incompatible Work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Conflict"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/items": {
       "get": {
         "operationId": "listItems",
@@ -8186,7 +9379,8 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "minLength": 1,
+                                    "maxLength": 16384
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -8254,7 +9448,8 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "minLength": 1,
+                                    "maxLength": 16384
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -8289,7 +9484,8 @@
                                   },
                                   "description": {
                                     "type": "string",
-                                    "minLength": 1
+                                    "minLength": 1,
+                                    "maxLength": 16384
                                   },
                                   "pipeline": {
                                     "type": "string",
@@ -8326,7 +9522,7 @@
                                 "additionalProperties": false
                               },
                               {
-                                "oneOf": [
+                                "anyOf": [
                                   {
                                     "type": "object",
                                     "properties": {
@@ -8337,7 +9533,8 @@
                                       },
                                       "description": {
                                         "type": "string",
-                                        "minLength": 1
+                                        "minLength": 1,
+                                        "maxLength": 16384
                                       },
                                       "priority": {
                                         "type": "string",
@@ -8364,6 +9561,43 @@
                                       "sourceKey",
                                       "pipeline",
                                       "operation"
+                                    ],
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "title": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 256
+                                      },
+                                      "description": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 16384
+                                      },
+                                      "priority": {
+                                        "type": "string",
+                                        "const": "background"
+                                      },
+                                      "pipeline": {},
+                                      "agent": {
+                                        "type": "string",
+                                        "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                      },
+                                      "sourceKey": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      }
+                                    },
+                                    "required": [
+                                      "title",
+                                      "description",
+                                      "priority",
+                                      "pipeline",
+                                      "agent",
+                                      "sourceKey"
                                     ],
                                     "additionalProperties": false
                                   }
@@ -8469,10 +9703,6 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
-                              },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -8736,10 +9966,6 @@
                                       "type": "string",
                                       "maxLength": 65536
                                     },
-                                    "oversized": {
-                                      "type": "boolean",
-                                      "const": true
-                                    },
                                     "state": {
                                       "type": "string",
                                       "enum": ["open", "closed"]
@@ -8842,7 +10068,7 @@
                                     },
                                     "commentBody": {
                                       "type": "string",
-                                      "maxLength": 65536
+                                      "maxLength": 16384
                                     },
                                     "commentId": {
                                       "anyOf": [
@@ -8889,10 +10115,12 @@
                                       "additionalProperties": false
                                     },
                                     "addedLabels": {
+                                      "maxItems": 20,
                                       "type": "array",
                                       "items": {
                                         "type": "string",
-                                        "minLength": 1
+                                        "minLength": 1,
+                                        "maxLength": 100
                                       }
                                     },
                                     "dispatchRequested": {
@@ -9011,39 +10239,7 @@
                                     },
                                     "message": {
                                       "type": "string",
-                                      "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                                    },
-                                    "messageOverflow": {
-                                      "type": "object",
-                                      "properties": {
-                                        "sha256": {
-                                          "type": "string",
-                                          "pattern": "^[a-f0-9]{64}$"
-                                        },
-                                        "chars": {
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        },
-                                        "bytes": {
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        },
-                                        "chunks": {
-                                          "type": "integer",
-                                          "exclusiveMinimum": 0,
-                                          "maximum": 9007199254740991
-                                        }
-                                      },
-                                      "required": [
-                                        "sha256",
-                                        "chars",
-                                        "bytes",
-                                        "chunks"
-                                      ],
-                                      "additionalProperties": false,
-                                      "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                      "maxLength": 16384
                                     },
                                     "humanNeededActions": {
                                       "minItems": 2,
@@ -9158,7 +10354,8 @@
                                   "additionalProperties": false
                                 },
                                 "reply": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "maxLength": 16384
                                 },
                                 "replyChannel": {
                                   "type": "string",
@@ -9377,7 +10574,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -9435,7 +10633,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -9470,7 +10669,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -9507,7 +10707,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -9518,7 +10718,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -9545,6 +10746,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -9650,10 +10888,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -9909,10 +11143,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -10015,7 +11245,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -10062,10 +11292,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -10184,39 +11416,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -10331,7 +11531,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -10601,7 +11802,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -10659,7 +11861,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -10694,7 +11897,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -10731,7 +11935,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -10742,7 +11946,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -10769,6 +11974,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -10874,10 +12116,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -11133,10 +12371,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -11239,7 +12473,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -11286,10 +12520,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -11408,39 +12644,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -11555,7 +12759,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -11793,7 +12998,8 @@
                 "properties": {
                   "text": {
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "maxLength": 16384
                   },
                   "requestId": {
                     "type": "string",
@@ -11855,7 +13061,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -11913,7 +13120,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -11948,7 +13156,8 @@
                             },
                             "description": {
                               "type": "string",
-                              "minLength": 1
+                              "minLength": 1,
+                              "maxLength": 16384
                             },
                             "pipeline": {
                               "type": "string",
@@ -11985,7 +13194,7 @@
                           "additionalProperties": false
                         },
                         {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -11996,7 +13205,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -12023,6 +13233,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -12128,10 +13375,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -12387,10 +13630,6 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -12493,7 +13732,7 @@
                               },
                               "commentBody": {
                                 "type": "string",
-                                "maxLength": 65536
+                                "maxLength": 16384
                               },
                               "commentId": {
                                 "anyOf": [
@@ -12540,10 +13779,12 @@
                                 "additionalProperties": false
                               },
                               "addedLabels": {
+                                "maxItems": 20,
                                 "type": "array",
                                 "items": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 100
                                 }
                               },
                               "dispatchRequested": {
@@ -12662,39 +13903,7 @@
                               },
                               "message": {
                                 "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
+                                "maxLength": 16384
                               },
                               "humanNeededActions": {
                                 "minItems": 2,
@@ -12809,7 +14018,8 @@
                             "additionalProperties": false
                           },
                           "reply": {
-                            "type": "string"
+                            "type": "string",
+                            "maxLength": 16384
                           },
                           "replyChannel": {
                             "type": "string",
@@ -13052,7 +14262,8 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "maxLength": 16384
                       },
                       "pipeline": {
                         "type": "string",
@@ -13128,7 +14339,8 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "maxLength": 16384
                         },
                         "pipeline": {
                           "type": "string",
@@ -13333,7 +14545,8 @@
                       },
                       "description": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "maxLength": 16384
                       },
                       "pipeline": {
                         "type": "string",
@@ -13409,7 +14622,8 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "maxLength": 16384
                         },
                         "pipeline": {
                           "type": "string",
@@ -13747,7 +14961,8 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "maxLength": 16384
                         },
                         "pipeline": {
                           "type": "string",
@@ -13926,7 +15141,8 @@
                               },
                               "description": {
                                 "type": "string",
-                                "minLength": 1
+                                "minLength": 1,
+                                "maxLength": 16384
                               },
                               "pipeline": {
                                 "type": "string",
@@ -14103,7 +15319,8 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "maxLength": 16384
                         },
                         "pipeline": {
                           "type": "string",
@@ -14343,7 +15560,8 @@
                         },
                         "description": {
                           "type": "string",
-                          "minLength": 1
+                          "minLength": 1,
+                          "maxLength": 16384
                         },
                         "pipeline": {
                           "type": "string",
@@ -14687,7 +15905,8 @@
                     "enum": ["implement", "review"]
                   },
                   "reply": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 8192
                   },
                   "runbook": {
                     "type": "string",
@@ -14695,7 +15914,8 @@
                     "maxLength": 128
                   },
                   "context": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                   },
                   "requestId": {
                     "type": "string",
@@ -14860,7 +16080,8 @@
                     "enum": ["implement", "review"]
                   },
                   "reply": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 8192
                   },
                   "runbook": {
                     "type": "string",
@@ -14868,7 +16089,8 @@
                     "maxLength": 128
                   },
                   "context": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 4096
                   },
                   "requestId": {
                     "type": "string",
@@ -15039,7 +16261,8 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "maxLength": 16384
                       }
                     },
                     "files": {
@@ -15050,7 +16273,8 @@
                       },
                       "additionalProperties": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "maxLength": 16384
                       }
                     }
                   },
@@ -15226,10 +16450,6 @@
                           "type": "string",
                           "maxLength": 65536
                         },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
-                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -15389,10 +16609,6 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -15923,7 +17139,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -15986,7 +17203,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -16021,7 +17239,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -16058,7 +17277,7 @@
                               "additionalProperties": false
                             },
                             {
-                              "oneOf": [
+                              "anyOf": [
                                 {
                                   "type": "object",
                                   "properties": {
@@ -16069,7 +17288,8 @@
                                     },
                                     "description": {
                                       "type": "string",
-                                      "minLength": 1
+                                      "minLength": 1,
+                                      "maxLength": 16384
                                     },
                                     "priority": {
                                       "type": "string",
@@ -16096,6 +17316,43 @@
                                     "sourceKey",
                                     "pipeline",
                                     "operation"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "title": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 256
+                                    },
+                                    "description": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 16384
+                                    },
+                                    "priority": {
+                                      "type": "string",
+                                      "const": "background"
+                                    },
+                                    "pipeline": {},
+                                    "agent": {
+                                      "type": "string",
+                                      "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                    },
+                                    "sourceKey": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": [
+                                    "title",
+                                    "description",
+                                    "priority",
+                                    "pipeline",
+                                    "agent",
+                                    "sourceKey"
                                   ],
                                   "additionalProperties": false
                                 }
@@ -16208,10 +17465,6 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
-                            },
-                            "oversized": {
-                              "type": "boolean",
-                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -16405,7 +17658,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "pipeline": {
                                   "type": "string",
@@ -16533,10 +17787,6 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
-                            },
-                            "oversized": {
-                              "type": "boolean",
-                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -16699,7 +17949,7 @@
                           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                         },
                         "spec": {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "object",
                               "properties": {
@@ -16710,7 +17960,8 @@
                                 },
                                 "description": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "maxLength": 16384
                                 },
                                 "priority": {
                                   "type": "string",
@@ -16737,6 +17988,43 @@
                                 "sourceKey",
                                 "pipeline",
                                 "operation"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 16384
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
                               ],
                               "additionalProperties": false
                             }
@@ -16843,10 +18131,6 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
-                            },
-                            "oversized": {
-                              "type": "boolean",
-                              "const": true
                             },
                             "state": {
                               "type": "string",
@@ -16986,26 +18270,93 @@
                           "type": "boolean"
                         },
                         "claw": {
-                          "type": "object",
-                          "properties": {
-                            "operation": {
-                              "type": "string",
-                              "enum": ["investigate:v1"]
-                            },
-                            "input": {
+                          "anyOf": [
+                            {
                               "type": "object",
                               "properties": {
-                                "question": {
+                                "operation": {
                                   "type": "string",
-                                  "minLength": 1
+                                  "enum": ["investigate:v1"]
+                                },
+                                "input": {
+                                  "type": "object",
+                                  "properties": {
+                                    "question": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 4000
+                                    }
+                                  },
+                                  "required": ["question"],
+                                  "additionalProperties": false
                                 }
                               },
-                              "required": ["question"],
+                              "required": ["operation", "input"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{40}$"
+                                },
+                                "digest": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "requireToolEvidence": {
+                                  "type": "boolean"
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "files": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "path": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "mode": {
+                                        "type": "string",
+                                        "enum": ["100644", "100755"]
+                                      },
+                                      "sha": {
+                                        "type": "string",
+                                        "pattern": "^[a-f0-9]{40}$"
+                                      },
+                                      "content": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "path",
+                                      "mode",
+                                      "sha",
+                                      "content"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "revision",
+                                "digest",
+                                "requireToolEvidence",
+                                "message",
+                                "files"
+                              ],
                               "additionalProperties": false
                             }
-                          },
-                          "required": ["operation", "input"],
-                          "additionalProperties": false
+                          ]
                         }
                       },
                       "required": [
@@ -17913,7 +19264,7 @@
                   "outcomeReference": {},
                   "message": {
                     "type": "string",
-                    "description": "The whole final message, stored and returned whole; at most 4194304 UTF-8 bytes."
+                    "maxLength": 16384
                   }
                 },
                 "required": ["outcome"]

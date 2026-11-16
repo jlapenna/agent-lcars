@@ -258,6 +258,25 @@ export function runOrchestratorStoreContract(
       }
     });
 
+    it('never reruns a lost round its admission marked retry: terminal', async () => {
+      const store = await makeStore();
+      const clock = new TestClock(T0);
+      const orchestrator = new Orchestrator(store, clock);
+      const admitted = await orchestrator.request({
+        taskId: { workId: '01J5Z3K9QX8F0N2B4V6C8D1E4C' },
+        requestId: 'round',
+        pipeline: 'claw-homelab-ops',
+        params: { mode: 'claw', retry: 'terminal' },
+        work: TASK_WORK,
+        sourceRevision: { key: 'round', input: { message: 'fix it' } },
+      });
+      if (isRefusal(admitted)) throw new Error(admitted.reason);
+      clock.advanceMinutes(121);
+      const swept = await orchestrator.sweepExpired();
+      expect(swept.lost).toHaveLength(1);
+      expect(swept.retried).toHaveLength(0);
+    });
+
     it('finishes a source revision after its finite failed model attempts', async () => {
       const store = await makeStore();
       const orchestrator = new Orchestrator(store, new TestClock(T0));

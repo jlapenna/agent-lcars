@@ -65,15 +65,17 @@ when a consumer needs them.
 ## Profiles
 
 A profile is operator configuration, never repository content, so a repository
-cannot grant itself credentials by writing a manifest. Profiles reuse
-`AGENT_LCARS_JOB_PROFILES`, with one added field:
+cannot grant itself credentials by writing a manifest. Profiles are a JSON
+array in `AGENT_LCARS_AGENT_PROFILES`, next to the job profiles, each with a
+`name` and:
 
 - **`runtime`** names the executor runtime (`claw-<name>`) that runs the
   agent's Jobs. The executor's own config sets that runtime's image, Secret
   items, defaults and claiming principal. Homelab owns that config and those
   credentials; LCARS never sees them.
-- **`repositories`** and **`principals`** limit which repositories' agents may
-  use the profile and who may invoke them.
+- **`repositories`** lists the repositories whose agents may use the profile,
+  and the optional **`principals`** limits who may invoke them. The caller's
+  grant must also list the runtime.
 
 The **default profile** runs on the shared executor's `claw-default` runtime,
 which holds only a model key. An agent that needs no other credential therefore

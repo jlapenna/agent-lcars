@@ -41,6 +41,12 @@ import { issueReferenceForTask } from './issue-trackers';
 import { readLifecycleCostMetrics } from './lifecycle-cost-metrics';
 import { linearConfig } from './linear-config';
 import { handleReconcile } from './orchestrator-routes';
+import {
+  admitAgentRun,
+  AgentAdmissionError,
+  agentProfiles,
+} from './repository-agent-runs';
+import { repositoryAgentStore } from './repository-agents-runtime';
 import { scheduleRouter } from './schedule-router';
 import { recordLinearWebhookHealth } from './webhook-observability';
 import {
@@ -423,6 +429,55 @@ export const workRouter = os.router({
       ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   }),
+
+  admitAgentRun: clawAdmitter.admitAgentRun.handler(
+    async ({ input, context, errors }) => {
+      const { principal } = context;
+      let admitted: { workId: string };
+      try {
+        admitted = await admitAgentRun(
+          {
+            store: context.runtime.store,
+            orchestrator: context.runtime.orchestrator,
+            agents: context.agents ?? repositoryAgentStore(),
+            profiles: context.agentProfiles ?? (() => agentProfiles()),
+            mayAdmit: (pipeline) => mayAdmitClaw(principal, pipeline),
+          },
+          {
+            repository: `${input.owner}/${input.repo}`,
+            name: input.name,
+            message: input.message,
+            principal: principal.principal,
+            ...(input.requestId === undefined
+              ? {}
+              : { requestId: input.requestId }),
+            ...(input.sourceKey === undefined
+              ? {}
+              : { sourceKey: input.sourceKey }),
+          },
+        );
+      } catch (error) {
+        if (error instanceof AgentAdmissionError) {
+          if (error.code === 'NOT_FOUND')
+            throw errors.NOT_FOUND({ message: error.message });
+          if (error.code === 'FORBIDDEN')
+            throw errors.FORBIDDEN({ message: error.message });
+          throw errors.CONFLICT({ message: error.message });
+        }
+        throw error;
+      }
+      // Durable before returning; the drain makes the round claimable now.
+      await context.runtime.drain();
+      const task = await context.runtime.store.readTask({
+        workId: admitted.workId,
+      });
+      if (task === undefined)
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: 'Admitted agent run is missing',
+        });
+      return view(context, admitted.workId, task.task);
+    },
+  ),
 
   admitClawInvestigation: clawAdmitter.admitClawInvestigation.handler(
     async ({ input, context, errors }) => {

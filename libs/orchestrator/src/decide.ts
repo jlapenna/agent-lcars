@@ -201,6 +201,20 @@ export function isEffectfulPipeline(pipeline: string): boolean {
   return EFFECTFUL_PIPELINES.has(pipeline);
 }
 
+/** Whether a run may already have performed external effects: its pipeline
+ *  is effectful, or its trusted admission marked it `retry: terminal` (a
+ *  repository-owned agent whose manifest declares effect authority,
+ *  docs/repository-agents.md). Such runs settle lost and failed attempts
+ *  terminally. */
+export function isEffectfulRun(run: {
+  pipeline: string;
+  params?: Readonly<Record<string, string>> | undefined;
+}): boolean {
+  return (
+    isEffectfulPipeline(run.pipeline) || run.params?.['retry'] === 'terminal'
+  );
+}
+
 export interface RequestRunInput {
   now: string;
   task: Task | undefined;
@@ -463,7 +477,7 @@ function advanceSourceRevision(decision: Decision, now: string): Decision {
     !superseded &&
     run.state === 'finished' &&
     run.result?.ok === false &&
-    !isEffectfulPipeline(run.pipeline) &&
+    !isEffectfulRun(run) &&
     (run.revisionAttempt ?? 1) <= MAX_AUTO_RETRIES;
   if (!superseded && !retry) return decision;
   const next = mintRun({
@@ -1127,7 +1141,7 @@ function settleLostAndRetry(
   // Effectful work (recipes) may already have performed effects. A new
   // occurrence requires explicit admission after physical retirement, never
   // recovery replay.
-  if (isEffectfulPipeline(decidedRun(lost).pipeline)) return lost;
+  if (isEffectfulRun(decidedRun(lost))) return lost;
   const desired = advanceSourceRevision(lost, input.now);
   if (desired !== lost) return desired;
   if (lost.task.consecutiveLost > MAX_AUTO_RETRIES) {
