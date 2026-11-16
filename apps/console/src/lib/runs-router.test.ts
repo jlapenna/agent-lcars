@@ -4085,6 +4085,64 @@ describe('codexAuth', () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
+  // A run's checkout can take long after its claim; the decision must not.
+  it.each([
+    ['still shares a login that outlives claim + 3.5 h', 4 * 60, 200],
+    [
+      'takes the exclusive lease for a login expiring within 3.5 h of claim',
+      200,
+      409,
+    ],
+  ])(
+    'decides from the claim time, 52 minutes after the claim: %s',
+    async (_case, dueAfterClaimMinutes, expectedStatus) => {
+      const { store, orchestrator, now, setNow, runId, token } =
+        await secondCodexRun();
+      const dueAt = Date.parse(NOW) + dueAfterClaimMinutes * 60_000;
+      const at = (minutes: number) =>
+        new Date(Date.parse(NOW) + minutes * 60_000).toISOString();
+      await store.recordCredentialWindow({
+        pipeline: 'codex',
+        refreshDueAt: new Date(dueAt).toISOString(),
+        observedAt: NOW,
+      });
+      // A real worker heartbeats through its long checkout.
+      for (const minute of [5, 15, 25, 35, 45, 52]) {
+        setNow(at(minute));
+        expect(
+          (
+            await call(
+              { store, orchestrator, now, ...context, bearerToken: token },
+              'POST',
+              runPath(runId, '/heartbeat'),
+            )
+          ).status,
+        ).toBe(200);
+      }
+      const r = await call(
+        {
+          store,
+          orchestrator,
+          now,
+          ...context,
+          bearerToken: token,
+          codexAuth: {
+            ...context.codexAuth,
+            read: async () => ({
+              authBase64: lineage(dueAt),
+              generation: '21',
+              sha256: 'a'.repeat(64),
+            }),
+            readLease: busyLease,
+          },
+        },
+        'GET',
+        runPath(runId, '/codex-auth'),
+      );
+      expect(r.status).toBe(expectedStatus);
+    },
+  );
+
   it('carries a shared reader through heartbeat, persist and completion without ever touching the lease', async () => {
     const { store, orchestrator, now, runId, token } = await secondCodexRun();
     const dueAt = Date.parse(NOW) + 8 * DAY;

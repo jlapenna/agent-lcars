@@ -18,9 +18,9 @@ import (
 // strictly below it, so the kubelet ends an attempt before its lease can
 // expire under a still-running worker.
 // Codex shared readers rely on this bound: the Console hands out a
-// refresh-token-free login only when no run admitted now can outlive it
-// (CODEX_EXCLUSIVE_WINDOW_MS, 2.5 h, in libs/orchestrator). Raise that window
-// before raising this deadline.
+// refresh-token-free login only when the login outlives claim + placement
+// wait (1 h) + this deadline (CODEX_SHARED_HORIZON_MS, 3.5 h, in
+// libs/orchestrator). Raise that horizon before raising this deadline.
 const queueRunLeaseSeconds = 2 * 60 * 60
 
 // queueRuntimeSecretMountPath is where a runtime Job sees its declared zone

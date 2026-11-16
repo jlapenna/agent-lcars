@@ -156,8 +156,7 @@ export function runOrchestratorStoreContract(
     it.each([
       ['with no recorded window', undefined, 1],
       ['inside the refresh window', 60, 1],
-      // Restore would still be shared, but a run claimed now may restore up
-      // to CODEX_CLAIM_TO_RESTORE_MAX_MS later, inside the window.
+      // A run claimed now could still be executing 3 h later, too close.
       ['within the claim-to-restore margin', 3 * 60, 1],
       ['outside the refresh window', 8 * 24 * 60, 2],
     ])(

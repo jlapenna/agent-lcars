@@ -18,18 +18,27 @@ export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   'claw-investigator': 2,
 });
 
-/** Codex runs share one subscription login. Outside this window before the
- * login's next refresh, runs read a refresh-token-free copy and need no
- * exclusive lease, so Codex is bounded only by host capacity. Inside it (the
- * longest run lease plus a margin) a run may meet the refresh, so Codex
- * falls back to the single exclusive lease the refresh token requires. */
-export const CODEX_EXCLUSIVE_WINDOW_MS = (2 * 60 + 30) * 60_000;
+/** Codex runs share one subscription login. A run claimed at time C cannot
+ * still be executing after C + 1 h (the placement wait bound) + 2 h (the pod
+ * deadline). When the login's access token expires later than C plus this
+ * horizon (those 3 h plus 30 min covering Codex's 5-minute early refresh and
+ * clock skew), the run can never meet a refresh: it reads a
+ * refresh-token-free copy, needs no exclusive lease, and Codex is bounded
+ * only by host capacity. Otherwise it takes the single exclusive lease the
+ * refresh token requires. Claim admission and restore apply this to the same
+ * claim time, so a run admitted without the ceiling always restores shared. */
+export const CODEX_SHARED_HORIZON_MS = (3 * 60 + 30) * 60_000;
 
-/** Claim admission lifts the Codex ceiling only this much earlier than the
- * restore cutoff: a claimed run restores up to one pod start later, and a run
- * claimed without the ceiling must still restore as a shared reader, or every
- * such run but one would wait out the exclusive lease and fail. */
-export const CODEX_CLAIM_TO_RESTORE_MAX_MS = 45 * 60_000;
+/** Whether a Codex run claimed at `claimedAt` shares the login. */
+export function codexRunSharesLogin(
+  refreshDueAt: string | undefined,
+  claimedAt: string,
+): boolean {
+  return (
+    refreshDueAt !== undefined &&
+    Date.parse(refreshDueAt) - CODEX_SHARED_HORIZON_MS > Date.parse(claimedAt)
+  );
+}
 
 /** When a provider's shared login next refreshes, recorded by the Console
  * credential broker from the authoritative lineage it reads. */
@@ -70,14 +79,7 @@ export function pipelineLiveClaimCeiling(
 ): number | undefined {
   if (pipeline === 'codex' && now !== undefined) {
     const window = parseCredentialWindow(credentialWindow, pipeline);
-    if (
-      window !== undefined &&
-      Date.parse(window.refreshDueAt) -
-        CODEX_EXCLUSIVE_WINDOW_MS -
-        CODEX_CLAIM_TO_RESTORE_MAX_MS >
-        Date.parse(now)
-    )
-      return undefined;
+    if (codexRunSharesLogin(window?.refreshDueAt, now)) return undefined;
   }
   return QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
 }

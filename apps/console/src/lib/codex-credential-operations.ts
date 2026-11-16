@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { logger } from '@agent-lcars/logging';
 import {
   changeCredentialOperation,
-  CODEX_EXCLUSIVE_WINDOW_MS,
+  codexRunSharesLogin,
   type CredentialMutation,
   type CredentialOperation,
   type CredentialWriteReceipt,
@@ -446,9 +446,12 @@ export async function restoreCodexCredential(
     // copy without the lease, so concurrent Codex runs need nothing
     // exclusive (#3392). The lineage itself is re-checked before use; with
     // no record, or inside the window, the exclusive lease applies as before.
+    // Decided against the claim time, exactly as claim admission decided
+    // whether to lift the Codex ceiling, so time spent between claim and
+    // restore (placement, checkout) cannot change the answer.
+    const claimedAt = run.queue?.claimedAt ?? context.now().toISOString();
     const outsideWindow = (dueAt: string | undefined) =>
-      dueAt !== undefined &&
-      Date.parse(dueAt) - CODEX_EXCLUSIVE_WINDOW_MS > context.now().getTime();
+      codexRunSharesLogin(dueAt, claimedAt);
     // A failed window read falls back to the exclusive lease, never fails.
     const recorded = await context.store
       .readCredentialWindow('codex')

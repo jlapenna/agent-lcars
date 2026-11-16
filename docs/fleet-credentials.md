@@ -285,22 +285,23 @@ unchanged.
 ### Shared Codex lease
 
 Most Codex runs do not take this lease. The single-use refresh token is the
-only thing that needs exclusivity, and Codex refreshes only when its access
-token expires (the lineage has rotated about every ten days, the token
-lifetime). The Console records that expiry as the `codex` credential window
-whenever it reads or rotates the lineage. A run whose start is earlier than
-the expiry minus `CODEX_EXCLUSIVE_WINDOW_MS` (the longest run plus a margin)
-is a shared reader: it receives a copy whose `refresh_token` is the empty
-string, takes no lease and persists nothing, so any number of Codex runs may
-execute concurrently and none can rotate the lineage. Persisting such a copy is
-always refused as a no-op. With no recorded window, a record the live lineage
-contradicts (restore always re-reads it), or inside the window, a run uses the
-exclusive lease below. Claim admission limits Codex
-to one live claim from `CODEX_CLAIM_TO_RESTORE_MAX_MS` (45 minutes) before the
-window, so a run claimed without that limit still restores as a shared reader
-(#3392). A shared reader's reported auth failure is logged: it is the signal
-that the refresh-at-expiry assumption no longer holds. The pod deadline
-(`queueRunLeaseSeconds`) must stay below the window.
+only thing that needs exclusivity, and Codex refreshes only within five minutes
+of its access token's expiry (the lineage has rotated about every ten days, the
+token lifetime). The Console records that expiry as the `codex` credential
+window whenever it reads or rotates the lineage. A run claimed at time C cannot
+still be executing after C + 1 h (placement wait) + 2 h (pod deadline), so when
+the expiry is later than C plus `CODEX_SHARED_HORIZON_MS` (3.5 h) the run is a
+shared reader: it receives a copy whose `refresh_token` is the empty string,
+takes no lease and persists nothing, so any number of Codex runs may execute
+concurrently and none can rotate the lineage. Persisting such a copy is always
+a no-op. Claim admission and restore both apply this test to the claim time, so
+a run admitted without Codex's one-claim ceiling always restores shared, however
+long its checkout takes. With no recorded window, a record the live lineage
+contradicts (restore always re-reads it), or a claim within the horizon, a run
+uses the exclusive lease below and the ceiling applies (#3392). A shared
+reader's reported auth failure is logged: it is the signal that the
+refresh-at-expiry assumption no longer holds. Raise the horizon before raising
+the pod deadline (`queueRunLeaseSeconds`) or the placement wait.
 
 The shared `gs://agent-lcars-codex-auth/_leases/codex-subscription.json`
 record serializes the single-use subscription refresh token. A run first takes
