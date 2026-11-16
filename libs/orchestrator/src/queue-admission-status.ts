@@ -84,10 +84,6 @@ export function pipelineLiveClaimCeiling(
   return QUEUE_PIPELINE_MAX_LIVE_CLAIMS[pipeline];
 }
 
-/** Bound console reads at the datastore. Exceeding this bound is unavailable,
- * never a truncated count presented as the entire queue. */
-export const QUEUE_ADMISSION_READ_LIMIT = 1000;
-
 export interface ProviderQueueAdmissionStatus {
   pipeline: string;
   queued: number;

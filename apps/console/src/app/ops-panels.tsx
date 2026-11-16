@@ -604,17 +604,21 @@ export interface DecisionRow {
 /**
  * The Bridge's decision panel: every waiting decision counts toward the
  * header's `N over SLA · oldest X`, and the first `limit` rows are listed.
+ * When more are waiting, a link opens the Inbox, which lists every one.
  */
 export function DecisionInboxPanel({
   rows: allRows,
   limit = 5,
   respondLabel = 'Open',
   testId = 'decision-inbox-panel',
+  inboxHref = '/inbox',
 }: {
   rows: DecisionRow[];
   limit?: number;
   respondLabel?: string;
   testId?: string;
+  /** Where every waiting decision is listed. */
+  inboxHref?: string;
 }) {
   const rows = allRows.slice(0, limit);
   return (
@@ -656,6 +660,16 @@ export function DecisionInboxPanel({
             </li>
           ))}
         </ul>
+      )}
+      {allRows.length > rows.length && (
+        <Anchor
+          href={inboxHref}
+          size="sm"
+          className="operations-more-link"
+          data-testid="decision-inbox-more"
+        >
+          Showing {rows.length} of {allRows.length} · view all in Inbox →
+        </Anchor>
       )}
     </OpsPanel>
   );

@@ -5,7 +5,6 @@ import {
   isLive,
   isRefusal,
   isWorkAnchor,
-  LIFECYCLE_METRICS_READ_LIMIT,
   LIFECYCLE_METRICS_WINDOW_SECONDS,
   lifecycleMetricSnapshot,
 } from '@agent-lcars/orchestrator';
@@ -261,7 +260,6 @@ export const workRouter = os.router({
           Date.parse(observedAt) - LIFECYCLE_METRICS_WINDOW_SECONDS * 1_000,
         ).toISOString(),
         until: observedAt,
-        limit: LIFECYCLE_METRICS_READ_LIMIT,
       });
       const snapshot = lifecycleMetricSnapshot(records, observedAt);
       return {

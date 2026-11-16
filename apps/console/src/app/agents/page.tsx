@@ -1,3 +1,4 @@
+import type { RunListCursor } from '@agent-lcars/orchestrator';
 import { PIPELINES } from '@agent-lcars/work';
 import { Anchor } from '@mantine/core';
 import { Suspense } from 'react';
@@ -6,7 +7,11 @@ import { assertAdmin } from '@/lib/auth-guards';
 
 import { auth } from '../../auth';
 import { type ActionItem } from '../../lib/action-items';
-import { issueUrlForRun } from '../../lib/agent-activity';
+import {
+  type AgentRun,
+  getRecentOutcomesPage,
+  issueUrlForRun,
+} from '../../lib/agent-activity';
 import { readAuthoritativeTaskStates } from '../../lib/authoritative-task-state';
 import { deriveClaimedIdle } from '../../lib/claimed-idle';
 import { getCliSessions } from '../../lib/cli-sessions';
@@ -65,6 +70,7 @@ import {
 import { AgentsWorkspace } from './agents-workspace';
 import { ClaimedIdleSection } from './claimed-idle-section';
 import { FleetSnapshotBar } from './fleet-snapshot-bar';
+import { encodeOutcomeCursor, parseOutcomeCursor } from './outcome-cursor';
 import { RecentOutcomesSection } from './recent-outcomes-section';
 
 interface PageProps {
@@ -74,7 +80,24 @@ interface PageProps {
     agent?: string | string[];
     window?: string | string[];
     q?: string | string[];
+    outcomes?: string | string[];
   }>;
+}
+
+/** This view's URL with the outcome history at `outcomes` (newest when
+ * absent), preserving the repository and toolbar filters. */
+function outcomesHref(
+  repoFilter: WatchedRepo | undefined,
+  filters: AgentsViewFilters,
+  outcomes: RunListCursor | undefined,
+): string {
+  const query = new URLSearchParams();
+  if (repoFilter) query.set('repo', repoKey(repoFilter));
+  if (filters.agent) query.set('agent', filters.agent);
+  if (filters.window) query.set('window', filters.window);
+  if (filters.q) query.set('q', filters.q);
+  if (outcomes) query.set('outcomes', encodeOutcomeCursor(outcomes));
+  return query.size ? `/agents?${query}` : '/agents';
 }
 
 async function AgentsPageBody({
@@ -82,11 +105,14 @@ async function AgentsPageBody({
   filters,
   selectedKey,
   watchedRepos,
+  outcomesCursor,
 }: {
   repoFilter: WatchedRepo | undefined;
   filters: AgentsViewFilters;
   selectedKey?: string;
   watchedRepos: WatchedRepo[];
+  /** A page of the outcome history older than the newest outcomes. */
+  outcomesCursor?: RunListCursor;
 }) {
   const matchesFilter = (repo: { owner: string; name: string }) =>
     !repoFilter || repoKey(repo) === repoKey(repoFilter);
@@ -99,11 +125,13 @@ async function AgentsPageBody({
     { data: activity, fetchedAt: activityFetchedAt },
     { sessions: cliSessions, warnings: cliSessionWarnings },
     { sessionsByRunId: runnerSessionsByRunId, warnings: runnerSessionWarnings },
+    outcomePage,
   ] = await Promise.all([
     getCachedQueueItems(),
     getCachedAgentActivity(),
     getCliSessions(),
     getRunnerSessionsByRunId(),
+    outcomesCursor ? getRecentOutcomesPage(outcomesCursor) : undefined,
   ]);
   // Deduped the same way as the home page (page.tsx): parallel fetchers can
   // degrade the same way (e.g. one rate-limit hit per PR-join), and each
@@ -113,6 +141,7 @@ async function AgentsPageBody({
       ...activity.warnings,
       ...cliSessionWarnings,
       ...runnerSessionWarnings,
+      ...(outcomePage?.warnings ?? []),
     ]),
   );
 
@@ -120,7 +149,11 @@ async function AgentsPageBody({
   // recent alike) - powers Active Agents' budget gauges and Recent
   // Outcomes' classification/diagnosis (see agent-activity-panel.tsx).
   const sessionsByRunId = indexSessionsByRunId(
-    [...activity.liveRuns, ...activity.recentRuns],
+    [
+      ...activity.liveRuns,
+      ...activity.recentRuns,
+      ...(outcomePage?.runs ?? []),
+    ],
     runnerSessionsByRunId,
   );
 
@@ -203,6 +236,18 @@ async function AgentsPageBody({
         matchesAgentsRun(run, filters, { finished: true, now }),
     ),
   };
+  // The outcome section shows the newest outcomes, or one page of the
+  // history behind them; the rest of the page always reads the newest.
+  const shownOutcomes: AgentRun[] = outcomePage
+    ? outcomePage.runs.filter(
+        (run) =>
+          matchesFilter(run.repo) &&
+          matchesAgentsRun(run, filters, { finished: true, now }),
+      )
+    : filteredActivity.recentRuns;
+  const olderOutcomes = outcomePage
+    ? outcomePage.nextCursor
+    : activity.olderOutcomes;
   const filteredClaimedIdle = claimedIdle.filter(
     (item) =>
       matchesFilter(item.repo) &&
@@ -363,7 +408,10 @@ async function AgentsPageBody({
         </>
       }
       hasSecondary={
-        filteredClaimedIdle.length > 0 || filteredActivity.recentRuns.length > 0
+        filteredClaimedIdle.length > 0 ||
+        shownOutcomes.length > 0 ||
+        outcomePage !== undefined ||
+        olderOutcomes !== undefined
       }
       claimedIdle={
         filteredClaimedIdle.length > 0 ? (
@@ -376,9 +424,19 @@ async function AgentsPageBody({
         ) : null
       }
       recentOutcomes={
-        filteredActivity.recentRuns.length > 0 ? (
+        shownOutcomes.length > 0 || outcomePage || olderOutcomes ? (
           <RecentOutcomesSection
-            recentRuns={filteredActivity.recentRuns}
+            recentRuns={shownOutcomes}
+            olderHref={
+              olderOutcomes
+                ? outcomesHref(repoFilter, filters, olderOutcomes)
+                : undefined
+            }
+            newestHref={
+              outcomePage
+                ? outcomesHref(repoFilter, filters, undefined)
+                : undefined
+            }
             sessionsByRunId={sessionsByRunId}
             merged={
               <MergedLastDay
@@ -406,6 +464,7 @@ interface AgentsViewProps {
   filters: AgentsViewFilters;
   subtitle: string;
   selectedKey?: string;
+  outcomesCursor?: RunListCursor;
 }
 
 function AgentsViewContent({
@@ -413,6 +472,7 @@ function AgentsViewContent({
   filters,
   watchedRepos,
   selectedKey,
+  outcomesCursor,
 }: AgentsViewProps) {
   return (
     <>
@@ -423,6 +483,7 @@ function AgentsViewContent({
           filters={filters}
           selectedKey={selectedKey}
           watchedRepos={watchedRepos}
+          outcomesCursor={outcomesCursor}
         />
       </Suspense>
     </>
@@ -484,6 +545,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
   const repoFilter = parseRepoFilterParam(params.repo);
   const selectedKey = parseBridgeSelection(params.sel);
   const filters = parseAgentsViewFilters(params);
+  const outcomesCursor = parseOutcomeCursor(params.outcomes);
 
   const subtitle =
     watchedRepos.length <= 1
@@ -499,6 +561,7 @@ async function AgentsPageShell({ searchParams }: PageProps) {
       filters={filters}
       subtitle={subtitle}
       selectedKey={selectedKey}
+      outcomesCursor={outcomesCursor}
     />
   );
 }

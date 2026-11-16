@@ -3,9 +3,10 @@ import type { SessionDoc } from '@agent-lcars/telemetry';
 
 import { sessionPRCandidates, spendPRKey } from './session-spend';
 
-/** Stored evidence only. A single page has at most 200 point reads, eight
- * outstanding reads and a shared five-second deadline. Late reads cannot
- * mutate the returned snapshot; unavailable/capped identities stay unknown. */
+/** Stored evidence only. Every referenced PR is read, with eight outstanding
+ * reads and a shared five-second deadline. Late reads cannot mutate the
+ * returned snapshot; identities unread by the deadline or unavailable stay
+ * unknown and mark the snapshot incomplete. */
 export async function loadSpendProjections(
   docs: SessionDoc[],
   read: (
@@ -29,10 +30,9 @@ export async function loadSpendProjections(
         issue: pr.number,
       });
     }
-  const keys = [...anchors.keys()];
-  const selected = keys.slice(0, 200);
+  const selected = [...anchors.keys()];
   const projections = new Map<string, GithubAnchorProjection>();
-  let incomplete = keys.length > selected.length;
+  let incomplete = false;
   let cursor = 0;
   const deadline = performance.now() + timeoutMs;
   await Promise.all(

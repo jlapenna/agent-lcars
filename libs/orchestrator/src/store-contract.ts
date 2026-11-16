@@ -575,7 +575,7 @@ export function runOrchestratorStoreContract(
           now: clock.now(),
           deliveryFailures: 3,
         });
-        const read = { since: T0, until: clock.now(), limit: 10 };
+        const read = { since: T0, until: clock.now() };
         const before = await store.readRun(first.run.runId);
         const records = await store.readLifecycleMetricRecords(read);
         expect(records.complete).toBe(true);
@@ -597,7 +597,7 @@ export function runOrchestratorStoreContract(
         expect(await store.readLifecycleMetricRecords(read)).toEqual(records);
         expect(await store.readRun(first.run.runId)).toEqual(before);
       });
-      it('detects overflow at each bounded feed and rejects excessive caller limits', async () => {
+      it('reads every record of each feed and rejects inverted windows', async () => {
         const { store, orchestrator } = await fixture();
         await started(orchestrator);
         await orchestrator.request({
@@ -609,69 +609,19 @@ export function runOrchestratorStoreContract(
         const records = await store.readLifecycleMetricRecords({
           since: T0,
           until: T0,
-          limit: 1,
         });
-        expect(records.complete).toBe(false);
-        expect(records.recentRuns).toHaveLength(1);
-        expect(records.liveRuns).toHaveLength(1);
-        expect(records.outstandingOutbox).toHaveLength(1);
-        expect(lifecycleMetricSnapshot(records, T0).prometheus).not.toContain(
-          'lcars_product_silent_loss_runs',
-        );
+        expect(records.complete).toBe(true);
+        expect(records.recentRuns).toHaveLength(2);
+        expect(records.liveRuns).toHaveLength(2);
+        expect(records.outstandingOutbox).toHaveLength(2);
         await expect(
           store.readLifecycleMetricRecords({
-            since: T0,
-            until: T0,
-            limit: 1001,
+            since: '2026-08-15T12:00:00.001Z',
+            until: '2026-08-15T12:00:00.000Z',
           }),
         ).rejects.toThrow('Invalid lifecycle metric read bounds');
       });
 
-      it.each(['recent', 'live', 'outbox'] as const)(
-        'fails closed when only the %s feed overflows',
-        async (feed) => {
-          const { store, orchestrator, clock } = await fixture();
-          const first = await started(orchestrator);
-          if (feed !== 'outbox')
-            await orchestrator.request({
-              taskId: { repo: 'octo/example', issue: 8 },
-              requestId: 'another',
-              pipeline: 'codex',
-              work: TASK_WORK,
-            });
-          if (feed === 'recent' || feed === 'outbox') {
-            await orchestrator.report(first.run.runId, {
-              ok: true,
-              summary: 'park',
-            });
-            if (feed === 'recent')
-              await orchestrator.report('octo/example#8/r1', {
-                ok: true,
-                summary: 'no-op',
-              });
-          }
-          if (feed !== 'outbox')
-            for (const entry of await claimOutbox(store, T0, 10))
-              await store.settleOutbox({
-                entryId: entry.entryId,
-                claimId: entry.claimId,
-                state: 'done',
-                now: T0,
-              });
-          if (feed !== 'recent') clock.advanceMinutes(120);
-          const records = await store.readLifecycleMetricRecords({
-            since: clock.now(),
-            until: clock.now(),
-            limit: 1,
-          });
-          expect(records.complete).toBe(false);
-          expect(records.recentRuns).toHaveLength(feed === 'recent' ? 1 : 0);
-          expect(records.liveRuns).toHaveLength(feed === 'live' ? 1 : 0);
-          expect(records.outstandingOutbox).toHaveLength(
-            feed === 'outbox' ? 1 : 0,
-          );
-        },
-      );
       it('keeps old live/dead-letter inventory but excludes old completions and done outbox entries', async () => {
         const { store, orchestrator, clock } = await fixture();
         const first = await started(orchestrator);
@@ -686,7 +636,6 @@ export function runOrchestratorStoreContract(
         const records = await store.readLifecycleMetricRecords({
           since: clock.now(),
           until: clock.now(),
-          limit: 10,
         });
         expect(records.complete).toBe(true);
         expect(records.recentRuns).toEqual([]);
@@ -1129,7 +1078,7 @@ export function runOrchestratorStoreContract(
         },
       );
 
-      it('persists a bounded label inventory refusal without minting a successor', async () => {
+      it('reads a claimed history longer than one datastore page before routing a label', async () => {
         const { store, orchestrator, clock } = await fixture();
         const first = await started(orchestrator);
         await store.enqueueRun({ runId: first.run.runId, now: clock.now() });
@@ -1171,7 +1120,7 @@ export function runOrchestratorStoreContract(
         clock.advanceMinutes(1);
         const request = {
           taskId: TASK,
-          requestId: 'inventory-overflow-label',
+          requestId: 'long-history-label',
           pipeline: 'opencode',
           pipelineForStoredTask: () => 'claude',
           labelProviderRequest: {
@@ -1180,24 +1129,14 @@ export function runOrchestratorStoreContract(
             allowProviderChange: true,
           },
         };
-        const refusal = await orchestrator.request(request);
-        expect(refusal).toMatchObject({
-          task: {
-            providerRouting: {
-              status: 'refused',
-              reason: 'physical-ownership-unavailable',
-            },
-          },
-          outbox: [],
+        // 1,001 terminal claimed runs span more than one read page; every
+        // one is inspected, none retains a physical claim, so the handoff
+        // is admitted rather than refused for an incomplete inventory.
+        expect(await orchestrator.request(request)).toMatchObject({
+          run: { pipeline: 'opencode' },
+          task: { providerRouting: { status: 'accepted' } },
         });
-        expect(
-          (await store.readTask(TASK))?.task.providerRouting,
-        ).toMatchObject({
-          status: 'refused',
-          reason: 'physical-ownership-unavailable',
-        });
-        expect(await orchestrator.request(request)).toEqual(refusal);
-        expect(await store.listRuns(TASK)).toHaveLength(1001);
+        expect(await store.listRuns(TASK)).toHaveLength(1002);
         expect(await store.readRun(legacy.runId)).toEqual(legacy);
       });
 
@@ -1582,6 +1521,43 @@ export function runOrchestratorStoreContract(
         'work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1',
         'octo/example#8/r1',
       ]);
+    });
+
+    it('pages back through the global run feed from a cursor, ties by run id', async () => {
+      const { clock, store, orchestrator } = await fixture();
+      // Two runs share each clock instant, so the run-id tiebreak decides.
+      for (let minute = 0; minute < 3; minute++) {
+        for (const issue of [20 + minute * 2, 21 + minute * 2])
+          await orchestrator.request({
+            taskId: { repo: 'octo/example', issue },
+            requestId: `page-${issue}`,
+            pipeline: 'claude',
+            work: TASK_WORK,
+          });
+        clock.advanceMinutes(1);
+      }
+      const all = (await store.listRecentRuns(10)).map((run) => run.runId);
+      expect(all).toHaveLength(6);
+      const paged: string[] = [];
+      let before: { updatedAt: string; runId: string } | undefined;
+      for (;;) {
+        const page = await store.listRecentRuns(4, before);
+        paged.push(...page.map((run) => run.runId));
+        const last = page.at(-1);
+        if (page.length < 4 || last === undefined) break;
+        before = { updatedAt: last.updatedAt, runId: last.runId };
+      }
+      expect(paged).toEqual(all);
+      const third = (await store.listRecentRuns(3)).at(-1);
+      if (third === undefined) throw new Error('missing third run');
+      expect(
+        (
+          await store.listRecentRuns(10, {
+            updatedAt: third.updatedAt,
+            runId: third.runId,
+          })
+        ).map((run) => run.runId),
+      ).toEqual(all.slice(3));
     });
 
     it('round-trips work and closedAt on a native task', async () => {

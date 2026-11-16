@@ -37,13 +37,13 @@ function doc(prNumbers: number[]): CliSessionDoc {
 }
 
 describe('stored spend evidence boundary', () => {
-  it('deduplicates qualified identities, caps reads and reports missing evidence', async () => {
+  it('deduplicates qualified identities, reads every one and reports missing evidence', async () => {
     const read = vi.fn().mockResolvedValue(undefined);
     const result = await loadSpendProjections(
       [doc(Array.from({ length: 205 }, (_, i) => i + 1)), doc([1, 2, 2])],
       read,
     );
-    expect(read).toHaveBeenCalledTimes(200);
+    expect(read).toHaveBeenCalledTimes(205);
     expect(read).toHaveBeenCalledWith({
       repo: 'jlapenna/agent-lcars',
       issue: 1,
@@ -150,5 +150,17 @@ describe('canonical stored projection identities (#2303)', () => {
         ).projections,
       ).mergedPRs,
     ).toBe(1);
+  });
+  it('reads more than the former 200-PR cap into a complete snapshot', async () => {
+    const read = vi.fn(async (anchor: GithubAnchorProjection['anchor']) => ({
+      anchor,
+    }));
+    const result = await loadSpendProjections(
+      [doc(Array.from({ length: 450 }, (_, i) => i + 1))],
+      read as unknown as Parameters<typeof loadSpendProjections>[1],
+    );
+    expect(read).toHaveBeenCalledTimes(450);
+    expect(result.projections.size).toBe(450);
+    expect(result.incomplete).toBe(false);
   });
 });

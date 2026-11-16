@@ -13,14 +13,15 @@ text in `prometheus`. `work metrics` prints that text; `work metrics --json`
 prints the complete response. Both are read-only and never drain, sweep,
 claim, renew, dispatch, or repair a run.
 
-The store makes three bounded queries: runs updated during the last hour,
-all live runs, and outstanding pending/leased/failed outbox entries. Each
-reads at most 1001 documents using automatic single-field indexes. Any feed
-over 1000 makes `complete=false`; only completeness, observation time and
-read-size diagnostics are emitted. CLI exit is then nonzero, but its stdout
-still contains the incomplete-observation signal. Errors return generic 500,
-not partial healthy metrics. No migration, backfill, new index, or data write
-is required.
+The store makes three queries: runs updated during the last hour, all live
+runs, and outstanding pending/leased/failed outbox entries. Each is read to
+exhaustion in cursor pages of 1,000 documents using automatic single-field
+indexes, so every metric is computed from every matching record. A store that
+cannot read a feed completely reports `complete=false`; then only
+completeness, observation time and read-size diagnostics are emitted, and the
+CLI exits nonzero while its stdout still contains the incomplete-observation
+signal. Errors return generic 500, not partial healthy metrics. No migration,
+backfill, new index, or data write is required.
 
 These are independently read durable feeds, not one atomic Firestore
 snapshot. Records with the same run ID are deduplicated, choosing the newest
@@ -254,11 +255,11 @@ does not turn process-local executor launch counters into those facts.
 
 The same authenticated export appends `lcars_product_session_cost_*` gauges
 from the canonical Costs `SessionSpend` owner. It selects sessions with recorded
-activity in the rolling hour ending at `observedAt`, retains at most 200 newest
-sessions, and uses existing stored GitHub PR projections (at most 200 point
-reads, eight concurrent, five-second shared projection deadline). The session
-reader streams matching recent records with bounded retained memory; 200 is the
-returned-page bound, not a promise of 200 underlying document reads. This is a
+activity in the rolling hour ending at `observedAt`, retains every one of them
+(the session reader streams the window exhaustively), and uses existing stored
+GitHub PR projections for every referenced PR (eight concurrent reads, a
+five-second shared projection deadline; PRs unread by the deadline stay unknown
+and make coverage partial). This is a
 read-only, nontransactional snapshot. Future/invalid activity clocks are excluded
 and make coverage partial. Page saturation also makes coverage partial.
 

@@ -9,8 +9,6 @@ import {
   taskKey,
 } from './model';
 
-/** Each query reads at most limit+1 documents; overflow fails closed. */
-export const LIFECYCLE_METRICS_READ_LIMIT = 1_000;
 export const LIFECYCLE_METRICS_WINDOW_SECONDS = 3_600;
 const PIPELINES = [...DISPATCH_PIPELINES, 'unknown'] as const;
 const OUTCOMES = [
@@ -177,14 +175,10 @@ export interface LifecycleMetricRecords {
 export interface LifecycleMetricRead {
   readonly since: string;
   readonly until: string;
-  readonly limit: number;
 }
 
 export function validateLifecycleMetricRead(input: LifecycleMetricRead): void {
   if (
-    !Number.isInteger(input.limit) ||
-    input.limit < 1 ||
-    input.limit > LIFECYCLE_METRICS_READ_LIMIT ||
     !Number.isFinite(Date.parse(input.since)) ||
     !Number.isFinite(Date.parse(input.until)) ||
     input.since > input.until

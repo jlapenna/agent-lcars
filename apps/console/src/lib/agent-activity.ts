@@ -1,6 +1,8 @@
 import {
   isWorkAnchor,
+  type OrchestratorStore,
   type Run as OrchestratorRun,
+  type RunListCursor,
   type Task,
   taskKey,
 } from '@agent-lcars/orchestrator';
@@ -44,9 +46,31 @@ const RECENT_RUN_LIMIT = 8;
  * the console still renders up to RECENT_RUN_LIMIT terminal outcomes. */
 const RECENT_RUN_FETCH_LIMIT = RECENT_RUN_LIMIT * 3;
 /** One updatedAt-ordered read serves both: its first RECENT_RUN_FETCH_LIMIT
- * runs are the outcome feed, and all of it reaches back RUN_HISTORY_MINUTES
- * for the readouts' sparklines unless the fleet ran more than this since. */
-const RUN_HISTORY_FETCH_LIMIT = 100;
+ * runs are the outcome feed, and it is paged back this many runs at a time
+ * until it reaches RUN_HISTORY_MINUTES for the readouts' sparklines. */
+const RUN_HISTORY_PAGE_SIZE = 100;
+/** Runs read per page of the Agents outcome history. */
+export const OUTCOME_PAGE_SIZE = 25;
+
+/** Newest-first runs back to `since` (ISO), paged until the feed passes it. */
+async function readRecentRunsSince(
+  store: Pick<OrchestratorStore, 'listRecentRuns'>,
+  since: number,
+): Promise<{ runs: OrchestratorRun[]; reachedSince: boolean }> {
+  const runs: OrchestratorRun[] = [];
+  let before: RunListCursor | undefined;
+  for (;;) {
+    const page = await store.listRecentRuns(RUN_HISTORY_PAGE_SIZE, before);
+    runs.push(...page);
+    const last = page.at(-1);
+    if (page.length < RUN_HISTORY_PAGE_SIZE || last === undefined)
+      return { runs, reachedSince: true };
+    if (Date.parse(last.updatedAt) < since) return { runs, reachedSince: true };
+    // A feed that does not advance cannot reach `since`; withhold history.
+    if (before?.runId === last.runId) return { runs, reachedSince: false };
+    before = { updatedAt: last.updatedAt, runId: last.runId };
+  }
+}
 
 export type AgentRunStatus = 'queued' | 'running' | 'completed';
 export type AgentRunConclusion = 'success' | 'failure' | 'cancelled' | 'other';
@@ -123,6 +147,9 @@ export interface AgentActivity {
    * this field itself is the raw, ungrouped truth. */
   liveRuns: AgentRun[];
   recentRuns: AgentRun[];
+  /** Where the outcome history continues after `recentRuns`: the last run
+   * the outcome feed considered. Absent when the feed holds no older run. */
+  olderOutcomes?: RunListCursor;
   /** Missing subfields indicate unavailable capacity, never a real zero. */
   fleet?: FleetSummary;
   /** Lifecycle counts from authoritative Run records, never scale-set
@@ -471,7 +498,7 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   const warnings: string[] = [];
   const [liveRead, recentRead, autoscalerRead] = await Promise.allSettled([
     store.listLiveRuns(),
-    store.listRecentRuns(RUN_HISTORY_FETCH_LIMIT),
+    readRecentRunsSince(store, Date.now() - RUN_HISTORY_MINUTES * 60_000),
     getAutoscalerStatuses(),
   ]);
   const autoscaler =
@@ -508,18 +535,15 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   const authoritativeLiveRuns =
     liveRead.status === 'fulfilled' ? liveRead.value : [];
   const recentWindow =
-    recentRead.status === 'fulfilled' ? recentRead.value : [];
+    recentRead.status === 'fulfilled' ? recentRead.value.runs : [];
   const terminalRecentRuns = recentWindow
     .slice(0, RECENT_RUN_FETCH_LIMIT)
     .filter((run) => run.state !== 'pending' && run.state !== 'running');
   const historyStart = Date.now() - RUN_HISTORY_MINUTES * 60_000;
-  const oldestRecent = recentWindow.at(-1);
   const historyReached =
     liveRead.status === 'fulfilled' &&
     recentRead.status === 'fulfilled' &&
-    (recentWindow.length < RUN_HISTORY_FETCH_LIMIT ||
-      (oldestRecent !== undefined &&
-        Date.parse(oldestRecent.updatedAt) < historyStart));
+    recentRead.value.reachedSince;
   // A run that ended inside the window was last written inside it.
   // The two reads are not one snapshot. A run the recent read saw live
   // and the live read did not ended between them, at an unknown instant:
@@ -592,6 +616,17 @@ export async function getAgentActivity(): Promise<AgentActivity> {
       : undefined;
   const liveRuns = projectRuns(authoritativeLiveRuns);
   const recentRuns = projectRuns(terminalRecentRuns).slice(0, RECENT_RUN_LIMIT);
+  // Resume the history after the last outcome shown, or after the whole
+  // outcome window when it held fewer terminal runs than the feed shows.
+  const lastShown = recentRuns.at(-1);
+  const windowEnd =
+    recentWindow.length > RECENT_RUN_FETCH_LIMIT
+      ? recentWindow[RECENT_RUN_FETCH_LIMIT - 1]
+      : undefined;
+  const olderOutcomes: RunListCursor | undefined =
+    recentRuns.length === RECENT_RUN_LIMIT && lastShown !== undefined
+      ? { updatedAt: lastShown.updatedAt, runId: lastShown.id }
+      : windowEnd && { updatedAt: windowEnd.updatedAt, runId: windowEnd.runId };
   if (invalidMetadata.value) {
     warnings.push('Authoritative run activity contains invalid task metadata.');
   }
@@ -604,11 +639,70 @@ export async function getAgentActivity(): Promise<AgentActivity> {
   return {
     liveRuns,
     recentRuns,
+    ...(olderOutcomes ? { olderOutcomes } : {}),
     fleet,
     ...(liveRead.status === 'fulfilled'
       ? { queue: queueFromLiveRuns(authoritativeLiveRuns) }
       : {}),
     ...(runHistory === undefined ? {} : { runHistory }),
     warnings: Array.from(new Set(warnings)),
+  };
+}
+
+/** One page of the Agents outcome history, older than `before`: the
+ * terminal runs among the next {@link OUTCOME_PAGE_SIZE} runs of the global
+ * feed, projected like the recent outcomes. `nextCursor` continues the feed
+ * and is absent once it is exhausted. */
+export async function getRecentOutcomesPage(
+  before: RunListCursor,
+  limit = OUTCOME_PAGE_SIZE,
+): Promise<{
+  runs: AgentRun[];
+  nextCursor?: RunListCursor;
+  warnings: string[];
+}> {
+  const { store } = createOrchestratorRuntime();
+  let page: OrchestratorRun[];
+  try {
+    page = await store.listRecentRuns(limit, before);
+  } catch (error) {
+    logger.error('agent-lcars: failed to list older run outcomes:', error);
+    return { runs: [], warnings: ['Older run outcomes unavailable.'] };
+  }
+  const terminal = page.filter(
+    (run) => run.state !== 'pending' && run.state !== 'running',
+  );
+  const tasks = new Map<string, Task | undefined>();
+  await Promise.all(
+    [...new Set(terminal.map((run) => taskKey(run.task)))].map(async (key) => {
+      const run = terminal.find((candidate) => taskKey(candidate.task) === key);
+      if (run === undefined) return;
+      try {
+        tasks.set(key, (await store.readTask(run.task))?.task);
+      } catch (error) {
+        logger.error(
+          'agent-lcars: failed to read authoritative run task:',
+          error,
+        );
+      }
+    }),
+  );
+  let invalid = false;
+  const runs = terminal.flatMap((run) => {
+    const task = tasks.get(taskKey(run.task));
+    const projected =
+      task === undefined ? undefined : agentRunFromOrchestrator(run, task);
+    if (projected === undefined) invalid = true;
+    return projected === undefined ? [] : [projected];
+  });
+  const last = page.at(-1);
+  return {
+    runs,
+    ...(page.length === limit && last !== undefined
+      ? { nextCursor: { updatedAt: last.updatedAt, runId: last.runId } }
+      : {}),
+    warnings: invalid
+      ? ['Authoritative run activity contains invalid task metadata.']
+      : [],
   };
 }

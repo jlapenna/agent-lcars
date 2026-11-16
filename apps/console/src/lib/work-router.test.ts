@@ -857,7 +857,6 @@ describe('items routes', () => {
       expect(read).toHaveBeenCalledWith({
         since: '2026-08-26T09:00:00.000Z',
         until: '2026-08-26T10:00:00.000Z',
-        limit: 1000,
       });
       expect(drain).not.toHaveBeenCalled();
       expect(await ctx.runtime.store.listLiveRuns()).toEqual([]);

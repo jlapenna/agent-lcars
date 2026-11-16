@@ -157,24 +157,26 @@ describe('POST /api/control-plane/webhook/process', () => {
   });
   it.each([
     {
-      name: 'within-bound',
+      name: 'with one historical run',
       historical: 1,
       expectedBody: { dispatched: false, runId: 'jlapenna/agent-lcars#42/r2' },
       expectedStatus: 'accepted',
       expectedRuns: 2,
     },
     {
-      name: 'overflow',
+      // More claimed history than one datastore read page: every candidate
+      // is inspected, so the handoff is admitted instead of refused.
+      name: 'beyond one read page',
       historical: 1001,
       expectedBody: {
-        refused: 'physical-ownership-unavailable',
-        providerRouting: { status: 'refused' },
+        dispatched: false,
+        runId: 'jlapenna/agent-lcars#42/r1002',
       },
-      expectedStatus: 'refused',
-      expectedRuns: 1001,
+      expectedStatus: 'accepted',
+      expectedRuns: 1002,
     },
   ])(
-    'acknowledges real label inventory $name at the HTTP boundary',
+    'acknowledges a label handoff $name at the HTTP boundary',
     async ({ historical, expectedBody, expectedStatus, expectedRuns }) => {
       const actual = await vi.importActual<
         typeof import('@/lib/orchestrator-routes')
@@ -266,11 +268,8 @@ describe('POST /api/control-plane/webhook/process', () => {
       const replay = await POST(labelRequest('switch-label', 'opencode'));
       expect(replay.status).toBe(200);
       const replayBody = await replay.json();
-      // Overflow is a persisted source-clock refusal; a successful request replays
-      // through its normal duplicate binding. Both outcomes remain acknowledged.
-      expect(replayBody).toMatchObject(
-        historical > 1 ? expectedBody : { duplicate: true, runId: body.runId },
-      );
+      // A successful request replays through its normal duplicate binding.
+      expect(replayBody).toMatchObject({ duplicate: true, runId: body.runId });
       expect(await store.listRuns(anchor)).toHaveLength(expectedRuns);
     },
   );

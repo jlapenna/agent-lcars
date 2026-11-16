@@ -190,15 +190,7 @@ describe('captureOpenCodeExports', () => {
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
     expect(calls[0]).toEqual({
-      args: [
-        '--pure',
-        'session',
-        'list',
-        '--format',
-        'json',
-        '-n',
-        String(OPENCODE_CAPTURE_LIMITS.list),
-      ],
+      args: ['--pure', 'session', 'list', '--format', 'json'],
       maxBytes: OPENCODE_CAPTURE_LIMITS.listBytes,
       timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
     });
@@ -493,14 +485,16 @@ describe('captureOpenCodeExports', () => {
     ).toBe(false);
   });
 
-  it('accepts legacy nested time fields and caps exports to the newest sessions', async () => {
-    const sessions = Array.from(
-      { length: OPENCODE_CAPTURE_LIMITS.sessions + 5 },
-      (_, index) => ({
-        id: `ses_${index}`,
-        directory: workspace,
-        time: { updated: index },
-      }),
+  it('accepts legacy nested time fields and exports every workspace session, newest first', async () => {
+    // More sessions than the former 20-session cap, interleaved with other
+    // directories' sessions that the former 100-entry list cap counted.
+    const sessions = Array.from({ length: 125 }, (_, index) => ({
+      id: `ses_${index}`,
+      directory: index % 5 === 0 ? `${workspace}-other` : workspace,
+      time: { updated: index },
+    }));
+    const workspaceSessions = sessions.filter(
+      (session) => session.directory === workspace,
     );
     // Each selected session now produces two runOpenCodeToFile calls (the
     // sanitized artifact this test cares about, plus the raw resumable
@@ -524,9 +518,10 @@ describe('captureOpenCodeExports', () => {
       runOpenCodeToFile,
     });
 
-    expect(result.selected).toBe(OPENCODE_CAPTURE_LIMITS.sessions);
-    expect(exports).toHaveLength(OPENCODE_CAPTURE_LIMITS.sessions);
+    expect(result.selected).toBe(workspaceSessions.length);
+    expect(exports).toHaveLength(workspaceSessions.length);
     expect(exports[0]).toBe(`ses_${sessions.length - 1}`);
+    expect(exports).toContain('ses_1');
     expect(exports).not.toContain('ses_0');
   });
 
@@ -644,9 +639,7 @@ describe('captureOpenCodeExports', () => {
     ).toEqual({ status: 'ok', selected: 1, exported: 1, failed: 0 });
 
     const args = fs.readFileSync(argsLog, 'utf8');
-    expect(args).toContain(
-      `---\n--pure\nsession\nlist\n--format\njson\n-n\n${OPENCODE_CAPTURE_LIMITS.list}\n`,
-    );
+    expect(args).toContain('---\n--pure\nsession\nlist\n--format\njson\n---');
     expect(args).toContain('---\n--pure\nexport\nses_env\n--sanitize\n');
     const env = fs.readFileSync(envLog, 'utf8');
     expect(env).not.toContain('writer-secret');
