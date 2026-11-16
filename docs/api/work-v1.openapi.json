@@ -415,6 +415,10 @@
                                   "type": "string",
                                   "maxLength": 65536
                                 },
+                                "oversized": {
+                                  "type": "boolean",
+                                  "const": true
+                                },
                                 "state": {
                                   "type": "string",
                                   "enum": ["open", "closed"]
@@ -1201,6 +1205,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -1521,6 +1529,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -1758,12 +1770,6 @@
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
-                    },
-                    "oversized": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
                     },
                     "nextCursor": {
                       "type": "string"
@@ -2270,6 +2276,10 @@
                                 "description": {
                                   "type": "string",
                                   "maxLength": 65536
+                                },
+                                "oversized": {
+                                  "type": "boolean",
+                                  "const": true
                                 },
                                 "state": {
                                   "type": "string",
@@ -3596,6 +3606,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -3849,6 +3863,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -4743,6 +4761,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -4996,6 +5018,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -5895,6 +5921,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -6148,6 +6178,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -7058,6 +7092,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -7311,6 +7349,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -8265,6 +8307,10 @@
                                 "type": "string",
                                 "maxLength": 65536
                               },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
+                              },
                               "state": {
                                 "type": "string",
                                 "enum": ["open", "closed"]
@@ -8526,6 +8572,10 @@
                                     "description": {
                                       "type": "string",
                                       "maxLength": 65536
+                                    },
+                                    "oversized": {
+                                      "type": "boolean",
+                                      "const": true
                                     },
                                     "state": {
                                       "type": "string",
@@ -9411,6 +9461,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -9664,6 +9718,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -10600,6 +10658,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -10853,6 +10915,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -11820,6 +11886,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -12073,6 +12143,10 @@
                               "description": {
                                 "type": "string",
                                 "maxLength": 65536
+                              },
+                              "oversized": {
+                                "type": "boolean",
+                                "const": true
                               },
                               "state": {
                                 "type": "string",
@@ -14892,6 +14966,10 @@
                           "type": "string",
                           "maxLength": 65536
                         },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
+                        },
                         "state": {
                           "type": "string",
                           "enum": ["open", "closed"]
@@ -15051,6 +15129,10 @@
                         "description": {
                           "type": "string",
                           "maxLength": 65536
+                        },
+                        "oversized": {
+                          "type": "boolean",
+                          "const": true
                         },
                         "state": {
                           "type": "string",
@@ -15871,6 +15953,10 @@
                               "type": "string",
                               "maxLength": 65536
                             },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
+                            },
                             "state": {
                               "type": "string",
                               "enum": ["open", "closed"]
@@ -16193,6 +16279,10 @@
                               "type": "string",
                               "maxLength": 65536
                             },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
+                            },
                             "state": {
                               "type": "string",
                               "enum": ["open", "closed"]
@@ -16499,6 +16589,10 @@
                             "description": {
                               "type": "string",
                               "maxLength": 65536
+                            },
+                            "oversized": {
+                              "type": "boolean",
+                              "const": true
                             },
                             "state": {
                               "type": "string",

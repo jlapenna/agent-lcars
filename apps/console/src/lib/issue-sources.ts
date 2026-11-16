@@ -27,8 +27,8 @@ import {
   readSourceWorkBinding,
 } from './issue-trackers';
 import {
-  LinearIssueTooLargeError,
   listLinearIssues,
+  oversizedIssueReason,
   readLinearIssue,
 } from './linear-client';
 import {
@@ -80,12 +80,7 @@ export async function lookupIssueSource(
     const config = linearConfig();
     if (!config)
       throw new ORPCError('NOT_FOUND', { message: 'Linear is not configured' });
-    try {
-      issue = await readLinearIssue(config.organizationId, lookup.issue);
-    } catch (error) {
-      if (!(error instanceof LinearIssueTooLargeError)) throw error;
-      throw new ORPCError('BAD_REQUEST', { message: error.message });
-    }
+    issue = await readLinearIssue(config.organizationId, lookup.issue);
     const team = issue?.teamId ? linearTeam(config, issue.teamId) : undefined;
     if (!issue || !team || !linearIssueInRepository(config, issue))
       throw new ORPCError('NOT_FOUND', {
@@ -317,7 +312,6 @@ export async function refreshIssueSources(
     await refreshLinearIssue(context.runtime, config, issue);
   return {
     refreshed: page.issues.length,
-    ...(page.oversized.length > 0 ? { oversized: page.oversized } : {}),
     ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
   };
 }
@@ -395,6 +389,10 @@ export async function dispatchIssueSource(
     );
   if (source.issue.state !== 'open')
     throw new ORPCError('CONFLICT', { message: 'Issue is closed' });
+  if (source.issue.oversized)
+    throw new ORPCError('BAD_REQUEST', {
+      message: oversizedIssueReason(source.issue.identifier),
+    });
   if (ref.tracker === 'github') {
     const anchor = { repo: ref.repo, issue: ref.issue };
     if (repo !== ref.repo) throw new ORPCError('FORBIDDEN');

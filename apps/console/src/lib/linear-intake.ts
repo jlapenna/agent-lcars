@@ -21,7 +21,7 @@ import {
   readSourceWorkBinding,
 } from './issue-trackers';
 import {
-  LinearIssueTooLargeError,
+  oversizedIssueReason,
   readLinearComment,
   readLinearIssue,
 } from './linear-client';
@@ -182,6 +182,8 @@ export async function dispatchLinearIssue(
     await runtime.orchestrator.refreshIssue({ workId: id }, issue);
     return { status: 200, body: { outcome: 'existing', itemId: id } };
   }
+  // A new brief would be a cut copy. Lifecycle sync above still applies.
+  if (issue.oversized) return ignored(oversizedIssueReason(issue.identifier));
   const work = normalizeWorkPayload({
     origin: { principal: grant.principal, channel: 'linear', thread },
     spec: {
@@ -271,19 +273,10 @@ export async function admitLinearWebhook(
   const issueId = commentData?.success
     ? commentData.data.issueId
     : event.data.id;
-  let issue: Awaited<ReturnType<typeof readLinearIssue>>;
-  try {
-    issue = await (deps.readIssue ?? readLinearIssue)(
-      config.organizationId,
-      issueId,
-    );
-  } catch (error) {
-    // Permanent for this revision: retrying cannot shrink it, and a cut
-    // copy would hand an agent a brief that silently lost content.
-    if (error instanceof LinearIssueTooLargeError)
-      return ignored(error.message);
-    throw error;
-  }
+  let issue = await (deps.readIssue ?? readLinearIssue)(
+    config.organizationId,
+    issueId,
+  );
   if (!issue) {
     if (event.type !== 'Issue' || event.action !== 'remove')
       throw new Error('Linear current source is unavailable');
@@ -449,6 +442,8 @@ export async function admitLinearWebhook(
       admitted.body['itemId'] === binding.workId &&
       route.repo === binding.repo
     ) {
+      if (issue.oversized)
+        return ignored(oversizedIssueReason(issue.identifier));
       const grant = grantForPrincipal(route.principal);
       if (!grant)
         return { status: 403, body: { error: 'Linear grant required' } };

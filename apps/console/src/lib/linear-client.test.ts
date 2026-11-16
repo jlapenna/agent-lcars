@@ -5,11 +5,7 @@ import {
 } from '@agent-lcars/dispatch-contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  linearIssueSnapshot,
-  LinearIssueTooLargeError,
-  listLinearIssues,
-} from './linear-client';
+import { linearIssueSnapshot, listLinearIssues } from './linear-client';
 
 const org = '11111111-1111-4111-8111-111111111111';
 const team = '22222222-2222-4222-8222-222222222222';
@@ -49,13 +45,21 @@ describe('Linear issue snapshot bounds', () => {
   it.each([
     ['title', 't'.repeat(TRACKER_ISSUE_TITLE_MAX + 1), 'ok'],
     ['description', 'ok', 'd'.repeat(TRACKER_ISSUE_DESCRIPTION_MAX + 1)],
-  ])('refuses rather than cuts an oversized %s', (_, title, description) => {
-    expect(() =>
-      linearIssueSnapshot(org, node('ENG-2', title, description)),
-    ).toThrow(LinearIssueTooLargeError);
-  });
+  ])(
+    'flags an oversized %s and carries no cut description',
+    (_, title, description) => {
+      const snapshot = linearIssueSnapshot(
+        org,
+        node('ENG-2', title, description),
+      );
+      expect(snapshot.oversized).toBe(true);
+      expect(snapshot.description).toBe('');
+      expect(snapshot.identifier).toBe('ENG-2');
+      expect(snapshot.state).toBe('open');
+    },
+  );
 
-  it('reports an oversized issue on a page without blocking the others', async () => {
+  it('keeps an oversized issue on a list page alongside the others', async () => {
     const fetchImpl = vi.fn(async () =>
       Response.json({
         data: {
@@ -77,7 +81,11 @@ describe('Linear issue snapshot bounds', () => {
       }),
     ) as unknown as typeof fetch;
     const page = await listLinearIssues(org, team, undefined, fetchImpl);
-    expect(page.issues.map((issue) => issue.identifier)).toEqual(['ENG-3']);
-    expect(page.oversized).toEqual(['ENG-4']);
+    expect(
+      page.issues.map((issue) => [issue.identifier, issue.oversized]),
+    ).toEqual([
+      ['ENG-3', undefined],
+      ['ENG-4', true],
+    ]);
   });
 });

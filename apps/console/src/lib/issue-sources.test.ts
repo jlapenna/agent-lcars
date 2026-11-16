@@ -160,18 +160,14 @@ describe('first-class issue source operations', () => {
   });
   it('refreshes one bounded page as metadata without dispatch and preserves explicit cursor', async () => {
     const f = fixture();
-    mock.list.mockResolvedValue({
-      issues: [issue],
-      oversized: ['ENG-43'],
-      nextCursor: 'page-two',
-    });
+    mock.list.mockResolvedValue({ issues: [issue], nextCursor: 'page-two' });
     expect(
       await refreshIssueSources(f.context, {
         tracker: 'linear',
         teamId: team,
         cursor: 'page-one',
       }),
-    ).toEqual({ refreshed: 1, oversized: ['ENG-43'], nextCursor: 'page-two' });
+    ).toEqual({ refreshed: 1, nextCursor: 'page-two' });
     expect(mock.list).toHaveBeenCalledWith(org, team, 'page-one');
     expect(
       (await listIssueSources(f.context, { tracker: 'linear', limit: 1 }))
@@ -212,6 +208,18 @@ describe('first-class issue source operations', () => {
       ).toHaveLength(1);
     },
   );
+  it('refuses a new dispatch from an oversized Linear issue', async () => {
+    const f = fixture();
+    mock.read.mockResolvedValue({ ...issue, description: '', oversized: true });
+    await expect(
+      dispatchIssueSource(f.context, {
+        issue: issue.reference,
+        pipeline: 'codex',
+        requestId: 'oversized',
+      }),
+    ).rejects.toThrow('exceeds LCARS tracker bounds');
+    expect(await f.store.listNativeTasks(10)).toHaveLength(0);
+  });
   it('recovers a completed/closed source receipt and rejects changed provider selection', async () => {
     const f = fixture();
     const input = {
