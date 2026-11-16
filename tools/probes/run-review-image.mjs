@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -62,9 +63,7 @@ const claudeTokenFile = () => {
   claudeSecretDir = mkdtempSync(join(tmpdir(), 'lcars-review-secret-'));
   const file = join(claudeSecretDir, 'claude-code-oauth-token');
   const token = process.env.LCARS_REVIEW_CLAUDE_TOKEN_FILE
-    ? execFileSync('cat', [process.env.LCARS_REVIEW_CLAUDE_TOKEN_FILE], {
-        encoding: 'utf8',
-      })
+    ? readFileSync(process.env.LCARS_REVIEW_CLAUDE_TOKEN_FILE, 'utf8')
     : execFileSync(
         'gcloud',
         [
