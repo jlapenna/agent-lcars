@@ -11,6 +11,7 @@ import { handoffSummaryConfig } from './human-needed-summary';
 import { validateJobSecretDeployment } from './job-secrets-runtime';
 import { linearConfig } from './linear-config';
 import { validateOutcomeWebhooks } from './outcome-webhook';
+import { agentProfiles } from './repository-agent-runs';
 import { parseWorkGrants } from './work-grants';
 
 /**
@@ -28,6 +29,7 @@ export function validateStartupConfiguration(): void {
   // Also parses AGENT_LCARS_WATCHED_REPOS and requires the two to match.
   controlPlaneRepositories();
   parseWorkGrants(process.env['AGENT_LCARS_WORK_GRANTS']);
+  agentProfiles();
   validateOutcomeWebhooks();
   validateJobSecretDeployment();
   linearConfig();
