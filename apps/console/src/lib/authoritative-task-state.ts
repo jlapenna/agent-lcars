@@ -1,7 +1,8 @@
 import 'server-only';
 
 import { logger } from '@agent-lcars/logging';
-import type { Run as OrchestratorRun } from '@agent-lcars/orchestrator';
+import type { Run, VersionedTask } from '@agent-lcars/orchestrator';
+import { taskKey } from '@agent-lcars/orchestrator';
 import { workPayloadSchema, type WorkSpec } from '@agent-lcars/work';
 import { type ItemView, toItemView } from '@agent-lcars/work/derive';
 
@@ -35,7 +36,7 @@ export interface AuthoritativeTaskState {
   updatedAt: string;
   /** Set iff a run is currently live (see `Task.activeRunId`). */
   activeRunId?: string;
-  runs: OrchestratorRun[];
+  runs: Run[];
   /** Immutable Work specification used to build every run brief. A missing
    * or malformed payload is durable-data corruption and fails this read;
    * callers surface the authoritative-data warning rather than inventing a
@@ -105,25 +106,69 @@ export async function readAuthoritativeTaskStates(
   const states = new Map<string, AuthoritativeTaskState>();
   const unavailableTaskKeys = new Set<string>();
   const warnings: string[] = [];
-  await Promise.all(
-    [...uniqueTasks].map(async ([key, task]) => {
-      try {
-        const state = await readAuthoritativeTaskState({
-          repository: repoKey(task.repository),
-          issue: task.issueNumber,
-        });
-        if (state) states.set(key, state);
-      } catch (error) {
-        logger.error(
-          'agent-lcars: failed to read authoritative task state (%s):',
-          key,
-          error,
-        );
-        unavailableTaskKeys.add(key);
-        warnings.push(`Authoritative lifecycle state unavailable for ${key}.`);
-      }
-    }),
-  );
+  if (uniqueTasks.size === 0) return { states, unavailableTaskKeys, warnings };
+
+  const { store } = createOrchestratorRuntime();
+  const taskIds = [...uniqueTasks.values()].map((task) => ({
+    repo: repoKey(task.repository),
+    issue: task.issueNumber,
+  }));
+  // Two bounded datastore passes for the whole set instead of one document
+  // read and one run query per task: the Agents page asks for every queue
+  // item and recent run at once, so the per-task shape was ~2 reads per item
+  // on the route's critical path.
+  let versioned: Map<string, VersionedTask>;
+  let runsByTask: Map<string, Run[]>;
+  try {
+    [versioned, runsByTask] = await Promise.all([
+      store.readTasks(taskIds),
+      store.listRunsForTasks(taskIds),
+    ]);
+  } catch (error) {
+    logger.error(
+      'agent-lcars: failed to read authoritative task states:',
+      error,
+    );
+    for (const key of uniqueTasks.keys()) unavailableTaskKeys.add(key);
+    warnings.push('Authoritative lifecycle state unavailable for this view.');
+    return { states, unavailableTaskKeys, warnings };
+  }
+
+  for (const [key, task] of uniqueTasks) {
+    const taskId = { repo: repoKey(task.repository), issue: task.issueNumber };
+    try {
+      const current = versioned.get(taskKey(taskId));
+      if (current === undefined) continue;
+      const payload = workPayloadSchema.safeParse(current.task.work);
+      if (!payload.success)
+        throw new Error('Authoritative task state requires coding Work');
+      const runs = runsByTask.get(taskKey(taskId)) ?? [];
+      states.set(key, {
+        schema: AUTHORITATIVE_TASK_STATE_SCHEMA,
+        task: taskId,
+        storageRevision: current.revision,
+        updatedAt: current.task.updatedAt,
+        ...(current.task.activeRunId === undefined
+          ? {}
+          : { activeRunId: current.task.activeRunId }),
+        runs,
+        spec: payload.data.spec,
+        item: toItemView({
+          workId: `${repoKey(task.repository)}#${task.issueNumber}`,
+          task: current.task,
+          runs,
+        }),
+      });
+    } catch (error) {
+      logger.error(
+        'agent-lcars: failed to read authoritative task state (%s):',
+        key,
+        error,
+      );
+      unavailableTaskKeys.add(key);
+      warnings.push(`Authoritative lifecycle state unavailable for ${key}.`);
+    }
+  }
 
   return { states, unavailableTaskKeys, warnings };
 }

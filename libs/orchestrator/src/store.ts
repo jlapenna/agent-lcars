@@ -259,10 +259,30 @@ export interface OrchestratorStore {
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
+  /**
+   * The task document of each given task in one datastore pass, keyed by
+   * {@link taskKey}: a batched document read rather than one round trip per
+   * task. A task with no document is absent from the map, matching
+   * {@link readTask} returning undefined.
+   */
+  readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
   readActiveRun(id: TaskId): Promise<Run | undefined>;
   listRuns(id: TaskId): Promise<Run[]>;
+  /**
+   * Every run of each of the given tasks in one datastore pass, keyed by
+   * {@link taskKey}. Equivalent to calling {@link listRuns} per id, but the
+   * Firestore implementation issues one equality-only query per bounded chunk
+   * of tasks instead of one per task, so a console
+   * surface listing hundreds of tasks stops paying hundreds of round trips.
+   *
+   * Contract: every requested id is present in the map, mapped to `[]` when
+   * the task has no runs; a task absent from the input is absent from the
+   * map. Ordering within a task is unspecified, exactly as for
+   * {@link listRuns}.
+   */
+  listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>>;
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */
