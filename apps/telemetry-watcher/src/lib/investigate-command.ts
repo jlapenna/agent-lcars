@@ -124,7 +124,9 @@ export async function executeInvestigateCommand(
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: 'error',
         cache: 'no-store',
-        signal: AbortSignal.timeout(Math.min(30_000, remaining())),
+        // AbortSignal.timeout needs whole milliseconds; performance.now()
+        // makes the remaining time fractional.
+        signal: AbortSignal.timeout(Math.ceil(Math.min(30_000, remaining()))),
       });
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
@@ -149,7 +151,7 @@ export async function executeInvestigateCommand(
       : question;
     let status = await request(`/agents/${agent}`, { requestId, message });
     while (!SETTLED.has(status.state)) {
-      await deps.sleep(Math.min(POLL_MS, remaining()));
+      await deps.sleep(Math.ceil(Math.min(POLL_MS, remaining())));
       status = await request(
         `/agent-runs/${encodeURIComponent(status.workId)}`,
       );

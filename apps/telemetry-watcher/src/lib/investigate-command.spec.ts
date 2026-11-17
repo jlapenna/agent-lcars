@@ -133,6 +133,20 @@ describe('lcars investigate', () => {
     expect(f.err).toEqual(['investigate failed: deadline-exceeded']);
   });
 
+  it('passes whole milliseconds to AbortSignal.timeout from a fractional clock', async () => {
+    const f = fixture([json({ workId, state: 'done', ok: true })], {
+      LCARS_INVESTIGATE_TIMEOUT_SECONDS: '20',
+    });
+    let now = 0.25;
+    f.deps.monotonic = () => (now += 0.333);
+    expect(
+      await executeInvestigateCommand(
+        ['--request-id', 'x', '--question', 'Q'],
+        f.deps,
+      ),
+    ).toEqual({ ok: true });
+  });
+
   it('bounds the wait by a short deadline instead of a full poll interval', async () => {
     const f = fixture(
       [

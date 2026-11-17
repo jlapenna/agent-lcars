@@ -193,8 +193,10 @@ export async function admitAgentRun(
   const key = createHash('sha256')
     .update(
       JSON.stringify(
+        // The original key for rounds without a request id, so receipts
+        // admitted before request ids became idempotency keys still replay.
         round.requestId === undefined
-          ? ['round', round.digest, round.message]
+          ? [round.digest, round.message, null]
           : ['request', round.requestId],
       ),
     )
