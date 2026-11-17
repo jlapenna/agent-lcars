@@ -129,15 +129,27 @@ Trust follows from this:
 - LCARS chooses neither the credentials nor the tool policy. It delivers the
   reviewed definition.
 
-## What this retires
+## What this retired
 
-- `CLAW_PIPELINES` and the claw discriminated spec union.
+The per-agent investigator path is gone. Every claw run is a repository-owned
+agent round admitted through the generic route.
+
+- `CLAW_PIPELINES` and the claw discriminated spec union: the claw spec is the
+  agent spec, and its pipeline is any `claw-*` runtime.
 - `claw-investigate-work.ts`, `POST /claw/investigations` and the
-  `investigate:v1` operation with its input and report caps.
+  `investigate:v1` operation with its input schema and the run brief's
+  operation member.
 - `EVIDENCE_OPERATIONS`, replaced by the manifest's `requireToolEvidence`.
-- The hard-coded claw entries in `QUEUE_PIPELINE_MAX_LIVE_CLAIMS` and the grant
-  pipeline enum.
-- Homelab's `claw/agents/` directory and its agent ConfigMap.
+- The hard-coded claw entry in `QUEUE_PIPELINE_MAX_LIVE_CLAIMS` (the executor
+  runtime bounds claw concurrency) and the claw names in the grant pipeline
+  enum (grants admit any `claw-*` runtime by pattern).
+- The executor runtime's `agent` ConfigMap block, its subPath mounts and
+  preflight check, and the launcher's `CLAW_AGENT_DIR` mount. The strict
+  executor config decoder now refuses an `agent` block.
+- Homelab's `claw/agents/` directory and its agent ConfigMap (retired in
+  Homelab).
+- Firestore Work records of the old investigator shape, purged before the
+  code was removed.
 
 ## Migration and acceptance
 
@@ -147,8 +159,8 @@ Trust follows from this:
    `jlapenna/homelab`.
 2. The shared executor gains runtime `claw-default` with a model key only.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
-   and the launcher change. It then removes the investigator-specific code and
-   points `lcars investigate` at the generic route.
+   and the launcher change. It then points `lcars investigate` at the generic
+   route and removes the investigator-specific code (done).
 
 Acceptance:
 

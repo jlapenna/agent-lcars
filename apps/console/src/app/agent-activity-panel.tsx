@@ -171,7 +171,9 @@ export function internalRunHref(run: AgentRun): string {
   return `/agents?${new URLSearchParams({ repo: repoKey(run.repo), sel: runKey(run) })}`;
 }
 
-const PIPELINE_LABELS: Record<StoredPipeline, string> = {
+type FixedPipeline = Exclude<StoredPipeline, `claw-${string}`>;
+
+const PIPELINE_LABELS: Record<FixedPipeline, string> = {
   claude: 'claude',
   codex: 'codex',
   opencode: 'opencode',
@@ -179,10 +181,9 @@ const PIPELINE_LABELS: Record<StoredPipeline, string> = {
   goose: 'goose',
   'inbox-summary': 'inbox summary',
   'handoff-summary': 'handoff summary',
-  'claw-investigator': 'claw investigator',
 };
 
-const PIPELINE_COLORS: Record<StoredPipeline, string> = {
+const PIPELINE_COLORS: Record<FixedPipeline, string> = {
   claude: 'blue',
   codex: 'teal',
   // The default violet outline shade fails AA on the dark ground.
@@ -193,9 +194,11 @@ const PIPELINE_COLORS: Record<StoredPipeline, string> = {
   goose: 'gray',
   'inbox-summary': 'gray',
   'handoff-summary': 'gray',
-  // A read-only claw agent: an internal executor, not a coding provider.
-  'claw-investigator': 'orange',
 };
+
+const isClawPipeline = (
+  pipeline: StoredPipeline,
+): pipeline is `claw-${string}` => pipeline.startsWith('claw-');
 
 /**
  * Subtle pipeline source tag on run rows - context, not status, so it stays
@@ -208,11 +211,14 @@ export function PipelineBadge({ pipeline }: { pipeline: StoredPipeline }) {
   return (
     <Badge
       variant="outline"
-      color={PIPELINE_COLORS[pipeline]}
+      // A claw runtime is an internal executor, not a coding provider.
+      color={isClawPipeline(pipeline) ? 'orange' : PIPELINE_COLORS[pipeline]}
       size="xs"
       style={{ flexShrink: 0 }}
     >
-      {PIPELINE_LABELS[pipeline]}
+      {isClawPipeline(pipeline)
+        ? `claw ${pipeline.slice('claw-'.length)}`
+        : PIPELINE_LABELS[pipeline]}
     </Badge>
   );
 }

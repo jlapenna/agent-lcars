@@ -147,7 +147,7 @@ describe('WorkDetailViewContent', () => {
   });
 });
 
-describe('claw investigation detail', () => {
+describe('claw agent run detail', () => {
   const first = 'Why did the backup alert fire?';
   const second = 'And why did the restore check pass?';
   const run = (n: number, question: string, message: string) => ({
@@ -158,7 +158,13 @@ describe('claw investigation detail', () => {
     updatedAt: `2026-11-14T10:0${n}:30.000Z`,
     sourceRevision: {
       key: String(n).repeat(64),
-      input: { operation: 'investigate:v1', question },
+      input: {
+        agent: 'jlapenna/homelab/investigator',
+        revision: 'c'.repeat(40),
+        digest: 'd'.repeat(64),
+        requireToolEvidence: true,
+        message: question,
+      },
     },
     revisionAttempt: 1,
     result: { ok: true, summary: 'report', message },
@@ -167,12 +173,12 @@ describe('claw investigation detail', () => {
     id: '01J5Z3K9QX8F0N2B4V6C8D1E3H',
     state: 'done',
     spec: {
-      title: 'Claw investigation alert:backup',
+      title: `jlapenna/homelab/investigator: ${first}`,
       description:
-        "Read-only claw investigation for source key alert:backup. Each round's question is its own revision input.",
+        "Run of repository-owned agent jlapenna/homelab/investigator, source key alert:backup. Each round's message and pinned definition are its revision input.",
       pipeline: 'claw-investigator',
       priority: 'background',
-      operation: 'investigate:v1',
+      agent: 'jlapenna/homelab/investigator',
       sourceKey: 'alert:backup',
     },
     origin: { principal: 'user:jlapenna', channel: 'console' },

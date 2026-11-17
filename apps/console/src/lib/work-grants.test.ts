@@ -289,7 +289,7 @@ describe('grant channel', () => {
   });
 });
 
-describe('claw-investigator grants', () => {
+describe('claw runtime grants', () => {
   function committedGrants() {
     const config = parseYaml(
       readFileSync(

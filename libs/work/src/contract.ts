@@ -1,6 +1,4 @@
 import {
-  CLAW_OPERATIONS,
-  clawInvestigateInputSchema,
   fitsWorkParamText,
   humanNeededActionsSchema,
   issueCommentSchema,
@@ -564,45 +562,6 @@ export const itemsContract = {
          *  it is derived from the authenticated principal's grant, never
          *  from the request body. */
         thread: z.string().max(512).optional(),
-      }),
-    )
-    .output(itemViewSchema),
-  /** The one internal-admission route for `claw/investigator` (phase 3a).
-   *  Requires `work.claw.admit` and a grant listing pipeline
-   *  `claw-investigator`; public `create` keeps rejecting the claw shape. */
-  admitClawInvestigation: base
-    .meta(
-      openapi({
-        method: 'POST',
-        path: '/claw/investigations',
-        operationId: 'admitClawInvestigation',
-        summary:
-          'Admit a read-only claw investigation (work.claw.admit required)',
-        description:
-          'Idempotent by `sourceKey`: the same key always names the same ' +
-          'Work item, the same question returns its existing round, and a ' +
-          'new question supersedes a queued one. Without `sourceKey` every ' +
-          'call admits a new item. The report is the settled run message; ' +
-          'outcomes are persisted only, never delivered to a channel.',
-        successStatus: 202,
-        successDescription: 'Admitted, or the existing round for this input.',
-      }),
-    )
-    .errors({
-      FORBIDDEN: {
-        message: 'Principal may not admit claw-investigator work',
-      },
-      CONFLICT: { message: 'Source key names incompatible Work' },
-    })
-    .input(
-      z.strictObject({
-        question: clawInvestigateInputSchema.shape.question,
-        sourceKey: z
-          .string()
-          .min(1)
-          .max(200)
-          .regex(/^[\w.:/#@-]+$/u)
-          .optional(),
       }),
     )
     .output(itemViewSchema),
@@ -1328,8 +1287,8 @@ export const agentRunStatusSchema = z.strictObject({
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 
 /** A claw run reads its zone, not a repository: its anchor names no
- * `target_repo`. `claw` carries the admitted operation input the launcher
- * hands to the agent's single turn. */
+ * `target_repo`. `claw` carries the agent's pinned definition and message
+ * the launcher hands to its single turn. */
 const clawRunBriefSchema = z.strictObject({
   id: workIdSchema,
   spec: clawWorkSpecSchema,
@@ -1342,13 +1301,7 @@ const clawRunBriefSchema = z.strictObject({
   }),
   ...runBriefSharedSchema,
   mode: z.literal('claw'),
-  claw: z.union([
-    z.strictObject({
-      operation: z.enum(CLAW_OPERATIONS),
-      input: clawInvestigateInputSchema,
-    }),
-    agentRunBriefSchema,
-  ]),
+  claw: agentRunBriefSchema,
 });
 
 export const runBriefSchema = z.union([

@@ -161,7 +161,7 @@ const clawAdmitter = {
   principal: 'user:jlapenna',
   subject: 'github:jlapenna',
   scopes: new Set(['work.claw.admit'] as const),
-  pipelines: ['claw-investigator'],
+  pipelines: ['claw-default'],
   via: 'google' as const,
 };
 const clawZoneExecutor = {
@@ -172,65 +172,66 @@ const clawZoneExecutor = {
   via: 'google' as const,
 };
 
-describe('repository-owned agent runs', () => {
-  const definition = (
-    manifest: Record<string, unknown> = { description: 'Reads things.' },
-    name = 'investigator',
-  ) => ({
-    repository: 'owner/repo',
-    name,
-    revision: 'c'.repeat(40),
-    digest: 'd'.repeat(64),
-    manifest: manifest as { description: string },
-    fileCount: 1,
-  });
-  function agents(
-    rows: {
-      name?: string;
-      enabled?: boolean;
-      manifest?: Record<string, unknown>;
-      error?: string;
-    }[],
-  ): AgentStore {
-    const map = new Map<string, CatalogAgent>();
-    for (const row of rows) {
-      const name = row.name ?? 'investigator';
-      const id = agentKey('owner/repo', name);
-      map.set(id, {
-        id,
-        repository: 'owner/repo',
-        name,
-        refreshedAt: '2026-08-26T10:00:00.000Z',
-        enabled: row.enabled ?? true,
-        ...(row.error ? { error: row.error } : {}),
-        ...(row.enabled === false && !row.manifest
-          ? {}
-          : { definition: definition(row.manifest, name) }),
-      });
-    }
-    return {
-      list: async () => [...map.values()],
-      read: async (id) => map.get(id),
-      sources: async () => [],
-      recordAttempt: async () => undefined,
-      claimObservation: async () => true,
-      mutate: async () => ({}),
-    };
+const definition = (
+  manifest: Record<string, unknown> = { description: 'Reads things.' },
+  name = 'investigator',
+) => ({
+  repository: 'owner/repo',
+  name,
+  revision: 'c'.repeat(40),
+  digest: 'd'.repeat(64),
+  manifest: manifest as { description: string },
+  fileCount: 1,
+});
+function agents(
+  rows: {
+    name?: string;
+    enabled?: boolean;
+    manifest?: Record<string, unknown>;
+    error?: string;
+  }[],
+): AgentStore {
+  const map = new Map<string, CatalogAgent>();
+  for (const row of rows) {
+    const name = row.name ?? 'investigator';
+    const id = agentKey('owner/repo', name);
+    map.set(id, {
+      id,
+      repository: 'owner/repo',
+      name,
+      refreshedAt: '2026-08-26T10:00:00.000Z',
+      enabled: row.enabled ?? true,
+      ...(row.error ? { error: row.error } : {}),
+      ...(row.enabled === false && !row.manifest
+        ? {}
+        : { definition: definition(row.manifest, name) }),
+    });
   }
-  const caller = {
-    principal: 'svc:claw-operator',
-    subject: 'claw-operator@agent-lcars.iam.gserviceaccount.com',
-    scopes: new Set(['work.claw.admit'] as const),
-    pipelines: ['claw-default', 'claw-homelab-ops'],
-    via: 'google' as const,
+  return {
+    list: async () => [...map.values()],
+    read: async (id) => map.get(id),
+    sources: async () => [],
+    recordAttempt: async () => undefined,
+    claimObservation: async () => true,
+    mutate: async () => ({}),
   };
-  const profiles = () => [
-    {
-      name: 'homelab-ops',
-      runtime: 'claw-homelab-ops',
-      repositories: ['owner/repo'],
-    },
-  ];
+}
+const caller = {
+  principal: 'svc:claw-operator',
+  subject: 'claw-operator@agent-lcars.iam.gserviceaccount.com',
+  scopes: new Set(['work.claw.admit'] as const),
+  pipelines: ['claw-default', 'claw-homelab-ops'],
+  via: 'google' as const,
+};
+const profiles = () => [
+  {
+    name: 'homelab-ops',
+    runtime: 'claw-homelab-ops',
+    repositories: ['owner/repo'],
+  },
+];
+
+describe('repository-owned agent runs', () => {
   const path = '/claw/agents/owner/repo/investigator/runs';
 
   it('admits an agent without a profile on the default runtime, pinning the definition and message', async () => {
@@ -419,108 +420,28 @@ describe('repository-owned agent runs', () => {
   });
 });
 
-describe('claw investigation admission', () => {
-  const question = 'Why did the backup alert fire?';
-
-  it('admits a persist-only claw-investigator round idempotently by sourceKey', async () => {
-    const drain = vi.fn(async () => ({ dispatched: [], failed: [] }));
-    const base = context({ principal: clawAdmitter });
-    const ctx = context({
-      principal: clawAdmitter,
-      runtime: { ...base.runtime, drain } as WorkContext['runtime'],
+describe('claw work read and cancel rules', () => {
+  const message = 'Why did the backup alert fire?';
+  const clawContext = (principal: WorkContext['principal'] = clawAdmitter) =>
+    context({ principal, agents: agents([{}]), agentProfiles: profiles });
+  const admit = (ctx: WorkContext) =>
+    call(ctx, 'POST', '/claw/agents/owner/repo/investigator/runs', {
+      message,
     });
-    const first = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-      sourceKey: 'alert:backup',
-    });
-    expect(first.status).toBe(202);
-    expect(first.json).toMatchObject({
-      origin: { principal: 'user:jlapenna', channel: 'console' },
-      spec: {
-        pipeline: 'claw-investigator',
-        priority: 'background',
-        operation: 'investigate:v1',
-        sourceKey: 'alert:backup',
-        title: 'Claw investigation alert:backup',
-      },
-      state: 'running',
-      runs: [
-        {
-          pipeline: 'claw-investigator',
-          priority: 'background',
-          sourceRevision: {
-            input: { operation: 'investigate:v1', question },
-          },
-        },
-      ],
-    });
-    expect(first.json.origin).not.toHaveProperty('thread');
-    expect(first.json.spec).not.toHaveProperty('target');
-    expect(first.json.spec).not.toHaveProperty('input');
-    expect(JSON.stringify(first.json.spec)).not.toContain(question);
-    expect(drain).toHaveBeenCalledTimes(1);
-    const replay = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-      sourceKey: 'alert:backup',
-    });
-    expect(replay.status).toBe(202);
-    expect(replay.json.id).toBe(first.json.id);
-    expect(replay.json.runs).toHaveLength(1);
-    const run = await ctx.runtime.store.readRun(first.json.runs[0].runId);
-    expect(run?.params).toEqual({ mode: 'claw' });
-  });
-
-  it('admits a new item for every call without a sourceKey', async () => {
-    const ctx = context({ principal: clawAdmitter });
-    const a = await call(ctx, 'POST', '/claw/investigations', { question });
-    const b = await call(ctx, 'POST', '/claw/investigations', { question });
-    expect([a.status, b.status]).toEqual([202, 202]);
-    expect(a.json.id).not.toBe(b.json.id);
-  });
 
   it.each([
     ['an operator without the claw scope', operator, 401],
     ['the shared executor', executorOnly, 401],
     ['the claw zone executor', clawZoneExecutor, 401],
     [
-      'an admitter whose grant omits the pipeline',
+      'an admitter whose grant omits the runtime',
       { ...clawAdmitter, pipelines: ['claude'] },
       403,
     ],
-  ] as const)('refuses %s', async (_name, principal, status) => {
-    const ctx = context({ principal });
-    const response = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-    });
-    expect(response.status).toBe(status);
+  ] as const)('refuses admission by %s', async (_name, principal, status) => {
+    const ctx = clawContext(principal);
+    expect((await admit(ctx)).status).toBe(status);
     expect(await ctx.runtime.store.listNativeTasks(10)).toHaveLength(0);
-  });
-
-  it.each([
-    ['a blank question', { question: '   ' }],
-    [
-      'a question past the Work payload budget',
-      { question: 'q'.repeat(WORK_PAYLOAD_MAX_BYTES) },
-    ],
-    ['a caller-chosen pipeline', { question, pipeline: 'claude' }],
-    ['a target', { question, target: { repo: 'jlapenna/agent-lcars' } }],
-  ])('rejects %s', async (_name, body) => {
-    const ctx = context({ principal: clawAdmitter });
-    expect((await call(ctx, 'POST', '/claw/investigations', body)).status).toBe(
-      400,
-    );
-  });
-
-  it('admits a question past the retired 4,000-character cap whole', async () => {
-    const ctx = context({ principal: clawAdmitter });
-    const long = 'q'.repeat(50_000);
-    const response = await call(ctx, 'POST', '/claw/investigations', {
-      question: long,
-    });
-    expect(response.status).toBe(202);
-    expect(response.json).toMatchObject({
-      runs: [{ sourceRevision: { input: { question: long } } }],
-    });
   });
 
   it('keeps public create rejecting the claw shape, even for an admitter with operator scope', async () => {
@@ -528,16 +449,16 @@ describe('claw investigation admission', () => {
       principal: {
         ...operator,
         scopes: new Set(['work.operator', 'work.claw.admit'] as const),
-        pipelines: ['claude', 'claw-investigator'],
+        pipelines: ['claude', 'claw-default'],
       },
     });
     const response = await call(ctx, 'PUT', `/items/${ID}`, {
       spec: {
-        title: 'Investigate',
-        description: question,
-        pipeline: 'claw-investigator',
+        title: 'Agent owner/repo/investigator',
+        description: message,
+        pipeline: 'claw-default',
         priority: 'background',
-        operation: 'investigate:v1',
+        agent: 'owner/repo/investigator',
         sourceKey: 'alert:backup',
       },
     });
@@ -549,12 +470,11 @@ describe('claw investigation admission', () => {
     const both = {
       ...operator,
       scopes: new Set(['work.operator', 'work.claw.admit'] as const),
-      pipelines: ['claude', 'claw-investigator'],
+      pipelines: ['claude', 'claw-default'],
     };
-    const ctx = context({ principal: both });
-    const admitted = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-    });
+    const ctx = clawContext(both);
+    const admitted = await admit(ctx);
+    expect(admitted.status).toBe(202);
     const id = admitted.json.id as string;
     expect(
       (
@@ -614,11 +534,9 @@ describe('claw investigation admission', () => {
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
   });
 
-  it('lets a claw admitter read its own investigation and report, and nothing else', async () => {
-    const ctx = context({ principal: clawAdmitter });
-    const mine = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-    });
+  it('lets a claw admitter read its own run and report, and nothing else', async () => {
+    const ctx = clawContext();
+    const mine = await admit(ctx);
     const id = mine.json.id as string;
     const read = await call(ctx, 'GET', `/items/${id}`);
     expect(read.status).toBe(200);
@@ -647,7 +565,7 @@ describe('claw investigation admission', () => {
     );
     expect(foreign).toMatchObject({ status: 404 });
     expect(foreign.json).toEqual(missing.json);
-    expect(JSON.stringify(foreign.json)).not.toContain(question);
+    expect(JSON.stringify(foreign.json)).not.toContain(message);
     // Listing stays operator and reaper only.
     expect((await call(ctx, 'GET', '/items')).status).toBe(401);
     // A principal without any reading scope is still refused outright.
@@ -662,11 +580,9 @@ describe('claw investigation admission', () => {
     ).toBe(401);
   });
 
-  it("never lets one claw admitter cancel or read another principal's investigation", async () => {
-    const ctx = context({ principal: clawAdmitter });
-    const mine = await call(ctx, 'POST', '/claw/investigations', {
-      question,
-    });
+  it("never lets one claw admitter cancel or read another principal's run", async () => {
+    const ctx = clawContext();
+    const mine = await admit(ctx);
     const id = mine.json.id as string;
     const gate = {
       ...clawAdmitter,
@@ -685,9 +601,9 @@ describe('claw investigation admission', () => {
     );
     expect(foreign).toMatchObject({ status: 404 });
     expect(foreign.json).toEqual(missing.json);
-    expect(JSON.stringify(foreign.json)).not.toContain(question);
+    expect(JSON.stringify(foreign.json)).not.toContain(message);
     // An operator who also admits claw work still cannot cancel another
-    // principal's investigation.
+    // principal's run.
     expect(
       (
         await call(

@@ -1,7 +1,6 @@
 import 'server-only';
 
 import {
-  CLAW_PIPELINES,
   CLAW_RUNTIME_PIPELINE,
   PIPELINES,
   WORK_CHANNELS,
@@ -19,9 +18,10 @@ const workScopeSchema = z.enum([
   'work.reader',
   'work.executor',
   'work.cron',
-  /** Internal claw admission (`POST /claw/investigations` for
-   *  `claw-investigator`) for the claw pipelines this same grant lists, and cancellation of that
-   *  work. It confers no other Work API read or mutation. */
+  /** Internal claw admission (`POST /claw/agents/{owner}/{repo}/{name}/runs`)
+   *  on the claw runtimes this same grant lists, and reading and
+   *  cancellation of that work. It confers no other Work API read or
+   *  mutation. */
   'work.claw.admit',
 ]);
 
@@ -30,7 +30,7 @@ const workScopeSchema = z.enum([
  *  `AGENT_LCARS_WORK_GRANTS` is a startup config error, not a silently inert
  *  grant discovered later by a principal who mysteriously has no access. */
 const pipelineNameSchema = z.union([
-  z.enum([...PIPELINES, 'goose', ...CLAW_PIPELINES]),
+  z.enum([...PIPELINES, 'goose']),
   // Repository-owned claw agents run on executor runtimes named by
   // operator profiles (docs/repository-agents.md); any `claw-*` runtime.
   z.string().regex(CLAW_RUNTIME_PIPELINE),

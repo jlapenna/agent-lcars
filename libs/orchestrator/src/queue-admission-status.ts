@@ -6,8 +6,9 @@ import {
 
 /** Server-owned direct-runner admission ceilings. OpenCode protects the
  * shared inference backend; Codex has one subscription credential lease.
- * Claude remains bounded by host capacity. Each claw agent's ceiling is its
- * registry `maxLiveClaims` (unified-dataflow design, "`claw`"). */
+ * Claude remains bounded by host capacity. Claw runtimes have no ceiling
+ * here: the executor runtime bounds their concurrency
+ * (docs/repository-agents.md). */
 export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   Record<string, number | undefined>
 > = Object.freeze({
@@ -15,7 +16,6 @@ export const QUEUE_PIPELINE_MAX_LIVE_CLAIMS: Readonly<
   opencode: 1,
   'inbox-summary': 3,
   'handoff-summary': 1,
-  'claw-investigator': 2,
 });
 
 /** Codex runs share one subscription login. A run claimed at time C cannot

@@ -129,7 +129,7 @@ export function resolveAgentRuntime(
   return { pipeline: profile.runtime, runCallers: profile.runCallers === true };
 }
 
-/** Admit one round of a repository-owned agent. Like investigations, a
+/** Admit one round of a repository-owned agent. A
  * caller's `sourceKey` resolves to one stable Work item, the round's input is
  * immutable, the same input is the same round and a new one supersedes a
  * queued round. The round pins the enabled definition at admission, so a

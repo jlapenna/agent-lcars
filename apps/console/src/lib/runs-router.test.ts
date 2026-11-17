@@ -21,7 +21,6 @@ import {
 import { deriveItemState } from '@agent-lcars/work/derive';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { admitInvestigation } from './claw-investigate-work';
 import {
   CODEX_GLOBAL_LEASE_OBJECT,
   CodexAuthStoreError,
@@ -32,6 +31,7 @@ import { codexCentralAuthObject } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { UnqualifiedDeliveryError } from './ready-delivery';
 import { agentKey } from './repository-agent-definition';
+import { admitAgentRun } from './repository-agent-runs';
 import type { AgentStore } from './repository-agent-store';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
@@ -6471,20 +6471,56 @@ describe('reply recovery preserves incomplete delivery output requirements', () 
   });
 });
 
-describe('claw-investigator runs', () => {
-  const ZONE = ['claw-investigator'];
+describe('claw agent runs', () => {
+  const ZONE = ['claw-default'];
   const SHARED = ['claude', 'codex', 'opencode', 'agy', 'goose'];
+  const agents: AgentStore = {
+    list: async () => [],
+    read: async (id) =>
+      id === agentKey('jlapenna/homelab', 'investigator')
+        ? {
+            id,
+            repository: 'jlapenna/homelab',
+            name: 'investigator',
+            refreshedAt: NOW,
+            enabled: true,
+            definition: {
+              repository: 'jlapenna/homelab',
+              name: 'investigator',
+              revision: 'c'.repeat(40),
+              digest: 'd'.repeat(64),
+              manifest: { description: 'Investigates.' },
+              fileCount: 1,
+            },
+          }
+        : undefined,
+    sources: async () => [],
+    recordAttempt: async () => undefined,
+    claimObservation: async () => true,
+    mutate: async () => ({}),
+  };
 
   async function admitted(
     f: ReturnType<typeof fixture>,
-    question = 'Why did the backup alert fire?',
+    message = 'Why did the backup alert fire?',
     sourceKey = 'alert:backup',
   ) {
-    const { workId } = await admitInvestigation(f, {
-      question,
-      sourceKey,
-      principal: 'user:jlapenna',
-    });
+    const { workId } = await admitAgentRun(
+      {
+        store: f.store,
+        orchestrator: f.orchestrator,
+        agents,
+        profiles: () => [],
+        mayAdmit: () => true,
+      },
+      {
+        repository: 'jlapenna/homelab',
+        name: 'investigator',
+        message,
+        sourceKey,
+        principal: 'user:jlapenna',
+      },
+    );
     const task = (await f.store.readTask({ workId }))!.task;
     const runId = task.activeRunId!;
     if ((await f.store.readRun(runId))?.queue === undefined) {
@@ -6503,7 +6539,7 @@ describe('claw-investigator runs', () => {
     );
   }
 
-  it('is claimable only by a grant listing it, and its brief carries the operation input', async () => {
+  it('is claimable only by a grant listing it, and settles a report', async () => {
     const f = fixture();
     const { workId, runId } = await admitted(f);
     expect((await claim(f, SHARED)).json).toBeUndefined();
@@ -6511,41 +6547,10 @@ describe('claw-investigator runs', () => {
     expect(claimed.json).toMatchObject({
       runId,
       workId,
-      pipeline: 'claw-investigator',
+      pipeline: 'claw-default',
     });
     const { token } = claimed.json as { token: string };
     const runCtx: RunsContext = { ...f, ...context, bearerToken: token };
-
-    const brief = await call(runCtx, 'GET', runPath(runId, '/brief'));
-    expect(brief.status).toBe(200);
-    expect(brief.json).toMatchObject({
-      id: workId,
-      spec: {
-        pipeline: 'claw-investigator',
-        priority: 'background',
-        operation: 'investigate:v1',
-        sourceKey: 'alert:backup',
-        title: 'Claw investigation alert:backup',
-      },
-      anchor: {
-        type: 'work',
-        id: workId,
-        body: 'Why did the backup alert fire?',
-        html_url: expect.stringMatching(new RegExp(`/work/${workId}$`, 'u')),
-      },
-      pipeline: 'claw-investigator',
-      mode: 'claw',
-      context: '',
-      intentId: runId,
-      generation: 1,
-      claw: {
-        operation: 'investigate:v1',
-        input: { question: 'Why did the backup alert fire?' },
-      },
-    });
-    expect(brief.json).not.toHaveProperty('spec.target');
-    expect(brief.json).not.toHaveProperty('anchor.target_repo');
-    expect(brief.json).not.toHaveProperty('spec.input');
 
     const heartbeat = await call(runCtx, 'POST', runPath(runId, '/heartbeat'));
     expect(heartbeat.status).toBe(200);
@@ -6611,7 +6616,7 @@ describe('claw-investigator runs', () => {
       expect(runs).toHaveLength(2);
       expect(runs.find((run) => run.runId !== runId)).toMatchObject({
         state: 'pending',
-        pipeline: 'claw-investigator',
+        pipeline: 'claw-default',
         params: { mode: 'claw' },
         revisionAttempt: 2,
       });
@@ -6620,7 +6625,7 @@ describe('claw-investigator runs', () => {
     },
   );
 
-  it('settles an investigation that parks on every attempt as failed, not parked', async () => {
+  it('settles an agent run that parks on every attempt as failed, not parked', async () => {
     const f = fixture();
     const { workId } = await admitted(f);
     let attempts = 0;
@@ -6655,11 +6660,11 @@ describe('claw-investigator runs', () => {
     expect(deriveItemState(task!.task, runs)).toBe('failed');
   });
 
-  it('briefs the executing round, so a newer question reaches its successor', async () => {
+  it('runs the executing round, so a newer message reaches its successor', async () => {
     const f = fixture();
     const { workId, runId } = await admitted(f, 'First question?');
     const { token } = (await claim(f, ZONE)).json as { token: string };
-    // A claimed attempt keeps executing; the new question waits for it.
+    // A claimed attempt keeps executing; the new message waits for it.
     await admitted(f, 'Second question?');
     const done = await call(
       { ...f, ...context, bearerToken: token },
@@ -6670,22 +6675,9 @@ describe('claw-investigator runs', () => {
     expect(done.status).toBe(200);
     const successor = (await f.store.readTask({ workId }))!.task.activeRunId!;
     expect(successor).not.toBe(runId);
-    await f.store.enqueueRun({ runId: successor, now: NOW });
-    await f.orchestrator.confirmDispatch(successor);
-    const next = (await claim(f, ZONE)).json as { token: string };
-    const brief = await call(
-      { ...f, ...context, bearerToken: next.token },
-      'GET',
-      runPath(successor, '/brief'),
-    );
-    expect(brief.json).toMatchObject({
-      anchor: { body: 'Second question?' },
-      claw: { input: { question: 'Second question?' } },
-    });
-    // The successor brief holds exactly one question: no stale copy in its
-    // spec, title or anywhere else.
-    expect(JSON.stringify(brief.json)).not.toContain('First question?');
-    expect(brief.json).not.toHaveProperty('spec.input');
+    expect(
+      (await f.store.readRun(successor))?.sourceRevision?.input['message'],
+    ).toBe('Second question?');
   });
 
   it('refuses claw mode for any other pipeline', async () => {

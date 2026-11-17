@@ -369,15 +369,14 @@ kubernetes:
         - { key: investigator-ssh-key, path: ssh/id_ed25519 }
         - { key: known-hosts, path: ssh/known_hosts }
         - { key: litellm-api-key, path: env/LITELLM_API_KEY }
-      agent: # optional
-        config_map: claw-investigator-agent
-        items:
-          - { key: config.json, path: config.json }
-          - { key: approvals.json, path: approvals.json }
-          - { key: workspace-AGENTS.md, path: workspace/AGENTS.md }
       env:
         - { name: CLAW_AGENT, value: investigator }
 ```
+
+A runtime mounts no agent definition: a repository-owned agent's pinned files
+arrive in its run brief ([docs/repository-agents.md](../../docs/repository-agents.md)).
+The retired `agent` ConfigMap block is an unknown key, which the strict decoder
+refuses.
 
 Validation refuses to start the executor unless:
 
@@ -389,7 +388,7 @@ Validation refuses to start the executor unless:
 - `active_deadline_seconds` is at least 360 and strictly below the 7200 s run
   lease;
 - `secret_name` is a valid Secret name other than `credentials_secret`, with at
-  least one item. Item and agent keys are valid keys. Paths are clean relative
+  least one item. Item keys are valid keys. Paths are clean relative
   paths with no `.` segment and no segment starting with `..` (Kubernetes
   reserves `..data`). They do not repeat, and none is a parent of another
   (`ssh` alongside `ssh/id_ed25519`);
@@ -416,13 +415,7 @@ tolerations) and differs only in:
   outer turn deadline ends first) and the declared `env`;
 - the only Secret material is the declared items of `secret_name`, read-only
   at `/run/claw-secrets` (the launcher exports items under `env/` as
-  environment variables); each item of the optional `agent` ConfigMap is its
-  own read-only subPath mount at `/claw/agent/<path>` with mode 0555, so agent
-  tools under `tools/` run by path and resolve to exactly that path (a
-  directory mount would resolve them through the ConfigMap's `..data`
-  symlinks, and OpenClaw's exec allowlist matches the resolved path; agent
-  `items` are therefore required). Secret items stay 0440 and are never
-  executable;
+  environment variables). Secret items stay 0440 and are never executable;
 - `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
   (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
   `emptyDir`.
@@ -443,9 +436,7 @@ principal's own key, whose `work.executor` grant admits only the zone's
 pipelines). It runs no schedule or maintenance ticker, which belongs to the
 shared executor: `LCARS_SCHEDULER_CREDENTIALS` must be unset, and startup and
 `--check-config` refuse a zone executor that sets it. Preflight
-requires every declared item of each runtime's Secret to be nonempty and every
-declared agent key to exist, which adds ConfigMaps `get` to the controller's
-RBAC when `agent` is used. A shared executor may also declare runtimes; it
+requires every declared item of each runtime's Secret to be nonempty. A shared executor may also declare runtimes; it
 then still requires its legacy keys.
 
 **Capacity.** The claimed pipeline, and so the run's shape, is known only

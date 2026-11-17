@@ -3519,84 +3519,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -4737,84 +4693,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -5959,84 +5871,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -6998,1239 +6866,6 @@
         ]
       }
     },
-    "/claw/investigations": {
-      "post": {
-        "operationId": "admitClawInvestigation",
-        "summary": "Admit a read-only claw investigation (work.claw.admit required)",
-        "description": "Idempotent by `sourceKey`: the same key always names the same Work item, the same question returns its existing round, and a new question supersedes a queued one. Without `sourceKey` every call admits a new item. The report is the settled run message; outcomes are persisted only, never delivered to a channel.",
-        "tags": ["items"],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "question": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "sourceKey": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 200,
-                    "pattern": "^[\\w.:/#@-]+$"
-                  }
-                },
-                "required": ["question"],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Admitted, or the existing round for this input.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
-                    },
-                    "state": {
-                      "type": "string",
-                      "enum": [
-                        "running",
-                        "done",
-                        "parked",
-                        "failed",
-                        "canceled"
-                      ]
-                    },
-                    "spec": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "title": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            },
-                            "description": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "pipeline": {
-                              "type": "string",
-                              "enum": ["claude", "codex", "opencode", "agy"]
-                            },
-                            "priority": {
-                              "default": "normal",
-                              "type": "string",
-                              "enum": ["urgent", "normal", "background"]
-                            },
-                            "fallbackPipelines": {
-                              "maxItems": 3,
-                              "type": "array",
-                              "items": {
-                                "type": "string",
-                                "enum": ["claude", "codex", "opencode", "agy"]
-                              }
-                            },
-                            "deliveryRuntime": {
-                              "type": "string",
-                              "enum": ["none", "required"]
-                            },
-                            "deliverable": {
-                              "type": "string",
-                              "enum": ["report"]
-                            },
-                            "target": {
-                              "type": "object",
-                              "properties": {
-                                "repo": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
-                                }
-                              },
-                              "required": ["repo"],
-                              "additionalProperties": false
-                            }
-                          },
-                          "required": [
-                            "title",
-                            "description",
-                            "pipeline",
-                            "priority",
-                            "target"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "title": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            },
-                            "description": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "pipeline": {
-                              "type": "string",
-                              "enum": ["inbox-summary", "handoff-summary"]
-                            },
-                            "priority": {
-                              "type": "string",
-                              "const": "background"
-                            },
-                            "sourceKey": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            }
-                          },
-                          "required": [
-                            "title",
-                            "description",
-                            "pipeline",
-                            "priority",
-                            "sourceKey"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "type": "object",
-                          "properties": {
-                            "title": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            },
-                            "description": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "pipeline": {
-                              "type": "string",
-                              "const": "goose"
-                            },
-                            "priority": {
-                              "type": "string",
-                              "const": "background"
-                            },
-                            "target": {
-                              "type": "object",
-                              "properties": {
-                                "repo": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
-                                }
-                              },
-                              "required": ["repo"],
-                              "additionalProperties": false
-                            },
-                            "jobOccurrence": {
-                              "type": "string",
-                              "pattern": "^[a-f0-9]{64}$"
-                            }
-                          },
-                          "required": [
-                            "title",
-                            "description",
-                            "pipeline",
-                            "priority",
-                            "target",
-                            "jobOccurrence"
-                          ],
-                          "additionalProperties": false
-                        },
-                        {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
-                            }
-                          ]
-                        }
-                      ]
-                    },
-                    "origin": {
-                      "type": "object",
-                      "properties": {
-                        "principal": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 128
-                        },
-                        "channel": {
-                          "type": "string",
-                          "enum": [
-                            "api",
-                            "cron",
-                            "console",
-                            "github",
-                            "linear",
-                            "slack"
-                          ]
-                        },
-                        "thread": {
-                          "type": "string",
-                          "maxLength": 512
-                        }
-                      },
-                      "required": ["principal", "channel"],
-                      "additionalProperties": false
-                    },
-                    "issue": {
-                      "type": "object",
-                      "properties": {
-                        "reference": {
-                          "oneOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "tracker": {
-                                  "type": "string",
-                                  "const": "github"
-                                },
-                                "repo": {
-                                  "type": "string",
-                                  "maxLength": 140,
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+$"
-                                },
-                                "issue": {
-                                  "type": "integer",
-                                  "exclusiveMinimum": 0,
-                                  "maximum": 9007199254740991
-                                }
-                              },
-                              "required": ["tracker", "repo", "issue"],
-                              "additionalProperties": false
-                            },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "tracker": {
-                                  "type": "string",
-                                  "const": "linear"
-                                },
-                                "organizationId": {
-                                  "type": "string",
-                                  "format": "uuid",
-                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                },
-                                "issueId": {
-                                  "type": "string",
-                                  "format": "uuid",
-                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                }
-                              },
-                              "required": [
-                                "tracker",
-                                "organizationId",
-                                "issueId"
-                              ],
-                              "additionalProperties": false
-                            }
-                          ]
-                        },
-                        "identifier": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256
-                        },
-                        "url": {
-                          "type": "string",
-                          "maxLength": 2048,
-                          "format": "uri"
-                        },
-                        "title": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 256
-                        },
-                        "description": {
-                          "type": "string",
-                          "maxLength": 65536
-                        },
-                        "oversized": {
-                          "type": "boolean",
-                          "const": true
-                        },
-                        "state": {
-                          "type": "string",
-                          "enum": ["open", "closed"]
-                        },
-                        "updatedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                        },
-                        "teamId": {
-                          "type": "string",
-                          "format": "uuid",
-                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                        },
-                        "status": {
-                          "type": "object",
-                          "properties": {
-                            "id": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 256
-                            },
-                            "name": {
-                              "type": "string",
-                              "maxLength": 256
-                            },
-                            "type": {
-                              "type": "string",
-                              "maxLength": 128
-                            }
-                          },
-                          "required": ["id", "name", "type"],
-                          "additionalProperties": false
-                        },
-                        "labels": {
-                          "maxItems": 256,
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 256
-                              },
-                              "name": {
-                                "type": "string",
-                                "maxLength": 256
-                              }
-                            },
-                            "required": ["id", "name"],
-                            "additionalProperties": false
-                          }
-                        },
-                        "assignees": {
-                          "maxItems": 256,
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "id": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 256
-                              },
-                              "name": {
-                                "type": "string",
-                                "maxLength": 256
-                              }
-                            },
-                            "required": ["id", "name"],
-                            "additionalProperties": false
-                          }
-                        }
-                      },
-                      "required": [
-                        "reference",
-                        "identifier",
-                        "url",
-                        "title",
-                        "description",
-                        "state",
-                        "updatedAt",
-                        "labels",
-                        "assignees"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "createdAt": {
-                      "type": "string"
-                    },
-                    "updatedAt": {
-                      "type": "string"
-                    },
-                    "closedAt": {
-                      "type": "string"
-                    },
-                    "providerRouting": {
-                      "type": "object",
-                      "properties": {
-                        "requestId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 1024
-                        },
-                        "requestedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                        },
-                        "actor": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 128
-                        },
-                        "requestedPipeline": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 128
-                        },
-                        "effectivePipeline": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 128
-                        },
-                        "status": {
-                          "type": "string",
-                          "enum": ["accepted", "refused"]
-                        },
-                        "reason": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 128
-                        },
-                        "fromRunId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 1024
-                        },
-                        "acceptedGeneration": {
-                          "type": "object",
-                          "properties": {
-                            "runId": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 1024
-                            },
-                            "requestedAt": {
-                              "type": "string",
-                              "format": "date-time",
-                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                            },
-                            "pipeline": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 128
-                            }
-                          },
-                          "required": ["runId", "requestedAt", "pipeline"],
-                          "additionalProperties": false
-                        },
-                        "successorRunId": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 1024
-                        }
-                      },
-                      "required": [
-                        "requestId",
-                        "requestedAt",
-                        "actor",
-                        "requestedPipeline",
-                        "effectivePipeline",
-                        "status"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "runs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "issue": {
-                            "type": "object",
-                            "properties": {
-                              "reference": {
-                                "oneOf": [
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "tracker": {
-                                        "type": "string",
-                                        "const": "github"
-                                      },
-                                      "repo": {
-                                        "type": "string",
-                                        "maxLength": 140,
-                                        "pattern": "^[\\w.-]+\\/[\\w.-]+$"
-                                      },
-                                      "issue": {
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0,
-                                        "maximum": 9007199254740991
-                                      }
-                                    },
-                                    "required": ["tracker", "repo", "issue"],
-                                    "additionalProperties": false
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "tracker": {
-                                        "type": "string",
-                                        "const": "linear"
-                                      },
-                                      "organizationId": {
-                                        "type": "string",
-                                        "format": "uuid",
-                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                      },
-                                      "issueId": {
-                                        "type": "string",
-                                        "format": "uuid",
-                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                      }
-                                    },
-                                    "required": [
-                                      "tracker",
-                                      "organizationId",
-                                      "issueId"
-                                    ],
-                                    "additionalProperties": false
-                                  }
-                                ]
-                              },
-                              "identifier": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 256
-                              },
-                              "url": {
-                                "type": "string",
-                                "maxLength": 2048,
-                                "format": "uri"
-                              },
-                              "title": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 256
-                              },
-                              "description": {
-                                "type": "string",
-                                "maxLength": 65536
-                              },
-                              "oversized": {
-                                "type": "boolean",
-                                "const": true
-                              },
-                              "state": {
-                                "type": "string",
-                                "enum": ["open", "closed"]
-                              },
-                              "updatedAt": {
-                                "type": "string",
-                                "format": "date-time",
-                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                              },
-                              "teamId": {
-                                "type": "string",
-                                "format": "uuid",
-                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                              },
-                              "status": {
-                                "type": "object",
-                                "properties": {
-                                  "id": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "maxLength": 256
-                                  },
-                                  "name": {
-                                    "type": "string",
-                                    "maxLength": 256
-                                  },
-                                  "type": {
-                                    "type": "string",
-                                    "maxLength": 128
-                                  }
-                                },
-                                "required": ["id", "name", "type"],
-                                "additionalProperties": false
-                              },
-                              "labels": {
-                                "maxItems": 256,
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "properties": {
-                                    "id": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 256
-                                    },
-                                    "name": {
-                                      "type": "string",
-                                      "maxLength": 256
-                                    }
-                                  },
-                                  "required": ["id", "name"],
-                                  "additionalProperties": false
-                                }
-                              },
-                              "assignees": {
-                                "maxItems": 256,
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "properties": {
-                                    "id": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 256
-                                    },
-                                    "name": {
-                                      "type": "string",
-                                      "maxLength": 256
-                                    }
-                                  },
-                                  "required": ["id", "name"],
-                                  "additionalProperties": false
-                                }
-                              }
-                            },
-                            "required": [
-                              "reference",
-                              "identifier",
-                              "url",
-                              "title",
-                              "description",
-                              "state",
-                              "updatedAt",
-                              "labels",
-                              "assignees"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "triagePublication": {
-                            "type": "object",
-                            "properties": {
-                              "state": {
-                                "type": "string",
-                                "enum": [
-                                  "pending",
-                                  "complete",
-                                  "superseded",
-                                  "failed"
-                                ]
-                              },
-                              "commentBody": {
-                                "type": "string",
-                                "maxLength": 65536
-                              },
-                              "commentId": {
-                                "anyOf": [
-                                  {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  {
-                                    "type": "string",
-                                    "format": "uuid",
-                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                  }
-                                ]
-                              },
-                              "sourceComment": {
-                                "type": "object",
-                                "properties": {
-                                  "id": {
-                                    "anyOf": [
-                                      {
-                                        "type": "integer",
-                                        "exclusiveMinimum": 0,
-                                        "maximum": 9007199254740991
-                                      },
-                                      {
-                                        "type": "string",
-                                        "format": "uuid",
-                                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                                      }
-                                    ]
-                                  },
-                                  "body": {
-                                    "type": "string",
-                                    "maxLength": 65536
-                                  },
-                                  "updatedAt": {
-                                    "type": "string",
-                                    "format": "date-time",
-                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                                  }
-                                },
-                                "required": ["id", "body", "updatedAt"],
-                                "additionalProperties": false
-                              },
-                              "addedLabels": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "dispatchRequested": {
-                                "type": "string",
-                                "format": "date-time",
-                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                              },
-                              "dispatchObserved": {
-                                "type": "boolean"
-                              },
-                              "error": {
-                                "type": "string",
-                                "maxLength": 400
-                              }
-                            },
-                            "required": ["state"],
-                            "additionalProperties": false
-                          },
-                          "delivery": {
-                            "type": "object",
-                            "properties": {
-                              "runId": {
-                                "type": "string"
-                              },
-                              "repo": {
-                                "type": "string"
-                              },
-                              "number": {
-                                "type": "integer",
-                                "exclusiveMinimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "baseRef": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 255
-                              },
-                              "head": {
-                                "type": "string",
-                                "pattern": "^[a-f0-9]{40}$"
-                              },
-                              "state": {
-                                "type": "string",
-                                "enum": ["waiting", "complete"]
-                              },
-                              "correctionRunId": {
-                                "type": "string"
-                              },
-                              "observedAt": {
-                                "type": "string"
-                              },
-                              "mergeCommit": {
-                                "type": "string",
-                                "pattern": "^[a-f0-9]{40}$"
-                              }
-                            },
-                            "required": [
-                              "runId",
-                              "repo",
-                              "number",
-                              "baseRef",
-                              "head",
-                              "state",
-                              "observedAt"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "runId": {
-                            "type": "string"
-                          },
-                          "state": {
-                            "type": "string",
-                            "enum": [
-                              "pending",
-                              "running",
-                              "finished",
-                              "canceled",
-                              "lost"
-                            ]
-                          },
-                          "pipeline": {
-                            "type": "string"
-                          },
-                          "priority": {
-                            "default": "normal",
-                            "type": "string",
-                            "enum": ["urgent", "normal", "background"]
-                          },
-                          "createdAt": {
-                            "type": "string"
-                          },
-                          "updatedAt": {
-                            "type": "string"
-                          },
-                          "result": {
-                            "type": "object",
-                            "properties": {
-                              "ok": {
-                                "type": "boolean"
-                              },
-                              "summary": {
-                                "type": "string",
-                                "maxLength": 4096
-                              },
-                              "ref": {
-                                "type": "string",
-                                "maxLength": 1024
-                              },
-                              "relatedRefs": {
-                                "maxItems": 1,
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "maxLength": 1024
-                                }
-                              },
-                              "message": {
-                                "type": "string",
-                                "description": "The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present."
-                              },
-                              "messageOverflow": {
-                                "type": "object",
-                                "properties": {
-                                  "sha256": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{64}$"
-                                  },
-                                  "chars": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "bytes": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  },
-                                  "chunks": {
-                                    "type": "integer",
-                                    "exclusiveMinimum": 0,
-                                    "maximum": 9007199254740991
-                                  }
-                                },
-                                "required": [
-                                  "sha256",
-                                  "chars",
-                                  "bytes",
-                                  "chunks"
-                                ],
-                                "additionalProperties": false,
-                                "description": "Present only when message is a preview; GET /items/{id} returns the whole message."
-                              },
-                              "humanNeededActions": {
-                                "minItems": 2,
-                                "maxItems": 3,
-                                "type": "array",
-                                "items": {
-                                  "type": "object",
-                                  "properties": {
-                                    "text": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 400
-                                    },
-                                    "command": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 2000
-                                    }
-                                  },
-                                  "required": ["text"],
-                                  "additionalProperties": false
-                                }
-                              }
-                            },
-                            "required": ["ok"],
-                            "additionalProperties": false
-                          },
-                          "sourceRevision": {
-                            "type": "object",
-                            "properties": {
-                              "key": {
-                                "type": "string"
-                              },
-                              "input": {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "additionalProperties": {}
-                              },
-                              "observedAt": {
-                                "type": "object",
-                                "propertyNames": {
-                                  "type": "string"
-                                },
-                                "additionalProperties": {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                                }
-                              }
-                            },
-                            "required": ["key", "input"],
-                            "additionalProperties": false
-                          },
-                          "revisionAttempt": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "providerFallback": {
-                            "type": "object",
-                            "properties": {
-                              "allowedPipelines": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "attemptedPipelines": {
-                                "type": "array",
-                                "items": {
-                                  "type": "string"
-                                }
-                              },
-                              "originalRunId": {
-                                "type": "string"
-                              },
-                              "fromRunId": {
-                                "type": "string"
-                              },
-                              "trigger": {
-                                "type": "object",
-                                "properties": {
-                                  "reason": {
-                                    "type": "string",
-                                    "enum": [
-                                      "provider-limit",
-                                      "provider-cooldown"
-                                    ]
-                                  },
-                                  "failureRunId": {
-                                    "type": "string"
-                                  },
-                                  "limitedPipeline": {
-                                    "type": "string"
-                                  }
-                                },
-                                "required": [
-                                  "reason",
-                                  "failureRunId",
-                                  "limitedPipeline"
-                                ],
-                                "additionalProperties": false
-                              }
-                            },
-                            "required": [
-                              "allowedPipelines",
-                              "attemptedPipelines",
-                              "originalRunId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "reply": {
-                            "type": "string"
-                          },
-                          "replyChannel": {
-                            "type": "string",
-                            "maxLength": 64
-                          },
-                          "replyPrincipal": {
-                            "type": "string",
-                            "maxLength": 256
-                          },
-                          "queue": {
-                            "type": "object",
-                            "properties": {
-                              "state": {
-                                "type": "string",
-                                "enum": ["queued", "claimed", "retired"]
-                              },
-                              "claimedBy": {
-                                "type": "string"
-                              },
-                              "claimedAt": {
-                                "type": "string"
-                              },
-                              "firstHeartbeatAt": {
-                                "type": "string"
-                              },
-                              "providerProcessStartedAt": {
-                                "type": "string"
-                              },
-                              "startDeadlineAt": {
-                                "type": "string"
-                              },
-                              "placement": {
-                                "type": "object",
-                                "properties": {
-                                  "phase": {
-                                    "type": "string",
-                                    "enum": [
-                                      "waiting-for-placement",
-                                      "bootstrapping",
-                                      "unavailable"
-                                    ]
-                                  },
-                                  "reason": {
-                                    "type": "string",
-                                    "enum": [
-                                      "pending",
-                                      "unschedulable",
-                                      "scheduled",
-                                      "inventory-unavailable",
-                                      "launch-pending"
-                                    ]
-                                  },
-                                  "observedAt": {
-                                    "type": "string",
-                                    "maxLength": 32,
-                                    "format": "date-time",
-                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                                  },
-                                  "jobCreatedAt": {
-                                    "type": "string",
-                                    "maxLength": 32,
-                                    "format": "date-time",
-                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                                  }
-                                },
-                                "required": ["phase", "reason", "observedAt"],
-                                "additionalProperties": false
-                              }
-                            },
-                            "required": ["state"],
-                            "additionalProperties": false
-                          }
-                        },
-                        "required": [
-                          "runId",
-                          "state",
-                          "pipeline",
-                          "priority",
-                          "createdAt",
-                          "updatedAt"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "sessions": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "sessionId": {
-                            "type": "string"
-                          },
-                          "runId": {
-                            "type": "string"
-                          },
-                          "startedAt": {
-                            "type": "string"
-                          },
-                          "lastActivityAt": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "transcriptGcsUri": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "sessionId",
-                          "runId",
-                          "startedAt",
-                          "lastActivityAt"
-                        ],
-                        "additionalProperties": false
-                      }
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "state",
-                    "spec",
-                    "origin",
-                    "createdAt",
-                    "updatedAt",
-                    "runs",
-                    "sessions"
-                  ],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Principal may not admit claw-investigator work",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Forbidden"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Source key names incompatible Work",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Conflict"
-                    },
-                    {
-                      "$ref": "#/components/schemas/UndefinedError"
-                    }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
-      }
-    },
     "/claw/agents/{owner}/{repo}/{name}/runs": {
       "post": {
         "operationId": "admitAgentRun",
@@ -8455,84 +7090,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -9750,84 +8341,40 @@
                                 "additionalProperties": false
                               },
                               {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "title": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 256
-                                      },
-                                      "description": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      },
-                                      "priority": {
-                                        "type": "string",
-                                        "const": "background"
-                                      },
-                                      "sourceKey": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 256
-                                      },
-                                      "pipeline": {
-                                        "type": "string",
-                                        "const": "claw-investigator"
-                                      },
-                                      "operation": {
-                                        "type": "string",
-                                        "const": "investigate:v1"
-                                      }
-                                    },
-                                    "required": [
-                                      "title",
-                                      "description",
-                                      "priority",
-                                      "sourceKey",
-                                      "pipeline",
-                                      "operation"
-                                    ],
-                                    "additionalProperties": false
+                                "type": "object",
+                                "properties": {
+                                  "title": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
                                   },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "title": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 256
-                                      },
-                                      "description": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      },
-                                      "priority": {
-                                        "type": "string",
-                                        "const": "background"
-                                      },
-                                      "pipeline": {},
-                                      "agent": {
-                                        "type": "string",
-                                        "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                      },
-                                      "sourceKey": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      }
-                                    },
-                                    "required": [
-                                      "title",
-                                      "description",
-                                      "priority",
-                                      "pipeline",
-                                      "agent",
-                                      "sourceKey"
-                                    ],
-                                    "additionalProperties": false
+                                  "description": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "priority": {
+                                    "type": "string",
+                                    "const": "background"
+                                  },
+                                  "pipeline": {},
+                                  "agent": {
+                                    "type": "string",
+                                    "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                  },
+                                  "sourceKey": {
+                                    "type": "string",
+                                    "minLength": 1
                                   }
-                                ]
+                                },
+                                "required": [
+                                  "title",
+                                  "description",
+                                  "priority",
+                                  "pipeline",
+                                  "agent",
+                                  "sourceKey"
+                                ],
+                                "additionalProperties": false
                               }
                             ]
                           },
@@ -10967,84 +9514,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -12227,84 +10730,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -13517,84 +11976,40 @@
                           "additionalProperties": false
                         },
                         {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         }
                       ]
                     },
@@ -17897,84 +16312,40 @@
                               "additionalProperties": false
                             },
                             {
-                              "anyOf": [
-                                {
-                                  "type": "object",
-                                  "properties": {
-                                    "title": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 256
-                                    },
-                                    "description": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    },
-                                    "priority": {
-                                      "type": "string",
-                                      "const": "background"
-                                    },
-                                    "sourceKey": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 256
-                                    },
-                                    "pipeline": {
-                                      "type": "string",
-                                      "const": "claw-investigator"
-                                    },
-                                    "operation": {
-                                      "type": "string",
-                                      "const": "investigate:v1"
-                                    }
-                                  },
-                                  "required": [
-                                    "title",
-                                    "description",
-                                    "priority",
-                                    "sourceKey",
-                                    "pipeline",
-                                    "operation"
-                                  ],
-                                  "additionalProperties": false
+                              "type": "object",
+                              "properties": {
+                                "title": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
                                 },
-                                {
-                                  "type": "object",
-                                  "properties": {
-                                    "title": {
-                                      "type": "string",
-                                      "minLength": 1,
-                                      "maxLength": 256
-                                    },
-                                    "description": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    },
-                                    "priority": {
-                                      "type": "string",
-                                      "const": "background"
-                                    },
-                                    "pipeline": {},
-                                    "agent": {
-                                      "type": "string",
-                                      "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                    },
-                                    "sourceKey": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    }
-                                  },
-                                  "required": [
-                                    "title",
-                                    "description",
-                                    "priority",
-                                    "pipeline",
-                                    "agent",
-                                    "sourceKey"
-                                  ],
-                                  "additionalProperties": false
+                                "description": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "priority": {
+                                  "type": "string",
+                                  "const": "background"
+                                },
+                                "pipeline": {},
+                                "agent": {
+                                  "type": "string",
+                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                                },
+                                "sourceKey": {
+                                  "type": "string",
+                                  "minLength": 1
                                 }
-                              ]
+                              },
+                              "required": [
+                                "title",
+                                "description",
+                                "priority",
+                                "pipeline",
+                                "agent",
+                                "sourceKey"
+                              ],
+                              "additionalProperties": false
                             }
                           ]
                         },
@@ -18574,84 +16945,40 @@
                           "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
                         },
                         "spec": {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "pipeline": {
-                                  "type": "string",
-                                  "const": "claw-investigator"
-                                },
-                                "operation": {
-                                  "type": "string",
-                                  "const": "investigate:v1"
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "sourceKey",
-                                "pipeline",
-                                "operation"
-                              ],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "title": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "title": {
-                                  "type": "string",
-                                  "minLength": 1,
-                                  "maxLength": 256
-                                },
-                                "description": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "priority": {
-                                  "type": "string",
-                                  "const": "background"
-                                },
-                                "pipeline": {},
-                                "agent": {
-                                  "type": "string",
-                                  "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
-                                },
-                                "sourceKey": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              },
-                              "required": [
-                                "title",
-                                "description",
-                                "priority",
-                                "pipeline",
-                                "agent",
-                                "sourceKey"
-                              ],
-                              "additionalProperties": false
+                            "description": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "priority": {
+                              "type": "string",
+                              "const": "background"
+                            },
+                            "pipeline": {},
+                            "agent": {
+                              "type": "string",
+                              "pattern": "^[\\w.-]+\\/[\\w.-]+\\/[a-z][a-z0-9-]*$"
+                            },
+                            "sourceKey": {
+                              "type": "string",
+                              "minLength": 1
                             }
-                          ]
+                          },
+                          "required": [
+                            "title",
+                            "description",
+                            "priority",
+                            "pipeline",
+                            "agent",
+                            "sourceKey"
+                          ],
+                          "additionalProperties": false
                         },
                         "anchor": {
                           "type": "object",
@@ -18897,92 +17224,61 @@
                           "type": "boolean"
                         },
                         "claw": {
-                          "anyOf": [
-                            {
-                              "type": "object",
-                              "properties": {
-                                "operation": {
-                                  "type": "string",
-                                  "enum": ["investigate:v1"]
-                                },
-                                "input": {
-                                  "type": "object",
-                                  "properties": {
-                                    "question": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    }
-                                  },
-                                  "required": ["question"],
-                                  "additionalProperties": false
-                                }
-                              },
-                              "required": ["operation", "input"],
-                              "additionalProperties": false
+                          "type": "object",
+                          "properties": {
+                            "agent": {
+                              "type": "string"
                             },
-                            {
-                              "type": "object",
-                              "properties": {
-                                "agent": {
-                                  "type": "string"
-                                },
-                                "revision": {
-                                  "type": "string",
-                                  "pattern": "^[a-f0-9]{40}$"
-                                },
-                                "digest": {
-                                  "type": "string",
-                                  "pattern": "^[a-f0-9]{64}$"
-                                },
-                                "requireToolEvidence": {
-                                  "type": "boolean"
-                                },
-                                "message": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "files": {
-                                  "type": "array",
-                                  "items": {
-                                    "type": "object",
-                                    "properties": {
-                                      "path": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      },
-                                      "mode": {
-                                        "type": "string",
-                                        "enum": ["100644", "100755"]
-                                      },
-                                      "sha": {
-                                        "type": "string",
-                                        "pattern": "^[a-f0-9]{40}$"
-                                      },
-                                      "content": {
-                                        "type": "string"
-                                      }
-                                    },
-                                    "required": [
-                                      "path",
-                                      "mode",
-                                      "sha",
-                                      "content"
-                                    ],
-                                    "additionalProperties": false
+                            "revision": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{40}$"
+                            },
+                            "digest": {
+                              "type": "string",
+                              "pattern": "^[a-f0-9]{64}$"
+                            },
+                            "requireToolEvidence": {
+                              "type": "boolean"
+                            },
+                            "message": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "files": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "path": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "mode": {
+                                    "type": "string",
+                                    "enum": ["100644", "100755"]
+                                  },
+                                  "sha": {
+                                    "type": "string",
+                                    "pattern": "^[a-f0-9]{40}$"
+                                  },
+                                  "content": {
+                                    "type": "string"
                                   }
-                                }
-                              },
-                              "required": [
-                                "agent",
-                                "revision",
-                                "digest",
-                                "requireToolEvidence",
-                                "message",
-                                "files"
-                              ],
-                              "additionalProperties": false
+                                },
+                                "required": ["path", "mode", "sha", "content"],
+                                "additionalProperties": false
+                              }
                             }
-                          ]
+                          },
+                          "required": [
+                            "agent",
+                            "revision",
+                            "digest",
+                            "requireToolEvidence",
+                            "message",
+                            "files"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
