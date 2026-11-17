@@ -107,6 +107,12 @@ export async function executeInvestigateCommand(
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)
       throw new InvestigateError('invalid-input');
     const deadline = deps.monotonic() + timeoutSeconds * 1000;
+    // Every wait and request is bounded by what remains of the deadline.
+    const remaining = () => {
+      const left = deadline - deps.monotonic();
+      if (left <= 0) throw new InvestigateError('deadline-exceeded');
+      return left;
+    };
     const base = `${CONSOLE_ORIGIN}/api/work/v1/runs/${encodeURIComponent(runId)}`;
     const request = async (path: string, body?: unknown) => {
       const response = await deps.fetchImpl(`${base}${path}`, {
@@ -118,7 +124,7 @@ export async function executeInvestigateCommand(
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         redirect: 'error',
         cache: 'no-store',
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(Math.min(30_000, remaining())),
       });
       if (!response.ok) {
         void response.body?.cancel().catch(() => undefined);
@@ -143,13 +149,12 @@ export async function executeInvestigateCommand(
       : question;
     let status = await request(`/agents/${agent}`, { requestId, message });
     while (!SETTLED.has(status.state)) {
-      if (deps.monotonic() >= deadline)
-        throw new InvestigateError('deadline-exceeded');
-      await deps.sleep(POLL_MS);
+      await deps.sleep(Math.min(POLL_MS, remaining()));
       status = await request(
         `/agent-runs/${encodeURIComponent(status.workId)}`,
       );
     }
+    remaining();
     const output = JSON.stringify(status);
     if (output.includes(token)) throw new InvestigateError('invalid-response');
     deps.stdout(output);

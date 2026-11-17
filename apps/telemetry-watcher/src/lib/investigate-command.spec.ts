@@ -133,6 +133,24 @@ describe('lcars investigate', () => {
     expect(f.err).toEqual(['investigate failed: deadline-exceeded']);
   });
 
+  it('bounds the wait by a short deadline instead of a full poll interval', async () => {
+    const f = fixture(
+      [
+        json({ workId, state: 'running' }),
+        json({ workId, state: 'done', ok: true }),
+      ],
+      { LCARS_INVESTIGATE_TIMEOUT_SECONDS: '1' },
+    );
+    expect(
+      await executeInvestigateCommand(
+        ['--request-id', 'x', '--question', 'Q'],
+        f.deps,
+      ),
+    ).toEqual({ ok: false });
+    expect(f.deps.sleep).toHaveBeenCalledWith(1000);
+    expect(f.err).toEqual(['investigate failed: deadline-exceeded']);
+  });
+
   it.each([
     [['--question', 'Q']],
     [['--request-id', 'x']],
