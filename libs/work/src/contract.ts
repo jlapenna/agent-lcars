@@ -1316,6 +1316,17 @@ export const agentRunBriefSchema = z.strictObject({
 });
 export type AgentRunBrief = z.infer<typeof agentRunBriefSchema>;
 
+/** An invoked agent round as its invoking run sees it: the item state and,
+ * once settled, whether it produced a report and the report itself. */
+export const agentRunStatusSchema = z.strictObject({
+  workId: workIdSchema,
+  state: z.string(),
+  ok: z.boolean().optional(),
+  summary: z.string().optional(),
+  report: z.string().optional(),
+});
+export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
+
 /** A claw run reads its zone, not a repository: its anchor names no
  * `target_repo`. `claw` carries the admitted operation input the launcher
  * hands to the agent's single turn. */
@@ -1360,6 +1371,54 @@ const withRunToken = (current: OpenAPIV3_2.OperationObject) => ({
 const runBase = oc.meta(openapi({ tags: ['runs'] }));
 
 export const runsContract = {
+  /** A dispatched run invokes a repository-owned agent (`lcars investigate`,
+   *  docs/repository-agents.md) as `run:<runId>`, when the agent's profile
+   *  opts in to run callers. One round per `requestId` for this run. */
+  invokeAgent: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/agents/{owner}/{repo}/{name}',
+        operationId: 'invokeRunAgent',
+        summary: 'Admit an agent round on behalf of a live run',
+        spec: withRunToken,
+        successStatus: 202,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      FORBIDDEN: { message: 'This run may not invoke that agent' },
+      NOT_FOUND: { message: 'No enabled agent by that name' },
+      CONFLICT: { message: 'Request id names an incompatible round' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        owner: z.string().regex(/^[\w.-]+$/u),
+        repo: z.string().regex(/^[\w.-]+$/u),
+        name: z.string().regex(/^[a-z][a-z0-9-]*$/u),
+        requestId: z.string().min(1),
+        message: z.string().min(1),
+      }),
+    )
+    .output(agentRunStatusSchema),
+  /** Read back an agent round this run invoked. */
+  agentRun: runBase
+    .meta(
+      openapi({
+        method: 'GET',
+        path: '/runs/{runId}/agent-runs/{workId}',
+        operationId: 'getRunAgentRun',
+        summary: 'Read an agent round this live run invoked',
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+      NOT_FOUND: { message: 'No agent round by that id for this run' },
+    })
+    .input(z.strictObject({ runId: runIdSchema, workId: workIdSchema }))
+    .output(agentRunStatusSchema),
   jobSecrets: runBase
     .meta(
       openapi({

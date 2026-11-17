@@ -86,21 +86,19 @@ use the authorized application API operation.
 
 ## Worker investigation client
 
-`lcars investigate --request-id <key> --question-file <path> [--context-file <path>]`
-uses the existing runner bundle, `LCARS_RUN_ID` and `LCARS_RUN_TOKEN`.
-Operator credentials are not used.
+`lcars investigate --request-id <key> (--question <text> | --question-file <path>) [--context … | --context-file …] [--agent <owner/repo/name>]`
+uses the runner bundle, `LCARS_RUN_ID` and `LCARS_RUN_TOKEN`; operator
+credentials are not used. It admits one round of a repository-owned agent
+(default `jlapenna/homelab/investigator`, or `LCARS_INVESTIGATE_AGENT`) as
+`run:<runId>` through `POST /api/work/v1/runs/{runId}/agents/{owner}/{repo}/{name}`,
+then polls `GET /api/work/v1/runs/{runId}/agent-runs/{workId}` until the round
+settles (default deadline 20 minutes, `LCARS_INVESTIGATE_TIMEOUT_SECONDS`) and
+prints its status and report as JSON.
 
-The client reads canonical identity from the fixed Console introspection route,
-then sends the agreed v1 payload to
-`https://investigate.lan.jlapenna.net/v1/investigations`. This endpoint is a
-client contract; gateway implementation and adoption remain Homelab-owned.
-The strict wire schemas live in [the Work contract](libs/work/src/investigation-contract.ts):
-32 KiB requests, 64 KiB findings and 2 KiB errors, including streamed bodies.
-The client bounds transport to 65 seconds or the smaller observed authorization
-validity, refuses redirects, and never retries. Reuse a request key only for the
-same question/context; gateway quota, idempotency, final authorization, probe
-catalog/evidence linkage and retained audit remain required server behavior.
-An unavailable gateway fails safely and proves no investigator execution.
+A run may invoke an agent only when the agent's operator profile sets
+`runCallers: true` (`AGENT_LCARS_AGENT_PROFILES`, docs/repository-agents.md);
+`homelab-ops` does. A run reads back only the rounds it admitted. The former
+Homelab gateway (`investigate.lan.jlapenna.net`) is retired.
 
 ## Operator evidence for stopped work
 

@@ -439,7 +439,7 @@ export const workRouter = os.router({
             orchestrator: context.runtime.orchestrator,
             agents: context.agents ?? repositoryAgentStore(),
             profiles: context.agentProfiles ?? (() => agentProfiles()),
-            mayAdmit: (pipeline) => mayAdmitClaw(principal, pipeline),
+            mayAdmit: ({ pipeline }) => mayAdmitClaw(principal, pipeline),
           },
           {
             repository: `${input.owner}/${input.repo}`,

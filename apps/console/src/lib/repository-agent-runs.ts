@@ -38,6 +38,9 @@ export const agentProfileSchema = z.strictObject({
   /** Principals that may run these agents; omitted means any principal whose
    * grant covers the runtime. */
   principals: z.array(z.string().min(1)).optional(),
+  /** Whether a dispatched run may invoke these agents with its run token
+   * (`lcars investigate`), as `run:<runId>`. Off unless the operator opts in. */
+  runCallers: z.boolean().optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -88,8 +91,16 @@ export interface AgentAdmissionDeps {
   orchestrator: Orchestrator;
   agents: AgentStore;
   profiles: () => AgentProfile[];
-  /** Whether the principal's grant admits claw work on `pipeline`. */
-  mayAdmit: (pipeline: string) => boolean;
+  /** Whether the caller may admit work on the resolved runtime: a principal's
+   * grant must list the pipeline; a dispatched run needs a profile that opts
+   * in to run callers. */
+  mayAdmit: (runtime: ResolvedAgentRuntime) => boolean;
+}
+
+export interface ResolvedAgentRuntime {
+  pipeline: string;
+  /** The profile admits dispatched runs as callers. */
+  runCallers: boolean;
 }
 
 /** Resolve the runtime an agent runs on, refusing a profile that does not
@@ -98,9 +109,10 @@ export function resolveAgentRuntime(
   definition: AgentDefinition,
   principal: string,
   profiles: readonly AgentProfile[],
-): string {
+): ResolvedAgentRuntime {
   const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
-  if (name === DEFAULT_AGENT_PROFILE) return DEFAULT_AGENT_RUNTIME;
+  if (name === DEFAULT_AGENT_PROFILE)
+    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false };
   const profile = profiles.find((candidate) => candidate.name === name);
   if (!profile)
     throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
@@ -114,7 +126,7 @@ export function resolveAgentRuntime(
       'FORBIDDEN',
       `Profile ${name} does not admit ${principal}`,
     );
-  return profile.runtime;
+  return { pipeline: profile.runtime, runCallers: profile.runCallers === true };
 }
 
 /** Admit one round of a repository-owned agent. Like investigations, a
@@ -145,15 +157,16 @@ export async function admitAgentRun(
         : `No enabled agent ${id}`,
     );
   const definition = agent.definition;
-  const pipeline = resolveAgentRuntime(
+  const runtime = resolveAgentRuntime(
     definition,
     request.principal,
     deps.profiles(),
   );
-  if (!deps.mayAdmit(pipeline))
+  const { pipeline } = runtime;
+  if (!deps.mayAdmit(runtime))
     throw new AgentAdmissionError(
       'FORBIDDEN',
-      `Principal may not run agents on ${pipeline}`,
+      `${request.principal} may not run agents on ${pipeline}`,
     );
   const sourceKey = request.sourceKey ?? `adhoc:${request.requestId ?? ulid()}`;
   // Keys are scoped to the agent and the caller: one caller's key never
@@ -173,9 +186,19 @@ export async function admitAgentRun(
       ? {}
       : { requestId: request.requestId }),
   });
+  // A request id is an idempotency key: it alone names the round, so a
+  // replay returns the round it first admitted (even after the definition
+  // changed) and a different message under it is a conflict. Without one, the
+  // definition digest and message name the round, and a sourceKey coalesces.
   const key = createHash('sha256')
     .update(
-      JSON.stringify([round.digest, round.message, round.requestId ?? null]),
+      JSON.stringify(
+        // The original key for rounds without a request id, so receipts
+        // admitted before request ids became idempotency keys still replay.
+        round.requestId === undefined
+          ? [round.digest, round.message, null]
+          : ['request', round.requestId],
+      ),
     )
     .digest('hex');
   const revision = workRevisionSchema.parse({ key, input: round });
@@ -206,7 +229,9 @@ export async function admitAgentRun(
     // identity. A repeat after an unrelated commit moved the revision of an
     // unchanged definition, or of a round coalesced away before it ran,
     // replays the admitted receipt instead of conflicting with it.
-    isSameSourceRevision: (admitted, replay) => admitted.key === replay.key,
+    isSameSourceRevision: (admitted, replay) =>
+      admitted.key === replay.key &&
+      admitted.input['message'] === replay.input['message'],
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;

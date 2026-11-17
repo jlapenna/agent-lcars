@@ -1,7 +1,6 @@
 export * from './contract';
 export * from './cron';
 export * from './derive';
-export * from './investigation-contract';
 export * from './job-secrets';
 export * from './openapi';
 export * from './repository-job-limits';

@@ -31,6 +31,8 @@ import { recoverCodexCredentialOperations } from './codex-credential-operations'
 import { codexCentralAuthObject } from './deployment';
 import { drainOutbox } from './orchestrator-dispatch';
 import { UnqualifiedDeliveryError } from './ready-delivery';
+import { agentKey } from './repository-agent-definition';
+import type { AgentStore } from './repository-agent-store';
 import { hashRunToken, mintRunToken } from './run-token';
 import { createRunsHandler, type RunsContext } from './runs-router';
 import { ConditionalCodexBucket, deferred } from './testing/codex-auth-bucket';
@@ -6700,5 +6702,208 @@ describe('claw-investigator runs', () => {
       runPath(runId, '/brief'),
     );
     expect(brief.status).toBe(401);
+  });
+});
+
+describe('run-invoked agents', () => {
+  const definition = {
+    repository: 'jlapenna/homelab',
+    name: 'investigator',
+    revision: 'c'.repeat(40),
+    digest: 'd'.repeat(64),
+    manifest: { description: 'Investigates.', profile: 'homelab-ops' },
+    fileCount: 3,
+  };
+  const agents: AgentStore = {
+    list: async () => [],
+    read: async (id) =>
+      id === agentKey('jlapenna/homelab', 'investigator')
+        ? {
+            id,
+            repository: 'jlapenna/homelab',
+            name: 'investigator',
+            refreshedAt: NOW,
+            enabled: true,
+            vetoedBy: null,
+            definition,
+          }
+        : undefined,
+    sources: async () => [],
+    recordAttempt: async () => undefined,
+    claimObservation: async () => true,
+    mutate: async () => ({}),
+  };
+  const profiles = (runCallers: boolean) => () => [
+    {
+      name: 'homelab-ops',
+      runtime: 'claw-investigator',
+      repositories: ['jlapenna/homelab'],
+      runCallers,
+    },
+  ];
+  async function claimed() {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('invoker'),
+      now: NOW,
+    });
+    const claim = await call(
+      { ...f, ...context, principal: executorPrincipal() },
+      'POST',
+      '/runs/claim',
+      { runner: 'worker' },
+    );
+    const token = (claim.json as { token: string }).token;
+    return { ...f, runId, token };
+  }
+  const invoke = '/agents/jlapenna/homelab/investigator';
+
+  it('admits a round as the run when its profile opts in, and reads it back', async () => {
+    const f = await claimed();
+    const ctx = {
+      ...f,
+      ...context,
+      bearerToken: f.token,
+      agents,
+      agentProfiles: profiles(true),
+    };
+    const admitted = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-1',
+      message: 'Why is the disk full?',
+    });
+    expect(admitted.status).toBe(202);
+    const status = admitted.json as { workId: string; state: string };
+    expect(status.state).toBe('running');
+    const task = await f.store.readTask({ workId: status.workId });
+    expect(task?.task.work).toMatchObject({
+      origin: { principal: `run:${f.runId}` },
+    });
+    const again = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-1',
+      message: 'Why is the disk full?',
+    });
+    expect((again.json as { workId: string }).workId).toBe(status.workId);
+    const read = await call(
+      ctx,
+      'GET',
+      runPath(f.runId, `/agent-runs/${status.workId}`),
+    );
+    expect(read.status).toBe(200);
+    expect(read.json).toMatchObject({ workId: status.workId });
+  });
+
+  it('binds a request id to its first round: a replay returns it, a changed message conflicts', async () => {
+    const f = await claimed();
+    const ctx = {
+      ...f,
+      ...context,
+      bearerToken: f.token,
+      agents,
+      agentProfiles: profiles(true),
+    };
+    const first = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Why is the disk full?',
+    });
+    expect(first.status).toBe(202);
+    const changed = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Something else entirely?',
+    });
+    expect(changed.status).toBe(409);
+    // A definition change does not turn a replay into a new round.
+    definition.digest = 'e'.repeat(64);
+    const replay = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Why is the disk full?',
+    });
+    definition.digest = 'd'.repeat(64);
+    expect(replay.status).toBe(202);
+    const workId = (first.json as { workId: string }).workId;
+    expect((replay.json as { workId: string }).workId).toBe(workId);
+    expect(await f.store.listRuns({ workId })).toHaveLength(1);
+  });
+
+  it('refuses an agent run as a caller, so agents never invoke agents', async () => {
+    const f = fixture();
+    const runId = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('agent-caller'),
+      pipeline: 'claw-investigator',
+      now: NOW,
+    });
+    const claim = await call(
+      { ...f, ...context, principal: executorPrincipal(['claw-investigator']) },
+      'POST',
+      '/runs/claim',
+      { runner: 'zone' },
+    );
+    const token = (claim.json as { token: string }).token;
+    const response = await call(
+      {
+        ...f,
+        ...context,
+        bearerToken: token,
+        agents,
+        agentProfiles: profiles(true),
+      },
+      'POST',
+      runPath(runId, invoke),
+      { requestId: 'x', message: 'Why?' },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('refuses a profile that does not opt in to run callers', async () => {
+    const f = await claimed();
+    const response = await call(
+      {
+        ...f,
+        ...context,
+        bearerToken: f.token,
+        agents,
+        agentProfiles: profiles(false),
+      },
+      'POST',
+      runPath(f.runId, invoke),
+      { requestId: 'x', message: 'Why?' },
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('refuses an invalid run token and hides rounds another caller admitted', async () => {
+    const f = await claimed();
+    const ctx = {
+      ...f,
+      ...context,
+      agents,
+      agentProfiles: profiles(true),
+    };
+    expect(
+      (
+        await call(
+          { ...ctx, bearerToken: 'not-the-token' },
+          'POST',
+          runPath(f.runId, invoke),
+          { requestId: 'x', message: 'Why?' },
+        )
+      ).status,
+    ).toBe(401);
+    // Work the run did not admit reads exactly like a missing item.
+    const other = await seedQueuedRun(f.store, f.orchestrator, {
+      workId: wid('other'),
+      now: NOW,
+    });
+    const otherRun = await f.store.readRun(other);
+    const otherWork =
+      otherRun && 'workId' in otherRun.task ? otherRun.task.workId : '';
+    expect(
+      (
+        await call(
+          { ...ctx, bearerToken: f.token },
+          'GET',
+          runPath(f.runId, `/agent-runs/${otherWork}`),
+        )
+      ).status,
+    ).toBe(404);
   });
 });
