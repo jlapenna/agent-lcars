@@ -186,9 +186,17 @@ export async function admitAgentRun(
       ? {}
       : { requestId: request.requestId }),
   });
+  // A request id is an idempotency key: it alone names the round, so a
+  // replay returns the round it first admitted (even after the definition
+  // changed) and a different message under it is a conflict. Without one, the
+  // definition digest and message name the round, and a sourceKey coalesces.
   const key = createHash('sha256')
     .update(
-      JSON.stringify([round.digest, round.message, round.requestId ?? null]),
+      JSON.stringify(
+        round.requestId === undefined
+          ? ['round', round.digest, round.message]
+          : ['request', round.requestId],
+      ),
     )
     .digest('hex');
   const revision = workRevisionSchema.parse({ key, input: round });
@@ -219,7 +227,9 @@ export async function admitAgentRun(
     // identity. A repeat after an unrelated commit moved the revision of an
     // unchanged definition, or of a round coalesced away before it ran,
     // replays the admitted receipt instead of conflicting with it.
-    isSameSourceRevision: (admitted, replay) => admitted.key === replay.key,
+    isSameSourceRevision: (admitted, replay) =>
+      admitted.key === replay.key &&
+      admitted.input['message'] === replay.input['message'],
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;

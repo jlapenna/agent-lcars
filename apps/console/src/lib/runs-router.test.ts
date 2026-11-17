@@ -6792,6 +6792,38 @@ describe('run-invoked agents', () => {
     expect(read.json).toMatchObject({ workId: status.workId });
   });
 
+  it('binds a request id to its first round: a replay returns it, a changed message conflicts', async () => {
+    const f = await claimed();
+    const ctx = {
+      ...f,
+      ...context,
+      bearerToken: f.token,
+      agents,
+      agentProfiles: profiles(true),
+    };
+    const first = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Why is the disk full?',
+    });
+    expect(first.status).toBe(202);
+    const changed = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Something else entirely?',
+    });
+    expect(changed.status).toBe(409);
+    // A definition change does not turn a replay into a new round.
+    definition.digest = 'e'.repeat(64);
+    const replay = await call(ctx, 'POST', runPath(f.runId, invoke), {
+      requestId: 'disk-2',
+      message: 'Why is the disk full?',
+    });
+    definition.digest = 'd'.repeat(64);
+    expect(replay.status).toBe(202);
+    const workId = (first.json as { workId: string }).workId;
+    expect((replay.json as { workId: string }).workId).toBe(workId);
+    expect(await f.store.listRuns({ workId })).toHaveLength(1);
+  });
+
   it('refuses an agent run as a caller, so agents never invoke agents', async () => {
     const f = fixture();
     const runId = await seedQueuedRun(f.store, f.orchestrator, {
