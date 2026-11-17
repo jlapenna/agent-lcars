@@ -11,8 +11,7 @@ export function eventOperation(
 ): string {
   if (run.sourceRevision?.input['operation'] === 'fleet-triage:v1')
     return 'Issue triage';
-  if (run.sourceRevision?.input['operation'] === 'investigate:v1')
-    return 'Claw investigation';
+  if (clawRoundQuestion(run) !== undefined) return 'Claw agent run';
   if (run.pipeline === 'inbox-summary') return 'Inbox summary';
   if (run.pipeline === 'handoff-summary') return 'Handoff summary';
   return 'Source update';
@@ -47,15 +46,15 @@ export function eventSource(
   return { label: key };
 }
 
-/** The question a claw round executed: its own revision input, never the
- * item's immutable spec, which a later round under the same source key may
- * have outgrown. Undefined for any other run. */
+/** The message a claw agent round executed: its own revision input, never
+ * the item's immutable spec, which a later round under the same source key
+ * may have outgrown. Undefined for any other run. */
 export function clawRoundQuestion(
   run: Pick<ItemRunView, 'sourceRevision'>,
 ): string | undefined {
   const input = run.sourceRevision?.input;
-  return input?.['operation'] === 'investigate:v1' &&
-    typeof input['question'] === 'string'
-    ? input['question']
+  return typeof input?.['agent'] === 'string' &&
+    typeof input['message'] === 'string'
+    ? input['message']
     : undefined;
 }

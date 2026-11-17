@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  CLAW_INVESTIGATE_OPERATION,
-  clawInvestigateInputSchema,
-} from './claw-investigate';
-import {
   fitsWorkDescription,
   fitsWorkParamText,
   RUN_PARAMS_MAX_BYTES,
@@ -55,35 +51,5 @@ describe('Work byte budgets', () => {
     expect(fitsWorkParamText('x'.repeat(WORK_PARAM_TEXT_MAX_BYTES - 1))).toBe(
       false,
     );
-  });
-});
-
-describe('clawInvestigateInputSchema', () => {
-  it('accepts a question past the retired 4,000-character cap', () => {
-    const question = 'q'.repeat(50_000);
-    expect(clawInvestigateInputSchema.parse({ question }).question).toBe(
-      question,
-    );
-  });
-
-  it('refuses a question whose revision input exceeds the payload budget', () => {
-    const overhead = serializedJsonBytes({
-      operation: CLAW_INVESTIGATE_OPERATION,
-      question: '',
-    });
-    const fits = 'q'.repeat(WORK_PAYLOAD_MAX_BYTES - overhead);
-    expect(
-      clawInvestigateInputSchema.safeParse({ question: fits }).success,
-    ).toBe(true);
-    expect(
-      clawInvestigateInputSchema.safeParse({ question: `${fits}q` }).error
-        ?.issues[0]?.message,
-    ).toMatch(/serialized Work payload budget/u);
-  });
-
-  it('still refuses a blank question', () => {
-    expect(
-      clawInvestigateInputSchema.safeParse({ question: '   ' }).success,
-    ).toBe(false);
   });
 });

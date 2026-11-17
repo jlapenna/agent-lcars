@@ -32,7 +32,6 @@ COPY claw-job.mjs /opt/claw/claw-job.mjs
 # Self-update stays off: the image digest is the only way to change OpenClaw.
 ENV OPENCLAW_NO_AUTO_UPDATE=1 \
     OPENCLAW_BIN=/opt/openclaw/node_modules/.bin/openclaw \
-    CLAW_AGENT_DIR=/claw/agent \
     CLAW_SECRETS_DIR=/run/claw-secrets \
     CLAW_WORK_DIR=/work \
     HOME=/work/home

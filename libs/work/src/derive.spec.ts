@@ -113,7 +113,7 @@ describe('deriveItemState', () => {
 describe('loss policy by pipeline', () => {
   const revision = {
     key: 'k',
-    input: { operation: 'investigate:v1', question: 'why?' },
+    input: { agent: 'jlapenna/homelab/investigator', message: 'why?' },
   };
   it('a lost read-only claw round stays running while its budget remains', () => {
     const current = task({ consecutiveLost: 1, desiredRevision: revision });
@@ -466,7 +466,7 @@ describe('completed delivery is bound to its run', () => {
     },
   );
 
-  it('shows an exhausted claw investigation as failed even if a worker sent park', () => {
+  it('shows an exhausted claw agent round as failed even if a worker sent park', () => {
     // toClawRunResult normalizes every unsupported claw outcome to
     // runner-failed; three failed attempts exhaust the finite retries.
     const failed = {

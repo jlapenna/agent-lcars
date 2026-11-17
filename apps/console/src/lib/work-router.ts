@@ -23,11 +23,6 @@ import { OpenAPIHandler } from '@orpc/openapi/fetch';
 import { implement, ORPCError } from '@orpc/server';
 
 import { readAnchorOwner, readTrackerIssueOwner } from './anchor-owner';
-import {
-  admitInvestigation,
-  CLAW_INVESTIGATOR_PIPELINE,
-  ClawAdmissionConflict,
-} from './claw-investigate-work';
 import { controlPlaneRepositories } from './deployment';
 import { githubDispatchRouter } from './github-dispatch-router';
 import {
@@ -178,7 +173,7 @@ const canceller = os.use(async ({ context, next }) => {
 });
 
 /** `get` serves `reader` principals and, for its own claw work alone, a
- *  claw admitter: the report is the investigation's only output, so the
+ *  claw admitter: the report is the agent run's only output, so the
  *  principal that asked must be able to read it. Which authority applies is
  *  decided per item in the handler. */
 const getter = os.use(async ({ context, next }) => {
@@ -477,45 +472,12 @@ export const workRouter = os.router({
     },
   ),
 
-  admitClawInvestigation: clawAdmitter.admitClawInvestigation.handler(
-    async ({ input, context, errors }) => {
-      const { principal } = context;
-      if (!mayAdmitClaw(principal, CLAW_INVESTIGATOR_PIPELINE))
-        throw errors.FORBIDDEN();
-      let admitted: { workId: string };
-      try {
-        admitted = await admitInvestigation(context.runtime, {
-          question: input.question,
-          ...(input.sourceKey === undefined
-            ? {}
-            : { sourceKey: input.sourceKey }),
-          principal: principal.principal,
-        });
-      } catch (error) {
-        if (error instanceof ClawAdmissionConflict)
-          throw errors.CONFLICT({ message: error.message });
-        throw error;
-      }
-      // Durable before returning; the drain makes the round claimable now
-      // rather than on the next maintenance tick.
-      await context.runtime.drain();
-      const task = await context.runtime.store.readTask({
-        workId: admitted.workId,
-      });
-      if (task === undefined)
-        throw new ORPCError('INTERNAL_SERVER_ERROR', {
-          message: 'Admitted investigation is missing',
-        });
-      return view(context, admitted.workId, task.task);
-    },
-  ),
-
   cancel: canceller.cancel.handler(async ({ input, context, errors }) => {
     const { principal } = context;
     let task: Awaited<ReturnType<typeof readWorkTask>>;
     if (!isWorkOperatorPrincipal(principal)) {
       // A claw admitter without work.operator may cancel only its own claw
-      // investigations. Every other item -- missing, not claw, owned by
+      // agent runs. Every other item -- missing, not claw, owned by
       // another principal, or outside its repository binding -- answers the
       // same 404, so the route is no existence oracle for it.
       const stored = await context.runtime.store.readTask({

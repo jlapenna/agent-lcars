@@ -311,7 +311,7 @@ export function runOrchestratorStoreContract(
           work: TASK_WORK,
           sourceRevision: {
             key: 'question',
-            input: { operation: 'investigate:v1', question: 'why?' },
+            input: { agent: 'jlapenna/homelab/investigator', message: 'why?' },
           },
         });
         if (isRefusal(admitted)) throw new Error(admitted.reason);
@@ -3650,7 +3650,7 @@ export function runOrchestratorStoreContract(
         }
       });
 
-      it('admits at most two live claw-investigator claims, and only to a grant listing it', async () => {
+      it('admits claw runtime claims only to a grant listing it, with no store ceiling', async () => {
         const { store, orchestrator, clock } = await fixture();
         const runs = [];
         for (const value of [60, 61, 62]) {
@@ -3684,10 +3684,9 @@ export function runOrchestratorStoreContract(
             }),
           ),
         );
-        expect(claims.filter((run) => run !== undefined)).toHaveLength(2);
-        expect((await store.listQueuedRuns()).map((run) => run.runId)).toEqual([
-          runs[2]?.runId,
-        ]);
+        // The executor runtime bounds claw concurrency, not the store.
+        expect(claims.filter((run) => run !== undefined)).toHaveLength(3);
+        expect(await store.listQueuedRuns()).toEqual([]);
       });
 
       it.each([

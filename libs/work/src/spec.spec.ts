@@ -198,7 +198,7 @@ describe('readStoredWorkSpec', () => {
       }),
     ).toEqual({ title: 'T', pipeline: 'inbox-summary' });
     expect(readStoredWorkSpec({ ...base, ...clawSpec })).toEqual({
-      title: 'Claw investigation adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
+      title: 'Agent jlapenna/homelab/investigator',
       pipeline: 'claw-investigator',
     });
   });
@@ -212,7 +212,6 @@ describe('readStoredWorkSpec', () => {
       'goose',
       'inbox-summary',
       'handoff-summary',
-      'claw-investigator',
     ]);
   });
 
@@ -223,18 +222,18 @@ describe('readStoredWorkSpec', () => {
 });
 
 const clawSpec = {
-  title: 'Claw investigation adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
-  description: 'Read-only claw investigation.',
+  title: 'Agent jlapenna/homelab/investigator',
+  description: 'A run of a repository-owned claw agent.',
   pipeline: 'claw-investigator',
   priority: 'background',
-  operation: 'investigate:v1',
+  agent: 'jlapenna/homelab/investigator',
   sourceKey: 'adhoc:01J5Z3K9QX8F0N2B4V6C8D1E3G',
 };
 
 describe('clawWorkSpecSchema', () => {
   const origin = { principal: 'user:jlapenna', channel: 'console' };
 
-  it('stores a target-less background investigation', () => {
+  it('stores a target-less background agent run', () => {
     expect(clawWorkSpecSchema.parse(clawSpec)).toEqual(clawSpec);
     expect(storedClawWorkSpec({ origin, spec: clawSpec })).toEqual(clawSpec);
   });
@@ -246,7 +245,8 @@ describe('clawWorkSpecSchema', () => {
   it.each([
     ['a target', { target: { repo: 'octo/example' } }],
     ['another priority', { priority: 'normal' }],
-    ['another operation', { operation: 'remediate:v1' }],
+    ['a retired operation', { operation: 'investigate:v1' }],
+    ['a non-claw pipeline', { pipeline: 'claude' }],
     // The immutable spec never holds a round's question.
     ['a question', { input: { question: 'q' } }],
   ])('rejects %s', (_name, change) => {

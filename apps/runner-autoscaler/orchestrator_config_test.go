@@ -174,12 +174,6 @@ kubernetes:
         - { key: investigator-ssh-key, path: ssh/id_ed25519 }
         - { key: known-hosts, path: ssh/known_hosts }
         - { key: litellm-api-key, path: env/LITELLM_API_KEY }
-      agent:
-        config_map: claw-investigator-agent
-        items:
-          - { key: config.json, path: config.json }
-          - { key: approvals.json, path: approvals.json }
-          - { key: workspace-AGENTS.md, path: workspace/AGENTS.md }
       env:
         - { name: CLAW_AGENT, value: investigator }
 `
@@ -190,7 +184,7 @@ func TestOrchestratorConfigAcceptsZoneExecutor(t *testing.T) {
 		t.Fatalf("zone executor config rejected: %v", err)
 	}
 	rt, ok := cfg.Kubernetes.Runtimes["claw-investigator"]
-	if !cfg.Kubernetes.RuntimesOnly || !ok || rt.ActiveDeadlineSeconds != 3300 || len(rt.Items) != 3 || rt.Agent == nil || len(rt.Agent.Items) != 3 || rt.Env[0].Name != "CLAW_AGENT" {
+	if !cfg.Kubernetes.RuntimesOnly || !ok || rt.ActiveDeadlineSeconds != 3300 || len(rt.Items) != 3 || rt.Env[0].Name != "CLAW_AGENT" {
 		t.Fatalf("zone config resolved unexpectedly: %+v", cfg.Kubernetes)
 	}
 }
@@ -206,6 +200,9 @@ func TestOrchestratorConfigRejectsInvalidRuntime(t *testing.T) {
 		"reserved env":        {"name: CLAW_AGENT", "name: LCARS_RUN_ID"},
 		"zone with legacy":    {"  runtimes_only: true\n", "  runtimes_only: true\n  credentials_secret: lcars-runner-credentials\n"},
 		"shared without keys": {"  runtimes_only: true\n", ""},
+		// The agent ConfigMap mount is retired: definitions arrive in the
+		// run brief, and the strict decoder refuses the old block.
+		"retired agent block": {"      env:\n", "      agent:\n        config_map: claw-investigator-agent\n      env:\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := strings.Replace(zoneOrchestratorYAML, edit[0], edit[1], 1)

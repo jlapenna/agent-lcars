@@ -148,6 +148,18 @@ The existing `direct-runner.sh` path, now reading `agent`, `resources` and `inte
 
 ### `claw`
 
+> **Status (2026-11-17):** the per-agent investigator path described here
+> (`claw/investigator` bound to the `investigate:v1` operation, admitted
+> through `POST /claw/investigations`, its definition mounted from a zone
+> ConfigMap and its concurrency capped in `QUEUE_PIPELINE_MAX_LIVE_CLAIMS`)
+> is retired in favor of
+> [repository-owned agents](../../repository-agents.md). Every claw run is now
+> a repository agent round: its definition is pinned from the repository and
+> delivered in the run brief, the profile's executor runtime holds the
+> credentials and bounds concurrency, and the manifest's
+> `requireToolEvidence` replaces the evidence operation. The execution zones,
+> Job and launcher sequence below still apply.
+
 Every non-conversational OpenClaw agent runs the same way: an executor claims
 the attempt and launches one k3s Job, and the Job runs one embedded agent turn
 with `openclaw agent exec`. No Gateway, paired node, long-lived pod or
@@ -218,8 +230,9 @@ in [image publish routing](../../image-publish-routing.md). The launcher:
    top-level `error` and `toolSummary`. `agent exec` exits `0` with
    `ok: true` even when every tool call was denied, so
    `toolSummary.unresolvedError` settles as a failed attempt rather than a
-   report, and an evidence operation (`investigate:v1`) answered without any
-   tool call is a failed attempt too. A tool call that failed and was then
+   report, and an agent whose manifest sets `requireToolEvidence` (formerly
+   the `investigate:v1` evidence operation) answered without any tool call is
+   a failed attempt too. A tool call that failed and was then
    resolved, such as a probe of a host that is down, is evidence rather than
    a runner failure. Exit `2` is a timeout; other non-ok results are failed
    attempts.

@@ -7,7 +7,6 @@ import {
   mkdtemp,
   readFile,
   stat,
-  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,7 +15,6 @@ import { test } from 'node:test';
 
 import {
   agentDigest,
-  briefMessage,
   comparableConfig,
   main,
   materializeAgent,
@@ -28,6 +26,45 @@ import {
 
 const RUN_ID = 'run-123';
 
+const blobSha = (content) =>
+  createHash('sha1')
+    .update(`blob ${Buffer.byteLength(content)}\0`)
+    .update(content)
+    .digest('hex');
+function agentBrief(files, over = {}) {
+  const pinned = Object.entries(files).map(([path, { content, mode }]) => ({
+    path,
+    mode: mode ?? '100644',
+    sha: blobSha(content),
+    content: Buffer.from(content).toString('base64'),
+  }));
+  return {
+    intentId: RUN_ID,
+    pipeline: 'claw-default',
+    mode: 'claw',
+    claw: {
+      agent: 'owner/repo/investigator',
+      revision: 'c'.repeat(40),
+      digest: agentDigest(pinned),
+      requireToolEvidence: true,
+      message: 'Why is the disk alert firing?',
+      files: pinned,
+      ...over,
+    },
+  };
+}
+const agentFiles = {
+  'agent.yaml': { content: 'description: x\n' },
+  'config.json': {
+    content: JSON.stringify({
+      tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
+    }),
+  },
+  'approvals.json': { content: '{"version":1}' },
+  'workspace/AGENTS.md': { content: '# repository agent\n' },
+  'workspace/tools/probe': { content: '#!/bin/sh\necho ok\n', mode: '100755' },
+};
+
 // A fake `openclaw` CLI. Behaviour per subcommand is chosen by FAKE_* env.
 const FAKE_OPENCLAW = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -37,7 +74,9 @@ const path = require('node:path');
 const behaviour = JSON.parse(fs.readFileSync(path.join(__dirname, 'behaviour.json'), 'utf8'));
 const args = process.argv.slice(2);
 const log = behaviour.FAKE_LOG;
-if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null }) + '\\n');
+const messageAt = args.indexOf('--message-file');
+const message = messageAt < 0 ? null : fs.readFileSync(args[messageAt + 1], 'utf8');
+if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message }) + '\\n');
 const sub = args.slice(0, 2).join(' ');
 if (args[0] === 'config' && args[1] === 'validate') {
   console.log(JSON.stringify({ valid: behaviour.FAKE_INVALID !== '1' }));
@@ -64,20 +103,10 @@ process.exit(64);
 
 async function fixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), 'claw-job-'));
-  const agentDir = join(root, 'agent');
   const secretsDir = join(root, 'secrets');
   const workDir = join(root, 'work');
-  await mkdir(join(agentDir, 'workspace'), { recursive: true });
   await mkdir(join(secretsDir, 'env'), { recursive: true });
   await mkdir(workDir, { recursive: true });
-  await writeFile(
-    join(agentDir, 'config.json'),
-    JSON.stringify({
-      tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
-    }),
-  );
-  await writeFile(join(agentDir, 'approvals.json'), '{"version":1}');
-  await writeFile(join(agentDir, 'workspace', 'AGENTS.md'), '# investigator\n');
   await writeFile(join(secretsDir, 'env', 'LITELLM_API_KEY'), 'sk-test\n');
   const openclaw = join(root, 'openclaw');
   await writeFile(openclaw, FAKE_OPENCLAW);
@@ -87,15 +116,7 @@ async function fixture(overrides = {}) {
   await writeFile(join(root, 'behaviour.json'), JSON.stringify(behaviour));
   await chmod(openclaw, 0o755);
   const calls = [];
-  const brief = overrides.brief ?? {
-    intentId: RUN_ID,
-    pipeline: 'claw-investigator',
-    mode: 'claw',
-    claw: {
-      operation: 'investigate:v1',
-      input: { question: 'Why is the disk alert firing?' },
-    },
-  };
+  const brief = overrides.brief ?? agentBrief(agentFiles);
   const fetchImpl = async (url, init) => {
     const path = url.split(`/runs/${RUN_ID}/`)[1];
     const body = init.body ? JSON.parse(init.body) : undefined;
@@ -117,7 +138,6 @@ async function fixture(overrides = {}) {
     LCARS_RUN_ID: RUN_ID,
     LCARS_RUN_TOKEN: 'run-token',
     OPENCLAW_BIN: openclaw,
-    CLAW_AGENT_DIR: agentDir,
     CLAW_SECRETS_DIR: secretsDir,
     CLAW_WORK_DIR: workDir,
     CLAW_HEARTBEAT_INTERVAL_MS: '3600000',
@@ -321,21 +341,17 @@ test('comparableConfig ignores only meta and wizard stamps', () => {
   assert.notEqual(comparableConfig({ a: 1 }), comparableConfig({ a: 2 }));
 });
 
-test('readBrief requires this run and a non-empty question', () => {
+test('readBrief requires this run and a non-empty agent message', () => {
   const env = { LCARS_RUN_ID: RUN_ID };
   assert.throws(
-    () =>
-      readBrief(
-        {
-          intentId: 'other',
-          pipeline: 'claw-investigator',
-          mode: 'claw',
-          claw: { input: { question: 'q' } },
-        },
-        env,
-      ),
+    () => readBrief({ ...agentBrief(agentFiles), intentId: 'other' }, env),
     /not a claw run/,
   );
+  assert.throws(
+    () => readBrief(agentBrief(agentFiles, { message: ' ' }), env),
+    /no agent message/,
+  );
+  // The retired operation brief names no agent.
   assert.throws(
     () =>
       readBrief(
@@ -343,11 +359,14 @@ test('readBrief requires this run and a non-empty question', () => {
           intentId: RUN_ID,
           pipeline: 'claw-investigator',
           mode: 'claw',
-          claw: { input: { question: ' ' } },
+          claw: {
+            operation: 'investigate:v1',
+            input: { question: 'q' },
+          },
         },
         env,
       ),
-    /no claw question/,
+    /no agent/,
   );
 });
 
@@ -372,7 +391,7 @@ test('cancellation stops the turn process group and still settles', async () => 
   assert.deepEqual(completion(calls), result);
 });
 
-test('an investigation answered without any tool call is not a report', async () => {
+test('an evidence-bound agent answered without any tool call is not a report', async () => {
   const envelope = JSON.stringify({ ok: true, final: 'Probably fine.' });
   const { env, fetchImpl } = await fixture({
     env: { FAKE_ENVELOPE: envelope },
@@ -425,77 +444,8 @@ test('the overall deadline also bounds setup and stops before the turn', async (
   assert.ok(!log.includes('"exec"'), 'the turn started after the deadline');
 });
 
-test('a ConfigMap-style symlinked agent directory is read and copied', async () => {
-  const { root, env, fetchImpl } = await fixture();
-  // Rebuild the agent dir the way the kubelet projects a ConfigMap:
-  // real files in a timestamped dir, top-level entries as symlinks.
-  const projected = join(root, 'projected');
-  const data = join(projected, '..2026_11_14_00_00_00.1');
-  await mkdir(join(data, 'workspace'), { recursive: true });
-  for (const name of ['config.json', 'approvals.json'])
-    await writeFile(
-      join(data, name),
-      await readFile(join(env.CLAW_AGENT_DIR, name)),
-    );
-  await writeFile(join(data, 'workspace', 'AGENTS.md'), '# projected\n');
-  await symlink('..2026_11_14_00_00_00.1', join(projected, '..data'));
-  for (const name of ['config.json', 'approvals.json', 'workspace'])
-    await symlink(join('..data', name), join(projected, name));
-  const result = await main(
-    { ...env, CLAW_AGENT_DIR: projected },
-    { fetchImpl },
-  );
-  assert.equal(result.outcome, 'report');
-  assert.equal(
-    await readFile(join(env.CLAW_WORK_DIR, 'workspace', 'AGENTS.md'), 'utf8'),
-    '# projected\n',
-  );
-});
-
-const blobSha = (content) =>
-  createHash('sha1')
-    .update(`blob ${Buffer.byteLength(content)}\0`)
-    .update(content)
-    .digest('hex');
-function agentBrief(files, over = {}) {
-  const pinned = Object.entries(files).map(([path, { content, mode }]) => ({
-    path,
-    mode: mode ?? '100644',
-    sha: blobSha(content),
-    content: Buffer.from(content).toString('base64'),
-  }));
-  return {
-    intentId: RUN_ID,
-    pipeline: 'claw-default',
-    mode: 'claw',
-    claw: {
-      agent: 'owner/repo/investigator',
-      revision: 'c'.repeat(40),
-      digest: agentDigest(pinned),
-      requireToolEvidence: true,
-      message: 'Why is the disk alert firing?',
-      files: pinned,
-      ...over,
-    },
-  };
-}
-const agentFiles = {
-  'agent.yaml': { content: 'description: x\n' },
-  'config.json': {
-    content: JSON.stringify({
-      tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
-    }),
-  },
-  'approvals.json': { content: '{"version":1}' },
-  'workspace/AGENTS.md': { content: '# repository agent\n' },
-  'workspace/tools/probe': { content: '#!/bin/sh\necho ok\n', mode: '100755' },
-};
-
-test('runs a repository-owned agent from its verified brief, not the zone mount', async () => {
-  const { env, calls, fetchImpl } = await fixture({
-    brief: agentBrief(agentFiles),
-    env: { CLAW_AGENT_DIR: '/nonexistent' },
-  });
+test('runs a repository-owned agent from its verified, locked brief', async () => {
+  const { env, calls, fetchImpl } = await fixture();
   const result = await main(env, { fetchImpl });
   assert.equal(result.outcome, 'report');
   assert.deepEqual(completion(calls), result);
@@ -513,7 +463,6 @@ test('runs a repository-owned agent from its verified brief, not the zone mount'
 
 test('readBrief returns an agent request with its evidence rule', () => {
   const request = readBrief(agentBrief(agentFiles), { LCARS_RUN_ID: RUN_ID });
-  assert.equal(request.kind, 'agent');
   assert.equal(request.requireTools, true);
   assert.equal(request.message, 'Why is the disk alert firing?');
 });
@@ -558,7 +507,6 @@ test('gives the agent a writable copy of its locked workspace', async () => {
   };
   const { env, fetchImpl } = await fixture({
     brief: agentBrief(files),
-    env: { CLAW_AGENT_DIR: '/nonexistent' },
   });
   await main(env, { fetchImpl });
   const copy = join(env.CLAW_WORK_DIR, 'workspace', 'state');
@@ -570,8 +518,15 @@ test('gives the agent a writable copy of its locked workspace', async () => {
   );
 });
 
-test('sends a repository agent exactly its message, without the report wrapper', () => {
-  const brief = agentBrief(agentFiles, { message: 'Reply with JSON only.' });
-  const request = readBrief(brief, { LCARS_RUN_ID: RUN_ID });
-  assert.equal(briefMessage(request, brief), 'Reply with JSON only.');
+test('sends a repository agent exactly its message, without a wrapper', async () => {
+  const { env, fetchImpl } = await fixture({
+    brief: agentBrief(agentFiles, { message: 'Reply with JSON only.' }),
+  });
+  await main(env, { fetchImpl });
+  const exec = (await readFile(env.FAKE_LOG, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .find((entry) => entry.args[0] === 'agent');
+  assert.equal(exec.message, 'Reply with JSON only.');
 });

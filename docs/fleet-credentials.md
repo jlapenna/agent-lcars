@@ -14,17 +14,17 @@ succeeds. Never echo a secret value into terminal output, chat, or shell
 history — move values with pipes, `read -rs`, or files created under
 `umask 077`, and delete temporaries when done.
 
-| Credential                | Consumed by                                                                  | Canonical home                                                                           | Mintable by                        |
-| ------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)                                             | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
-| Codex `auth.json` lineage | Console QueueExecutor (run time)                                             | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
-| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                             | age store + homelab vault (`lcars-runner-credentials`)                                   | anyone with the LiteLLM master key |
-| `antigravity-oauth-token` | Console QueueExecutor (run time)                                             | homelab vault `agent_lcars_antigravity_oauth_token` (`lcars-runner-credentials`)         | maintainer only (`agy auth login`) |
-| `hindsight-api-token`     | Console QueueExecutor (run time, per-repo `agent-lcars::<repo>` memory)      | homelab vault `hindsight_api_token` + age store `HINDSIGHT_API_TOKEN`                    | maintainer (homelab secrets)       |
-| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                         | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
-| Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab)  | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
-| `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                  | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
-| `claw-operator` ID token  | interactive claw admission (`POST /api/work/v1/claw/investigations`, cancel) | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
+| Credential                | Consumed by                                                                                     | Canonical home                                                                           | Mintable by                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Console QueueExecutor (run time)                                                                | Secret Manager `CLAUDE_CODE_OAUTH_TOKEN` (project `agent-lcars`)                         | maintainer only (browser OAuth)    |
+| Codex `auth.json` lineage | Console QueueExecutor (run time)                                                                | GCS `gs://agent-lcars-codex-auth/jlapenna/agent-lcars/auth.json`, one LCARS-owned object | maintainer only (`codex login`)    |
+| `OPENCODE_LLM_API_KEY`    | Console QueueExecutor (run time)                                                                | age store + homelab vault (`lcars-runner-credentials`)                                   | anyone with the LiteLLM master key |
+| `antigravity-oauth-token` | Console QueueExecutor (run time)                                                                | homelab vault `agent_lcars_antigravity_oauth_token` (`lcars-runner-credentials`)         | maintainer only (`agy auth login`) |
+| `hindsight-api-token`     | Console QueueExecutor (run time, per-repo `agent-lcars::<repo>` memory)                         | homelab vault `hindsight_api_token` + age store `HINDSIGHT_API_TOKEN`                    | maintainer (homelab secrets)       |
+| `AGENT_LCARS_PRIVATE_KEY` | every pipeline's token mint; console                                                            | Secret Manager `AGENT_LCARS_APP_PRIVATE_KEY` (project `agent-lcars`)                     | maintainer (App settings UI)       |
+| Autoscaler App key        | runner registration (homelab autoscaler); github-actions-exporter (homelab)                     | homelab vault `github_autoscaler_lcars_app_private_key`                                  | maintainer (App settings UI)       |
+| `work-reader` ID token    | interactive sessions' `lcars work owner` (Console Work API)                                     | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
+| `claw-operator` ID token  | interactive claw admission (`POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs`, cancel) | none stored; minted per call by Google impersonation                                     | `user:jlapenna@gmail.com` only     |
 
 Two GitHub Apps exist and are easy to confuse:
 

@@ -71,24 +71,10 @@ type queueRuntimeConfig struct {
 	// exports items whose path starts with env/ as environment variables.
 	SecretName string                   `yaml:"secret_name"`
 	Items      []queueRuntimeSecretItem `yaml:"items"`
-	// Agent optionally mounts the zone-pinned agent definition (OpenClaw
-	// config.json, approvals.json, workspace/ files) from a ConfigMap,
-	// read-only at queueRuntimeAgentMountPath.
-	Agent *queueRuntimeAgentConfig `yaml:"agent,omitempty"`
-	Env   []queueRuntimeEnv        `yaml:"env,omitempty"`
+	// The agent definition is never mounted: a repository-owned agent's
+	// pinned files arrive in its run brief (docs/repository-agents.md).
+	Env []queueRuntimeEnv `yaml:"env,omitempty"`
 }
-
-// queueRuntimeAgentConfig selects the ConfigMap holding an agent definition.
-// ConfigMap keys cannot contain '/', so items map flat keys to nested paths
-// (workspace-AGENTS.md -> workspace/AGENTS.md); without items every key is
-// projected at its own name.
-type queueRuntimeAgentConfig struct {
-	ConfigMap string                   `yaml:"config_map"`
-	Items     []queueRuntimeSecretItem `yaml:"items,omitempty"`
-}
-
-// queueRuntimeAgentMountPath is where the agent definition ConfigMap appears.
-const queueRuntimeAgentMountPath = "/claw/agent"
 
 // queueRuntimeTurnMargin is how far inside the Pod deadline the launcher's
 // outer turn deadline (CLAW_TURN_DEADLINE_SECONDS) sits, so a timed-out turn
@@ -150,19 +136,6 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 	}
 	if err := validateQueueRuntimeItems(prefix+".items", r.Items); err != nil {
 		return err
-	}
-	if r.Agent != nil {
-		if len(validation.IsDNS1123Subdomain(r.Agent.ConfigMap)) != 0 {
-			return fmt.Errorf("%s.agent.config_map must be a valid ConfigMap name", prefix)
-		}
-		// Each agent item is mounted as its own file (see runtimeJobShape),
-		// so the definition must be listed item by item.
-		if len(r.Agent.Items) == 0 {
-			return fmt.Errorf("%s.agent.items must list every agent file", prefix)
-		}
-		if err := validateQueueRuntimeItems(prefix+".agent.items", r.Agent.Items); err != nil {
-			return err
-		}
 	}
 	// The declared env list and every Secret item under env/ (which the claw
 	// launcher exports as an environment variable named by the rest of the
@@ -293,7 +266,7 @@ func (c *queueKubernetesConfig) runtimeNames() []string {
 // runtimeJobShape builds the pipeline-specific half of a declared runtime's
 // Job: its pinned image (its own entrypoint; no command override), resources,
 // deadline, LCARS run environment plus the declared static environment, only
-// the declared zone Secret items and the optional agent ConfigMap. It
+// the declared zone Secret items. It
 // deliberately carries no telemetry writer, provider key, Hindsight token or
 // Codex volume.
 func (q *kubernetesQueue) runtimeJobShape(l directRunnerLaunch, rt queueRuntimeConfig, runTokenEnv core.EnvVar) (queueJobShape, error) {
@@ -323,23 +296,6 @@ func (q *kubernetesQueue) runtimeJobShape(l directRunnerLaunch, rt queueRuntimeC
 		{Name: "claw-secrets", MountPath: queueRuntimeSecretMountPath, ReadOnly: true},
 		{Name: "work", MountPath: queueRuntimeWorkMountPath},
 		{Name: "tmp", MountPath: "/tmp"},
-	}
-	if rt.Agent != nil {
-		// Agent tools (tools/*) run by path under the exec allowlist, so the
-		// definition is read+execute with no write. Secrets stay 0440 above:
-		// zone credentials are never executable.
-		//
-		// Each item is its own subPath mount rather than one directory mount:
-		// a ConfigMap directory presents files as symlinks into a timestamped
-		// ..data directory, and OpenClaw's exec allowlist matches the
-		// resolved binary path, so an allowlisted tool would resolve outside
-		// its declared path and be denied. A subPath mount binds the real
-		// file at exactly /claw/agent/<path>.
-		agentMode := int32(0555)
-		volumes = append(volumes, core.Volume{Name: "claw-agent", VolumeSource: core.VolumeSource{ConfigMap: &core.ConfigMapVolumeSource{LocalObjectReference: core.LocalObjectReference{Name: rt.Agent.ConfigMap}, Items: queueRuntimeKeyToPaths(rt.Agent.Items), DefaultMode: &agentMode}}})
-		for _, item := range rt.Agent.Items {
-			mounts = append(mounts, core.VolumeMount{Name: "claw-agent", MountPath: queueRuntimeAgentMountPath + "/" + item.Path, SubPath: item.Path, ReadOnly: true})
-		}
 	}
 	return queueJobShape{
 		container: "claw", image: rt.Image, pullPolicy: core.PullIfNotPresent,

@@ -33,11 +33,6 @@ func testClawRuntime() queueRuntimeConfig {
 			{Key: "known-hosts", Path: "ssh/known_hosts"},
 			{Key: "litellm-api-key", Path: "env/LITELLM_API_KEY"},
 		},
-		Agent: &queueRuntimeAgentConfig{ConfigMap: "claw-investigator-agent", Items: []queueRuntimeSecretItem{
-			{Key: "config.json", Path: "config.json"},
-			{Key: "approvals.json", Path: "approvals.json"},
-			{Key: "workspace-AGENTS.md", Path: "workspace/AGENTS.md"},
-		}},
 		Env: []queueRuntimeEnv{{Name: "CLAW_AGENT", Value: "investigator"}},
 	}
 }
@@ -134,16 +129,6 @@ func TestQueueRuntimeValidation(t *testing.T) {
 		"no items": func(c *queueKubernetesConfig) {
 			r := c.Runtimes["claw-investigator"]
 			r.Items = nil
-			c.Runtimes["claw-investigator"] = r
-		},
-		"agent item escapes": func(c *queueKubernetesConfig) {
-			r := c.Runtimes["claw-investigator"]
-			r.Agent = &queueRuntimeAgentConfig{ConfigMap: "agent", Items: []queueRuntimeSecretItem{{Key: "config.json", Path: "../config.json"}}}
-			c.Runtimes["claw-investigator"] = r
-		},
-		"agent without ConfigMap": func(c *queueKubernetesConfig) {
-			r := c.Runtimes["claw-investigator"]
-			r.Agent = &queueRuntimeAgentConfig{}
 			c.Runtimes["claw-investigator"] = r
 		},
 		"legacy credential Secret": func(c *queueKubernetesConfig) {
@@ -262,16 +247,6 @@ func TestQueueRuntimeValidation(t *testing.T) {
 			r.Env = []queueRuntimeEnv{{Name: "OPENCLAW_CONFIG_PATH", Value: "x"}}
 			c.Runtimes["claw-investigator"] = r
 		},
-		"agent path parent of another": func(c *queueKubernetesConfig) {
-			r := c.Runtimes["claw-investigator"]
-			r.Agent = &queueRuntimeAgentConfig{ConfigMap: "agent", Items: []queueRuntimeSecretItem{{Key: "tools", Path: "tools"}, {Key: "tools-probe", Path: "tools/probe"}}}
-			c.Runtimes["claw-investigator"] = r
-		},
-		"agent path ..data": func(c *queueKubernetesConfig) {
-			r := c.Runtimes["claw-investigator"]
-			r.Agent = &queueRuntimeAgentConfig{ConfigMap: "agent", Items: []queueRuntimeSecretItem{{Key: "config.json", Path: "..data/config.json"}}}
-			c.Runtimes["claw-investigator"] = r
-		},
 		"runtimes_only with legacy credentials": func(c *queueKubernetesConfig) {
 			c.CredentialsSecret = "credentials"
 		},
@@ -303,7 +278,6 @@ func TestQueueRuntimeAcceptsExactCeiling(t *testing.T) {
 	r.Requests = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "40Gi"}
 	r.Limits = map[string]string{"cpu": "2000m", "memory": "6Gi", "ephemeral-storage": "40Gi"}
 	r.ActiveDeadlineSeconds = queueRunLeaseSeconds - 1
-	r.Agent = nil
 	q.config.Runtimes["claw-investigator"] = r
 	if err := q.config.validate(); err != nil {
 		t.Fatalf("runtime at the ceiling rejected: %v", err)
@@ -378,8 +352,8 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 			t.Fatal("host path volume")
 		}
 	}
-	if len(volumes) != 4 {
-		t.Fatalf("volumes = %v, want claw-secrets, claw-agent, work, tmp only", pod.Volumes)
+	if len(volumes) != 3 {
+		t.Fatalf("volumes = %v, want claw-secrets, work, tmp only", pod.Volumes)
 	}
 	secret := volumes["claw-secrets"].Secret
 	if secret == nil || secret.SecretName != "claw-investigator" || (secret.Optional != nil && *secret.Optional) {
@@ -388,19 +362,11 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 	if want := []core.KeyToPath{{Key: "investigator-ssh-key", Path: "ssh/id_ed25519"}, {Key: "known-hosts", Path: "ssh/known_hosts"}, {Key: "litellm-api-key", Path: "env/LITELLM_API_KEY"}}; !reflect.DeepEqual(secret.Items, want) {
 		t.Fatalf("secret items = %v, want exactly %v", secret.Items, want)
 	}
-	agent := volumes["claw-agent"].ConfigMap
-	if agent == nil || agent.Name != "claw-investigator-agent" || len(agent.Items) != 3 || agent.Items[2].Path != "workspace/AGENTS.md" {
-		t.Fatalf("agent ConfigMap volume = %+v", agent)
-	}
-	// Agent tools run by path, so the definition is read+execute and never
-	// writable; zone secrets stay 0440 and are never executable.
-	if agent.DefaultMode == nil || *agent.DefaultMode != 0o555 {
-		t.Fatalf("agent ConfigMap mode = %v, want 0555", agent.DefaultMode)
-	}
+	// Zone secrets stay 0440 and are never executable.
 	if secret.DefaultMode == nil || *secret.DefaultMode != 0o440 {
 		t.Fatalf("zone Secret mode = %v, want 0440", secret.DefaultMode)
 	}
-	for _, item := range append(append([]core.KeyToPath{}, secret.Items...), agent.Items...) {
+	for _, item := range secret.Items {
 		if item.Mode != nil {
 			t.Fatalf("item %s overrides the volume mode", item.Key)
 		}
@@ -416,18 +382,7 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 	for _, m := range container.VolumeMounts {
 		mounts[m.MountPath] = m
 	}
-	// One read-only subPath mount per agent item, so each tool's resolved path
-	// is exactly its declared /claw/agent/<path> (no ..data symlink).
-	for _, item := range agent.Items {
-		m, ok := mounts["/claw/agent/"+item.Path]
-		if !ok || m.Name != "claw-agent" || m.SubPath != item.Path || !m.ReadOnly {
-			t.Fatalf("agent item %s mount = %+v", item.Path, m)
-		}
-	}
-	if _, whole := mounts["/claw/agent"]; whole {
-		t.Fatal("the agent ConfigMap must not be mounted as a symlinked directory")
-	}
-	if len(mounts) != 3+len(agent.Items) || !mounts["/run/claw-secrets"].ReadOnly || mounts["/work"].Name != "work" || mounts["/tmp"].Name != "tmp" {
+	if len(mounts) != 3 || !mounts["/run/claw-secrets"].ReadOnly || mounts["/work"].Name != "work" || mounts["/tmp"].Name != "tmp" {
 		t.Fatalf("mounts = %v", container.VolumeMounts)
 	}
 	text := job.String()
@@ -438,23 +393,21 @@ func TestClawJobMountsOnlyDeclaredZoneMaterial(t *testing.T) {
 	}
 }
 
-func TestClawJobRejectsProviderAuthAndOmitsOptionalAgent(t *testing.T) {
+func TestClawJobRejectsProviderAuthAndMountsNoConfigMap(t *testing.T) {
 	q, _ := zoneQueueFixture()
 	l := clawLaunch()
 	l.providerAuth = "claude"
 	if _, err := q.job(l); err == nil {
 		t.Fatal("a runtime must not accept provider auth")
 	}
-	r := q.config.Runtimes["claw-investigator"]
-	r.Agent = nil
-	q.config.Runtimes["claw-investigator"] = r
 	job, err := q.job(clawLaunch())
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Agent definitions arrive in the run brief, never as a mount.
 	for _, v := range job.Spec.Template.Spec.Volumes {
 		if v.ConfigMap != nil {
-			t.Fatal("agent ConfigMap mounted without being declared")
+			t.Fatal("claw Job mounts a ConfigMap")
 		}
 	}
 }
@@ -524,23 +477,17 @@ func zoneSecret(data map[string][]byte) *core.Secret {
 	return &core.Secret{ObjectMeta: meta.ObjectMeta{Name: "claw-investigator", Namespace: "lcars-work"}, Data: data}
 }
 
-func zoneAgentConfigMap() *core.ConfigMap {
-	return &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: "claw-investigator-agent", Namespace: "lcars-work"}, Data: map[string]string{"config.json": "{}", "approvals.json": "{}", "workspace-AGENTS.md": "# agent"}}
-}
-
 // A zone executor starts without the legacy credential Secret or provider
-// keys, but requires every declared zone item and agent key.
+// keys, but requires every declared zone item.
 func TestZoneExecutorPreflight(t *testing.T) {
 	complete := map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": []byte("l")}
 	for name, tc := range map[string]struct {
 		objects []runtime.Object
 		ok      bool
 	}{
-		"complete":              {objects: []runtime.Object{zoneSecret(complete), zoneAgentConfigMap()}, ok: true},
-		"missing zone Secret":   {objects: []runtime.Object{zoneAgentConfigMap()}},
-		"empty item":            {objects: []runtime.Object{zoneSecret(map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": {}}), zoneAgentConfigMap()}},
-		"missing agent map":     {objects: []runtime.Object{zoneSecret(complete)}},
-		"agent map missing key": {objects: []runtime.Object{zoneSecret(complete), &core.ConfigMap{ObjectMeta: meta.ObjectMeta{Name: "claw-investigator-agent", Namespace: "lcars-work"}, Data: map[string]string{"config.json": "{}"}}}},
+		"complete":            {objects: []runtime.Object{zoneSecret(complete)}, ok: true},
+		"missing zone Secret": {objects: nil},
+		"empty item":          {objects: []runtime.Object{zoneSecret(map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": {}})}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			objects := append([]runtime.Object{queueReadyNode(), &core.ServiceAccount{ObjectMeta: meta.ObjectMeta{Name: "worker", Namespace: "lcars-work"}}}, tc.objects...)
@@ -561,7 +508,7 @@ func TestZoneExecutorPreflight(t *testing.T) {
 
 // The shared executor with a declared runtime still requires its legacy keys.
 func TestSharedExecutorPreflightStillRequiresLegacyKeys(t *testing.T) {
-	q, c := kubeQueueFixture(queueReadyNode(), &core.ServiceAccount{ObjectMeta: meta.ObjectMeta{Name: "worker", Namespace: "lcars-work"}}, zoneSecret(map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": []byte("l")}), zoneAgentConfigMap())
+	q, c := kubeQueueFixture(queueReadyNode(), &core.ServiceAccount{ObjectMeta: meta.ObjectMeta{Name: "worker", Namespace: "lcars-work"}}, zoneSecret(map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": []byte("l")}))
 	q.config.Runtimes = map[string]queueRuntimeConfig{"claw-investigator": testClawRuntime()}
 	c.PrependReactor("create", "selfsubjectaccessreviews", func(clienttesting.Action) (bool, runtime.Object, error) {
 		return true, &auth.SelfSubjectAccessReview{Status: auth.SubjectAccessReviewStatus{Allowed: true}}, nil
@@ -645,13 +592,11 @@ func TestRuntimesOnlyEnvironmentNeedsNoRunnerImageOrScheduler(t *testing.T) {
 }
 
 // Env items are a separate namespace from declared env only by name: a
-// distinct, unreserved env/ item and declared env coexist, and agent
-// ConfigMap items under env/ are files, not exported variables.
+// distinct, unreserved env/ item and declared env coexist.
 func TestQueueRuntimeAcceptsDistinctEnvItems(t *testing.T) {
 	q, _ := zoneQueueFixture()
 	r := q.config.Runtimes["claw-investigator"]
 	r.Items = append(r.Items, queueRuntimeSecretItem{Key: "github-token", Path: "env/GH_TOKEN"})
-	r.Agent.Items = append(r.Agent.Items, queueRuntimeSecretItem{Key: "env-home", Path: "env/HOME"})
 	q.config.Runtimes["claw-investigator"] = r
 	if err := q.config.validate(); err != nil {
 		t.Fatalf("distinct env items rejected: %v", err)
@@ -687,15 +632,5 @@ func TestLaunchSettlesClaimWhenJobCreateIsInvalid(t *testing.T) {
 				t.Fatal("refused create left a Job")
 			}
 		})
-	}
-}
-
-func TestRuntimeAgentRequiresExplicitItems(t *testing.T) {
-	q, _ := zoneQueueFixture()
-	r := q.config.Runtimes["claw-investigator"]
-	r.Agent.Items = nil
-	q.config.Runtimes["claw-investigator"] = r
-	if err := q.config.validate(); err == nil || !strings.Contains(err.Error(), "agent.items must list every agent file") {
-		t.Fatalf("validate() = %v, want an agent items error", err)
 	}
 }

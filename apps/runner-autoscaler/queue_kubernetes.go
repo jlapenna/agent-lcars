@@ -305,17 +305,6 @@ func (q *kubernetesQueue) preflight(ctx context.Context) error {
 				return fmt.Errorf("runtime %s Secret missing nonempty key %s", name, item.Key)
 			}
 		}
-		if rt.Agent != nil {
-			agent, err := client.CoreV1().ConfigMaps(c.Namespace).Get(ctx, rt.Agent.ConfigMap, meta.GetOptions{})
-			if err != nil {
-				return fmt.Errorf("reading runtime %s agent ConfigMap: %w", name, err)
-			}
-			for _, item := range rt.Agent.Items {
-				if _, ok := agent.Data[item.Key]; !ok {
-					return fmt.Errorf("runtime %s agent ConfigMap missing key %s", name, item.Key)
-				}
-			}
-		}
 	}
 	if _, err := client.CoreV1().ServiceAccounts(c.Namespace).Get(ctx, c.ServiceAccount, meta.GetOptions{}); err != nil {
 		return fmt.Errorf("reading queue worker ServiceAccount: %w", err)

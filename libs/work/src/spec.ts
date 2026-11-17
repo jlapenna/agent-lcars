@@ -1,5 +1,4 @@
 import {
-  CLAW_INVESTIGATE_OPERATION,
   fitsWorkDescription,
   PIPELINE_CONTRACTS,
   QUEUE_PRIORITIES,
@@ -117,17 +116,13 @@ export const SUMMARY_PIPELINES = Object.freeze([
   'inbox-summary',
   'handoff-summary',
 ] as const);
-/** Internal `claw` agents executed as one k3s Job per attempt. Each is
- * bound to its operation by trusted configuration, never by source text. */
-export const CLAW_PIPELINES = Object.freeze(['claw-investigator'] as const);
-export type ClawPipeline = (typeof CLAW_PIPELINES)[number];
-/** Every pipeline a stored Work spec can name: the public coding pipelines,
- * then internal recipe, summary and claw work. */
+/** Every fixed pipeline a stored Work spec can name: the public coding
+ * pipelines, then internal recipe and summary work. Claw work names its
+ * executor runtime instead (`ClawRuntimePipeline`). */
 export const STORED_PIPELINES = Object.freeze([
   ...PIPELINES,
   'goose',
   ...SUMMARY_PIPELINES,
-  ...CLAW_PIPELINES,
 ] as const);
 /** A repository-owned claw agent's pipeline: the executor runtime its
  * profile names (docs/repository-agents.md). */
@@ -152,18 +147,6 @@ export const recipeWorkSpecSchema = z.strictObject({
   target: workTargetSchema,
   jobOccurrence: z.string().regex(/^[a-f0-9]{64}$/u),
 });
-/** Internal read-only investigation. It names no target: the agent reads
- * its zone, not a repository. It carries no question either: the stored
- * spec is immutable while a source key admits a new round per question, so
- * each round's question lives only in its revision input. Admitted only by the internal admission route
- * (`POST /claw/investigations`); public `create` validates `workSpecSchema`
- * and so rejects this shape. */
-const clawWorkSpecFields = {
-  title: z.string().min(1).max(WORK_TITLE_MAX),
-  description: workDescriptionSchema,
-  priority: z.literal('background'),
-  sourceKey: z.string().min(1).max(256),
-};
 /** A run of a repository-owned claw agent (docs/repository-agents.md). The
  * spec names the agent; each round's pinned definition and message live in
  * its revision input, so the immutable spec admits new rounds. */
@@ -180,17 +163,9 @@ export const agentWorkSpecSchema = z.strictObject({
   sourceKey: z.string().min(1),
 });
 export type AgentWorkSpec = z.infer<typeof agentWorkSpecSchema>;
-/** Legacy `claw/investigator` work (phase 3a), bound to its operation. */
-export const investigatorWorkSpecSchema = z.strictObject({
-  ...clawWorkSpecFields,
-  pipeline: z.literal('claw-investigator'),
-  operation: z.literal(CLAW_INVESTIGATE_OPERATION),
-});
-/** Every claw run shape: target-less, executed as one k3s Job per attempt. */
-export const clawWorkSpecSchema = z.union([
-  investigatorWorkSpecSchema,
-  agentWorkSpecSchema,
-]);
+/** Every claw run shape: target-less, executed as one k3s Job per attempt.
+ * Only repository-owned agents remain (docs/repository-agents.md). */
+export const clawWorkSpecSchema = agentWorkSpecSchema;
 export type ClawWorkSpec = z.infer<typeof clawWorkSpecSchema>;
 export const storedWorkSpecSchema = z.union([
   workSpecSchema,

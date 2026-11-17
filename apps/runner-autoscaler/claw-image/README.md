@@ -9,7 +9,8 @@ The image holds the verified OpenClaw distribution (`package.json` and
 `package-lock.json`, installed with `npm ci` so every package is checked
 against its integrity hash), generic clients (`openssh-client`, `python3`)
 and the launcher, `claw-job.mjs`. It holds no agent definition, agent tool or
-credential: a zone executor's runtime table mounts those.
+credential: the definition arrives in the run brief and a zone executor's
+runtime table mounts the credentials.
 
 ## Where the agent definition comes from
 
@@ -19,22 +20,17 @@ run brief: every file with its git mode, blob SHA and content, and the
 definition digest LCARS pinned at admission. The launcher writes the files to
 `/work/agent` only after each file's bytes hash to its blob SHA and the file
 list hashes to the pinned digest; paths cannot leave that directory, and
-executable files keep their mode. The executor's runtime mounts only Secret
-items for such an agent.
-
-A legacy zone agent (`claw-investigator`) still has its definition mounted
-from a zone ConfigMap, as below.
+executable files keep their mode. The definition's `config.json`,
+`approvals.json` and `workspace/` (such as `AGENTS.md`) are read from there;
+`config.json` must be Doctor-normalized (below).
 
 ## What a zone mounts
 
-| Path                           | Source         | Contents                                                                                                                                                                    |
-| ------------------------------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/claw/agent/config.json`      | zone ConfigMap | The agent's pinned OpenClaw config: model route (provider API key as an `env` SecretRef), deny-by-default tool policy. Must be Doctor-normalized (below).                   |
-| `/claw/agent/approvals.json`   | zone ConfigMap | Host exec approvals: `defaults` `security: allowlist`, `ask: off`, `askFallback: deny`; the allowlist on agent `main`. These approvals enforce the exec allowlist.          |
-| `/claw/agent/workspace/`       | zone ConfigMap | Workspace files such as `AGENTS.md`.                                                                                                                                        |
-| `/run/claw-secrets/env/<NAME>` | zone Secret    | Exported to OpenClaw as environment variable `NAME` (for example `LITELLM_API_KEY`). `LCARS_*`, `OPENCLAW_*`, `RUNNER_MODE`, `PATH`, `HOME` and `NODE_OPTIONS` are refused. |
-| `/run/claw-secrets/<other>`    | zone Secret    | Files the agent's own tools read by path (SSH keys, `known_hosts`).                                                                                                         |
-| `/work`, `/tmp`                | `emptyDir`     | Writable state, workspace copy and `HOME`; the root filesystem stays read-only.                                                                                             |
+| Path                           | Source      | Contents                                                                                                                                                                    |
+| ------------------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/run/claw-secrets/env/<NAME>` | zone Secret | Exported to OpenClaw as environment variable `NAME` (for example `LITELLM_API_KEY`). `LCARS_*`, `OPENCLAW_*`, `RUNNER_MODE`, `PATH`, `HOME` and `NODE_OPTIONS` are refused. |
+| `/run/claw-secrets/<other>`    | zone Secret | Files the agent's own tools read by path (SSH keys, `known_hosts`).                                                                                                         |
+| `/work`, `/tmp`                | `emptyDir`  | Writable state, workspace copy and `HOME`; the root filesystem stays read-only.                                                                                             |
 
 The executor supplies `LCARS_CONSOLE_URL`, `LCARS_RUN_ID`, `LCARS_RUN_TOKEN` and
 `CLAW_TURN_DEADLINE_SECONDS` (below the pod deadline, which is below the
@@ -57,7 +53,7 @@ Each step fails the attempt closed with a `runner-failed` completion:
 
 1. Startup heartbeat must be acknowledged before anything else, then the
    brief must be a `claw` brief for this run: an agent round with its message
-   and verified definition, or a legacy operation with its question.
+   and verified definition.
 2. Fresh state directory with a writable copy of the pinned config.
 3. `openclaw config validate --json` must report `valid: true`.
    `agent exec` itself silently ignores unknown keys.
@@ -65,14 +61,13 @@ Each step fails the attempt closed with a `runner-failed` completion:
    every config-pinned turn fails with "Auth profile read requested an
    uncaptured shared owner"). If it changes anything but `meta`/`wizard`,
    the pinned config was not normalized and the attempt fails.
-5. `openclaw approvals set --file /claw/agent/approvals.json`.
+5. `openclaw approvals set --file /work/agent/approvals.json`.
 6. `openclaw agent exec --config … --state-dir … --message-file … --cwd … --json`
    under the outer deadline. OpenClaw's stderr is never forwarded, because it
    can echo resolved configuration.
 7. Settle: `report` only when the envelope is `ok`, has a final message and
    no `toolSummary.unresolvedError`. When the agent's manifest sets
-   `requireToolEvidence` (or the legacy operation is `investigate:v1`), at
-   least one tool call is also required. A tool call
+   `requireToolEvidence`, at least one tool call is also required. A tool call
    that failed and was resolved (a probe of a host that is down) is evidence,
    not a runner failure. `agent exec` exits 0 with `ok: true` even when every
    tool call was denied, so the exit code alone proves nothing.

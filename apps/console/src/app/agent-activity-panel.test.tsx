@@ -561,9 +561,11 @@ describe('Badges and FleetChip', () => {
         <PipelineBadge pipeline="inbox-summary" />
         <PipelineBadge pipeline="handoff-summary" />
         <PipelineBadge pipeline="claw-investigator" />
+        <PipelineBadge pipeline="claw-default" />
       </MantineProvider>,
     );
     expect(screen.getByText('claw investigator')).toBeTruthy();
+    expect(screen.getByText('claw default')).toBeTruthy();
     expect(screen.getByText('goose')).toBeTruthy();
     expect(screen.getByText('inbox summary')).toBeTruthy();
     expect(screen.getByText('handoff summary')).toBeTruthy();

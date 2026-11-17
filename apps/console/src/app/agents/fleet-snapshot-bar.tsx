@@ -1,4 +1,4 @@
-import { STORED_PIPELINES } from '@agent-lcars/work';
+import { STORED_PIPELINES, type StoredPipeline } from '@agent-lcars/work';
 import { VisuallyHidden } from '@mantine/core';
 import type { ReactNode } from 'react';
 
@@ -56,10 +56,18 @@ export function FleetSnapshotBar({
   metrics?: ActivityMetrics;
 }) {
   const { liveRuns, fleet, queue } = activity;
-  const livePipelines = STORED_PIPELINES.map((pipeline) => ({
-    pipeline,
-    count: liveRuns.filter((run) => run.pipeline === pipeline).length,
-  })).filter(({ count }) => count > 0);
+  // Fixed pipelines in their declared order, then each live claw runtime.
+  const livePipelines = [
+    ...new Set<StoredPipeline>([
+      ...STORED_PIPELINES,
+      ...liveRuns.map((run) => run.pipeline),
+    ]),
+  ]
+    .map((pipeline) => ({
+      pipeline,
+      count: liveRuns.filter((run) => run.pipeline === pipeline).length,
+    }))
+    .filter(({ count }) => count > 0);
 
   return (
     <div data-testid="fleet-snapshot-bar" className="agents-fleet-strip">

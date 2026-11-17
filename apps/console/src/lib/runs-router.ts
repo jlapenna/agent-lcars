@@ -2,7 +2,6 @@ import 'server-only';
 
 import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
-  clawInvestigateInputSchema,
   formatAttemptId,
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
@@ -796,7 +795,7 @@ export const runsRouter = os.router({
       });
     }
     const { spec } = parsed.data;
-    if (claw !== undefined && 'agent' in claw) {
+    if (claw !== undefined) {
       // A repository-owned agent: the round pins the definition and message;
       // the brief carries the pinned files read back from GitHub.
       const workId = run.task.workId;
@@ -826,35 +825,6 @@ export const runsRouter = os.router({
         ...shared,
         mode: 'claw' as const,
         claw: agent,
-      };
-    }
-    if (claw !== undefined) {
-      // The question exists only in the executing round's revision input:
-      // the immutable spec carries none, so the brief never holds two.
-      const { operation, ...operationInput } = run.sourceRevision?.input ?? {};
-      const input = clawInvestigateInputSchema.safeParse(operationInput);
-      if (!input.success || operation !== claw.operation) {
-        logger.error('agent-lcars: claw run has no valid operation input', {
-          runId: run.runId,
-          workId: run.task.workId,
-        });
-        throw new ORPCError('INTERNAL_SERVER_ERROR', {
-          message: 'run has corrupted Work',
-        });
-      }
-      return {
-        id: run.task.workId,
-        spec: claw,
-        anchor: {
-          type: 'work' as const,
-          id: run.task.workId,
-          title: claw.title,
-          body: input.data.question,
-          html_url: `${consoleUrl()}/work/${run.task.workId}`,
-        },
-        ...shared,
-        mode: 'claw' as const,
-        claw: { operation: claw.operation, input: input.data },
       };
     }
     const target = anchorTarget(run, task.task);

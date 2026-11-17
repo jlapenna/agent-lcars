@@ -32,7 +32,6 @@ describe('itemsContract', () => {
   it('declares item and maintenance procedures', () => {
     expect(Object.keys(itemsContract).sort()).toEqual([
       'admitAgentRun',
-      'admitClawInvestigation',
       'anchorOwner',
       'cancel',
       'create',
@@ -485,12 +484,20 @@ describe('runsContract.brief resume field', () => {
 describe('runsContract.brief claw branch', () => {
   const workId = '01J5Z3K9QX8F0N2B4V6C8D1E3G';
   const spec = {
-    title: 'Investigate: why?',
+    title: 'Agent jlapenna/homelab/investigator',
     description: 'why?',
     pipeline: 'claw-investigator',
     priority: 'background',
-    operation: 'investigate:v1',
+    agent: 'jlapenna/homelab/investigator',
     sourceKey: 'adhoc:x',
+  };
+  const agentBrief = {
+    agent: 'jlapenna/homelab/investigator',
+    revision: 'a'.repeat(40),
+    digest: 'b'.repeat(64),
+    requireToolEvidence: true,
+    message: 'why?',
+    files: [],
   };
   const brief = {
     id: workId,
@@ -512,11 +519,20 @@ describe('runsContract.brief claw branch', () => {
     attemptId: `g1:work:${workId}/r1`,
     generation: 1,
     intentId: `work:${workId}/r1`,
-    claw: { operation: 'investigate:v1', input: { question: 'why?' } },
+    claw: agentBrief,
   };
 
-  it('carries the operation input and no repository', () => {
+  it('carries the agent brief and no repository', () => {
     expect(runBriefSchema.parse(brief)).toEqual(brief);
+  });
+
+  it('refuses the retired operation brief', () => {
+    expect(
+      runBriefSchema.safeParse({
+        ...brief,
+        claw: { operation: 'investigate:v1', input: { question: 'why?' } },
+      }).success,
+    ).toBe(false);
   });
 
   it('refuses a claw brief whose spec carries a question', () => {
@@ -528,7 +544,7 @@ describe('runsContract.brief claw branch', () => {
     ).toBe(false);
   });
 
-  it('refuses a claw brief without its operation or with another mode', () => {
+  it('refuses a claw brief without its agent brief or with another mode', () => {
     const { claw: _claw, ...withoutClaw } = brief;
     expect(runBriefSchema.safeParse(withoutClaw).success).toBe(false);
     expect(
@@ -636,7 +652,6 @@ describe('generateWorkOpenApi', () => {
       [
         '/anchors/github/owner',
         '/claw/agents/{owner}/{repo}/{name}/runs',
-        '/claw/investigations',
         '/dispatches/github',
         '/dispatches/github/redispatch',
         '/issues',
@@ -769,7 +784,6 @@ describe('generateWorkOpenApi', () => {
       'POST /issues/dispatch': ['200', '400', '403', '404', '409'],
       'PATCH /items/{id}': ['200', '404', '409'],
       'POST /items/{id}/cancel': ['200', '403', '404', '409'],
-      'POST /claw/investigations': ['202', '403', '409'],
       'POST /claw/agents/{owner}/{repo}/{name}/runs': [
         '202',
         '403',
