@@ -1,0 +1,4 @@
+description: >-
+  Canary for the default profile: no tools and no credential beyond a model
+  key. It answers its message in one short reply, proving that a
+  repository-owned agent with no profile runs end to end.

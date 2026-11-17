@@ -158,6 +158,7 @@ agent round admitted through the generic route.
    investigator Secret), and an operator adds profile `homelab-ops` for
    `jlapenna/homelab`.
 2. The shared executor gains runtime `claw-default` with a model key only.
+   `.lcars/agents/smoke/` in this repository is its canary (done).
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
