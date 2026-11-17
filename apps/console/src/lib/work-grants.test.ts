@@ -326,11 +326,11 @@ describe('claw runtime grants', () => {
     ]);
   });
 
-  it('commits a zone executor grant that claims only claw-investigator', () => {
+  it('commits a zone executor grant that claims only claw runtimes', () => {
     const zone = committedGrants().find(
       (grant) => grant.principal === 'svc:claw-homelab-ops',
     );
-    expect(zone?.pipelines).toEqual(['claw-investigator']);
+    expect(zone?.pipelines).toEqual(['claw-investigator', 'claw-default']);
     expect(zone?.scopes).toEqual(['work.executor']);
   });
 
@@ -340,6 +340,7 @@ describe('claw runtime grants', () => {
     );
     expect(shared?.scopes).toContain('work.executor');
     expect(shared?.pipelines).not.toContain('claw-investigator');
+    expect(shared?.pipelines).not.toContain('claw-default');
 
     const store = new MemoryStore();
     const now = '2026-11-14T10:00:00.000Z';

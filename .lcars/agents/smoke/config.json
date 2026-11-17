@@ -1,0 +1,89 @@
+{
+  "plugins": {
+    "entries": {
+      "litellm": {
+        "enabled": true
+      }
+    }
+  },
+  "models": {
+    "providers": {
+      "litellm": {
+        "baseUrl": "https://llm.jlapenna.net",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "LITELLM_API_KEY"
+        },
+        "auth": "api-key",
+        "api": "openai-completions",
+        "timeoutSeconds": 600,
+        "request": {
+          "allowPrivateNetwork": true
+        },
+        "models": [
+          {
+            "id": "default",
+            "name": "Spark Default (local Sparks)",
+            "reasoning": true,
+            "input": ["text", "image"],
+            "thinkingLevelMap": {
+              "off": "none",
+              "minimal": null,
+              "low": "low",
+              "medium": "medium",
+              "high": null,
+              "xhigh": "xhigh",
+              "max": null
+            },
+            "compat": {
+              "supportsTools": true,
+              "thinkingFormat": "openai",
+              "supportsReasoningEffort": true,
+              "supportedReasoningEfforts": ["none", "low", "medium", "xhigh"],
+              "reasoningEffortMap": {
+                "off": "none",
+                "low": "low",
+                "medium": "medium",
+                "xhigh": "xhigh"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "litellm/default"
+      },
+      "skills": []
+    },
+    "entries": {
+      "main": {}
+    }
+  },
+  "tools": {
+    "profile": "minimal",
+    "deny": [
+      "apply_patch",
+      "browser",
+      "cron",
+      "exec",
+      "gateway",
+      "group:fs",
+      "message",
+      "presence",
+      "process",
+      "session_status",
+      "sessions_send",
+      "sessions_spawn",
+      "web_fetch",
+      "web_search"
+    ],
+    "elevated": {
+      "enabled": false
+    }
+  }
+}
