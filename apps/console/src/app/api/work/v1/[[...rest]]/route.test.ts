@@ -192,6 +192,7 @@ describe('a work.reader-only principal (#2502)', () => {
     },
     recipeComplete: { result: {} },
     completeRun: { outcome: { ok: true, summary: 'done' } },
+    invokeRunAgent: { requestId: 'request-1', message: 'Why?' },
     persistRunCodexAuth: {
       generation: '1',
       restoredSha256: '0'.repeat(64),
@@ -218,6 +219,10 @@ describe('a work.reader-only principal (#2502)', () => {
       operationId: operation.operationId,
       path: template
         .replace('{id}', '01J5Z3K9QX8F0N2B4V6C8D1E3G')
+        .replace('{workId}', '01J5Z3K9QX8F0N2B4V6C8D1E3H')
+        .replace('{owner}', 'owner')
+        .replace('{repo}', 'repo')
+        .replace('{name}', 'agent')
         .replace(
           '{runId}',
           encodeURIComponent('work:01J5Z3K9QX8F0N2B4V6C8D1E3G/r1'),
