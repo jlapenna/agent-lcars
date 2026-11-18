@@ -3,8 +3,11 @@
 When an authenticated run completion reports `park` with a nonblank final
 message, the completion transaction enqueues an `admit-handoff-summary` outbox
 entry. Its drain admits one durable `handoff-summary` Work item for that run,
-keyed by the run and the SHA-256 of its message, so a retried delivery never
-mints a second summary. That Work's result holds 2–3 short actions
+keyed by the run and the SHA-256 of its stored inline message, so a retried
+delivery never mints a second summary. The model receives that same stored
+message: for an overflowed handoff it is a head-and-tail preview, so its digest
+differs from the full message's, and actions in the omitted middle are not
+available to the summary. That Work's result holds 2–3 short actions
 (`humanNeededActions`); the parked run's original result is never rewritten.
 Commands sort first and must be exact excerpts from the handoff. The summary is
 a reading aid, never an authorization or an executable action.
