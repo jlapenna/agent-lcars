@@ -180,7 +180,9 @@ The core promises:
     has another page also suppresses triage, even when the first page holds
     no match.
   - Linear (`lib/linear-triage-source.ts`): one of the team's configured bug
-    label IDs; none of the team's configured routing label IDs; and no open
+    label IDs; none of the team's configured provider dispatch label IDs
+    (`config.routes`; a repository-selection label only resolves the target
+    and can make a shared-team issue eligible); and no open
     PR in the target repository attached to the issue. Any attached open PR
     in the target repository suppresses triage, with or without a closing
     reference; an attached PR in another repository is ignored.
@@ -546,8 +548,11 @@ executor is working an issue; a human assignee owns it regardless.
 
   Before launching a coding provider, the runner binds Hindsight
   coding-agent memory (`runtime/hindsight-bootstrap.sh`, #3261, #3280). It
-  enables memory when a Hindsight API token is mounted or supplied in
-  `HINDSIGHT_API_TOKEN`, unless `HINDSIGHT_DISABLED` is `true` or `1`. The
+  enables memory when it finds a Hindsight API token, unless
+  `HINDSIGHT_DISABLED` is `true` or `1`. A readable mounted token file takes
+  precedence: it consults `HINDSIGHT_API_TOKEN` only when that file is absent
+  or unreadable, so a readable empty or newline-only file disables memory
+  (`reason=no-token`) even with a usable environment token. The
   bank defaults to the per-repository `agent-lcars::<repo>` and can be
   overridden with `HINDSIGHT_BANK_ID`. Otherwise it writes a disabled config.
   Each coding run logs exactly one `hindsight: enabled bank=…` or
