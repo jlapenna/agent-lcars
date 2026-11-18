@@ -174,15 +174,20 @@ Shared URL state:
     (`app/refresh-action.ts`) use the same admin gate.
   - Work, schedule, and issue-source server actions (`app/work/actions.ts`,
     `app/work/schedules/actions.ts`, `app/work/issues/actions.ts`) call the
-    Work router in-process and are authorized by the caller's resolved Work
-    grant, not by admin status alone.
+    Work router in-process, not over HTTP, and are authorized by the caller's
+    resolved Work grant, not by admin status alone. The Work API's REST
+    routes expose the same operations to other callers.
   - Jobs and credentials have no server actions. `jobs-panel.tsx`,
     `job-detail.tsx`, and `credentials-panel.tsx` call the Work API from the
     browser with the session cookie (`jobsApi` posts to
     `/api/work/v1/jobs/refresh`, `/jobs/{id}/enable`, and `/jobs/{id}/invoke`;
     the credentials panel uses `/api/work/v1/credentials/*`), so the Work
     API's grant checks (`work.operator` for `goose`, or `secrets.admin`) apply
-    unchanged. A 401 sends the browser back to `/login`.
+    unchanged. When the session has lapsed, `jobsApi` receives a 401 and
+    sends the browser back to `/login`. The credentials routes answer a
+    missing or insufficient principal with 403 (`lib/job-secrets-http.ts`),
+    so the credentials panel shows its "Credential operation refused" error
+    in place instead of redirecting.
 - **FE-AUTH-4 [Shipped]** Work API authorization is separate from admin
   status. The session's `github:<login>` is mapped to a principal and scopes
   through `AGENT_LCARS_WORK_GRANTS`. Grantable scopes
@@ -315,10 +320,13 @@ the work that has stopped, and the work in flight.
   - Recent outcomes, headed by "N merged · 24h": pull requests merged in the
     last day across the watched repositories (or the page's repository
     scope), counted from GitHub itself (`app/merged-last-day.tsx`,
-    `lib/merged-pulls.ts`). The count streams in after the page, is cached
-    for five minutes, reads `N+` when a repository could not be read or
-    merged more than one 100-PR page, and is unavailable, never zero, when no
-    repository answers within 5 seconds.
+    `lib/merged-pulls.ts`). The count streams in after the page and is
+    cached for five minutes. One 5-second deadline covers the whole count
+    across repositories, so a single stalled repository makes the figure
+    unavailable (never zero) even when others answered; it is also
+    unavailable when no repository could be read. `N+` means the count
+    finished but is a lower bound: some repository read failed, or a
+    repository's 100-PR page may have been truncated inside the window.
   - Active CLI sessions.
   - A fleet chip showing online/running GitHub Actions runners from
     fresh ARC lane records separately from direct-executor readiness
@@ -735,13 +743,17 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   50 per page with "Next issues →") without live tracker reads on page load.
   Each row shows the identifier and title (linked to the tracker), tracker,
   repository, state, and assignees. A row already bound to Work links
-  **Open Work →**; otherwise an operator chooses a **Target repository**
-  (Linear rows offer the repositories routed for the issue's team) and an
-  **Issue agent** from the grant's pipelines, then **Run**. Run calls the
-  `dispatchSource` server action, which sends `{issue, repo, pipeline,
-requestId}` to `POST /api/work/v1/issues/dispatch`; the request ID is
-  reused while the selection is unchanged. There is no priority control.
-  The toolbar's **Refresh issues** (`POST /api/work/v1/issues/refresh`,
+  **Open Work →**; otherwise an operator chooses an **Issue agent** from the
+  grant's pipelines and presses **Run**. Run targets the source's stored
+  repository when it has one; only a source with no stored target shows a
+  **Target repository** selector (Linear sources offer the repositories
+  routed for the issue's team). Run and Refresh issues are server actions
+  (`app/work/issues/actions.ts`) that call the Work router in-process
+  (FE-AUTH-3); `POST /api/work/v1/issues/dispatch` and `/issues/refresh` expose
+  the same operations over REST. Run's `dispatchSource` passes `{issue,
+repo, pipeline, requestId}`, reusing the request ID while the selection is
+  unchanged. There is no priority control.
+  The toolbar's **Refresh issues** (`refreshSources`,
   `{tracker, teamId?, cursor?}`) re-reads one bounded page live: for GitHub,
   50 stored open anchor projections; for Linear, one page of the selected
   team, chosen with a **Linear team** selector when more than one team is
