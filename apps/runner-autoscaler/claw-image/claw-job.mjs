@@ -13,8 +13,9 @@
 //   1. Acknowledged startup heartbeat, then the brief.
 //   2. Fresh state: writable config copy, OPENCLAW_STATE_DIR/CONFIG_PATH.
 //   3. `openclaw config validate --json` must report valid.
-//   4. `openclaw doctor --fix --non-interactive`; it must not change the
-//      pinned config beyond its own `meta`/`wizard` stamps.
+//   4. `openclaw doctor --fix --non-interactive` normalizes the copy for this
+//      image. It may only narrow the agent (doctorChanges); any other change
+//      fails the attempt, naming the changed settings.
 //   5. `openclaw approvals set --file` seeds the enforcing exec approvals.
 //   6. `openclaw agent exec --json` under the outer turn deadline.
 //   7. Settle: a report only when the envelope is ok, has a final message and
@@ -83,10 +84,75 @@ export function workClient(env, { signal, fetchImpl = fetch } = {}) {
 }
 
 // Strip OpenClaw's own bookkeeping so the pinned config can be compared with
-// what Doctor leaves behind. Anything else Doctor changes fails the attempt.
+// what Doctor leaves behind.
 export function comparableConfig(config) {
   const { meta: _meta, wizard: _wizard, ...rest } = config;
   return JSON.stringify(sortKeys(rest));
+}
+
+// An agent's config.json is a source config, not a per-image artifact: the
+// launcher runs Doctor's normalization for the image it is actually in. That
+// normalization depends on the image, but it may only narrow the agent:
+//   - disable a bundled skill (`skills.entries.<name>.enabled: false`), which
+//     Doctor does for skills whose binaries the image lacks;
+//   - enable the plugin of a model provider the config already declares
+//     (`plugins.entries.<provider>.enabled: true`);
+//   - add an empty agent entry (`agents.entries.<name>: {}`), an agent with
+//     no overrides of the config's defaults.
+// Returns the dotted paths of every other change (OpenClaw's `meta`/`wizard`
+// stamps aside); any such change fails the attempt.
+export function doctorChanges(source, after) {
+  const providers = new Set(Object.keys(source?.models?.providers ?? {}));
+  const before = leaves(JSON.parse(comparableConfig(source)));
+  const normalized = leaves(JSON.parse(comparableConfig(after)));
+  const refused = [];
+  for (const path of new Set([...before.keys(), ...normalized.keys()])) {
+    const was = before.get(path);
+    const now = normalized.get(path);
+    if (was === now) continue;
+    const [root, entries, name, field, ...rest] = path.split('\u0000');
+    const entry =
+      root !== undefined &&
+      entries === 'entries' &&
+      field === 'enabled' &&
+      rest.length === 0;
+    if (entry && root === 'skills' && now === 'false') continue;
+    if (
+      entry &&
+      root === 'plugins' &&
+      now === 'true' &&
+      was === undefined &&
+      providers.has(name)
+    )
+      continue;
+    if (
+      root === 'agents' &&
+      entries === 'entries' &&
+      field === undefined &&
+      was === undefined &&
+      now === '{}'
+    )
+      continue;
+    refused.push(path.split('\u0000').join('.'));
+  }
+  return refused.sort();
+}
+
+// Leaf values by path (segments joined with NUL, which no key holds in
+// practice); arrays and empty objects are leaves.
+function leaves(value, prefix = [], out = new Map()) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0
+  ) {
+    for (const [key, child] of Object.entries(value))
+      leaves(child, [...prefix, key], out);
+  } else {
+    out.set(prefix.join('\u0000'), JSON.stringify(value));
+  }
+  return out;
 }
 
 function sortKeys(value) {
@@ -417,10 +483,15 @@ export async function prepareState({
   });
   if (doctor.code !== 0 || doctor.timedOut)
     throw new ClawFailure(`openclaw doctor exited ${doctor.code}`);
-  const after = JSON.parse(await readFile(configPath, 'utf8'));
-  if (comparableConfig(after) !== comparableConfig(pinned))
+  // The agent runs Doctor's normalized copy; the verified source stays
+  // untouched under the locked agent directory.
+  const refused = doctorChanges(
+    pinned,
+    JSON.parse(await readFile(configPath, 'utf8')),
+  );
+  if (refused.length > 0)
     throw new ClawFailure(
-      'openclaw doctor changed the pinned config; pin the Doctor-normalized config',
+      `openclaw doctor would change this agent's config.json on this image beyond narrowing it: ${refused.join(', ')}`,
     );
 
   const approvals = await run(

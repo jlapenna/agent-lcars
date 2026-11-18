@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import {
   agentDigest,
   comparableConfig,
+  doctorChanges,
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
@@ -89,6 +90,7 @@ if (args[0] === 'doctor') {
   config.meta = { lastTouchedVersion: 'fake' };
   config.wizard = { lastRunAt: new Date().toISOString() };
   if (behaviour.FAKE_DOCTOR_WIDENS === '1') config.tools = { profile: 'coding' };
+  if (behaviour.FAKE_DOCTOR_NARROWS === '1') config.skills = { entries: { gog: { enabled: false } } };
   fs.writeFileSync(path, JSON.stringify(config));
   process.exit(0);
 }
@@ -208,15 +210,82 @@ test('an invalid pinned config fails closed before the turn', async () => {
   assert.ok(!log.includes('"exec"'));
 });
 
-test('a Doctor change beyond its own stamps fails closed', async () => {
+test('a Doctor change that would widen the agent fails closed, naming it', async () => {
   const { env, calls, fetchImpl } = await fixture({
     env: { FAKE_DOCTOR_WIDENS: '1' },
   });
   const result = await main(env, { fetchImpl });
   assert.equal(result.outcome, 'runner-failed');
-  assert.match(result.message, /Doctor-normalized/);
+  assert.match(
+    result.message,
+    /beyond narrowing it: tools\.exec\.mode, tools\.profile\.$/,
+  );
   assert.ok(!(await readFile(env.FAKE_LOG, 'utf8')).includes('"exec"'));
   assert.deepEqual(completion(calls), result);
+});
+
+test("an un-normalized source config runs on Doctor's narrowed copy", async () => {
+  const { env, calls, fetchImpl } = await fixture({
+    env: { FAKE_DOCTOR_NARROWS: '1' },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.equal(result.outcome, 'report');
+  assert.deepEqual(completion(calls), result);
+  const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
+  assert.equal(JSON.parse(log.at(-1)).args[1], 'exec');
+});
+
+test("Doctor may only disable skills and enable declared providers' plugins", () => {
+  const source = {
+    models: { providers: { litellm: { baseUrl: 'https://llm.test' } } },
+    tools: { profile: 'minimal', deny: ['exec'] },
+    skills: { entries: { tmux: { enabled: true } } },
+  };
+  const narrowed = {
+    ...source,
+    meta: { lastTouchedVersion: 'x' },
+    wizard: { lastRunAt: 'now' },
+    plugins: { entries: { litellm: { enabled: true } } },
+    skills: { entries: { tmux: { enabled: false }, gog: { enabled: false } } },
+    agents: { entries: { main: {} } },
+  };
+  assert.deepEqual(doctorChanges(source, narrowed), []);
+  assert.deepEqual(
+    doctorChanges(source, {
+      ...narrowed,
+      plugins: {
+        entries: { litellm: { enabled: true }, browser: { enabled: true } },
+      },
+      skills: { entries: { tmux: { enabled: true }, gog: { enabled: true } } },
+      tools: { profile: 'minimal', deny: [] },
+      agents: { entries: { main: { tools: { profile: 'coding' } } } },
+      gateway: {},
+    }),
+    [
+      'agents.entries.main.tools.profile',
+      'gateway',
+      'plugins.entries.browser.enabled',
+      'skills.entries.gog.enabled',
+      'tools.deny',
+    ],
+  );
+  // A plugin the source disabled stays disabled; Doctor removing settings is
+  // a change too.
+  const disabled = {
+    ...source,
+    plugins: { entries: { litellm: { enabled: false } } },
+  };
+  assert.deepEqual(
+    doctorChanges(disabled, {
+      ...disabled,
+      plugins: { entries: { litellm: { enabled: true } } },
+    }),
+    ['plugins.entries.litellm.enabled'],
+  );
+  assert.deepEqual(
+    doctorChanges(source, { models: source.models, skills: source.skills }),
+    ['tools.deny', 'tools.profile'],
+  );
 });
 
 test('a brief for another pipeline is refused', async () => {
