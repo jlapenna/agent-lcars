@@ -435,6 +435,9 @@ function interpretPullRequestEvent(
       body: pullRequest.body,
       actor: sender.login,
       labels,
+      requestedPipeline: labels
+        .map((item) => REVIEW_LABELS.get(item.name))
+        .find((pipeline) => pipeline !== undefined),
       userLogin: pullRequest.user.login,
       headRef: pullRequest.head?.ref,
     });
