@@ -23,7 +23,9 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -164,9 +166,13 @@ export async function resolveCommand(command, path = '') {
     if (!dir) continue;
     const candidate = join(dir, command);
     try {
-      if ((await stat(candidate)).isFile()) return candidate;
+      // As execvp does: the first regular, executable file on PATH.
+      if ((await stat(candidate)).isFile()) {
+        await access(candidate, constants.X_OK);
+        return candidate;
+      }
     } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+      if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes(error.code)) throw error;
     }
   }
   throw new ClawFailure(`OpenClaw executable not found on PATH: ${command}`);

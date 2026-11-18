@@ -296,8 +296,13 @@ test('a bare OpenClaw command resolves through PATH', async () => {
   const bin = join(root, 'bin');
   await mkdir(bin);
   await writeFile(join(bin, 'openclaw'), '');
+  await chmod(join(bin, 'openclaw'), 0o755);
+  // A non-executable file earlier on PATH is skipped, as spawn skips it.
+  const shadow = join(root, 'shadow');
+  await mkdir(shadow);
+  await writeFile(join(shadow, 'openclaw'), '');
   assert.equal(
-    await resolveCommand('openclaw', `/nonexistent:${bin}`),
+    await resolveCommand('openclaw', `/nonexistent:${shadow}:${bin}`),
     join(bin, 'openclaw'),
   );
   assert.equal(await resolveCommand('/abs/openclaw', ''), '/abs/openclaw');
