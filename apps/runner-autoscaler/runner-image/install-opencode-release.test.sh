@@ -42,8 +42,8 @@ assert_release arm64 opencode-linux-arm64.tar.gz \
 pinned_version="$(tr -d '\r\n' < "$here/opencode-version")"
 select_opencode_release "$pinned_version" amd64 >/dev/null
 select_opencode_release "$pinned_version" arm64 >/dev/null
-[[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 88080384 ]] ||
-  fail_test 'OpenCode archive size cap is no longer the reviewed 84 MiB bound'
+[[ "$OPENCODE_MAX_ARCHIVE_BYTES" -eq 134217728 ]] ||
+  fail_test 'OpenCode archive size cap is no longer the reviewed 128 MiB bound'
 [[ "$OPENCODE_RETRY_MAX_SECONDS" -eq 570 && "$OPENCODE_DOWNLOAD_BUDGET_SECONDS" -eq 600 ]] ||
   fail_test 'OpenCode retry/download budgets are no longer bounded to the install window'
 grep -Fq -- '--max-filesize "$OPENCODE_MAX_ARCHIVE_BYTES"' "$here/install-opencode-release.sh" ||

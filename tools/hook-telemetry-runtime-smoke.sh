@@ -40,8 +40,12 @@ cp agents/opencode/opencode.json agents/opencode/instructions.md \
 # assertions. A future image-pin update must not require its new image before
 # source CI can pass. Image publication still checks the source tooling pin.
 cp apps/runner-autoscaler/runner-image/{hook-telemetry.test.sh,hook-telemetry-assertions.sh,opencode-continuation.test.sh,opencode-continuation.test.py,drain-hook-test-clients.py} "$lib_dir/"
-node -p 'require(process.argv[1]).version' \
-  "$opencode_config/node_modules/@opencode-ai/plugin/package.json" > "$lib_dir/opencode-version"
+# OpenCode 2 images bake `@opencode/plugin`; OpenCode 1 images baked
+# `@opencode-ai/plugin`. Source CI runs on whichever image is current.
+opencode_sdk="$opencode_config/node_modules/@opencode/plugin/package.json"
+[ -f "$opencode_sdk" ] ||
+  opencode_sdk="$opencode_config/node_modules/@opencode-ai/plugin/package.json"
+node -p 'require(process.argv[1]).version' "$opencode_sdk" > "$lib_dir/opencode-version"
 
 HOOK_TEST_LIB_DIR="$lib_dir" HOOK_TEST_OPENCODE_CONFIG_DIR="$opencode_config" \
   bash "$lib_dir/hook-telemetry.test.sh"

@@ -2,7 +2,7 @@
 # Build gate for the baked OpenCode store (#2040, #2071), run in the layer
 # after prepare-opencode-store.sh so the store is a cold lower-layer file.
 #
-# Locking boundary: OpenCode v1.19.5 opens SQLite and executes
+# Locking boundary (measured on v1.19.5): OpenCode opens SQLite and executes
 # `PRAGMA journal_mode = WAL` before it sets `busy_timeout`, so that first
 # statement fails immediately with `database is locked` on any contention.
 # When no other connection holds the store, two OpenCode processes contend:
@@ -44,8 +44,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --pure still resolves global config file references, including the
-# production API-key mount that is absent during a build.
+# OpenCode 2 has no --pure mode and still resolves global config file
+# references, including the production API-key mount that is absent during a
+# build. --standalone keeps each reader on a private server instead of the
+# persistent background service.
 export XDG_CONFIG_HOME="$scratch/config"
 unset OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG_DIR
 export OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=true
@@ -53,14 +55,14 @@ export OPENCODE_DISABLE_AUTOUPDATE=true OPENCODE_DISABLE_MODELS_FETCH=true
 [ -f "$db" ] || fail "baked store is missing: $db"
 
 assert_empty_listing() {
-  # The pinned CLI emits no bytes for an empty result.
+  # OpenCode 1 emitted no bytes for an empty result; OpenCode 2 prints `[]`.
   if [ -s "$1" ]; then
     jq -e 'type == "array" and length == 0' "$1" >/dev/null ||
       fail "reader returned sessions or malformed output: $1"
   fi
 }
 
-"$opencode_bin" --pure session list --format json >"$scratch/cold.json" ||
+"$opencode_bin" session list --standalone --format json >"$scratch/cold.json" ||
   fail 'cold OpenCode reader failed against the baked store'
 assert_empty_listing "$scratch/cold.json"
 
@@ -72,7 +74,7 @@ import sys
 db = sqlite3.connect(sys.argv[1], timeout=60, isolation_level=None)
 if db.execute('PRAGMA journal_mode').fetchone()[0] != 'wal':
     raise SystemExit('baked OpenCode store is not in WAL mode')
-if db.execute('SELECT count(*) FROM session').fetchone()[0] != 0:
+if db.execute('SELECT count(*) FROM session_v2').fetchone()[0] != 0:
     raise SystemExit('baked OpenCode store must contain no sessions')
 print('ready', flush=True)
 sys.stdin.read()
@@ -88,7 +90,7 @@ read -r -t "$ready_timeout_seconds" -u "$holder_out" holder_state ||
 
 pids=()
 for reader in $(seq "$readers"); do
-  "$opencode_bin" --pure session list --format json >"$scratch/reader-$reader.json" &
+  "$opencode_bin" session list --standalone --format json >"$scratch/reader-$reader.json" &
   pids+=("$!")
 done
 failed=0

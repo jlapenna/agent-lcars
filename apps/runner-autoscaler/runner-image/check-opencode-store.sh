@@ -13,6 +13,6 @@ import sys
 from pathlib import Path
 path = Path(sys.argv[1])
 with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
-    if db.execute('SELECT count(*) FROM session').fetchone()[0] != 0:
+    if db.execute('SELECT count(*) FROM session_v2').fetchone()[0] != 0:
         raise SystemExit('Baked OpenCode store must contain no sessions')
 PY
