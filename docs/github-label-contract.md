@@ -1,10 +1,12 @@
 # GitHub label contract
 
-Agent LCARS owns the canonical label manifest for Agent LCARS, Sprinkles, and
-Homelab in [`config/github-labels.json`](../config/github-labels.json). Labels
-are GitHub-facing intent and classification metadata. Agent LCARS Work
-Tasks/Runs own execution state; GitHub comments, assignees, and pull-request
-state remain their respective artifact facts.
+Agent LCARS owns the canonical label manifest for every covered fleet
+repository in [`config/github-labels.json`](../config/github-labels.json); its
+`repositories` map is the authoritative list, and the
+`label-contract-audit.yml` matrix syncs each entry. Labels are GitHub-facing
+intent and classification metadata. Agent LCARS Work Tasks/Runs own execution
+state; GitHub comments, assignees, and pull-request state remain their
+respective artifact facts.
 
 ## Shared vocabulary
 
@@ -73,17 +75,27 @@ state remain their respective artifact facts.
 
 ## Repository profiles
 
-| Family            | Agent LCARS                              | Sprinkles                                                         | Homelab                                  |
-| ----------------- | ---------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- |
-| `type:*`          | All canonical types                      | All canonical types                                               | All canonical types                      |
-| `status:*`        | Ready, blocked, needs-human, post-deploy | Ready, blocked, needs-human, post-deploy                          | Ready, blocked, needs-human, post-deploy |
-| `agent:*`         | Claude, Codex, OpenCode, Antigravity     | Claude, Codex, OpenCode, Antigravity                              | Claude, Codex, OpenCode, Antigravity     |
-| `review:*`        | Claude, Codex, OpenCode, Antigravity     | Claude, Codex, OpenCode, Antigravity                              | Claude, Codex, OpenCode, Antigravity     |
-| `agent-option:*`  | Cross-repo                               | Cross-repo                                                        | Cross-repo                               |
-| Intake/provenance | Quick task, Renovate                     | Quick task, Renovate                                              | Quick task, Renovate                     |
-| Automation/CI     | None                                     | Heal, unstick PRs, visual refresh, functional/full E2E, snapshots | None                                     |
-| Apps              | Console, telemetry, runner autoscaler    | Sprinkles, OneCake, Primes                                        | None                                     |
-| Planning          | `planning`                               | `planning`                                                        | `planning`                               |
+Each manifest entry follows one of four profiles:
+
+- **Standard** (Homelab and most member repositories): the shared families
+  below and no `automation:*`, `ci:*`, or `app:*` labels.
+- **Agent LCARS**: Standard plus its own `app:*` labels.
+- **Sprinkles**: Standard plus its automation/CI controls and `app:*` labels.
+- **Empty**: an entry with no declared labels and empty
+  `migrations`/`remove` lists (currently `dev`, `repo-tools`, and
+  `fleet-runtime`), so the sync changes nothing there.
+
+| Family            | Standard                                         | Agent LCARS                           | Sprinkles                                                         |
+| ----------------- | ------------------------------------------------ | ------------------------------------- | ----------------------------------------------------------------- |
+| `type:*`          | All canonical types                              | All canonical types                   | All canonical types                                               |
+| `status:*`        | Ready, blocked, needs-human, post-deploy, ledger | Same as Standard                      | Same as Standard                                                  |
+| `agent:*`         | Claude, Codex, OpenCode, Antigravity             | Same as Standard                      | Same as Standard                                                  |
+| `review:*`        | `review`; Claude, Codex, OpenCode, Antigravity   | Same as Standard                      | Same as Standard                                                  |
+| `agent-option:*`  | Cross-repo                                       | Cross-repo                            | Cross-repo                                                        |
+| Intake/provenance | Quick task, Renovate                             | Quick task, Renovate                  | Quick task, Renovate                                              |
+| Automation/CI     | None                                             | None                                  | Heal, unstick PRs, visual refresh, functional/full E2E, snapshots |
+| Apps              | None                                             | Console, telemetry, runner autoscaler | Sprinkles, OneCake, Primes                                        |
+| Planning          | `planning`                                       | `planning`                            | `planning`                                                        |
 
 Repository profiles deliberately share names without requiring every
 repository to install every label. Every watched repository uses the same

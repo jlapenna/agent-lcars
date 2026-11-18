@@ -3,7 +3,9 @@
 The R11 implementation supports explicit opt-in open-tab notifications and
 background Web Push, qualified in production on 2026-11-02 (#3001). It reuses the existing durable Inbox decisions,
 including native parks the current Work principal may answer. Web Push uses the existing authenticated schedule tick and browser push service;
-it does not send Slack, email or SMS.
+it does not send Slack, email or SMS. Settled native work started from a
+chat thread reports back through a separate channel, the
+[outbound outcome webhooks](#outbound-outcome-webhooks).
 
 ## Activate and unsubscribe
 
@@ -166,3 +168,39 @@ after a provider 404 or 410 is implemented but has no regression test yet.
 Browser API references: [service-worker display](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/showNotification),
 [explicit permission](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API),
 and [exclusive Web Locks](https://www.w3.org/TR/web-locks/).
+
+## Outbound outcome webhooks
+
+Separate from Inbox notifications, the Console POSTs a settled native item's
+outcome to the adapter that started it (`apps/console/src/lib/outcome-webhook.ts`).
+The outbox drain in `orchestrator-dispatch.ts` sends one when a run settles
+`finished`, `canceled` or `lost` and the item's origin carries a `thread`;
+a later `deliveryStage: "complete"` event follows a protected merge. The
+target is chosen by `origin.channel`, which comes from the caller's Work grant,
+never the request, so only a grant declaring that channel can route there.
+Linear is delivered natively ([linear.md](linear.md)) and needs no entry.
+
+`AGENT_LCARS_OUTCOME_WEBHOOKS` (set in `apps/console/apphosting.yaml`) is a
+JSON object keyed by channel:
+
+```json
+{
+  "<channel>": {
+    "url": "https://<adapter>/<path>",
+    "audience": "<id-token-audience>"
+  }
+}
+```
+
+Startup rejects invalid JSON or an entry without a non-empty `url` and
+`audience`; unset or empty means no outbound targets. Each POST carries a
+Google ID token minted by the Console runtime identity for `audience` in
+`Authorization`, `Content-Type: application/json`, and `Idempotency-Key`
+when the payload has an `eventId`. The receiver verifies that token and
+audience. The JSON body (`OutcomeWebhookPayload`) holds `itemId`, `runId`,
+`state`, `ok`, `parked`, `thread` (echoed for routing), and `consoleUrl`,
+plus optional `eventId`/`deliveryStage`, `message` (the run's final message,
+truncated at 16,384 characters with `messageTruncated: true`), `ref` (e.g. the
+PR URL), `providerFallback`, and `reroutedTo`. No transcript content is sent.
+A non-2xx response or transport error releases the outbox entry for retry
+with backoff, like a failed GitHub outcome comment.

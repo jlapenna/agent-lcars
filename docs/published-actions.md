@@ -17,6 +17,7 @@ their operating constraints.
 
 | Action                  | Purpose                                                                 |
 | ----------------------- | ----------------------------------------------------------------------- |
+| `setup-repo-checks`     | Install pinned native gitleaks or actionlint without Docker.            |
 | `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                       |
 | `assert-repo-vars`      | Report all missing required repository variables.                       |
 | `merge-live-base`       | Merge the live base into a PR head before validation.                   |
@@ -138,6 +139,9 @@ The internal `ci-log-stream` action makes the long `Full verification` jobs
 observable before GitHub publishes its completed log archive. On trusted fleet
 runners it tails the runner's already-secret-masked rotating page logs and
 pushes them directly to Loki; GitHub-hosted fork jobs cleanly no-op.
+The Loki push endpoint comes from the optional `CI_LOG_LOKI_URL` repository
+variable (`config/github-variables.json`); the action carries no default, so
+leaving it unset disables shipping.
 
 The Loki stream uses only low-cardinality labels:
 

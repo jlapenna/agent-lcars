@@ -18,6 +18,28 @@ sidecar are retired (hooks telemetry phase 3) and their code is deleted:
 any `node sidecar.cjs` invocation other than `runner <finalize|resume>`,
 including the retired `runner sidecar`, is a usage error.
 
+## `lcars` commands
+
+`src/session-title-cli.ts` dispatches these. A bad invocation prints usage,
+except `hook`, which logs to `hook.log` and always exits 0:
+
+- `lcars session title "<text>"` / `--clear` and `lcars session status
+"<text>"` / `--clear`: the declared title and the current-activity line
+  ([Session titles](#session-titles-issue-1212)).
+- `lcars session archive --consent <path>` / `--revoke`: consented transcript
+  snapshot ([Archived CLI transcripts](#archived-cli-transcripts)).
+- `lcars hook <claude|codex|opencode|agy> [--inline]` and `lcars hook flush`:
+  the hook client ([Hook client](#hook-client-lcars-hook)).
+- `lcars integration <install|uninstall|status> <claude|codex|opencode|agy|all>`:
+  installs or removes the runtime hook entries ([Host setup](#host-setup)).
+- `lcars work ...`: the Work API client (`create`, `status`, `list`,
+  `cancel`, `redispatch`, `reply`, `job`, `secrets`, `metrics`, `owner`,
+  `issue`, `issues`, `dispatch`, `source`). `WORK_CLI_USAGE` in
+  `src/lib/work-command.ts` is the full grammar; `work secrets` is
+  `src/lib/job-secrets-command.ts`.
+- `lcars investigate --request-id <key> (--question <text> | --question-file
+<path>) ...`: see `INVESTIGATE_CLI_USAGE` in `src/lib/investigate-command.ts`.
+
 ## QueueExecutor issue-agent telemetry paths
 
 CI issue-agent (`source: 'issue-agent'`) telemetry is provided by provider
@@ -212,16 +234,19 @@ and `lcars hook <runtime> --inline` posts synchronously for debugging.
 All via environment variables (see `src/lib/config.ts` and, for the hook
 client, `src/lib/hook/hook-config.ts`):
 
-| Variable                              | Default                                 | Purpose                                                                                                                                                                                                                   |
-| ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR` | `~/.claude/projects`                    | Runner finalize/resume default.                                                                                                                                                                                           |
-| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`  | `~/.codex/sessions`                     | Runner finalize/resume default.                                                                                                                                                                                           |
-| `AGENT_TELEMETRY_HOST`                | `os.hostname()`                         | Host label the hook client records on each session doc.                                                                                                                                                                   |
-| `AGENT_TELEMETRY_PROJECT_ID`          | —                                       | Firestore project id for the real store.                                                                                                                                                                                  |
-| `AGENT_TELEMETRY_DATABASE_ID`         | `(default)`                             | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                                                           |
-| `AGENT_TELEMETRY_WRITER_KEY_JSON`     | —                                       | Service-account key JSON for the real store's writer credentials.                                                                                                                                                         |
-| `FIRESTORE_EMULATOR_HOST`             | —                                       | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                                                             |
-| `SESSION_EXPIRY_BEARER`               | required (`bin/session-expiry.ts` only) | GitHub-Actions-OIDC bearer (`work.reaper` scope) the session-expiry script reads the work API with — see `work-session-expiry.yml`. `SESSION_EXPIRY_ITEM` names the closed item; empty clears expiry for every open item. |
+| Variable                                | Default                                 | Purpose                                                                                                                                                                                                                   |
+| --------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENT_TELEMETRY_CLAUDE_PROJECTS_DIR`   | `~/.claude/projects`                    | Runner finalize/resume default.                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_CODEX_SESSIONS_DIR`    | `~/.codex/sessions`                     | Runner finalize/resume default.                                                                                                                                                                                           |
+| `AGENT_TELEMETRY_ANTIGRAVITY_BRAIN_DIR` | `~/.gemini/antigravity-cli/brain`       | Runner finalize/resume default for Antigravity.                                                                                                                                                                           |
+| `LCARS_TELEMETRY_REPOS`                 | —                                       | Comma-separated repository patterns; overrides `repos` in `~/.config/agent-lcars/config.json` for the hook client.                                                                                                        |
+| `LCARS_TELEMETRY_WORKSPACES`            | —                                       | Comma-separated workspace roots; overrides `workspaces` in the same file.                                                                                                                                                 |
+| `AGENT_TELEMETRY_HOST`                  | `os.hostname()`                         | Host label the hook client records on each session doc.                                                                                                                                                                   |
+| `AGENT_TELEMETRY_PROJECT_ID`            | —                                       | Firestore project id for the real store.                                                                                                                                                                                  |
+| `AGENT_TELEMETRY_DATABASE_ID`           | `(default)`                             | Firestore database id within that project (`src/lib/store.ts`).                                                                                                                                                           |
+| `AGENT_TELEMETRY_WRITER_KEY_JSON`       | —                                       | Service-account key JSON for the real store's writer credentials.                                                                                                                                                         |
+| `FIRESTORE_EMULATOR_HOST`               | —                                       | If set, writes to the emulator instead (takes precedence over the two above).                                                                                                                                             |
+| `SESSION_EXPIRY_BEARER`                 | required (`bin/session-expiry.ts` only) | GitHub-Actions-OIDC bearer (`work.reaper` scope) the session-expiry script reads the work API with — see `work-session-expiry.yml`. `SESSION_EXPIRY_ITEM` names the closed item; empty clears expiry for every open item. |
 
 `runner finalize` picks its store in this order: the emulator when
 `FIRESTORE_EMULATOR_HOST` is set; the writer key JSON when both
