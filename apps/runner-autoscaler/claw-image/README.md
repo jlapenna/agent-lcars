@@ -108,7 +108,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    stop reason and an empty answer are `runner-failed`. So is a turn the
    harness itself reports as failed: Codex ends a turn its provider failed
    with `end_turn` and the error as message text, and tells only a client
-   that declares the session-failure extension, which the launcher does. When the agent's
+   that declares the session-failure extension, which the launcher does.
+   For such a client Codex also tags each message with its phase, and text
+   tagged `commentary` is never part of the answer, so a turn that ends
+   with commentary and no final answer is an empty one. When the agent's
    manifest sets `requireToolEvidence`, at least one tool call is also
    required.
 6. Every pinned `home/` file must still be its blob. The harness runs as the
@@ -244,7 +247,9 @@ streamed (`answerText`): the ending of the stream that equals the reply, or,
 for a reply recorded cut short, everything from where the recorded part
 first appears. The report is still the streamed text, never the recorded
 one. Where the reply cannot be placed, or the Gateway has no record of one,
-the stream is reported as it is. A run the Gateway recorded as ending
+the stream is reported as it is. Where a reply recorded cut short appears
+more than once in the stream, the answer's start cannot be told and the
+attempt fails. A run the Gateway recorded as ending
 `silent` or `empty` has no answer, whatever the agent said on the way, and
 fails as an empty result.
 

@@ -456,10 +456,14 @@ while the newer Console is still running, in this order:
    rounds of other agents already queued on it are claimed through that
    grant and would stall without it.
 
-   That fence is per runtime and per profile, not per agent. While it
-   stays, no other agent on the same runtime or profile can be admitted
-   either, and every agent without a profile shares `claw-default`. To keep
-   those agents running, disable only the incompatible one: delete its
+   That fence is not per agent, and its two parts reach differently. With
+   no `work.claw.admit` grant listing the runtime, nobody can admit a round
+   by grant for any agent on that runtime, whatever its profile, and every
+   agent without a profile shares `claw-default`. `runCallers` is per
+   profile: turning it off stops dispatched runs from invoking the agents of
+   that profile only, and a sibling profile on the same runtime whose flag
+   is on still admits them. To keep the other agents running, disable only
+   the incompatible one: delete its
    definition from the default branch, which stops its admission, check that
    its catalog row shows it disabled, and then restore the shared grant and
    `runCallers`.

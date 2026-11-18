@@ -94,7 +94,8 @@ const record = (entry) => fs.appendFileSync(behaviour.log, JSON.stringify(entry)
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\\n');
 const update = (sessionUpdate, fields) =>
   send({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate, ...fields } } });
-const say = (text, messageId) => update('agent_message_chunk', { ...(messageId ? { messageId } : {}), content: { type: 'text', text } });
+// A phase is how Codex's adapter tags a message as commentary or as the final answer.
+const say = (text, messageId, phase) => update('agent_message_chunk', { ...(messageId ? { messageId } : {}), content: { type: 'text', text }, ...(phase ? { _meta: { jetbrains: { air: { phase } } } } : {}) });
 // A provider failure as Codex's adapter reports it to a client that declared
 // the capability.
 const failureMeta = (failure) => ({ jetbrains: { air: { version: 1, sessionFailure: { id: 'f1', revision: 1, title: 'unexpected status 400 for sk-secret', actions: [], ...failure } } } });
@@ -162,7 +163,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       } else fs.writeFileSync(settings, '{"permissions":{"allow":["Bash"]}}');
     }
     for (const step of behaviour.steps ?? []) {
-      if (step.say) say(step.say, step.id);
+      if (step.say) say(step.say, step.id, step.phase);
       if (step.notice) update('notice', { severity: 'info', title: step.notice });
       if (step.failure) update('session_info_update', { _meta: failureMeta(step.failure) });
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
@@ -857,6 +858,16 @@ test('answerText finds the answer in what OpenClaw streamed', () => {
     answerText(`Looking.${answer}`, `${answer.slice(0, 4095)}…`),
     answer,
   );
+  // A recorded part that appears more than once, because the answer
+  // repeats a passage the agent had already shown, places nothing.
+  const table = `Evidence:${' row'.repeat(1500)}`;
+  assert.equal(
+    answerText(
+      `${table} Checking.${table} Verdict.`,
+      `${table.slice(0, 4095)}…`,
+    ),
+    undefined,
+  );
   // A reply that itself ends with the marker is still a whole reply.
   assert.equal(
     answerText('Hm.More to come…', 'More to come…'),
@@ -915,6 +926,24 @@ test('a config string that names a credential is resolved whole', () => {
     header('k', `$${KEY} ${template('ONLY_IN_GATEWAY')}`),
     `$${KEY} ${template('ONLY_IN_GATEWAY')}`,
   );
+});
+
+test('a long OpenClaw reply that repeats what the agent already showed is no report', async () => {
+  // The Gateway records a long reply cut short. When that part also appears
+  // in what the agent said before, where the answer begins cannot be told.
+  const table = `Evidence:${' row'.repeat(1500)}`;
+  const { env, deps } = await fixture({
+    acp: {
+      steps: [{ say: `${table} Checking.` }, { say: `${table} Verdict.` }],
+      terminalReply: `${table.slice(0, 4095)}…`,
+    },
+    brief: agentBrief(agentFiles, { requireToolEvidence: false }),
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message:
+      "Claw turn failed: OpenClaw's final reply could not be told from what preceded it.",
+  });
 });
 
 test("only the Gateway's own record of the session passes a turn", async () => {
@@ -2114,6 +2143,40 @@ test('a turn the harness reports as a provider failure is never a report', async
       ],
     }),
     { outcome: 'report', message: 'Disk at 41%.' },
+  );
+});
+
+test('text a harness tags as commentary is never the answer', async () => {
+  const outcome = async (steps) => {
+    const { env, deps } = await harnessFixture({ steps });
+    return main(env, deps);
+  };
+  const worked = [
+    tool('pending', { update: 'tool_call' }),
+    tool('completed'),
+    { say: 'Looking at the logs now.', id: 'm1', phase: 'commentary' },
+  ];
+  // Codex finishing a turn with a tool call and commentary but no final
+  // answer has not answered.
+  assert.deepEqual(await outcome(worked), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: empty result.',
+  });
+  // With an answer, the report is the answer alone.
+  assert.deepEqual(
+    await outcome([
+      ...worked,
+      { say: 'Done.', id: 'm2', phase: 'final_answer' },
+    ]),
+    { outcome: 'report', message: 'Done.' },
+  );
+  // Commentary after the answer does not replace it either.
+  assert.deepEqual(
+    await outcome([
+      { say: 'Done.', id: 'm1', phase: 'final_answer' },
+      { say: 'Wrapping up.', id: 'm2', phase: 'commentary' },
+    ]),
+    { outcome: 'report', message: 'Done.' },
   );
 });
 

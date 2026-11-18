@@ -127,6 +127,9 @@ function sessionFailure(meta) {
     ? failure.category
     : 'session';
 }
+// Message text a harness tags as commentary: what the agent says while it
+// works, as opposed to its final answer. Untagged text is the answer's.
+const isCommentary = (meta) => meta?.jetbrains?.air?.phase === 'commentary';
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
 // How long what an exited harness had already written gets to be read
@@ -415,7 +418,10 @@ export function acpTurn(
         // A new message replaces the one before it: the report is the agent's
         // last message, not a harness notice that preceded it. Text with no
         // message id after an identified message is a harness's own remark
-        // on the turn, never the answer.
+        // on the turn, never the answer. Nor is text the harness marks as
+        // said on the way to the answer (Codex does, for a client that
+        // declares the extension the session-failure reports come with).
+        if (isCommentary(update._meta)) return;
         if (update.messageId === undefined && messageId !== undefined) return;
         if (update.messageId !== messageId) startMessage(update.messageId);
         if (turn.final.length + update.content.text.length > MAX_MESSAGE_BYTES)

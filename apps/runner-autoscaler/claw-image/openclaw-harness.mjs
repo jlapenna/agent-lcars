@@ -1058,8 +1058,10 @@ async function terminalReply(openclaw, { env, runId, signal }) {
  * streams both as one message. The Gateway records the final reply by
  * itself: where the stream ends with it, the answer is that ending. A long
  * reply is recorded cut short with a marker; then the answer begins where
- * the recorded part first appears. A reply that cannot be placed leaves the
- * stream as it is. */
+ * the recorded part appears. A reply that cannot be placed leaves the
+ * stream as it is. A cut reply whose recorded part appears more than once
+ * (an answer that repeats a passage the agent had already shown) cannot be
+ * placed either way: that is `undefined`, and no report. */
 export function answerText(streamed, reply) {
   if (typeof reply !== 'string' || reply === '') return streamed;
   const body = streamed.trimEnd();
@@ -1067,8 +1069,11 @@ export function answerText(streamed, reply) {
   const head = reply.endsWith(REPLY_CUT_MARKER)
     ? reply.slice(0, -REPLY_CUT_MARKER.length)
     : '';
-  const at = head === '' ? -1 : streamed.indexOf(head);
-  return at > 0 ? streamed.slice(at) : streamed;
+  if (head === '') return streamed;
+  const at = streamed.indexOf(head);
+  if (at === -1) return streamed;
+  if (streamed.indexOf(head, at + 1) !== -1) return undefined;
+  return streamed.slice(at);
 }
 const REPLY_CUT_MARKER = '…';
 
@@ -1135,13 +1140,20 @@ export async function openclawHarness({
       } finally {
         await gateway.stop();
       }
+      // A turn the Gateway recorded as ending without a final answer has
+      // none, whatever the agent said on the way.
+      const final = !turn
+        ? undefined
+        : reply?.empty
+          ? ''
+          : answerText(turn.final, reply?.text);
       return {
-        refused: outcome.refused ?? (await verify()),
-        // A turn the Gateway recorded as ending without a final answer
-        // has none, whatever the agent said on the way.
-        ...(turn
-          ? { final: reply?.empty ? '' : answerText(turn.final, reply?.text) }
-          : {}),
+        refused:
+          outcome.refused ??
+          (turn && final === undefined
+            ? "OpenClaw's final reply could not be told from what preceded it"
+            : await verify()),
+        ...(final === undefined ? {} : { final }),
       };
     },
   };
