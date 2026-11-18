@@ -520,6 +520,13 @@ To go back, clear the flag first and pin the earlier image after. The Console
 is not involved either way: the brief, the round and the definition are the
 same with or without a harness container.
 
+Pinning a claw image whose launcher predates agent-lcars#3409 is not
+image-only for an agent with a source config, such as `smoke`: that launcher
+refuses any config Doctor would change, so the agent's rounds fail before the
+model runs. Before such a pin, fence admission and let affected rounds finish
+(steps 1 to 3 below), commit each such agent's config normalized for the
+rollback image, and restore admission only after the pin is live.
+
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
 
@@ -652,10 +659,11 @@ attempt. Before reverting a runtime's image digest:
   open: a production `lcars investigate` invocation that settles
   successfully, since the CLI uses the run-token routes and waits for the
   result.
-- **Open:** an agent with no profile, added by a repository PR alone, runs
-  end to end on k3s. The zone executor records `claw-default` runs exiting
-  `succeeded`, but that counter does not identify the agent; the check needs
-  a successful Work item or report for the `.lcars/agents/smoke/` canary.
+- **Met:** an agent with no profile, added by a repository PR alone, runs
+  end to end on k3s. The `.lcars/agents/smoke/` canary (#3406) finished on
+  runtime `claw-default` with a report as Work items
+  `01M7M0971YRED8SC4E08KD82Z9` (2026-11-17) and `01M7QNY66GRY4H71BYJ6QRV02J`
+  (2026-11-18, on the #3409 launcher).
 - **Partly met:** a manifest naming a profile that does not list its
   repository is refused. Admission refuses it with "Profile NAME does not
   admit REPOSITORY" (`apps/console/src/lib/repository-agent-runs.ts`), and
