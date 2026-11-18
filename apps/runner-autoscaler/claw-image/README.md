@@ -22,7 +22,8 @@ definition digest LCARS pinned at admission. The launcher writes the files to
 list hashes to the pinned digest; paths cannot leave that directory, and
 executable files keep their mode. The definition's `config.json`,
 `approvals.json` and `workspace/` (such as `AGENTS.md`) are read from there;
-`config.json` must be Doctor-normalized (below).
+`config.json` is a source config; the launcher normalizes it for this image
+(below).
 
 ## What a zone mounts
 
@@ -59,8 +60,9 @@ Each step fails the attempt closed with a `runner-failed` completion:
    `agent exec` itself silently ignores unknown keys.
 4. `openclaw doctor --fix --non-interactive` initializes state (without it
    every config-pinned turn fails with "Auth profile read requested an
-   uncaptured shared owner"). If it changes anything but `meta`/`wizard`,
-   the pinned config was not normalized and the attempt fails.
+   uncaptured shared owner") and normalizes the config copy for this image.
+   The turn runs on that copy without Doctor's skill toggles; any change
+   beyond the accepted ones fails the attempt and names the settings (below).
 5. `openclaw approvals set --file /work/agent/approvals.json`.
 6. `openclaw agent exec --config … --state-dir … --message-file … --cwd … --json`
    under the outer deadline. OpenClaw's stderr is never forwarded, because it
@@ -72,23 +74,41 @@ Each step fails the attempt closed with a `runner-failed` completion:
    not a runner failure. `agent exec` exits 0 with `ok: true` even when every
    tool call was denied, so the exit code alone proves nothing.
 
-## Normalize an agent config
+## Agent config normalization
 
-Doctor's normalization depends on the image (for example it disables bundled
-skills whose binaries are absent), so produce the pinned config with the
-exact image digest the zone will run:
+An agent's `config.json` is a source config: it does not have to match any
+particular image. Doctor's normalization depends on the image, so the launcher
+validates the source as written, runs Doctor on a copy inside the image that
+executes the turn, and builds the turn's config from the result
+(`doctorChanges` and `turnConfig` in `claw-job.mjs`). The verified definition
+under `/work/agent` is never modified, and the turn's workspace is staged
+from it only after Doctor runs, so Doctor's file repairs never reach the turn
+(even for a source that names that directory as its workspace).
 
-```sh
-docker run --rm --read-only --tmpfs /work:uid=1001 --tmpfs /tmp:uid=1001 \
-  -v "$PWD/config.json:/in.json:ro" --entrypoint sh <claw-runner@digest> -c '
-    mkdir -p /work/home /work/s && cp /in.json /work/s/c.json &&
-    OPENCLAW_STATE_DIR=/work/s OPENCLAW_CONFIG_PATH=/work/s/c.json \
-      "$OPENCLAW_BIN" doctor --fix --non-interactive >/dev/null 2>&1 &&
-    node -e "const c=require(\"/work/s/c.json\");delete c.meta;delete c.wizard;console.log(JSON.stringify(c,null,2))"' \
-  > config.normalized.json
-```
+The turn keeps only these Doctor changes:
 
-Re-run this whenever the zone adopts a new image digest.
+- enabling a plugin that owns a model provider the config declares
+  (`plugins.entries.<plugin>.enabled: true`, not one the config set).
+  Ownership comes from the image's bundled
+  `dist/extensions/*/openclaw.plugin.json` (`providers`,
+  `autoEnableWhenConfiguredProviders`), matched case-insensitively as OpenClaw
+  does, so `google-vertex` authorizes the `google` plugin and `LITELLM` the
+  `litellm` plugin;
+- adding an empty agent entry (`agents.entries.<name>: {}`).
+
+Skill toggles Doctor writes (`skills.entries.<name>.enabled`, for bundled
+skills whose binaries the image lacks) are discarded, not carried: Doctor
+judges readiness outside the turn's working directory, workspace and exec
+defaults, while OpenClaw already filters ineligible skills at load time in the
+turn itself. The turn runs with the source's own `skills` settings.
+
+Any other change, apart from OpenClaw's `meta`/`wizard` stamps, fails the
+attempt with `runner-failed` naming the changed settings, for example
+`tools.profile`. Write the config's authority (tools, exec, approvals,
+providers) explicitly so Doctor has nothing else to fill in; a multi-agent
+roster (`agents.ownership: "explicit"`), for example, sets
+`agents.defaults.heartbeat.agentId` and `agents.defaults.systemAgent.agentId`
+itself. A config already normalized for some image remains valid.
 
 ## Test
 

@@ -146,7 +146,7 @@
       ]
     },
     {
-      "description": "The claw runner image pins the approved OpenClaw distribution (apps/runner-autoscaler/claw-image). An OpenClaw upgrade changes the agent runtime, needs a re-normalized agent config per zone (claw-image/README.md) and a deliberate qualification, and zones adopt it by digest; a bot bump of openclaw or its lockfile would only produce an image no zone runs.",
+      "description": "The claw runner image pins the approved OpenClaw distribution (apps/runner-autoscaler/claw-image). An OpenClaw upgrade changes the agent runtime and needs a deliberate qualification (the launcher normalizes each agent's source config for the image it runs and refuses any widening change: claw-image/README.md), and zones adopt it by digest; a bot bump of openclaw or its lockfile would only produce an image no zone runs.",
       "enabled": false,
       "matchFileNames": ["apps/runner-autoscaler/claw-image/**"]
     },

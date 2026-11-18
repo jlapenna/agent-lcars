@@ -17,7 +17,7 @@ A repository defines an agent in `.lcars/agents/<name>/`:
 ```text
 .lcars/agents/investigator/
   agent.yaml        # manifest
-  config.json       # OpenClaw config, Doctor-normalized for the pinned image
+  config.json       # OpenClaw source config; the launcher normalizes it per image
   approvals.json    # exec approvals: the enforcement layer
   workspace/        # AGENTS.md, skills, tools (git file modes apply)
 ```
@@ -108,9 +108,11 @@ another's credentials gets its own profile.
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
   - The launcher materializes the files into `/work/agent` and checks the
-    digest. It then runs today's sequence: `config validate`, `doctor` (which
-    must change nothing, proving the reviewed config is what runs),
-    `approvals set` and `agent exec`.
+    digest. It then runs `config validate`, `doctor --fix` on a copy (the turn
+    keeps only accepted changes such as the declared provider's plugin, and
+    never Doctor's skill toggles; any other change fails the run and names the
+    changed settings), `approvals set` and `agent exec`. A runtime's image can therefore change without every
+    repository re-normalizing its agents.
 
   Zone ConfigMaps carrying agent definitions are retired.
 

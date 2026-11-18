@@ -13,8 +13,9 @@
 //   1. Acknowledged startup heartbeat, then the brief.
 //   2. Fresh state: writable config copy, OPENCLAW_STATE_DIR/CONFIG_PATH.
 //   3. `openclaw config validate --json` must report valid.
-//   4. `openclaw doctor --fix --non-interactive`; it must not change the
-//      pinned config beyond its own `meta`/`wizard` stamps.
+//   4. `openclaw doctor --fix --non-interactive` normalizes the copy for this
+//      image. The turn keeps only accepted changes (doctorChanges, turnConfig);
+//      any other change fails the attempt, naming the changed settings.
 //   5. `openclaw approvals set --file` seeds the enforcing exec approvals.
 //   6. `openclaw agent exec --json` under the outer turn deadline.
 //   7. Settle: a report only when the envelope is ok, has a final message and
@@ -22,7 +23,9 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -83,10 +86,166 @@ export function workClient(env, { signal, fetchImpl = fetch } = {}) {
 }
 
 // Strip OpenClaw's own bookkeeping so the pinned config can be compared with
-// what Doctor leaves behind. Anything else Doctor changes fails the attempt.
+// what Doctor leaves behind.
 export function comparableConfig(config) {
   const { meta: _meta, wizard: _wizard, ...rest } = config;
   return JSON.stringify(sortKeys(rest));
+}
+
+// An agent's config.json is a source config, not a per-image artifact: the
+// launcher runs Doctor's normalization for the image it is actually in and
+// the turn runs the result (turnConfig). Doctor's output depends on the
+// image; the turn keeps only these changes:
+//   - enable a plugin that, by the image's own plugin manifests
+//     (`pluginProviders`), owns a model provider the config declares
+//     (`plugins.entries.<plugin>.enabled: true`), unless the source set it;
+//   - add an empty agent entry (`agents.entries.<name>: {}`), an agent with
+//     no overrides of the config's defaults.
+// Skill toggles (`skills.entries.<name>.enabled`) Doctor writes are discarded,
+// not carried: Doctor judges readiness outside the turn's context (its
+// working directory, workspace and exec defaults), and OpenClaw already
+// filters ineligible skills at load time in the turn itself.
+// Returns the dotted paths of every other change (OpenClaw's `meta`/`wizard`
+// stamps aside); any such change fails the attempt.
+export function doctorChanges(source, after, pluginProviders = new Map()) {
+  // OpenClaw matches provider IDs case-insensitively (LITELLM enables the
+  // litellm plugin).
+  const providerId = (id) => id.trim().toLowerCase();
+  const providers = new Set(
+    Object.keys(source?.models?.providers ?? {}).map(providerId),
+  );
+  const ownsDeclaredProvider = (plugin) =>
+    [...(pluginProviders.get(plugin) ?? [])].some((provider) =>
+      providers.has(providerId(provider)),
+    );
+  const before = nodes(JSON.parse(comparableConfig(source)));
+  const normalized = nodes(JSON.parse(comparableConfig(after)));
+  const refused = [];
+  for (const path of new Set([...before.keys(), ...normalized.keys()])) {
+    const was = before.get(path);
+    const now = normalized.get(path);
+    if (was === now) continue;
+    // An object that stays an object is judged by its children; a new
+    // non-empty object (a container on an allowed path) likewise.
+    if (isObjectNode(was) && isObjectNode(now)) continue;
+    if (was === undefined && now === NON_EMPTY) continue;
+    // A removed non-empty object is reported through its removed children.
+    if (was === NON_EMPTY && now === undefined) continue;
+    const [root, entries, name, field, ...rest] = path.split('\u0000');
+    const entry =
+      root !== undefined &&
+      entries === 'entries' &&
+      field === 'enabled' &&
+      rest.length === 0;
+    if (entry && root === 'skills') continue;
+    if (
+      entry &&
+      root === 'plugins' &&
+      now === 'true' &&
+      was === undefined &&
+      ownsDeclaredProvider(name)
+    )
+      continue;
+    if (
+      root === 'agents' &&
+      entries === 'entries' &&
+      field === undefined &&
+      was === undefined &&
+      now === EMPTY
+    )
+      continue;
+    refused.push(path.split('\u0000').join('.'));
+  }
+  return refused.sort();
+}
+
+// The file `spawn` runs for `command`: a path as given, a bare name from PATH.
+export async function resolveCommand(command, path = '') {
+  if (command.includes('/')) return command;
+  for (const dir of path.split(':')) {
+    if (!dir) continue;
+    const candidate = join(dir, command);
+    try {
+      // As execvp does: the first regular, executable file on PATH.
+      if ((await stat(candidate)).isFile()) {
+        await access(candidate, constants.X_OK);
+        return candidate;
+      }
+    } catch (error) {
+      if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes(error.code)) throw error;
+    }
+  }
+  throw new ClawFailure(`OpenClaw executable not found on PATH: ${command}`);
+}
+
+// The config the turn runs: Doctor's normalized copy with the source's own
+// skill settings, so no skill toggle Doctor wrote reaches the turn.
+export function turnConfig(source, normalized) {
+  const config = structuredClone(normalized);
+  if (source.skills === undefined) delete config.skills;
+  else config.skills = structuredClone(source.skills);
+  return config;
+}
+
+// Every node by path (segments joined with NUL, which no key holds in
+// practice): objects as EMPTY or NON_EMPTY markers, everything else (arrays
+// included) as its JSON value.
+const EMPTY = '\u0000{}';
+const NON_EMPTY = '\u0000{...}';
+const isObjectNode = (node) => node === EMPTY || node === NON_EMPTY;
+
+function nodes(value, prefix = [], out = new Map()) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    out.set(prefix.join('\u0000'), keys.length > 0 ? NON_EMPTY : EMPTY);
+    for (const key of keys) nodes(value[key], [...prefix, key], out);
+  } else {
+    out.set(prefix.join('\u0000'), JSON.stringify(value));
+  }
+  return out;
+}
+
+// Which model providers each plugin bundled in this image owns, from its
+// `openclaw.plugin.json` (`providers` and `autoEnableWhenConfiguredProviders`).
+// The manifests ship in the image, so a repository cannot widen this map.
+export async function bundledPluginProviders(
+  openclaw,
+  path = process.env.PATH,
+) {
+  const extensions = join(
+    dirname(await realpath(await resolveCommand(openclaw, path))),
+    'dist',
+    'extensions',
+  );
+  const owners = new Map();
+  let entries;
+  try {
+    entries = await readdir(extensions, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return owners;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(
+        await readFile(
+          join(extensions, entry.name, 'openclaw.plugin.json'),
+          'utf8',
+        ),
+      );
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    const provides = [
+      ...(manifest.providers ?? []),
+      ...(manifest.autoEnableWhenConfiguredProviders ?? []),
+    ].filter((provider) => typeof provider === 'string');
+    owners.set(manifest.id ?? entry.name, new Set(provides));
+  }
+  return owners;
 }
 
 function sortKeys(value) {
@@ -368,26 +527,11 @@ export async function prepareState({
 }) {
   const stateDir = await mkdtemp(join(workRoot, 'state-'));
   const workspace = join(workRoot, 'workspace');
-  await rm(workspace, { recursive: true, force: true });
-  await mkdir(workspace, { recursive: true });
-  try {
-    // A ConfigMap mount presents workspace/ as a symlink into its
-    // timestamped data directory; copy the resolved files, not the link.
-    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
-      recursive: true,
-      dereference: true,
-    });
-    // The pinned definition stays locked; its execution copy is the agent's
-    // writable workspace, so give the owner write access back.
-    await ownerWritable(workspace);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-  const pinned = JSON.parse(
+  const source = JSON.parse(
     await readFile(join(agentDir, 'config.json'), 'utf8'),
   );
   const configPath = join(stateDir, 'agent-config.json');
-  await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
+  await writeFile(configPath, `${JSON.stringify(source, null, 2)}\n`, {
     mode: 0o600,
   });
   const childEnv = {
@@ -417,11 +561,41 @@ export async function prepareState({
   });
   if (doctor.code !== 0 || doctor.timedOut)
     throw new ClawFailure(`openclaw doctor exited ${doctor.code}`);
-  const after = JSON.parse(await readFile(configPath, 'utf8'));
-  if (comparableConfig(after) !== comparableConfig(pinned))
+  // The agent runs Doctor's normalized copy; the verified source stays
+  // untouched under the locked agent directory.
+  const normalized = JSON.parse(await readFile(configPath, 'utf8'));
+  const refused = doctorChanges(
+    source,
+    normalized,
+    await bundledPluginProviders(openclaw, childEnv.PATH),
+  );
+  if (refused.length > 0)
     throw new ClawFailure(
-      'openclaw doctor changed the pinned config; pin the Doctor-normalized config',
+      `openclaw doctor would change this agent's config.json on this image beyond narrowing it: ${refused.join(', ')}`,
     );
+  await writeFile(
+    configPath,
+    `${JSON.stringify(turnConfig(source, normalized), null, 2)}\n`,
+    { mode: 0o600 },
+  );
+
+  // Stage the turn's workspace only after Doctor, so its file repairs (for a
+  // source that names this directory as its workspace) never reach the turn.
+  await rm(workspace, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true });
+  try {
+    // A ConfigMap mount presents workspace/ as a symlink into its
+    // timestamped data directory; copy the resolved files, not the link.
+    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
+      recursive: true,
+      dereference: true,
+    });
+    // The pinned definition stays locked; its execution copy is the agent's
+    // writable workspace, so give the owner write access back.
+    await ownerWritable(workspace);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 
   const approvals = await run(
     openclaw,
