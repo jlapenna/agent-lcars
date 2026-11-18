@@ -30,8 +30,12 @@ profile: homelab-ops # credentials; omitted = the default profile
 retry: finite # finite (default) | terminal, for agents with effect authority
 requireToolEvidence: true # a report with no tool call is a failed attempt
 harness: claude # openclaw (default) | claude | codex; see Harnesses
-mode: plan # the harness's ACP session mode; omitted = its default
+mode: plan # the harness's ACP session mode; see below when omitted
 ```
+
+Without `mode`, OpenClaw and Claude Code run in their own default mode and
+Codex runs in `workspace-write`, which the launcher selects in place of
+Codex's own default ([tool policy](#harnesses)).
 
 Concurrency and resources are not agent fields: the executor runtime the
 profile names sizes and bounds its Jobs.
@@ -147,9 +151,12 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   completed; that later call is resolved evidence, as a retried probe is.
   `requireToolEvidence` needs at least one tool call. OpenClaw's ACP server
   ends a turn its Gateway failed like any other, even after part of an answer
-  has streamed, so the launcher also reads the Gateway's own log and fails
-  the attempt when it recorded the message's outcome as an error. A model
-  attempt that failed before a fallback answered is not one. Codex's adapter
+  has streamed, so the launcher also asks the Gateway how it recorded the
+  session and fails the attempt unless its last run finished. A model
+  attempt that failed before a fallback answered still finished. Neither
+  that nor the Gateway's readiness is read from its log, so a definition's
+  logging and redaction settings do not affect them. An OpenClaw turn gets
+  ten minutes whatever timeout its config sets. Codex's adapter
   does the same when its provider fails, and reports the failure only to a
   client that asks for it, so the launcher asks and fails the attempt on a
   failure Codex reports as an error. Codex's adapter
@@ -158,10 +165,14 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   answer must rest on a tool sets
   `requireToolEvidence`.
 
-Verified on 2026-11-18 on a workstation, with the pinned OpenClaw and both
-adapters against stand-in model endpoints. No real model turn and no run on
-k3s has been made through this path yet, and Codex's sandbox is untested
-inside a pod.
+A change to the launcher, a harness or a pinned harness version is checked
+by running the launcher with the harnesses installed from the image's
+lockfile, as well as by its unit suite, because the launcher depends on
+behavior only the real binaries have
+([claw image](../apps/runner-autoscaler/claw-image/README.md#checking-a-change)).
+What was run for a change, and what was not, is recorded in its pull
+request; for the introduction of harnesses that is
+[#3411](https://github.com/jlapenna/agent-lcars/pull/3411).
 
 ## Catalog
 
@@ -380,8 +391,11 @@ while the newer Console is still running, in this order:
    catalog for every repository. Deleting an agent does not clear its row:
    the row is only disabled and keeps the stored manifest. For the row of an
    agent that is no longer in its repository, or whose repository is gone or
-   can no longer be read, delete its document from the `orchestrator-agents`
-   collection.
+   can no longer be read, remove the `definition` field from its document in
+   the `orchestrator-agents` collection and leave the rest. The row has to
+   stay, disabled, because it holds the operator's veto (`vetoedBy`): if the
+   definition or the repository comes back, a refresh that found no row
+   would enable the agent.
 6. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
    The earlier Console validates profiles at startup with a strict schema and
    does not start with a field it does not know.

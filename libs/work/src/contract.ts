@@ -1300,8 +1300,9 @@ export const agentRunBriefSchema = z.union([
     ...agentBriefFields,
     /** The harness that runs the turn; omitted means OpenClaw. */
     harness: agentHarnessSchema.optional(),
-    /** The ACP session mode to select before the prompt; omitted means the
-     * harness's own default. */
+    /** The ACP session mode to select before the prompt. Omitted means the
+     * mode the launcher runs that harness in: the harness's own default for
+     * OpenClaw and Claude Code, `workspace-write` for Codex. */
     mode: agentModeSchema.optional(),
     definition: z.array(agentBriefFileSchema),
   }),

@@ -353,7 +353,7 @@ export function settle(
 export function acpTurn(
   command,
   args,
-  { env, cwd, message, mode, auth, signal } = {},
+  { env, cwd, message, mode, auth, promptMeta, signal } = {},
 ) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -592,9 +592,14 @@ export function acpTurn(
           modeId: mode,
         });
       }
+      // The harness's own name for the session, for a harness that has a
+      // record of the turn to check afterwards.
+      turn.sessionId = session.sessionId;
       const prompted = await request('session/prompt', {
         sessionId: session.sessionId,
         prompt: [{ type: 'text', text: promptText(message) }],
+        // What a harness reads from a prompt beyond ACP's own fields.
+        ...(promptMeta === undefined ? {} : { _meta: promptMeta }),
       });
       turn.stopReason = prompted.stopReason;
       // The harness's last word on the turn: a failure it attaches to the
@@ -701,7 +706,8 @@ async function harnessTurn({
     signal,
   });
   // Stops whatever the harness started and names any reason it has to
-  // refuse the turn's result. It runs on every path, exactly once.
+  // refuse the turn's result. It runs on every path, exactly once, and is
+  // given the turn when there is one to judge.
   const finish = harness.finish ?? (async () => undefined);
   let finished;
   try {
@@ -712,6 +718,7 @@ async function harnessTurn({
       message: request.message,
       mode: request.mode ?? harness.mode,
       auth: harness.auth,
+      promptMeta: harness.promptMeta,
       signal,
     });
     // The turn is awaited after the heartbeat; a spawn failure in between
@@ -723,7 +730,7 @@ async function harnessTurn({
     await finish();
     throw error;
   }
-  const refused = await finish();
+  const refused = await finish(finished);
   // The harness runs as the launcher's UID, so nothing can stop an agent
   // with a write-capable tool from rewriting the settings that bound it.
   // What the launcher can do is refuse a result when it sees that: every

@@ -129,13 +129,13 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
   if (message.method === 'session/prompt') {
     // Answer later, so what the Gateway logs meanwhile is read first.
     if (behaviour.delayMs && !delayed) { delayed = true; return setTimeout(() => process.stdin.emit('data', line + '\\n'), behaviour.delayMs); }
-    record({ prompt: message.params.prompt });
+    record({ prompt: message.params.prompt, ...(message.params._meta ? { promptMeta: message.params._meta } : {}) });
     prompt = message.id;
     if (behaviour.hang) return;
     if (behaviour.exit) process.exit(7);
     // The Gateway's own record that the turn failed, which OpenClaw's ACP
     // server never passes on.
-    if (behaviour.gatewayError) fs.writeFileSync(path.join(__dirname, 'gateway-error'), '');
+    fs.writeFileSync(path.join(__dirname, 'gateway-session.json'), JSON.stringify({ key: 'agent:main:acp-bridge:' + (behaviour.sessionKey ?? 's1'), status: behaviour.gatewayError ? 'failed' : behaviour.sessionStatus ?? 'done', lastRunError: 'LLM request timed out for sk-secret' }));
     if (behaviour.tamperConfig) {
       const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
       config.tools = { profile: 'coding' };
@@ -215,21 +215,29 @@ if (args[0] === 'doctor') {
 if (sub === 'approvals set') process.exit(0);
 if (sub === 'gateway run') {
   if (behaviour.FAKE_GATEWAY_EXIT) process.exit(Number(behaviour.FAKE_GATEWAY_EXIT));
-  // The Gateway's coloured log lines: an early "ready" that is not the
-  // Gateway's own, then the real one.
-  const line = (text) => console.log('\\u001b[90m2026-11-18T04:44:41.551+00:00\\u001b[39m \\u001b[36m[gateway]\\u001b[39m \\u001b[36m' + text + '\\u001b[39m');
-  line('spawn broker ready pid=1');
-  setTimeout(() => line('ready'), 150);
-  // A model attempt that failed before a fallback answered: logged, but not
-  // the turn's outcome.
-  if (behaviour.FAKE_GATEWAY_ATTEMPT_ERROR) setTimeout(() => console.error('\\u001b[31m[diagnostic]\\u001b[39m lane task error: lane=main durationMs=81853 error="LLM request timed out."'), 250);
-  // A failed turn is logged at error level, on stderr, as the turn ends.
-  process.on('SIGTERM', () => {
-    if (!fs.existsSync(path.join(__dirname, 'gateway-error'))) process.exit(0);
-    process.stderr.write('\\u001b[90m2026-11-18T06:47:39.530+00:00\\u001b[39m \\u001b[31m[diagnostic]\\u001b[39m \\u001b[31mmessage processed: channel=webchat sessionKey=agent:main:acp-bridge:x outcome=error duration=83426ms\\u001b[39m\\n', () => process.exit(0));
-  });
-  setInterval(() => {}, 1000);
+  // A definition's logging and redaction settings decide what the Gateway
+  // logs, so its log says nothing the launcher could go by. Only its
+  // readiness probe does, a moment after it starts listening.
+  console.log('[gateway] *** *** ***');
+  console.error('[diagnostic] *** outcome=*** ***');
+  const started = Date.now();
+  const { port } = JSON.parse(fs.readFileSync(configPath, 'utf8')).gateway;
+  require('node:http').createServer((request, response) => {
+    const ready = request.url === '/readyz' && Date.now() - started > 150 && !behaviour.FAKE_GATEWAY_NEVER_READY;
+    response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ ready }));
+  }).listen(port, '127.0.0.1');
+  process.on('SIGTERM', () => process.exit(0));
   return;
+}
+if (sub === 'gateway call') {
+  // The Gateway's record of its sessions: the one OpenClaw's ACP server
+  // opened for the turn, once a prompt has reached it.
+  if (behaviour.FAKE_CALL_EXIT) process.exit(Number(behaviour.FAKE_CALL_EXIT));
+  const file = path.join(__dirname, 'gateway-session.json');
+  const sessions = fs.existsSync(file) ? [JSON.parse(fs.readFileSync(file, 'utf8'))] : [];
+  console.log(JSON.stringify({ count: sessions.length, sessions: [{ key: 'agent:main:main', status: 'failed' }, ...sessions] }));
+  process.exit(0);
 }
 if (args[0] === 'acp') { require(path.join(__dirname, 'harness.cjs')); return; }
 process.exit(64);
@@ -354,6 +362,16 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     'approvals set',
     'gateway run',
     'acp --url',
+    // How the Gateway recorded the turn, asked before it is stopped.
+    'gateway call',
+  ]);
+  assert.deepEqual(log[5].args, [
+    'gateway',
+    'call',
+    'sessions.list',
+    '--json',
+    '--timeout',
+    '20000',
   ]);
   assert.ok(log.every((entry) => entry.key === 'sk-test'));
   // The Gateway runs the reviewed config plus what only this run knows: its
@@ -394,9 +412,15 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
   assert.ok(acp.includes('--no-prefix-cwd'));
   // Nobody may give this Gateway commands: a `/word` in a message is text.
   assert.deepEqual(config.commands, { allowFrom: { '*': [] } });
-  const [initialize, session] = await harnessLog();
+  const harness = await harnessLog();
+  const [initialize, session] = harness;
   assert.equal(initialize.token, null);
   assert.equal(session.session.cwd, workspace);
+  // The turn keeps the ten minutes `agent exec` gave it, whatever timeout
+  // the definition or the Gateway would otherwise apply.
+  assert.deepEqual(harness.find((entry) => entry.prompt).promptMeta, {
+    timeoutMs: 600_000,
+  });
   // The Gateway does not outlive the turn.
   gone(pid);
 });
@@ -667,6 +691,13 @@ test('a Gateway that never becomes ready fails closed before the turn', async ()
   });
   assert.deepEqual(completion(calls), result);
   assert.ok(!ran(await openclawLog()).includes('acp --url'));
+  // A Gateway that keeps running and logging but never answers its
+  // readiness probe is stopped by the run's deadline.
+  const stuck = await fixture({
+    env: { FAKE_GATEWAY_NEVER_READY: '1', CLAW_TURN_DEADLINE_SECONDS: '2' },
+  });
+  assert.equal((await main(stuck.env, stuck.deps)).outcome, 'runner-failed');
+  assert.ok(!ran(await stuck.openclawLog()).includes('acp --url'));
   // No provider work was reported.
   assert.ok(!calls.some((call) => call.body?.providerProcessStarted));
 });
@@ -726,16 +757,36 @@ test('a turn the Gateway recorded as failed is never a report', async () => {
   });
 });
 
-test('a model attempt that failed before a fallback answered does not fail the turn', async () => {
-  const { env, deps } = await fixture({
-    env: { FAKE_GATEWAY_ATTEMPT_ERROR: '1' },
-    // Long enough for the Gateway's line to be read before the turn ends.
-    acp: { ...CLEAN_TURN, delayMs: 400 },
+test("only the Gateway's own record of the session passes a turn", async () => {
+  const outcome = async (acp, fake = {}) => {
+    const { env, deps } = await fixture({ acp, env: fake });
+    return main(env, deps);
+  };
+  const failed = (reason) => ({
+    outcome: 'runner-failed',
+    message: `Claw turn failed: ${reason}.`,
   });
-  assert.deepEqual(await main(env, deps), {
-    outcome: 'report',
-    message: 'All clear: disk at 41%.',
-  });
+  // Any last run but a finished one is a failed turn; OpenClaw's own text
+  // for it is never repeated.
+  for (const sessionStatus of ['failed', 'timeout', 'killed', 'interrupted'])
+    assert.deepEqual(
+      await outcome({ ...CLEAN_TURN, sessionStatus }),
+      failed('OpenClaw reported the turn as failed'),
+    );
+  // A run that never stops being recorded is not a finished one either.
+  assert.deepEqual(
+    await outcome({ ...CLEAN_TURN, sessionStatus: 'running' }),
+    failed('OpenClaw reported the turn as failed'),
+  );
+  // No record of this turn's session, or no answer at all, is no report.
+  assert.deepEqual(
+    await outcome({ ...CLEAN_TURN, sessionKey: 'another' }),
+    failed("OpenClaw did not report the turn's outcome"),
+  );
+  assert.deepEqual(
+    await outcome(CLEAN_TURN, { FAKE_CALL_EXIT: '1' }),
+    failed("OpenClaw did not report the turn's outcome"),
+  );
 });
 
 test('a model credential the config names stays out of what host commands inherit', async () => {
@@ -1075,8 +1126,6 @@ test('launchConfig runs the reviewed config under headless defaults and this run
       exec: { mode: 'full' },
     },
     skills: { load: { watch: false } },
-    logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
-    diagnostics: { enabled: true },
     commands: { allowFrom: { '*': [] } },
     gateway,
   });
@@ -1129,15 +1178,15 @@ test('launchConfig runs the reviewed config under headless defaults and this run
   });
   assert.deepEqual(launched.session, { scope: 'per-sender' });
   // The Gateway is this run's alone: nothing the source says about it
-  // survives, and its log keeps the form the launcher reads.
+  // survives. Its log is the definition's to shape, because nothing the
+  // launcher decides is read from it.
   assert.deepEqual(launched.gateway, gateway);
   assert.deepEqual(launched.logging, {
-    consoleLevel: 'info',
-    consoleStyle: 'pretty',
+    consoleLevel: 'silent',
+    consoleStyle: 'json',
     level: 'debug',
   });
-  // Nor can a definition switch off the log a failed turn is read from.
-  assert.deepEqual(launched.diagnostics, { enabled: true, flags: ['x'] });
+  assert.deepEqual(launched.diagnostics, { enabled: false, flags: ['x'] });
 });
 
 test('readBrief requires this run and a non-empty agent message', () => {

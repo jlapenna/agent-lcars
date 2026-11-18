@@ -173,21 +173,33 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    agent state under the Job's state directory, and the Gateway does not
    read auth profiles from the original directory as `agent exec` did. Give
    the provider its key as an `env` SecretRef.
-6. `openclaw gateway run`, waited on until it logs `[gateway] ready`. It
-   serves this one turn: channels, cron, the Gmail watcher, the canvas host,
-   the browser control server and the startup model prewarm are all switched
-   off, so nothing outside the Job can reach the agent.
+6. `openclaw gateway run`, waited on until its readiness probe answers
+   (`GET /readyz` on its loopback port). It serves this one turn: channels,
+   cron, the Gmail watcher, the canvas host, the browser control server and
+   the startup model prewarm are all switched off, so nothing outside the Job
+   can reach the agent.
 7. `openclaw acp --url ws://127.0.0.1:<port> --token-file … --no-prefix-cwd`
-   is the harness. After the turn the Gateway's process group is stopped.
+   is the harness. The prompt carries `_meta.timeoutMs` of 600 000, the turn
+   budget `agent exec` gave; without it the turn would run under the
+   definition's `agents.defaults.timeoutSeconds` or the Gateway's default.
+8. `openclaw gateway call sessions.list`, then the Gateway's process group
+   is stopped.
 
 OpenClaw's ACP server ends a turn the Gateway failed like any other
-(`end_turn`), even after part of an answer has streamed. The Gateway does log
-the message's outcome (`[diagnostic] message processed: … outcome=error`), so
-the launcher stops the Gateway after the turn, reads its log to the end and
-fails the attempt when it finds one. The launch config keeps diagnostics on
-whatever the definition says, because that line is a diagnostic. A model attempt that failed before a
-fallback answered is logged as a `lane task error` and is not a failed turn.
-This reads log text, so a new OpenClaw version needs that wording checked.
+(`end_turn`), even after part of an answer has streamed. So after the turn,
+while the Gateway still runs, the launcher asks it for its sessions
+(`turnOutcome`) and finds the one the ACP server opened, whose key ends in
+`acp-bridge:<ACP session id>`. Its last run must be `done`. Any other status
+(`failed`, `timeout`, `killed`, `interrupted`, or one still `running` after
+a few seconds) fails the attempt, and so does a Gateway that does not answer
+or has no such session. A model attempt that failed before a fallback
+answered leaves the run `done`. OpenClaw's text for the failure is not
+repeated.
+
+Nothing the launcher decides is read from the Gateway's log: a definition's
+`logging` and `diagnostics` settings, including redaction, stay as written
+and can change every line of it. A new OpenClaw version needs `/readyz`, the
+`sessions.list` row (`key`, `status`) and the session key's form checked.
 
 After the turn the launcher also refuses the result if the Gateway's config
 or token file is no longer what it launched. Exec approvals live in OpenClaw's
@@ -207,27 +219,16 @@ Both speak ACP through their own pinned adapters and read their settings from
 They sign in with the runtime's `env/` Secret items; a runtime without a
 login fails the attempt with `Authentication required`.
 
-### What has been checked
+### Checking a change
 
-On 2026-11-18, on a workstation, the launcher ran each harness from this
-lockfile against stand-in model endpoints:
-
-- OpenClaw 2026.10.10-beta.3 settled a report in about 40 s, most of it
-  Doctor and the Gateway's start. The agent read its `AGENTS.md`, an
-  allowlisted `date` ran and counted as evidence, and `cat /etc/hostname`
-  outside the allowlist failed the attempt. Before the Gateway's background
-  services were switched off, a model endpoint returning HTTP 500 failed the
-  attempt with `empty result` after 136 s of OpenClaw's own retries.
-- Claude Code settled a report in 3 to 5 s; a command allowed in
-  `home/.claude/settings.json` ran, and a write or network command without a
-  rule was refused and failed the attempt.
-- Codex settled a report in 3 to 4 s, ran a command in its sandbox, and its
-  sandbox blocked the network.
-
-No real model turn and no run on k3s has been made through this path yet. The
-previous launcher, which ran `openclaw agent exec` without a Gateway, settled
-an OpenClaw report in 58 s on the real image (2026-11-14, Spark lane, 2 CPU /
-3 GiB); the Gateway's memory under that limit is unmeasured.
+The unit suite ([Test](#test)) runs the launcher over fakes. A change to the
+launcher, a harness or a pinned version is also run with the harnesses
+installed from this lockfile, because the launcher depends on behavior only
+the real binaries have: OpenClaw's `/readyz`, its `sessions.list` rows and
+its ACP session keys, each adapter's modes and sign-in methods, and Codex's
+session-failure extension. What was run for a change, and what was not, is
+recorded in its pull request, not here; for the introduction of harnesses
+that is [#3411](https://github.com/jlapenna/agent-lcars/pull/3411).
 
 ## Agent config normalization
 

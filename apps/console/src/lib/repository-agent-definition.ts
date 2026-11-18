@@ -29,7 +29,9 @@ export const agentManifestSchema = z.strictObject({
   harness: agentHarnessSchema.optional(),
   /** The harness's ACP session mode the turn runs in: the agent's permission
    * policy as the harness itself enforces it (Codex `read-only`, Claude Code
-   * `plan`). Omitted means the harness's default. */
+   * `plan`). Omitted means the mode the launcher runs that harness in: the
+   * harness's own default for OpenClaw and Claude Code, `workspace-write`
+   * for Codex. */
   mode: agentModeSchema.optional(),
 });
 export type AgentManifest = z.infer<typeof agentManifestSchema>;

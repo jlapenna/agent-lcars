@@ -43,19 +43,16 @@ const SETTINGS_SLACK_BYTES = 64 * 1024;
 const MAX_OUTPUT_CHARS = 1024 * 1024;
 const GATEWAY_READY_MS = 300_000;
 const GATEWAY_STOP_MS = 5_000;
-// The Gateway's own line once it accepts work, after its log prefix. Earlier
-// lines such as "spawn broker ready pid=…" must not match.
-const GATEWAY_READY = /\[gateway\] ready$/u;
-// The Gateway's own record of how a turn ended. OpenClaw's ACP server ends a
-// failed turn like any other (`end_turn`), even after part of an answer has
-// streamed, so this log is the only place the failure shows. Only the
-// message's final outcome counts: a model attempt that failed before a
-// fallback answered is logged too (`lane task error`) and is not a failure.
-const TURN_FAILED =
-  /\[diagnostic\] message (processed|dispatch completed):.*\boutcome=error\b/u;
-const stripAnsi = (text) =>
-  // eslint-disable-next-line no-control-regex -- terminal colour codes
-  text.replace(/\u001b\[[0-9;]*m/gu, '');
+const GATEWAY_PROBE_MS = 250;
+// What `agent exec` gave a turn, which the ACP server takes per prompt. Left
+// out, the turn runs under the definition's `agents.defaults.timeoutSeconds`
+// or the Gateway's own default instead.
+const TURN_TIMEOUT_MS = 600_000;
+// Asking the Gateway how the turn ended: one CLI call, repeated while the
+// run is still being recorded.
+const OUTCOME_CALL_MS = 60_000;
+const OUTCOME_ATTEMPTS = 5;
+const OUTCOME_RETRY_MS = 1_000;
 
 // Strip OpenClaw's own bookkeeping so the pinned config can be compared with
 // what Doctor leaves behind.
@@ -608,7 +605,8 @@ const TURN_DEFAULTS = Object.freeze({
 //   Agent state stays under the Job's state directory.
 // - The Gateway block is this Job's alone, so a definition cannot open the
 //   Gateway, drop its token or expose it.
-// - Console logging and diagnostics keep the form startGateway reads.
+// - Logging and diagnostics stay the definition's own: nothing here reads
+//   the Gateway's log.
 export function launchConfig(config, { workspace, port, token }) {
   const { session, gateway: _gateway, ...root } = config;
   const { store: _store, ...sessionWithoutStore } = session ?? {};
@@ -636,10 +634,6 @@ export function launchConfig(config, { workspace, port, token }) {
   return mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
     agents: { defaults: { workspace, skipBootstrap: true } },
     skills: { load: { watch: false } },
-    logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
-    // The Gateway's diagnostic log is the only record that a turn failed
-    // (TURN_FAILED), so a definition cannot switch it off.
-    diagnostics: { enabled: true },
     // Nobody is authorized to give the Gateway commands or directives, so a
     // `/word` inside a message stays text for the agent, as it was under
     // `agent exec`. (A message that begins with one is handled by the
@@ -794,10 +788,11 @@ export async function prepareState({
   return { turnEnv, port: gateway.port, tokenFile, verify };
 }
 
-// Starts the Gateway in its own process group and resolves, once it reports
-// ready, with the function that stops it and whether it has since recorded a
-// failed turn.
-export function startGateway(openclaw, { env, signal }) {
+// Starts the Gateway in its own process group and resolves, once it answers
+// its readiness probe, with the function that stops it. Readiness is the
+// Gateway's own `/readyz`, not a line in its log: a definition's logging and
+// redaction settings decide what the log says.
+export function startGateway(openclaw, { env, port, signal }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new ClawFailure('claw run was cancelled'));
@@ -824,7 +819,6 @@ export function startGateway(openclaw, { env, signal }) {
       }
     };
     let settled = false;
-    let turnFailed = false;
     const settle = () => {
       if (settled) return false;
       settled = true;
@@ -843,25 +837,29 @@ export function startGateway(openclaw, { env, signal }) {
     timer.unref();
     const onAbort = () => fail(new ClawFailure('claw run was cancelled'));
     signal?.addEventListener('abort', onAbort, { once: true });
-    const onLine = (text) => {
-      const line = stripAnsi(text).trimEnd();
-      if (!settled) {
-        if (GATEWAY_READY.test(line) && settle())
-          resolve({ stop, turnFailed: () => turnFailed });
-      } else if (TURN_FAILED.test(line)) turnFailed = true;
+    const probe = async () => {
+      while (!settled) {
+        const ready = await fetch(`http://127.0.0.1:${port}/readyz`, {
+          signal: AbortSignal.timeout(GATEWAY_PROBE_MS * 8),
+        }).then(
+          async (response) => {
+            await response.body?.cancel();
+            return response.status === 200;
+          },
+          () => false,
+        );
+        if (ready) {
+          if (settle()) resolve({ stop });
+          return;
+        }
+        await new Promise((done) => setTimeout(done, GATEWAY_PROBE_MS));
+      }
     };
-    // Both streams are read to the end: a full pipe would block the Gateway,
-    // and it reports a failed turn on either. Its logs can echo resolved
-    // configuration, so nothing is forwarded.
-    for (const stream of [child.stdout, child.stderr]) {
-      let tail = '';
-      stream.setEncoding('utf8');
-      stream.on('data', (chunk) => {
-        const lines = (tail + chunk).split('\n');
-        tail = lines.pop().slice(-4096);
-        for (const line of lines) onLine(line);
-      });
-    }
+    void probe();
+    // Both streams are drained, because a full pipe would block the
+    // Gateway, and discarded: its logs can echo resolved configuration.
+    child.stdout.resume();
+    child.stderr.resume();
     child.once('error', (error) => {
       if (settle()) reject(error);
     });
@@ -871,6 +869,49 @@ export function startGateway(openclaw, { env, signal }) {
       ),
     );
   });
+}
+
+// How the Gateway recorded the turn, or why its result is refused. OpenClaw's
+// ACP server ends a failed turn like any other (`end_turn`), even after part
+// of an answer has streamed, so the Gateway's own record of the session is
+// asked: its last run must be `done`. A model attempt that failed before a
+// fallback answered is still `done`. The record is asked of the Gateway
+// itself, not read from its log, which a definition's redaction settings
+// can rewrite. OpenClaw's text for the failure is never repeated.
+export async function turnOutcome(openclaw, { env, sessionId, signal }) {
+  const unreported = "OpenClaw did not report the turn's outcome";
+  if (typeof sessionId !== 'string' || sessionId === '') return unreported;
+  for (let attempt = 1; ; attempt++) {
+    let status;
+    try {
+      // The CLI finds this Job's Gateway and its token in the launch config.
+      const listed = await run(
+        openclaw,
+        ['gateway', 'call', 'sessions.list', '--json', '--timeout', '20000'],
+        { env, timeoutMs: OUTCOME_CALL_MS, signal },
+      );
+      if (listed.code !== 0 || listed.timedOut) return unreported;
+      const { sessions } = JSON.parse(listed.stdout);
+      // The ACP server keys its Gateway session by the ACP session's id.
+      const session = sessions.find(
+        (row) =>
+          typeof row?.key === 'string' &&
+          row.key.endsWith(`:acp-bridge:${sessionId}`),
+      );
+      if (session === undefined) return unreported;
+      status = session.status;
+    } catch {
+      return unreported;
+    }
+    if (status === 'done') return undefined;
+    // Still being recorded: the ACP server answers as the run ends.
+    if (
+      (status !== 'running' && status !== 'queued') ||
+      attempt === OUTCOME_ATTEMPTS
+    )
+      return 'OpenClaw reported the turn as failed';
+    await new Promise((done) => setTimeout(done, OUTCOME_RETRY_MS));
+  }
 }
 
 /** The `openclaw` harness: OpenClaw's ACP server, bridged to a Gateway this
@@ -893,7 +934,11 @@ export async function openclawHarness({
     env,
     signal,
   });
-  const gateway = await startGateway(openclaw, { env: turnEnv, signal });
+  const gateway = await startGateway(openclaw, {
+    env: turnEnv,
+    port,
+    signal,
+  });
   return {
     command: openclaw,
     args: [
@@ -907,13 +952,23 @@ export async function openclawHarness({
       '--no-prefix-cwd',
     ],
     env: turnEnv,
-    // Stopping the Gateway first reads its log to the end, so a failure it
-    // recorded for the turn is seen before the result is judged.
-    finish: async () => {
-      await gateway.stop();
-      return gateway.turnFailed()
-        ? 'OpenClaw reported the turn as failed'
-        : verify();
+    promptMeta: { timeoutMs: TURN_TIMEOUT_MS },
+    // The Gateway is asked how it recorded the turn while it still runs,
+    // then stopped whatever the answer. A turn that already failed or was
+    // cancelled needs no second opinion.
+    finish: async (turn) => {
+      let refused;
+      try {
+        if (turn && !turn.aborted && !turn.error)
+          refused = await turnOutcome(openclaw, {
+            env: turnEnv,
+            sessionId: turn.sessionId,
+            signal,
+          });
+      } finally {
+        await gateway.stop();
+      }
+      return refused ?? verify();
     },
   };
 }
