@@ -82,9 +82,12 @@ disables bundled skills whose binaries are absent), so the launcher runs it on
 a copy inside the image that executes the turn, and the turn uses that copy.
 The verified definition under `/work/agent` is never modified.
 
-Doctor runs against a disposable copy of the turn's workspace: the config
-copy's `agents.defaults.workspace` and every `agents.entries.<name>.workspace`
-point at it (overriding source values, as `agent exec --cwd` does). Doctor
+The source config is validated as written. Doctor then runs from a
+disposable copy of the turn's workspace, as the turn runs from its own (so
+relative paths such as `skills.load.extraDirs` resolve to equivalent places),
+and the config copy's `agents.defaults.workspace` and every roster entry's
+`workspace` point at it (overriding source values, as `agent exec --cwd`
+does). Doctor
 therefore judges skill readiness against the skills the turn loads (a
 repository skill replacing a bundled one keeps it enabled), while its file
 repairs (such as its `TOOLS.md` migration) never reach the turn. The turn's
@@ -106,8 +109,10 @@ Doctor may only narrow the agent (`doctorChanges` in `claw-job.mjs`):
 Any other change, apart from OpenClaw's `meta`/`wizard` stamps, fails the
 attempt with `runner-failed` naming the changed settings, for example
 `tools.profile`. Write the config's authority (tools, exec, approvals,
-providers) explicitly so Doctor has nothing else to fill in. A config already
-normalized for some image remains valid.
+providers) explicitly so Doctor has nothing else to fill in; a multi-agent
+roster (`agents.ownership: "explicit"`), for example, sets
+`agents.defaults.heartbeat.agentId` and `agents.defaults.systemAgent.agentId`
+itself. A config already normalized for some image remains valid.
 
 ## Test
 

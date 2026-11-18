@@ -212,8 +212,9 @@ export async function bundledPluginProviders(openclaw) {
   return owners;
 }
 
-// The source with every agent workspace (the defaults and any entry that sets
-// its own) pointed at `workspace`, as `agent exec --cwd` does for the turn.
+// The source with every agent workspace (the defaults and every roster entry,
+// whether or not it sets one) pointed at `workspace`, as `agent exec --cwd`
+// does for the turn.
 // Doctor runs on a disposable copy of the turn's workspace so it judges skill
 // readiness (a repository skill replacing a bundled one) against the skills
 // the turn loads, while its file repairs never reach the turn; the turn's
@@ -224,7 +225,7 @@ export function launchConfig(source, workspace) {
   config.agents.defaults ??= {};
   config.agents.defaults.workspace = workspace;
   for (const entry of Object.values(config.agents.entries ?? {}))
-    if (entry && typeof entry === 'object' && 'workspace' in entry)
+    if (entry && typeof entry === 'object' && !Array.isArray(entry))
       entry.workspace = workspace;
   return config;
 }
@@ -525,12 +526,12 @@ export async function prepareState({
   }
   const doctorWorkspace = join(stateDir, 'doctor-workspace');
   await cp(workspace, doctorWorkspace, { recursive: true });
-  const pinned = launchConfig(
-    JSON.parse(await readFile(join(agentDir, 'config.json'), 'utf8')),
-    doctorWorkspace,
+  const source = JSON.parse(
+    await readFile(join(agentDir, 'config.json'), 'utf8'),
   );
   const configPath = join(stateDir, 'agent-config.json');
-  await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
+  // Validate the source as written, before the launcher supplies workspaces.
+  await writeFile(configPath, `${JSON.stringify(source, null, 2)}\n`, {
     mode: 0o600,
   });
   const childEnv = {
@@ -553,8 +554,16 @@ export async function prepareState({
   }
   if (!valid) throw new ClawFailure('pinned OpenClaw config failed validation');
 
+  const pinned = launchConfig(source, doctorWorkspace);
+  await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
+    mode: 0o600,
+  });
+
+  // Doctor runs from the disposable workspace as the turn runs from its own,
+  // so relative paths (skills.load.extraDirs) resolve to equivalent places.
   const doctor = await run(openclaw, ['doctor', '--fix', '--non-interactive'], {
     env: childEnv,
+    cwd: doctorWorkspace,
     timeoutMs: 300_000,
     signal,
   });

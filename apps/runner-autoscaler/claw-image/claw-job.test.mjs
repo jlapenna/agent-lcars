@@ -82,11 +82,11 @@ const log = behaviour.FAKE_LOG;
 const messageAt = args.indexOf('--message-file');
 const message = messageAt < 0 ? null : fs.readFileSync(args[messageAt + 1], 'utf8');
 const configAt = args.indexOf('--config');
-const configFile = configAt >= 0 ? args[configAt + 1] : args[0] === 'doctor' ? process.env.OPENCLAW_CONFIG_PATH : null;
+const configFile = configAt >= 0 ? args[configAt + 1] : args[0] === 'doctor' || args[0] === 'config' ? process.env.OPENCLAW_CONFIG_PATH : null;
 const config = configFile ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : null;
 const cwdAt = args.indexOf('--cwd');
 const cwdFiles = cwdAt < 0 ? null : fs.readdirSync(args[cwdAt + 1]).sort();
-if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message, config, cwdFiles }) + '\\n');
+if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message, config, cwdFiles, cwd: process.cwd() }) + '\\n');
 const sub = args.slice(0, 2).join(' ');
 if (args[0] === 'config' && args[1] === 'validate') {
   console.log(JSON.stringify({ valid: behaviour.FAKE_INVALID !== '1' }));
@@ -255,6 +255,20 @@ test("an un-normalized source config runs on Doctor's narrowed copy", async () =
   // Doctor judged a disposable copy of the turn's workspace; the turn runs
   // Doctor's normalized config pointed back at its own workspace.
   assert.notEqual(doctor.config.agents.defaults.workspace, cwd);
+  assert.equal(doctor.cwd, doctor.config.agents.defaults.workspace);
+  assert.equal(
+    doctor.config.agents.entries.main.workspace,
+    doctor.config.agents.defaults.workspace,
+  );
+  assert.equal(exec.cwd, cwd);
+  // Validation saw the source as written, before workspaces were supplied.
+  const validate = JSON.parse(log[0]);
+  assert.deepEqual(validate.args.slice(0, 2), ['config', 'validate']);
+  assert.equal(
+    validate.config.agents.entries.main.workspace,
+    '/repo/workspace',
+  );
+  assert.equal(validate.config.agents.defaults, undefined);
   assert.equal(exec.config.skills.entries.gog.enabled, false);
   assert.equal(exec.config.agents.defaults.workspace, cwd);
   assert.equal(exec.config.agents.entries.main.workspace, cwd);
@@ -293,7 +307,7 @@ test('every configured agent workspace follows the turn', () => {
       defaults: { workspace: '/work/workspace' },
       entries: {
         main: { workspace: '/work/workspace' },
-        helper: { model: 'm' },
+        helper: { model: 'm', workspace: '/work/workspace' },
       },
     },
   );
