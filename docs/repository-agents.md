@@ -331,34 +331,48 @@ agent round admitted through the generic route.
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
 
-1. Stop new rounds. Remove `work.claw.admit` from every grant in
+1. Cancel any affected round (step 3 says which) that you will not wait
+   for. Cancelling a round needs the same `work.claw.admit` grant that
+   admitted it, so it is not possible once the fence in step 2 is up.
+2. Stop new rounds. Remove `work.claw.admit` from every grant in
    `AGENT_LCARS_WORK_GRANTS` and turn `runCallers` off in every profile, so
-   nothing can admit an agent round. An agent has no switch of its own to
-   disable it; the grant is the fence. Leave it in place until step 6.
-2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
-   earlier Console cannot read such a round, so it can neither deliver its
-   brief nor retry it. If the claw image is going back too, do the same for
-   every queued or retrying round whose pinned definition has `home/` files:
-   a round keeps the revision it was admitted with, so nothing done to the
-   default branch changes it, and the earlier Console and launcher together
-   would run it without those settings. Other rounds of OpenClaw agents are
-   unaffected.
-3. Take `harness` and `mode` out of every manifest that names one, on each
-   repository's default branch. If that definition also has `config.json`
-   and `approvals.json`, remove them too: without its `harness` it would
-   otherwise be a valid OpenClaw agent and run as one. Wait for the catalog
-   to refresh.
-4. Check that no agent in the catalog, enabled or not, still shows either
+   nothing can admit an agent round. A grant must keep at least one scope:
+   where `work.claw.admit` is a grant's only scope, as it is for
+   `svc:claw-operator`, remove the whole grant and keep a copy to restore.
+   An agent has no switch of its own to disable it; the grant is the fence.
+   Leave it in place until step 7.
+3. Wait until every affected round has reached a terminal state: finished,
+   failed for good, or cancelled. That includes attempts that are claimed or
+   running now and any retry they may still get, because a retry does not go
+   through admission. Roll back neither the Console nor the image before
+   then. Affected are:
+   - rounds that pinned a `harness` or a `mode`. The earlier Console cannot
+     read such a round, so it can neither deliver its brief nor retry it;
+   - if the claw image is going back too, rounds whose pinned definition has
+     `home/` files. A round keeps the revision it was admitted with, so
+     nothing done to the default branch changes it, and the earlier Console
+     and launcher together would run it without those settings.
+
+   Other rounds of OpenClaw agents are unaffected.
+
+4. Take `harness` and `mode` out of every manifest that names one, on each
+   repository's default branch. For a `claude` or `codex` definition that
+   also has `config.json` and `approvals.json`, remove those two files as
+   well: without its `harness` it would otherwise be a valid OpenClaw agent
+   and run as one. Leave them in place for a definition that only spelled
+   out `harness: openclaw`; it is an OpenClaw agent either way and needs
+   them. Wait for the catalog to refresh.
+5. Check that no agent in the catalog, enabled or not, still shows either
    field. The earlier Console reads stored rows with a strict schema, and
    one row with a field it does not know stops it listing and refreshing the
    catalog for every repository. Deleting an agent does not clear its row:
    the row is only disabled and keeps the stored manifest. For a row whose
    repository is gone or can no longer be read, delete its document from the
    `orchestrator-agents` collection.
-5. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
+6. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
    The earlier Console validates profiles at startup with a strict schema and
    does not start with a field it does not know.
-6. Roll the Console back, then lift the fence from step 1: restore the
+7. Roll the Console back, then lift the fence from step 2: restore the
    grants, and restore `runCallers` on each profile that had it, since the
    earlier Console lets a dispatched run invoke an agent only through that
    flag. If the claw image went back too, first deal with every agent whose
