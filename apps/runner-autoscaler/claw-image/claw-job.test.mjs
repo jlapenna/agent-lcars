@@ -911,6 +911,62 @@ test('resolveCredentials resolves what the config names and what providers read'
   ]);
 });
 
+test('resolveCredentials keeps credentials out of the variables a config defines', () => {
+  // OpenClaw adds the config's own `env` to its process environment, after
+  // the launcher has filtered that environment.
+  const template = (name) => '$' + `{${name}}`;
+  const auth = {
+    names: new Set(['LITELLM_API_KEY', 'OPENROUTER_API_KEY']),
+    candidates: new Map([
+      ['litellm', ['LITELLM_API_KEY']],
+      ['openrouter', ['OPENROUTER_API_KEY']],
+    ]),
+  };
+  const { config, used } = resolveCredentials(
+    {
+      env: {
+        shellEnv: { enabled: false },
+        // The older layout: a string directly under `env`.
+        LITELLM_API_KEY: template('LITELLM_API_KEY'),
+        vars: {
+          // A credential the config supplies itself.
+          OPENROUTER_API_KEY: 'sk-or-literal',
+          // A credential under another name.
+          GATEWAY_HEADER: `Bearer ${template('LITELLM_API_KEY')}`,
+          // Not a credential: tools keep it, as written.
+          REGION: template('ZONE'),
+        },
+      },
+      models: {
+        providers: {
+          litellm: { headers: { authorization: template('GATEWAY_HEADER') } },
+          openrouter: { baseUrl: 'https://openrouter.test' },
+        },
+      },
+    },
+    { PATH: '/bin', LITELLM_API_KEY: 'k1', ZONE: 'west' },
+    auth,
+  );
+  assert.deepEqual(config, {
+    env: { shellEnv: { enabled: false }, vars: { REGION: template('ZONE') } },
+    models: {
+      providers: {
+        // Each provider still gets its key, from wherever it was defined.
+        litellm: { headers: { authorization: 'Bearer k1' }, apiKey: 'k1' },
+        openrouter: {
+          baseUrl: 'https://openrouter.test',
+          apiKey: 'sk-or-literal',
+        },
+      },
+    },
+  });
+  assert.deepEqual([...used].sort(), [
+    'GATEWAY_HEADER',
+    'LITELLM_API_KEY',
+    'OPENROUTER_API_KEY',
+  ]);
+});
+
 test("provider credential names are OpenClaw's own answer", async () => {
   const root = await mkdtemp(join(tmpdir(), 'claw-auth-env-'));
   const bin = join(root, 'openclaw.mjs');

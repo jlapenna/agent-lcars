@@ -125,7 +125,11 @@ costs one attempt.
   `models.providers` and relied on finding its key there no longer
   authenticates; declare it. A SecretRef is resolved only as OpenClaw would
   resolve it: through an `env` provider the config declares, within that
-  provider's `allowlist`. An OpenClaw definition whose model key came from an
+  provider's `allowlist`. A variable the config defines under `env.vars` is
+  treated the same way: one that is a credential, or is built from one,
+  still reaches the provider settings that name it and is then left out of
+  what the Gateway, and so a command, inherits. Other `env.vars` entries are
+  kept. An OpenClaw definition whose model key came from an
   auth-profile store in its configured `agentDir` no longer authenticates
   either, because the Gateway keeps agent state under the Job's own state
   directory; give the provider its key as an `env` SecretRef instead. The launch config is readable by the agent's
@@ -340,7 +344,8 @@ while the newer Console is still running, in this order:
    where `work.claw.admit` is a grant's only scope, as it is for
    `svc:claw-operator`, remove the whole grant and keep a copy to restore.
    An agent has no switch of its own to disable it; the grant is the fence.
-   Leave it in place until step 7.
+   These are settings of the Console's deployed revision, so the fence is a
+   deploy. Leave it in place until step 8.
 3. Wait until every affected round has reached a terminal state: finished,
    failed for good, or cancelled. That includes attempts that are claimed or
    running now and any retry they may still get, because a retry does not go
@@ -366,22 +371,29 @@ while the newer Console is still running, in this order:
    field. The earlier Console reads stored rows with a strict schema, and
    one row with a field it does not know stops it listing and refreshing the
    catalog for every repository. Deleting an agent does not clear its row:
-   the row is only disabled and keeps the stored manifest. For a row whose
-   repository is gone or can no longer be read, delete its document from the
-   `orchestrator-agents` collection.
+   the row is only disabled and keeps the stored manifest. For the row of an
+   agent that is no longer in its repository, or whose repository is gone or
+   can no longer be read, delete its document from the `orchestrator-agents`
+   collection.
 6. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
    The earlier Console validates profiles at startup with a strict schema and
    does not start with a field it does not know.
-7. Roll the Console back, then lift the fence from step 2: restore the
-   grants, and restore `runCallers` on each profile that had it, since the
-   earlier Console lets a dispatched run invoke an agent only through that
-   flag. If the claw image went back too, first deal with every agent whose
-   definition has `home/` files: remove that directory if the agent can run
-   without it, or keep the agent fenced by leaving its runtime out of every
-   grant and `runCallers` off on its profile. The earlier Console delivers
-   such a definition in the brief the earlier launcher accepts, and that
-   launcher stages only the workspace, so the agent would run without its
-   reviewed `home/` settings.
+7. Roll the Console back with a build of the earlier version whose settings
+   carry the fence from step 2 and the profiles from step 6. Pinning the
+   earlier revision is not enough: a revision brings its own settings
+   (`apps/console/apphosting.yaml`), so its grants and `runCallers` would
+   come back at cutover and admission would reopen.
+8. Lift the fence with a further deploy of that version: restore the grants,
+   and restore `runCallers` on each profile that had it, since the earlier
+   Console lets a dispatched run invoke an agent only through that flag. If
+   the claw image went back too, first deal with every agent whose
+   definition has `home/` files. Remove that directory if the agent can run
+   without it and wait until the catalog shows the change, because admission
+   pins the revision the catalog holds, not the default branch. Otherwise
+   keep the agent fenced: its runtime out of every grant and `runCallers`
+   off on its profile. The earlier Console delivers such a definition in the
+   brief the earlier launcher accepts, and that launcher stages only the
+   workspace, so the agent would run without its reviewed `home/` settings.
 
 Rolling back only the claw image, with the newer Console still running,
 needs no step: a round that needs the newer launcher is delivered in a shape

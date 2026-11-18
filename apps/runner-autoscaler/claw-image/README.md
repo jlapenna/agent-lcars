@@ -155,7 +155,15 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    only outside those places stays in the environment. A SecretRef is
    resolved only as OpenClaw would resolve it: through an `env` provider the
    config declares, within that provider's `allowlist`; any other reference
-   is left for OpenClaw to refuse. A definition whose model key came from an
+   is left for OpenClaw to refuse. The config's own `env` counts as
+   environment too, because the Gateway adds its variables to its process
+   environment after the launcher has filtered it: a variable defined there
+   is a credential by the same rules, and so is one whose value is built
+   from a credential. Each still resolves into the provider settings that
+   name it, and is then removed from the launch config's `env`; the other
+   variables stay there as written. Both layouts the runtime reads are
+   covered (`env.vars` and a string directly under `env`), though the pinned
+   OpenClaw's validation accepts only `env.vars`. A definition whose model key came from an
    auth-profile store in its configured `agentDir` no longer authenticates,
    because the launch config, like `agent exec`, drops `agentDir` to keep
    agent state under the Job's state directory, and the Gateway does not
