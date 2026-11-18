@@ -10,6 +10,7 @@ import {
 } from '@agent-lcars/orchestrator';
 import {
   agentHarnessSchema,
+  agentModeSchema,
   type AgentRunBrief,
   agentWorkSpecSchema,
   CLAW_RUNTIME_PIPELINE,
@@ -42,6 +43,10 @@ export const agentProfileSchema = z.strictObject({
   /** Whether a dispatched run may invoke these agents with its run token
    * (`lcars investigate`), as `run:<runId>`. Off unless the operator opts in. */
   runCallers: z.boolean().optional(),
+  /** The harnesses the runtime's image and credentials can run; omitted
+   * means OpenClaw only. An operator lists another once the runtime's image
+   * carries it and its Secret holds that harness's login. */
+  harnesses: z.array(agentHarnessSchema).min(1).optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -71,6 +76,8 @@ const agentRoundSchema = z.strictObject({
   /** The admitted definition's harness; omitted means OpenClaw, so rounds
    * admitted before harnesses existed read the same. */
   harness: agentHarnessSchema.optional(),
+  /** The admitted definition's ACP session mode, when it names one. */
+  mode: agentModeSchema.optional(),
   requireToolEvidence: z.boolean(),
   /** The admitted definition's retry policy, pinned with the round so a
    * coalesced successor runs under its own round's policy. */
@@ -115,11 +122,24 @@ export function resolveAgentRuntime(
   profiles: readonly AgentProfile[],
 ): ResolvedAgentRuntime {
   const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
-  if (name === DEFAULT_AGENT_PROFILE)
+  const harness = definition.manifest.harness ?? 'openclaw';
+  // A runtime runs only the harnesses its operator says it carries, so a
+  // round never reaches an image or a Secret that cannot run it.
+  const runs = (harnesses: readonly string[] = ['openclaw']) => {
+    if (!harnesses.includes(harness))
+      throw new AgentAdmissionError(
+        'FORBIDDEN',
+        `Profile ${name} does not run ${harness} agents`,
+      );
+  };
+  if (name === DEFAULT_AGENT_PROFILE) {
+    runs();
     return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false };
+  }
   const profile = profiles.find((candidate) => candidate.name === name);
   if (!profile)
     throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
+  runs(profile.harnesses);
   if (!profile.repositories.includes(definition.repository))
     throw new AgentAdmissionError(
       'FORBIDDEN',
@@ -187,6 +207,9 @@ export async function admitAgentRun(
     definition.manifest.harness === 'openclaw'
       ? {}
       : { harness: definition.manifest.harness }),
+    ...(definition.manifest.mode === undefined
+      ? {}
+      : { mode: definition.manifest.mode }),
     requireToolEvidence: definition.manifest.requireToolEvidence ?? false,
     retry: definition.manifest.retry ?? 'finite',
     message: request.message,
@@ -303,20 +326,30 @@ export async function agentRunBrief(
     });
   if (agentDigest(files) !== round.digest)
     throw new Error(`${round.agent} does not match its pinned digest`);
-  return {
+  const delivered = await Promise.all(
+    [...files]
+      .sort((left, right) => left.path.localeCompare(right.path))
+      .map(async (file) => ({
+        ...file,
+        content: (await source.readBlob(file.sha)).toString('base64'),
+      })),
+  );
+  const brief = {
     agent: round.agent,
     revision: round.revision,
     digest: round.digest,
-    ...(round.harness === undefined ? {} : { harness: round.harness }),
     requireToolEvidence: round.requireToolEvidence,
     message: round.message,
-    files: await Promise.all(
-      [...files]
-        .sort((left, right) => left.path.localeCompare(right.path))
-        .map(async (file) => ({
-          ...file,
-          content: (await source.readBlob(file.sha)).toString('base64'),
-        })),
-    ),
+  };
+  // A round that names a harness or a mode needs a launcher that knows
+  // them. Its files go under `definition`, which a launcher from before
+  // harnesses does not read, so that launcher refuses the brief.
+  if (round.harness === undefined && round.mode === undefined)
+    return { ...brief, files: delivered };
+  return {
+    ...brief,
+    ...(round.harness === undefined ? {} : { harness: round.harness }),
+    ...(round.mode === undefined ? {} : { mode: round.mode }),
+    definition: delivered,
   };
 }

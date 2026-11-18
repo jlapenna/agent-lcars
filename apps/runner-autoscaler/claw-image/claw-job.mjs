@@ -64,9 +64,9 @@ const RESERVED_ENV =
 
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
-// an environment when it needs more than the zone's, a `verify` that names
-// any of its own settings the turn changed, and a `stop` for anything it
-// started. A manifest names a harness; the command comes from
+// an environment when it needs more than the zone's, and a `finish` that
+// stops anything it started and names any reason to refuse the turn's
+// result. A manifest names a harness; the command comes from
 // the image, never from the definition, so reviewed source cannot choose the
 // program that speaks for the agent.
 const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
@@ -152,15 +152,28 @@ export function readBrief(brief, env) {
     throw new ClawFailure('brief carries no agent');
   if (typeof claw.message !== 'string' || !claw.message.trim())
     throw new ClawFailure('brief carries no agent message');
-  if (!Array.isArray(claw.files) || typeof claw.digest !== 'string')
+  // A brief that names a harness or a mode carries its files as `definition`,
+  // not `files`. A launcher from before harnesses reads only `files`, so it
+  // refuses such a brief instead of running the agent on OpenClaw with a
+  // policy its definition never asked for.
+  const selects = claw.harness !== undefined || claw.mode !== undefined;
+  const files = claw.definition ?? claw.files;
+  if (
+    !Array.isArray(files) ||
+    typeof claw.digest !== 'string' ||
+    (claw.definition !== undefined && claw.files !== undefined) ||
+    (selects && claw.definition === undefined)
+  )
     throw new ClawFailure('brief carries no agent definition');
-  if (claw.harness !== undefined && typeof claw.harness !== 'string')
-    throw new ClawFailure('brief names no usable harness');
+  for (const field of ['harness', 'mode'])
+    if (claw[field] !== undefined && typeof claw[field] !== 'string')
+      throw new ClawFailure(`brief names no usable ${field}`);
   return {
     agent: claw.agent,
     harness: claw.harness ?? 'openclaw',
+    mode: claw.mode,
     message: claw.message,
-    files: claw.files,
+    files,
     digest: claw.digest,
     requireTools: claw.requireToolEvidence === true,
   };
@@ -281,7 +294,11 @@ export function settle(
 // system, no terminal) and refuses every permission request: an unattended run
 // has nobody to ask, so what the agent may do is whatever its reviewed harness
 // settings already allow.
-export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
+export function acpTurn(
+  command,
+  args,
+  { env, cwd, message, mode, signal } = {},
+) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new ClawFailure('claw run was cancelled'));
@@ -473,6 +490,21 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
           `harness speaks ACP protocol ${initialized.protocolVersion}`,
         );
       const session = await request('session/new', { cwd, mcpServers: [] });
+      // The manifest's mode is the agent's reviewed permission policy: a
+      // harness that does not offer it, or will not switch to it, runs
+      // nothing.
+      if (mode !== undefined) {
+        const offered = session.modes?.availableModes;
+        if (
+          !Array.isArray(offered) ||
+          !offered.some((candidate) => candidate?.id === mode)
+        )
+          throw new ClawFailure(`harness offers no ${mode} mode`);
+        await request('session/set_mode', {
+          sessionId: session.sessionId,
+          modeId: mode,
+        });
+      }
       const prompted = await request('session/prompt', {
         sessionId: session.sessionId,
         prompt: [{ type: 'text', text: message }],
@@ -560,7 +592,9 @@ async function harnessTurn({
   );
   const inHome = (file) =>
     join(env.HOME, normalize(file.path).slice('home/'.length));
-  for (const file of settings) await chmod(inHome(file), 0o444);
+  // Read-only for the turn; an executable (a hook's helper) stays one.
+  for (const file of settings)
+    await chmod(inHome(file), file.mode === '100755' ? 0o555 : 0o444);
   const harness = await harnesses[request.harness]({
     definitionDir,
     workRoot,
@@ -571,42 +605,43 @@ async function harnessTurn({
     env,
     signal,
   });
+  // Stops whatever the harness started and names any reason it has to
+  // refuse the turn's result. It runs on every path, exactly once.
+  const finish = harness.finish ?? (async () => undefined);
+  let finished;
   try {
     if (signal.aborted) throw new ClawFailure('claw run was cancelled');
     const turn = acpTurn(harness.command, harness.args, {
       env: harness.env ?? env,
       cwd: workspace,
       message: request.message,
+      mode: request.mode,
       signal,
     });
     // The turn is awaited after the heartbeat; a spawn failure in between
     // must reach that await, not become an unhandled rejection.
     turn.catch(() => undefined);
     await started();
-    const finished = await turn;
-    // The harness runs as the launcher's UID, so nothing can stop an agent
-    // with a write-capable tool from rewriting the settings that bound it.
-    // What the launcher can do is refuse a result when it sees that: every
-    // pinned `home/` file must still be its blob once the turn is over. A
-    // file the agent added, or changed and put back, is not seen.
-    const changed = async () => {
-      for (const file of settings) {
-        const content = await readFile(inHome(file)).catch(() => undefined);
-        if (content === undefined || gitBlobSha(content) !== file.sha)
-          return file.path;
-      }
-      return harness.verify?.();
-    };
-    const what = await changed();
-    return what === undefined
-      ? finished
-      : {
-          ...finished,
-          error: `the agent changed its harness settings (${what})`,
-        };
-  } finally {
-    await harness.stop?.();
+    finished = await turn;
+  } catch (error) {
+    await finish();
+    throw error;
   }
+  const refused = await finish();
+  // The harness runs as the launcher's UID, so nothing can stop an agent
+  // with a write-capable tool from rewriting the settings that bound it.
+  // What the launcher can do is refuse a result when it sees that: every
+  // pinned `home/` file must still be its blob once the turn is over. A
+  // file the agent added, or changed and put back, is not seen.
+  for (const file of settings) {
+    const content = await readFile(inHome(file)).catch(() => undefined);
+    if (content === undefined || gitBlobSha(content) !== file.sha)
+      return {
+        ...finished,
+        error: `the agent changed its harness settings (${file.path})`,
+      };
+  }
+  return refused === undefined ? finished : { ...finished, error: refused };
 }
 
 export async function main(env = process.env, deps = {}) {

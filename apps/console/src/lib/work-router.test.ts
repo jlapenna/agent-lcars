@@ -290,26 +290,48 @@ describe('repository-owned agent runs', () => {
     });
   });
 
-  it('pins a named ACP harness with the round, and nothing for OpenClaw', async () => {
-    const round = async (manifest: Record<string, unknown>) => {
+  it('pins a named harness and mode with the round, and nothing for a plain OpenClaw agent', async () => {
+    const admit = async (manifest: Record<string, unknown>) => {
       const ctx = context({
-        principal: caller,
+        principal: {
+          ...caller,
+          pipelines: [...caller.pipelines, 'claw-coders'],
+        },
         agents: agents([{ manifest: { description: 'x', ...manifest } }]),
-        agentProfiles: profiles,
+        agentProfiles: () => [
+          ...profiles(),
+          {
+            name: 'coders',
+            runtime: 'claw-coders',
+            repositories: ['owner/repo'],
+            harnesses: ['claude' as const, 'openclaw' as const],
+          },
+        ],
       });
       const response = await call(ctx, 'POST', path, { message: 'Why?' });
-      expect(response.status).toBe(202);
       const [run] = await ctx.runtime.store.listRuns({
         workId: response.json.id,
       });
-      return run!.sourceRevision!.input;
+      return { status: response.status, input: run?.sourceRevision?.input };
     };
-    expect(await round({ harness: 'claude' })).toMatchObject({
-      harness: 'claude',
+    expect(
+      await admit({ profile: 'coders', harness: 'claude', mode: 'plan' }),
+    ).toMatchObject({
+      status: 202,
+      input: { harness: 'claude', mode: 'plan' },
     });
     // Rounds for OpenClaw agents keep the shape they had before harnesses.
-    expect(await round({ harness: 'openclaw' })).not.toHaveProperty('harness');
-    expect(await round({})).not.toHaveProperty('harness');
+    for (const manifest of [{ harness: 'openclaw' }, {}]) {
+      const { status, input } = await admit(manifest);
+      expect(status).toBe(202);
+      expect(input).not.toHaveProperty('harness');
+      expect(input).not.toHaveProperty('mode');
+    }
+    // A harness the profile's runtime does not carry is refused at admission.
+    expect((await admit({ harness: 'claude' })).status).toBe(403);
+    expect((await admit({ profile: 'coders', harness: 'codex' })).status).toBe(
+      403,
+    );
   });
 
   it('returns the same round for the same message under one sourceKey', async () => {

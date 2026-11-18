@@ -45,6 +45,9 @@ function agentBrief(files, over = {}) {
     sha: blobSha(content),
     content: Buffer.from(content).toString('base64'),
   }));
+  // As LCARS delivers it: a round that names a harness or a mode carries its
+  // files as `definition`, every other round as `files`.
+  const selects = over.harness !== undefined || over.mode !== undefined;
   return {
     intentId: RUN_ID,
     pipeline: 'claw-default',
@@ -55,7 +58,7 @@ function agentBrief(files, over = {}) {
       digest: agentDigest(pinned),
       requireToolEvidence: true,
       message: 'Why is the disk alert firing?',
-      files: pinned,
+      [selects ? 'definition' : 'files']: pinned,
       ...over,
     },
   };
@@ -98,13 +101,22 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     record({ session: message.params });
     return behaviour.authError
       ? send({ id: message.id, error: { code: -32000, message: 'Authentication required' } })
-      : send({ id: message.id, result: { sessionId: 's1' } });
+      : send({ id: message.id, result: { sessionId: 's1', ...(behaviour.modes ? { modes: { currentModeId: behaviour.modes[0], availableModes: behaviour.modes.map((id) => ({ id, name: id })) } } : {}) } });
+  }
+  if (message.method === 'session/set_mode') {
+    record({ mode: message.params.modeId });
+    return behaviour.refuseMode
+      ? send({ id: message.id, error: { code: -32602, message: 'mode not allowed' } })
+      : send({ id: message.id, result: {} });
   }
   if (message.method === 'session/prompt') {
     record({ prompt: message.params.prompt });
     prompt = message.id;
     if (behaviour.hang) return;
     if (behaviour.exit) process.exit(7);
+    // The Gateway's own record that the turn failed, which OpenClaw's ACP
+    // server never passes on.
+    if (behaviour.gatewayError) fs.writeFileSync(path.join(__dirname, 'gateway-error'), '');
     if (behaviour.tamperConfig) {
       const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
       config.tools = { profile: 'coding' };
@@ -183,7 +195,11 @@ if (sub === 'gateway run') {
   const line = (text) => console.log('\\u001b[90m2026-11-18T04:44:41.551+00:00\\u001b[39m \\u001b[36m[gateway]\\u001b[39m \\u001b[36m' + text + '\\u001b[39m');
   line('spawn broker ready pid=1');
   setTimeout(() => line('ready'), 150);
-  process.on('SIGTERM', () => process.exit(0));
+  // A failed turn is logged at error level, on stderr, as the turn ends.
+  process.on('SIGTERM', () => {
+    if (!fs.existsSync(path.join(__dirname, 'gateway-error'))) process.exit(0);
+    process.stderr.write('\\u001b[90m2026-11-18T06:47:39.530+00:00\\u001b[39m \\u001b[31m[diagnostic]\\u001b[39m \\u001b[31mmessage processed: channel=webchat sessionKey=agent:main:acp-bridge:x outcome=error duration=83426ms\\u001b[39m\\n', () => process.exit(0));
+  });
   setInterval(() => {}, 1000);
   return;
 }
@@ -656,6 +672,25 @@ test('an agent that rewrites the Gateway config loses its report', async () => {
   });
 });
 
+test('a turn the Gateway recorded as failed is never a report', async () => {
+  // OpenClaw's ACP server ends a failed turn like any other, even after part
+  // of an answer has streamed.
+  const { env, deps } = await fixture({
+    acp: {
+      gatewayError: true,
+      steps: [
+        tool('pending', { update: 'tool_call' }),
+        tool('completed'),
+        { say: 'The disk is' },
+      ],
+    },
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: OpenClaw reported the turn as failed.',
+  });
+});
+
 test('the outer deadline stops an OpenClaw turn and its Gateway', async () => {
   const { env, deps, openclawLog } = await fixture({
     acp: { hang: true },
@@ -961,6 +996,7 @@ test('sends a repository agent exactly its message, without a wrapper', async ()
 
 const harnessFiles = {
   'agent.yaml': { content: 'description: x\nharness: claude\n' },
+  'home/.claude/hooks/check': { content: '#!/bin/sh\n', mode: '100755' },
   'home/.claude/settings.json': { content: '{"permissions":{}}' },
   'workspace/CLAUDE.md': { content: '# repository agent\n' },
 };
@@ -1006,8 +1042,13 @@ test('an ACP harness runs the agent and reports its last message after the last 
   assert.equal(initialize.cwd, join(env.CLAW_WORK_DIR, 'workspace'));
   assert.equal(initialize.key, 'sk-test');
   assert.equal(initialize.token, null);
-  // Its user-level settings are the definition's reviewed `home/`.
+  // Its user-level settings are the definition's reviewed `home/`: read-only
+  // for the turn, with an executable still executable.
   assert.equal(initialize.settings, '{"permissions":{}}');
+  const modeOf = async (file) =>
+    (await stat(join(env.HOME, '.claude', file))).mode & 0o777;
+  assert.equal(await modeOf('settings.json'), 0o444);
+  assert.equal(await modeOf('hooks/check'), 0o555);
   assert.deepEqual(initialize.initialize.clientCapabilities, {
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
@@ -1250,15 +1291,63 @@ test('settle applies the evidence rules to an ACP turn', () => {
   );
 });
 
-test('readBrief names the harness, defaulting to OpenClaw', () => {
+test('readBrief names the harness and mode, defaulting to OpenClaw', () => {
   const env = { LCARS_RUN_ID: RUN_ID };
-  assert.equal(readBrief(agentBrief(agentFiles), env).harness, 'openclaw');
-  assert.equal(
-    readBrief(agentBrief(harnessFiles, { harness: 'codex' }), env).harness,
-    'codex',
+  const plain = readBrief(agentBrief(agentFiles), env);
+  assert.equal(plain.harness, 'openclaw');
+  assert.equal(plain.mode, undefined);
+  const selected = readBrief(
+    agentBrief(harnessFiles, { harness: 'codex', mode: 'read-only' }),
+    env,
   );
+  assert.equal(selected.harness, 'codex');
+  assert.equal(selected.mode, 'read-only');
+  assert.equal(selected.files.length, 4);
   assert.throws(
     () => readBrief(agentBrief(harnessFiles, { harness: 7 }), env),
     /no usable harness/,
   );
+  // A harness or mode beside `files` is the shape a launcher from before
+  // harnesses would run on OpenClaw; it is never accepted.
+  const legacy = agentBrief(agentFiles);
+  for (const selection of [{ harness: 'claude' }, { mode: 'plan' }]) {
+    assert.throws(
+      () =>
+        readBrief({ ...legacy, claw: { ...legacy.claw, ...selection } }, env),
+      /no agent definition/,
+    );
+  }
+});
+
+test("the manifest's session mode is selected before the prompt, or nothing runs", async () => {
+  const modes = ['agent', 'read-only'];
+  const run = async (behaviour, mode) => {
+    const fixtureRun = await harnessFixture(
+      { ...CLEAN_TURN, ...behaviour },
+      { brief: { mode } },
+    );
+    const result = await main(fixtureRun.env, fixtureRun.deps);
+    return { result, log: await fixtureRun.harnessLog() };
+  };
+  const selected = await run({ modes }, 'read-only');
+  assert.equal(selected.result.outcome, 'report');
+  assert.deepEqual(
+    selected.log.map((entry) => Object.keys(entry)[0]),
+    ['initialize', 'session', 'mode', 'prompt'],
+  );
+  assert.equal(selected.log[2].mode, 'read-only');
+  // A harness that does not offer the mode, or will not switch, is never
+  // prompted.
+  for (const [behaviour, message] of [
+    [
+      { modes: ['agent'] },
+      'Claw turn failed: harness offers no read-only mode.',
+    ],
+    [{}, 'Claw turn failed: harness offers no read-only mode.'],
+    [{ modes, refuseMode: true }, 'Claw turn failed: mode not allowed.'],
+  ]) {
+    const refused = await run(behaviour, 'read-only');
+    assert.deepEqual(refused.result, { outcome: 'runner-failed', message });
+    assert.ok(!refused.log.some((entry) => entry.prompt));
+  }
 });

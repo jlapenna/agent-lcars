@@ -29,10 +29,6 @@ executable files keep their mode. The harness's files are read from there:
 `approvals.json` for OpenClaw. Its `config.json` is a source config; the
 launcher normalizes it for this image
 ([below](#agent-config-normalization)).
-||||||| 1dddd263
-executable files keep their mode. The definition's `config.json`,
-`approvals.json` and `workspace/` (such as `AGENTS.md`) are read from there;
-`config.json` must be Doctor-normalized (below).
 
 ## What a zone mounts
 
@@ -65,18 +61,22 @@ Each step fails the attempt closed with a `runner-failed` completion:
 
 1. Startup heartbeat must be acknowledged before anything else, then the
    brief must be a `claw` brief for this run: an agent round with its message
-   and verified definition.
+   and verified definition. A round that names a harness or a mode carries
+   its files as `definition` instead of `files`, which a launcher from before
+   harnesses refuses.
 2. The launcher writes the verified definition to `/work/agent`, copies its
    `workspace/` to a writable `/work/workspace` and copies its `home/` into
-   `HOME`, making each pinned `home/` file read-only.
+   `HOME`, making each pinned `home/` file read-only (an executable stays
+   executable).
 3. It prepares what the harness needs (for OpenClaw, [below](#openclaw)) and
    starts the harness the manifest names (`HARNESSES` in `claw-job.mjs`) in
    its own process group, in the workspace, with a clean environment: the
    zone's `env/` Secret items and nothing of the launcher's. The command
    always comes from the image.
 4. It speaks ACP over the harness's stdio: `initialize` (protocol 1, no file
-   system or terminal capability), `session/new` in the workspace and one
-   `session/prompt` carrying the message. It answers every
+   system or terminal capability), `session/new` in the workspace,
+   `session/set_mode` when the manifest names a mode (a harness that does not
+   offer it runs nothing), and one `session/prompt` carrying the message. It answers every
    `session/request_permission` with the reject option, so the agent can do
    only what its harness does without asking.
 5. It settles from the session's updates: `report` only when the turn ended
@@ -129,8 +129,15 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
 7. `openclaw acp --url ws://127.0.0.1:<port> --token-file … --no-prefix-cwd`
    is the harness. After the turn the Gateway's process group is stopped.
 
-After the turn the launcher refuses the result if the Gateway's config or
-token file is no longer what it launched. Exec approvals live in OpenClaw's
+OpenClaw's ACP server ends a turn the Gateway failed like any other
+(`end_turn`), even after part of an answer has streamed. The Gateway does log
+the failure (`[diagnostic] lane task error`, or a `message processed` line
+with `outcome=error`), so the launcher stops the Gateway after the turn,
+reads its log to the end and fails the attempt when it finds one. This reads
+log text, so a new OpenClaw version needs that wording checked.
+
+After the turn the launcher also refuses the result if the Gateway's config
+or token file is no longer what it launched. Exec approvals live in OpenClaw's
 state database and are not covered by that check.
 
 Exec approvals stay the enforcement layer: a denied command is a failed tool
@@ -167,18 +174,6 @@ No real model turn and no run on k3s has been made through this path yet. The
 previous launcher, which ran `openclaw agent exec` without a Gateway, settled
 an OpenClaw report in 58 s on the real image (2026-11-14, Spark lane, 2 CPU /
 3 GiB); the Gateway's memory under that limit is unmeasured.
-||||||| 1dddd263 2. Fresh state directory with a writable copy of the pinned config. 3. `openclaw config validate --json` must report `valid: true`.
-`agent exec` itself silently ignores unknown keys. 4. `openclaw doctor --fix --non-interactive` initializes state (without it
-every config-pinned turn fails with "Auth profile read requested an
-uncaptured shared owner"). If it changes anything but `meta`/`wizard`,
-the pinned config was not normalized and the attempt fails. 5. `openclaw approvals set --file /work/agent/approvals.json`. 6. `openclaw agent exec --config … --state-dir … --message-file … --cwd … --json`
-under the outer deadline. OpenClaw's stderr is never forwarded, because it
-can echo resolved configuration. 7. Settle: `report` only when the envelope is `ok`, has a final message and
-no `toolSummary.unresolvedError`. When the agent's manifest sets
-`requireToolEvidence`, at least one tool call is also required. A tool call
-that failed and was resolved (a probe of a host that is down) is evidence,
-not a runner failure. `agent exec` exits 0 with `ok: true` even when every
-tool call was denied, so the exit code alone proves nothing.
 
 ## Agent config normalization
 

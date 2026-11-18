@@ -30,6 +30,7 @@ profile: homelab-ops # credentials; omitted = the default profile
 retry: finite # finite (default) | terminal, for agents with effect authority
 requireToolEvidence: true # a report with no tool call is a failed attempt
 harness: claude # openclaw (default) | claude | codex; see Harnesses
+mode: plan # the harness's ACP session mode; omitted = its default
 ```
 
 Concurrency and resources are not agent fields: the executor runtime the
@@ -81,9 +82,17 @@ costs one attempt.
     in `home/.claude/settings.json`. It ignores allow rules in
     `workspace/.claude/settings.json`, because the workspace is not a trusted
     directory, but applies deny rules from either file.
-  - Codex runs commands in its own sandbox: it writes inside the workspace
-    unasked and blocks writes elsewhere and the network.
-    `home/.codex/config.toml` sets its approval and sandbox policy.
+  - Codex runs commands in its own sandbox, and its adapter sets that sandbox
+    and approval policy from the session's mode on every turn, overriding
+    `sandbox_mode` and `approval_policy` in `home/.codex/config.toml`. The
+    adapter's default mode, `agent`, writes inside the workspace unasked and
+    blocks writes elsewhere and the network.
+
+  `mode` in the manifest selects the harness's ACP session mode before the
+  prompt, so it is where a definition states a policy the harness enforces
+  itself: `read-only` or `workspace-write` for Codex, `plan` or `acceptEdits`
+  for Claude Code. A harness that does not offer the mode, or refuses to
+  switch to it, runs nothing and the attempt fails.
 
   The harness runs as the launcher's user, so an agent allowed a tool that
   writes files could rewrite the settings that bound it. The launcher cannot
@@ -98,12 +107,16 @@ costs one attempt.
   `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. A runtime without one fails
   the attempt with the harness's `Authentication required`. The default
   runtime holds only a model key, so a `claude` or `codex` agent names a
-  profile whose runtime carries its harness's login.
+  profile whose runtime carries its harness's login and lists the harness
+  ([profiles](#profiles)).
 - **Evidence.** One set of rules for every harness, read from the ACP
   session. An answer with no text is a failed attempt. So is a tool call that
   failed or never finished, unless a call that started after it ended
   completed; that later call is resolved evidence, as a retried probe is.
-  `requireToolEvidence` needs at least one tool call. Codex's adapter
+  `requireToolEvidence` needs at least one tool call. OpenClaw's ACP server
+  ends a turn its Gateway failed like any other, even after part of an answer
+  has streamed, so the launcher also reads the Gateway's own log and fails
+  the attempt when it recorded the turn as failed. Codex's adapter
   sometimes leaves a command its sandbox blocked at once out of the session
   (3 of 8 runs on 2.1.1), so that failure can go unseen; a Codex agent whose
   answer must rest on a tool sets
@@ -153,10 +166,15 @@ array in `AGENT_LCARS_AGENT_PROFILES`, next to the job profiles, each with a
 - **`repositories`** lists the repositories whose agents may use the profile,
   and the optional **`principals`** limits who may invoke them. The caller's
   grant must also list the runtime.
+- **`harnesses`** lists the harnesses the runtime can run; omitted means
+  `openclaw` only. An operator adds `claude` or `codex` once the runtime's
+  image carries that harness and its Secret holds the harness's login. An
+  agent whose harness its profile does not list is refused at admission.
 
 The **default profile** runs on the shared executor's `claw-default` runtime,
-which holds only a model key. An agent that needs no other credential therefore
-runs from a repository PR alone.
+which holds only a model key and runs only `openclaw` agents. An OpenClaw
+agent that needs no other credential therefore runs from a repository PR
+alone.
 
 Agents that share a profile share its credentials. An agent that must not see
 another's credentials gets its own profile.
@@ -170,7 +188,7 @@ another's credentials gets its own profile.
   `jlapenna/homelab/investigator`.
 - **Pinning:** the round's revision input pins the definition (revision,
   digest, each file's path, mode and blob SHA), `requireToolEvidence`, a
-  non-default `harness` and the message. A later merge cannot change a round already admitted. A repeated
+  non-default `harness`, a `mode` and the message. A later merge cannot change a round already admitted. A repeated
   `requestId` with the same message is the same round, and `sourceKey`
   coalesces rounds on one subject. Admission needs no reservation transaction:
   claims already bound concurrency.
@@ -184,6 +202,11 @@ another's credentials gets its own profile.
     definition and the message. LCARS reads each file from GitHub by its blob
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
+  - A round that names a harness or a mode carries its files in the brief as
+    `definition`, not `files`. A launcher from before harnesses reads only
+    `files`, so on an image that predates them (or after a rollback to one)
+    the attempt fails instead of running the agent on OpenClaw under a policy
+    its definition never asked for.
   - The launcher materializes the files into `/work/agent` and checks the
     digest. It then runs the agent's [harness](#harnesses) as an ACP agent.
     For OpenClaw that starts with `config validate`, `doctor --fix` on a copy
@@ -191,10 +214,6 @@ another's credentials gets its own profile.
     plugin, and never Doctor's skill toggles; any other change fails the run
     and names the changed settings) and `approvals set`. A runtime's image can
     therefore change without every repository re-normalizing its agents.
-    ||||||| 1dddd263
-    digest. It then runs today's sequence: `config validate`, `doctor` (which
-    must change nothing, proving the reviewed config is what runs),
-    `approvals set` and `agent exec`.
 
   Zone ConfigMaps carrying agent definitions are retired.
 

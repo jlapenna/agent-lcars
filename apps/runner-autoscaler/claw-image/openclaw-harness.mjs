@@ -41,6 +41,11 @@ const GATEWAY_STOP_MS = 5_000;
 // The Gateway's own line once it accepts work, after its log prefix. Earlier
 // lines such as "spawn broker ready pid=…" must not match.
 const GATEWAY_READY = /\[gateway\] ready$/u;
+// The Gateway's own record that a turn failed. OpenClaw's ACP server ends
+// such a turn like any other (`end_turn`), even after part of an answer has
+// streamed, so this log is the only place the failure shows.
+const TURN_FAILED =
+  /\[diagnostic\] (lane task error:|message (processed|dispatch completed):.*\boutcome=error\b)/u;
 const stripAnsi = (text) =>
   // eslint-disable-next-line no-control-regex -- terminal colour codes
   text.replace(/\u001b\[[0-9;]*m/gu, '');
@@ -458,16 +463,20 @@ export async function prepareState({
     } catch {
       config = undefined;
     }
-    if (config !== comparableConfig(launched)) return 'OpenClaw config';
-    if ((await text(tokenFile)) !== `${gateway.token}\n`)
-      return 'OpenClaw Gateway token';
-    return undefined;
+    const changed =
+      config !== comparableConfig(launched)
+        ? 'OpenClaw config'
+        : (await text(tokenFile)) !== `${gateway.token}\n`
+          ? 'OpenClaw Gateway token'
+          : undefined;
+    return changed && `the agent changed its harness settings (${changed})`;
   };
   return { childEnv, port: gateway.port, tokenFile, verify };
 }
 
 // Starts the Gateway in its own process group and resolves, once it reports
-// ready, with the function that stops it.
+// ready, with the function that stops it and whether it has since recorded a
+// failed turn.
 export function startGateway(openclaw, { env, signal }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -495,7 +504,7 @@ export function startGateway(openclaw, { env, signal }) {
       }
     };
     let settled = false;
-    let tail = '';
+    let turnFailed = false;
     const settle = () => {
       if (settled) return false;
       settled = true;
@@ -514,17 +523,25 @@ export function startGateway(openclaw, { env, signal }) {
     timer.unref();
     const onAbort = () => fail(new ClawFailure('claw run was cancelled'));
     signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.setEncoding('utf8');
-    // Keep reading after ready: a full pipe would block the Gateway.
-    child.stdout.on('data', (chunk) => {
-      if (settled) return;
-      const lines = (tail + chunk).split('\n');
-      tail = lines.pop().slice(-4096);
-      if (lines.some((line) => GATEWAY_READY.test(stripAnsi(line).trimEnd())))
-        if (settle()) resolve(stop);
-    });
-    // Gateway logs can echo resolved configuration; never forward them.
-    child.stderr.resume();
+    const onLine = (text) => {
+      const line = stripAnsi(text).trimEnd();
+      if (!settled) {
+        if (GATEWAY_READY.test(line) && settle())
+          resolve({ stop, turnFailed: () => turnFailed });
+      } else if (TURN_FAILED.test(line)) turnFailed = true;
+    };
+    // Both streams are read to the end: a full pipe would block the Gateway,
+    // and it reports a failed turn on either. Its logs can echo resolved
+    // configuration, so nothing is forwarded.
+    for (const stream of [child.stdout, child.stderr]) {
+      let tail = '';
+      stream.setEncoding('utf8');
+      stream.on('data', (chunk) => {
+        const lines = (tail + chunk).split('\n');
+        tail = lines.pop().slice(-4096);
+        for (const line of lines) onLine(line);
+      });
+    }
     child.once('error', (error) => {
       if (settle()) reject(error);
     });
@@ -556,7 +573,7 @@ export async function openclawHarness({
     env,
     signal,
   });
-  const stop = await startGateway(openclaw, { env: childEnv, signal });
+  const gateway = await startGateway(openclaw, { env: childEnv, signal });
   return {
     command: openclaw,
     args: [
@@ -570,7 +587,13 @@ export async function openclawHarness({
       '--no-prefix-cwd',
     ],
     env: childEnv,
-    verify,
-    stop,
+    // Stopping the Gateway first reads its log to the end, so a failure it
+    // recorded for the turn is seen before the result is judged.
+    finish: async () => {
+      await gateway.stop();
+      return gateway.turnFailed()
+        ? 'OpenClaw reported the turn as failed'
+        : verify();
+    },
   };
 }

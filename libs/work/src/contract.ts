@@ -1263,27 +1263,48 @@ export const AGENT_HARNESSES = ['openclaw', 'claude', 'codex'] as const;
 export const agentHarnessSchema = z.enum(AGENT_HARNESSES);
 export type AgentHarness = z.infer<typeof agentHarnessSchema>;
 
-/** A repository-owned agent's round (docs/repository-agents.md): the pinned
- * definition read from GitHub by blob SHA, and the message that is the
- * agent's brief. The launcher materializes `files` (base64 content, git
- * mode) and verifies `digest` before running the agent. */
-export const agentRunBriefSchema = z.strictObject({
+/** A harness's ACP session mode, the agent's reviewed permission policy
+ * (for example Codex's `read-only`). */
+export const agentModeSchema = z.string().regex(/^[A-Za-z][\w-]{0,63}$/u);
+
+const agentBriefFileSchema = z.strictObject({
+  path: z.string().min(1),
+  mode: z.enum(['100644', '100755']),
+  sha: z.string().regex(/^[a-f0-9]{40}$/u),
+  content: z.string(),
+});
+const agentBriefFields = {
   agent: z.string(),
   revision: z.string().regex(/^[a-f0-9]{40}$/u),
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
-  /** The harness that runs the turn; omitted means OpenClaw. */
-  harness: agentHarnessSchema.optional(),
   requireToolEvidence: z.boolean(),
   message: z.string().min(1),
-  files: z.array(
-    z.strictObject({
-      path: z.string().min(1),
-      mode: z.enum(['100644', '100755']),
-      sha: z.string().regex(/^[a-f0-9]{40}$/u),
-      content: z.string(),
-    }),
-  ),
-});
+};
+
+/** A repository-owned agent's round (docs/repository-agents.md): the pinned
+ * definition read from GitHub by blob SHA, and the message that is the
+ * agent's brief. The launcher materializes the files (base64 content, git
+ * mode) and verifies `digest` before running the agent.
+ *
+ * A round that names a harness or a mode carries its files as `definition`.
+ * A launcher from before harnesses reads only `files`, so it refuses such a
+ * brief instead of running the agent on OpenClaw under a policy its
+ * definition never asked for. */
+export const agentRunBriefSchema = z.union([
+  z.strictObject({
+    ...agentBriefFields,
+    files: z.array(agentBriefFileSchema),
+  }),
+  z.strictObject({
+    ...agentBriefFields,
+    /** The harness that runs the turn; omitted means OpenClaw. */
+    harness: agentHarnessSchema.optional(),
+    /** The ACP session mode to select before the prompt; omitted means the
+     * harness's own default. */
+    mode: agentModeSchema.optional(),
+    definition: z.array(agentBriefFileSchema),
+  }),
+]);
 export type AgentRunBrief = z.infer<typeof agentRunBriefSchema>;
 
 /** An invoked agent round as its invoking run sees it: the item state and,
