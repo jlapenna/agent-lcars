@@ -567,10 +567,16 @@ The metrics endpoint exposes the queue worker's own health:
   unattributed exit (`pipeline="unknown"`) and a finished run without a
   result (a Console that predates `ok`) leave it unchanged. Once the exit
   reporter starts, the executor zero-initializes each declared runtime's
-  outcome counters, duration histograms and streak and sets
-  `..._run_exit_metrics_supported 1`: an absent series is then unknown (scrape
-  down, preflight failed or older producer), a zero streak with no exit
-  timestamp is idle.
+  `succeeded`, `failed`, `finished`, `lost` and `canceled` counters and
+  duration histograms and its streak, and sets
+  `..._run_exit_metrics_supported 1` (0 until then, including after a failed
+  preflight). The diagnostic `unknown_run`, `not_claimant` and `other`
+  outcomes appear only once observed. An absent streak is unknown (scrape
+  down, preflight failed or older producer); a zero streak with no exit
+  timestamp is idle. These are best-effort operational metrics: exits during
+  executor downtime are not counted, Jobs shorter than a second record no
+  duration, and a terminal Job kept past the reporter's 48-hour receipt
+  could be counted again.
 - `lcars_repository_agents*` (shared executor only, registered with the
   maintenance ticker) export the repository
   agent catalog observation from the maintenance reply: agents by admission

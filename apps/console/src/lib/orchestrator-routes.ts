@@ -12,9 +12,10 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import type {
-  JobCredentialObservation,
-  RepositoryAgentObservation,
+import {
+  type JobCredentialObservation,
+  type RepositoryAgentObservation,
+  repositoryAgentObservationSchema,
 } from '@agent-lcars/work';
 import { z } from 'zod';
 
@@ -553,6 +554,30 @@ async function decideDelivery(
   }
 }
 
+/** The executor reads at most 64 KiB of the maintenance reply. */
+const MAINTENANCE_REPLY_BUDGET_BYTES = 60 * 1024;
+
+/** `observation` when it parses on the wire and fits beside `rest`. */
+function fitObservation(
+  observation: RepositoryAgentObservation | undefined,
+  rest: object,
+): RepositoryAgentObservation | undefined {
+  if (observation === undefined) return undefined;
+  const parsed = repositoryAgentObservationSchema.safeParse(observation);
+  if (!parsed.success) {
+    logger.warn('Repository agent observation omitted: invalid on the wire');
+    return undefined;
+  }
+  const bytes = Buffer.byteLength(
+    JSON.stringify({ ...rest, repositoryAgents: parsed.data }),
+  );
+  if (bytes > MAINTENANCE_REPLY_BUDGET_BYTES) {
+    logger.warn('Repository agent observation omitted: reply budget');
+    return undefined;
+  }
+  return parsed.data;
+}
+
 /** `observation`'s value, or undefined if it fails or is still pending at
  * `deadline` (epoch ms). It never rejects and never outlives the deadline. */
 async function withinDeadline<T>(
@@ -621,7 +646,7 @@ export async function handleReconcile(
     ]);
     for (const result of maintenance)
       if (result.status === 'rejected') throw result.reason;
-    const repositoryAgents = await repositoryAgentObservation;
+    const observed = await repositoryAgentObservation;
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +
@@ -631,6 +656,19 @@ export async function handleReconcile(
       credentialObservation?.status === 'fulfilled'
         ? credentialObservation.value
         : undefined;
+    // Optional health telemetry is attached only when it is valid on the
+    // wire and the whole reply still fits the executor's 64 KiB limit; it
+    // never turns a completed maintenance pass into a failed one.
+    const repositoryAgents = fitObservation(observed, {
+      jobCredentials,
+      credentialRecovery,
+      lost: swept.lost.map((run) => run.runId),
+      retried: swept.retried,
+      rerouted,
+      dispatched: drained.dispatched,
+      reported: drained.reported,
+      outboxDrainFailed: drained.failed,
+    });
     return {
       status: 200,
       body: {

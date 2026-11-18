@@ -81,3 +81,14 @@ it('bounds the reported repositories to fit the maintenance reply', () => {
   expect(observation.sources).toHaveLength(OBSERVED_SOURCE_LIMIT);
   expect(JSON.stringify(observation).length).toBeLessThan(32 * 1024);
 });
+
+it('leaves out a repository name that cannot travel on the wire', () => {
+  const observation = observeAgentCatalog(
+    [],
+    [{ repository: 'owner/repo+suffix', attemptedAt: at }],
+    [],
+    ['owner/repo+suffix'],
+    new Date(at),
+  );
+  expect(observation.sources).toEqual([]);
+});

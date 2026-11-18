@@ -16,6 +16,10 @@ const REMOVED = 'Definition removed';
  * bytes each). Repositories beyond it are dropped in name order. */
 export const OBSERVED_SOURCE_LIMIT = 100;
 
+/** The wire's repository pattern (libs/work repository-agents.ts); a name
+ * that cannot travel is left out rather than failing the reply. */
+const WIRE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+
 /** Catalog health for the maintenance reply: agents by admission state and
  * each refreshed repository's attempt, read success and read failure times.
  * Only repositories still refreshed (configured, or holding stored agents)
@@ -57,7 +61,11 @@ export function observeAgentCatalog(
     observedAt: now.toISOString(),
     agents: counts,
     sources: [...known]
-      .filter((repository) => attempted.has(repository) || read.has(repository))
+      .filter(
+        (repository) =>
+          WIRE_REPOSITORY.test(repository) &&
+          (attempted.has(repository) || read.has(repository)),
+      )
       .sort()
       .slice(0, OBSERVED_SOURCE_LIMIT)
       .map((repository) => {

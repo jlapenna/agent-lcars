@@ -1558,6 +1558,37 @@ describe('handleReconcile', () => {
     expect(failed.body).not.toHaveProperty('repositoryAgents');
   });
 
+  it('omits a catalog observation that is invalid on the wire or would overflow the reply', async () => {
+    const { deps } = fixture();
+    const base = {
+      version: 1 as const,
+      observedAt: T0,
+      agents: { enabled: 0, vetoed: 0, invalid: 0, unavailable: 0, removed: 0 },
+    };
+    const invalid = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => ({
+        ...base,
+        sources: [{ repository: 'owner/repo+suffix' }],
+      }),
+    });
+    expect(invalid.status).toBe(200);
+    expect(invalid.body).not.toHaveProperty('repositoryAgents');
+
+    const huge = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => ({
+        ...base,
+        sources: Array.from({ length: 1000 }, (_, index) => ({
+          repository: `owner/${'r'.repeat(80)}${index}`,
+          attemptedAt: T0,
+        })),
+      }),
+    });
+    expect(huge.status).toBe(200);
+    expect(huge.body).not.toHaveProperty('repositoryAgents');
+  });
+
   it('omits a catalog observation still pending at the maintenance deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     try {
