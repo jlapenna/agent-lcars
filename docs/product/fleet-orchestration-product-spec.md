@@ -616,10 +616,14 @@ executor is working an issue; a human assignee owns it regardless.
   cross-model `fallbackPipelines` order of FL-IN-10, with the authoring model
   last. A provider-limited repository Goose recipe re-runs under its operator
   profile's `fallbackProfile` (#3289). If that run also stops on a provider
-  limit, it re-runs under the first fallback profile's own fallback. A chain
+  limit, a second fallback runs only when the fallback profile configures an
+  eligible fallback of its own and the occurrence records its chain history
+  (`fallbackProfiles`). A fallback persisted without chain history settles
+  on its provider limit without launching its configured successor. A chain
   uses at most two distinct fallback profiles (`MAX_FALLBACKS`) and never
-  revisits a profile (`reserveFallback` in `lib/repository-jobs.ts`; the
-  regression test chains Codex → Claude → Antigravity). Production fallback evidence is
+  revisits a profile (`reserveFallback` in `lib/repository-jobs.ts`;
+  regression tests chain Codex → Claude → Antigravity and stop a
+  history-less Claude fallback). Production fallback evidence is
   recorded under R7 in §12.
   - **Provider wait for PR reviews.** When every authorized provider of a
     GitHub PR review (`mode: 'review'`, not native Work) has stopped on its
@@ -657,11 +661,12 @@ executor is working an issue; a human assignee owns it regardless.
   5. In parallel: the summary pass (`executeModelWork`) and repository jobs
      (`maintainRepositoryJobs`: catalog refresh for every control-plane
      repository, repository-agent catalog refresh, due-slot ticks and
-     settlement), both bounded by a 45-second deadline, and job-credential
-     health (`observeJobCredentials`, reported as `jobCredentials`). The
-     credential observation starts alongside them but is awaited without the
-     deadline, so slow credential reads can extend maintenance past 45
-     seconds.
+     settlement), and job-credential health (`observeJobCredentials`,
+     reported as `jobCredentials`). The 45-second deadline is a shared work
+     budget, not a timeout: the passes stop starting new work once it
+     passes, but the handler awaits every pass. A slow job-store read, a
+     job reconciliation already in flight, or slow credential reads can each
+     keep maintenance pending past 45 seconds.
   6. The repository-agent catalog observation (`repositoryAgents`), started
      beside step 5 under the same deadline and attached only when it is valid
      and the reply stays within a 60 KiB budget (the executor reads at most

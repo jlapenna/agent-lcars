@@ -186,8 +186,10 @@ Shared URL state:
     unchanged. When the session has lapsed, `jobsApi` receives a 401 and
     sends the browser back to `/login`. The credentials routes answer a
     missing or insufficient principal with 403 (`lib/job-secrets-http.ts`),
-    so the credentials panel shows its "Credential operation refused" error
-    in place instead of redirecting.
+    so the credentials panel shows an error in place instead of
+    redirecting: "Credential registry could not be loaded." when the initial
+    registry read fails, and "Credential operation refused." when an action
+    such as an explicit refresh fails.
 - **FE-AUTH-4 [Shipped]** Work API authorization is separate from admin
   status. The session's `github:<login>` is mapped to a principal and scopes
   through `AGENT_LCARS_WORK_GRANTS`. Grantable scopes
@@ -744,10 +746,14 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   Each row shows the identifier and title (linked to the tracker), tracker,
   repository, state, and assignees. A row already bound to Work links
   **Open Work →**; otherwise an operator chooses an **Issue agent** from the
-  grant's pipelines and presses **Run**. Run targets the source's stored
-  repository when it has one; only a source with no stored target shows a
-  **Target repository** selector (Linear sources offer the repositories
-  routed for the issue's team). Run and Refresh issues are server actions
+  grant's pipelines and presses **Run**. Run targets the row's resolved
+  target repository and shows a **Target repository** selector only when
+  none resolves. GitHub rows resolve to the issue's own repository. Unbound
+  Linear rows compute the target at read time from the current routing
+  configuration and the projected issue labels, so changing routing can
+  change the Run target without changing the stored projection
+  (`lib/issue-sources.ts`). A row bound to Work uses that Work's stored
+  target and shows **Open Work →** instead of Run. Run and Refresh issues are server actions
   (`app/work/issues/actions.ts`) that call the Work router in-process
   (FE-AUTH-3); `POST /api/work/v1/issues/dispatch` and `/issues/refresh` expose
   the same operations over REST. Run's `dispatchSource` passes `{issue,
