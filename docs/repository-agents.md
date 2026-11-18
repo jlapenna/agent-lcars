@@ -523,9 +523,19 @@ same with or without a harness container.
 Pinning a claw image whose launcher predates agent-lcars#3409 is not
 image-only for an agent with a source config, such as `smoke`: that launcher
 refuses any config Doctor would change, so the agent's rounds fail before the
-model runs. Before such a pin, fence admission and let affected rounds finish
-(steps 1 to 3 below), commit each such agent's config normalized for the
-rollback image, and restore admission only after the pin is live.
+model runs. A round re-reads its definition at the revision it pinned, so a
+later config commit does not rescue it. In order:
+
+1. Cancel any round of an affected agent you will not wait for; cancelling
+   needs the admitting grant, so do it before the fence.
+2. Fence admission for the affected runtimes, as in step 2 of the Console
+   rollback below (here only the grants and profiles covering those
+   runtimes), then wait until every round of an affected agent is terminal,
+   including queued attempts and their retries.
+3. Commit each affected agent's `config.json` normalized for the rollback
+   image, and wait until the catalog shows those revisions.
+4. Pin the rollback image and wait until the executor runs it.
+5. Restore admission.
 
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
