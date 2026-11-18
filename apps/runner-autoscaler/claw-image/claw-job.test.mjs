@@ -18,6 +18,7 @@ import {
   bundledPluginProviders,
   comparableConfig,
   doctorChanges,
+  launchConfig,
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
@@ -60,6 +61,8 @@ const agentFiles = {
   'config.json': {
     content: JSON.stringify({
       tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
+      // A repository path, meaningless in the job: the turn's workspace wins.
+      agents: { entries: { main: { workspace: '/repo/workspace' } } },
     }),
   },
   'approvals.json': { content: '{"version":1}' },
@@ -79,8 +82,11 @@ const log = behaviour.FAKE_LOG;
 const messageAt = args.indexOf('--message-file');
 const message = messageAt < 0 ? null : fs.readFileSync(args[messageAt + 1], 'utf8');
 const configAt = args.indexOf('--config');
-const config = configAt < 0 ? null : JSON.parse(fs.readFileSync(args[configAt + 1], 'utf8'));
-if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message, config }) + '\\n');
+const configFile = configAt >= 0 ? args[configAt + 1] : args[0] === 'doctor' ? process.env.OPENCLAW_CONFIG_PATH : null;
+const config = configFile ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : null;
+const cwdAt = args.indexOf('--cwd');
+const cwdFiles = cwdAt < 0 ? null : fs.readdirSync(args[cwdAt + 1]).sort();
+if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message, config, cwdFiles }) + '\\n');
 const sub = args.slice(0, 2).join(' ');
 if (args[0] === 'config' && args[1] === 'validate') {
   console.log(JSON.stringify({ valid: behaviour.FAKE_INVALID !== '1' }));
@@ -94,6 +100,9 @@ if (args[0] === 'doctor') {
   config.wizard = { lastRunAt: new Date().toISOString() };
   if (behaviour.FAKE_DOCTOR_WIDENS === '1') config.tools = { profile: 'coding' };
   if (behaviour.FAKE_DOCTOR_NARROWS === '1') config.skills = { entries: { gog: { enabled: false } } };
+  // Doctor's file repairs (for example its TOOLS.md migration) act on the
+  // configured workspace.
+  if (behaviour.FAKE_DOCTOR_REPAIRS_WORKSPACE === '1') fs.rmSync(require('node:path').join(config.agents.defaults.workspace, 'AGENTS.md'));
   fs.writeFileSync(path, JSON.stringify(config));
   process.exit(0);
 }
@@ -210,7 +219,7 @@ test('an invalid pinned config fails closed before the turn', async () => {
   assert.match(result.message, /failed validation/);
   assert.deepEqual(completion(calls), result);
   const log = await readFile(env.FAKE_LOG, 'utf8');
-  assert.ok(!log.includes('"exec"'));
+  assert.ok(!log.includes('["agent","exec"'));
 });
 
 test('a Doctor change that would widen the agent fails closed, naming it', async () => {
@@ -223,7 +232,9 @@ test('a Doctor change that would widen the agent fails closed, naming it', async
     result.message,
     /beyond narrowing it: tools\.exec\.mode, tools\.profile\.$/,
   );
-  assert.ok(!(await readFile(env.FAKE_LOG, 'utf8')).includes('"exec"'));
+  assert.ok(
+    !(await readFile(env.FAKE_LOG, 'utf8')).includes('["agent","exec"'),
+  );
   assert.deepEqual(completion(calls), result);
 });
 
@@ -235,13 +246,56 @@ test("an un-normalized source config runs on Doctor's narrowed copy", async () =
   assert.equal(result.outcome, 'report');
   assert.deepEqual(completion(calls), result);
   const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
+  const doctor = JSON.parse(
+    log.find((line) => JSON.parse(line).args[0] === 'doctor'),
+  );
   const exec = JSON.parse(log.at(-1));
   assert.equal(exec.args[1], 'exec');
-  // The turn runs Doctor's copy, whose workspace is the turn's own.
+  const cwd = exec.args[exec.args.indexOf('--cwd') + 1];
+  // Doctor judged a disposable copy of the turn's workspace; the turn runs
+  // Doctor's normalized config pointed back at its own workspace.
+  assert.notEqual(doctor.config.agents.defaults.workspace, cwd);
   assert.equal(exec.config.skills.entries.gog.enabled, false);
-  assert.equal(
-    exec.config.agents.defaults.workspace,
-    exec.args[exec.args.indexOf('--cwd') + 1],
+  assert.equal(exec.config.agents.defaults.workspace, cwd);
+  assert.equal(exec.config.agents.entries.main.workspace, cwd);
+});
+
+test("Doctor's workspace repairs never reach the turn's workspace", async () => {
+  const { env, fetchImpl } = await fixture({
+    env: { FAKE_DOCTOR_REPAIRS_WORKSPACE: '1' },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.equal(result.outcome, 'report');
+  const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
+  const doctor = JSON.parse(
+    log.find((line) => JSON.parse(line).args[0] === 'doctor'),
+  );
+  const exec = JSON.parse(log.at(-1));
+  assert.ok(exec.cwdFiles.includes('AGENTS.md'));
+  assert.ok(exec.cwdFiles.includes('tools'));
+  await assert.rejects(stat(doctor.config.agents.defaults.workspace), {
+    code: 'ENOENT',
+  });
+});
+
+test('every configured agent workspace follows the turn', () => {
+  assert.deepEqual(
+    launchConfig(
+      {
+        agents: {
+          defaults: { workspace: '/elsewhere' },
+          entries: { main: { workspace: '/other' }, helper: { model: 'm' } },
+        },
+      },
+      '/work/workspace',
+    ).agents,
+    {
+      defaults: { workspace: '/work/workspace' },
+      entries: {
+        main: { workspace: '/work/workspace' },
+        helper: { model: 'm' },
+      },
+    },
   );
 });
 
@@ -332,6 +386,16 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
   assert.deepEqual(doctorChanges(source, { ...source, gateway: {} }, owners), [
     'gateway',
   ]);
+  // OpenClaw matches provider IDs case-insensitively.
+  const upper = { models: { providers: { LITELLM: {} } } };
+  assert.deepEqual(
+    doctorChanges(
+      upper,
+      { ...upper, plugins: { entries: { litellm: { enabled: true } } } },
+      owners,
+    ),
+    [],
+  );
   // A provider owned by a differently named plugin (google-vertex → google).
   const vertex = { models: { providers: { 'google-vertex': {} } } };
   assert.deepEqual(
@@ -591,7 +655,10 @@ test('the overall deadline also bounds setup and stops before the turn', async (
   assert.deepEqual(completion(calls), result);
   const log = await readFile(env.FAKE_LOG, 'utf8');
   assert.ok(!log.includes('"approvals"'), 'approvals ran after the deadline');
-  assert.ok(!log.includes('"exec"'), 'the turn started after the deadline');
+  assert.ok(
+    !log.includes('["agent","exec"'),
+    'the turn started after the deadline',
+  );
 });
 
 test('runs a repository-owned agent from its verified, locked brief', async () => {

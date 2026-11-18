@@ -103,10 +103,15 @@ export function comparableConfig(config) {
 // Returns the dotted paths of every other change (OpenClaw's `meta`/`wizard`
 // stamps aside); any such change fails the attempt.
 export function doctorChanges(source, after, pluginProviders = new Map()) {
-  const providers = new Set(Object.keys(source?.models?.providers ?? {}));
+  // OpenClaw matches provider IDs case-insensitively (LITELLM enables the
+  // litellm plugin).
+  const providerId = (id) => id.trim().toLowerCase();
+  const providers = new Set(
+    Object.keys(source?.models?.providers ?? {}).map(providerId),
+  );
   const ownsDeclaredProvider = (plugin) =>
     [...(pluginProviders.get(plugin) ?? [])].some((provider) =>
-      providers.has(provider),
+      providers.has(providerId(provider)),
     );
   const before = nodes(JSON.parse(comparableConfig(source)));
   const normalized = nodes(JSON.parse(comparableConfig(after)));
@@ -207,14 +212,20 @@ export async function bundledPluginProviders(openclaw) {
   return owners;
 }
 
-// The config the turn runs: the source with the agent's workspace set to the
-// turn's workspace, so Doctor judges skill readiness (a repository skill
-// replacing a bundled one) against the same skills the turn loads.
+// The source with every agent workspace (the defaults and any entry that sets
+// its own) pointed at `workspace`, as `agent exec --cwd` does for the turn.
+// Doctor runs on a disposable copy of the turn's workspace so it judges skill
+// readiness (a repository skill replacing a bundled one) against the skills
+// the turn loads, while its file repairs never reach the turn; the turn's
+// config then points back at the turn's own workspace.
 export function launchConfig(source, workspace) {
   const config = structuredClone(source);
   config.agents ??= {};
   config.agents.defaults ??= {};
   config.agents.defaults.workspace = workspace;
+  for (const entry of Object.values(config.agents.entries ?? {}))
+    if (entry && typeof entry === 'object' && 'workspace' in entry)
+      entry.workspace = workspace;
   return config;
 }
 
@@ -512,9 +523,11 @@ export async function prepareState({
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
+  const doctorWorkspace = join(stateDir, 'doctor-workspace');
+  await cp(workspace, doctorWorkspace, { recursive: true });
   const pinned = launchConfig(
     JSON.parse(await readFile(join(agentDir, 'config.json'), 'utf8')),
-    workspace,
+    doctorWorkspace,
   );
   const configPath = join(stateDir, 'agent-config.json');
   await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
@@ -549,15 +562,22 @@ export async function prepareState({
     throw new ClawFailure(`openclaw doctor exited ${doctor.code}`);
   // The agent runs Doctor's normalized copy; the verified source stays
   // untouched under the locked agent directory.
+  const normalized = JSON.parse(await readFile(configPath, 'utf8'));
   const refused = doctorChanges(
     pinned,
-    JSON.parse(await readFile(configPath, 'utf8')),
+    normalized,
     await bundledPluginProviders(openclaw),
   );
   if (refused.length > 0)
     throw new ClawFailure(
       `openclaw doctor would change this agent's config.json on this image beyond narrowing it: ${refused.join(', ')}`,
     );
+  await writeFile(
+    configPath,
+    `${JSON.stringify(launchConfig(normalized, workspace), null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await rm(doctorWorkspace, { recursive: true, force: true });
 
   const approvals = await run(
     openclaw,

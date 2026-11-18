@@ -80,20 +80,27 @@ An agent's `config.json` is a source config: it does not have to match any
 particular image. Doctor's normalization depends on the image (for example it
 disables bundled skills whose binaries are absent), so the launcher runs it on
 a copy inside the image that executes the turn, and the turn uses that copy.
-The verified definition under `/work/agent` is never modified. Before Doctor
-runs, the launcher sets the copy's `agents.defaults.workspace` to the turn's
-workspace (overriding any source value), so Doctor judges skill readiness
-against the same skills the turn loads: a repository skill replacing a bundled
-one keeps it enabled.
+The verified definition under `/work/agent` is never modified.
+
+Doctor runs against a disposable copy of the turn's workspace: the config
+copy's `agents.defaults.workspace` and every `agents.entries.<name>.workspace`
+point at it (overriding source values, as `agent exec --cwd` does). Doctor
+therefore judges skill readiness against the skills the turn loads (a
+repository skill replacing a bundled one keeps it enabled), while its file
+repairs (such as its `TOOLS.md` migration) never reach the turn. The turn's
+config then points those workspaces back at the turn's own workspace.
 
 Doctor may only narrow the agent (`doctorChanges` in `claw-job.mjs`):
 
-- disable a bundled skill (`skills.entries.<name>.enabled: false`);
+- disable a skill (`skills.entries.<name>.enabled: false`): a bundled skill
+  whose binaries the image lacks, or a repository skill whose declared
+  requirements this image does not meet;
 - enable a plugin that owns a model provider the config declares
   (`plugins.entries.<plugin>.enabled: true`, not one the config set). Ownership
   comes from the image's bundled `dist/extensions/*/openclaw.plugin.json`
-  (`providers`, `autoEnableWhenConfiguredProviders`), so `google-vertex`
-  authorizes the `google` plugin;
+  (`providers`, `autoEnableWhenConfiguredProviders`), matched
+  case-insensitively as OpenClaw does, so `google-vertex` authorizes the
+  `google` plugin and `LITELLM` the `litellm` plugin;
 - add an empty agent entry (`agents.entries.<name>: {}`).
 
 Any other change, apart from OpenClaw's `meta`/`wizard` stamps, fails the
