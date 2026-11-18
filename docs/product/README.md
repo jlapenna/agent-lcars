@@ -10,10 +10,12 @@ This product specification comes in two parts:
    frontend roadmap.
 2. [Fleet management and orchestration](fleet-orchestration-product-spec.md):
    GitHub and Linear intake, event-driven issue triage, the task/run state
-   machine, admission and queueing, repository-owned Goose jobs, per-job
-   credential sets, direct-runner execution (`claude`, `codex`, `opencode`,
-   `agy`, `goose`), the worker contract, ready deliverable ownership and merge,
-   telemetry, fleet boundaries, and the control-plane roadmap.
+   machine, admission and queueing (including server-owned live-claim
+   ceilings), repository-owned Goose jobs, repository-owned claw agents on
+   `claw-*` runtime pipelines, per-job credential sets, direct-runner
+   execution (`claude`, `codex`, `opencode`, `agy`, `goose`), the worker
+   contract, ready deliverable ownership and merge, telemetry, fleet
+   boundaries, and the control-plane roadmap.
 
 ## Harness engineering principles
 
