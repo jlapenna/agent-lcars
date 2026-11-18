@@ -22,6 +22,7 @@ import {
   readBrief,
   secretEnvironment,
   settle,
+  settleAcp,
 } from './claw-job.mjs';
 
 const RUN_ID = 'run-123';
@@ -529,4 +530,258 @@ test('sends a repository agent exactly its message, without a wrapper', async ()
     .map((line) => JSON.parse(line))
     .find((entry) => entry.args[0] === 'agent');
   assert.equal(exec.message, 'Reply with JSON only.');
+});
+
+// A fake ACP harness: newline-delimited JSON-RPC on stdio, scripted by a
+// behaviour file beside it (the launcher gives a harness a clean environment).
+const FAKE_HARNESS = `
+const fs = require('node:fs');
+const path = require('node:path');
+const behaviour = JSON.parse(fs.readFileSync(path.join(__dirname, 'harness.json'), 'utf8'));
+const record = (entry) => fs.appendFileSync(behaviour.log, JSON.stringify(entry) + '\\n');
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\\n');
+const update = (sessionUpdate, fields) =>
+  send({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate, ...fields } } });
+const say = (text, messageId) => update('agent_message_chunk', { ...(messageId ? { messageId } : {}), content: { type: 'text', text } });
+let prompt;
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    const settings = path.join(process.env.HOME, '.claude', 'settings.json');
+    record({ initialize: message.params, cwd: process.cwd(), key: process.env.LITELLM_API_KEY ?? null, token: process.env.LCARS_RUN_TOKEN ?? null, settings: fs.existsSync(settings) ? fs.readFileSync(settings, 'utf8') : null });
+    console.log('harness banner, not protocol');
+    return send({ id: message.id, result: { protocolVersion: behaviour.protocolVersion ?? 1, agentCapabilities: {} } });
+  }
+  if (message.method === 'session/new') {
+    record({ session: message.params });
+    return behaviour.authError
+      ? send({ id: message.id, error: { code: -32000, message: 'Authentication required' } })
+      : send({ id: message.id, result: { sessionId: 's1' } });
+  }
+  if (message.method === 'session/prompt') {
+    record({ prompt: message.params.prompt });
+    prompt = message.id;
+    if (behaviour.hang) return;
+    if (behaviour.exit) process.exit(7);
+    for (const step of behaviour.steps ?? []) {
+      if (step.say) say(step.say, step.id);
+      if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
+      if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
+    }
+    return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn' } });
+  }
+  if (message.id === 'ask-1') {
+    record({ permission: message.result });
+    update('tool_call_update', { toolCallId: 't1', status: 'failed' });
+    say('I could not run it.');
+    return send({ id: prompt, result: { stopReason: 'end_turn' } });
+  }
+});
+`;
+
+const harnessFiles = {
+  'agent.yaml': { content: 'description: x\nharness: claude\n' },
+  'home/.claude/settings.json': { content: '{"permissions":{}}' },
+  'workspace/CLAUDE.md': { content: '# repository agent\n' },
+};
+
+async function harnessFixture(behaviour = {}, overrides = {}) {
+  const made = await fixture({
+    brief: agentBrief(harnessFiles, {
+      harness: 'claude',
+      requireToolEvidence: false,
+      ...overrides.brief,
+    }),
+    env: overrides.env,
+  });
+  const script = join(made.root, 'harness.cjs');
+  const log = join(made.root, 'harness.log');
+  await writeFile(script, FAKE_HARNESS);
+  await writeFile(
+    join(made.root, 'harness.json'),
+    JSON.stringify({ log, ...behaviour }),
+  );
+  const harnessLog = async () =>
+    (await readFile(log, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+  return {
+    ...made,
+    harnessLog,
+    deps: {
+      fetchImpl: made.fetchImpl,
+      harnesses: { claude: { command: process.execPath, args: [script] } },
+    },
+  };
+}
+
+const tool = (status, over = {}) => ({
+  tool: { id: 't1', kind: 'execute', status, ...over },
+});
+
+test('an ACP harness runs the agent and reports its last message after the last tool call', async () => {
+  const { env, calls, deps, harnessLog } = await harnessFixture({
+    steps: [
+      { say: 'Let me check the disk.' },
+      tool('pending', { update: 'tool_call' }),
+      tool('completed'),
+      // A harness notice is its own message; the answer that follows wins.
+      { say: 'Warning: model metadata not found.' },
+      { say: 'All clear: ', id: 'm1' },
+      { say: 'disk at 41%.', id: 'm1' },
+    ],
+  });
+  const result = await main(env, deps);
+  assert.deepEqual(result, {
+    outcome: 'report',
+    message: 'All clear: disk at 41%.',
+  });
+  assert.deepEqual(completion(calls), result);
+  assert.deepEqual(
+    calls.map((call) => call.path),
+    ['heartbeat', 'brief', 'heartbeat', 'complete'],
+  );
+  assert.deepEqual(calls[2].body, { providerProcessStarted: true });
+  const [initialize, session, prompt] = await harnessLog();
+  // The harness runs in the agent's workspace copy with the zone's secret
+  // environment and nothing of the launcher's.
+  assert.equal(initialize.cwd, join(env.CLAW_WORK_DIR, 'workspace'));
+  assert.equal(initialize.key, 'sk-test');
+  assert.equal(initialize.token, null);
+  // Its user-level settings are the definition's reviewed `home/`.
+  assert.equal(initialize.settings, '{"permissions":{}}');
+  assert.deepEqual(initialize.initialize.clientCapabilities, {
+    fs: { readTextFile: false, writeTextFile: false },
+    terminal: false,
+  });
+  assert.deepEqual(session.session, {
+    cwd: join(env.CLAW_WORK_DIR, 'workspace'),
+    mcpServers: [],
+  });
+  assert.deepEqual(prompt.prompt, [
+    { type: 'text', text: 'Why is the disk alert firing?' },
+  ]);
+  assert.equal(
+    await readFile(join(env.CLAW_WORK_DIR, 'workspace', 'CLAUDE.md'), 'utf8'),
+    '# repository agent\n',
+  );
+  // An ACP agent needs no OpenClaw definition, and OpenClaw never runs.
+  await assert.rejects(readFile(env.FAKE_LOG, 'utf8'), { code: 'ENOENT' });
+});
+
+test('an ACP permission request is refused and its tool call fails the attempt', async () => {
+  const { env, deps, harnessLog } = await harnessFixture({
+    steps: [tool('pending', { update: 'tool_call' }), { ask: 't1' }],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: unresolved execute tool call.',
+  });
+  const asked = (await harnessLog()).find((entry) => entry.permission);
+  assert.deepEqual(asked.permission, {
+    outcome: { outcome: 'selected', optionId: 'no' },
+  });
+});
+
+test('an ACP turn fails closed on a harness error, an early exit or no answer', async () => {
+  const outcome = async (behaviour) => {
+    const { env, deps } = await harnessFixture(behaviour);
+    return (await main(env, deps)).message;
+  };
+  assert.equal(
+    await outcome({ authError: true }),
+    'Claw turn failed: Authentication required.',
+  );
+  assert.equal(
+    await outcome({ exit: true }),
+    'Claw turn failed: harness exited 7 mid-turn.',
+  );
+  // A harness reports a turn that died before the model as a normal end.
+  assert.equal(await outcome({ steps: [] }), 'Claw turn failed: empty result.');
+  assert.equal(
+    await outcome({ steps: [{ say: 'partial' }], stopReason: 'max_tokens' }),
+    'Claw turn failed: harness stopped with max_tokens.',
+  );
+  assert.equal(
+    await outcome({ protocolVersion: 2 }),
+    'Claw turn failed: harness speaks ACP protocol 2.',
+  );
+});
+
+test('a harness the image does not carry is refused before any turn', async () => {
+  const { env, deps, harnessLog } = await harnessFixture(
+    {},
+    { brief: { harness: 'constructor' } },
+  );
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw setup failed: this image carries no constructor harness.',
+  });
+  await assert.rejects(harnessLog(), { code: 'ENOENT' });
+});
+
+test('the outer deadline stops an ACP harness that never answers', async () => {
+  const { env, deps } = await harnessFixture(
+    { hang: true },
+    { env: { CLAW_TURN_DEADLINE_SECONDS: '1' } },
+  );
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn exceeded its deadline.',
+  });
+});
+
+test('settleAcp applies the evidence rules to an ACP turn', () => {
+  const turn = (over) => ({
+    stopReason: 'end_turn',
+    final: 'Disk at 41%.',
+    calls: 0,
+    ...over,
+  });
+  const done = { kind: 'execute', status: 'completed' };
+  assert.deepEqual(settleAcp(turn()), {
+    outcome: 'report',
+    message: 'Disk at 41%.',
+  });
+  assert.equal(
+    settleAcp(turn(), { requireTools: true }).message,
+    'Claw turn answered without using any tool.',
+  );
+  // A failed call that a later call followed is resolved evidence.
+  assert.equal(
+    settleAcp(turn({ calls: 2, lastTool: done }), { requireTools: true })
+      .outcome,
+    'report',
+  );
+  for (const status of ['failed', 'pending', 'in_progress'])
+    assert.equal(
+      settleAcp(turn({ calls: 1, lastTool: { kind: 'read', status } })).message,
+      'Claw turn failed: unresolved read tool call.',
+    );
+  assert.equal(
+    settleAcp(turn({ final: 'x'.repeat(MAX_REPORT_BYTES + 1) })).outcome,
+    'runner-failed',
+  );
+  assert.equal(
+    settleAcp(turn({ aborted: true })).message,
+    'Claw turn was cancelled.',
+  );
+  assert.equal(
+    settleAcp(turn({ timedOut: true })).message,
+    'Claw turn exceeded its deadline.',
+  );
+});
+
+test('readBrief names the harness, defaulting to OpenClaw', () => {
+  const env = { LCARS_RUN_ID: RUN_ID };
+  assert.equal(readBrief(agentBrief(agentFiles), env).harness, 'openclaw');
+  assert.equal(
+    readBrief(agentBrief(harnessFiles, { harness: 'codex' }), env).harness,
+    'codex',
+  );
+  assert.throws(
+    () => readBrief(agentBrief(harnessFiles, { harness: 7 }), env),
+    /no usable harness/,
+  );
 });

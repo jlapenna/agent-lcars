@@ -526,6 +526,14 @@ describe('runsContract.brief claw branch', () => {
     expect(runBriefSchema.parse(brief)).toEqual(brief);
   });
 
+  it('names an ACP harness the image carries, and refuses any other', () => {
+    const withHarness = (harness: string) =>
+      runBriefSchema.safeParse({ ...brief, claw: { ...agentBrief, harness } });
+    expect(withHarness('claude').success).toBe(true);
+    expect(withHarness('codex').success).toBe(true);
+    expect(withHarness('bash').success).toBe(false);
+  });
+
   it('refuses the retired operation brief', () => {
     expect(
       runBriefSchema.safeParse({

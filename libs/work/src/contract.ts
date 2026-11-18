@@ -1256,6 +1256,13 @@ const githubRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
 });
 
+/** The harnesses that can run a repository-owned agent's turn
+ * (docs/repository-agents.md): embedded OpenClaw, or an ACP harness the claw
+ * runner image carries. */
+export const AGENT_HARNESSES = ['openclaw', 'claude', 'codex'] as const;
+export const agentHarnessSchema = z.enum(AGENT_HARNESSES);
+export type AgentHarness = z.infer<typeof agentHarnessSchema>;
+
 /** A repository-owned agent's round (docs/repository-agents.md): the pinned
  * definition read from GitHub by blob SHA, and the message that is the
  * agent's brief. The launcher materializes `files` (base64 content, git
@@ -1264,6 +1271,8 @@ export const agentRunBriefSchema = z.strictObject({
   agent: z.string(),
   revision: z.string().regex(/^[a-f0-9]{40}$/u),
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
+  /** The harness that runs the turn; omitted means OpenClaw. */
+  harness: agentHarnessSchema.optional(),
   requireToolEvidence: z.boolean(),
   message: z.string().min(1),
   files: z.array(

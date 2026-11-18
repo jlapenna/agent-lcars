@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Claw runner: one embedded OpenClaw agent turn per LCARS run attempt.
+// Claw runner: one agent turn per LCARS run attempt, run by the harness the
+// agent's manifest names: embedded OpenClaw (the default) or an ACP harness
+// this image carries.
 //
 // Contract: docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md
 // ("### `claw`"). The QueueExecutor launches this image with RUNNER_MODE=claw,
@@ -19,6 +21,11 @@
 //   6. `openclaw agent exec --json` under the outer turn deadline.
 //   7. Settle: a report only when the envelope is ok, has a final message and
 //      no unresolved tool error; everything else is runner-failed.
+//
+// An ACP harness (Agent Client Protocol, agentclientprotocol.com) replaces
+// steps 2 to 6: the launcher is the ACP client. It starts the image's adapter
+// in the agent's workspace copy, sends the message as one prompt, refuses
+// every permission request and settles from the session's updates (settleAcp).
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -35,6 +42,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
+import { createInterface } from 'node:readline';
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
 // The Work API stores a report of any size whole, up to its completion bound
@@ -47,6 +55,24 @@ const MAX_ENVELOPE_BYTES = 4 * MAX_REPORT_BYTES;
 const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RESERVED_ENV =
   /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
+
+// The ACP harnesses this image carries (Dockerfile). A manifest names one;
+// its command comes from the image, never from the definition, so reviewed
+// source cannot choose the program that speaks for the agent.
+const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
+export const ACP_HARNESSES = Object.freeze({
+  claude: {
+    command: process.execPath,
+    args: [`${ACP_MODULES}/claude-agent-acp/dist/index.js`],
+  },
+  codex: {
+    command: process.execPath,
+    args: [`${ACP_MODULES}/codex-acp/dist/index.js`],
+  },
+});
+const ACP_PROTOCOL_VERSION = 1;
+// How long an ACP harness gets to exit by itself once its turn has ended.
+const ACP_EXIT_GRACE_MS = 2_000;
 
 export class ClawFailure extends Error {}
 
@@ -140,8 +166,11 @@ export function readBrief(brief, env) {
     throw new ClawFailure('brief carries no agent message');
   if (!Array.isArray(claw.files) || typeof claw.digest !== 'string')
     throw new ClawFailure('brief carries no agent definition');
+  if (claw.harness !== undefined && typeof claw.harness !== 'string')
+    throw new ClawFailure('brief names no usable harness');
   return {
     agent: claw.agent,
+    harness: claw.harness ?? 'openclaw',
     message: claw.message,
     files: claw.files,
     digest: claw.digest,
@@ -206,6 +235,16 @@ export async function materializeAgent(request, dir) {
   return dir;
 }
 
+function boundedReport(report) {
+  const bytes = Buffer.byteLength(report, 'utf8');
+  if (bytes > MAX_REPORT_BYTES)
+    return {
+      outcome: 'runner-failed',
+      message: `Claw report is ${bytes} bytes; the completion bound is ${MAX_REPORT_BYTES}.`,
+    };
+  return { outcome: 'report', message: report };
+}
+
 // Decide the attempt outcome from the `agent exec --json` envelope. Exit 0 and
 // ok:true are returned even when every tool call was denied, so tool failures
 // are read from toolSummary rather than the exit code.
@@ -259,14 +298,7 @@ export function settle(
       code === 1
         ? '\n\n(OpenClaw reported a cleanup failure after this result.)'
         : '';
-    const report = final + cleanup;
-    const bytes = Buffer.byteLength(report, 'utf8');
-    if (bytes > MAX_REPORT_BYTES)
-      return {
-        outcome: 'runner-failed',
-        message: `Claw report is ${bytes} bytes; the completion bound is ${MAX_REPORT_BYTES}.`,
-      };
-    return { outcome: 'report', message: report };
+    return boundedReport(final + cleanup);
   }
   if (code === 2)
     return {
@@ -281,6 +313,63 @@ export function settle(
         ? `OpenClaw exited ${code}`
         : 'empty result';
   return { outcome: 'runner-failed', message: `Claw turn failed: ${reason}.` };
+}
+
+// Decide the attempt outcome from an ACP turn (acpTurn). The same rules as the
+// OpenClaw envelope, read from the session instead:
+// - the report is the agent's last message after its last tool call, so
+//   neither narration before a tool call nor a harness notice ahead of the
+//   answer is mistaken for it;
+// - the turn's last tool call must have completed. An earlier failed call that
+//   a later call followed is resolved evidence; a turn that ends on a failed
+//   or unfinished call is an unresolved tool error;
+// - `requireToolEvidence` needs at least one tool call.
+// A harness reports a turn that died early as an ordinary end of turn with no
+// text, so an empty result is always a failure.
+export function settleAcp(
+  { aborted, timedOut, error, stopReason, final, overflow, calls, lastTool },
+  { requireTools = false } = {},
+) {
+  if (aborted)
+    return { outcome: 'runner-failed', message: 'Claw turn was cancelled.' };
+  if (timedOut)
+    return {
+      outcome: 'runner-failed',
+      message: 'Claw turn exceeded its deadline.',
+    };
+  const failed = (reason) => ({
+    outcome: 'runner-failed',
+    message: `Claw turn failed: ${reason}.`,
+  });
+  if (error) return failed(String(error).slice(0, 500));
+  if (stopReason !== 'end_turn')
+    return failed(`harness stopped with ${String(stopReason).slice(0, 80)}`);
+  if (overflow)
+    return failed(`report exceeds the ${MAX_REPORT_BYTES}-byte bound`);
+  if (lastTool && lastTool.status !== 'completed')
+    return failed(`unresolved ${lastTool.kind} tool call`);
+  const report = (final ?? '').trim();
+  if (!report) return failed('empty result');
+  if (requireTools && !(calls > 0))
+    return {
+      outcome: 'runner-failed',
+      message: 'Claw turn answered without using any tool.',
+    };
+  return boundedReport(report);
+}
+
+// Stops a child's whole process group: SIGTERM, then SIGKILL for whatever is
+// still running ten seconds later.
+function stopGroup(child) {
+  const killTree = (killSignal) => {
+    try {
+      process.kill(-child.pid, killSignal);
+    } catch {
+      // The group already exited.
+    }
+  };
+  killTree('SIGTERM');
+  setTimeout(() => killTree('SIGKILL'), 10_000).unref();
 }
 
 // Runs one OpenClaw command in its own process group, so a deadline or a
@@ -306,17 +395,7 @@ export function run(
     let stderrBytes = 0;
     let timedOut = false;
     let aborted = false;
-    const killTree = (killSignal) => {
-      try {
-        process.kill(-child.pid, killSignal);
-      } catch {
-        // The group already exited.
-      }
-    };
-    const stop = () => {
-      killTree('SIGTERM');
-      setTimeout(() => killTree('SIGKILL'), 10_000).unref();
-    };
+    const stop = () => stopGroup(child);
     const timer =
       timeoutMs > 0
         ? setTimeout(() => {
@@ -351,12 +430,215 @@ export function run(
   });
 }
 
+// Runs one ACP turn: starts the harness in its own process group, speaks
+// newline-delimited JSON-RPC over its stdio, and resolves with what the
+// session showed. The launcher advertises no client capability (no file
+// system, no terminal) and refuses every permission request: an unattended run
+// has nobody to ask, so what the agent may do is whatever its reviewed harness
+// settings already allow.
+export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ClawFailure('claw run was cancelled'));
+      return;
+    }
+    const child = spawn(command, args, {
+      env,
+      cwd,
+      detached: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const turn = { final: '', overflow: false, calls: 0 };
+    const tools = new Map();
+    const pending = new Map();
+    let nextId = 1;
+    let aborted = false;
+    const send = (payload) => {
+      if (child.stdin.writable)
+        child.stdin.write(
+          `${JSON.stringify({ jsonrpc: '2.0', ...payload })}\n`,
+        );
+    };
+    const request = (method, params) =>
+      new Promise((answer, refuse) => {
+        const id = nextId++;
+        pending.set(id, { answer, refuse });
+        send({ id, method, params });
+      });
+    let messageId;
+    const startMessage = (id) => {
+      messageId = id;
+      turn.final = '';
+      turn.overflow = false;
+    };
+    const onUpdate = (update) => {
+      if (
+        update?.sessionUpdate === 'agent_message_chunk' &&
+        typeof update.content?.text === 'string'
+      ) {
+        // A new message replaces the one before it: the report is the agent's
+        // last message, not a harness notice that preceded it.
+        if (update.messageId !== messageId) startMessage(update.messageId);
+        if (turn.final.length + update.content.text.length > MAX_ENVELOPE_BYTES)
+          turn.overflow = true;
+        else turn.final += update.content.text;
+        return;
+      }
+      if (
+        (update?.sessionUpdate === 'tool_call' ||
+          update?.sessionUpdate === 'tool_call_update') &&
+        typeof update.toolCallId === 'string'
+      ) {
+        const known = tools.get(update.toolCallId);
+        const tool = known ?? { kind: 'other', status: 'pending' };
+        if (typeof update.kind === 'string')
+          tool.kind = update.kind.slice(0, 40);
+        if (typeof update.status === 'string') tool.status = update.status;
+        // The map keeps announcement order, so its last entry is the turn's
+        // last tool call.
+        if (!known) tools.set(update.toolCallId, tool);
+        // Only a message after the last tool activity is the answer.
+        startMessage(undefined);
+      }
+    };
+    const onLine = (line) => {
+      let incoming;
+      try {
+        incoming = JSON.parse(line);
+      } catch {
+        return; // not protocol: a harness may log to stdout
+      }
+      if (!incoming || typeof incoming !== 'object') return;
+      if (incoming.method === undefined) {
+        const waiter = pending.get(incoming.id);
+        if (!waiter) return;
+        pending.delete(incoming.id);
+        if (incoming.error)
+          waiter.refuse(
+            new ClawFailure(
+              String(incoming.error.message ?? 'harness error').slice(0, 500),
+            ),
+          );
+        else waiter.answer(incoming.result ?? {});
+      } else if (incoming.id === undefined) {
+        if (incoming.method === 'session/update')
+          onUpdate(incoming.params?.update);
+      } else if (incoming.method === 'session/request_permission') {
+        const reject = (incoming.params?.options ?? []).find(
+          (option) =>
+            option?.kind === 'reject_once' || option?.kind === 'reject_always',
+        );
+        send({
+          id: incoming.id,
+          result: {
+            outcome: reject
+              ? { outcome: 'selected', optionId: reject.optionId }
+              : { outcome: 'cancelled' },
+          },
+        });
+      } else {
+        send({
+          id: incoming.id,
+          error: { code: -32601, message: 'Method not found' },
+        });
+      }
+    };
+    createInterface({ input: child.stdout }).on('line', onLine);
+    // stderr carries harness diagnostics; never forward it.
+    child.stderr.resume();
+    child.stdin.on('error', () => undefined);
+    const onAbort = () => {
+      aborted = true;
+      stopGroup(child);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    child.on('error', (error) => {
+      signal?.removeEventListener('abort', onAbort);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      signal?.removeEventListener('abort', onAbort);
+      for (const waiter of pending.values())
+        waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));
+      pending.clear();
+      // Let the session below record its outcome before this resolves.
+      setImmediate(() =>
+        resolve({
+          ...turn,
+          calls: tools.size,
+          lastTool: [...tools.values()].at(-1),
+          aborted,
+          code,
+        }),
+      );
+    });
+    (async () => {
+      const initialized = await request('initialize', {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+        clientInfo: { name: 'lcars-claw-runner', version: '1' },
+      });
+      if (initialized.protocolVersion !== ACP_PROTOCOL_VERSION)
+        throw new ClawFailure(
+          `harness speaks ACP protocol ${initialized.protocolVersion}`,
+        );
+      const session = await request('session/new', { cwd, mcpServers: [] });
+      const prompted = await request('session/prompt', {
+        sessionId: session.sessionId,
+        prompt: [{ type: 'text', text: message }],
+      });
+      turn.stopReason = prompted.stopReason;
+    })()
+      .catch((error) => {
+        turn.error =
+          error instanceof ClawFailure ? error.message : 'ACP session failed';
+      })
+      .finally(() => {
+        // The turn is over: close the session's input, then stop whatever
+        // the harness left running.
+        child.stdin.end();
+        setTimeout(() => stopGroup(child), ACP_EXIT_GRACE_MS).unref();
+      });
+  });
+}
+
 async function ownerWritable(path) {
   const info = await stat(path);
   await chmod(path, info.mode | 0o200);
   if (info.isDirectory())
     for (const entry of await readdir(path))
       await ownerWritable(join(path, entry));
+}
+
+// Copies one directory of the locked definition into a directory the agent
+// may write. A definition without that directory contributes nothing.
+async function copyFromDefinition(source, target) {
+  try {
+    // A ConfigMap mount presents a directory as a symlink into its
+    // timestamped data directory; copy the resolved files, not the link.
+    await cp(await realpath(source), target, {
+      recursive: true,
+      dereference: true,
+    });
+    // The pinned definition stays locked; its execution copy is the agent's
+    // to write, so give the owner write access back.
+    await ownerWritable(target);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+// The agent's writable workspace: a fresh copy of the definition's
+// `workspace/`, or an empty directory when the definition has none.
+export async function prepareWorkspace(agentDir, workRoot) {
+  const workspace = join(workRoot, 'workspace');
+  await rm(workspace, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true });
+  await copyFromDefinition(join(agentDir, 'workspace'), workspace);
+  return workspace;
 }
 
 export async function prepareState({
@@ -367,22 +649,7 @@ export async function prepareState({
   signal,
 }) {
   const stateDir = await mkdtemp(join(workRoot, 'state-'));
-  const workspace = join(workRoot, 'workspace');
-  await rm(workspace, { recursive: true, force: true });
-  await mkdir(workspace, { recursive: true });
-  try {
-    // A ConfigMap mount presents workspace/ as a symlink into its
-    // timestamped data directory; copy the resolved files, not the link.
-    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
-      recursive: true,
-      dereference: true,
-    });
-    // The pinned definition stays locked; its execution copy is the agent's
-    // writable workspace, so give the owner write access back.
-    await ownerWritable(workspace);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
+  const workspace = await prepareWorkspace(agentDir, workRoot);
   const pinned = JSON.parse(
     await readFile(join(agentDir, 'config.json'), 'utf8'),
   );
@@ -440,6 +707,84 @@ function positiveInteger(env, name, fallback) {
   if (!Number.isSafeInteger(value) || value <= 0)
     throw new ClawFailure(`${name} must be a positive integer`);
   return value;
+}
+
+// Each starter prepares its harness, starts the turn, tells LCARS that
+// provider work has begun and resolves with the finished turn.
+async function openclawTurn({
+  request,
+  definitionDir,
+  workRoot,
+  openclaw,
+  env,
+  signal,
+  started,
+}) {
+  const { stateDir, workspace, configPath, childEnv } = await prepareState({
+    agentDir: definitionDir,
+    workRoot,
+    openclaw,
+    env,
+    signal,
+  });
+  if (signal.aborted) throw new ClawFailure('claw run was cancelled');
+  const messageFile = join(stateDir, 'brief.md');
+  await writeFile(messageFile, request.message, {
+    mode: 0o600,
+  });
+  const turn = run(
+    openclaw,
+    [
+      'agent',
+      'exec',
+      '--config',
+      configPath,
+      '--state-dir',
+      stateDir,
+      '--message-file',
+      messageFile,
+      '--cwd',
+      workspace,
+      '--json',
+    ],
+    {
+      env: childEnv,
+      cwd: workspace,
+      signal,
+    },
+  );
+  await started();
+  return turn;
+}
+
+async function acpHarnessTurn({
+  request,
+  harnesses,
+  definitionDir,
+  workRoot,
+  env,
+  signal,
+  started,
+}) {
+  const harness = Object.hasOwn(harnesses, request.harness)
+    ? harnesses[request.harness]
+    : undefined;
+  if (!harness)
+    throw new ClawFailure(`this image carries no ${request.harness} harness`);
+  const workspace = await prepareWorkspace(definitionDir, workRoot);
+  // A harness reads its user-level settings from HOME. The definition's
+  // `home/` supplies them, so the tool policy a harness trusts (it ignores
+  // allow rules found in an untrusted workspace) is reviewed source too.
+  await copyFromDefinition(join(definitionDir, 'home'), env.HOME);
+  if (signal.aborted) throw new ClawFailure('claw run was cancelled');
+  const turn = acpTurn(harness.command, harness.args, {
+    env,
+    cwd: workspace,
+    message: request.message,
+    signal,
+  });
+  await started();
+  return turn;
 }
 
 export async function main(env = process.env, deps = {}) {
@@ -504,44 +849,21 @@ export async function main(env = process.env, deps = {}) {
         ...(await secretEnvironment(secretsDir)),
       };
       await mkdir(baseEnv.HOME, { recursive: true });
-      const { stateDir, workspace, configPath, childEnv } = await prepareState({
-        agentDir: definitionDir,
+      const acp = request.harness !== 'openclaw';
+      const finished = await (acp ? acpHarnessTurn : openclawTurn)({
+        request,
+        harnesses: deps.harnesses ?? ACP_HARNESSES,
+        definitionDir,
         workRoot,
         openclaw,
         env: baseEnv,
         signal: work,
+        started: () =>
+          call('heartbeat', { providerProcessStarted: true }).catch(
+            ignoreHeartbeatFailure,
+          ),
       });
-      if (work.aborted) throw new ClawFailure('claw run was cancelled');
-      const messageFile = join(stateDir, 'brief.md');
-      await writeFile(messageFile, request.message, {
-        mode: 0o600,
-      });
-      const turn = run(
-        openclaw,
-        [
-          'agent',
-          'exec',
-          '--config',
-          configPath,
-          '--state-dir',
-          stateDir,
-          '--message-file',
-          messageFile,
-          '--cwd',
-          workspace,
-          '--json',
-        ],
-        {
-          env: childEnv,
-          cwd: workspace,
-          signal: work,
-        },
-      );
-      await call('heartbeat', { providerProcessStarted: true }).catch(
-        ignoreHeartbeatFailure,
-      );
-      const finished = await turn;
-      result = settle(
+      result = (acp ? settleAcp : settle)(
         {
           ...finished,
           aborted: controller.signal.aborted,

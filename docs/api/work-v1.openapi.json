@@ -17330,6 +17330,10 @@
                               "type": "string",
                               "pattern": "^[a-f0-9]{64}$"
                             },
+                            "harness": {
+                              "type": "string",
+                              "enum": ["openclaw", "claude", "codex"]
+                            },
                             "requireToolEvidence": {
                               "type": "boolean"
                             },

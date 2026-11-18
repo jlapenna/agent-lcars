@@ -9,6 +9,7 @@ import {
   workRevisionSchema,
 } from '@agent-lcars/orchestrator';
 import {
+  agentHarnessSchema,
   type AgentRunBrief,
   agentWorkSpecSchema,
   CLAW_RUNTIME_PIPELINE,
@@ -67,6 +68,9 @@ const agentRoundSchema = z.strictObject({
   agent: z.string(),
   revision: z.string(),
   digest: z.string(),
+  /** The admitted definition's harness; omitted means OpenClaw, so rounds
+   * admitted before harnesses existed read the same. */
+  harness: agentHarnessSchema.optional(),
   requireToolEvidence: z.boolean(),
   /** The admitted definition's retry policy, pinned with the round so a
    * coalesced successor runs under its own round's policy. */
@@ -179,6 +183,10 @@ export async function admitAgentRun(
     agent: id,
     revision: definition.revision,
     digest: definition.digest,
+    ...(definition.manifest.harness === undefined ||
+    definition.manifest.harness === 'openclaw'
+      ? {}
+      : { harness: definition.manifest.harness }),
     requireToolEvidence: definition.manifest.requireToolEvidence ?? false,
     retry: definition.manifest.retry ?? 'finite',
     message: request.message,
@@ -299,6 +307,7 @@ export async function agentRunBrief(
     agent: round.agent,
     revision: round.revision,
     digest: round.digest,
+    ...(round.harness === undefined ? {} : { harness: round.harness }),
     requireToolEvidence: round.requireToolEvidence,
     message: round.message,
     files: await Promise.all(

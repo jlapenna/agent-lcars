@@ -290,6 +290,28 @@ describe('repository-owned agent runs', () => {
     });
   });
 
+  it('pins a named ACP harness with the round, and nothing for OpenClaw', async () => {
+    const round = async (manifest: Record<string, unknown>) => {
+      const ctx = context({
+        principal: caller,
+        agents: agents([{ manifest: { description: 'x', ...manifest } }]),
+        agentProfiles: profiles,
+      });
+      const response = await call(ctx, 'POST', path, { message: 'Why?' });
+      expect(response.status).toBe(202);
+      const [run] = await ctx.runtime.store.listRuns({
+        workId: response.json.id,
+      });
+      return run!.sourceRevision!.input;
+    };
+    expect(await round({ harness: 'claude' })).toMatchObject({
+      harness: 'claude',
+    });
+    // Rounds for OpenClaw agents keep the shape they had before harnesses.
+    expect(await round({ harness: 'openclaw' })).not.toHaveProperty('harness');
+    expect(await round({})).not.toHaveProperty('harness');
+  });
+
   it('returns the same round for the same message under one sourceKey', async () => {
     const ctx = context({
       principal: caller,

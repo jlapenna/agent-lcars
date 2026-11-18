@@ -92,6 +92,14 @@ it('serves the pinned files at the pinned revision, with git modes and base64 co
   );
 });
 
+it('names the pinned harness in the brief, and none for an OpenClaw round', async () => {
+  vi.stubGlobal('fetch', github());
+  expect(
+    await agentRunBrief({ ...round(), harness: 'codex' }, tokens),
+  ).toMatchObject({ harness: 'codex' });
+  expect(await agentRunBrief(round(), tokens)).not.toHaveProperty('harness');
+});
+
 it('refuses a definition whose files no longer match the pinned digest', async () => {
   vi.stubGlobal('fetch', github());
   await expect(agentRunBrief(round('0'.repeat(64)), tokens)).rejects.toThrow(

@@ -1,13 +1,15 @@
 # Claw runner image
 
-One embedded OpenClaw agent turn per LCARS run attempt, for the `claw-*`
-pipelines. The design is the `claw` execute adapter in the
+One agent turn per LCARS run attempt, for the `claw-*` pipelines, run by the
+harness the agent's manifest names: embedded OpenClaw (the default) or an
+[ACP harness](#acp-harnesses) the image carries. The design is the `claw` execute adapter in the
 [unified work dataflow spec](../../../docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md#claw);
 phase 3a is tracked in agent-lcars#3349.
 
-The image holds the verified OpenClaw distribution (`package.json` and
-`package-lock.json`, installed with `npm ci` so every package is checked
-against its integrity hash), generic clients (`openssh-client`, `python3`)
+The image holds the verified OpenClaw distribution and the ACP adapters for
+Claude Code and Codex (`package.json` and `package-lock.json`, installed with
+`npm ci` so every package is checked against its integrity hash), generic
+clients (`openssh-client`, `python3`)
 and the launcher, `claw-job.mjs`. It holds no agent definition, agent tool or
 credential: the definition arrives in the run brief and a zone executor's
 runtime table mounts the credentials.
@@ -72,6 +74,41 @@ Each step fails the attempt closed with a `runner-failed` completion:
    not a runner failure. `agent exec` exits 0 with `ok: true` even when every
    tool call was denied, so the exit code alone proves nothing.
 
+## ACP harnesses
+
+An agent whose manifest names `harness: claude` or `harness: codex`
+([docs/repository-agents.md](../../../docs/repository-agents.md#harnesses))
+skips steps 2 to 6. The launcher is the ACP client instead:
+
+1. It copies the definition's `home/` into `HOME`, so the harness reads its
+   user-level settings (tool policy, model route) from reviewed source.
+2. It starts the image's adapter (`ACP_HARNESSES` in `claw-job.mjs`) in its
+   own process group, in the workspace copy, with the same clean environment
+   OpenClaw gets: the zone's `env/` Secret items and nothing of the
+   launcher's. The command always comes from the image.
+3. It speaks ACP over the adapter's stdio: `initialize` (protocol 1, no file
+   system or terminal capability), `session/new` in the workspace and one
+   `session/prompt` carrying the message.
+4. It answers every `session/request_permission` with the reject option. The
+   agent can do only what its harness does without asking, which `home/`
+   widens.
+5. It settles from the session's updates: `report` only when the turn ended
+   with `end_turn`, the agent's last message after its last tool call is not
+   empty and that last tool call completed. A harness error (a missing
+   login, for example), an early exit, any other stop reason and an empty
+   answer are `runner-failed`. `requireToolEvidence` needs at least one tool
+   call.
+
+Adapter stderr is never forwarded. The outer deadline and cancellation stop
+the adapter's process group exactly as they stop OpenClaw's.
+
+A check with the real adapters from this lockfile (2026-11-18, on a
+workstation, against stand-in model endpoints) settled reports from Claude
+Code and Codex in 3 to 4 s each. With Claude Code, a command allowed in
+`home/.claude/settings.json` ran, and a write or network command without a
+rule was refused and failed the attempt. Neither harness has made a real
+model turn or run on k3s yet.
+
 ## Normalize an agent config
 
 Doctor's normalization depends on the image (for example it disables bundled
@@ -96,7 +133,8 @@ Re-run this whenever the zone adopts a new image digest.
 node --test apps/runner-autoscaler/claw-image/claw-job.test.mjs
 ```
 
-The tests drive the launcher against a fake Work API and a fake `openclaw`.
+The tests drive the launcher against a fake Work API, a fake `openclaw` and a
+fake ACP harness.
 A real-image check (2026-11-14, OpenClaw 2026.10.10-beta.3, read-only root,
 2 CPU / 3 GiB, Spark lane) settled a report in 58 s: the allowlisted `date`
 ran and `cat /etc/hostname` returned `exec denied: allowlist miss`.
