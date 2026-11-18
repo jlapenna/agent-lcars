@@ -551,9 +551,12 @@ The metrics endpoint exposes the queue worker's own health:
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
 - `github_runner_autoscaler_queue_executor_memory_launches_total{pipeline,memory}`
-  counts new direct-runner Jobs by the Hindsight memory credential state at
-  launch: `configured`, `isolated` (goose and declared runtimes; no token
-  mounted by design), `no_token` (memory expected but `hindsight-api-token` is
+  counts launch attempts that reach a matching suspended Job (including one
+  recovered by name after an ambiguous create), by the Hindsight memory
+  credential state at launch. It increments before the run credential is
+  created and the Job resumed, so a credential-creation failure still counts
+  even though no worker starts. States: `configured`, `isolated` (goose and
+  declared runtimes; no token mounted by design), `no_token` (memory expected but `hindsight-api-token` is
   missing, empty, or only CR/LF), or `unknown` (Secret read failed). The
   classifier reads the Secret value and trims CR/LF the way the worker
   bootstrap does; only the resulting state is exported.
@@ -701,7 +704,11 @@ Beyond `direct-runner.sh`, the image bakes these single-purpose helpers from
 
 - `opencode-litellm-proxy.mjs`: loopback proxy `direct-runner.sh` starts in
   front of LiteLLM for OpenCode runs; it records the physical model behind
-  `x-litellm-model-id` to a file and never alters the inference response.
+  `x-litellm-model-id` to a file. That model lookup is best effort: its
+  failure never replaces the upstream response. Known limitation: the proxy
+  streams the body as `fetch` decoded it but forwards the original
+  `content-encoding` header, so a gzip-encoded upstream body reaches the
+  client unreadable.
 - `toolchain-health.sh`: image-build predicates (pnpm through the baked
   Corepack cache, offline fleet pnpm pins, and other job tools) sourced by
   `verify-image-invariants.sh`, so an image with a broken job tool is never

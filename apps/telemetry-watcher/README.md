@@ -21,7 +21,8 @@ including the retired `runner sidecar`, is a usage error.
 ## `lcars` commands
 
 `src/session-title-cli.ts` dispatches these. A bad invocation prints usage,
-except `hook`, which logs to `hook.log` and always exits 0:
+including a missing or unknown `hook` subcommand (on stderr), but `hook`
+always exits 0, even for a usage error; its other decisions go to `hook.log`:
 
 - `lcars session title "<text>"` / `--clear` and `lcars session status
 "<text>"` / `--clear`: the declared title and the current-activity line

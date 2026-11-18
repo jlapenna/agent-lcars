@@ -213,4 +213,6 @@ before one, the redacted tail of the provider's own output
 notice naming the protected merge commit. The full transcript is never sent,
 but treat `message` as potentially sensitive run output.
 A non-2xx response or transport error releases the outbox entry for retry
-with backoff, like a failed GitHub outcome comment.
+with backoff, like a failed GitHub outcome comment. A delivery that fails 72
+hours or more after the entry's first delivery failure retires the event;
+restoring the endpoint afterwards does not replay it.

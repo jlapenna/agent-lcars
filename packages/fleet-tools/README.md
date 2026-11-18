@@ -39,5 +39,12 @@ the dispatched-worker `PreToolUse` policy for each provider
 (`worker-policy.cjs`, through `worker-hook-bridge.cjs` or the OpenCode plugin
 `worker-opencode-plugin.mjs`), bind the provider session (`worker-session.cjs`,
 `worker-opencode-session.mjs`), and check review state (`worker-review.cjs`).
-`worker-readiness.cjs` evaluates offline canary evidence. Their contract tests
+`worker-readiness.cjs` evaluates offline canary evidence.
+
+The image always ships these modules, but enforcement is rolled out per
+provider: the bootstrap registers the policy only when the run's pipeline is
+listed in `LCARS_WORKER_POLICY_PROVIDERS` (comma-separated `claude`, `codex`,
+`opencode`, `agy`), which the trusted autoscaler sets on each worker Job
+([runner-autoscaler README](../../apps/runner-autoscaler/README.md)). Unset or
+empty skips registration entirely; an unknown provider name fails the launch. Their contract tests
 live in `tools/contract-tests/worker-*.test.ts`.
