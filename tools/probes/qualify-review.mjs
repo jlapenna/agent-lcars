@@ -291,6 +291,7 @@ if (provider === 'opencode') {
   env.MODE = 'review';
   args = [
     'run',
+    '--standalone',
     '--auto',
     '--format',
     'json',

@@ -271,7 +271,9 @@ test('retains large native OpenCode exports and repeated child task references',
       `#!/usr/bin/env node
 const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(process.env.LCARS_TEST_EXPORT_FIXTURE, 'utf8'));
-process.stdout.write(JSON.stringify(data[process.argv[3]]));
+const [command, subcommand, mode, id] = process.argv.slice(2);
+if (command !== 'session' || subcommand !== 'export' || mode !== '--standalone') process.exit(2);
+process.stdout.write(JSON.stringify(data[id]));
 process.exit(0);
 `,
       { mode: 0o700 },

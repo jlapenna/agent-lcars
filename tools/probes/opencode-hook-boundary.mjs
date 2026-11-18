@@ -59,9 +59,11 @@ const version = await run(
   { PATH: process.env.PATH, HOME: root },
   10000,
 );
-if (version.code !== 0 || version.stdout.trim() !== expectedVersion) {
+// OpenCode 2 prints `opencode v2.3.2`; OpenCode 1 printed a bare version.
+const reportedVersion = version.stdout.trim().replace(/^opencode v/, '');
+if (version.code !== 0 || reportedVersion !== expectedVersion) {
   throw new Error(
-    `version mismatch: expected ${expectedVersion}, got ${version.stdout.trim()}`,
+    `version mismatch: expected ${expectedVersion}, got ${reportedVersion}`,
   );
 }
 
@@ -437,13 +439,13 @@ export default async (context) => {
       throw new Error('Setup was not idempotent');
   }
   writeFileSync(join(dir, 'models.json'), '{}');
+  // OpenCode 2 has no `run --dir`; `run()` starts in the workspace.
   const args = [
     'run',
+    '--standalone',
     '--model',
     'probe/test',
     '--auto',
-    '--dir',
-    workspace,
     'Execute the supplied probe tool call, then finish.',
   ];
   const env = {

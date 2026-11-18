@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import {
   readReviewEvidence,
   completedOpenCodeChild,
+  completedOpenCode2Child,
   antigravityChildIds,
 } from './review-evidence.mjs';
 
@@ -281,7 +282,7 @@ if (manifest.provider === 'opencode') {
     try {
       execFileSync(
         manifest.imageId ? '/usr/local/bin/opencode' : 'opencode',
-        ['export', id],
+        ['session', 'export', '--standalone', id],
         {
           timeout: 10000,
           maxBuffer: 1024 * 1024,
@@ -310,6 +311,24 @@ if (manifest.provider === 'opencode') {
           continue;
         const child = exported(part.state.metadata?.sessionId);
         if (completedOpenCodeChild(root, part, child))
+          completed.add(child.info.id);
+        else
+          errors.push(
+            'OpenCode child lacks native parent/completion proof: ' +
+              child.info?.id,
+          );
+        if (child.info?.model) models.add(JSON.stringify(child.info.model));
+      }
+      // OpenCode 2: flat typed messages whose `content` holds tool calls.
+      for (const call of message.content ?? []) {
+        if (
+          call?.type !== 'tool' ||
+          call.name !== 'subagent' ||
+          call.state?.status !== 'completed'
+        )
+          continue;
+        const child = exported(call.state.metadata?.sessionID);
+        if (completedOpenCode2Child(root, call, child))
           completed.add(child.info.id);
         else
           errors.push(
