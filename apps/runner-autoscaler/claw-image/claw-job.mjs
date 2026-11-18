@@ -45,7 +45,12 @@ import {
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import { ClawFailure, readSettingsFile, stopGroup } from './claw-process.mjs';
+import {
+  ClawFailure,
+  endGroup,
+  readSettingsFile,
+  stopGroup,
+} from './claw-process.mjs';
 import { openclawHarness } from './openclaw-harness.mjs';
 
 export { ClawFailure };
@@ -217,6 +222,11 @@ export function readBrief(brief, env) {
     mode: claw.mode,
     message: claw.message,
     files,
+    // `home/` is staged only for a definition that asked for this launcher
+    // by naming a harness or a mode. A definition from before harnesses may
+    // hold files under `home/` that no launcher ever applied, and a round
+    // already admitted for one must run as it would have.
+    stagesHome: claw.definition !== undefined,
     digest: claw.digest,
     requireTools: claw.requireToolEvidence === true,
   };
@@ -529,15 +539,21 @@ export function acpTurn(
       for (const waiter of pending.values())
         waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));
       pending.clear();
-      // Let the session below record its outcome before this resolves.
-      setImmediate(() =>
-        resolve({
-          ...turn,
-          calls: tools.size,
-          unresolved: unresolved(),
-          aborted,
-          code,
-        }),
+      // The harness's own process is gone, but a child of its own can run
+      // on in its group. Nothing of the harness may still run while the
+      // launcher checks the settings it could change and settles the
+      // attempt, so the group is ended first. Then the session below gets
+      // to record its outcome before this resolves.
+      void endGroup(child, ACP_EXIT_GRACE_MS).then(() =>
+        setImmediate(() =>
+          resolve({
+            ...turn,
+            calls: tools.size,
+            unresolved: unresolved(),
+            aborted,
+            code,
+          }),
+        ),
       );
     });
     (async () => {
@@ -686,10 +702,12 @@ async function harnessTurn({
   // A harness reads its user-level settings from HOME. The definition's
   // `home/` supplies them, so the tool policy a harness trusts (it ignores
   // allow rules found in an untrusted workspace) is reviewed source too.
-  await copyFromDefinition(join(definitionDir, 'home'), env.HOME);
-  const settings = request.files.filter((file) =>
-    normalize(file.path).startsWith('home/'),
-  );
+  // Only a definition that names a harness or a mode has them applied.
+  if (request.stagesHome)
+    await copyFromDefinition(join(definitionDir, 'home'), env.HOME);
+  const settings = request.stagesHome
+    ? request.files.filter((file) => normalize(file.path).startsWith('home/'))
+    : [];
   const inHome = (file) =>
     join(env.HOME, normalize(file.path).slice('home/'.length));
   // Read-only for the turn; an executable (a hook's helper) stays one.

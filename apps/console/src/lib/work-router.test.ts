@@ -320,13 +320,18 @@ describe('repository-owned agent runs', () => {
       status: 202,
       input: { harness: 'claude', mode: 'plan' },
     });
-    // Rounds for OpenClaw agents keep the shape they had before harnesses.
-    for (const manifest of [{ harness: 'openclaw' }, {}]) {
-      const { status, input } = await admit(manifest);
-      expect(status).toBe(202);
-      expect(input).not.toHaveProperty('harness');
-      expect(input).not.toHaveProperty('mode');
-    }
+    // A round for an agent that names no harness keeps the shape it had
+    // before harnesses.
+    const plain = await admit({});
+    expect(plain.status).toBe(202);
+    expect(plain.input).not.toHaveProperty('harness');
+    expect(plain.input).not.toHaveProperty('mode');
+    // A harness is pinned as the manifest names it, OpenClaw included:
+    // naming one is how a definition asks for its `home/` settings.
+    expect(await admit({ harness: 'openclaw' })).toMatchObject({
+      status: 202,
+      input: { harness: 'openclaw' },
+    });
     // A harness the profile's runtime does not carry is refused at admission.
     expect((await admit({ harness: 'claude' })).status).toBe(403);
     expect((await admit({ profile: 'coders', harness: 'codex' })).status).toBe(

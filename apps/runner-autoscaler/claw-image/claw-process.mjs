@@ -7,6 +7,34 @@ import { open } from 'node:fs/promises';
 /** A failure with a message safe to settle the attempt with. */
 export class ClawFailure extends Error {}
 
+/** Stops whatever still runs in a child's process group and waits until
+ * nothing of it does: SIGTERM, then SIGKILL once the grace is over. The wait
+ * is bounded, so a process that cannot be reaped does not hold the caller. A
+ * leader can exit while a child of its own, with its own stdio, runs on. */
+export async function endGroup(child, graceMs = 2_000) {
+  if (typeof child.pid !== 'number') return;
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch {
+      // Nothing of the group is left.
+      return false;
+    }
+  };
+  const gone = async (withinMs) => {
+    const until = Date.now() + withinMs;
+    while (signalGroup(0)) {
+      if (Date.now() >= until) return false;
+      await new Promise((done) => setTimeout(done, 25));
+    }
+    return true;
+  };
+  if (!signalGroup('SIGTERM') || (await gone(graceMs))) return;
+  signalGroup('SIGKILL');
+  await gone(1_000);
+}
+
 /** Reads a settings file the agent's tools could have replaced, to check it
  * after the turn: only a regular file of at most `maxBytes`, and never for
  * longer than `timeoutMs`. Anything else (a missing file, a link, a pipe, a

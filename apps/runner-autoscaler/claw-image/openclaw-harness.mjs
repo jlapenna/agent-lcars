@@ -477,13 +477,21 @@ export function resolveCredentials(
   const providers = resolved.models?.providers;
   for (const [id, provider] of Object.entries(providers ?? {})) {
     if (!provider || typeof provider !== 'object') continue;
-    if (provider.apiKey !== undefined) continue;
-    // The first of the provider's variables that holds something, as
-    // OpenClaw chooses among them.
-    const own = (auth.candidates.get(id.trim().toLowerCase()) ?? []).find(
-      (name) => set(name) && !kept(name),
-    );
-    if (own !== undefined) providers[id] = { ...provider, apiKey: env[own] };
+    const key = provider.apiKey;
+    const written = typeof key === 'string' ? key.trim() : undefined;
+    if (key === undefined || written === '') {
+      // No key, or a blank one, which is no key to OpenClaw: the first of
+      // the provider's variables that holds something, as OpenClaw chooses
+      // among them.
+      const own = (auth.candidates.get(id.trim().toLowerCase()) ?? []).find(
+        (name) => set(name) && !kept(name),
+      );
+      if (own !== undefined) providers[id] = { ...provider, apiKey: env[own] };
+    } else if (written !== undefined && resolves(written)) {
+      // A key that is only the name of a credential variable is OpenClaw's
+      // marker for that variable's value.
+      providers[id] = { ...provider, apiKey: env[written] };
+    }
   }
   return { config: resolved, used: withheld };
 }
@@ -504,6 +512,10 @@ function configEnvironment(environment) {
       defined.set(name, value);
   return defined;
 }
+
+const GATEWAY_VARIABLES = {
+  has: (name) => name.startsWith('OPENCLAW_GATEWAY_'),
+};
 
 // A config's `env` without the named variables, in either layout.
 function withoutVariables(environment, names) {
@@ -631,6 +643,10 @@ export function launchConfig(config, { workspace, port, token }) {
         }),
       ),
     };
+  // The variables OpenClaw reads its Gateway's port, token and address from
+  // are not a definition's to set through its own `env` either.
+  if (pinned.env !== undefined)
+    pinned.env = withoutVariables(pinned.env, GATEWAY_VARIABLES);
   return mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
     agents: { defaults: { workspace, skipBootstrap: true } },
     skills: { load: { watch: false } },
@@ -747,9 +763,15 @@ export async function prepareState({
   await write(launched);
   // What the Gateway and its ACP server run with: none of the credentials
   // now held by the launch config.
-  const turnEnv = Object.fromEntries(
-    Object.entries(childEnv).filter(([name]) => !used.has(name)),
-  );
+  // OpenClaw takes its Gateway's port from this variable before its config,
+  // and from the process before a config's `env` or a `.env` file, so the
+  // listener and everything that connects to it use the port chosen here.
+  const turnEnv = {
+    ...Object.fromEntries(
+      Object.entries(childEnv).filter(([name]) => !used.has(name)),
+    ),
+    OPENCLAW_GATEWAY_PORT: String(gateway.port),
+  };
   const tokenFile = join(stateDir, 'gateway.token');
   await writeFile(tokenFile, `${gateway.token}\n`, { mode: 0o600 });
   // The Gateway's config and token belong to the same UID as the agent's
@@ -792,14 +814,17 @@ export async function prepareState({
 // its readiness probe, with the function that stops it. Readiness is the
 // Gateway's own `/readyz`, not a line in its log: a definition's logging and
 // redaction settings decide what the log says.
-export function startGateway(openclaw, { env, port, signal }) {
+export function startGateway(openclaw, { env, cwd, port, signal }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new ClawFailure('claw run was cancelled'));
       return;
     }
-    const child = spawn(openclaw, ['gateway', 'run'], {
+    // In the agent's workspace, where `agent exec` ran: OpenClaw reads a
+    // `.env` there, under its own filter, and host tools inherit it.
+    const child = spawn(openclaw, ['gateway', 'run', '--port', String(port)], {
       env,
+      cwd,
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -936,6 +961,7 @@ export async function openclawHarness({
   });
   const gateway = await startGateway(openclaw, {
     env: turnEnv,
+    cwd: workspace,
     port,
     signal,
   });

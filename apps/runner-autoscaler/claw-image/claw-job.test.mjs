@@ -141,6 +141,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       config.tools = { profile: 'coding' };
       fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
     }
+    if (behaviour.linger) {
+      const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
+      record({ lingering: child.pid });
+    }
     if (behaviour.tamper) {
       const settings = path.join(process.env.HOME, '.claude', 'settings.json');
       fs.chmodSync(settings, 0o644);
@@ -185,6 +189,8 @@ const configPath = process.env.OPENCLAW_CONFIG_PATH;
 fs.appendFileSync(behaviour.FAKE_LOG, JSON.stringify({
   args,
   pid: process.pid,
+  cwd: process.cwd(),
+  gatewayPort: process.env.OPENCLAW_GATEWAY_PORT ?? null,
   key: process.env.LITELLM_API_KEY ?? null,
   skips: Object.keys(process.env).filter((name) => name.startsWith('OPENCLAW_SKIP_')).sort(),
   config: configPath && fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined,
@@ -221,7 +227,9 @@ if (sub === 'gateway run') {
   console.log('[gateway] *** *** ***');
   console.error('[diagnostic] *** outcome=*** ***');
   const started = Date.now();
-  const { port } = JSON.parse(fs.readFileSync(configPath, 'utf8')).gateway;
+  const launched = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const flag = args.indexOf('--port');
+  const port = Number(flag === -1 ? process.env.OPENCLAW_GATEWAY_PORT ?? launched.env?.vars?.OPENCLAW_GATEWAY_PORT ?? launched.gateway.port : args[flag + 1]);
   require('node:http').createServer((request, response) => {
     const ready = request.url === '/readyz' && Date.now() - started > 150 && !behaviour.FAKE_GATEWAY_NEVER_READY;
     response.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
@@ -402,6 +410,20 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     'OPENCLAW_SKIP_GMAIL_WATCHER',
     'OPENCLAW_SKIP_STARTUP_MODEL_PREWARM',
   ]);
+  // It listens where the launcher says, on the flag and in the variable
+  // OpenClaw reads before its config, and runs in the agent's workspace,
+  // where OpenClaw reads a `.env`.
+  assert.deepEqual(log[3].args, [
+    'gateway',
+    'run',
+    '--port',
+    String(config.gateway.port),
+  ]);
+  assert.equal(log[3].gatewayPort, String(config.gateway.port));
+  assert.equal(log[3].cwd, workspace);
+  // Whatever connects to it resolves the same port.
+  assert.equal(log[4].gatewayPort, String(config.gateway.port));
+  assert.equal(log[5].gatewayPort, String(config.gateway.port));
   // OpenClaw's ACP server is the agent, pointed at that Gateway.
   const acp = log[4].args;
   assert.equal(acp[2], `ws://127.0.0.1:${config.gateway.port}`);
@@ -967,6 +989,57 @@ test('resolveCredentials resolves what the config names and what providers read'
     'OPENAI_API_KEY',
     'REFUSED_KEY',
   ]);
+});
+
+test('resolveCredentials gives a provider the key OpenClaw would have found for it', () => {
+  // A blank key is no key to OpenClaw, and a key that is only the name of a
+  // credential variable is its marker for that variable: either way the
+  // provider read the environment, which no longer holds the credential.
+  const auth = {
+    names: new Set(['LITELLM_API_KEY', 'OPENAI_API_KEY']),
+    candidates: new Map([
+      ['litellm', ['LITELLM_API_KEY']],
+      ['openai', ['OPENAI_API_KEY']],
+    ]),
+  };
+  const { config, used } = resolveCredentials(
+    {
+      models: {
+        providers: {
+          litellm: { apiKey: '  ' },
+          openai: { apiKey: 'OPENAI_API_KEY' },
+          // An explicit key stays the definition's, even one that looks
+          // like a variable nobody set.
+          custom: { apiKey: 'NOT_A_VARIABLE' },
+        },
+      },
+    },
+    { LITELLM_API_KEY: 'k1', OPENAI_API_KEY: 'k2' },
+    auth,
+  );
+  assert.deepEqual(config.models.providers, {
+    litellm: { apiKey: 'k1' },
+    openai: { apiKey: 'k2' },
+    custom: { apiKey: 'NOT_A_VARIABLE' },
+  });
+  assert.deepEqual([...used].sort(), ['LITELLM_API_KEY', 'OPENAI_API_KEY']);
+});
+
+test("a definition's own env cannot move this run's Gateway", () => {
+  const launched = launchConfig(
+    {
+      env: {
+        vars: {
+          OPENCLAW_GATEWAY_PORT: '18789',
+          OPENCLAW_GATEWAY_TOKEN: 'theirs',
+          REPORT_REGION: 'west',
+        },
+      },
+    },
+    { workspace: '/work/workspace', port: 4242, token: 't' },
+  );
+  assert.deepEqual(launched.env.vars, { REPORT_REGION: 'west' });
+  assert.equal(launched.gateway.port, 4242);
 });
 
 test('resolveCredentials keeps credentials out of the variables a config defines', () => {
@@ -1584,6 +1657,39 @@ test('ACP tool calls resolve only through a later completed call', async () => {
     ]),
     unresolved,
   );
+});
+
+test('nothing of the harness runs on once its turn has resolved', async () => {
+  // The harness's own process exits when its input closes; a child of its
+  // own, with its own stdio, would otherwise outlive the settings check and
+  // the settlement.
+  const { env, deps, harnessLog } = await harnessFixture({
+    linger: true,
+    steps: [{ say: 'All clear.' }],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  const { lingering } = (await harnessLog()).find((entry) => entry.lingering);
+  gone(lingering);
+});
+
+test('home settings apply only to a definition that names a harness', async () => {
+  const files = {
+    ...agentFiles,
+    'home/.claude/settings.json': { content: '{"permissions":{}}' },
+  };
+  const settings = async (over) => {
+    const made = await fixture({ brief: agentBrief(files, over) });
+    assert.equal((await main(made.env, made.deps)).outcome, 'report');
+    return (await made.harnessLog())[0].settings;
+  };
+  // A definition from before harnesses, whose `home/` no launcher applied,
+  // and a round already admitted for it, run as they always did.
+  assert.equal(await settings({}), null);
+  // Naming the harness, OpenClaw included, is what asks for them.
+  assert.equal(await settings({ harness: 'openclaw' }), '{"permissions":{}}');
 });
 
 test('cancellation stops an ACP harness and still settles', async () => {

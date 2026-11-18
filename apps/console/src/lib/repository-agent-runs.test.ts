@@ -122,17 +122,28 @@ it('delivers a round that names a harness or a mode in a shape older launchers r
   }
 });
 
-it('delivers a definition with home settings in the shape older launchers refuse', async () => {
-  // An older launcher would run this OpenClaw agent without its `home/`.
+it('applies home settings only for a round that pinned a harness', async () => {
   const withHome = {
     ...files,
     'home/.config/tool.toml': { content: 'safe = true\n', mode: '100644' },
   };
   vi.stubGlobal('fetch', github([], withHome));
-  const brief = await agentRunBrief(round(agentDigest(pin(withHome))), tokens);
-  expect(brief).not.toHaveProperty('files');
-  expect(brief).not.toHaveProperty('harness');
-  expect(brief).toMatchObject({
+  const pinned = round(agentDigest(pin(withHome)));
+  // A round admitted before harnesses, whose definition happens to hold
+  // files under `home/`: no launcher ever applied them, so it is delivered
+  // as it always was.
+  const legacy = await agentRunBrief(pinned, tokens);
+  expect(legacy).toHaveProperty('files');
+  expect(legacy).not.toHaveProperty('definition');
+  // Naming the harness, OpenClaw included, asks for the launcher that
+  // stages `home/`; an older launcher refuses this shape.
+  const optedIn = await agentRunBrief(
+    { ...pinned, harness: 'openclaw' },
+    tokens,
+  );
+  expect(optedIn).not.toHaveProperty('files');
+  expect(optedIn).toMatchObject({
+    harness: 'openclaw',
     definition: expect.arrayContaining([
       expect.objectContaining({ path: 'home/.config/tool.toml' }),
     ]),

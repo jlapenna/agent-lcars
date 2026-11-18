@@ -49,17 +49,24 @@ The agent ID is `<owner>/<repo>/<name>`, for example
 carries every harness, pinned by its lockfile. A definition chooses among
 them by name and cannot supply a command of its own.
 
-| `harness`            | Runs the turn with | The definition supplies                                |
-| -------------------- | ------------------ | ------------------------------------------------------ |
-| `openclaw` (default) | OpenClaw           | `config.json`, `approvals.json`, `workspace/`, `home/` |
-| `claude`             | Claude Code        | `workspace/` (`CLAUDE.md`), `home/.claude/`            |
-| `codex`              | Codex              | `workspace/` (`AGENTS.md`), `home/.codex/`             |
+| `harness`            | Runs the turn with | The definition supplies                       |
+| -------------------- | ------------------ | --------------------------------------------- |
+| `openclaw` (default) | OpenClaw           | `config.json`, `approvals.json`, `workspace/` |
+| `claude`             | Claude Code        | `workspace/` (`CLAUDE.md`), `home/.claude/`   |
+| `codex`              | Codex              | `workspace/` (`AGENTS.md`), `home/.codex/`    |
+
+`home/` is applied only to a definition whose `agent.yaml` names a `harness`
+or a `mode`. An OpenClaw agent that wants user-level settings names
+`harness: openclaw`. A definition that names neither runs as it did before
+harnesses existed, so files it happens to keep under `home/` stay unused,
+and a round already admitted for it is not changed by a newer image or
+Console.
 
 Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
 (ACP) agent, and the launcher is only an ACP client. It starts the harness in
-a copy of `workspace/`, copies `home/` into the harness's `HOME`, sends the
-message as one prompt and takes the agent's last message after its last tool
-call as the report. Claude Code and Codex speak ACP through their own
+a copy of `workspace/`, copies `home/` into the harness's `HOME` for a
+definition that asked for it, sends the message as one prompt and takes the
+agent's last message after its last tool call as the report. Claude Code and Codex speak ACP through their own
 adapters. OpenClaw speaks it through its own server, `openclaw acp`, which
 forwards to a Gateway: the launcher validates the config, runs Doctor, seeds
 the exec approvals and starts a Gateway on loopback inside the Job for that
@@ -254,8 +261,9 @@ another's credentials gets its own profile.
     definition and the message. LCARS reads each file from GitHub by its blob
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
-  - A round that names a harness or a mode, or whose definition has `home/`
-    files, carries its files in the brief as `definition`, not `files`. A launcher from before harnesses reads only
+  - A round that names a harness or a mode carries its files in the brief
+    as `definition`, not `files`, and only such a round has its `home/`
+    settings applied. A launcher from before harnesses reads only
     `files`, so on an image that predates them (or after a rollback to one)
     the attempt fails instead of running the agent on OpenClaw under a policy
     its definition never asked for.
@@ -369,14 +377,11 @@ while the newer Console is still running, in this order:
    running now and any retry they may still get, because a retry does not go
    through admission. Roll back neither the Console nor the image before
    then. Affected are:
-   - rounds that pinned a `harness` or a `mode`. The earlier Console cannot
-     read such a round, so it can neither deliver its brief nor retry it;
-   - if the claw image is going back too, rounds whose pinned definition has
-     `home/` files. A round keeps the revision it was admitted with, so
-     nothing done to the default branch changes it, and the earlier Console
-     and launcher together would run it without those settings.
-
-   Other rounds of OpenClaw agents are unaffected.
+   the rounds that pinned a `harness` or a `mode`. The earlier Console
+   cannot read such a round, so it can neither deliver its brief nor retry
+   it. A round keeps the revision it was admitted with, so nothing done to
+   the default branch changes it. Rounds of agents that name neither are
+   unaffected: they never had `home/` settings applied.
 
 4. Take `harness` and `mode` out of every manifest that names one, on each
    repository's default branch. For a `claude` or `codex` definition that
@@ -407,14 +412,13 @@ while the newer Console is still running, in this order:
 8. Lift the fence with a further deploy of that version: restore the grants,
    and restore `runCallers` on each profile that had it, since the earlier
    Console lets a dispatched run invoke an agent only through that flag. If
-   the claw image went back too, first deal with every agent whose
-   definition has `home/` files. Remove that directory if the agent can run
-   without it and wait until the catalog shows the change, because admission
-   pins the revision the catalog holds, not the default branch. Otherwise
-   keep the agent fenced: its runtime out of every grant and `runCallers`
-   off on its profile. The earlier Console delivers such a definition in the
-   brief the earlier launcher accepts, and that launcher stages only the
-   workspace, so the agent would run without its reviewed `home/` settings.
+   the claw image went back too, first deal with every OpenClaw agent that
+   relied on `home/` settings, which is one that named `harness: openclaw`
+   before step 4. With the `harness` line gone it is an agent the earlier
+   launcher runs, and that launcher stages only the workspace, so it would
+   run without its reviewed `home/` settings. If it can run without them,
+   nothing more is needed. Otherwise keep the agent fenced: its runtime out
+   of every grant and `runCallers` off on its profile.
 
 Rolling back only the claw image, with the newer Console still running,
 needs no step: a round that needs the newer launcher is delivered in a shape

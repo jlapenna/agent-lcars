@@ -25,8 +25,8 @@ definition digest LCARS pinned at admission. The launcher writes the files to
 `/work/agent` only after each file's bytes hash to its blob SHA and the file
 list hashes to the pinned digest; paths cannot leave that directory, and
 executable files keep their mode. The harness's files are read from there:
-`workspace/` and `home/` for every harness, and `config.json` and
-`approvals.json` for OpenClaw. Its `config.json` is a source config; the
+`workspace/` for every harness, `home/` for a definition that names a
+harness or a mode, and `config.json` and `approvals.json` for OpenClaw. Its `config.json` is a source config; the
 launcher normalizes it for this image
 ([below](#agent-config-normalization)).
 
@@ -69,10 +69,12 @@ Each step fails the attempt closed with a `runner-failed` completion:
    its files as `definition` instead of `files`, which a launcher from before
    harnesses refuses.
 2. The launcher writes the verified definition to `/work/agent`, copies its
-   `workspace/` directory to a writable `/work/workspace` and copies its
-   `home/` directory into
-   `HOME`, making each pinned `home/` file read-only (an executable stays
-   executable).
+   `workspace/` directory to a writable `/work/workspace`. For a brief that
+   carries its files as `definition` (a round that named a harness or a
+   mode), it also copies the `home/` directory into `HOME`, making each
+   pinned `home/` file read-only (an executable stays executable). A `files`
+   brief never has `home/` applied: no launcher did before harnesses, and a
+   round admitted then must run as it would have.
 3. It prepares what the harness needs (for OpenClaw, [below](#openclaw)) and
    starts the harness the manifest names (`HARNESSES` in `claw-job.mjs`) in
    its own process group, in the workspace, with a clean environment: the
@@ -92,7 +94,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    itself, and otherwise unchanged. It answers every
    `session/request_permission` with the reject option, so the agent can do
    only what its harness does without asking.
-5. It settles from the session's updates: `report` only when the turn ended
+5. Once the harness's process has exited, whatever is left of its process
+   group is stopped and waited for (`endGroup`), so nothing of the harness
+   runs while the launcher checks settings and settles. It settles from the
+   session's updates: `report` only when the turn ended
    with `end_turn`, the agent's last message after its last tool call is not
    empty and no tool call is unresolved. A call that failed or never finished
    is unresolved unless a call that started after it ended completed. A
@@ -153,8 +158,10 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    SecretRef, or one a provider's `apiKey` or `headers` names in a `${NAME}`
    or `${NAME:-default}` template (OpenClaw's own grammar; an empty variable
    counts as unset). Every SecretRef and template for it is resolved, and a declared
-   provider with no `apiKey` gets the first of its own variables the
-   environment holds. A provider that is not declared in the config and
+   provider with no `apiKey`, or a blank one, gets the first of its own
+   variables the environment holds. An `apiKey` that is only the name of a
+   credential variable is OpenClaw's marker for that variable and gets its
+   value. A provider that is not declared in the config and
    relied on the environment no longer finds its key, and a custom key named
    only outside those places stays in the environment. A SecretRef is
    resolved only as OpenClaw would resolve it: through an `env` provider the
@@ -173,8 +180,14 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    agent state under the Job's state directory, and the Gateway does not
    read auth profiles from the original directory as `agent exec` did. Give
    the provider its key as an `env` SecretRef.
-6. `openclaw gateway run`, waited on until its readiness probe answers
-   (`GET /readyz` on its loopback port). It serves this one turn: channels,
+6. `openclaw gateway run --port <port>` in the agent's workspace, waited on
+   until its readiness probe answers (`GET /readyz` on its loopback port).
+   The workspace is where `agent exec` ran, so OpenClaw still reads a `.env`
+   there, under its own filter. The port is the launcher's: OpenClaw reads
+   `OPENCLAW_GATEWAY_PORT` before its config, so the Gateway, its ACP server
+   and the outcome call all get that variable from the launcher, and the
+   launch config drops every `OPENCLAW_GATEWAY_*` variable a definition's
+   own `env` sets. It serves this one turn: channels,
    cron, the Gmail watcher, the canvas host, the browser control server and
    the startup model prewarm are all switched off, so nothing outside the Job
    can reach the agent.

@@ -73,8 +73,9 @@ const agentRoundSchema = z.strictObject({
   agent: z.string(),
   revision: z.string(),
   digest: z.string(),
-  /** The admitted definition's harness; omitted means OpenClaw, so rounds
-   * admitted before harnesses existed read the same. */
+  /** The harness the admitted definition names; omitted means OpenClaw as a
+   * launcher from before harnesses ran it (no `home/` settings), so rounds
+   * admitted before harnesses existed read and run the same. */
   harness: agentHarnessSchema.optional(),
   /** The admitted definition's ACP session mode, when it names one. */
   mode: agentModeSchema.optional(),
@@ -203,8 +204,9 @@ export async function admitAgentRun(
     agent: id,
     revision: definition.revision,
     digest: definition.digest,
-    ...(definition.manifest.harness === undefined ||
-    definition.manifest.harness === 'openclaw'
+    // Pinned as written, `openclaw` included: naming a harness is how a
+    // definition asks for the launcher that stages `home/`.
+    ...(definition.manifest.harness === undefined
       ? {}
       : { harness: definition.manifest.harness }),
     ...(definition.manifest.mode === undefined
@@ -341,15 +343,15 @@ export async function agentRunBrief(
     requireToolEvidence: round.requireToolEvidence,
     message: round.message,
   };
-  // A round that names a harness or a mode, or whose definition carries
-  // `home/` settings, needs a launcher that knows them. Its files go under
+  // A round that pinned a harness or a mode needs a launcher that knows
+  // them, and it alone has its `home/` settings applied. Its files go under
   // `definition`, which a launcher from before harnesses does not read, so
   // that launcher refuses the brief instead of running the agent without
-  // them.
+  // them. Every other round, including one admitted before harnesses whose
+  // definition happens to hold files under `home/`, is delivered as it
+  // always was and runs without them.
   const needsHarnessLauncher =
-    round.harness !== undefined ||
-    round.mode !== undefined ||
-    files.some((file) => file.path.startsWith('home/'));
+    round.harness !== undefined || round.mode !== undefined;
   if (!needsHarnessLauncher) return { ...brief, files: delivered };
   return {
     ...brief,
