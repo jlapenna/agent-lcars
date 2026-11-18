@@ -1,9 +1,12 @@
 # Agent LCARS
 
-Agent LCARS is the control plane for headless Claude Code, Codex, OpenCode, and
-Antigravity work on the shared self-hosted GitHub Actions runner fleet. It turns
-GitHub issues into accountable agent work, shows maintainers where attention is
-needed, and retains the session evidence behind each outcome.
+Agent LCARS is the control plane for headless agent work across the fleet. It
+admits Work from GitHub issues and pull requests, Linear issues, and native Work
+requests (API, `lcars work` CLI and Console); runs coding pipelines on Claude
+Code, Codex, OpenCode and Antigravity, repository-owned Goose jobs, and
+repository-owned OpenClaw ("claw") agents; and launches every run as a
+Kubernetes Job through the QueueExecutor. The Console shows maintainers where
+attention is needed and retains the session evidence behind each outcome.
 
 ![Agent LCARS decision inbox showing a selected item and its takeover context](docs/images/console-inbox.png)
 
@@ -33,15 +36,24 @@ See [Operations](OPERATIONS.md) for Work API access and parked-item cleanup.
 Use the console for decisions and inspection; use the supporting services when
 working on a specific part of the fleet.
 
-| Surface                        | Use                                             |
-| ------------------------------ | ----------------------------------------------- |
-| Console queue (`/`)            | Work requiring a maintainer action              |
-| Console agents (`/agents`)     | Active runs, CLI sessions, and recent outcomes  |
-| Console sessions (`/sessions`) | Search and inspect session records              |
-| `apps/telemetry-watcher`       | Interactive and CI session telemetry            |
-| `apps/runner-autoscaler`       | Runner placement and lifecycle                  |
-| `apps/github-actions-exporter` | GitHub Actions metrics                          |
-| `infra/terraform`              | GCP services, IAM, storage, secrets, and budget |
+| Surface                                     | Use                                                   |
+| ------------------------------------------- | ----------------------------------------------------- |
+| Console Bridge (`/`)                        | Fleet overview                                        |
+| Console Inbox (`/inbox`)                    | Pending decisions and completed reports               |
+| Console Agents (`/agents`)                  | Active runs, claimed work, and recent outcomes        |
+| Console Shuttlebay (`/shuttlebay`)          | Runner fleet: live runners and queue status           |
+| Console Work (`/work`)                      | Native Work items, issues, and schedules              |
+| Console Jobs (`/jobs`, `/jobs/credentials`) | Repository jobs, and job secrets and credential sets  |
+| Console Sessions (`/sessions`)              | Search and inspect session records                    |
+| Console Costs (`/costs`)                    | Session spend                                         |
+| `apps/telemetry-watcher`                    | Interactive and CI session telemetry                  |
+| `apps/runner-autoscaler`                    | QueueExecutor: claims, Kubernetes Jobs, and placement |
+| `apps/runner-autoscaler/claw-image`         | Runner image for repository-owned claw agents         |
+| `apps/github-actions-exporter`              | GitHub Actions metrics                                |
+| `infra/terraform`                           | GCP services, IAM, storage, secrets, and budget       |
+
+The [Console product spec](docs/product/console-product-spec.md) describes each
+view in detail.
 
 ## Console views
 

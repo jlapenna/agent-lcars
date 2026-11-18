@@ -94,7 +94,9 @@ pull-request review runs admitted through `pr-review-routing.ts` populate
 (`codex` PR -> `claude` with `['agy']`; `claude` PR -> `codex` with `['agy']`;
 `agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
 `review:codex` is requested; `opencode`/human PR -> `claude` with
-`['codex', 'agy']`).
+`['codex', 'agy']`). The authoring model is appended as the last alternative
+when it is not already listed, so a PR is reviewed by its own model only after
+every opposite model has stopped on its limit.
 
 Admission intersects the list with the authenticated principal's pipeline
 grant. A failed `provider-limit` report can atomically settle its attempt,
@@ -112,8 +114,21 @@ records: `usage_limit_reached`, `insufficient_quota`,
 It prefers an available authorized alternative. When all remaining alternatives
 are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
-hold it until it can run. Missing opt-in, revoked authority or exhausted
-alternatives still settle without a successor.
+hold it until it can run. Missing opt-in or revoked authority settle without a
+successor, as do exhausted alternatives for native Work and non-review runs.
+
+A GitHub PR review (`mode: review`) whose authorized alternatives are all
+exhausted waits for quota instead of failing (#3300): the decision mints a
+deferred successor on the round's first provider, with
+`providerFallback.providerWait` recording the attempt and `retryAt`. The wait
+starts at 15 minutes and doubles up to 6 hours, for at most
+`MAX_PROVIDER_WAITS` (7) waits, about 20 hours in all; after that the review
+settles failed. Each wait still requires current authority, the claim fence
+still applies the provider's cooldown, and queued-cooldown rerouting can move
+the due run to a free alternative. Sources: `waitForProvider` in
+`libs/orchestrator/src/provider-fallback.ts` and `MAX_PROVIDER_WAITS` in
+`model.ts`; waiting runs are counted by the `provider_wait_runs` lifecycle
+gauge.
 A `provider-capacity` report is the same availability class with no window to wait on: the direct
 runner derives it from the provider's own structured failure events when a round stops before any
 final message, so an empty last message cannot degrade it to a generic agent failure. It holds that
@@ -169,9 +184,11 @@ Run provenance records the original intent, predecessor, triggering failure
 and attempted providers. Alternatives are tried deterministically without
 cycles, and cross-provider successors drop session/transcript resume artifacts
 while retaining the human request and context. Work/task/conversation views
-and outcome delivery identify fresh fallback attempts. Source tests and local
-emulator proof qualify this mechanism; protected CI, normal deployment and a
-real provider-limit journey remain separate delivery gates.
+and outcome delivery identify fresh fallback attempts. A real provider-limit
+journey has completed in production: on 2026-11-10 a review of
+`jlapenna/agent-lcars#3292` went Codex, then Antigravity (`provider-limit`),
+then Claude, which posted the review (FL-IN-10 in the
+[fleet orchestration spec](product/fleet-orchestration-product-spec.md)).
 
 ## Console acknowledgement and maintenance
 
@@ -186,6 +203,31 @@ lease expiry and durable outbox retry. A failed or held maintenance pass cannot
 delay a successful merge acknowledgement. Pending entries and expired drain
 leases remain eligible for the next five-minute tick; no request-lifetime
 background promise carries required work.
+
+One tick (`handleReconcile` in `apps/console/src/lib/orchestrator-routes.ts`)
+runs, in order:
+
+1. Codex credential-operation recovery.
+2. `sweepExpired`: lost leases and startup deadlines, with bounded retry.
+3. `rerouteQueued`: queued runs blocked by another run's provider cooldown.
+4. One outbox drain of at most 30 entries; the reply's
+   `outboxContinuationNeeded` reports a full batch, and the next tick
+   continues it.
+5. In parallel, under a 45-second deadline inside the executor's 60-second
+   HTTP deadline: one queued summary Work attempt (inbox and handoff
+   summaries), repository maintenance (`maintainRepositoryJobs`: job and
+   claw-agent catalog refresh plus job schedules), and the job-credential
+   observation.
+
+The repository-agent catalog observation starts beside step 5 under the same
+deadline. It is attached to the reply as `repositoryAgents` only when it
+finishes in time, is valid on the wire and keeps the reply within its 60 KiB
+budget; otherwise it is omitted without failing maintenance.
+
+Inbox Web Push delivery runs on the schedule tick instead
+(`deliverInboxPush` in `apps/console/src/lib/schedule-router.ts`), after due
+schedules are admitted; a delivery failure is logged and does not fail the
+tick.
 
 The hermetic Inbox journey keeps a 20-second merge-action allowance, distinct
 from #2201's navigation-to-ready phone p95 contract.

@@ -265,6 +265,10 @@ the transport fixture.
 
 The authenticated `/jobs` screen uses these Work API endpoints:
 
+- `GET /api/work/v1/jobs` lists the jobs whose repositories the caller's grant
+  covers.
+- `GET /api/work/v1/jobs/{id}/profiles` lists the execution profiles the
+  caller may use for that job.
 - `POST /api/work/v1/jobs/refresh` with a managed `repository`.
 - `POST /api/work/v1/jobs/{id}/enable` with the current `digest` and `enabled`:
   `false` records the operator veto, `true` clears it and enables that digest.

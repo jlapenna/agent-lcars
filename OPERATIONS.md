@@ -14,11 +14,15 @@ required`. Work grants are declared in `AGENT_LCARS_WORK_GRANTS` in
 [work-grants.ts](apps/console/src/lib/work-grants.ts), and matched against the
 verified identity by [work-auth.ts](apps/console/src/lib/work-auth.ts).
 
-| Identity                                                    | Work principal            | Scope           |
-| ----------------------------------------------------------- | ------------------------- | --------------- |
-| `jlapenna`                                                  | `user:jlapenna`           | `work.operator` |
-| `agent-lcars-production-verifier`                           | `svc:production-verifier` | `work.operator` |
-| Google SA `work-reader@agent-lcars.iam.gserviceaccount.com` | `svc:work-reader`         | `work.reader`   |
+`AGENT_LCARS_WORK_GRANTS` is the authoritative grant list; it also covers
+service, workflow, executor, scheduler and adapter principals. The rows below
+are examples of the grants operators most often meet, not the full list.
+
+| Identity                                                    | Work principal            | Scopes                                              |
+| ----------------------------------------------------------- | ------------------------- | --------------------------------------------------- |
+| `jlapenna`                                                  | `user:jlapenna`           | `work.operator`, `secrets.admin`, `work.claw.admit` |
+| `agent-lcars-production-verifier`                           | `svc:production-verifier` | `work.operator`                                     |
+| Google SA `work-reader@agent-lcars.iam.gserviceaccount.com` | `svc:work-reader`         | `work.reader`, `costs.reader`                       |
 
 The production-verifier grant applies to sessions with that login, including
 existing unexpired sessions. It is an identity grant, not a grant limited to
@@ -29,7 +33,8 @@ its holders must act only within the requested task.
 
 `work.reader` authorizes only the read-only issue-owner query,
 `GET /anchors/github/owner` (`lcars work owner <owner/repo>#<n>`). It cannot
-list or read items, mutate, or manage schedules. Interactive Claude and Codex
+list or read items, mutate, or manage schedules. `costs.reader` separately
+authorizes the read-only spend readout `GET /costs/budget`. Interactive Claude and Codex
 sessions use it through `LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com`;
 only the maintainer's Google account may impersonate that identity.
 

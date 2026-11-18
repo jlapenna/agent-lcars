@@ -1,10 +1,18 @@
 # Human-needed handoff summaries
 
-Console performs a bounded LLM pass when an authenticated run completion
-reports `park` with a nonblank final message. It stores 2–3 short actions on
-that exact run as `result.humanNeededActions`; the original `message` remains
-unchanged. Commands sort first and must be exact excerpts from the handoff.
-The summary is a reading aid, never an authorization or an executable action.
+When an authenticated run completion reports `park` with a nonblank final
+message, the completion transaction enqueues an `admit-handoff-summary` outbox
+entry. Its drain admits one durable `handoff-summary` Work item for that run,
+keyed by the run and the SHA-256 of its message, so a retried delivery never
+mints a second summary. That Work's result holds 2–3 short actions
+(`humanNeededActions`); the parked run's original result is never rewritten.
+Commands sort first and must be exact excerpts from the handoff. The summary is
+a reading aid, never an authorization or an executable action.
+
+Readers project the actions onto the parked run with `readHandoffActions`
+(`apps/console/src/lib/handoff-summary-work.ts`). It returns them only when the
+summary Work finished successfully for the same run and message hash; runs
+parked before this change keep their inline `result.humanNeededActions`.
 
 The native and GitHub Inbox detail panes show the current parked run's
 summary, and both task history pages retain the summary beside that round's
@@ -19,10 +27,10 @@ The current decision description is the primary reading aid in an Inbox detail
 pane. A stored action summary is available in a collapsed **Earlier handoff ·
 AI summary** disclosure, explicitly identified as historical:
 
-| Reading aid                                         | Source and lifetime                                                                                                                      | Display                                                                                  |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Decision description                                | Current bounded issue/comment or native handoff context and decision state; cached at display time and refreshed when that input changes | Inbox row and detail, including older parks, label-only decisions, and completed reports |
-| Stored action summary (`result.humanNeededActions`) | The final handoff of one authenticated parked run; generated once at completion and retained with that run                               | Current parked-run detail and that round's task history                                  |
+| Reading aid                                  | Source and lifetime                                                                                                                           | Display                                                                                  |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Decision description                         | Current bounded issue/comment or native handoff context and decision state; durable `inbox-summary` Work, re-admitted when that input changes | Inbox row and detail, including older parks, label-only decisions, and completed reports |
+| Stored action summary (`humanNeededActions`) | The final handoff of one authenticated parked run; generated once by its `handoff-summary` Work and read back for that run                    | Current parked-run detail and that round's task history                                  |
 
 The description explains the current decision (or summarizes a completed
 report). Stored actions preserve what the agent asked at the time it parked;
@@ -67,15 +75,18 @@ put secret values in application configuration or Terraform.
 The request sends only the bounded final handoff message (up to 16 KiB),
 requests JSON with a 1,200-token output cap, permits no tools or redirects,
 disables model reasoning for this short extraction task,
-and allows at most 30 seconds with no retry. The timeout is shortened to
-leave five seconds before the effective run deadline for settlement; with five
-seconds or less remaining, Console skips the optional call. The streamed response
+and allows at most 30 seconds per attempt. Before calling the model, the
+attempt rechecks that the source run is still parked with the same message
+hash. Inside a maintenance tick the timeout is shortened to leave five seconds
+before the tick's deadline for settlement; with five seconds or less
+remaining, the attempt is not started or its claim is released. The streamed response
 is capped at 64 KiB before decoding or JSON parsing, and must contain exactly
 one choice. Unread response data is canceled on failure. Non-park outcomes make
-no LLM call. Invalid output, invented commands, timeout and upstream failure all
-preserve normal completion and the complete original message. The log records
-only that the optional summary was unavailable, never its contents or upstream
-error body. Failed summaries are not regenerated on page refresh.
+no LLM call. Invalid output, invented commands, timeout and upstream failure
+report the summary attempt as `summary-unavailable` and leave the parked run and
+its complete original message untouched. The log records only that the
+optional summary was unavailable, never its contents or upstream error body.
+Page refreshes never regenerate a summary.
 
 ## Verification boundary
 
@@ -102,14 +113,25 @@ latest comment or handoff, current queue reasons, CI/review state and diagnosis.
 No tools or actions are offered to the model. The result is plain text, capped
 at 600 characters, and is advisory rather than authorization.
 
-Descriptions stream independently behind Suspense so the queue and reply
-controls do not wait for the model. Up to four requests run concurrently per
-Console process; queue time shares the 30-second request budget. Next's
-server cache keys descriptions by the bounded source content and its revision,
-so changed comments, handoffs or decision state select a new summary. Successful
-results revalidate after a day; unavailable results retry after a minute.
-This is a cached reading aid, not a persisted change to the underlying work.
-When configuration is absent or generation fails, native rows retain their
-original question or report; GitHub rows direct the reader to the original context.
-Opening a selected item skips summary work for the hidden rows. The completion-time stored action summaries
-above continue to behave independently.
+Displaying an item admits one durable `inbox-summary` Work item per source
+(`admitInboxSummary` in `apps/console/src/lib/inbox-summary-work.ts`). Its
+revision key hashes the bounded context and the decision's observation times,
+so an unchanged source is a duplicate request and changed comments, handoffs or
+decision state admit a new revision. Only the latest finished revision whose
+context matches is shown. When work is pending, the request's `after` callback
+drains the outbox and runs summary attempts once the response is sent
+(`getInboxDecisionSummary` in `apps/console/src/lib/inbox-decision-summary.ts`);
+the maintenance tick recovers any that callback did not finish.
+
+Summary Work uses the same durable claims, token fencing and completion
+transactions as coding work. Console itself claims it (`console-model-call`),
+at most four attempts per background pass and one per maintenance tick. The
+queue's live-claim ceilings are 3 for `inbox-summary` and 1 for
+`handoff-summary` (`QUEUE_PIPELINE_MAX_LIVE_CLAIMS`).
+
+Descriptions render behind Suspense, so the queue and reply controls do not
+wait. A pending description shows "Generating summary…" beside the fallback
+text. When configuration is absent or generation fails, native rows retain
+their original question or report; GitHub rows direct the reader to the
+original context. The result is a reading aid, not a change to the underlying
+work. The stored action summaries above behave independently.

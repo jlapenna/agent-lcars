@@ -252,15 +252,16 @@ permissions.
 All administration paths below are under `/api/work/v1/credentials`, require
 `secrets.admin`, and return metadata only. All Work responses use `no-store`.
 
-| Method/path                        | Operation                                             |
-| ---------------------------------- | ----------------------------------------------------- |
-| `GET /secrets`, `/sets`, `/grants` | List bounded metadata                                 |
-| `POST /secrets`                    | Register a provisioned container's name/type/login    |
-| `POST /secrets/{name}/versions`    | Upload `{"value":"..."}` and return `{"version":"N"}` |
-| `POST /secrets/{name}/promote`     | Validate/promote `{"version":"N"}`                    |
-| `POST /secrets/{name}/disable`     | Stop further delivery; body `{}`                      |
-| `POST /sets`                       | Create an immutable set revision                      |
-| `POST /grants`                     | Create/update/revoke an exact job grant               |
+| Method/path                        | Operation                                                    |
+| ---------------------------------- | ------------------------------------------------------------ |
+| `GET /secrets`, `/sets`, `/grants` | List bounded metadata                                        |
+| `POST /secrets`                    | Register a provisioned container's name/type/login           |
+| `POST /secrets/{name}/versions`    | Upload `{"value":"..."}` and return `{"version":"N"}`        |
+| `POST /secrets/{name}/promote`     | Validate/promote `{"version":"N"}`                           |
+| `POST /secrets/{name}/disable`     | Stop further delivery; body `{}`                             |
+| `POST /secrets/{name}/enable`      | Validate the promoted version and resume delivery; body `{}` |
+| `POST /sets`                       | Create an immutable set revision                             |
+| `POST /grants`                     | Create/update/revoke an exact job grant                      |
 
 The separate runtime delivery route uses the existing run-token contract,
 documented in the generated Work OpenAPI. No runtime route lists the store.
