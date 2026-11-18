@@ -261,6 +261,9 @@ a model key and runs only `openclaw` agents. Homelab's runtimes-only zone
 executor declares it; the shared executor's grant lists no claw pipeline. An OpenClaw
 agent that needs no other credential therefore runs from a repository PR
 alone.
+The name `default` is reserved: it resolves directly to `claw-default`, and a
+`default` entry in `AGENT_LCARS_AGENT_PROFILES` makes profile parsing fail,
+including for admissions that would use the built-in default.
 
 Credentials belong to the runtime, not the profile: every Job on a runtime
 mounts that runtime's Secret, and several profiles can name one runtime. So
