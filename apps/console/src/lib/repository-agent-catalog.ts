@@ -31,6 +31,14 @@ export async function refreshAgentCatalog(
   // Never let a slower, older observation replace a newer one.
   const newer = (current: CatalogAgent | undefined) =>
     current !== undefined && Date.parse(current.refreshedAt) > now.getTime();
+  // Health telemetry only: a lost write never fails the refresh.
+  const recordRead = (outcome: 'succeeded' | 'failed') =>
+    store
+      .recordSourceRead(repository, at, outcome)
+      .catch((error: unknown) =>
+        logger.error('Agent source health not recorded: %s', repository, error),
+      );
+  let read = false;
   try {
     const source = await openRepositorySource(
       repository,
@@ -55,24 +63,31 @@ export async function refreshAgentCatalog(
         refreshedAt: now.toISOString(),
         enabled: false,
       };
+      const prefix = `${name}/`;
+      const files = entries
+        .filter(
+          (entry) => entry.path.startsWith(prefix) && entry.type !== 'tree',
+        )
+        .map((entry) => ({
+          ...entry,
+          path: entry.path.slice(prefix.length),
+        }));
+      const manifest = files.find((file) => file.path === 'agent.yaml');
+      // Repository I/O stays outside the definition's own catch: a failed
+      // read fails the refresh (agents unavailable), never marks one invalid.
+      const manifestText =
+        manifest === undefined
+          ? undefined
+          : (await source.readBlob(manifest.sha)).toString('utf8');
       try {
-        const prefix = `${name}/`;
-        const files = entries
-          .filter(
-            (entry) => entry.path.startsWith(prefix) && entry.type !== 'tree',
-          )
-          .map((entry) => ({
-            ...entry,
-            path: entry.path.slice(prefix.length),
-          }));
-        const manifest = files.find((file) => file.path === 'agent.yaml');
-        if (!manifest) throw new Error('Agent is missing agent.yaml');
+        if (manifestText === undefined)
+          throw new Error('Agent is missing agent.yaml');
         row.definition = parseAgentDefinition(
           repository,
           source.revision,
           name,
           files,
-          (await source.readBlob(manifest.sha)).toString('utf8'),
+          manifestText,
         );
       } catch (error) {
         row.error =
@@ -80,9 +95,11 @@ export async function refreshAgentCatalog(
       }
       rows.push(row);
     }
+    read = true;
+    await recordRead('succeeded');
     // Publish after the complete read so a partial fetch cannot remove agents,
     // and only while no newer observation of this repository has published.
-    if (!(await store.claimObservation(repository, at, 'succeeded'))) return;
+    if (!(await store.claimObservation(repository, at))) return;
     const publish = (row: CatalogAgent) =>
       store.mutate(
         row.id,
@@ -137,7 +154,10 @@ export async function refreshAgentCatalog(
         fence,
       );
   } catch (error) {
-    if (!(await store.claimObservation(repository, at, 'failed'))) throw error;
+    // Health records repository reads only: a publication (storage) error
+    // after a complete read is not a source failure.
+    if (!read) await recordRead('failed');
+    if (!(await store.claimObservation(repository, at))) throw error;
     for (const agent of await repositoryRows())
       await store.mutate(
         agent.id,

@@ -1558,6 +1558,25 @@ describe('handleReconcile', () => {
     expect(failed.body).not.toHaveProperty('repositoryAgents');
   });
 
+  it('omits a catalog observation still pending at the maintenance deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const { deps } = fixture();
+      const reply = handleReconcile({
+        ...deps,
+        // Never settles: the deadline must answer for it.
+        observeRepositoryAgents: () =>
+          new Promise<never>((resolve) => void resolve),
+      });
+      await vi.advanceTimersByTimeAsync(45_000);
+      const result = await reply;
+      expect(result.status).toBe(200);
+      expect(result.body).not.toHaveProperty('repositoryAgents');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('performs no GitHub lifecycle reads: a closed anchor is caught at claim time, not by a sweep', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'queued-before-close');

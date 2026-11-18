@@ -553,6 +553,35 @@ async function decideDelivery(
   }
 }
 
+/** `observation`'s value, or undefined if it fails or is still pending at
+ * `deadline` (epoch ms). It never rejects and never outlives the deadline. */
+async function withinDeadline<T>(
+  observation: Promise<T> | undefined,
+  deadline: number,
+): Promise<T | undefined> {
+  if (observation === undefined) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      observation.catch((error: unknown) => {
+        logger.error('Repository agent observation failed', error);
+        return undefined;
+      }),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(
+          () => {
+            logger.warn('Repository agent observation missed its deadline');
+            resolve(undefined);
+          },
+          Math.max(0, Math.ceil(deadline - Date.now())),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * One QueueExecutor reconcile cycle: expire lost leases, then dispatch the
  * resulting retry work. Provider workers report completion through the Work
@@ -575,6 +604,14 @@ export async function handleReconcile(
     // ticker continues any larger backlog on its next pass.
     const outboxLimit = 30;
     const drained = await deps.drain(outboxLimit);
+    // Health telemetry only, read beside the passes below and bounded by
+    // the same deadline: a failed or slow catalog read omits the observation
+    // (the executor reports it unavailable) and never fails or delays
+    // maintenance past the executor's HTTP deadline.
+    const repositoryAgentObservation = withinDeadline(
+      deps.observeRepositoryAgents?.(),
+      modelDeadline,
+    );
     // Independent I/O-bound maintenance shares the same wall-clock window.
     // Await every pass even on failure; none may outlive the HTTP request.
     const maintenance = await Promise.allSettled([
@@ -584,14 +621,7 @@ export async function handleReconcile(
     ]);
     for (const result of maintenance)
       if (result.status === 'rejected') throw result.reason;
-    // Health telemetry only: a failed catalog read omits the observation
-    // (the executor then reports it unavailable) and never fails maintenance.
-    const repositoryAgents = await deps
-      .observeRepositoryAgents?.()
-      .catch((error: unknown) => {
-        logger.error('Repository agent observation failed', error);
-        return undefined;
-      });
+    const repositoryAgents = await repositoryAgentObservation;
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +

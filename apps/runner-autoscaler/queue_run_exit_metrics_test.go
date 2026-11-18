@@ -104,3 +104,27 @@ func TestUndeliveredExitIsNotCounted(t *testing.T) {
 		t.Fatalf("undelivered exit counted %v", got)
 	}
 }
+
+func TestRunExitStreakCountsFailuresInReportOrder(t *testing.T) {
+	initRunExitMetrics([]string{"claw-streak-test"})
+	streak := queueExecutorRunConsecutiveFailures.WithLabelValues("claw-streak-test")
+	if testutil.ToFloat64(streak) != 0 || testutil.ToFloat64(queueExecutorRunExitsTotal.WithLabelValues("claw-streak-test", "lost")) != 0 {
+		t.Fatal("a declared runtime must start at zero, not absent")
+	}
+	if testutil.ToFloat64(queueExecutorRunExitMetricsSupported) != 1 {
+		t.Fatal("support gauge not set")
+	}
+	at := time.Unix(1_800_000_000, 0)
+	for _, step := range []struct {
+		outcome string
+		want    float64
+	}{
+		{"failed", 1}, {"lost", 2}, {"unknown_run", 2}, {"canceled", 0},
+		{"lost", 1}, {"succeeded", 0}, {"failed", 1},
+	} {
+		recordRunExit(exitMeta{pipeline: "claw-streak-test"}, step.outcome, at)
+		if got := testutil.ToFloat64(streak); got != step.want {
+			t.Fatalf("after %s streak = %v, want %v", step.outcome, got, step.want)
+		}
+	}
+}

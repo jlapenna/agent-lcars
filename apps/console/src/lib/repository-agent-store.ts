@@ -23,19 +23,25 @@ export const catalogAgentSchema = z.strictObject({
 export type CatalogAgent = z.infer<typeof catalogAgentSchema>;
 
 /** Per-repository refresh bookkeeping: when a refresh last started (for
- * oldest-first fairness), the newest observation that published, and when
- * the newest published observation read the source successfully or failed
- * (catalog health metrics). */
+ * oldest-first fairness) and the newest observation that published. */
 export const agentSourceSchema = z.strictObject({
   repository: z.string(),
   attemptedAt: z.iso.datetime().optional(),
   observedAt: z.iso.datetime().optional(),
+});
+
+/** Catalog health telemetry, kept in its own collection so the strict
+ * source document (and a Console that predates this) never sees it: the
+ * newest repository read that succeeded and the newest that failed. */
+export const agentSourceHealthSchema = z.strictObject({
+  repository: z.string(),
   succeededAt: z.iso.datetime().optional(),
   failedAt: z.iso.datetime().optional(),
 });
+export type AgentSourceHealth = z.infer<typeof agentSourceHealthSchema>;
 export type AgentSource = z.infer<typeof agentSourceSchema>;
 
-export type ObservationOutcome = 'succeeded' | 'failed';
+export type SourceReadOutcome = 'succeeded' | 'failed';
 
 export interface AgentStore {
   list(): Promise<CatalogAgent[]>;
@@ -43,14 +49,16 @@ export interface AgentStore {
   recordAttempt(repository: string, at: string): Promise<void>;
   /** Atomically claim the right to publish an observation made at `at`:
    * false when a newer observation of the repository already published, so a
-   * slow older refresh can never resurrect what a newer one removed. A claim
-   * also records whether that observation read the source (`succeeded`) or
-   * failed. */
-  claimObservation(
+   * slow older refresh can never resurrect what a newer one removed. */
+  claimObservation(repository: string, at: string): Promise<boolean>;
+  /** Health telemetry: record that a refresh started at `at` read the
+   * repository (`succeeded`) or failed to. Never moves a timestamp back. */
+  recordSourceRead(
     repository: string,
     at: string,
-    outcome: ObservationOutcome,
-  ): Promise<boolean>;
+    outcome: SourceReadOutcome,
+  ): Promise<void>;
+  sourceHealth(): Promise<AgentSourceHealth[]>;
   read(id: string): Promise<CatalogAgent | undefined>;
   /** Read-modify-write one agent atomically. Returning `{}` writes nothing.
    * With `fence`, nothing is written when a newer observation of
@@ -88,11 +96,7 @@ export class FirestoreAgentStore implements AgentStore {
       { merge: true },
     );
   }
-  async claimObservation(
-    repository: string,
-    at: string,
-    outcome: ObservationOutcome,
-  ): Promise<boolean> {
+  async claimObservation(repository: string, at: string): Promise<boolean> {
     const ref = this.source(repository);
     return this.database.runTransaction(async (transaction) => {
       const current = await transaction.get(ref);
@@ -101,17 +105,38 @@ export class FirestoreAgentStore implements AgentStore {
         : undefined;
       if (source?.observedAt && Date.parse(source.observedAt) > Date.parse(at))
         return false;
-      transaction.set(
-        ref,
-        {
-          repository,
-          observedAt: at,
-          [outcome === 'succeeded' ? 'succeededAt' : 'failedAt']: at,
-        },
-        { merge: true },
-      );
+      transaction.set(ref, { repository, observedAt: at }, { merge: true });
       return true;
     });
+  }
+  private health(repository: string) {
+    return this.database
+      .collection('orchestrator-agent-source-health')
+      .doc(jobDigest(['agent-source-health', repository]));
+  }
+  async recordSourceRead(
+    repository: string,
+    at: string,
+    outcome: SourceReadOutcome,
+  ): Promise<void> {
+    const ref = this.health(repository);
+    const field = outcome === 'succeeded' ? 'succeededAt' : 'failedAt';
+    await this.database.runTransaction(async (transaction) => {
+      const current = await transaction.get(ref);
+      const previous = current.exists
+        ? agentSourceHealthSchema.parse(current.data())[field]
+        : undefined;
+      if (previous && Date.parse(previous) >= Date.parse(at)) return;
+      transaction.set(ref, { repository, [field]: at }, { merge: true });
+    });
+  }
+  async sourceHealth(): Promise<AgentSourceHealth[]> {
+    const snapshot = await this.database
+      .collection('orchestrator-agent-source-health')
+      .get();
+    return snapshot.docs.map((doc) =>
+      agentSourceHealthSchema.parse(doc.data()),
+    );
   }
   async read(id: string): Promise<CatalogAgent | undefined> {
     const snapshot = await this.collection.doc(hash.parse(id)).get();

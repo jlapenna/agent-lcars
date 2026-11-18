@@ -229,6 +229,7 @@ func scheduleTickFailureDetails(failures []scheduleTickFailure) string {
 // ticks, and the bounded metric makes the failure visible to the operations
 // consumer.
 func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *slog.Logger) {
+	registerRepositoryAgentMetrics()
 	tick := func() {
 		if err := tickSchedulesOnce(cfg); err != nil {
 			recordScheduleTick(false)

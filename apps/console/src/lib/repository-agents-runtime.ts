@@ -37,6 +37,16 @@ export async function maintainRepositoryAgents(
 /** Catalog health for the maintenance reply (docs/repository-agents.md). */
 export async function observeRepositoryAgents(): Promise<RepositoryAgentObservation> {
   const store = repositoryAgentStore();
-  const [agents, sources] = await Promise.all([store.list(), store.sources()]);
-  return observeAgentCatalog(agents, sources, new Date());
+  const [agents, attempts, health] = await Promise.all([
+    store.list(),
+    store.sources(),
+    store.sourceHealth(),
+  ]);
+  return observeAgentCatalog(
+    agents,
+    attempts,
+    health,
+    controlPlaneRepositories(),
+    new Date(),
+  );
 }

@@ -291,6 +291,11 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	}
 	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
 		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
+	runtimes := make([]string, 0, len(c.Runtimes))
+	for name := range c.Runtimes {
+		runtimes = append(runtimes, name)
+	}
+	initRunExitMetrics(runtimes)
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
 	}

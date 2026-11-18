@@ -555,8 +555,16 @@ The metrics endpoint exposes the queue worker's own health:
   `pipeline="unknown"`. `..._run_duration_seconds{pipeline,outcome}` is the
   Job's start-to-terminal wall time (inventory-observed exits only), and
   `..._run_exit_last_timestamp_seconds{pipeline,outcome}` is absent until the
-  first exit in the process, so no runs reads as idle, not failure.
-- `lcars_repository_agents*` (shared executor only) export the repository
+  first exit in the process. A claim whose Job could not be built or was
+  refused by the apiserver is also reported (and counted) without a Job, so
+  it has no duration. `..._run_consecutive_failures{pipeline}` counts failed
+  or lost exits since the last succeeded, finished or canceled one, in report
+  order. A runtimes-only executor zero-initializes each declared runtime's
+  outcome counters and streak at start, and every executor sets
+  `..._run_exit_metrics_supported 1`: an absent series is then unknown (scrape
+  down or older producer), a zero streak with no exit timestamp is idle.
+- `lcars_repository_agents*` (shared executor only, registered with the
+  maintenance ticker) export the repository
   agent catalog observation from the maintenance reply: agents by admission
   state, and per repository the last refresh attempt, success and failure
   ([docs/repository-agents.md](../../docs/repository-agents.md#health)).

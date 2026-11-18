@@ -6500,6 +6500,8 @@ describe('claw agent runs', () => {
     sources: async () => [],
     recordAttempt: async () => undefined,
     claimObservation: async () => true,
+    recordSourceRead: async () => undefined,
+    sourceHealth: async () => [],
     mutate: async () => ({}),
   };
 
@@ -6726,6 +6728,8 @@ describe('run-invoked agents', () => {
     sources: async () => [],
     recordAttempt: async () => undefined,
     claimObservation: async () => true,
+    recordSourceRead: async () => undefined,
+    sourceHealth: async () => [],
     mutate: async () => ({}),
   };
   const profiles = (runCallers: boolean) => () => [

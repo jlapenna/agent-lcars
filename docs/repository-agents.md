@@ -135,17 +135,23 @@ Catalog and run health reach Homelab's Prometheus through the executors'
 existing metrics endpoints; nothing here adds a scrape target.
 
 - **Catalog:** each maintenance reply carries `repositoryAgents`: agents by
-  admission state (enabled, vetoed, invalid, unavailable, removed) and each
-  repository's last refresh attempt, successful read and failed read. The
-  shared executor exports it as `lcars_repository_agents*`. A failed
-  observation omits it without failing maintenance, and the executor then
-  reports `read_available 0`, never a healthy zero. Agent names, errors and
-  messages never leave the console.
+  admission state (enabled, vetoed, invalid, unavailable, removed) and, for
+  up to 100 still-refreshed repositories, the last refresh attempt,
+  successful read and failed read. Read outcomes cover repository I/O only
+  (a failed manifest read fails the refresh; a storage error after a
+  complete read is not a source failure) and live in their own
+  `orchestrator-agent-source-health` collection, so the strict source
+  document is unchanged. The shared executor exports it as
+  `lcars_repository_agents*`. A failed observation, or one still pending at
+  the maintenance deadline, is omitted without failing maintenance, and the
+  executor then reports `read_available 0`, never a healthy zero. Agent
+  names, errors and messages never leave the console.
 - **Runs:** every executor counts delivered worker exits by pipeline and
   settled outcome (`github_runner_autoscaler_queue_executor_run_exits_total`),
-  with Job wall time. The zone executor's series are the claw runtimes'
-  (`claw-investigator`, `claw-default`). The exit route answers a finished
-  run's `ok` for this.
+  with Job wall time and an ordered failure streak
+  (`..._run_consecutive_failures`). The zone executor's series are the claw
+  runtimes' (`claw-investigator`, `claw-default`), zero from start. The exit
+  route answers a finished run's `ok` for this.
 - Homelab owns the dashboard and alerts (its `docs/claw-zone.md`).
 
 ## What this retired

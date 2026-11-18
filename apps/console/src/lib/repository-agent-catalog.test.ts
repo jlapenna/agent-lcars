@@ -9,6 +9,7 @@ import {
 import { agentKey } from './repository-agent-definition';
 import type {
   AgentSource,
+  AgentSourceHealth,
   AgentStore,
   CatalogAgent,
 } from './repository-agent-store';
@@ -36,18 +37,31 @@ class MemoryAgentStore implements AgentStore {
       attemptedAt: at,
     });
   }
-  async claimObservation(
+  healthRows = new Map<string, AgentSourceHealth>();
+  async recordSourceRead(
     repository: string,
     at: string,
     outcome: 'succeeded' | 'failed',
   ) {
+    const field = outcome === 'succeeded' ? 'succeededAt' : 'failedAt';
+    const previous = this.healthRows.get(repository)?.[field];
+    if (previous && Date.parse(previous) >= Date.parse(at)) return;
+    this.healthRows.set(repository, {
+      ...this.healthRows.get(repository),
+      repository,
+      [field]: at,
+    });
+  }
+  async sourceHealth() {
+    return [...this.healthRows.values()];
+  }
+  async claimObservation(repository: string, at: string) {
     const observedAt = this.sourceRows.get(repository)?.observedAt;
     if (observedAt && Date.parse(observedAt) > Date.parse(at)) return false;
     this.sourceRows.set(repository, {
       ...this.sourceRows.get(repository),
       repository,
       observedAt: at,
-      [outcome === 'succeeded' ? 'succeededAt' : 'failedAt']: at,
     });
     return true;
   }
@@ -77,7 +91,7 @@ const blobSha = (content: string) =>
  * files); undefined models a repository without `.lcars/agents`. */
 function github(
   agents: Record<string, Files> | undefined,
-  options: { fail?: boolean; extra?: object[] } = {},
+  options: { fail?: boolean; failBlobs?: boolean; extra?: object[] } = {},
 ) {
   const blobs = new Map<string, string>();
   return vi.fn(async (url: string) => {
@@ -122,6 +136,8 @@ function github(
           ...(options.extra ?? []),
         ],
       });
+    if (path.startsWith('git/blobs/') && options.failBlobs)
+      return new Response('unavailable', { status: 503 });
     if (path.startsWith('git/blobs/'))
       return new Response(blobs.get(path.slice('git/blobs/'.length))!);
     return new Response('Not Found', { status: 404 });
@@ -269,7 +285,7 @@ it('disables a removed agent and every agent when the source refresh fails', asy
     error: 'Source refresh failed',
   });
   // Health bookkeeping: the last good read stays visible beside the failure.
-  expect(store.sourceRows.get('owner/repo')).toMatchObject({
+  expect(store.healthRows.get('owner/repo')).toMatchObject({
     succeededAt: new Date(now.getTime() + 1000).toISOString(),
     failedAt: new Date(now.getTime() + 2000).toISOString(),
   });
@@ -417,4 +433,42 @@ it('keeps a definition storage cannot hold to its own error, publishing its sibl
   expect(huge.enabled).toBe(false);
   expect(huge.definition).toBeUndefined();
   expect(huge.error).toMatch(/could not be stored/u);
+});
+
+it('treats a failed manifest read as a source failure, never an invalid definition', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal('fetch', github({ investigator: investigator() }));
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  vi.stubGlobal(
+    'fetch',
+    github({ investigator: investigator() }, { failBlobs: true }),
+  );
+  const later = new Date(now.getTime() + 1000);
+  await expect(
+    refreshAgentCatalog(store, 'owner/repo', tokens, later),
+  ).rejects.toThrow();
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: false,
+    error: 'Source refresh failed',
+  });
+  expect(store.healthRows.get('owner/repo')).toEqual({
+    repository: 'owner/repo',
+    succeededAt: now.toISOString(),
+    failedAt: later.toISOString(),
+  });
+});
+
+it('records no source failure when only publication fails after a complete read', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal('fetch', github({ investigator: investigator() }));
+  store.mutate = async () => {
+    throw new Error('storage unavailable');
+  };
+  await expect(
+    refreshAgentCatalog(store, 'owner/repo', tokens, now),
+  ).rejects.toThrow('storage unavailable');
+  expect(store.healthRows.get('owner/repo')).toEqual({
+    repository: 'owner/repo',
+    succeededAt: now.toISOString(),
+  });
 });
