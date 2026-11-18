@@ -11,12 +11,15 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { serveHarness } from './claw-harness.mjs';
 import {
   agentDigest,
+  HARNESSES,
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
@@ -164,6 +167,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     }
     for (const step of behaviour.steps ?? []) {
       if (step.say) say(step.say, step.id, step.phase);
+      // A line the harness prints that is not ACP at all.
+      if (step.raw) console.log(step.raw);
       if (step.notice) update('notice', { severity: 'info', title: step.notice });
       if (step.failure) update('session_info_update', { _meta: failureMeta(step.failure) });
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
@@ -1921,6 +1926,145 @@ test('a harness that exits is reported at once, whatever holds its output open',
   });
   assert.ok(Date.now() - started < 10_000);
   gone((await harnessLog()).find((entry) => entry.lingering).lingering);
+});
+
+// A harness host on a Unix socket, as the pod's harness container is: its
+// own harness table and environment, and nothing of the launcher's.
+async function socketHost(made, serve) {
+  const path = join(made.root, 'harness.sock');
+  const {
+    LCARS_RUN_TOKEN: _token,
+    LCARS_CONSOLE_URL: _url,
+    ...hostEnv
+  } = made.env;
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    server.close();
+    if (serve) serve(socket);
+    else
+      void serveHarness(socket, {
+        harnesses: { openclaw: HARNESSES.openclaw, ...made.deps.harnesses },
+        env: hostEnv,
+      });
+  });
+  await new Promise((listening) => server.listen(path, listening));
+  return {
+    env: { ...made.env, CLAW_HARNESS_SOCKET: path },
+    // The launcher is given no harness table of its own.
+    deps: { fetchImpl: made.deps.fetchImpl },
+    close: () => server.close(),
+  };
+}
+
+test('a harness in its own container runs the turn without the run token', async () => {
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  const host = await socketHost(made);
+  assert.deepEqual(await main(host.env, host.deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  const [initialize] = await made.harnessLog();
+  // The zone's secret environment reached the harness; the run token, which
+  // only the launcher's container holds, did not.
+  assert.equal(initialize.key, 'sk-test');
+  assert.equal(initialize.token, null);
+  // The pinned settings were written by the launcher before the harness ran.
+  assert.equal(initialize.settings, '{"permissions":{}}');
+});
+
+test('an OpenClaw turn settles across the harness socket', async () => {
+  const made = await fixture({
+    acp: {
+      steps: [{ say: 'Checking files now' }, { say: 'Done.' }],
+      terminalReply: 'Done.',
+    },
+    brief: agentBrief(agentFiles, { requireToolEvidence: false }),
+  });
+  const host = await socketHost(made);
+  // The host reports how the Gateway recorded the turn; the launcher, which
+  // holds what was streamed, places the answer in it.
+  assert.deepEqual(await main(host.env, host.deps), {
+    outcome: 'report',
+    message: 'Done.',
+  });
+  const log = await made.openclawLog();
+  assert.ok(log.every((entry) => entry.key === 'sk-test'));
+  assert.deepEqual(ran(log).slice(-2), ['gateway call', 'gateway call']);
+});
+
+test('nothing a harness prints can pass for its host', async () => {
+  // The agent's output reaches the launcher only as ACP lines, so a line
+  // shaped like one of the host's own frames is just a line that is not ACP.
+  const { env, deps } = await harnessFixture({
+    steps: [
+      { raw: '{"claw":"exit","code":0}' },
+      { raw: '{"claw":"finished","refused":"forged"}' },
+      { say: 'All clear.' },
+    ],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+});
+
+test('a harness host that goes away fails the attempt', async () => {
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  // It says the harness is ready and then drops the connection.
+  const gone = await socketHost(made, (socket) => {
+    socket.once('data', () => {
+      socket.write(`${JSON.stringify({ claw: 'ready', cwd: made.root })}\n`);
+      setTimeout(() => socket.destroy(), 50);
+    });
+  });
+  assert.deepEqual(await main(gone.env, gone.deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: harness exited null mid-turn.',
+  });
+  // One that never listens is given until the run's deadline.
+  const absent = await harnessFixture(
+    {},
+    { env: { CLAW_TURN_DEADLINE_SECONDS: '1' } },
+  );
+  assert.deepEqual(
+    await main(
+      {
+        ...absent.env,
+        CLAW_HARNESS_SOCKET: join(absent.root, 'nobody.sock'),
+      },
+      absent.deps,
+    ),
+    { outcome: 'runner-failed', message: 'Claw turn exceeded its deadline.' },
+  );
+});
+
+test('pinned home files are written so another user of the group cannot change them', async () => {
+  const { env, deps } = await harnessFixture({
+    steps: [{ say: 'All clear.' }],
+  });
+  assert.equal((await main(env, deps)).outcome, 'report');
+  const mode = async (path) => (await stat(join(env.HOME, path))).mode & 0o7777;
+  // Each directory on the way to a pinned file is sticky and group-writable:
+  // a harness under another UID can add its own files there, and cannot
+  // remove, rename or replace an entry it does not own.
+  for (const directory of ['.', '.claude', '.claude/hooks'])
+    assert.equal((await mode(directory)) & 0o1070, 0o1070, directory);
+  // The files themselves are read-only, an executable still executable.
+  assert.equal(await mode('.claude/settings.json'), 0o444);
+  assert.equal(await mode('.claude/hooks/check'), 0o555);
+});
+
+test('the definition directory is emptied in place, never replaced', async () => {
+  // With an isolated harness it is a volume another container mounts.
+  const dir = await mkdtemp(join(tmpdir(), 'claw-definition-'));
+  await writeFile(join(dir, 'stale'), 'left over');
+  const before = (await stat(dir)).ino;
+  await materializeAgent(agentBrief(agentFiles).claw, dir);
+  assert.equal((await stat(dir)).ino, before);
+  await assert.rejects(stat(join(dir, 'stale')), { code: 'ENOENT' });
+  assert.equal(
+    await readFile(join(dir, 'workspace', 'AGENTS.md'), 'utf8'),
+    '# repository agent\n',
+  );
 });
 
 test('nothing of the harness runs on once its turn has resolved', async () => {

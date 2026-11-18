@@ -15,45 +15,54 @@
 // (openclaw-harness.mjs), Claude Code and Codex through their adapters. The
 // agent's manifest names the harness.
 //
+// The harness does not run in this process's hands. A harness host
+// (claw-harness.mjs) prepares it, starts it and relays its stdio; the
+// launcher only speaks ACP to it through that host. In a pod whose runtime
+// isolates the harness, the host is another container, under another UID,
+// reached over the Unix socket CLAW_HARNESS_SOCKET names: this container
+// then holds the run token and the pinned definition, and the harness's
+// container holds the zone's Secret items. Otherwise the host runs inside
+// this process.
+//
 // Sequence (each step fails the attempt closed):
 //   1. Acknowledged startup heartbeat, then the brief.
-//   2. The verified definition under <work>/agent, a writable copy of its
-//      `workspace/`, and its `home/` copied into HOME.
-//   3. Whatever the harness needs before it can speak (for OpenClaw: config
-//      validation, Doctor, exec approvals and a Gateway), then the harness
-//      itself, in its own process group in the workspace, with the zone's
-//      secret environment and nothing of the launcher's.
+//   2. The verified definition under <work>/agent, and its `home/` files in
+//      HOME, both written by the launcher.
+//   3. The host stages a writable copy of `workspace/`, does whatever the
+//      harness needs before it can speak (for OpenClaw: config validation,
+//      Doctor, exec approvals and a Gateway), then starts the harness in its
+//      own process group in the workspace, with the zone's secret
+//      environment and nothing of the launcher's.
 //   4. One ACP session and one prompt carrying the message. Every permission
 //      request is refused.
 //   5. Settle from the session's updates (settle): a report only when the
 //      turn ended normally, the agent's last message is not empty and no
 //      tool call is unresolved; everything else is runner-failed.
 
-import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmod,
-  cp,
+  copyFile,
   mkdir,
   readdir,
-  readFile,
-  realpath,
   rm,
-  stat,
   writeFile,
 } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
+import { duplexPair } from 'node:stream';
 
 import {
-  ClawFailure,
-  endGroup,
-  readSettingsFile,
-  stopGroup,
-} from './claw-process.mjs';
-import { openclawHarness } from './openclaw-harness.mjs';
+  HARNESSES,
+  prepareWorkspace,
+  secretEnvironment,
+  serveHarness,
+} from './claw-harness.mjs';
+import { ClawFailure, readSettingsFile } from './claw-process.mjs';
+import { answerText } from './openclaw-harness.mjs';
 
-export { ClawFailure };
+export { ClawFailure, HARNESSES, prepareWorkspace, secretEnvironment };
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
 // The Work API stores a report of any size whole, up to its completion bound
@@ -63,40 +72,13 @@ export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
 // A message is buffered up to this size, so an oversized report is measured
 // and refused rather than cut short.
 const MAX_MESSAGE_BYTES = 4 * MAX_REPORT_BYTES;
-const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
-const RESERVED_ENV =
-  /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
+// How long a harness host gets to listen, to answer a finished turn (for
+// OpenClaw that includes asking its Gateway how the turn ended), and to stop
+// what it started once the launcher is done with it.
+const HOST_CONNECT_MS = 60_000;
+const HOST_FINISH_MS = 180_000;
+const HOST_CLOSE_MS = 20_000;
 
-// The harnesses this image carries (Dockerfile). Each entry prepares what
-// its harness needs and returns the ACP agent to run on stdio: its command,
-// an environment when it needs more than the zone's, the `auth` method to
-// sign in with when the harness asks for one, the session `mode` to use when
-// the manifest names none, and a `finish` that
-// stops anything it started and names any reason to refuse the turn's
-// result. A manifest names a harness; the command comes from
-// the image, never from the definition, so reviewed source cannot choose the
-// program that speaks for the agent.
-const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
-const adapter = (path, more) => () => ({
-  command: process.execPath,
-  args: [path],
-  ...more,
-});
-export const HARNESSES = Object.freeze({
-  // OpenClaw's own ACP server, bridged to a Gateway this Job owns.
-  openclaw: openclawHarness,
-  claude: adapter(`${ACP_MODULES}/claude-agent-acp/dist/index.js`),
-  // Codex opens a session with an API key from the environment only once
-  // the client has chosen that sign-in; its other method is interactive.
-  // Its own default mode, `agent`, lets Codex approve some escalations
-  // itself, outside its sandbox and without asking the client. Unless the
-  // manifest names a mode, the turn runs in `workspace-write`, where every
-  // approval is asked of the launcher, which refuses it.
-  codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`, {
-    auth: 'api-key',
-    mode: 'workspace-write',
-  }),
-});
 const ACP_PROTOCOL_VERSION = 1;
 // A harness reads some prompts as commands of its own rather than as text
 // for the agent: one that begins with `/` (OpenClaw's Gateway, Claude Code
@@ -130,11 +112,6 @@ function sessionFailure(meta) {
 // Message text a harness tags as commentary: what the agent says while it
 // works, as opposed to its final answer. Untagged text is the answer's.
 const isCommentary = (meta) => meta?.jetbrains?.air?.phase === 'commentary';
-// How long an ACP harness gets to exit by itself once its turn has ended.
-const ACP_EXIT_GRACE_MS = 2_000;
-// How long what an exited harness had already written gets to be read
-// before whatever still holds its output open is stopped.
-const ACP_DRAIN_MS = 100;
 
 // Periodic heartbeats are best effort: the lease and its recovery belong to
 // LCARS, and only the startup acknowledgement gates provider work.
@@ -166,28 +143,6 @@ export function workClient(env, { signal, fetchImpl = fetch } = {}) {
       throw new ClawFailure(`Work API ${path} HTTP ${response.status}`);
     return text ? JSON.parse(text) : {};
   };
-}
-
-// Zone Secret items under <secrets>/env/<NAME> become environment variables
-// for OpenClaw (for example the agent's dedicated LiteLLM key). Other items
-// (SSH keys, known_hosts) stay files that the agent's tools read by path.
-export async function secretEnvironment(secretsDir) {
-  const envDir = join(secretsDir, 'env');
-  let names;
-  try {
-    names = await readdir(envDir);
-  } catch (error) {
-    if (error.code === 'ENOENT') return {};
-    throw error;
-  }
-  const environment = {};
-  for (const name of names.sort()) {
-    if (name.startsWith('..')) continue; // projected-volume bookkeeping
-    if (!SECRET_ENV_NAME.test(name) || RESERVED_ENV.test(name))
-      throw new ClawFailure(`zone secret env name is not allowed: ${name}`);
-    environment[name] = (await readFile(join(envDir, name), 'utf8')).trim();
-  }
-  return environment;
 }
 
 /** The claw request this attempt runs: a repository-owned agent round, its
@@ -261,8 +216,12 @@ function gitBlobSha(content) {
 export async function materializeAgent(request, dir) {
   if (agentDigest(request.files) !== request.digest)
     throw new ClawFailure('agent definition does not match its pinned digest');
-  await rm(dir, { recursive: true, force: true });
+  // Emptied, never removed: with an isolated harness this directory is a
+  // volume the harness's container mounts read-only, and removing it here
+  // would take that mount away.
   await mkdir(dir, { recursive: true });
+  for (const entry of await readdir(dir))
+    await rm(join(dir, entry), { recursive: true, force: true });
   for (const file of request.files) {
     const path = normalize(file.path);
     if (isAbsolute(path) || path === '..' || path.startsWith('../'))
@@ -360,39 +319,170 @@ export function settle(
   return boundedReport(report);
 }
 
-// Runs one ACP turn: starts the harness in its own process group, speaks
-// newline-delimited JSON-RPC over its stdio, and resolves with what the
-// session showed. The launcher advertises no client capability (no file
-// system, no terminal) and refuses every permission request: an unattended run
-// has nobody to ask, so what the agent may do is whatever its reviewed harness
-// settings already allow.
+/** The launcher's end of the stream to a harness host (claw-harness.mjs):
+ * the host's control replies, the agent's ACP lines and its exit. Everything
+ * that arrives is the harness side's word, parsed and bounded here, never
+ * trusted for more than the session it describes. */
+export function harnessChannel(stream) {
+  const write = (frame) => {
+    if (stream.writable) stream.write(`${JSON.stringify(frame)}\n`);
+  };
+  // The host answers `launch` and `finish` in the order they were sent.
+  const replies = [];
+  let onAcp = () => undefined;
+  let onExit;
+  let exit;
+  let gone = false;
+  const closed = new Promise((done) => stream.once('close', done));
+  const left = (code) => {
+    if (exit !== undefined) return;
+    exit = { code };
+    onExit?.(code);
+  };
+  createInterface({ input: stream }).on('line', (line) => {
+    let frame;
+    try {
+      frame = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (!frame || typeof frame !== 'object') return;
+    if (typeof frame.acp === 'string') onAcp(frame.acp);
+    else if (frame.claw === 'exit')
+      left(Number.isInteger(frame.code) ? frame.code : null);
+    else if (
+      frame.claw === 'ready' ||
+      frame.claw === 'failed' ||
+      frame.claw === 'finished'
+    )
+      replies.shift()?.(frame);
+  });
+  stream.on('error', () => undefined);
+  // A host that goes away has taken the harness with it.
+  void closed.then(() => {
+    gone = true;
+    left(null);
+    for (const reply of replies.splice(0)) reply(undefined);
+  });
+  const ask = (frame, { signal, timeoutMs } = {}) =>
+    new Promise((answer, refuse) => {
+      const stop = (error) => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        const at = replies.indexOf(reply);
+        if (at !== -1) replies.splice(at, 1);
+        refuse(error);
+      };
+      const reply = (value) => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        answer(value);
+      };
+      const onAbort = () => stop(new ClawFailure('claw run was cancelled'));
+      const timer =
+        timeoutMs === undefined
+          ? undefined
+          : setTimeout(
+              () => stop(new ClawFailure('the harness host did not answer')),
+              timeoutMs,
+            );
+      if (signal?.aborted) return onAbort();
+      // Nobody is left to answer.
+      if (gone) return reply(undefined);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      replies.push(reply);
+      write(frame);
+    });
+  return {
+    /** Has the host prepare and start the harness. Resolves with where the
+     * agent works and what the harness needs of an ACP client. */
+    async launch(harness, signal) {
+      const reply = await ask({ claw: 'launch', harness }, { signal });
+      if (reply?.claw === 'ready' && typeof reply.cwd === 'string')
+        return {
+          cwd: reply.cwd,
+          auth: typeof reply.auth === 'string' ? reply.auth : undefined,
+          mode: typeof reply.mode === 'string' ? reply.mode : undefined,
+          promptMeta:
+            reply.promptMeta && typeof reply.promptMeta === 'object'
+              ? reply.promptMeta
+              : undefined,
+        };
+      if (reply?.claw === 'failed' && typeof reply.message === 'string')
+        throw new ClawFailure(reply.message.slice(0, 500));
+      // The host's own unexpected failure, already on its stderr.
+      throw new Error('the harness host could not start the harness');
+    },
+    acp: (line) => write({ acp: line }),
+    onAcp: (listener) => {
+      onAcp = listener;
+    },
+    /** Calls `listener` once, with the agent's exit code, when the agent and
+     * everything in its process group have gone. */
+    onExit: (listener) => {
+      if (exit !== undefined) listener(exit.code);
+      else onExit = listener;
+    },
+    end: () => write({ claw: 'end' }),
+    stop: () => write({ claw: 'stop' }),
+    /** What the harness side has to say about a finished turn: a reason to
+     * refuse it, and its own record of the final reply. */
+    async finish(turn) {
+      const reply = await ask(
+        { claw: 'finish', turn },
+        { timeoutMs: HOST_FINISH_MS },
+      ).catch(() => undefined);
+      if (reply?.claw !== 'finished')
+        return { refused: "the harness did not report the turn's outcome" };
+      return {
+        refused:
+          typeof reply.refused === 'string'
+            ? reply.refused.slice(0, 500)
+            : undefined,
+        reply:
+          reply.reply && typeof reply.reply === 'object'
+            ? reply.reply
+            : undefined,
+      };
+    },
+    /** Lets the host stop what it started, and waits for it, within a bound. */
+    async close() {
+      stream.end();
+      let timer;
+      await Promise.race([
+        closed,
+        new Promise((done) => {
+          timer = setTimeout(done, HOST_CLOSE_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+      stream.destroy();
+    },
+  };
+}
+
+// Runs one ACP turn on the harness a host has started: speaks
+// newline-delimited JSON-RPC to its stdio through `channel`, and resolves
+// with what the session showed. The launcher advertises no client capability
+// (no file system, no terminal) and refuses every permission request: an
+// unattended run has nobody to ask, so what the agent may do is whatever its
+// reviewed harness settings already allow.
 export function acpTurn(
-  command,
-  args,
-  { env, cwd, message, mode, auth, promptMeta, signal } = {},
+  channel,
+  { cwd, message, mode, auth, promptMeta, signal } = {},
 ) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new ClawFailure('claw run was cancelled'));
       return;
     }
-    const child = spawn(command, args, {
-      env,
-      cwd,
-      detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
     const turn = { final: '', overflow: false, calls: 0 };
     const tools = new Map();
     const pending = new Map();
     let nextId = 1;
     let aborted = false;
-    const send = (payload) => {
-      if (child.stdin.writable)
-        child.stdin.write(
-          `${JSON.stringify({ jsonrpc: '2.0', ...payload })}\n`,
-        );
-    };
+    const send = (payload) =>
+      channel.acp(JSON.stringify({ jsonrpc: '2.0', ...payload }));
     const request = (method, params) =>
       new Promise((answer, refuse) => {
         const id = nextId++;
@@ -488,7 +578,7 @@ export function acpTurn(
         // Nothing a harness sends may take the launcher down before it has
         // settled the attempt.
         turn.error ??= 'harness sent a malformed ACP message';
-        stopGroup(child);
+        channel.stop();
       }
     };
     const onMessage = (incoming) => {
@@ -530,51 +620,29 @@ export function acpTurn(
         });
       }
     };
-    createInterface({ input: child.stdout }).on('line', onLine);
-    // stderr carries harness diagnostics; never forward it.
-    child.stderr.resume();
-    child.stdin.on('error', () => undefined);
+    channel.onAcp(onLine);
     const onAbort = () => {
       aborted = true;
-      stopGroup(child);
+      channel.stop();
     };
     signal?.addEventListener('abort', onAbort, { once: true });
-    child.on('error', (error) => {
-      signal?.removeEventListener('abort', onAbort);
-      reject(error);
-    });
-    // The harness's own process can be gone while a child of its own holds
-    // its output open, and `close` does not come until that child lets go.
-    // What the harness had written is read first; then what is left of its
-    // group is ended, and `close` follows.
-    let drained;
-    child.once('exit', () => {
-      drained = setTimeout(
-        () => void endGroup(child, ACP_EXIT_GRACE_MS),
-        ACP_DRAIN_MS,
-      );
-    });
-    child.on('close', (code) => {
-      clearTimeout(drained);
+    // The host reports the exit once the harness and everything in its
+    // process group have gone, so nothing of the harness still runs while
+    // the launcher checks the settings it could change and settles.
+    channel.onExit((code) => {
       signal?.removeEventListener('abort', onAbort);
       for (const waiter of pending.values())
         waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));
       pending.clear();
-      // The harness's own process is gone, but a child of its own can run
-      // on in its group. Nothing of the harness may still run while the
-      // launcher checks the settings it could change and settles the
-      // attempt, so the group is ended first. Then the session below gets
-      // to record its outcome before this resolves.
-      void endGroup(child, ACP_EXIT_GRACE_MS).then(() =>
-        setImmediate(() =>
-          resolve({
-            ...turn,
-            calls: tools.size,
-            unresolved: unresolved(),
-            aborted,
-            code,
-          }),
-        ),
+      // The session below gets to record its outcome before this resolves.
+      setImmediate(() =>
+        resolve({
+          ...turn,
+          calls: tools.size,
+          unresolved: unresolved(),
+          aborted,
+          code,
+        }),
       );
     });
     (async () => {
@@ -649,52 +717,11 @@ export function acpTurn(
           error instanceof ClawFailure ? error.message : 'ACP session failed';
       })
       .finally(() => {
-        // The turn is over: close the session's input, then stop whatever
-        // the harness left running.
-        child.stdin.end();
-        setTimeout(() => stopGroup(child), ACP_EXIT_GRACE_MS).unref();
+        // The turn is over: the host closes the session's input, then stops
+        // whatever the harness left running.
+        channel.end();
       });
   });
-}
-
-async function ownerWritable(path) {
-  const info = await stat(path);
-  await chmod(path, info.mode | 0o200);
-  if (info.isDirectory())
-    for (const entry of await readdir(path))
-      await ownerWritable(join(path, entry));
-}
-
-// Copies one directory of the locked definition into a directory the agent
-// may write. A definition without that directory contributes nothing.
-async function copyFromDefinition(source, target) {
-  try {
-    // A ConfigMap mount presents a directory as a symlink into its
-    // timestamped data directory; copy the resolved files, not the link.
-    const directory = await realpath(source);
-    // A definition may hold a plain file of that name; only a directory is
-    // staged.
-    if (!(await stat(directory)).isDirectory()) return;
-    await cp(directory, target, {
-      recursive: true,
-      dereference: true,
-    });
-    // The pinned definition stays locked; its execution copy is the agent's
-    // to write, so give the owner write access back.
-    await ownerWritable(target);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-}
-
-// The agent's writable workspace: a fresh copy of the definition's
-// `workspace/`, or an empty directory when the definition has none.
-export async function prepareWorkspace(agentDir, workRoot) {
-  const workspace = join(workRoot, 'workspace');
-  await rm(workspace, { recursive: true, force: true });
-  await mkdir(workspace, { recursive: true });
-  await copyFromDefinition(join(agentDir, 'workspace'), workspace);
-  return workspace;
 }
 
 function positiveInteger(env, name, fallback) {
@@ -705,85 +732,145 @@ function positiveInteger(env, name, fallback) {
   return value;
 }
 
-// Prepares the agent's workspace and HOME, runs its turn on the harness it
-// names and resolves with the finished turn.
+// The stream to the harness host. With CLAW_HARNESS_SOCKET the host is the
+// pod's harness container, which may still be starting. Without it the host
+// runs here, in the launcher's own process, on the other end of an in-memory
+// pair: the same protocol either way.
+async function harnessStream(env, harnesses, signal) {
+  const path = env.CLAW_HARNESS_SOCKET;
+  if (!path) {
+    const [near, far] = duplexPair();
+    void serveHarness(far, { harnesses, env });
+    return near;
+  }
+  const until = Date.now() + HOST_CONNECT_MS;
+  for (;;) {
+    if (signal.aborted) throw new ClawFailure('claw run was cancelled');
+    const socket = await new Promise((connected) => {
+      const attempt = connect(path);
+      attempt.once('connect', () => connected(attempt));
+      attempt.once('error', () => connected(undefined));
+    });
+    if (socket) return socket;
+    if (Date.now() >= until)
+      throw new ClawFailure('the harness container did not start');
+    await new Promise((retry) => setTimeout(retry, 250));
+  }
+}
+
+// Writes the definition's pinned `home/` files into HOME, as the launcher.
+// A harness reads its user-level settings from HOME, so the tool policy a
+// harness trusts (it ignores allow rules found in an untrusted workspace) is
+// reviewed source too. Each file is read-only, and every directory on the
+// way to one is sticky and group-writable. A harness that runs as another
+// user of the launcher's group can therefore keep its own state beside a
+// pinned file, and cannot change, remove, rename or replace the file or any
+// directory that leads to it: the kernel refuses, because it owns neither.
+// Under the launcher's own UID the modes change nothing, which is why the
+// files are also checked after the turn.
+async function stageHome(definitionDir, home, files) {
+  const pinned = files.filter((file) =>
+    normalize(file.path).startsWith('home/'),
+  );
+  if (pinned.length === 0) return [];
+  const shared = async (directory) => {
+    await mkdir(directory, { recursive: true });
+    await chmod(directory, 0o1775);
+  };
+  await shared(home);
+  for (const file of pinned) {
+    const relative = normalize(file.path).slice('home/'.length);
+    const target = join(home, relative);
+    const parents = [];
+    for (
+      let parent = dirname(target);
+      parent !== home && parent.startsWith(home);
+      parent = dirname(parent)
+    )
+      parents.unshift(parent);
+    for (const parent of parents) await shared(parent);
+    await copyFile(join(definitionDir, normalize(file.path)), target);
+    // An executable (a hook's helper) stays one.
+    await chmod(target, file.mode === '100755' ? 0o555 : 0o444);
+  }
+  return pinned.map((file) => ({
+    ...file,
+    target: join(home, normalize(file.path).slice('home/'.length)),
+  }));
+}
+
+// Stages the agent's pinned HOME files, has the harness host run its turn on
+// the harness it names and resolves with the finished turn.
 async function harnessTurn({
   request,
   harnesses,
   definitionDir,
-  workRoot,
-  openclaw,
   env,
   signal,
   started,
 }) {
-  if (!Object.hasOwn(harnesses, request.harness))
-    throw new ClawFailure(`this image carries no ${request.harness} harness`);
-  const workspace = await prepareWorkspace(definitionDir, workRoot);
-  // A harness reads its user-level settings from HOME. The definition's
-  // `home/` supplies them, so the tool policy a harness trusts (it ignores
-  // allow rules found in an untrusted workspace) is reviewed source too.
-  // Only a definition that names a harness or a mode has them applied.
-  if (request.stagesHome)
-    await copyFromDefinition(join(definitionDir, 'home'), env.HOME);
-  const settings = request.stagesHome
-    ? request.files.filter((file) => normalize(file.path).startsWith('home/'))
-    : [];
-  const inHome = (file) =>
-    join(env.HOME, normalize(file.path).slice('home/'.length));
-  // Read-only for the turn; an executable (a hook's helper) stays one.
-  for (const file of settings)
-    await chmod(inHome(file), file.mode === '100755' ? 0o555 : 0o444);
-  const harness = await harnesses[request.harness]({
-    definitionDir,
-    workRoot,
-    workspace,
-    // For a harness whose own preparation may write into the workspace.
-    stageWorkspace: () => prepareWorkspace(definitionDir, workRoot),
-    openclaw,
-    env,
-    signal,
-  });
-  // Stops whatever the harness started and names any reason it has to
-  // refuse the turn's result. It runs on every path, exactly once, and is
-  // given the turn when there is one to judge.
-  const finish = harness.finish ?? (async () => undefined);
+  const channel = harnessChannel(await harnessStream(env, harnesses, signal));
   let finished;
+  let settings;
   try {
     if (signal.aborted) throw new ClawFailure('claw run was cancelled');
-    const turn = acpTurn(harness.command, harness.args, {
-      env: harness.env ?? env,
-      cwd: workspace,
+    // Only a definition that names a harness or a mode has `home/` applied,
+    // and it is in place before the host starts anything.
+    settings = request.stagesHome
+      ? await stageHome(definitionDir, env.HOME || '/work/home', request.files)
+      : [];
+    const harness = await channel.launch(request.harness, signal);
+    const turn = acpTurn(channel, {
+      cwd: harness.cwd,
       message: request.message,
       mode: request.mode ?? harness.mode,
       auth: harness.auth,
       promptMeta: harness.promptMeta,
       signal,
     });
-    // The turn is awaited after the heartbeat; a spawn failure in between
-    // must reach that await, not become an unhandled rejection.
     turn.catch(() => undefined);
     await started();
     finished = await turn;
   } catch (error) {
-    await finish();
+    await channel.close();
     throw error;
   }
-  // A harness with a record of its own of the turn may also say which part
-  // of what it streamed is the answer.
-  const verdict = await finish(finished);
-  const refused = typeof verdict === 'string' ? verdict : verdict?.refused;
-  if (typeof verdict?.final === 'string')
-    finished = { ...finished, final: verdict.final };
-  // The harness runs as the launcher's UID, so nothing can stop an agent
-  // with a write-capable tool from rewriting the settings that bound it.
-  // What the launcher can do is refuse a result when it sees that: every
-  // pinned `home/` file must still be its blob once the turn is over. A
-  // file the agent added, or changed and put back, is not seen.
-  // Its tools could also have put anything at these paths, so each is read
-  // only as a regular file of its pinned size, within a bounded time.
+  // The harness side stops whatever it started and names any reason it has
+  // to refuse the turn's result. A harness with a record of its own of the
+  // final reply sends that too: it says which part of what it streamed is
+  // the answer (answerText).
+  const verdict = await channel.finish({
+    sessionId: finished.sessionId,
+    aborted: finished.aborted,
+    error: finished.error,
+  });
+  await channel.close();
+  let refused = verdict.refused;
+  if (verdict.reply !== undefined) {
+    const final = verdict.reply.empty
+      ? ''
+      : answerText(
+          finished.final,
+          typeof verdict.reply.text === 'string'
+            ? verdict.reply.text
+            : undefined,
+        );
+    // Only OpenClaw's host sends a record of the reply.
+    if (final === undefined)
+      refused ??=
+        "OpenClaw's final reply could not be told from what preceded it";
+    else finished = { ...finished, final };
+  }
+  // Under an isolated harness the kernel keeps the pinned `home/` files as
+  // they were written. Without one the harness runs as the launcher's UID,
+  // and nothing can stop an agent with a write-capable tool from rewriting
+  // the settings that bound it. So the launcher always refuses a result
+  // when a pinned file is no longer its blob once the turn is over. A file
+  // the agent added, or changed and put back, is not seen. Its tools could
+  // also have put anything at these paths, so each is read only as a
+  // regular file of its pinned size, within a bounded time.
   for (const file of settings) {
-    const content = await readSettingsFile(inHome(file), {
+    const content = await readSettingsFile(file.target, {
       maxBytes: Buffer.byteLength(file.content, 'base64'),
     });
     if (content === undefined || gitBlobSha(content) !== file.sha)
@@ -792,7 +879,10 @@ async function harnessTurn({
         error: `the agent changed its harness settings (${file.path})`,
       };
   }
-  return refused === undefined ? finished : { ...finished, error: refused };
+  // What the turn itself already failed on stands.
+  return refused === undefined || finished.error
+    ? finished
+    : { ...finished, error: refused };
 }
 
 export async function main(env = process.env, deps = {}) {
@@ -806,9 +896,6 @@ export async function main(env = process.env, deps = {}) {
   // Settlement must still be attempted after cancellation, under its own
   // request timeout only.
   const settleCall = workClient(env, { fetchImpl: deps.fetchImpl });
-  const openclaw =
-    env.OPENCLAW_BIN || '/opt/openclaw/node_modules/.bin/openclaw';
-  const secretsDir = env.CLAW_SECRETS_DIR || '/run/claw-secrets';
   const workRoot = env.CLAW_WORK_DIR || '/work';
   const started = Date.now();
   const turnDeadlineMs =
@@ -850,20 +937,11 @@ export async function main(env = process.env, deps = {}) {
         request,
         join(workRoot, 'agent'),
       );
-      const baseEnv = {
-        PATH: env.PATH || '/usr/local/bin:/usr/bin:/bin',
-        HOME: env.HOME || '/work/home',
-        LANG: 'C.UTF-8',
-        ...(await secretEnvironment(secretsDir)),
-      };
-      await mkdir(baseEnv.HOME, { recursive: true });
       const finished = await harnessTurn({
         request,
         harnesses: { ...HARNESSES, ...deps.harnesses },
         definitionDir,
-        workRoot,
-        openclaw,
-        env: baseEnv,
+        env,
         signal: work,
         started: () =>
           call('heartbeat', { providerProcessStarted: true }).catch(

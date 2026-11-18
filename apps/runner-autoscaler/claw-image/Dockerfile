@@ -22,7 +22,7 @@ RUN apt-get update \
 # The verified OpenClaw distribution and ACP harness adapters: exact versions
 # and every dependency checked against package-lock.json integrity hashes.
 # Root-owned and never writable by the runtime UID, so nothing staged at
-# runtime can replace them. The adapter paths are the ones claw-job.mjs
+# runtime can replace them. The adapter paths are the ones claw-harness.mjs
 # starts (HARNESSES); a missing one fails the build, not the first run.
 WORKDIR /opt/openclaw
 COPY package.json package-lock.json ./
@@ -32,7 +32,7 @@ RUN npm ci --omit=dev --no-fund --no-audit \
  && test -f node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js \
  && test -f node_modules/@agentclientprotocol/codex-acp/dist/index.js
 
-COPY claw-job.mjs claw-process.mjs openclaw-harness.mjs /opt/claw/
+COPY claw-job.mjs claw-harness.mjs claw-process.mjs openclaw-harness.mjs /opt/claw/
 
 # Self-update stays off: the image digest is the only way to change OpenClaw.
 ENV OPENCLAW_NO_AUTO_UPDATE=1 \
@@ -42,10 +42,14 @@ ENV OPENCLAW_NO_AUTO_UPDATE=1 \
     HOME=/work/home
 
 # The zone executor runs claw pods as uid/gid 1001 (the queue Job contract);
-# OpenSSH and Python's getpwuid need a passwd entry for that uid.
+# OpenSSH and Python's getpwuid need a passwd entry for that uid. A runtime
+# that isolates the harness runs it in a second container (claw-harness.mjs)
+# as uid 1002 in the same group, so that user needs an entry too.
 RUN groupadd --gid 1001 claw \
  && useradd --uid 1001 --gid 1001 --home-dir /work/home --no-create-home \
-      --shell /usr/sbin/nologin claw
+      --shell /usr/sbin/nologin claw \
+ && useradd --uid 1002 --gid 1001 --home-dir /work/home --no-create-home \
+      --shell /usr/sbin/nologin claw-harness
 
 USER 1001:1001
 WORKDIR /work

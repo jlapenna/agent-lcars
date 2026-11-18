@@ -634,3 +634,176 @@ func TestLaunchSettlesClaimWhenJobCreateIsInvalid(t *testing.T) {
 		})
 	}
 }
+
+// A runtime that sets harness_container runs the harness in a container of
+// its own: the launcher keeps the run token, the harness holds the zone's
+// Secret items under another UID, and the kubelet stops the harness when the
+// launcher exits.
+func TestQueueRuntimeHarnessContainerShape(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	rt := testClawRuntime()
+	rt.HarnessContainer = true
+	q.config.Runtimes["claw-investigator"] = rt
+	if err := q.config.validate(); err != nil {
+		t.Fatal(err)
+	}
+	job, err := q.job(clawLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.Containers) != 1 || pod.Containers[0].Name != "claw" {
+		t.Fatalf("the launcher must be the Pod's only regular container: %#v", pod.Containers)
+	}
+	if len(pod.InitContainers) != 2 || pod.InitContainers[0].Name != "claw-home" || pod.InitContainers[1].Name != "harness" {
+		t.Fatalf("init containers = %#v", pod.InitContainers)
+	}
+	launcher, prepare, harness := pod.Containers[0], pod.InitContainers[0], pod.InitContainers[1]
+
+	envNames := func(c core.Container) []string {
+		names := []string{}
+		for _, env := range c.Env {
+			names = append(names, env.Name)
+		}
+		sort.Strings(names)
+		return names
+	}
+	mounts := func(c core.Container) map[string]core.VolumeMount {
+		out := map[string]core.VolumeMount{}
+		for _, mount := range c.VolumeMounts {
+			out[mount.MountPath] = mount
+		}
+		return out
+	}
+
+	// The run token and the Console's address stay with the launcher.
+	if got, want := envNames(launcher), []string{"CLAW_AGENT", "CLAW_HARNESS_SOCKET", "CLAW_TURN_DEADLINE_SECONDS", "LCARS_CONSOLE_URL", "LCARS_RUN_ID", "LCARS_RUN_TOKEN", "RUNNER_MODE"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("launcher env = %v", got)
+	}
+	if got, want := envNames(harness), []string{"CLAW_AGENT", "CLAW_HARNESS_SOCKET"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("harness env = %v", got)
+	}
+	// The zone's Secret items and the scratch are the harness's alone.
+	if _, mounted := mounts(launcher)[queueRuntimeSecretMountPath]; mounted {
+		t.Fatal("the launcher must not mount the zone Secret")
+	}
+	if _, mounted := mounts(launcher)[queueRuntimeWorkMountPath]; mounted {
+		t.Fatal("the launcher must not mount the harness's scratch")
+	}
+	if mount := mounts(harness)[queueRuntimeSecretMountPath]; mount.Name != "claw-secrets" || !mount.ReadOnly {
+		t.Fatalf("harness secret mount = %#v", mount)
+	}
+	// The launcher writes the definition; the harness only reads it.
+	if mount := mounts(launcher)[queueRuntimeDefinitionMountPath]; mount.Name != "definition" || mount.SubPath != "definition" || mount.ReadOnly {
+		t.Fatalf("launcher definition mount = %#v", mount)
+	}
+	if mount := mounts(harness)[queueRuntimeDefinitionMountPath]; mount.Name != "definition" || mount.SubPath != "definition" || !mount.ReadOnly {
+		t.Fatalf("harness definition mount = %#v", mount)
+	}
+	// Both write HOME, through the directory the launcher's user created.
+	for name, c := range map[string]core.Container{"launcher": launcher, "harness": harness} {
+		if mount := mounts(c)[queueRuntimeHomeMountPath]; mount.Name != "home" || mount.SubPath != "home" || mount.ReadOnly {
+			t.Fatalf("%s home mount = %#v", name, mount)
+		}
+		if mount := mounts(c)["/run/claw"]; mount.Name != "harness-socket" {
+			t.Fatalf("%s socket mount = %#v", name, mount)
+		}
+	}
+	if got, want := prepare.Command, []string{"mkdir", "-m", "1775", "/claw/definition/definition", "/claw/home/home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claw-home command = %v", got)
+	}
+
+	// The harness is another user; the others are the Pod's.
+	if harness.SecurityContext.RunAsUser == nil || *harness.SecurityContext.RunAsUser != queueRuntimeHarnessUID || *pod.SecurityContext.RunAsUser == queueRuntimeHarnessUID {
+		t.Fatalf("harness user = %#v, pod user = %v", harness.SecurityContext.RunAsUser, *pod.SecurityContext.RunAsUser)
+	}
+	if launcher.SecurityContext.RunAsUser != nil || prepare.SecurityContext.RunAsUser != nil {
+		t.Fatal("the launcher and claw-home run as the Pod's user")
+	}
+	for _, c := range []core.Container{launcher, prepare, harness} {
+		sc := c.SecurityContext
+		if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+			t.Fatalf("%s security context = %#v", c.Name, sc)
+		}
+	}
+	// A sidecar: the kubelet starts it before the launcher and stops it
+	// when the launcher exits, so the launcher alone decides the Pod's phase.
+	if harness.RestartPolicy == nil || *harness.RestartPolicy != core.ContainerRestartPolicyAlways || prepare.RestartPolicy != nil {
+		t.Fatalf("restart policies = %v, %v", harness.RestartPolicy, prepare.RestartPolicy)
+	}
+	if got, want := harness.Command, []string{"node", "/opt/claw/claw-harness.mjs"}; !reflect.DeepEqual(got, want) || launcher.Command != nil {
+		t.Fatalf("commands = %v, %v", got, launcher.Command)
+	}
+	if pod.ShareProcessNamespace != nil {
+		t.Fatal("the containers must not share a PID namespace")
+	}
+
+	// Requests equal limits everywhere, and the launcher's share plus the
+	// harness's remainder is exactly what the runtime declares.
+	for _, name := range []core.ResourceName{core.ResourceCPU, core.ResourceMemory, core.ResourceEphemeralStorage} {
+		total := launcher.Resources.Requests[name].DeepCopy()
+		total.Add(harness.Resources.Requests[name])
+		if declared := resource.MustParse(rt.Limits[string(name)]); total.Cmp(declared) != 0 {
+			t.Fatalf("%s: launcher + harness = %s, declared %s", name, total.String(), declared.String())
+		}
+		for _, c := range []core.Container{launcher, prepare, harness} {
+			request, limit := c.Resources.Requests[name], c.Resources.Limits[name]
+			if request.Cmp(limit) != 0 || request.Sign() <= 0 {
+				t.Fatalf("%s %s: request %s, limit %s", c.Name, name, request.String(), limit.String())
+			}
+		}
+		if share := resource.MustParse(queueRuntimeLauncherShare[string(name)]); prepare.Resources.Requests[name] != share || launcher.Resources.Requests[name] != share {
+			t.Fatalf("%s: the launcher's share is %s", name, share.String())
+		}
+	}
+	// The harness's scratch is bounded by the harness's own storage limit.
+	for _, volume := range pod.Volumes {
+		if volume.Name == "work" {
+			if limit := harness.Resources.Limits[core.ResourceEphemeralStorage]; volume.EmptyDir.SizeLimit.Cmp(limit) != 0 {
+				t.Fatalf("scratch size limit = %s, harness limit %s", volume.EmptyDir.SizeLimit.String(), limit.String())
+			}
+		}
+	}
+
+	// A runtime too small to leave the harness anything is refused at startup.
+	for _, name := range []string{"cpu", "memory", "ephemeral-storage"} {
+		small := testClawRuntime()
+		small.HarnessContainer = true
+		small.Requests = map[string]string{"cpu": "2", "memory": "3Gi", "ephemeral-storage": "8Gi"}
+		small.Requests[name] = queueRuntimeLauncherShare[name]
+		small.Limits[name] = queueRuntimeLauncherShare[name]
+		if err := small.validate("claw-investigator", "runner-credentials"); err == nil || !strings.Contains(err.Error(), "launcher's") {
+			t.Fatalf("%s at the launcher's share: %v", name, err)
+		}
+		// Without a harness container the same size is fine.
+		small.HarnessContainer = false
+		if err := small.validate("claw-investigator", "runner-credentials"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The socket's variable is the executor's to set.
+	reserved := testClawRuntime()
+	reserved.Env = []queueRuntimeEnv{{Name: "CLAW_HARNESS_SOCKET", Value: "/tmp/x"}}
+	if err := reserved.validate("claw-investigator", "runner-credentials"); err == nil {
+		t.Fatal("CLAW_HARNESS_SOCKET must be reserved")
+	}
+}
+
+// A runtime that does not set harness_container keeps its single-container
+// Job exactly.
+func TestQueueRuntimeWithoutHarnessContainerIsOneContainer(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	job, err := q.job(clawLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.InitContainers) != 0 || len(pod.Containers) != 1 {
+		t.Fatalf("containers = %d init, %d regular", len(pod.InitContainers), len(pod.Containers))
+	}
+	for _, env := range pod.Containers[0].Env {
+		if env.Name == "CLAW_HARNESS_SOCKET" {
+			t.Fatal("no harness socket without a harness container")
+		}
+	}
+}

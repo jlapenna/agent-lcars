@@ -769,7 +769,12 @@ image is documented in
   config normalization from #3409, its exec approvals and the Gateway the
   Job runs for the turn; Claude Code and Codex settings, modes and logins)
   is in [repository agents](../repository-agents.md#harnesses) and the
-  [image README](../../apps/runner-autoscaler/claw-image/README.md).
+  [image README](../../apps/runner-autoscaler/claw-image/README.md). A
+  runtime can run the harness in a container of its own
+  (`harness_container`): the launcher's container keeps the run token and
+  writes the definition, and the harness's container, under another UID,
+  holds the runtime's Secret items and sees the definition read-only
+  ([the harness container](../repository-agents.md#the-harness-container)).
   Qualification: the source is covered by the launcher's unit suite and by
   runs of the real harness binaries against stand-in model endpoints. No
   harness has run a real-model turn in the cluster through this launcher;

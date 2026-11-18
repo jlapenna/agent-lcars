@@ -371,6 +371,7 @@ kubernetes:
         - { key: litellm-api-key, path: env/LITELLM_API_KEY }
       env:
         - { name: CLAW_AGENT, value: investigator }
+      harness_container: true # optional; see below
 ```
 
 A runtime mounts no agent definition: a repository-owned agent's pinned files
@@ -396,7 +397,9 @@ Validation refuses to start the executor unless:
   (which the launcher exports as a variable), are valid and share one
   namespace without repeats. An `env/` path has exactly one segment after the
   prefix. Neither may be `RUNNER_MODE`, `CLAW_TURN_DEADLINE_SECONDS`,
-  `NODE_OPTIONS`, `PATH`, `HOME`, or any `LCARS_*` or `OPENCLAW_*` name.
+  `NODE_OPTIONS`, `PATH`, `HOME`, `CLAW_HARNESS_SOCKET`, or any `LCARS_*` or
+  `OPENCLAW_*` name;
+- with `harness_container`, each limit exceeds the launcher's share (below).
 
 If the apiserver still refuses a Job spec as invalid, launch settles the claim
 immediately rather than holding it until its placement deadline.
@@ -419,6 +422,43 @@ tolerations) and differs only in:
 - `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
   (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
   `emptyDir`.
+
+**`harness_container: true`** runs the agent's harness in a container of its
+own, so that the pod, not the harness's settings, bounds what an agent can
+reach ([the two sides](claw-image/README.md#trust-boundary-inside-the-pod)).
+The Pod then has three containers from the runtime's image:
+
+- `claw-home`, an init container run as the Pod's user: `mkdir -m 1775` of
+  the two directories the others mount, the definition directory and `HOME`.
+  A volume's own root belongs to root and is writable by every user, so only
+  a directory this user created can be sticky, or be a mount point the
+  harness cannot rename.
+- `harness`, a sidecar (an init container whose restart policy is `Always`):
+  `node /opt/claw/claw-harness.mjs` as UID 1002 in the Pod's group. It alone
+  mounts the declared Secret items and the `/work` scratch, and it mounts
+  the definition read-only. Its environment is `CLAW_HARNESS_SOCKET` and the
+  declared `env`. The kubelet starts it before the launcher and stops it
+  when the launcher exits.
+- `claw`, the launcher and the Pod's only regular container, so its exit
+  decides the Pod's phase as before. It keeps `LCARS_RUN_TOKEN` and the rest
+  of the run environment, adds `CLAW_HARNESS_SOCKET`, and mounts the
+  definition and `HOME` writable. It mounts no Secret item and no scratch.
+
+They share an `emptyDir` for the socket (`/run/claw`) and no PID namespace.
+Each has a read-only root filesystem, no privilege escalation and no
+capabilities. The launcher's container takes a fixed share of the runtime's
+resources (100m CPU, 384Mi memory, 1Gi ephemeral storage) and the harness's
+container the rest, so the Pod requests and is limited to exactly what the
+runtime declares, and admission and node-fit accounting do not change. The
+`/work` scratch is bounded by the harness's storage limit.
+
+Sidecar containers need Kubernetes 1.29 or later. The flag also needs an
+image that carries `claw-harness.mjs` and a passwd entry for UID 1002. An
+earlier image has neither, so its harness container would not start and
+every attempt on that runtime would fail. Set the flag per runtime after
+that runtime's image is pinned, and clear it before pinning an earlier
+image again. An executor from before this field refuses the key at startup,
+because its configuration decoder is strict: deploy the executor first.
 
 No runtime Job receives `telemetry-writer.json`, a provider key, the Hindsight
 token, the Codex volatile volume or `LCARS_WORKER_POLICY_PROVIDERS`. Its memory

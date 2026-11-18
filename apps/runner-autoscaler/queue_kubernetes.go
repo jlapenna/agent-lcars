@@ -719,9 +719,10 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 					SecurityContext: &core.PodSecurityContext{RunAsUser: &uid, RunAsGroup: &gid, RunAsNonRoot: &yes, FSGroup: &gid},
 					// Query external API names before cluster search suffixes; musl can
 					// stop on a search response before reaching the absolute name.
-					DNSPolicy: core.DNSClusterFirst,
-					DNSConfig: &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
-					Volumes:   shape.volumes,
+					DNSPolicy:      core.DNSClusterFirst,
+					DNSConfig:      &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
+					Volumes:        shape.volumes,
+					InitContainers: shape.initContainers,
 					Containers: []core.Container{{
 						Name: shape.container, Image: shape.image, ImagePullPolicy: shape.pullPolicy,
 						Env: shape.env, VolumeMounts: shape.mounts,

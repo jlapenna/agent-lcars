@@ -126,12 +126,14 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   `approvals.json`. A harness that does not offer the mode, or refuses to
   switch to it, runs nothing and the attempt fails.
 
-  The harness runs as the launcher's user, so an agent allowed a tool that
-  writes files could rewrite the settings that bound it. The launcher cannot
-  prevent that. It makes each pinned `home/` file read-only and fails the
-  attempt when one is not its pinned blob after the turn; it does not see a
-  file the agent added, or changed and put back. A harness that must not be
-  able to do this needs its own container (#3412).
+  Whether an agent with a tool that writes files can rewrite the settings
+  that bound it depends on where its harness runs
+  ([the harness container](#the-harness-container)). In a container of its
+  own, it cannot: the kernel keeps the pinned definition and each pinned
+  `home/` file as the launcher wrote them. In the launcher's container it
+  can, and the launcher can only fail the attempt when a pinned `home/` file
+  is not its blob after the turn; it does not see a file the agent added, or
+  changed and put back.
 
 - **Credentials.** A harness signs in with the environment its runtime exports
   from `env/` Secret items: the model key its `config.json` names for
@@ -211,6 +213,39 @@ behavior only the real binaries have
 What was run for a change, and what was not, is recorded in its pull
 request; for the introduction of harnesses that is
 [#3411](https://github.com/jlapenna/agent-lcars/pull/3411).
+
+### The harness container
+
+A claw run has two sides. The launcher holds the run token, talks to LCARS,
+verifies and writes the pinned definition, and decides the outcome. The
+harness side holds what the agent may use: the runtime's Secret items, the
+workspace and the harness itself. A runtime chooses how far apart they are
+(`harness_container` in the executor's runtime table,
+[runner-autoscaler](../apps/runner-autoscaler/README.md#declared-runtimes-and-zone-executors)):
+
+- **One container** (the default). The harness runs under the launcher's
+  UID. Nothing separates them but file modes their shared owner can change,
+  and a tool the agent may run can read the run token.
+- **A harness container.** The harness runs in a second container of the
+  same Pod, under another UID, and the two talk over a Unix socket. The
+  harness's container has the Secret items and a scratch volume. It sees the
+  pinned definition through a read-only mount, and the pinned `home/` files
+  as another user's files in sticky directories, so it can keep its own
+  state beside them and cannot change, remove, rename or replace them. It
+  has no run token and shares no PID namespace with the launcher.
+
+What the pod then enforces is what the runtime gives it: its Secret items,
+its mounts and its network policy. The harness's settings shape how the
+agent behaves inside that. Two things stay outside the kernel's reach. A
+harness that reads a settings file the definition does not pin, from a
+directory it can write to, can be given one by its own agent. And
+OpenClaw's launch config, Gateway token and exec approvals are made and
+kept on the harness's side, where OpenClaw runs
+([claw image](../apps/runner-autoscaler/claw-image/README.md#trust-boundary-inside-the-pod)).
+
+A harness container needs a claw image that carries the harness host, so it
+is switched on per runtime after that runtime's image is pinned
+([migration](#migration-and-acceptance)).
 
 ## Catalog
 
@@ -397,6 +432,21 @@ agent round admitted through the generic route.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
+
+Switching a runtime to a harness container
+([above](#the-harness-container)) is Homelab's change to its zone executor's
+runtime table, in this order:
+
+1. Deploy an executor that knows `harness_container`. An earlier one refuses
+   the key when it starts.
+2. Pin a claw image that carries the harness host on that runtime. An
+   earlier image has no program for the harness's container to run.
+3. Set `harness_container: true` on that runtime and restart the executor.
+   Jobs already created keep the shape they were created with.
+
+To go back, clear the flag first and pin the earlier image after. The Console
+is not involved either way: the brief, the round and the definition are the
+same with or without a harness container.
 
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
