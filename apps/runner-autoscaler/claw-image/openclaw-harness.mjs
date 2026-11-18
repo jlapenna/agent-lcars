@@ -1056,26 +1056,59 @@ async function terminalReply(openclaw, { env, runId, signal }) {
  * It sends the agent's commentary and its final answer as the same kind of
  * message text with nothing between them, so a turn without a tool call
  * streams both as one message. The Gateway records the final reply by
- * itself: where the stream ends with it, the answer is that ending. A long
- * reply is recorded cut short with a marker; then the answer begins where
- * the recorded part appears. A reply that cannot be placed leaves the
- * stream as it is. A cut reply whose recorded part appears more than once
- * (an answer that repeats a passage the agent had already shown) cannot be
- * placed either way: that is `undefined`, and no report. */
+ * itself, whole when it is short and otherwise cut to its beginning with a
+ * marker (`recordedCut`). The answer begins wherever the Gateway would have
+ * recorded exactly that reply for the rest of the stream. One such place
+ * is the answer's start. None leaves the stream as it is: the record could
+ * not be placed. More than one cannot be told apart (an answer that repeats
+ * a passage the agent had already shown, or its own beginning): that is
+ * `undefined`, and no report. */
 export function answerText(streamed, reply) {
   if (typeof reply !== 'string' || reply === '') return streamed;
   const body = streamed.trimEnd();
-  if (body.endsWith(reply)) return streamed.slice(body.length - reply.length);
+  const starts = [];
+  // Recorded whole: the stream ends with the reply.
+  const whole = body.length - reply.length;
+  if (whole >= 0 && body.endsWith(reply)) starts.push(whole);
+  // Recorded cut short: a reply that ends with the marker may be the
+  // beginning of a longer answer.
   const head = reply.endsWith(REPLY_CUT_MARKER)
     ? reply.slice(0, -REPLY_CUT_MARKER.length)
     : '';
-  if (head === '') return streamed;
-  const at = streamed.indexOf(head);
-  if (at === -1) return streamed;
-  if (streamed.indexOf(head, at + 1) !== -1) return undefined;
-  return streamed.slice(at);
+  if (head !== '' && head === head.trimEnd())
+    for (
+      let at = body.indexOf(head);
+      at !== -1 && starts.length < 2;
+      at = body.indexOf(head, at + 1)
+    )
+      if (at !== whole && recordedCut(body, at, head.length)) starts.push(at);
+  if (starts.length > 1) return undefined;
+  return starts.length === 1 ? streamed.slice(starts[0]) : streamed;
 }
+// OpenClaw's own rule for the reply it records (its
+// `sanitizeAgentRunTerminalReplyText`): trimmed text of up to REPLY_CAP
+// characters is kept whole; a longer one is cut one short of the cap, never
+// between the halves of a surrogate pair, loses its trailing whitespace and
+// gets the marker.
+const REPLY_CAP = 4096;
 const REPLY_CUT_MARKER = '…';
+// Whether the answer that begins at `at` would have been recorded cut to
+// its first `length` characters.
+function recordedCut(body, at, length) {
+  if (body.length - at <= REPLY_CAP) return false;
+  let end = at + REPLY_CAP - 1;
+  const highSurrogate = (code) => code >= 0xd800 && code <= 0xdbff;
+  const lowSurrogate = (code) => code >= 0xdc00 && code <= 0xdfff;
+  if (
+    highSurrogate(body.charCodeAt(end - 1)) &&
+    lowSurrogate(body.charCodeAt(end))
+  )
+    end -= 1;
+  if (at + length > end) return false;
+  for (let index = at + length; index < end; index++)
+    if (body[index].trim() !== '') return false;
+  return true;
+}
 
 /** The `openclaw` harness: OpenClaw's ACP server, bridged to a Gateway this
  * Job owns. */

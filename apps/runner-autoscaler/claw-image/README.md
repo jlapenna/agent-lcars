@@ -243,13 +243,15 @@ tool ran in between, so the stream alone would report `Checking files
 nowDone.` for the answer `Done.`. The Gateway records the run's final reply
 by itself (`agent.wait` for the session's `lastRunId`, `terminalReply`), cut
 to 4,096 characters. The launcher uses it to find the answer in what was
-streamed (`answerText`): the ending of the stream that equals the reply, or,
-for a reply recorded cut short, everything from where the recorded part
-first appears. The report is still the streamed text, never the recorded
-one. Where the reply cannot be placed, or the Gateway has no record of one,
-the stream is reported as it is. Where a reply recorded cut short appears
-more than once in the stream, the answer's start cannot be told and the
-attempt fails. A run the Gateway recorded as ending
+streamed (`answerText`). The answer begins wherever OpenClaw would have
+recorded exactly that reply for the rest of the stream, by its own rule: a
+trimmed reply of up to 4,096 characters whole, a longer one cut one short of
+that, never inside a surrogate pair, without trailing whitespace and with
+`…` appended. The report is still the streamed text, never the recorded
+one. Where no place fits, or the Gateway has no record of a reply, the
+stream is reported as it is. Where more than one place fits (the answer
+repeats a passage the agent had already shown, or its own beginning), the
+answer's start cannot be told and the attempt fails. A run the Gateway recorded as ending
 `silent` or `empty` has no answer, whatever the agent said on the way, and
 fails as an empty result.
 

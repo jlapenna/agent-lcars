@@ -62,6 +62,13 @@ harnesses existed, so files it happens to keep under `home/` stay unused,
 and a round already admitted for it is not changed by a newer image or
 Console.
 
+Merge or enable a definition that names a `harness` or a `mode` only once
+the runtime it runs on has a claw image that knows harnesses pinned,
+`claw-default` included. The Console admits such a definition as soon as it
+is deployed, and delivers its rounds in the brief shape an earlier launcher
+refuses. On an earlier image every such round fails, and a `retry:
+terminal` round fails for good.
+
 Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
 (ACP) agent, and the launcher is only an ACP client. It starts the harness in
 a copy of `workspace/`, copies `home/` into the harness's `HOME` for a
@@ -169,7 +176,13 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   agent's final answer. OpenClaw's ACP server streams what the agent says on
   the way and the answer as one message when no tool ran between them, so
   for OpenClaw the launcher finds the answer in that stream with the
-  Gateway's own record of the final reply. OpenClaw's ACP server
+  Gateway's own record of the final reply. There is one exception an author
+  who relies on a strict output format should know: when the Gateway gives
+  no record of the reply, or the record cannot be found in the stream, the
+  report is everything OpenClaw streamed after the last tool call, which
+  can begin with what the agent said on the way (`Checking files nowDone.`
+  for `Done.`). When the record fits more than one place in the stream, the
+  attempt fails. OpenClaw's ACP server
   ends a turn its Gateway failed like any other, even after part of an answer
   has streamed, so the launcher also asks the Gateway how it recorded the
   session and fails the attempt unless its last run finished. A model
@@ -418,7 +431,12 @@ while the newer Console is still running, in this order:
    then, so a manifest that gains `harness` or `mode`, or a repository that
    becomes readable again with one, would publish an incompatible row after
    this check. Then check that no agent in the catalog, enabled or not,
-   still shows either field. The earlier Console reads stored rows with a strict schema, and
+   still shows either field. Check the stored rows themselves, read-only:
+   in every document of the `orchestrator-agents` collection,
+   `definition.manifest.harness` and `definition.manifest.mode` must be
+   absent. The `repositoryAgents` observation in a maintenance reply cannot
+   show this: it is an aggregate, so it says nothing about a disabled row's
+   stored fields. The earlier Console reads stored rows with a strict schema, and
    one row with a field it does not know stops it listing and refreshing the
    catalog for every repository. Deleting an agent does not clear its row:
    the row is only disabled and keeps the stored manifest. For the row of an
@@ -436,11 +454,15 @@ while the newer Console is still running, in this order:
    earlier revision is not enough: a revision brings its own settings
    (`apps/console/apphosting.yaml`), so its grants and `runCallers` would
    come back at cutover and admission would reopen. Repeat the check of
-   step 5 immediately before the cutover, and after it confirm that the
-   earlier Console lists the catalog. If it does not, a row gained a field
-   in between: the earlier Console cannot repair that by refreshing, because
-   it reads the catalog first, so clear that row's `definition` as in
-   step 5. Release the hold on merges only then.
+   step 5 immediately before the cutover. After it, wait for a fresh
+   `repositoryAgents` observation in a maintenance reply served by the
+   downgraded revision, and release the hold on merges only once there is
+   one. That reply can be HTTP 200 and still carry no `repositoryAgents`
+   when the earlier Console could not read the catalog, so a missing
+   observation is the signal, not the status. Find out why before changing
+   anything. If a row gained a field in between, the earlier Console cannot
+   repair that by refreshing, because it reads the catalog first: clear that
+   row's `definition` as in step 5.
 8. Lift the fence with a further deploy of that version: restore the grants,
    and restore `runCallers` on each profile that had it, since the earlier
    Console lets a dispatched run invoke an agent only through that flag. If

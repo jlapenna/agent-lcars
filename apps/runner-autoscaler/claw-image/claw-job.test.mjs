@@ -868,6 +868,21 @@ test('answerText finds the answer in what OpenClaw streamed', () => {
     ),
     undefined,
   );
+  // So does an answer that repeats its own beginning at its end and ends
+  // with the marker: the record fits the whole answer and its last part.
+  const repeated = `${'p'.repeat(4095)}${'q'.repeat(30)}${'p'.repeat(4095)}…`;
+  assert.equal(answerText(repeated, `${'p'.repeat(4095)}…`), undefined);
+  // The cut is OpenClaw's: never between the halves of a surrogate pair,
+  // and without the whitespace before it.
+  const emoji = `${'x'.repeat(4094)}😀${'y'.repeat(500)}`;
+  assert.equal(answerText(`Looking.${emoji}`, `${'x'.repeat(4094)}…`), emoji);
+  const spaced = `${'x'.repeat(4000)}${' '.repeat(200)}tail`;
+  assert.equal(answerText(`Looking.${spaced}`, `${'x'.repeat(4000)}…`), spaced);
+  // A beginning the Gateway would not have recorded that way places nothing.
+  assert.equal(
+    answerText(`Looking.${'x'.repeat(5000)}`, `${'x'.repeat(100)}…`),
+    `Looking.${'x'.repeat(5000)}`,
+  );
   // A reply that itself ends with the marker is still a whole reply.
   assert.equal(
     answerText('Hm.More to come…', 'More to come…'),
