@@ -386,7 +386,8 @@ export function resolveCredentials(
   const defined = configEnvironment(config.env);
   const env = { ...processEnv };
   for (const [name, raw] of defined)
-    if (!holds(processEnv, name)) env[name] = expandTemplates(raw, processEnv);
+    if (!holds(processEnv, name))
+      env[name] = expandTemplates(raw, processEnv, { whole: true });
   const set = (name) => holds(env, name);
   const isReference = (value) =>
     value.source === 'env' &&
@@ -459,11 +460,11 @@ export function resolveCredentials(
   const resolves = (name) => withheld.has(name) && set(name);
   const resolve = (value) => {
     if (typeof value === 'string')
-      return expandTemplates(value, env, (name) => resolves(name));
+      return expandTemplates(value, env, { only: resolves, encode: literal });
     if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
     if (isReference(value) && allowed(value) && resolves(value.id))
-      return env[value.id];
+      return literal(env[value.id]);
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [key, resolve(child)]),
     );
@@ -486,11 +487,12 @@ export function resolveCredentials(
       const own = (auth.candidates.get(id.trim().toLowerCase()) ?? []).find(
         (name) => set(name) && !kept(name),
       );
-      if (own !== undefined) providers[id] = { ...provider, apiKey: env[own] };
+      if (own !== undefined)
+        providers[id] = { ...provider, apiKey: literal(env[own]) };
     } else if (written !== undefined && resolves(written)) {
       // A key that is only the name of a credential variable is OpenClaw's
       // marker for that variable's value.
-      providers[id] = { ...provider, apiKey: env[written] };
+      providers[id] = { ...provider, apiKey: literal(env[written]) };
     }
   }
   return { config: resolved, used: withheld };
@@ -534,20 +536,49 @@ function withoutVariables(environment, names) {
 // Substitutes the templates in a config string as OpenClaw does: a variable
 // that holds something replaces its token, an empty or missing one gives way
 // to the token's default, and with no default the token stays as written.
-// `only` limits substitution to some names and leaves every other token,
-// default included, for OpenClaw.
-function expandTemplates(text, env, only = () => true) {
+// - `only` limits substitution to some names and leaves every other token,
+//   default included, for OpenClaw.
+// - `encode` is applied to each value written in.
+// - `whole` gives the string OpenClaw ends up with, not one it will still
+//   load: an escaped token becomes the text it stands for.
+function expandTemplates(
+  text,
+  env,
+  { only = () => true, encode = (value) => value, whole = false } = {},
+) {
   let result = '';
   let end = 0;
   for (const token of envTemplateTokens(text)) {
-    if (token.escaped || !only(token.name)) continue;
-    const value = env[token.name];
-    const held = typeof value === 'string' && value !== '';
-    if (!held && token.fallback === undefined) continue;
-    result += text.slice(end, token.start) + (held ? value : token.fallback);
+    let written;
+    if (token.escaped) {
+      if (!whole) continue;
+      written = text.slice(token.start + 1, token.end + 1);
+    } else {
+      if (!only(token.name)) continue;
+      const value = env[token.name];
+      if (typeof value === 'string' && value !== '') written = encode(value);
+      else if (token.fallback !== undefined) written = token.fallback;
+      else continue;
+    }
+    result += text.slice(end, token.start) + written;
     end = token.end + 1;
   }
   return result + text.slice(end);
+}
+
+// A value as it has to be written into the launch config to reach OpenClaw
+// unchanged. OpenClaw substitutes templates in every config string it loads,
+// including the ones the launcher has already resolved, so a credential that
+// happens to contain `${NAME}` would be rewritten on the way in. A `$` in
+// front of each token is OpenClaw's escape for the literal text.
+function literal(value) {
+  let result = '';
+  let end = 0;
+  for (const token of envTemplateTokens(value)) {
+    result += `${value.slice(end, token.start)}$`;
+    end = token.start;
+  }
+  return result + value.slice(end);
 }
 
 const SECRET_REF_KEYS = new Set(['source', 'provider', 'id']);

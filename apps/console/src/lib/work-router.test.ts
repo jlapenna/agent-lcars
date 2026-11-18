@@ -385,6 +385,42 @@ describe('repository-owned agent runs', () => {
     expect(runs[0]!.sourceRevision?.input['revision']).toBe('c'.repeat(40));
   });
 
+  it('replays an admitted request after the definition moves to a harness the profile does not run', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const body = { message: 'Why?', requestId: 'lost-response' };
+    const first = await call(ctx, 'POST', path, body);
+    expect(first.status).toBe(202);
+    // The catalog refreshes a Codex definition on the same OpenClaw-only
+    // profile before the caller, whose response was lost, retries.
+    const row = (await store.list())[0]!;
+    row.definition = {
+      ...row.definition!,
+      manifest: { ...row.definition!.manifest, harness: 'codex' },
+    };
+    const again = await call(ctx, 'POST', path, body);
+    expect(again.status).toBe(202);
+    expect(again.json.id).toBe(first.json.id);
+    const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
+    expect(runs).toHaveLength(1);
+    // The admitted round still pins what it was admitted with.
+    expect(runs[0]!.sourceRevision?.input).not.toHaveProperty('harness');
+    // A new round, or the same request id with another message, is still
+    // refused: this profile's runtime does not run Codex.
+    expect(
+      (await call(ctx, 'POST', path, { message: 'Why?', requestId: 'new' }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await call(ctx, 'POST', path, { ...body, message: 'Something else' }))
+        .status,
+    ).toBe(403);
+  });
+
   it('replays a round that was coalesced away before it ran, after an unrelated commit', async () => {
     const store = agents([{}]);
     const ctx = context({

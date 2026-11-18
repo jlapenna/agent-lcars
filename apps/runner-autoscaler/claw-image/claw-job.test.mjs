@@ -1025,6 +1025,54 @@ test('resolveCredentials gives a provider the key OpenClaw would have found for 
   assert.deepEqual([...used].sort(), ['LITELLM_API_KEY', 'OPENAI_API_KEY']);
 });
 
+test('resolveCredentials writes a credential so OpenClaw loads it unchanged', () => {
+  // OpenClaw substitutes templates in every config string it loads, the
+  // resolved ones included. A key that happens to contain one is written
+  // with OpenClaw's escape, so it arrives as the key it is.
+  const template = (name) => '$' + `{${name}}`;
+  const auth = {
+    names: new Set(['LITELLM_API_KEY']),
+    candidates: new Map([['litellm', ['LITELLM_API_KEY']]]),
+  };
+  const written = (key, provider) =>
+    resolveCredentials(
+      { models: { providers: { litellm: provider } } },
+      { LITELLM_API_KEY: key, SUFFIX: 'modified' },
+      auth,
+    ).config.models.providers.litellm;
+  const key = `test-token-${template('SUFFIX')}`;
+  const escaped = `test-token-$${template('SUFFIX')}`;
+  const reference = {
+    source: 'env',
+    provider: 'default',
+    id: 'LITELLM_API_KEY',
+  };
+  assert.deepEqual(written(key, { apiKey: reference }), { apiKey: escaped });
+  assert.deepEqual(written(key, { apiKey: template('LITELLM_API_KEY') }), {
+    apiKey: escaped,
+  });
+  assert.deepEqual(written(key, {}), { apiKey: escaped });
+  assert.deepEqual(written(key, { apiKey: 'LITELLM_API_KEY' }), {
+    apiKey: escaped,
+  });
+  assert.deepEqual(
+    written(key, {
+      headers: { authorization: `Bearer ${template('LITELLM_API_KEY')}` },
+    }),
+    { headers: { authorization: `Bearer ${escaped}` }, apiKey: escaped },
+  );
+  // A key that already holds the escape keeps it, one `$` deeper.
+  assert.deepEqual(written(`a$${template('SUFFIX')}b`, {}), {
+    apiKey: `a$$${template('SUFFIX')}b`,
+  });
+  // A template the definition wrote for another variable is still
+  // OpenClaw's to resolve.
+  assert.deepEqual(
+    written('k1', { apiKey: reference, baseUrl: template('SUFFIX') }),
+    { apiKey: 'k1', baseUrl: template('SUFFIX') },
+  );
+});
+
 test("a definition's own env cannot move this run's Gateway", () => {
   const launched = launchConfig(
     {

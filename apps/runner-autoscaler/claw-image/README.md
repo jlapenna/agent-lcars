@@ -161,7 +161,10 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    provider with no `apiKey`, or a blank one, gets the first of its own
    variables the environment holds. An `apiKey` that is only the name of a
    credential variable is OpenClaw's marker for that variable and gets its
-   value. A provider that is not declared in the config and
+   value. OpenClaw substitutes templates in every config string it loads,
+   the resolved ones included, so each value is written with OpenClaw's
+   escape (`$${…}`) wherever it contains a template of its own: a key
+   arrives as the key it is. A provider that is not declared in the config and
    relied on the environment no longer finds its key, and a custom key named
    only outside those places stays in the environment. A SecretRef is
    resolved only as OpenClaw would resolve it: through an `env` provider the
@@ -183,7 +186,9 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
 6. `openclaw gateway run --port <port>` in the agent's workspace, waited on
    until its readiness probe answers (`GET /readyz` on its loopback port).
    The workspace is where `agent exec` ran, so OpenClaw still reads a `.env`
-   there, under its own filter. The port is the launcher's: OpenClaw reads
+   there, under its own filter, which refuses every `OPENCLAW_*` key,
+   provider credential names and base URLs: a workspace `.env` cannot
+   reconfigure the Gateway. The port is the launcher's: OpenClaw reads
    `OPENCLAW_GATEWAY_PORT` before its config, so the Gateway, its ACP server
    and the outcome call all get that variable from the launcher, and the
    launch config drops every `OPENCLAW_GATEWAY_*` variable a definition's

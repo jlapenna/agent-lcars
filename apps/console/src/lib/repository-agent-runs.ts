@@ -116,31 +116,48 @@ export interface ResolvedAgentRuntime {
 }
 
 /** Resolve the runtime an agent runs on, refusing a profile that does not
- * admit its repository or the caller. */
+ * admit its repository or the caller, or whose runtime does not carry the
+ * agent's harness. */
 export function resolveAgentRuntime(
   definition: AgentDefinition,
   principal: string,
   profiles: readonly AgentProfile[],
 ): ResolvedAgentRuntime {
+  const { unsupported, ...runtime } = agentRuntime(
+    definition,
+    principal,
+    profiles,
+  );
+  if (unsupported) throw unsupported;
+  return runtime;
+}
+
+/** The runtime as `resolveAgentRuntime` resolves it, with the harness check
+ * reported instead of thrown: it guards a new round, and admission replays
+ * a round it already admitted before applying it. */
+function agentRuntime(
+  definition: AgentDefinition,
+  principal: string,
+  profiles: readonly AgentProfile[],
+): ResolvedAgentRuntime & { unsupported?: AgentAdmissionError } {
   const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
   const harness = definition.manifest.harness ?? 'openclaw';
   // A runtime runs only the harnesses its operator says it carries, so a
   // round never reaches an image or a Secret that cannot run it.
-  const runs = (harnesses: readonly string[] = ['openclaw']) => {
-    if (!harnesses.includes(harness))
-      throw new AgentAdmissionError(
-        'FORBIDDEN',
-        `Profile ${name} does not run ${harness} agents`,
-      );
-  };
-  if (name === DEFAULT_AGENT_PROFILE) {
-    runs();
-    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false };
-  }
+  const runs = (harnesses: readonly string[] = ['openclaw']) =>
+    harnesses.includes(harness)
+      ? {}
+      : {
+          unsupported: new AgentAdmissionError(
+            'FORBIDDEN',
+            `Profile ${name} does not run ${harness} agents`,
+          ),
+        };
+  if (name === DEFAULT_AGENT_PROFILE)
+    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false, ...runs() };
   const profile = profiles.find((candidate) => candidate.name === name);
   if (!profile)
     throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
-  runs(profile.harnesses);
   if (!profile.repositories.includes(definition.repository))
     throw new AgentAdmissionError(
       'FORBIDDEN',
@@ -151,7 +168,11 @@ export function resolveAgentRuntime(
       'FORBIDDEN',
       `Profile ${name} does not admit ${principal}`,
     );
-  return { pipeline: profile.runtime, runCallers: profile.runCallers === true };
+  return {
+    pipeline: profile.runtime,
+    runCallers: profile.runCallers === true,
+    ...runs(profile.harnesses),
+  };
 }
 
 /** Admit one round of a repository-owned agent. A
@@ -182,7 +203,7 @@ export async function admitAgentRun(
         : `No enabled agent ${id}`,
     );
   const definition = agent.definition;
-  const runtime = resolveAgentRuntime(
+  const { unsupported, ...runtime } = agentRuntime(
     definition,
     request.principal,
     deps.profiles(),
@@ -235,6 +256,19 @@ export async function admitAgentRun(
     )
     .digest('hex');
   const revision = workRevisionSchema.parse({ key, input: round });
+  // The harness check guards a new round. A caller that lost the response
+  // to a round it admitted must still get that round back, even when the
+  // definition has since moved to a harness this profile does not carry:
+  // the admitted round pins the harness it was admitted with.
+  if (unsupported) {
+    const admitted = (await deps.store.listRuns({ workId })).some(
+      (run) =>
+        run.requestId === key &&
+        run.sourceRevision?.input['message'] === request.message,
+    );
+    if (admitted) return { workId, duplicate: true };
+    throw unsupported;
+  }
   const title = `${id}: ${request.message.split('\n')[0]}`;
   const spec = agentWorkSpecSchema.parse({
     title:

@@ -246,8 +246,11 @@ another's credentials gets its own profile.
   `lcars investigate` becomes this call against
   `jlapenna/homelab/investigator`.
 - **Pinning:** the round's revision input pins the definition (revision,
-  digest, each file's path, mode and blob SHA), `requireToolEvidence`, a
-  non-default `harness`, a `mode` and the message. A later merge cannot change a round already admitted. A repeated
+  digest, each file's path, mode and blob SHA), `requireToolEvidence`, the
+  `harness` whenever the manifest names one (`openclaw` included), the `mode`
+  when it names one, and the message. A round that pinned either is
+  delivered in the versioned brief and has to finish before a Console
+  downgrade ([rollback](#migration-and-acceptance)). A later merge cannot change a round already admitted. A repeated
   `requestId` with the same message is the same round, and `sourceKey`
   coalesces rounds on one subject. Admission needs no reservation transaction:
   claims already bound concurrency.
@@ -412,13 +415,17 @@ while the newer Console is still running, in this order:
 8. Lift the fence with a further deploy of that version: restore the grants,
    and restore `runCallers` on each profile that had it, since the earlier
    Console lets a dispatched run invoke an agent only through that flag. If
-   the claw image went back too, first deal with every OpenClaw agent that
-   relied on `home/` settings, which is one that named `harness: openclaw`
-   before step 4. With the `harness` line gone it is an agent the earlier
-   launcher runs, and that launcher stages only the workspace, so it would
-   run without its reviewed `home/` settings. If it can run without them,
-   nothing more is needed. Otherwise keep the agent fenced: its runtime out
-   of every grant and `runCallers` off on its profile.
+   Before that, whether or not the claw image went back, deal with every
+   OpenClaw agent that relied on `home/` settings: one whose manifest named
+   `harness: openclaw`, or named only a `mode`, before step 4. With those
+   lines gone the earlier Console delivers its rounds as `files`, and no
+   launcher applies `home/` to such a round, so the agent would run without
+   its reviewed settings. If it can run without them, nothing more is
+   needed. Otherwise keep the agent fenced: no grant that holds
+   `work.claw.admit` lists its runtime, and `runCallers` stays off on its
+   profile. Leave the runtime in the executor's own grant (`work.executor`):
+   rounds of other agents already queued on it are claimed through that
+   grant and would stall without it.
 
 Rolling back only the claw image, with the newer Console still running,
 needs no step: a round that needs the newer launcher is delivered in a shape
