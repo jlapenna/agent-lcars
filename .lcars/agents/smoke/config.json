@@ -1,11 +1,4 @@
 {
-  "plugins": {
-    "entries": {
-      "litellm": {
-        "enabled": true
-      }
-    }
-  },
   "models": {
     "providers": {
       "litellm": {
@@ -59,9 +52,6 @@
         "primary": "litellm/default"
       },
       "skills": []
-    },
-    "entries": {
-      "main": {}
     }
   },
   "tools": {

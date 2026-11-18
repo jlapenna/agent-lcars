@@ -498,6 +498,9 @@ agent round admitted through the generic route.
    `jlapenna/homelab`.
 2. Homelab's zone executor gains runtime `claw-default` with a model key only.
    `.lcars/agents/smoke/` in this repository is its canary (done).
+   Its `config.json` is deliberately a source config (no Doctor-added plugin
+   or agent entries), so it also proves the launcher normalizes configs for
+   whichever image runs them.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
