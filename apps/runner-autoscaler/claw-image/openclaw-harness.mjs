@@ -14,7 +14,8 @@
 //      any other change fails the attempt, naming the changed settings.
 //   4. `openclaw approvals set --file` seeds the enforcing exec approvals.
 //   5. The launch config: the turn's config plus this Job's workspace and a
-//      loopback, token-protected Gateway.
+//      loopback, token-protected Gateway, with the credentials it names
+//      written in so they stay out of what host commands inherit.
 //   6. `openclaw gateway run`, waited on until it reports ready.
 
 import { spawn } from 'node:child_process';
@@ -41,11 +42,13 @@ const GATEWAY_STOP_MS = 5_000;
 // The Gateway's own line once it accepts work, after its log prefix. Earlier
 // lines such as "spawn broker ready pid=…" must not match.
 const GATEWAY_READY = /\[gateway\] ready$/u;
-// The Gateway's own record that a turn failed. OpenClaw's ACP server ends
-// such a turn like any other (`end_turn`), even after part of an answer has
-// streamed, so this log is the only place the failure shows.
+// The Gateway's own record of how a turn ended. OpenClaw's ACP server ends a
+// failed turn like any other (`end_turn`), even after part of an answer has
+// streamed, so this log is the only place the failure shows. Only the
+// message's final outcome counts: a model attempt that failed before a
+// fallback answered is logged too (`lane task error`) and is not a failure.
 const TURN_FAILED =
-  /\[diagnostic\] (lane task error:|message (processed|dispatch completed):.*\boutcome=error\b)/u;
+  /\[diagnostic\] message (processed|dispatch completed):.*\boutcome=error\b/u;
 const stripAnsi = (text) =>
   // eslint-disable-next-line no-control-regex -- terminal colour codes
   text.replace(/\u001b\[[0-9;]*m/gu, '');
@@ -283,6 +286,36 @@ function freePort() {
   });
 }
 
+// OpenClaw hands a host command the Gateway's environment. `agent exec` kept
+// provider credentials out of what a command inherits; a Gateway has no such
+// scope. So each credential the config asks for by name (an `env` SecretRef)
+// is written into the launch config instead, and its variable is left out of
+// the Gateway's environment: the model still authenticates and an approved
+// command does not receive the key. Returns the config and the names used.
+export function inlineEnvSecrets(config, env) {
+  const used = new Set();
+  const reference = (value) =>
+    value.source === 'env' &&
+    typeof value.id === 'string' &&
+    typeof env[value.id] === 'string' &&
+    !KEPT_ENV.has(value.id) &&
+    Object.keys(value).every((key) => SECRET_REF_KEYS.has(key));
+  const walk = (value) => {
+    if (Array.isArray(value)) return value.map(walk);
+    if (!value || typeof value !== 'object') return value;
+    if (reference(value)) {
+      used.add(value.id);
+      return env[value.id];
+    }
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, walk(child)]),
+    );
+  };
+  return { config: walk(config), used };
+}
+const SECRET_REF_KEYS = new Set(['source', 'provider', 'id']);
+const KEPT_ENV = new Set(['PATH', 'HOME', 'LANG']);
+
 // `over` wins over `under`; plain objects merge key by key.
 function mergeDeep(under, over) {
   const plain = (value) =>
@@ -444,11 +477,17 @@ export async function prepareState({
     port: await freePort(),
     token: randomBytes(32).toString('hex'),
   };
-  const launched = launchConfig(turnConfig(source, normalized), {
-    workspace,
-    ...gateway,
-  });
+  const { config: resolved, used } = inlineEnvSecrets(
+    turnConfig(source, normalized),
+    env,
+  );
+  const launched = launchConfig(resolved, { workspace, ...gateway });
   await write(launched);
+  // What the Gateway and its ACP server run with: none of the credentials
+  // now held by the launch config.
+  const turnEnv = Object.fromEntries(
+    Object.entries(childEnv).filter(([name]) => !used.has(name)),
+  );
   const tokenFile = join(stateDir, 'gateway.token');
   await writeFile(tokenFile, `${gateway.token}\n`, { mode: 0o600 });
   // The Gateway's config and token belong to the same UID as the agent's
@@ -471,7 +510,7 @@ export async function prepareState({
           : undefined;
     return changed && `the agent changed its harness settings (${changed})`;
   };
-  return { childEnv, port: gateway.port, tokenFile, verify };
+  return { turnEnv, port: gateway.port, tokenFile, verify };
 }
 
 // Starts the Gateway in its own process group and resolves, once it reports
@@ -564,7 +603,7 @@ export async function openclawHarness({
   env,
   signal,
 }) {
-  const { childEnv, port, tokenFile, verify } = await prepareState({
+  const { turnEnv, port, tokenFile, verify } = await prepareState({
     agentDir: definitionDir,
     workRoot,
     workspace,
@@ -573,7 +612,7 @@ export async function openclawHarness({
     env,
     signal,
   });
-  const gateway = await startGateway(openclaw, { env: childEnv, signal });
+  const gateway = await startGateway(openclaw, { env: turnEnv, signal });
   return {
     command: openclaw,
     args: [
@@ -586,7 +625,7 @@ export async function openclawHarness({
       // prompt carries exactly the message.
       '--no-prefix-cwd',
     ],
-    env: childEnv,
+    env: turnEnv,
     // Stopping the Gateway first reads its log to the end, so a failure it
     // recorded for the turn is seen before the result is judged.
     finish: async () => {

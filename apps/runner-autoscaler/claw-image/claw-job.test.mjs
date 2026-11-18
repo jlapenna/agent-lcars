@@ -26,6 +26,7 @@ import {
   bundledPluginProviders,
   comparableConfig,
   doctorChanges,
+  inlineEnvSecrets,
   launchConfig,
   resolveCommand,
   turnConfig,
@@ -89,19 +90,27 @@ const update = (sessionUpdate, fields) =>
   send({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate, ...fields } } });
 const say = (text, messageId) => update('agent_message_chunk', { ...(messageId ? { messageId } : {}), content: { type: 'text', text } });
 let prompt;
+let signedIn = false;
+let delayed = false;
 require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.method === 'initialize') {
     const settings = path.join(process.env.HOME, '.claude', 'settings.json');
     record({ initialize: message.params, pid: process.pid, cwd: process.cwd(), key: process.env.LITELLM_API_KEY ?? null, token: process.env.LCARS_RUN_TOKEN ?? null, settings: fs.existsSync(settings) ? fs.readFileSync(settings, 'utf8') : null });
     console.log('harness banner, not protocol');
-    return send({ id: message.id, result: { protocolVersion: behaviour.protocolVersion ?? 1, agentCapabilities: {} } });
+    return send({ id: message.id, result: { protocolVersion: behaviour.protocolVersion ?? 1, agentCapabilities: {}, authMethods: (behaviour.authMethods ?? []).map((id) => ({ id, name: id })) } });
   }
   if (message.method === 'session/new') {
     record({ session: message.params });
-    return behaviour.authError
+    return behaviour.authError || (behaviour.needsAuth && !signedIn)
       ? send({ id: message.id, error: { code: -32000, message: 'Authentication required' } })
       : send({ id: message.id, result: { sessionId: 's1', ...(behaviour.modes ? { modes: { currentModeId: behaviour.modes[0], availableModes: behaviour.modes.map((id) => ({ id, name: id })) } } : {}) } });
+  }
+  if (message.method === 'authenticate') {
+    record({ authenticate: message.params.methodId });
+    if (behaviour.refuseAuth) return send({ id: message.id, error: { code: -32603, message: 'CODEX_API_KEY or OPENAI_API_KEY is not set' } });
+    signedIn = true;
+    return send({ id: message.id, result: {} });
   }
   if (message.method === 'session/set_mode') {
     record({ mode: message.params.modeId });
@@ -110,6 +119,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       : send({ id: message.id, result: {} });
   }
   if (message.method === 'session/prompt') {
+    // Answer later, so what the Gateway logs meanwhile is read first.
+    if (behaviour.delayMs && !delayed) { delayed = true; return setTimeout(() => process.stdin.emit('data', line + '\\n'), behaviour.delayMs); }
     record({ prompt: message.params.prompt });
     prompt = message.id;
     if (behaviour.hang) return;
@@ -195,6 +206,9 @@ if (sub === 'gateway run') {
   const line = (text) => console.log('\\u001b[90m2026-11-18T04:44:41.551+00:00\\u001b[39m \\u001b[36m[gateway]\\u001b[39m \\u001b[36m' + text + '\\u001b[39m');
   line('spawn broker ready pid=1');
   setTimeout(() => line('ready'), 150);
+  // A model attempt that failed before a fallback answered: logged, but not
+  // the turn's outcome.
+  if (behaviour.FAKE_GATEWAY_ATTEMPT_ERROR) setTimeout(() => console.error('\\u001b[31m[diagnostic]\\u001b[39m lane task error: lane=main durationMs=81853 error="LLM request timed out."'), 250);
   // A failed turn is logged at error level, on stderr, as the turn ends.
   process.on('SIGTERM', () => {
     if (!fs.existsSync(path.join(__dirname, 'gateway-error'))) process.exit(0);
@@ -287,7 +301,11 @@ async function fixture(overrides = {}) {
     deps: {
       fetchImpl,
       harnesses: {
-        claude: () => ({ command: process.execPath, args: [harness] }),
+        claude: () => ({
+          command: process.execPath,
+          args: [harness],
+          ...(overrides.auth ? { auth: overrides.auth } : {}),
+        }),
       },
     },
   };
@@ -691,6 +709,87 @@ test('a turn the Gateway recorded as failed is never a report', async () => {
   });
 });
 
+test('a model attempt that failed before a fallback answered does not fail the turn', async () => {
+  const { env, deps } = await fixture({
+    env: { FAKE_GATEWAY_ATTEMPT_ERROR: '1' },
+    // Long enough for the Gateway's line to be read before the turn ends.
+    acp: { ...CLEAN_TURN, delayMs: 400 },
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'report',
+    message: 'All clear: disk at 41%.',
+  });
+});
+
+test('a model credential the config names stays out of what host commands inherit', async () => {
+  const files = {
+    ...agentFiles,
+    'config.json': {
+      content: JSON.stringify({
+        models: {
+          providers: {
+            litellm: {
+              apiKey: {
+                source: 'env',
+                provider: 'default',
+                id: 'LITELLM_API_KEY',
+              },
+            },
+          },
+        },
+      }),
+    },
+  };
+  const { env, deps, openclawLog } = await fixture({
+    brief: agentBrief(files),
+  });
+  assert.equal((await main(env, deps)).outcome, 'report');
+  const [validate, doctor, approvals, gateway, acp] = await openclawLog();
+  // OpenClaw's own setup commands read the key from the environment.
+  for (const entry of [validate, doctor, approvals])
+    assert.equal(entry.key, 'sk-test');
+  // The Gateway, whose environment every host command inherits, and its ACP
+  // server do not have it; the launch config carries it instead.
+  assert.equal(gateway.key, null);
+  assert.equal(acp.key, null);
+  assert.equal(gateway.config.models.providers.litellm.apiKey, 'sk-test');
+});
+
+test('inlineEnvSecrets resolves only env references the environment holds', () => {
+  const env = { PATH: '/bin', MODEL_KEY: 'k1', OTHER: 'k2' };
+  const { config, used } = inlineEnvSecrets(
+    {
+      models: {
+        providers: {
+          a: {
+            apiKey: { source: 'env', provider: 'default', id: 'MODEL_KEY' },
+          },
+          b: { apiKey: { source: 'env', id: 'MISSING' } },
+          c: { apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' } },
+          d: { headers: [{ source: 'env', id: 'OTHER' }] },
+        },
+      },
+      // Not a reference: it has a field of its own.
+      tools: { source: 'env', id: 'OTHER', profile: 'coding' },
+      path: { source: 'env', id: 'PATH' },
+    },
+    env,
+  );
+  assert.deepEqual(config, {
+    models: {
+      providers: {
+        a: { apiKey: 'k1' },
+        b: { apiKey: { source: 'env', id: 'MISSING' } },
+        c: { apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' } },
+        d: { headers: ['k2'] },
+      },
+    },
+    tools: { source: 'env', id: 'OTHER', profile: 'coding' },
+    path: { source: 'env', id: 'PATH' },
+  });
+  assert.deepEqual([...used].sort(), ['MODEL_KEY', 'OTHER']);
+});
+
 test('the outer deadline stops an OpenClaw turn and its Gateway', async () => {
   const { env, deps, openclawLog } = await fixture({
     acp: { hang: true },
@@ -1010,6 +1109,7 @@ const harnessFixture = (behaviour = {}, overrides = {}) =>
       ...overrides.brief,
     }),
     env: overrides.env,
+    auth: overrides.auth,
     acp: behaviour,
   });
 
@@ -1317,6 +1417,50 @@ test('readBrief names the harness and mode, defaulting to OpenClaw', () => {
       /no agent definition/,
     );
   }
+});
+
+test('a harness that asks to be signed in is signed in with the method the image names', async () => {
+  const needsAuth = { ...CLEAN_TURN, needsAuth: true };
+  const run = async (behaviour, overrides) => {
+    const made = await harnessFixture(behaviour, overrides);
+    const result = await main(made.env, made.deps);
+    return { result, log: await made.harnessLog() };
+  };
+  const methods = ['api-key', 'chat-gpt'];
+  // The image's method, offered: sign in once, then the session opens.
+  const signedIn = await run(
+    { ...needsAuth, authMethods: methods },
+    { auth: 'api-key' },
+  );
+  assert.equal(signedIn.result.outcome, 'report');
+  assert.deepEqual(
+    signedIn.log.map((entry) => Object.keys(entry)[0]),
+    ['initialize', 'session', 'authenticate', 'session', 'prompt'],
+  );
+  assert.equal(signedIn.log[2].authenticate, 'api-key');
+  // No method named for the harness, or not the one it offers: never an
+  // interactive sign-in, and nothing is prompted.
+  for (const [behaviour, overrides] of [
+    [{ ...needsAuth, authMethods: methods }, {}],
+    [{ ...needsAuth, authMethods: ['chat-gpt'] }, { auth: 'api-key' }],
+  ]) {
+    const refused = await run(behaviour, overrides);
+    assert.deepEqual(refused.result, {
+      outcome: 'runner-failed',
+      message: 'Claw turn failed: Authentication required.',
+    });
+    assert.ok(!refused.log.some((entry) => entry.authenticate || entry.prompt));
+  }
+  // The sign-in itself failing (no key on the runtime) names the cause.
+  const noKey = await run(
+    { ...needsAuth, authMethods: methods, refuseAuth: true },
+    { auth: 'api-key' },
+  );
+  assert.equal(
+    noKey.result.message,
+    'Claw turn failed: CODEX_API_KEY or OPENAI_API_KEY is not set.',
+  );
+  assert.ok(!noKey.log.some((entry) => entry.prompt));
 });
 
 test("the manifest's session mode is selected before the prompt, or nothing runs", async () => {

@@ -64,20 +64,30 @@ const RESERVED_ENV =
 
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
-// an environment when it needs more than the zone's, and a `finish` that
+// an environment when it needs more than the zone's, the `auth` method to
+// sign in with when the harness asks for one, and a `finish` that
 // stops anything it started and names any reason to refuse the turn's
 // result. A manifest names a harness; the command comes from
 // the image, never from the definition, so reviewed source cannot choose the
 // program that speaks for the agent.
 const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
-const adapter = (path) => () => ({ command: process.execPath, args: [path] });
+const adapter = (path, more) => () => ({
+  command: process.execPath,
+  args: [path],
+  ...more,
+});
 export const HARNESSES = Object.freeze({
   // OpenClaw's own ACP server, bridged to a Gateway this Job owns.
   openclaw: openclawHarness,
   claude: adapter(`${ACP_MODULES}/claude-agent-acp/dist/index.js`),
-  codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`),
+  // Codex opens a session with an API key from the environment only once
+  // the client has chosen that sign-in; its other method is interactive.
+  codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`, {
+    auth: 'api-key',
+  }),
 });
 const ACP_PROTOCOL_VERSION = 1;
+const ACP_AUTH_REQUIRED = -32000;
 const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
@@ -297,7 +307,7 @@ export function settle(
 export function acpTurn(
   command,
   args,
-  { env, cwd, message, mode, signal } = {},
+  { env, cwd, message, mode, auth, signal } = {},
 ) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -418,8 +428,11 @@ export function acpTurn(
         pending.delete(incoming.id);
         if (incoming.error)
           waiter.refuse(
-            new ClawFailure(
-              String(incoming.error.message ?? 'harness error').slice(0, 500),
+            Object.assign(
+              new ClawFailure(
+                String(incoming.error.message ?? 'harness error').slice(0, 500),
+              ),
+              { code: incoming.error.code },
             ),
           );
         else waiter.answer(incoming.result ?? {});
@@ -489,7 +502,22 @@ export function acpTurn(
         throw new ClawFailure(
           `harness speaks ACP protocol ${initialized.protocolVersion}`,
         );
-      const session = await request('session/new', { cwd, mcpServers: [] });
+      const open = () => request('session/new', { cwd, mcpServers: [] });
+      // A harness that wants signing in first says so (ACP's auth_required).
+      // The image names the one unattended method it has for that harness;
+      // with it the launcher signs in once and opens the session again.
+      const session = await open().catch(async (error) => {
+        const offered = initialized.authMethods;
+        if (
+          error.code !== ACP_AUTH_REQUIRED ||
+          auth === undefined ||
+          !Array.isArray(offered) ||
+          !offered.some((method) => method?.id === auth)
+        )
+          throw error;
+        await request('authenticate', { methodId: auth });
+        return open();
+      });
       // The manifest's mode is the agent's reviewed permission policy: a
       // harness that does not offer it, or will not switch to it, runs
       // nothing.
@@ -616,6 +644,7 @@ async function harnessTurn({
       cwd: workspace,
       message: request.message,
       mode: request.mode,
+      auth: harness.auth,
       signal,
     });
     // The turn is awaited after the heartbeat; a spawn failure in between

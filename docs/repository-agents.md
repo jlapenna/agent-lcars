@@ -104,8 +104,13 @@ costs one attempt.
 - **Credentials.** A harness signs in with the environment its runtime exports
   from `env/` Secret items: the model key its `config.json` names for
   `openclaw`, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` for `claude`,
-  `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. A runtime without one fails
-  the attempt with the harness's `Authentication required`. The default
+  `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. Codex opens a session with
+  a key only once its client chooses that sign-in, so the launcher signs in
+  with Codex's `api-key` method when Codex asks. A runtime without a login
+  fails the attempt, naming the missing key or `Authentication required`.
+  For OpenClaw, a credential its config names as an `env` SecretRef is
+  written into the launch config and left out of the Gateway's environment,
+  so a command the agent is allowed to run does not inherit the model key. The default
   runtime holds only a model key, so a `claude` or `codex` agent names a
   profile whose runtime carries its harness's login and lists the harness
   ([profiles](#profiles)).
@@ -116,7 +121,8 @@ costs one attempt.
   `requireToolEvidence` needs at least one tool call. OpenClaw's ACP server
   ends a turn its Gateway failed like any other, even after part of an answer
   has streamed, so the launcher also reads the Gateway's own log and fails
-  the attempt when it recorded the turn as failed. Codex's adapter
+  the attempt when it recorded the message's outcome as an error. A model
+  attempt that failed before a fallback answered is not one. Codex's adapter
   sometimes leaves a command its sandbox blocked at once out of the session
   (3 of 8 runs on 2.1.1), so that failure can go unseen; a Codex agent whose
   answer must rest on a tool sets
