@@ -18,17 +18,19 @@ import {
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
+  promptText,
   readBrief,
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
 import {
   bundledPluginProviders,
+  bundledProviderAuthEnv,
   comparableConfig,
   doctorChanges,
-  inlineEnvSecrets,
   launchConfig,
   resolveCommand,
+  resolveCredentials,
   turnConfig,
 } from './openclaw-harness.mjs';
 
@@ -140,6 +142,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     }
     for (const step of behaviour.steps ?? []) {
       if (step.say) say(step.say, step.id);
+      if (step.notice) update('notice', { severity: 'info', title: step.notice });
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
       if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: step.options ?? [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
     }
@@ -305,6 +308,7 @@ async function fixture(overrides = {}) {
           command: process.execPath,
           args: [harness],
           ...(overrides.auth ? { auth: overrides.auth } : {}),
+          ...(overrides.defaultMode ? { mode: overrides.defaultMode } : {}),
         }),
       },
     },
@@ -377,6 +381,8 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     config.gateway.auth.token,
   );
   assert.ok(acp.includes('--no-prefix-cwd'));
+  // Nobody may give this Gateway commands: a `/word` in a message is text.
+  assert.deepEqual(config.commands, { allowFrom: { '*': [] } });
   const [initialize, session] = await harnessLog();
   assert.equal(initialize.token, null);
   assert.equal(session.session.cwd, workspace);
@@ -755,39 +761,120 @@ test('a model credential the config names stays out of what host commands inheri
   assert.equal(gateway.config.models.providers.litellm.apiKey, 'sk-test');
 });
 
-test('inlineEnvSecrets resolves only env references the environment holds', () => {
-  const env = { PATH: '/bin', MODEL_KEY: 'k1', OTHER: 'k2' };
-  const { config, used } = inlineEnvSecrets(
+test('resolveCredentials resolves what the config names and what providers read', () => {
+  const env = {
+    PATH: '/bin',
+    MODEL_KEY: 'k1',
+    LITELLM_API_KEY: 'k2',
+    OPENAI_API_KEY: 'k3',
+    ZONE_SETTING: 'visible',
+  };
+  const providerAuthEnv = new Map([
+    ['LITELLM_API_KEY', new Set(['litellm'])],
+    ['OPENAI_API_KEY', new Set(['openai'])],
+    ['ANTHROPIC_API_KEY', new Set(['anthropic'])],
+  ]);
+  const template = (name) => '$' + `{${name}}`;
+  const { config, used } = resolveCredentials(
     {
       models: {
         providers: {
-          a: {
+          // Named by reference, and again in a header template.
+          custom: {
             apiKey: { source: 'env', provider: 'default', id: 'MODEL_KEY' },
+            headers: {
+              'x-key': `Bearer ${template('MODEL_KEY')}`,
+              literal: `$${template('MODEL_KEY')}`,
+            },
           },
-          b: { apiKey: { source: 'env', id: 'MISSING' } },
-          c: { apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' } },
-          d: { headers: [{ source: 'env', id: 'OTHER' }] },
+          // Not named at all: the key OpenClaw would have found by itself.
+          LiteLLM: { baseUrl: 'https://llm.test' },
+          other: {
+            apiKey: { source: 'env', id: 'MISSING' },
+            // Not a credential: OpenClaw resolves it, and tools keep it.
+            baseUrl: template('ZONE_SETTING'),
+          },
+          vault: {
+            apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' },
+          },
         },
       },
       // Not a reference: it has a field of its own.
-      tools: { source: 'env', id: 'OTHER', profile: 'coding' },
+      tools: { source: 'env', id: 'MODEL_KEY', profile: 'coding' },
       path: { source: 'env', id: 'PATH' },
     },
     env,
+    providerAuthEnv,
   );
   assert.deepEqual(config, {
     models: {
       providers: {
-        a: { apiKey: 'k1' },
-        b: { apiKey: { source: 'env', id: 'MISSING' } },
-        c: { apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' } },
-        d: { headers: ['k2'] },
+        custom: {
+          apiKey: 'k1',
+          headers: {
+            'x-key': 'Bearer k1',
+            literal: `$${template('MODEL_KEY')}`,
+          },
+        },
+        LiteLLM: { baseUrl: 'https://llm.test', apiKey: 'k2' },
+        other: {
+          apiKey: { source: 'env', id: 'MISSING' },
+          baseUrl: template('ZONE_SETTING'),
+        },
+        vault: {
+          apiKey: { source: 'file', provider: 'vault', id: 'MODEL_KEY' },
+        },
       },
     },
-    tools: { source: 'env', id: 'OTHER', profile: 'coding' },
+    tools: { source: 'env', id: 'MODEL_KEY', profile: 'coding' },
     path: { source: 'env', id: 'PATH' },
   });
-  assert.deepEqual([...used].sort(), ['MODEL_KEY', 'OTHER']);
+  // Every credential the environment holds is withheld from the Gateway,
+  // including one no declared provider reads; nothing else is.
+  assert.deepEqual([...used].sort(), [
+    'LITELLM_API_KEY',
+    'MODEL_KEY',
+    'OPENAI_API_KEY',
+  ]);
+});
+
+test('provider credential names come from the bundled plugin manifests', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claw-auth-env-'));
+  const bin = join(root, 'openclaw.mjs');
+  await writeFile(bin, '');
+  for (const manifest of [
+    {
+      id: 'litellm',
+      setup: { providers: [{ id: 'litellm', envVars: ['LITELLM_API_KEY'] }] },
+    },
+    {
+      id: 'openai',
+      setup: {
+        providers: [
+          { id: 'openai', envVars: ['OPENAI_API_KEY'] },
+          { id: 'openai-codex', envVars: ['OPENAI_API_KEY'] },
+        ],
+      },
+      providerUsageAuthEnvVars: { openai: ['OPENAI_ADMIN_KEY'] },
+    },
+    { id: 'browser' },
+  ]) {
+    await mkdir(join(root, 'dist', 'extensions', manifest.id), {
+      recursive: true,
+    });
+    await writeFile(
+      join(root, 'dist', 'extensions', manifest.id, 'openclaw.plugin.json'),
+      JSON.stringify(manifest),
+    );
+  }
+  assert.deepEqual(
+    await bundledProviderAuthEnv(bin),
+    new Map([
+      ['LITELLM_API_KEY', new Set(['litellm'])],
+      ['OPENAI_API_KEY', new Set(['openai', 'openai-codex'])],
+      ['OPENAI_ADMIN_KEY', new Set(['openai'])],
+    ]),
+  );
 });
 
 test('the outer deadline stops an OpenClaw turn and its Gateway', async () => {
@@ -852,6 +939,8 @@ test('launchConfig runs the reviewed config under headless defaults and this run
     },
     skills: { load: { watch: false } },
     logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
+    diagnostics: { enabled: true },
+    commands: { allowFrom: { '*': [] } },
     gateway,
   });
   const launched = launchConfig(
@@ -870,6 +959,7 @@ test('launchConfig runs the reviewed config under headless defaults and this run
       tools: { profile: 'minimal', fs: { workspaceOnly: false } },
       session: { store: '/repo/sessions', scope: 'per-sender' },
       logging: { consoleLevel: 'silent', consoleStyle: 'json', level: 'debug' },
+      diagnostics: { enabled: false, flags: ['x'] },
       gateway: {
         bind: 'lan',
         auth: { mode: 'none', allowTailscale: true },
@@ -909,6 +999,8 @@ test('launchConfig runs the reviewed config under headless defaults and this run
     consoleStyle: 'pretty',
     level: 'debug',
   });
+  // Nor can a definition switch off the log a failed turn is read from.
+  assert.deepEqual(launched.diagnostics, { enabled: true, flags: ['x'] });
 });
 
 test('readBrief requires this run and a non-empty agent message', () => {
@@ -1110,6 +1202,7 @@ const harnessFixture = (behaviour = {}, overrides = {}) =>
     }),
     env: overrides.env,
     auth: overrides.auth,
+    defaultMode: overrides.defaultMode,
     acp: behaviour,
   });
 
@@ -1152,6 +1245,7 @@ test('an ACP harness runs the agent and reports its last message after the last 
   assert.deepEqual(initialize.initialize.clientCapabilities, {
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
+    session: { notices: {} },
   });
   assert.deepEqual(session.session, {
     cwd: join(env.CLAW_WORK_DIR, 'workspace'),
@@ -1417,6 +1511,55 @@ test('readBrief names the harness and mode, defaulting to OpenClaw', () => {
       /no agent definition/,
     );
   }
+});
+
+test('a message that begins with a slash reaches the agent as text, not as a command', async () => {
+  const sent = async (message) => {
+    const made = await fixture({ brief: agentBrief(agentFiles, { message }) });
+    await main(made.env, made.deps);
+    return (await made.harnessLog()).find((entry) => entry.prompt).prompt;
+  };
+  const lead = 'The message below is the request itself, not a command.';
+  for (const message of ['/help', '  /status check the disk'])
+    assert.deepEqual(await sent(message), [
+      { type: 'text', text: `${lead}\n\n${message}` },
+    ]);
+  // Any other message is sent exactly as it is.
+  assert.equal(
+    promptText('Check /var/log for errors.'),
+    'Check /var/log for errors.',
+  );
+});
+
+test("a harness's own remarks on the turn never replace the answer", async () => {
+  const { env, deps } = await harnessFixture({
+    steps: [
+      { say: 'Disk at 41%.', id: 'm1' },
+      // A typed notice, and the same kind of remark sent as message text by
+      // a harness that has no notices: neither is the agent's answer.
+      { notice: 'Fast mode turned off' },
+      { say: '**Notice** Fast mode turned off.' },
+    ],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'report',
+    message: 'Disk at 41%.',
+  });
+});
+
+test('the image sets the session mode of a harness whose own default is too loose', async () => {
+  const modes = ['agent', 'workspace-write', 'read-only'];
+  const selected = async (mode) => {
+    const made = await harnessFixture(
+      { ...CLEAN_TURN, modes },
+      { defaultMode: 'workspace-write', brief: mode ? { mode } : {} },
+    );
+    assert.equal((await main(made.env, made.deps)).outcome, 'report');
+    return (await made.harnessLog()).find((entry) => entry.mode).mode;
+  };
+  // The image's choice unless the manifest names one.
+  assert.equal(await selected(undefined), 'workspace-write');
+  assert.equal(await selected('read-only'), 'read-only');
 });
 
 test('a harness that asks to be signed in is signed in with the method the image names', async () => {

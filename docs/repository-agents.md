@@ -85,8 +85,11 @@ costs one attempt.
   - Codex runs commands in its own sandbox, and its adapter sets that sandbox
     and approval policy from the session's mode on every turn, overriding
     `sandbox_mode` and `approval_policy` in `home/.codex/config.toml`. The
-    adapter's default mode, `agent`, writes inside the workspace unasked and
-    blocks writes elsewhere and the network.
+    adapter's own default, `agent`, lets Codex approve some escalations
+    itself, outside the sandbox and without asking. The launcher therefore
+    runs Codex in `workspace-write` unless the manifest names a mode: Codex
+    writes inside the workspace and its temporary directories unasked, and
+    asks before anything else, which the launcher refuses.
 
   `mode` in the manifest selects the harness's ACP session mode before the
   prompt, so it is where a definition states a policy the harness enforces
@@ -108,11 +111,15 @@ costs one attempt.
   a key only once its client chooses that sign-in, so the launcher signs in
   with Codex's `api-key` method when Codex asks. A runtime without a login
   fails the attempt, naming the missing key or `Authentication required`.
-  For OpenClaw, a credential its config names as an `env` SecretRef is
-  written into the launch config and left out of the Gateway's environment,
-  so a command the agent is allowed to run does not inherit the model key.
-  That file is readable by the agent's user, so this keeps the key out of a
-  command's output, not out of an agent's reach. The default runtime holds
+  For OpenClaw, provider credentials are resolved into the launch config and
+  left out of the Gateway's environment, so a command the agent is allowed to
+  run does not inherit the model key. That covers a variable the config names
+  as an `env` SecretRef or in a `${NAME}` template, and a key a declared
+  provider would have found in the environment by itself. A provider that is
+  not declared under `models.providers` and relied on finding its key in the
+  environment no longer authenticates; declare it. The launch config is
+  readable by the agent's user, so this keeps the key out of a command's
+  output, not out of an agent's reach. The default runtime holds
   only a model key, so a `claude` or `codex` agent names a profile whose
   runtime carries its harness's login and lists the harness
   ([profiles](#profiles)).
@@ -154,7 +161,9 @@ covers every path, mode and content.
 ## A run
 
 A run takes one `message`, free text that becomes the agent's brief, and
-returns the agent's final report. LCARS imposes no shape on either. An agent
+returns the agent's final report. A message that begins with `/` is the
+agent's to read like any other: no harness treats it as one of its own
+commands. LCARS imposes no shape on either. An agent
 that wants structure says so in its own `AGENTS.md`.
 
 Typed inputs and results can be added later, as optional manifest declarations,
@@ -210,8 +219,8 @@ another's credentials gets its own profile.
     definition and the message. LCARS reads each file from GitHub by its blob
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
-  - A round that names a harness or a mode carries its files in the brief as
-    `definition`, not `files`. A launcher from before harnesses reads only
+  - A round that names a harness or a mode, or whose definition has `home/`
+    files, carries its files in the brief as `definition`, not `files`. A launcher from before harnesses reads only
     `files`, so on an image that predates them (or after a rollback to one)
     the attempt fails instead of running the agent on OpenClaw under a policy
     its definition never asked for.
@@ -301,6 +310,22 @@ agent round admitted through the generic route.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
+
+Rolling the Console back to a version from before harnesses:
+
+1. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`
+   first. The earlier Console validates profiles at startup with a strict
+   schema and does not start with a field it does not know.
+2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
+   earlier Console cannot read such a round, so it can neither deliver its
+   brief nor retry it. Rounds of OpenClaw agents with neither are unaffected.
+3. Agents whose manifest names `harness` or `mode` show as invalid in the
+   earlier catalog (an unknown manifest field) and admit nothing until the
+   Console is rolled forward again.
+
+Rolling the claw image back needs no step: a round that needs the newer
+launcher is delivered in a shape the earlier one refuses, so the attempt
+fails instead of running on OpenClaw.
 
 Acceptance:
 

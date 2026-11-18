@@ -78,11 +78,16 @@ Each step fails the attempt closed with a `runner-failed` completion:
    zone's `env/` Secret items and nothing of the launcher's. The command
    always comes from the image.
 4. It speaks ACP over the harness's stdio: `initialize` (protocol 1, no file
-   system or terminal capability), `session/new` in the workspace (after
+   system or terminal capability, notices accepted so a harness's own
+   remarks do not arrive as answer text), `session/new` in the workspace (after
    `authenticate`, when the harness asks to be signed in and the image names
    an unattended method for it: Codex's `api-key`),
-   `session/set_mode` when the manifest names a mode (a harness that does not
-   offer it runs nothing), and one `session/prompt` carrying the message. It answers every
+   `session/set_mode` when the manifest names a mode or the image sets one
+   for the harness (`workspace-write` for Codex; a harness that does not
+   offer the mode runs nothing), and one `session/prompt` carrying the
+   message. Every harness reads a prompt that begins with `/` as one of its
+   own commands, so a message that begins that way is sent after one line
+   saying it is the request itself; any other message is sent as it is. It answers every
    `session/request_permission` with the reject option, so the agent can do
    only what its harness does without asking.
 5. It settles from the session's updates: `report` only when the turn ended
@@ -127,12 +132,18 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    only this Job knows. Every agent works in `/work/workspace`, replacing any
    path the source names, and is not bootstrapped. The Gateway block is the
    Job's alone: loopback, a random token, no Tailscale, config reload off. A
-   definition cannot open the Gateway or drop its token. A credential the
-   config names as an `env` SecretRef (the model key) is written into the
-   launch config and left out of the Gateway's environment: `agent exec` kept
-   provider credentials out of what a host command inherits, and a Gateway
-   has no such scope. A key OpenClaw picks up from the environment without
-   the config naming it is still inherited.
+   definition cannot open the Gateway or drop its token. Nobody is authorized
+   to give the Gateway commands (`commands.allowFrom` is empty), so a `/word`
+   inside a message stays text for the agent. Provider
+   credentials are resolved into the launch config and left out of the
+   Gateway's environment (`resolveCredentials`): `agent exec` kept them out
+   of what a host command inherits, and a Gateway has no such scope. A
+   credential is a variable the config names as an `env` SecretRef, or one
+   the image's plugin manifests say a provider reads. Every SecretRef and
+   `${NAME}` template for it is resolved, and a key the config never
+   mentions becomes the `apiKey` of a declared provider that reads it. A
+   provider that is not declared in the config and relied on the environment
+   no longer finds its key.
 6. `openclaw gateway run`, waited on until it logs `[gateway] ready`. It
    serves this one turn: channels, cron, the Gmail watcher, the canvas host,
    the browser control server and the startup model prewarm are all switched
@@ -144,7 +155,8 @@ OpenClaw's ACP server ends a turn the Gateway failed like any other
 (`end_turn`), even after part of an answer has streamed. The Gateway does log
 the message's outcome (`[diagnostic] message processed: … outcome=error`), so
 the launcher stops the Gateway after the turn, reads its log to the end and
-fails the attempt when it finds one. A model attempt that failed before a
+fails the attempt when it finds one. The launch config keeps diagnostics on
+whatever the definition says, because that line is a diagnostic. A model attempt that failed before a
 fallback answered is logged as a `lane task error` and is not a failed turn.
 This reads log text, so a new OpenClaw version needs that wording checked.
 
@@ -152,11 +164,12 @@ After the turn the launcher also refuses the result if the Gateway's config
 or token file is no longer what it launched. Exec approvals live in OpenClaw's
 state database and are not covered by that check.
 
-Exec approvals stay the enforcement layer: a denied command is a failed tool
-call in the session and fails the attempt. A turn that fails inside the
-Gateway (a model endpoint that is down, for example) ends with no text, which
-is a failed attempt. The Gateway and its token belong to the same UID as the
-agent's tools, like everything else in the pod (below).
+Exec approvals stay the enforcement layer. A denied command is a failed tool
+call in the session, and it fails the attempt unless a later call, started
+after it, completed (step 5 of the launch sequence). A turn the Gateway
+recorded as failed is a failed attempt whether or not text had streamed, and
+so is a turn that ends with no text. The Gateway and its token belong to the
+same UID as the agent's tools, like everything else in the pod (above).
 
 ### Claude Code and Codex
 

@@ -65,7 +65,8 @@ const RESERVED_ENV =
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
 // an environment when it needs more than the zone's, the `auth` method to
-// sign in with when the harness asks for one, and a `finish` that
+// sign in with when the harness asks for one, the session `mode` to use when
+// the manifest names none, and a `finish` that
 // stops anything it started and names any reason to refuse the turn's
 // result. A manifest names a harness; the command comes from
 // the image, never from the definition, so reviewed source cannot choose the
@@ -82,11 +83,24 @@ export const HARNESSES = Object.freeze({
   claude: adapter(`${ACP_MODULES}/claude-agent-acp/dist/index.js`),
   // Codex opens a session with an API key from the environment only once
   // the client has chosen that sign-in; its other method is interactive.
+  // Its own default mode, `agent`, lets Codex approve some escalations
+  // itself, outside its sandbox and without asking the client. Unless the
+  // manifest names a mode, the turn runs in `workspace-write`, where every
+  // approval is asked of the launcher, which refuses it.
   codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`, {
     auth: 'api-key',
+    mode: 'workspace-write',
   }),
 });
 const ACP_PROTOCOL_VERSION = 1;
+// Every harness reads a prompt that begins with `/` as one of its own
+// commands (OpenClaw's Gateway, Claude Code and Codex all do). A Work message
+// is the agent's to read, so one that begins that way follows this line and
+// is no longer the start of the prompt.
+const LITERAL_MESSAGE =
+  'The message below is the request itself, not a command.';
+export const promptText = (message) =>
+  /^\s*\//u.test(message) ? `${LITERAL_MESSAGE}\n\n${message}` : message;
 const ACP_AUTH_REQUIRED = -32000;
 const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
 // How long an ACP harness gets to exit by itself once its turn has ended.
@@ -352,7 +366,10 @@ export function acpTurn(
         typeof update.content?.text === 'string'
       ) {
         // A new message replaces the one before it: the report is the agent's
-        // last message, not a harness notice that preceded it.
+        // last message, not a harness notice that preceded it. Text with no
+        // message id after an identified message is a harness's own remark
+        // on the turn, never the answer.
+        if (update.messageId === undefined && messageId !== undefined) return;
         if (update.messageId !== messageId) startMessage(update.messageId);
         if (turn.final.length + update.content.text.length > MAX_MESSAGE_BYTES)
           turn.overflow = true;
@@ -495,6 +512,10 @@ export function acpTurn(
         clientCapabilities: {
           fs: { readTextFile: false, writeTextFile: false },
           terminal: false,
+          // A harness that has something to say other than the answer sends
+          // it as a `notice`, not as message text (Claude Code does, for a
+          // client that declares this).
+          session: { notices: {} },
         },
         clientInfo: { name: 'lcars-claw-runner', version: '1' },
       });
@@ -535,7 +556,7 @@ export function acpTurn(
       }
       const prompted = await request('session/prompt', {
         sessionId: session.sessionId,
-        prompt: [{ type: 'text', text: message }],
+        prompt: [{ type: 'text', text: promptText(message) }],
       });
       turn.stopReason = prompted.stopReason;
     })()
@@ -643,7 +664,7 @@ async function harnessTurn({
       env: harness.env ?? env,
       cwd: workspace,
       message: request.message,
-      mode: request.mode,
+      mode: request.mode ?? harness.mode,
       auth: harness.auth,
       signal,
     });

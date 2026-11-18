@@ -176,44 +176,71 @@ function nodes(value, prefix = [], out = new Map()) {
 // Which model providers each plugin bundled in this image owns, from its
 // `openclaw.plugin.json` (`providers` and `autoEnableWhenConfiguredProviders`).
 // The manifests ship in the image, so a repository cannot widen this map.
-export async function bundledPluginProviders(
-  openclaw,
-  path = process.env.PATH,
-) {
+// The `openclaw.plugin.json` of every plugin bundled in this image. The
+// manifests ship in the image, so a repository cannot change what they say.
+async function bundledManifests(openclaw, path = process.env.PATH) {
   const extensions = join(
     dirname(await realpath(await resolveCommand(openclaw, path))),
     'dist',
     'extensions',
   );
-  const owners = new Map();
   let entries;
   try {
     entries = await readdir(extensions, { withFileTypes: true });
   } catch (error) {
-    if (error.code === 'ENOENT') return owners;
+    if (error.code === 'ENOENT') return [];
     throw error;
   }
+  const manifests = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    let manifest;
     try {
-      manifest = JSON.parse(
+      const manifest = JSON.parse(
         await readFile(
           join(extensions, entry.name, 'openclaw.plugin.json'),
           'utf8',
         ),
       );
+      manifests.push({ ...manifest, id: manifest.id ?? entry.name });
     } catch (error) {
-      if (error.code === 'ENOENT') continue;
-      throw error;
+      if (error.code !== 'ENOENT') throw error;
     }
+  }
+  return manifests;
+}
+
+export async function bundledPluginProviders(openclaw, path) {
+  const owners = new Map();
+  for (const manifest of await bundledManifests(openclaw, path)) {
     const provides = [
       ...(manifest.providers ?? []),
       ...(manifest.autoEnableWhenConfiguredProviders ?? []),
     ].filter((provider) => typeof provider === 'string');
-    owners.set(manifest.id ?? entry.name, new Set(provides));
+    owners.set(manifest.id, new Set(provides));
   }
   return owners;
+}
+
+// The environment variables OpenClaw treats as provider credentials, each
+// with the providers that read it, from the bundled plugins' own manifests
+// (`setup.providers[].envVars`, `providerUsageAuthEnvVars`). These are the
+// names `agent exec` kept out of what a host command inherits.
+export async function bundledProviderAuthEnv(openclaw, path) {
+  const names = new Map();
+  const add = (name, provider) => {
+    if (typeof name !== 'string' || typeof provider !== 'string') return;
+    if (!names.has(name)) names.set(name, new Set());
+    names.get(name).add(provider.trim().toLowerCase());
+  };
+  for (const manifest of await bundledManifests(openclaw, path)) {
+    for (const provider of manifest.setup?.providers ?? [])
+      for (const name of provider?.envVars ?? []) add(name, provider.id);
+    for (const [provider, vars] of Object.entries(
+      manifest.providerUsageAuthEnvVars ?? {},
+    ))
+      for (const name of Array.isArray(vars) ? vars : []) add(name, provider);
+  }
+  return names;
 }
 
 function sortKeys(value) {
@@ -288,33 +315,77 @@ function freePort() {
 
 // OpenClaw hands a host command the Gateway's environment. `agent exec` kept
 // provider credentials out of what a command inherits; a Gateway has no such
-// scope. So each credential the config asks for by name (an `env` SecretRef)
-// is written into the launch config instead, and its variable is left out of
-// the Gateway's environment: the model still authenticates and an approved
-// command does not receive the key. Returns the config and the names used.
-export function inlineEnvSecrets(config, env) {
-  const used = new Set();
-  const reference = (value) =>
+// scope. So the credentials are resolved here, into the launch config, and
+// their variables are left out of the Gateway's environment: the model still
+// authenticates and an approved command does not inherit the key.
+//
+// A variable is treated as a credential when the config names it as an `env`
+// SecretRef, or when the image's plugins say a provider reads it
+// (`providerAuthEnv`). For each one the environment holds:
+// - every `env` SecretRef to it and every `${NAME}` in a config string is
+//   replaced by its value, as OpenClaw would resolve them;
+// - a provider credential the config never mentions is the key OpenClaw
+//   would have picked up by itself, so it becomes the `apiKey` of a declared
+//   provider that reads it and has none. With no such provider it is simply
+//   withheld, as it was from host commands before.
+// Returns the config and the names withheld from the Gateway.
+export function resolveCredentials(config, env, providerAuthEnv = new Map()) {
+  const held = (name) => typeof env[name] === 'string' && !KEPT_ENV.has(name);
+  const isReference = (value) =>
     value.source === 'env' &&
     typeof value.id === 'string' &&
-    typeof env[value.id] === 'string' &&
-    !KEPT_ENV.has(value.id) &&
     Object.keys(value).every((key) => SECRET_REF_KEYS.has(key));
-  const walk = (value) => {
-    if (Array.isArray(value)) return value.map(walk);
+  const withheld = new Set(
+    [...providerAuthEnv.keys()].filter((name) => held(name)),
+  );
+  const collect = (value) => {
+    if (Array.isArray(value)) value.forEach(collect);
+    else if (value && typeof value === 'object') {
+      if (isReference(value)) {
+        if (held(value.id)) withheld.add(value.id);
+      } else Object.values(value).forEach(collect);
+    }
+  };
+  collect(config);
+  const mentioned = new Set();
+  const resolve = (value) => {
+    if (typeof value === 'string')
+      return value.replace(ENV_TEMPLATE, (text, name) => {
+        if (!withheld.has(name)) return text;
+        mentioned.add(name);
+        return env[name];
+      });
+    if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
-    if (reference(value)) {
-      used.add(value.id);
+    if (isReference(value) && withheld.has(value.id)) {
+      mentioned.add(value.id);
       return env[value.id];
     }
     return Object.fromEntries(
-      Object.entries(value).map(([key, child]) => [key, walk(child)]),
+      Object.entries(value).map(([key, child]) => [key, resolve(child)]),
     );
   };
-  return { config: walk(config), used };
+  const resolved = resolve(config);
+  const providers = resolved.models?.providers;
+  for (const name of withheld) {
+    if (mentioned.has(name) || !providers) continue;
+    const readers = providerAuthEnv.get(name) ?? new Set();
+    for (const [id, provider] of Object.entries(providers))
+      if (
+        readers.has(id.trim().toLowerCase()) &&
+        provider &&
+        typeof provider === 'object' &&
+        provider.apiKey === undefined
+      )
+        providers[id] = { ...provider, apiKey: env[name] };
+  }
+  return { config: resolved, used: withheld };
 }
 const SECRET_REF_KEYS = new Set(['source', 'provider', 'id']);
 const KEPT_ENV = new Set(['PATH', 'HOME', 'LANG']);
+// `${NAME}` as OpenClaw substitutes it in config strings; `$${NAME}` is its
+// escape for the literal text.
+const ENV_TEMPLATE = /(?<!\$)\$\{([A-Z_][A-Z0-9_]*)\}/gu;
 
 // `over` wins over `under`; plain objects merge key by key.
 function mergeDeep(under, over) {
@@ -349,7 +420,7 @@ const TURN_DEFAULTS = Object.freeze({
 //   Agent state stays under the Job's state directory.
 // - The Gateway block is this Job's alone, so a definition cannot open the
 //   Gateway, drop its token or expose it.
-// - Console logging keeps the form startGateway reads.
+// - Console logging and diagnostics keep the form startGateway reads.
 export function launchConfig(config, { workspace, port, token }) {
   const { session, gateway: _gateway, ...root } = config;
   const { store: _store, ...sessionWithoutStore } = session ?? {};
@@ -378,6 +449,14 @@ export function launchConfig(config, { workspace, port, token }) {
     agents: { defaults: { workspace, skipBootstrap: true } },
     skills: { load: { watch: false } },
     logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
+    // The Gateway's diagnostic log is the only record that a turn failed
+    // (TURN_FAILED), so a definition cannot switch it off.
+    diagnostics: { enabled: true },
+    // Nobody is authorized to give the Gateway commands or directives, so a
+    // `/word` inside a message stays text for the agent, as it was under
+    // `agent exec`. (A message that begins with one is handled by the
+    // launcher: promptText.)
+    commands: { allowFrom: { '*': [] } },
     gateway: {
       mode: 'local',
       bind: 'loopback',
@@ -477,9 +556,10 @@ export async function prepareState({
     port: await freePort(),
     token: randomBytes(32).toString('hex'),
   };
-  const { config: resolved, used } = inlineEnvSecrets(
+  const { config: resolved, used } = resolveCredentials(
     turnConfig(source, normalized),
     env,
+    await bundledProviderAuthEnv(openclaw, childEnv.PATH),
   );
   const launched = launchConfig(resolved, { workspace, ...gateway });
   await write(launched);
@@ -622,7 +702,7 @@ export async function openclawHarness({
       '--token-file',
       tokenFile,
       // The agent's working directory is its configured workspace; the
-      // prompt carries exactly the message.
+      // prompt carries exactly what the launcher sends.
       '--no-prefix-cwd',
     ],
     env: turnEnv,

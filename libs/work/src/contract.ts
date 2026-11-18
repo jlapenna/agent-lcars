@@ -1286,10 +1286,11 @@ const agentBriefFields = {
  * agent's brief. The launcher materializes the files (base64 content, git
  * mode) and verifies `digest` before running the agent.
  *
- * A round that names a harness or a mode carries its files as `definition`.
- * A launcher from before harnesses reads only `files`, so it refuses such a
- * brief instead of running the agent on OpenClaw under a policy its
- * definition never asked for. */
+ * A round that names a harness or a mode, or whose definition carries
+ * `home/` settings, carries its files as `definition`. A launcher from
+ * before harnesses reads only `files`, so it refuses such a brief instead of
+ * running the agent on OpenClaw under a policy its definition never asked
+ * for. */
 export const agentRunBriefSchema = z.union([
   z.strictObject({
     ...agentBriefFields,

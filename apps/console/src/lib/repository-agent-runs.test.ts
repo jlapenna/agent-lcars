@@ -20,15 +20,19 @@ const files = {
 } as const;
 const sha = (content: string) =>
   createHash('sha1').update(content).digest('hex');
-const pinned = Object.entries(files).map(([path, { content, mode }]) => ({
-  path,
-  mode,
-  sha: sha(content),
-}));
+type Definition = Record<string, { content: string; mode: string }>;
+const pin = (definition: Definition) =>
+  Object.entries(definition).map(([path, { content, mode }]) => ({
+    path,
+    mode: mode as '100644' | '100755',
+    sha: sha(content),
+  }));
+const pinned = pin(files);
 
-function github(requested: string[] = []) {
+function github(requested: string[] = [], definition: Definition = files) {
+  const pinned = pin(definition);
   const blobs = new Map(
-    Object.values(files).map(({ content }) => [sha(content), content]),
+    Object.values(definition).map(({ content }) => [sha(content), content]),
   );
   return vi.fn(async (url: string) => {
     const path = /repos\/owner\/repo\/?(.*)$/u.exec(url)![1]!;
@@ -116,6 +120,23 @@ it('delivers a round that names a harness or a mode in a shape older launchers r
       ]),
     });
   }
+});
+
+it('delivers a definition with home settings in the shape older launchers refuse', async () => {
+  // An older launcher would run this OpenClaw agent without its `home/`.
+  const withHome = {
+    ...files,
+    'home/.config/tool.toml': { content: 'safe = true\n', mode: '100644' },
+  };
+  vi.stubGlobal('fetch', github([], withHome));
+  const brief = await agentRunBrief(round(agentDigest(pin(withHome))), tokens);
+  expect(brief).not.toHaveProperty('files');
+  expect(brief).not.toHaveProperty('harness');
+  expect(brief).toMatchObject({
+    definition: expect.arrayContaining([
+      expect.objectContaining({ path: 'home/.config/tool.toml' }),
+    ]),
+  });
 });
 
 it('runs a harness only on a profile whose runtime carries it', () => {

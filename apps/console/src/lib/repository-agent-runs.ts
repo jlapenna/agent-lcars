@@ -341,11 +341,16 @@ export async function agentRunBrief(
     requireToolEvidence: round.requireToolEvidence,
     message: round.message,
   };
-  // A round that names a harness or a mode needs a launcher that knows
-  // them. Its files go under `definition`, which a launcher from before
-  // harnesses does not read, so that launcher refuses the brief.
-  if (round.harness === undefined && round.mode === undefined)
-    return { ...brief, files: delivered };
+  // A round that names a harness or a mode, or whose definition carries
+  // `home/` settings, needs a launcher that knows them. Its files go under
+  // `definition`, which a launcher from before harnesses does not read, so
+  // that launcher refuses the brief instead of running the agent without
+  // them.
+  const needsHarnessLauncher =
+    round.harness !== undefined ||
+    round.mode !== undefined ||
+    files.some((file) => file.path.startsWith('home/'));
+  if (!needsHarnessLauncher) return { ...brief, files: delivered };
   return {
     ...brief,
     ...(round.harness === undefined ? {} : { harness: round.harness }),
