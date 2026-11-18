@@ -158,7 +158,9 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    Job's alone: loopback, a random token, no Tailscale, config reload off. A
    definition cannot open the Gateway or drop its token. Nobody is authorized
    to give the Gateway commands (`commands.allowFrom` is empty), so a `/word`
-   inside a message stays text for the agent. Provider
+   inside a message stays text for the agent. That map replaces the
+   definition's own: a rule it has for one origin would take precedence in
+   OpenClaw over the rule for every origin. Provider
    credentials are resolved into the launch config and left out of the
    Gateway's environment (`resolveCredentials`): `agent exec` kept them out
    of what a host command inherits, and a Gateway has no such scope. A
