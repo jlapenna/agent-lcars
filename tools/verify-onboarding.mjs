@@ -316,8 +316,37 @@ export async function auditRepository({
         metadataToken,
       ),
     );
+    // PR-only statuses belong to the reviewed head, even after squash merge.
+    const reviewRule = required.find(
+      (rule) =>
+        rule.context === 'LCARS review' && rule.integration_id === 15368,
+    );
+    let reviewStatusObserved = false;
+    if (reviewRule) {
+      const pulls = await optionalMetadataRead(capability, () =>
+        pages(api, `/repos/${repo}/commits/${commit.sha}/pulls`, metadataToken),
+      );
+      const merged = pulls.find(
+        (pr) => pr.merge_commit_sha === commit.sha && pr.merged_at,
+      );
+      if (merged) {
+        const headStatuses = await optionalMetadataRead(capability, () =>
+          pages(
+            api,
+            `/repos/${repo}/commits/${merged.head.sha}/statuses`,
+            metadataToken,
+          ),
+        );
+        reviewStatusObserved = headStatuses.some(
+          (status) =>
+            status.context === reviewRule.context &&
+            status.creator?.login === 'github-actions[bot]',
+        );
+      }
+    }
     const missing = required.filter(
       (rule) =>
+        !(rule === reviewRule && reviewStatusObserved) &&
         !checks.some(
           (check) =>
             check.name === rule.context &&
