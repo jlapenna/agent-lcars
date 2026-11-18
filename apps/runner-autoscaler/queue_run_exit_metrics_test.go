@@ -113,6 +113,9 @@ func TestRunExitStreakCountsFailuresInReportOrder(t *testing.T) {
 	if testutil.ToFloat64(streak) != 0 || testutil.ToFloat64(queueExecutorRunExitsTotal.WithLabelValues("claw-streak-test", "lost")) != 0 {
 		t.Fatal("a declared runtime must start at zero, not absent")
 	}
+	if testutil.ToFloat64(queueExecutorClaimsTotal.WithLabelValues("claw-streak-test")) != 0 || testutil.CollectAndCount(queueExecutorPollsTotal) < 2 {
+		t.Fatal("claims and healthy poll answers must start at zero")
+	}
 	if testutil.ToFloat64(queueExecutorRunExitMetricsSupported) != 1 {
 		t.Fatal("support gauge not set")
 	}

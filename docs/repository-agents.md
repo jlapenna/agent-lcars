@@ -136,19 +136,19 @@ existing metrics endpoints; nothing here adds a scrape target.
 
 - **Catalog:** each maintenance reply carries `repositoryAgents`: agents by
   admission state (enabled, vetoed, invalid, unavailable, removed) and, for
-  up to 100 still-refreshed repositories, the last refresh attempt,
-  successful read, failed read and how many of its stored agents a failed
-  refresh left unavailable (so a read that recovers before its publication
-  does is still visible). Read outcomes cover repository I/O only
-  (a failed manifest read fails the refresh; a storage error after a
-  complete read is not a source failure; a non-file `agent.yaml` is that
-  definition's own error, never fetched) and live in their own
+  up to 100 still-refreshed repositories, the last refresh attempt, the last
+  successful refresh (read and published), the last failed one (reading
+  GitHub or publishing; the Console log names which) and how many stored
+  agents a failed refresh left unavailable. A failed manifest read fails the
+  refresh rather than marking the agent invalid, and a non-file `agent.yaml`
+  is that definition's own error, never fetched. Outcomes live in their own
   `orchestrator-agent-source-health` collection, so the strict source
-  document is unchanged. The shared executor exports it as
-  `lcars_repository_agents*`. A failed observation, or one still pending at
-  the maintenance deadline, is omitted without failing maintenance, and the
-  executor then reports `read_available 0`, never a healthy zero. Agent
-  names, errors and messages never leave the console.
+  document is unchanged. The shared executor exports them as
+  `lcars_repository_agents*` and `lcars_repository_agent_source_*`. An
+  observation that fails, is late for the maintenance deadline, is invalid
+  on the wire or would overflow the reply is omitted without failing
+  maintenance, and the executor then reports `read_available 0`, never a
+  healthy zero. Agent names, errors and messages never leave the console.
 - **Runs:** every executor counts delivered worker exits by pipeline and
   settled outcome (`github_runner_autoscaler_queue_executor_run_exits_total`),
   with Job wall time and an ordered failure streak

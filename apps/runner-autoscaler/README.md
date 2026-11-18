@@ -569,7 +569,8 @@ The metrics endpoint exposes the queue worker's own health:
   reporter starts, the executor zero-initializes each declared runtime's
   `succeeded`, `failed`, `finished`, `lost` and `canceled` counters and
   duration histograms and its streak, and sets
-  `..._run_exit_metrics_supported 1` (0 until then, including after a failed
+  `..._run_exit_metrics_supported 1`, and starts the claim counters and the
+  `idle_204`/`idle_empty` poll answers at zero (support reads 0 until then, including after a failed
   preflight). The diagnostic `unknown_run`, `not_claimant` and `other`
   outcomes appear only once observed. An absent streak is unknown (scrape
   down, preflight failed or older producer); a zero streak with no exit
@@ -577,8 +578,9 @@ The metrics endpoint exposes the queue worker's own health:
   executor downtime are not counted, Jobs shorter than a second record no
   duration, and a terminal Job kept past the reporter's 48-hour receipt
   could be counted again.
-- `lcars_repository_agents*` (shared executor only, registered with the
-  maintenance ticker) export the repository
+- `lcars_repository_agents*` and the per-repository
+  `lcars_repository_agent_source_*` gauges (shared executor only, registered
+  with the maintenance ticker) export the repository
   agent catalog observation from the maintenance reply: agents by admission
   state, and per repository the last refresh attempt, success and failure
   ([docs/repository-agents.md](../../docs/repository-agents.md#health)).

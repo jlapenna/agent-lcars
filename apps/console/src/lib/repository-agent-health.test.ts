@@ -85,9 +85,12 @@ it('bounds the reported repositories to fit the maintenance reply', () => {
 it('leaves out a repository name that cannot travel on the wire', () => {
   const observation = observeAgentCatalog(
     [],
-    [{ repository: 'owner/repo+suffix', attemptedAt: at }],
+    [
+      { repository: 'owner/repo+suffix', attemptedAt: at },
+      { repository: `owner/${'r'.repeat(101)}`, attemptedAt: at },
+    ],
     [],
-    ['owner/repo+suffix'],
+    ['owner/repo+suffix', `owner/${'r'.repeat(101)}`],
     new Date(at),
   );
   expect(observation.sources).toEqual([]);

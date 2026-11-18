@@ -458,7 +458,7 @@ it('treats a failed manifest read as a source failure, never an invalid definiti
   });
 });
 
-it('records no source failure when only publication fails after a complete read', async () => {
+it('records a failed refresh, never a success, when publication fails after a complete read', async () => {
   const store = new MemoryAgentStore();
   vi.stubGlobal('fetch', github({ investigator: investigator() }));
   store.mutate = async () => {
@@ -469,7 +469,7 @@ it('records no source failure when only publication fails after a complete read'
   ).rejects.toThrow('storage unavailable');
   expect(store.healthRows.get('owner/repo')).toEqual({
     repository: 'owner/repo',
-    succeededAt: now.toISOString(),
+    failedAt: now.toISOString(),
   });
 });
 

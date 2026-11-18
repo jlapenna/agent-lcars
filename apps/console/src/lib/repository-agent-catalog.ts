@@ -53,7 +53,6 @@ export async function refreshAgentCatalog(
         ),
     );
   };
-  let read = false;
   try {
     const source = await openRepositorySource(
       repository,
@@ -117,8 +116,6 @@ export async function refreshAgentCatalog(
       }
       rows.push(row);
     }
-    read = true;
-    recordRead('succeeded');
     // Publish after the complete read so a partial fetch cannot remove agents,
     // and only while no newer observation of this repository has published.
     if (!(await store.claimObservation(repository, at))) return;
@@ -175,10 +172,13 @@ export async function refreshAgentCatalog(
               },
         fence,
       );
+    // Success means the catalog now reflects this read: published, not
+    // merely fetched. A refresh superseded by a newer one records nothing.
+    recordRead('succeeded');
   } catch (error) {
-    // Health records repository reads only: a publication (storage) error
-    // after a complete read is not a source failure.
-    if (!read) recordRead('failed');
+    // Any failure, reading GitHub or publishing to the catalog, is a failed
+    // refresh; the Console log line names which.
+    recordRead('failed');
     if (!(await store.claimObservation(repository, at))) throw error;
     for (const agent of await repositoryRows())
       await store.mutate(

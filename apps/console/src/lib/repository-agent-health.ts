@@ -18,7 +18,7 @@ export const OBSERVED_SOURCE_LIMIT = 100;
 
 /** The wire's repository pattern (libs/work repository-agents.ts); a name
  * that cannot travel is left out rather than failing the reply. */
-const WIRE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+const WIRE_REPOSITORY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u;
 
 /** Catalog health for the maintenance reply: agents by admission state and
  * each refreshed repository's attempt, read success and read failure times.

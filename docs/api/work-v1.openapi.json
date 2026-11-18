@@ -3212,7 +3212,7 @@
                             "properties": {
                               "repository": {
                                 "type": "string",
-                                "pattern": "^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+$"
+                                "pattern": "^[A-Za-z0-9_.-]{1,100}\\/[A-Za-z0-9_.-]{1,100}$"
                               },
                               "attemptedAt": {
                                 "type": "string",

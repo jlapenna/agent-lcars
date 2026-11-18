@@ -22,7 +22,10 @@ export const repositoryAgentObservationSchema = z.strictObject({
    * last failed read. Absent means never. */
   sources: z.array(
     z.strictObject({
-      repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u),
+      // The executor's label bound: at most 100 characters per segment.
+      repository: z
+        .string()
+        .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u),
       attemptedAt: z.iso.datetime().optional(),
       succeededAt: z.iso.datetime().optional(),
       failedAt: z.iso.datetime().optional(),

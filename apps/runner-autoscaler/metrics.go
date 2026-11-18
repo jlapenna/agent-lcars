@@ -165,7 +165,13 @@ var runExitOutcomes = []string{"succeeded", "failed", "finished", "lost", "cance
 // zero-initializes each declared runtime's outcome counters and streak.
 func initRunExitMetrics(pipelines []string) {
 	queueExecutorRunExitMetricsSupported.Set(1)
+	// The healthy poll answers start at zero too, so the first idle answer
+	// or claim after startup registers as an increase.
+	for _, outcome := range []queuePollOutcome{queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty} {
+		queueExecutorPollsTotal.WithLabelValues(string(outcome))
+	}
 	for _, pipeline := range pipelines {
+		queueExecutorClaimsTotal.WithLabelValues(pipeline)
 		for _, outcome := range runExitOutcomes {
 			queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome)
 			queueExecutorRunDurationSeconds.WithLabelValues(pipeline, outcome)
