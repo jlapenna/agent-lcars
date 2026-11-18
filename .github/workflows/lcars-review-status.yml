@@ -40,13 +40,15 @@ jobs:
             state=$(jq -r --arg head "$head" '
               [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head) ]
               | reduce .[] as $r ("pending";
-                  if $r.state == "CHANGES_REQUESTED" or ($r.state == "COMMENTED" and ($r.body // "" | contains("<!-- lcars-review:block -->"))) then "blocked"
+                  if $r.state == "CHANGES_REQUESTED" then "blocked"
+                  elif $r.state == "COMMENTED" and . != "blocked" and
+                    ($r.body // "" | test("^<!-- lcars-review:block -->$"; "m")) then "comment_blocked"
                   elif ($r.body // "" | contains("<!-- attempt-claim:")) and
-                    ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | contains("<!-- lcars-review:pass -->")) and . != "blocked"))
+                    ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | test("^<!-- lcars-review:pass -->$"; "m")) and . != "blocked"))
                   then "success" else . end)
             ' <<< "$reviews")
             case "$state" in
-              blocked) state=pending; description="LCARS requested changes" ;;
+              blocked|comment_blocked) state=pending; description="LCARS requested changes" ;;
               pending) description="Awaiting LCARS code review; comment /review to request one" ;;
               success) description="LCARS reviewed this commit" ;;
             esac
