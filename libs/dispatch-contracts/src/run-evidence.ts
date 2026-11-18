@@ -50,6 +50,19 @@ export const RUN_EVIDENCE_STOP_REASONS = [
   'cancelled',
 ] as const;
 
+/** The currencies a harness's cost is recorded in. A cost in any other is
+ * left out: a three-letter code is still a word somebody chose. */
+export const RUN_EVIDENCE_CURRENCIES = [
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CNY',
+  'CAD',
+  'AUD',
+  'CHF',
+] as const;
+
 /** One of `words`, or `other` for anything else. */
 const word = <const T extends readonly [string, ...string[]]>(words: T) =>
   z.enum([...words, 'other']).catch('other');
@@ -72,13 +85,16 @@ export const runEvidenceUsageSchema = z.object({
    * size. */
   contextTokens: count.optional(),
   contextWindow: count.optional(),
-  /** What the harness itself said the session cost. */
+  /** What the harness itself said the session cost. A cost that is not an
+   * amount in one of {@link RUN_EVIDENCE_CURRENCIES} is left out, and the
+   * rest of the record stands. */
   cost: z
     .object({
       amount: z.number().min(0).max(1_000_000),
-      currency: z.string().regex(/^[A-Z]{3}$/u),
+      currency: z.enum(RUN_EVIDENCE_CURRENCIES),
     })
-    .optional(),
+    .optional()
+    .catch(undefined),
 });
 
 const report = z.object({

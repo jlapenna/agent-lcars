@@ -158,6 +158,17 @@ const STOP_REASONS = new Set([
   'refusal',
   'cancelled',
 ]);
+// A cost in any other currency is left out: its code is a word too.
+const CURRENCIES = new Set([
+  'USD',
+  'EUR',
+  'GBP',
+  'JPY',
+  'CNY',
+  'CAD',
+  'AUD',
+  'CHF',
+]);
 const listed = (words, value) => (words.has(value) ? value : 'other');
 const counted = (value) =>
   Number.isSafeInteger(value) && value >= 0 ? value : undefined;
@@ -187,8 +198,7 @@ export function turnEvidence({
     typeof cost.amount === 'number' &&
     cost.amount >= 0 &&
     cost.amount <= 1_000_000 &&
-    typeof cost.currency === 'string' &&
-    /^[A-Z]{3}$/u.test(cost.currency)
+    CURRENCIES.has(cost.currency)
       ? { cost: { amount: cost.amount, currency: cost.currency } }
       : {}),
   };

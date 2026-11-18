@@ -2400,10 +2400,6 @@ describe('evidence', () => {
     ],
     ['fewer calls counted than listed', { toolCallCount: 1 }],
     ['a negative count', { usage: { inputTokens: -1 } }],
-    [
-      'a cost in no currency',
-      { usage: { cost: { amount: 1, currency: '$' } } },
-    ],
     ['another source', { source: 'transcript' }],
   ])('refuses %s', async (_name, change) => {
     const { store, runId, ctx } = await claimed('work-evidence-refused');
@@ -2411,6 +2407,53 @@ describe('evidence', () => {
       evidence: { ...EVIDENCE, ...change },
     });
     expect(r.status).toBe(400);
+    expect(await store.readRunEvidence([runId])).toEqual(new Map());
+  });
+
+  it.each([
+    ['a currency outside the list', { amount: 1, currency: 'BTC' }],
+    ['a currency that is a word', { amount: 1, currency: 'YES' }],
+    ['an amount that is no number', { amount: 'lots', currency: 'USD' }],
+  ])('leaves out a cost in %s and keeps the rest', async (_name, cost) => {
+    const { store, runId, ctx } = await claimed('work-evidence-cost');
+    const { cost: _cost, ...usage } = EVIDENCE.usage;
+    const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
+      evidence: { ...EVIDENCE, usage: { ...usage, cost } },
+    });
+    expect(r.status).toBe(200);
+    const stored = (await store.readRunEvidence([runId])).get(runId);
+    expect(stored?.usage).toEqual(usage);
+    expect(stored?.stopReason).toBe('end_turn');
+  });
+
+  it('writes nothing when the run settles while a report is in flight', async () => {
+    const { store, orchestrator, runId, ctx } =
+      await claimed('work-evidence-race');
+    // The token is checked, and then the run completes before the write.
+    const racing = new Proxy(store, {
+      get(target, key) {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key !== 'writeRunEvidence')
+          return typeof value === 'function' ? value.bind(target) : value;
+        return async (input: Parameters<typeof store.writeRunEvidence>[0]) => {
+          const settled = await orchestrator.report(
+            runId,
+            { ok: true },
+            input.claimFingerprint,
+          );
+          expect('refused' in settled).toBe(false);
+          return target.writeRunEvidence(input);
+        };
+      },
+    });
+    const r = await call(
+      { ...ctx, store: racing },
+      'POST',
+      runPath(runId, '/evidence'),
+      { evidence: EVIDENCE },
+    );
+    expect(r.status).toBe(401);
+    expect((await store.readRun(runId))?.state).toBe('finished');
     expect(await store.readRunEvidence([runId])).toEqual(new Map());
   });
 

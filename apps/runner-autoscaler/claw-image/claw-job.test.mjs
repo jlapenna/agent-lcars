@@ -2363,7 +2363,8 @@ test('evidence carries no word a harness chose and no number it got wrong', () =
     context: {
       used: Number.MAX_SAFE_INTEGER + 2,
       size: 100,
-      cost: { amount: 1, currency: 'dollars' },
+      // A real currency code, and still a word outside the list.
+      cost: { amount: 1, currency: 'BTC' },
     },
     durationMs: -5,
   });

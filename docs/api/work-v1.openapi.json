@@ -1035,7 +1035,16 @@
                                         },
                                         "currency": {
                                           "type": "string",
-                                          "pattern": "^[A-Z]{3}$"
+                                          "enum": [
+                                            "USD",
+                                            "EUR",
+                                            "GBP",
+                                            "JPY",
+                                            "CNY",
+                                            "CAD",
+                                            "AUD",
+                                            "CHF"
+                                          ]
                                         }
                                       },
                                       "required": ["amount", "currency"],
@@ -3084,7 +3093,16 @@
                                         },
                                         "currency": {
                                           "type": "string",
-                                          "pattern": "^[A-Z]{3}$"
+                                          "enum": [
+                                            "USD",
+                                            "EUR",
+                                            "GBP",
+                                            "JPY",
+                                            "CNY",
+                                            "CAD",
+                                            "AUD",
+                                            "CHF"
+                                          ]
                                         }
                                       },
                                       "required": ["amount", "currency"],
@@ -4933,7 +4951,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -6258,7 +6285,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -7587,7 +7623,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -8957,7 +9002,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -10376,7 +10430,16 @@
                                             },
                                             "currency": {
                                               "type": "string",
-                                              "pattern": "^[A-Z]{3}$"
+                                              "enum": [
+                                                "USD",
+                                                "EUR",
+                                                "GBP",
+                                                "JPY",
+                                                "CNY",
+                                                "CAD",
+                                                "AUD",
+                                                "CHF"
+                                              ]
                                             }
                                           },
                                           "required": ["amount", "currency"],
@@ -11688,7 +11751,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -13055,7 +13127,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -14452,7 +14533,16 @@
                                       },
                                       "currency": {
                                         "type": "string",
-                                        "pattern": "^[A-Z]{3}$"
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
                                       }
                                     },
                                     "required": ["amount", "currency"],
@@ -20001,7 +20091,16 @@
                               },
                               "currency": {
                                 "type": "string",
-                                "pattern": "^[A-Z]{3}$"
+                                "enum": [
+                                  "USD",
+                                  "EUR",
+                                  "GBP",
+                                  "JPY",
+                                  "CNY",
+                                  "CAD",
+                                  "AUD",
+                                  "CHF"
+                                ]
                               }
                             },
                             "required": ["amount", "currency"]

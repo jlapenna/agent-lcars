@@ -36,6 +36,7 @@ import {
   githubAnchorProjectionSchema,
   isClaimant,
   isLive,
+  isLiveClaimant,
   isWorkAnchor,
   type LeasedOutboxEntry,
   outboxEntrySchema,
@@ -309,9 +310,22 @@ export class FirestoreStore implements OrchestratorStore {
 
   async writeRunEvidence(input: {
     runId: string;
+    claimFingerprint: string;
+    now: string;
     evidence: RunEvidence;
-  }): Promise<void> {
-    await this.#runEvidenceRef(input.runId).set(input.evidence);
+  }): Promise<boolean> {
+    // The run is read in the transaction that writes beside it, so a
+    // completion, cancellation or reclaim that commits first is seen, and
+    // one that races this write waits for it or makes it run again.
+    return this.#firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(this.#runRef(input.runId));
+      const run = snapshot.exists
+        ? runSchema.parse(snapshot.data())
+        : undefined;
+      if (!isLiveClaimant(run, input.claimFingerprint, input.now)) return false;
+      tx.set(this.#runEvidenceRef(input.runId), input.evidence);
+      return true;
+    });
   }
 
   async readRunEvidence(

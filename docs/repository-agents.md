@@ -314,6 +314,8 @@ token), and the Work item's own read returns them on that run as `evidence`:
   list: the harness, ACP's tool kinds (`read`, `edit`, `delete`, `move`,
   `search`, `execute`, `think`, `fetch`, `switch_mode`), its tool call
   statuses and its stop reasons. Anything else is recorded as `other`. A
+  cost is kept only in one of a few listed currencies (`USD`, `EUR`, `GBP`,
+  `JPY`, `CNY`, `CAD`, `AUD`, `CHF`) and left out otherwise. A
   tool call's name, title and arguments are never recorded: they can hold a
   command, a path, a credential or text the model chose. A record lists the
   first 200 calls and counts them all.
@@ -328,7 +330,9 @@ token), and the Work item's own read returns them on that run as `evidence`:
   Console from before it reads every run as it always did, and a launcher
   from after it completes its run on a Console that answers 404. A listing
   never carries it. The Console shows it under the agent's turn on the Work
-  item.
+  item. The write is fenced on the claim that reported it, in one
+  transaction: a report still in flight when its run completes, is
+  cancelled or is reclaimed writes nothing.
 - **Read leniently.** An unknown key is dropped and an unknown word becomes
   `other`, at the route and on every read, so a launcher newer than its
   Console still records what that Console knows. A record that is refused

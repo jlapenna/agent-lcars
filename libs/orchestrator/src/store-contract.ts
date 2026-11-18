@@ -1659,45 +1659,6 @@ export function runOrchestratorStoreContract(
       ).toBeUndefined();
     });
 
-    it("keeps a run's evidence beside it and never in its document", async () => {
-      const { clock, store, orchestrator } = await fixture();
-      const { run } = await started(orchestrator);
-      const other = `${run.runId}-absent`;
-      const evidence = {
-        source: 'acp' as const,
-        harness: 'openclaw' as const,
-        stopReason: 'end_turn' as const,
-        toolCallCount: 1,
-        toolCalls: [{ kind: 'execute' as const, status: 'completed' as const }],
-        usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
-        durationMs: 2_500,
-        recordedAt: clock.now(),
-      };
-      expect(await store.readRunEvidence([run.runId, other])).toEqual(
-        new Map(),
-      );
-      const before = await store.readRun(run.runId);
-      await store.writeRunEvidence({ runId: run.runId, evidence });
-      expect(await store.readRunEvidence([other, run.runId])).toEqual(
-        new Map([[run.runId, evidence]]),
-      );
-      expect(await store.readRunEvidence([])).toEqual(new Map());
-      // The run reads as it did: an older Console never sees the evidence.
-      expect(await store.readRun(run.runId)).toEqual(before);
-      // A later report for the same run replaces the earlier one whole.
-      const later = {
-        source: 'acp' as const,
-        harness: 'openclaw' as const,
-        toolCallCount: 0,
-        toolCalls: [],
-        recordedAt: clock.now(),
-      };
-      await store.writeRunEvidence({ runId: run.runId, evidence: later });
-      expect((await store.readRunEvidence([run.runId])).get(run.runId)).toEqual(
-        later,
-      );
-    });
-
     describe('the outbox', () => {
       it('wakes only a pending entry that is still waiting out its backoff', async () => {
         const { clock, store, orchestrator } = await fixture();
@@ -2945,6 +2906,106 @@ export function runOrchestratorStoreContract(
           store.transactRun = transactRun;
           store.listExpiredRuns = listExpiredRuns;
         }
+      });
+
+      it("keeps a run's evidence beside it, fenced on the claim that reported it", async () => {
+        const { clock, store, orchestrator, run } = await claimedFixture();
+        const claim = { claimFingerprint: 'a'.repeat(64) };
+        const other = `${run.runId}-absent`;
+        const evidence = {
+          source: 'acp' as const,
+          harness: 'openclaw' as const,
+          stopReason: 'end_turn' as const,
+          toolCallCount: 1,
+          toolCalls: [
+            { kind: 'execute' as const, status: 'completed' as const },
+          ],
+          usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+          durationMs: 2_500,
+          recordedAt: clock.now(),
+        };
+        expect(await store.readRunEvidence([run.runId, other])).toEqual(
+          new Map(),
+        );
+        // Another claim's fingerprint, and a run that does not exist.
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: 'b'.repeat(64),
+            now: clock.now(),
+            evidence,
+          }),
+        ).toBe(false);
+        expect(
+          await store.writeRunEvidence({
+            runId: other,
+            ...claim,
+            now: clock.now(),
+            evidence,
+          }),
+        ).toBe(false);
+        expect(await store.readRunEvidence([run.runId, other])).toEqual(
+          new Map(),
+        );
+
+        const before = await store.readRun(run.runId);
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: clock.now(),
+            evidence,
+          }),
+        ).toBe(true);
+        expect(await store.readRunEvidence([other, run.runId])).toEqual(
+          new Map([[run.runId, evidence]]),
+        );
+        expect(await store.readRunEvidence([])).toEqual(new Map());
+        // The run reads as it did: an older Console never sees the evidence.
+        expect(await store.readRun(run.runId)).toEqual(before);
+
+        // A later report under the same claim replaces the earlier one whole.
+        const later = {
+          source: 'acp' as const,
+          harness: 'openclaw' as const,
+          toolCallCount: 0,
+          toolCalls: [],
+          recordedAt: clock.now(),
+        };
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: clock.now(),
+            evidence: later,
+          }),
+        ).toBe(true);
+        const stored = async () =>
+          (await store.readRunEvidence([run.runId])).get(run.runId);
+        expect(await stored()).toEqual(later);
+
+        // Past the claim's deadline the same fingerprint writes nothing.
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: '2026-08-15T12:15:00.000Z',
+            evidence,
+          }),
+        ).toBe(false);
+        // Nor once the run has settled: a report still in flight when the
+        // run completes cannot replace what it recorded.
+        await orchestrator.report(run.runId, { ok: true }, 'a'.repeat(64));
+        expect((await store.readRun(run.runId))?.state).toBe('finished');
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: clock.now(),
+            evidence,
+          }),
+        ).toBe(false);
+        expect(await stored()).toEqual(later);
       });
 
       it.each(['heartbeat', 'complete', 'exit'] as const)(

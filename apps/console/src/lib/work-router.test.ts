@@ -684,7 +684,26 @@ describe('claw work read and cancel rules', () => {
       durationMs: 2_500,
       recordedAt: '2026-08-26T10:00:00.000Z',
     };
-    await store.writeRunEvidence({ runId: run!.runId, evidence });
+    // As its worker would have, under the claim it holds.
+    const tokenHash = 'a'.repeat(64);
+    const NOW = '2026-08-26T10:00:00.000Z';
+    await store.enqueueRun({ runId: run!.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(run!.runId);
+    await store.claimQueuedRun({
+      pipelines: [run!.pipeline],
+      now: NOW,
+      claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+      tokenHash,
+    });
+    expect(
+      await store.writeRunEvidence({
+        runId: run!.runId,
+        claimFingerprint: tokenHash,
+        now: NOW,
+        evidence,
+      }),
+    ).toBe(true);
     const read = await call(ctx, 'GET', `/items/${ID}`);
     expect(read.status).toBe(200);
     expect(read.json.runs[0].evidence).toEqual(evidence);

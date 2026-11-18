@@ -25,6 +25,7 @@ import {
   githubAnchorProjectionSchema,
   isClaimant,
   isLive,
+  isLiveClaimant,
   isWorkAnchor,
   queueOrderAt,
   requestHistoryKey,
@@ -198,9 +199,20 @@ export class MemoryStore implements OrchestratorStore {
 
   async writeRunEvidence(input: {
     runId: string;
+    claimFingerprint: string;
+    now: string;
     evidence: RunEvidence;
-  }): Promise<void> {
+  }): Promise<boolean> {
+    if (
+      !isLiveClaimant(
+        this.#runs.get(input.runId),
+        input.claimFingerprint,
+        input.now,
+      )
+    )
+      return false;
     this.#runEvidence.set(input.runId, structuredClone(input.evidence));
+    return true;
   }
 
   async readRunEvidence(

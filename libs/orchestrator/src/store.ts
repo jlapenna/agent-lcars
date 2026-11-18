@@ -301,11 +301,19 @@ export interface OrchestratorStore {
   /** Store what a run's worker saw its agent do, beside the run and never
    * in its document: a Console from before evidence existed reads the run
    * as it always did. A later report for the same run replaces the earlier
-   * one. */
+   * one.
+   *
+   * Atomic with a check of the claim that authenticated the report
+   * (`isLiveClaimant`): resolves false and writes nothing once the run has
+   * settled, been released or reclaimed, or passed its deadline, so a write
+   * that was still in flight can never land on a settled run. */
   writeRunEvidence(input: {
     runId: string;
+    /** The authenticated queue token hash. */
+    claimFingerprint: string;
+    now: string;
     evidence: RunEvidence;
-  }): Promise<void>;
+  }): Promise<boolean>;
   /** The evidence recorded for each of `runIds` that has any. A run without
    * evidence, or whose stored evidence no longer parses, is absent. */
   readRunEvidence(runIds: readonly string[]): Promise<Map<string, RunEvidence>>;

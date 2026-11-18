@@ -910,15 +910,22 @@ export const runsRouter = os.router({
 
   evidence: os.evidence.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
+    const now = context.now().toISOString();
     // Beside the run, never in it: the run's outcome is `complete`'s alone,
-    // and a later report from the same attempt replaces this one.
-    await context.store.writeRunEvidence({
+    // and a later report from the same attempt replaces this one. The claim
+    // that authenticated this request is checked again in the transaction
+    // that writes, so a report still in flight when the run settles, is
+    // cancelled or is reclaimed never lands on it.
+    const recorded = await context.store.writeRunEvidence({
       runId: run.runId,
-      evidence: {
-        ...input.evidence,
-        recordedAt: context.now().toISOString(),
-      },
+      claimFingerprint: run.queue?.tokenHash ?? '',
+      now,
+      evidence: { ...input.evidence, recordedAt: now },
     });
+    if (!recorded)
+      throw new ORPCError('UNAUTHORIZED', {
+        message: 'Run evidence refused',
+      });
     return { runId: run.runId };
   }),
 
