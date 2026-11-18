@@ -1,6 +1,7 @@
 import {
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
+  runEvidenceSchema,
   runMessageBytes,
 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
@@ -2906,6 +2907,160 @@ export function runOrchestratorStoreContract(
           store.transactRun = transactRun;
           store.listExpiredRuns = listExpiredRuns;
         }
+      });
+
+      it("keeps a run's evidence beside it, under the claim that reported it", async () => {
+        const { clock, store, orchestrator, run } = await claimedFixture();
+        const mine = 'a'.repeat(64);
+        const theirs = 'b'.repeat(64);
+        const evidenceOf = async () =>
+          (
+            await store.readRunEvidence([(await store.readRun(run.runId))!])
+          ).get(run.runId);
+        const record = (stopReason: 'end_turn' | 'max_tokens') => ({
+          source: 'acp' as const,
+          harness: 'openclaw' as const,
+          stopReason,
+          toolCallCount: 1,
+          toolCalls: [
+            { kind: 'execute' as const, status: 'completed' as const },
+          ],
+          usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+          durationMs: 2_500,
+          recordedAt: clock.now(),
+        });
+        expect(await evidenceOf()).toBeUndefined();
+        expect(await store.readRunEvidence([])).toEqual(new Map());
+        // A run that was never claimed has no claim to read a record by.
+        expect(await store.readRunEvidence([{ runId: run.runId }])).toEqual(
+          new Map(),
+        );
+
+        // A claim the run is not held by writes a record of its own, which
+        // the run's read never returns.
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: theirs,
+            evidence: record('max_tokens'),
+          }),
+        ).toBe(true);
+        expect(await evidenceOf()).toBeUndefined();
+
+        const before = await store.readRun(run.runId);
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: mine,
+            evidence: record('end_turn'),
+          }),
+        ).toBe(true);
+        expect(await evidenceOf()).toEqual(record('end_turn'));
+        // The run reads as it did: an older Console never sees the evidence,
+        // and the write touched nothing a completion waits on.
+        expect(await store.readRun(run.runId)).toEqual(before);
+
+        // The first record under a claim stands.
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: mine,
+            evidence: record('max_tokens'),
+          }),
+        ).toBe(false);
+        expect(await evidenceOf()).toEqual(record('end_turn'));
+
+        // Settling the run keeps its claim, and so its record. A write
+        // still in flight when the run settled cannot replace it.
+        await orchestrator.report(run.runId, { ok: true }, mine);
+        expect((await store.readRun(run.runId))?.state).toBe('finished');
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: mine,
+            evidence: record('max_tokens'),
+          }),
+        ).toBe(false);
+        expect(await evidenceOf()).toEqual(record('end_turn'));
+      });
+
+      it('reads a reclaimed run through the claim that holds it now', async () => {
+        const { clock, store, run } = await claimedFixture();
+        const first = 'a'.repeat(64);
+        const second = 'b'.repeat(64);
+        const record = (toolCallCount: number) => ({
+          source: 'acp' as const,
+          harness: 'openclaw' as const,
+          toolCallCount,
+          toolCalls: [],
+          recordedAt: clock.now(),
+        });
+        const evidenceOf = async () =>
+          (
+            await store.readRunEvidence([(await store.readRun(run.runId))!])
+          ).get(run.runId);
+        await store.writeRunEvidence({
+          runId: run.runId,
+          claimFingerprint: first,
+          evidence: record(1),
+        });
+        expect(await evidenceOf()).toEqual(record(1));
+        expect(
+          await store.releaseQueuedRunClaim({
+            runId: run.runId,
+            claimedBy: 'executor',
+            tokenHash: first,
+            now: clock.now(),
+          }),
+        ).toBeTruthy();
+        const reclaimed = await store.claimQueuedRun({
+          pipelines: ['claude'],
+          now: clock.now(),
+          claimedBy: 'executor',
+          claimedBySubject: 'executor@example.com',
+          tokenHash: second,
+        });
+        expect(reclaimed?.runId).toBe(run.runId);
+        // The earlier claim's record is not this claim's.
+        expect(await evidenceOf()).toBeUndefined();
+        await store.writeRunEvidence({
+          runId: run.runId,
+          claimFingerprint: second,
+          evidence: record(2),
+        });
+        // And the earlier claim, still writing, changes nothing it reads.
+        await store.writeRunEvidence({
+          runId: run.runId,
+          claimFingerprint: first,
+          evidence: record(3),
+        });
+        expect(await evidenceOf()).toEqual(record(2));
+      });
+
+      it('stores a record whose cost was left out without the key', async () => {
+        const { clock, store, run } = await claimedFixture();
+        // A cost the record left out is a key holding `undefined`, exactly
+        // as the route's parser hands it over.
+        const parsed = runEvidenceSchema.parse({
+          source: 'acp',
+          harness: 'openclaw',
+          toolCallCount: 0,
+          toolCalls: [],
+          usage: { inputTokens: 42, cost: { amount: 1, currency: 'BTC' } },
+          recordedAt: clock.now(),
+        });
+        expect(parsed.usage).toHaveProperty('cost', undefined);
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            claimFingerprint: 'a'.repeat(64),
+            evidence: parsed,
+          }),
+        ).toBe(true);
+        const stored = (
+          await store.readRunEvidence([(await store.readRun(run.runId))!])
+        ).get(run.runId);
+        expect(stored?.usage).toStrictEqual({ inputTokens: 42 });
       });
 
       it.each(['heartbeat', 'complete', 'exit'] as const)(

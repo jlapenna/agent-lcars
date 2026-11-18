@@ -180,6 +180,14 @@ describe('a work.reader-only principal (#2502)', () => {
    *  authorize, so the refusal below is authorization, not a 400. */
   const validBodies: Record<string, unknown> = {
     changeCapacity: { action: 'register', producerId: 'producer-1' },
+    reportRunEvidence: {
+      evidence: {
+        source: 'acp',
+        harness: 'claude',
+        toolCallCount: 0,
+        toolCalls: [],
+      },
+    },
     activateWorker: {
       fence: {
         poolId: 'pool-a',

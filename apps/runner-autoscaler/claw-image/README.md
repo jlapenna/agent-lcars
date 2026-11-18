@@ -209,6 +209,15 @@ Each step fails the attempt closed with a `runner-failed` completion:
    size within a bounded time (`readSettingsFile`), and a link, a pipe, a
    device or a larger file counts as changed.
 
+After the sequence, and outside it, the launcher reports what the session
+showed before it completes the run (`turnEvidence`,
+`POST /runs/{runId}/evidence`). Unlike the steps above it never fails the
+attempt: it has three seconds, a Console from before it answers 404, a run
+that was told to stop skips it or gives it up, and the run completes all
+the same. A report that was not recorded is said once in the Job's log. What
+a record holds, and what it never does, is in
+[what a run records of its agent](../../../docs/repository-agents.md#what-a-run-records-of-its-agent).
+
 Harness stderr is never forwarded, because it can echo resolved
 configuration. The outer deadline and cancellation stop the harness's process
 group and still settle the run.

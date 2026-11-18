@@ -237,3 +237,176 @@ it('does not label an ordinary agent turn as a report', () => {
   renderConversation(itemWithTwoRounds);
   expect(screen.queryByText('Report')).toBeNull();
 });
+
+describe('run evidence', () => {
+  const withEvidence = (
+    evidence: NonNullable<ItemView['runs'][number]['evidence']>,
+  ): ItemView => ({
+    ...baseItem,
+    state: 'done',
+    runs: [
+      {
+        runId: 'work:x/r1',
+        state: 'finished',
+        pipeline: 'claw-default',
+        createdAt: '2026-08-26T10:00:00.000Z',
+        updatedAt: '2026-08-26T10:05:00.000Z',
+        result: { ok: true, summary: 'report', message: 'All clear.' },
+        evidence,
+      },
+    ],
+  });
+  const show = (item: ItemView) =>
+    render(
+      <MantineProvider>
+        <Conversation item={item} />
+      </MantineProvider>,
+    );
+
+  it('shows what the worker saw the agent do, under its message', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'openclaw',
+        stopReason: 'end_turn',
+        toolCallCount: 4,
+        toolCalls: [
+          { kind: 'execute', status: 'completed' },
+          { kind: 'read', status: 'failed' },
+          { kind: 'execute', status: 'completed' },
+          { kind: 'fetch', status: 'in_progress' },
+        ],
+        usage: {
+          inputTokens: 51_000,
+          outputTokens: 2_000,
+          cachedReadTokens: 40_000,
+          totalTokens: 53_000,
+          contextTokens: 53_000,
+          contextWindow: 200_000,
+          cost: { amount: 0.045, currency: 'USD' },
+        },
+        durationMs: 41_250,
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    const [tools, turn] = Array.from(
+      screen.getByTestId('run-evidence').children,
+      (line) => line.textContent,
+    );
+    expect(tools).toBe(
+      'Tool calls: 4 (execute 2, read 1, fetch 1; 1 failed; 1 unfinished)',
+    );
+    expect(turn).toBe(
+      'Harness: openclaw · Stopped: end_turn · Tokens: 51,000 in, 2,000 out, 40,000 cached · Context: 53,000 of 200,000 · Cost: USD 0.0450 · Turn: 41 s',
+    );
+  });
+
+  it('says so when a turn called no tool and reported no usage', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'codex',
+        toolCallCount: 0,
+        toolCalls: [],
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    const [tools, turn] = Array.from(
+      screen.getByTestId('run-evidence').children,
+      (line) => line.textContent,
+    );
+    expect(tools).toBe('Tool calls: none');
+    expect(turn).toBe('Harness: codex');
+  });
+
+  it('counts every call when a record lists only the first', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'claude',
+        toolCallCount: 1_250,
+        toolCalls: Array.from({ length: 200 }, () => ({
+          kind: 'read' as const,
+          status: 'completed' as const,
+        })),
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    expect(screen.getByTestId('run-evidence').children[0]?.textContent).toBe(
+      'Tool calls: 1,250 (read 200; first 200 listed)',
+    );
+  });
+
+  it('rounds nothing small down to nothing', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'claude',
+        // Counted by a worker that listed none of them.
+        toolCallCount: 5,
+        toolCalls: [],
+        usage: {
+          thoughtTokens: 900,
+          cachedWriteTokens: 1_200,
+          contextWindow: 200_000,
+          cost: { amount: 0.00004, currency: 'USD' },
+        },
+        durationMs: 400,
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    const [tools, turn] = Array.from(
+      screen.getByTestId('run-evidence').children,
+      (line) => line.textContent,
+    );
+    expect(tools).toBe('Tool calls: 5');
+    expect(turn).toBe(
+      'Harness: claude · Tokens: 1,200 written to cache, 900 thinking · Context window: 200,000 · Cost: USD under 0.0001 · Turn: 0.4 s',
+    );
+  });
+
+  it('keeps the total when the breakdown is incomplete, and calls nothing unfinished it cannot tell is', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'codex',
+        toolCallCount: 3,
+        toolCalls: [
+          { kind: 'execute', status: 'completed' },
+          // A newer harness's word for a status this Console does not know.
+          { kind: 'read', status: 'other' },
+          { kind: 'read', status: 'pending' },
+        ],
+        usage: { totalTokens: 120, cachedReadTokens: 20 },
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    const [tools, turn] = Array.from(
+      screen.getByTestId('run-evidence').children,
+      (line) => line.textContent,
+    );
+    expect(tools).toBe('Tool calls: 3 (execute 1, read 2; 1 unfinished)');
+    expect(turn).toBe('Harness: codex · Tokens: 120 total, 20 cached');
+  });
+
+  it("shows a total alone as the turn's tokens", () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'codex',
+        toolCallCount: 0,
+        toolCalls: [],
+        usage: { totalTokens: 53_000 },
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    expect(screen.getByTestId('run-evidence').children[1]?.textContent).toBe(
+      'Harness: codex · Tokens: 53,000',
+    );
+  });
+
+  it('shows nothing for a run whose worker reported none', () => {
+    show(itemWithTwoRounds);
+    expect(screen.queryByTestId('run-evidence')).toBeNull();
+  });
+});

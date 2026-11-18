@@ -775,6 +775,11 @@ image is documented in
   writes the definition, and the harness's container, under another UID,
   holds the runtime's Secret items and sees the definition read-only
   ([the harness container](../repository-agents.md#the-harness-container)).
+  Before it completes, the launcher records what the ACP session showed
+  beside the run (tool calls by kind, the harness's token usage and the
+  stop reason), which the Work item's own read returns as the run's
+  `evidence`
+  ([what a run records](../repository-agents.md#what-a-run-records-of-its-agent)).
   Qualification: the source is covered by the launcher's unit suite and by
   runs of the real harness binaries against stand-in model endpoints. No
   harness has run a real-model turn in the cluster through this launcher;

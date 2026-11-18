@@ -1,5 +1,6 @@
 import type {
   IssueReference,
+  RunEvidence,
   TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
@@ -297,6 +298,32 @@ export interface OrchestratorStore {
     runId: string;
     overflow: RunMessageOverflow;
   }): Promise<string | undefined>;
+  /** Store what a run's worker saw its agent do, beside the run and never
+   * in its document: a Console from before evidence existed reads the run
+   * as it always did.
+   *
+   * The record belongs to the claim that reported it: it is stored under
+   * that claim's fingerprint and read back only through the claim the run
+   * holds or settled under. So a claim the run was taken from can never
+   * replace the record of the claim that has it now, however late its write
+   * lands. The first record under a claim stands; resolves false, writing
+   * nothing, when one is already there.
+   *
+   * One unconditional write to a document nothing else reads in a
+   * transaction: it takes no lock on the run, so a slow or abandoned
+   * evidence write can never hold up the run's completion. */
+  writeRunEvidence(input: {
+    runId: string;
+    /** The authenticated queue token hash. */
+    claimFingerprint: string;
+    evidence: RunEvidence;
+  }): Promise<boolean>;
+  /** The evidence recorded under each run's own claim, by run id. A run
+   * that was never claimed, has none, or whose stored evidence no longer
+   * parses is absent. */
+  readRunEvidence(
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
+  ): Promise<Map<string, RunEvidence>>;
 
   /**
    * Atomically reads a task's current lock and the one matching durable

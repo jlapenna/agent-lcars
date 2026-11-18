@@ -1,4 +1,7 @@
-import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
+import type {
+  RunEvidence,
+  TrackerIssue,
+} from '@agent-lcars/dispatch-contracts';
 import {
   type DeliveryBinding,
   deliveryWaiting,
@@ -122,6 +125,9 @@ export interface ItemRunView {
   reply?: string;
   replyChannel?: string;
   replyPrincipal?: string;
+  /** What the run's worker saw its agent do, on single-item reads of a run
+   *  that reported any (`withRunEvidence`). Never derived from the run. */
+  evidence?: RunEvidence;
 }
 
 export interface ItemSessionView {

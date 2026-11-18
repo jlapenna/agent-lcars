@@ -285,6 +285,67 @@ itself, and otherwise unchanged.
 Typed inputs and results can be added later, as optional manifest declarations,
 when a consumer needs them.
 
+### What a run records of its agent
+
+Every harness is an ACP agent, so the launcher sees the same three things of
+every turn in the session itself: the agent's tool calls, the tokens the
+harness says it used and why the turn stopped. It reports them to the Work
+API beside the run (`POST /runs/{runId}/evidence`, with the run's own
+token), and the Work item's own read returns them on that run as `evidence`:
+
+```json
+{
+  "source": "acp",
+  "harness": "openclaw",
+  "stopReason": "end_turn",
+  "toolCallCount": 3,
+  "toolCalls": [
+    { "kind": "execute", "status": "completed" },
+    { "kind": "read", "status": "failed" },
+    { "kind": "read", "status": "completed" }
+  ],
+  "usage": { "inputTokens": 51000, "outputTokens": 2000, "totalTokens": 53000 },
+  "durationMs": 41250,
+  "recordedAt": "2026-11-18T17:40:00.000Z"
+}
+```
+
+- **No word of the agent's.** Every word in a record comes from a closed
+  list: the harness, ACP's tool kinds (`read`, `edit`, `delete`, `move`,
+  `search`, `execute`, `think`, `fetch`, `switch_mode`), its tool call
+  statuses and its stop reasons. Anything else is recorded as `other`. A
+  cost is kept only in one of a few listed currencies (`USD`, `EUR`, `GBP`,
+  `JPY`, `CNY`, `CAD`, `AUD`, `CHF`) and left out otherwise. A
+  tool call's name, title and arguments are never recorded: they can hold a
+  command, a path, a credential or text the model chose. A record lists the
+  first 200 calls and counts them all.
+- **What the harness said, not a bill.** `usage` is the harness's own
+  account: the token counts on the prompt's result, the context size from
+  its last `usage_update`, and a cost when it names one. A harness that
+  reports none has none. It is not added to the session cost totals, which
+  still come from provider transcripts. `durationMs` runs from the prompt to
+  the harness's answer.
+- **Beside the run, never the outcome.** The run's result is `complete`'s
+  alone. Evidence is stored in a document of its own under the run, so a
+  Console from before it reads every run as it always did, and a launcher
+  from after it completes its run on a Console that answers 404. A listing
+  never carries it. The Console shows it under the agent's turn on the Work
+  item.
+- **A record belongs to its claim.** It is stored under the fingerprint of
+  the claim that reported it and read back only through the claim the run
+  holds or settled under. A claim the run was taken from can still write,
+  and what it writes is never shown. The first record under a claim stands.
+  The write is one create that reads and locks nothing, so a report the
+  launcher gave up on can never make the run's completion wait.
+- **Read leniently.** An unknown key is dropped and an unknown word becomes
+  `other`, at the route and on every read, so a launcher newer than its
+  Console still records what that Console knows. A record that is refused
+  (a malformed number, more than 200 calls listed) costs the run nothing:
+  the launcher says so once in the Job's log and completes.
+- **One source.** No provider transcript is parsed for it. The same route
+  takes a record from any worker that holds a run token; claw runs are the
+  first to send one.
+
 ## Profiles
 
 A profile is operator configuration, never repository content, so a repository

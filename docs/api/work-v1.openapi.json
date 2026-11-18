@@ -909,6 +909,171 @@
                               },
                               "required": ["state"],
                               "additionalProperties": false
+                            },
+                            "evidence": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "acp"
+                                },
+                                "harness": {
+                                  "default": "other",
+                                  "type": "string",
+                                  "enum": [
+                                    "openclaw",
+                                    "claude",
+                                    "codex",
+                                    "other"
+                                  ]
+                                },
+                                "stopReason": {
+                                  "default": "other",
+                                  "type": "string",
+                                  "enum": [
+                                    "end_turn",
+                                    "max_tokens",
+                                    "max_turn_requests",
+                                    "refusal",
+                                    "cancelled",
+                                    "other"
+                                  ]
+                                },
+                                "toolCallCount": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "toolCalls": {
+                                  "maxItems": 200,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "default": "other",
+                                        "type": "string",
+                                        "enum": [
+                                          "read",
+                                          "edit",
+                                          "delete",
+                                          "move",
+                                          "search",
+                                          "execute",
+                                          "think",
+                                          "fetch",
+                                          "switch_mode",
+                                          "other"
+                                        ]
+                                      },
+                                      "status": {
+                                        "default": "other",
+                                        "type": "string",
+                                        "enum": [
+                                          "pending",
+                                          "in_progress",
+                                          "completed",
+                                          "failed",
+                                          "other"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["kind", "status"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "usage": {
+                                  "type": "object",
+                                  "properties": {
+                                    "inputTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "outputTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "totalTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "thoughtTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cachedReadTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cachedWriteTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "contextTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "contextWindow": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cost": {
+                                      "type": "object",
+                                      "properties": {
+                                        "amount": {
+                                          "type": "number",
+                                          "minimum": 0,
+                                          "maximum": 1000000
+                                        },
+                                        "currency": {
+                                          "type": "string",
+                                          "enum": [
+                                            "USD",
+                                            "EUR",
+                                            "GBP",
+                                            "JPY",
+                                            "CNY",
+                                            "CAD",
+                                            "AUD",
+                                            "CHF"
+                                          ]
+                                        }
+                                      },
+                                      "required": ["amount", "currency"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "durationMs": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "recordedAt": {
+                                  "type": "string",
+                                  "maxLength": 32,
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "harness",
+                                "toolCallCount",
+                                "toolCalls",
+                                "recordedAt"
+                              ],
+                              "additionalProperties": false,
+                              "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                             }
                           },
                           "required": [
@@ -2802,6 +2967,171 @@
                               },
                               "required": ["state"],
                               "additionalProperties": false
+                            },
+                            "evidence": {
+                              "type": "object",
+                              "properties": {
+                                "source": {
+                                  "type": "string",
+                                  "const": "acp"
+                                },
+                                "harness": {
+                                  "default": "other",
+                                  "type": "string",
+                                  "enum": [
+                                    "openclaw",
+                                    "claude",
+                                    "codex",
+                                    "other"
+                                  ]
+                                },
+                                "stopReason": {
+                                  "default": "other",
+                                  "type": "string",
+                                  "enum": [
+                                    "end_turn",
+                                    "max_tokens",
+                                    "max_turn_requests",
+                                    "refusal",
+                                    "cancelled",
+                                    "other"
+                                  ]
+                                },
+                                "toolCallCount": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "toolCalls": {
+                                  "maxItems": 200,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "default": "other",
+                                        "type": "string",
+                                        "enum": [
+                                          "read",
+                                          "edit",
+                                          "delete",
+                                          "move",
+                                          "search",
+                                          "execute",
+                                          "think",
+                                          "fetch",
+                                          "switch_mode",
+                                          "other"
+                                        ]
+                                      },
+                                      "status": {
+                                        "default": "other",
+                                        "type": "string",
+                                        "enum": [
+                                          "pending",
+                                          "in_progress",
+                                          "completed",
+                                          "failed",
+                                          "other"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["kind", "status"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "usage": {
+                                  "type": "object",
+                                  "properties": {
+                                    "inputTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "outputTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "totalTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "thoughtTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cachedReadTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cachedWriteTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "contextTokens": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "contextWindow": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "cost": {
+                                      "type": "object",
+                                      "properties": {
+                                        "amount": {
+                                          "type": "number",
+                                          "minimum": 0,
+                                          "maximum": 1000000
+                                        },
+                                        "currency": {
+                                          "type": "string",
+                                          "enum": [
+                                            "USD",
+                                            "EUR",
+                                            "GBP",
+                                            "JPY",
+                                            "CNY",
+                                            "CAD",
+                                            "AUD",
+                                            "CHF"
+                                          ]
+                                        }
+                                      },
+                                      "required": ["amount", "currency"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "durationMs": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "recordedAt": {
+                                  "type": "string",
+                                  "maxLength": 32,
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "source",
+                                "harness",
+                                "toolCallCount",
+                                "toolCalls",
+                                "recordedAt"
+                              ],
+                              "additionalProperties": false,
+                              "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                             }
                           },
                           "required": [
@@ -4500,6 +4830,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -5674,6 +6164,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -6852,6 +7502,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -8071,6 +8881,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -9334,6 +10304,171 @@
                                   },
                                   "required": ["state"],
                                   "additionalProperties": false
+                                },
+                                "evidence": {
+                                  "type": "object",
+                                  "properties": {
+                                    "source": {
+                                      "type": "string",
+                                      "const": "acp"
+                                    },
+                                    "harness": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "openclaw",
+                                        "claude",
+                                        "codex",
+                                        "other"
+                                      ]
+                                    },
+                                    "stopReason": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "end_turn",
+                                        "max_tokens",
+                                        "max_turn_requests",
+                                        "refusal",
+                                        "cancelled",
+                                        "other"
+                                      ]
+                                    },
+                                    "toolCallCount": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "toolCalls": {
+                                      "maxItems": 200,
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "kind": {
+                                            "default": "other",
+                                            "type": "string",
+                                            "enum": [
+                                              "read",
+                                              "edit",
+                                              "delete",
+                                              "move",
+                                              "search",
+                                              "execute",
+                                              "think",
+                                              "fetch",
+                                              "switch_mode",
+                                              "other"
+                                            ]
+                                          },
+                                          "status": {
+                                            "default": "other",
+                                            "type": "string",
+                                            "enum": [
+                                              "pending",
+                                              "in_progress",
+                                              "completed",
+                                              "failed",
+                                              "other"
+                                            ]
+                                          }
+                                        },
+                                        "required": ["kind", "status"],
+                                        "additionalProperties": false
+                                      }
+                                    },
+                                    "usage": {
+                                      "type": "object",
+                                      "properties": {
+                                        "inputTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "outputTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "totalTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "thoughtTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "cachedReadTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "cachedWriteTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "contextTokens": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "contextWindow": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "cost": {
+                                          "type": "object",
+                                          "properties": {
+                                            "amount": {
+                                              "type": "number",
+                                              "minimum": 0,
+                                              "maximum": 1000000
+                                            },
+                                            "currency": {
+                                              "type": "string",
+                                              "enum": [
+                                                "USD",
+                                                "EUR",
+                                                "GBP",
+                                                "JPY",
+                                                "CNY",
+                                                "CAD",
+                                                "AUD",
+                                                "CHF"
+                                              ]
+                                            }
+                                          },
+                                          "required": ["amount", "currency"],
+                                          "additionalProperties": false
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "durationMs": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "recordedAt": {
+                                      "type": "string",
+                                      "maxLength": 32,
+                                      "format": "date-time",
+                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                    }
+                                  },
+                                  "required": [
+                                    "source",
+                                    "harness",
+                                    "toolCallCount",
+                                    "toolCalls",
+                                    "recordedAt"
+                                  ],
+                                  "additionalProperties": false,
+                                  "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                                 }
                               },
                               "required": [
@@ -10495,6 +11630,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -11711,6 +13006,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -12957,6 +14412,166 @@
                             },
                             "required": ["state"],
                             "additionalProperties": false
+                          },
+                          "evidence": {
+                            "type": "object",
+                            "properties": {
+                              "source": {
+                                "type": "string",
+                                "const": "acp"
+                              },
+                              "harness": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": ["openclaw", "claude", "codex", "other"]
+                              },
+                              "stopReason": {
+                                "default": "other",
+                                "type": "string",
+                                "enum": [
+                                  "end_turn",
+                                  "max_tokens",
+                                  "max_turn_requests",
+                                  "refusal",
+                                  "cancelled",
+                                  "other"
+                                ]
+                              },
+                              "toolCallCount": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "toolCalls": {
+                                "maxItems": 200,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "read",
+                                        "edit",
+                                        "delete",
+                                        "move",
+                                        "search",
+                                        "execute",
+                                        "think",
+                                        "fetch",
+                                        "switch_mode",
+                                        "other"
+                                      ]
+                                    },
+                                    "status": {
+                                      "default": "other",
+                                      "type": "string",
+                                      "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "failed",
+                                        "other"
+                                      ]
+                                    }
+                                  },
+                                  "required": ["kind", "status"],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "usage": {
+                                "type": "object",
+                                "properties": {
+                                  "inputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "outputTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "totalTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "thoughtTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedReadTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cachedWriteTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextTokens": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "contextWindow": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 9007199254740991
+                                  },
+                                  "cost": {
+                                    "type": "object",
+                                    "properties": {
+                                      "amount": {
+                                        "type": "number",
+                                        "minimum": 0,
+                                        "maximum": 1000000
+                                      },
+                                      "currency": {
+                                        "type": "string",
+                                        "enum": [
+                                          "USD",
+                                          "EUR",
+                                          "GBP",
+                                          "JPY",
+                                          "CNY",
+                                          "CAD",
+                                          "AUD",
+                                          "CHF"
+                                        ]
+                                      }
+                                    },
+                                    "required": ["amount", "currency"],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "durationMs": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "recordedAt": {
+                                "type": "string",
+                                "maxLength": 32,
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "source",
+                              "harness",
+                              "toolCallCount",
+                              "toolCalls",
+                              "recordedAt"
+                            ],
+                            "additionalProperties": false,
+                            "description": "What the run's worker saw its agent do; present on single-item reads of a run that reported it."
                           }
                         },
                         "required": [
@@ -18329,6 +19944,190 @@
         "security": [
           {
             "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/runs/{runId}/evidence": {
+      "post": {
+        "operationId": "reportRunEvidence",
+        "summary": "Record what a claimed run's agent did",
+        "tags": ["runs"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "runId",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 175
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "evidence": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "const": "acp"
+                      },
+                      "harness": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "stopReason": {
+                        "type": "string",
+                        "maxLength": 64
+                      },
+                      "toolCallCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "toolCalls": {
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "maxLength": 64
+                            },
+                            "status": {
+                              "type": "string",
+                              "maxLength": 64
+                            }
+                          },
+                          "required": ["kind", "status"]
+                        }
+                      },
+                      "usage": {
+                        "type": "object",
+                        "properties": {
+                          "inputTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "outputTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "totalTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "thoughtTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cachedReadTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cachedWriteTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "contextTokens": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "contextWindow": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "cost": {
+                            "type": "object",
+                            "properties": {
+                              "amount": {
+                                "type": "number"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "maxLength": 64
+                              }
+                            },
+                            "required": ["amount", "currency"]
+                          }
+                        }
+                      },
+                      "durationMs": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "harness",
+                      "toolCallCount",
+                      "toolCalls"
+                    ]
+                  }
+                },
+                "required": ["evidence"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 175
+                    }
+                  },
+                  "required": ["runId"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired run token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Unauthorized"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UndefinedError"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "runToken": []
           }
         ]
       }

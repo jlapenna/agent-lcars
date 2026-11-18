@@ -6,6 +6,7 @@ import { IssueSourceLink } from '../issue-source';
 import { clawRoundQuestion } from './event-work';
 import { ProviderFallbackSummary } from './provider-fallback-summary';
 import { resultRefs } from './result-refs';
+import { RunEvidenceSummary } from './run-evidence-summary';
 import { safeHttpUrl } from './safe-url';
 
 /** Same rendering rule `page.tsx`'s `RunRef` already uses: `result.ref` is
@@ -152,6 +153,7 @@ export function Conversation({
                 canViewSessions={canViewSessions}
               />
             )}
+            <RunEvidenceSummary run={run} />
           </Stack>
         );
       })}

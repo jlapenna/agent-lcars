@@ -667,6 +667,85 @@ describe('claw work read and cancel rules', () => {
     expect((await call(ctx, 'POST', `/items/${ID}/cancel`)).status).toBe(200);
   });
 
+  it("returns a run's evidence on the item's own read, and never on a listing", async () => {
+    const ctx = context();
+    expect((await call(ctx, 'PUT', `/items/${ID}`, { spec })).status).toBe(201);
+    const { store } = ctx.runtime;
+    const [run] = await store.listRuns({ workId: ID });
+    const before = await call(ctx, 'GET', `/items/${ID}`);
+    expect(before.json.runs[0]).not.toHaveProperty('evidence');
+    const evidence = {
+      source: 'acp' as const,
+      harness: 'openclaw' as const,
+      stopReason: 'end_turn' as const,
+      toolCallCount: 1,
+      toolCalls: [{ kind: 'execute' as const, status: 'completed' as const }],
+      usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 },
+      durationMs: 2_500,
+      recordedAt: '2026-08-26T10:00:00.000Z',
+    };
+    // As its worker would have, under the claim it holds.
+    const tokenHash = 'a'.repeat(64);
+    const NOW = '2026-08-26T10:00:00.000Z';
+    await store.enqueueRun({ runId: run!.runId, now: NOW });
+    await ctx.runtime.orchestrator.confirmDispatch(run!.runId);
+    await store.claimQueuedRun({
+      pipelines: [run!.pipeline],
+      now: NOW,
+      claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+      tokenHash,
+    });
+    expect(
+      await store.writeRunEvidence({
+        runId: run!.runId,
+        claimFingerprint: tokenHash,
+        evidence,
+      }),
+    ).toBe(true);
+    const read = await call(ctx, 'GET', `/items/${ID}`);
+    expect(read.status).toBe(200);
+    expect(read.json.runs[0].evidence).toEqual(evidence);
+    const listed = await call(ctx, 'GET', '/items');
+    expect(listed.status).toBe(200);
+    // The listing has the item and its run, without the run's evidence.
+    expect(JSON.stringify(listed.json)).toContain(run!.runId);
+    expect(JSON.stringify(listed.json)).not.toContain('toolCallCount');
+
+    // Evidence the store cannot read costs the item nothing but the evidence.
+    let lookups = 0;
+    const failing = {
+      ...ctx,
+      runtime: {
+        ...ctx.runtime,
+        store: new Proxy(store, {
+          get(target, key) {
+            if (key === 'readRunEvidence')
+              return async () => {
+                lookups++;
+                throw new Error('evidence unavailable');
+              };
+            const value: unknown = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        }),
+      },
+    };
+    const without = await call(failing, 'GET', `/items/${ID}`);
+    expect(without.status).toBe(200);
+    expect(without.json.runs[0]).not.toHaveProperty('evidence');
+
+    expect(lookups).toBe(1);
+
+    // A change answers without the lookup: the confirmation of what has
+    // already committed never waits on evidence.
+    const cancelled = await call(failing, 'POST', `/items/${ID}/cancel`);
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.json.state).toBe('canceled');
+    expect(cancelled.json.runs[0]).not.toHaveProperty('evidence');
+    expect(lookups).toBe(1);
+  });
+
   it('lets a claw admitter read its own run and report, and nothing else', async () => {
     const ctx = clawContext();
     const mine = await admit(ctx);

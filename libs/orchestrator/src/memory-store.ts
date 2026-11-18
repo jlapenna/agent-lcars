@@ -110,6 +110,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #runMessageChunks = new Map<string, string>();
+  readonly #runEvidence = new Map<string, RunEvidence>();
   readonly #sourceWorkIds = new Map<string, string>();
   readonly #sourceRevisions = new Map<string, WorkRevision>();
   readonly #requestRuns = new Map<string, string>();
@@ -193,6 +194,33 @@ export class MemoryStore implements OrchestratorStore {
         ),
       ),
     );
+  }
+
+  async writeRunEvidence(input: {
+    runId: string;
+    claimFingerprint: string;
+    evidence: RunEvidence;
+  }): Promise<boolean> {
+    const key = `${input.runId}\0${input.claimFingerprint}`;
+    if (this.#runEvidence.has(key)) return false;
+    this.#runEvidence.set(key, plainRunEvidence(input.evidence));
+    return true;
+  }
+
+  async readRunEvidence(
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
+  ): Promise<Map<string, RunEvidence>> {
+    const found = new Map<string, RunEvidence>();
+    for (const run of runs) {
+      const claim = run.queue?.tokenHash;
+      if (claim === undefined) continue;
+      const evidence = runEvidenceSchema.safeParse(
+        this.#runEvidence.get(`${run.runId}\0${claim}`),
+      );
+      if (evidence.success)
+        found.set(run.runId, plainRunEvidence(evidence.data));
+    }
+    return found;
   }
 
   async readRun(runId: string): Promise<Run | undefined> {
@@ -890,6 +918,9 @@ export class MemoryStore implements OrchestratorStore {
 import {
   type IssueReference,
   issueSourceKey,
+  plainRunEvidence,
+  type RunEvidence,
+  runEvidenceSchema,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';
