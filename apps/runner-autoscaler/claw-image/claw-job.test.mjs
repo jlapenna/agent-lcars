@@ -149,6 +149,7 @@ fs.appendFileSync(behaviour.FAKE_LOG, JSON.stringify({
   args,
   pid: process.pid,
   key: process.env.LITELLM_API_KEY ?? null,
+  skips: Object.keys(process.env).filter((name) => name.startsWith('OPENCLAW_SKIP_')).sort(),
   config: configPath && fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined,
 }) + '\\n');
 if (sub === 'config validate') {
@@ -312,14 +313,28 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
   const { config, pid } = log[3];
   assert.deepEqual(config.tools, {
     profile: 'minimal',
+    fs: { workspaceOnly: true },
     exec: { mode: 'allowlist' },
   });
-  assert.deepEqual(config.agents.defaults, { skipBootstrap: true, workspace });
+  assert.deepEqual(config.agents.defaults, {
+    sandbox: { mode: 'off' },
+    skipBootstrap: true,
+    workspace,
+  });
   assert.equal(config.agents.entries.main.workspace, workspace);
   assert.equal(config.gateway.mode, 'local');
   assert.equal(config.gateway.bind, 'loopback');
   assert.equal(config.gateway.auth.mode, 'token');
   assert.deepEqual(config.gateway.reload, { mode: 'off' });
+  // It starts nothing but the turn: no channels, schedules or prewarm.
+  assert.deepEqual(log[3].skips, [
+    'OPENCLAW_SKIP_BROWSER_CONTROL_SERVER',
+    'OPENCLAW_SKIP_CANVAS_HOST',
+    'OPENCLAW_SKIP_CHANNELS',
+    'OPENCLAW_SKIP_CRON',
+    'OPENCLAW_SKIP_GMAIL_WATCHER',
+    'OPENCLAW_SKIP_STARTUP_MODEL_PREWARM',
+  ]);
   // OpenClaw's ACP server is the agent, pointed at that Gateway.
   const acp = log[4].args;
   assert.equal(acp[2], `ws://127.0.0.1:${config.gateway.port}`);
@@ -392,8 +407,10 @@ test("an un-normalized source config runs Doctor's accepted changes, without its
   }
   // The turn keeps Doctor's accepted change (an empty agent entry) but not
   // its skill toggle: OpenClaw gates skills at load time in the turn itself.
-  assert.deepEqual(gateway.config.agents.entries.helper, {});
-  assert.equal(gateway.config.skills, undefined);
+  assert.deepEqual(gateway.config.agents.entries.helper, {
+    workspace: join(env.CLAW_WORK_DIR, 'workspace'),
+  });
+  assert.deepEqual(gateway.config.skills, { load: { watch: false } });
 });
 
 test("Doctor's repairs to the turn's directory never reach the turn", async () => {
@@ -672,43 +689,91 @@ test('comparableConfig ignores only meta and wizard stamps', () => {
   assert.notEqual(comparableConfig({ a: 1 }), comparableConfig({ a: 2 }));
 });
 
-test('launchConfig adds only what this run knows to the reviewed config', () => {
+test('launchConfig runs the reviewed config under headless defaults and this run', () => {
+  const run = { workspace: '/work/workspace', port: 4242, token: 't' };
+  const gateway = {
+    mode: 'local',
+    bind: 'loopback',
+    port: 4242,
+    auth: { mode: 'token', token: 't', allowTailscale: false },
+    tailscale: { mode: 'off' },
+    reload: { mode: 'off' },
+  };
+  // A source that says nothing gets what `agent exec` gave a headless turn:
+  // file tools confined to the workspace and the coding profile, not every
+  // tool.
+  assert.deepEqual(launchConfig({}, run), {
+    env: { shellEnv: { enabled: false } },
+    agents: {
+      defaults: {
+        sandbox: { mode: 'off' },
+        workspace: '/work/workspace',
+        skipBootstrap: true,
+      },
+    },
+    tools: {
+      profile: 'coding',
+      fs: { workspaceOnly: true },
+      exec: { mode: 'full' },
+    },
+    skills: { load: { watch: false } },
+    logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
+    gateway,
+  });
   const launched = launchConfig(
     {
       agents: {
         defaults: { skipBootstrap: false, model: { primary: 'm' } },
-        entries: { main: { workspace: '/repo/workspace' }, helper: {} },
+        entries: {
+          main: {
+            workspace: '/repo/workspace',
+            agentDir: '/repo/agent',
+            runtime: { type: 'acp', acp: { agent: 'codex', cwd: '/repo' } },
+          },
+          helper: null,
+        },
       },
-      tools: { profile: 'minimal' },
+      tools: { profile: 'minimal', fs: { workspaceOnly: false } },
+      session: { store: '/repo/sessions', scope: 'per-sender' },
+      logging: { consoleLevel: 'silent', consoleStyle: 'json', level: 'debug' },
       gateway: {
-        port: 1,
-        auth: { mode: 'none' },
-        controlUi: { enabled: false },
+        bind: 'lan',
+        auth: { mode: 'none', allowTailscale: true },
+        tailscale: { mode: 'serve' },
+        remote: { url: 'wss://elsewhere' },
+        controlUi: { enabled: true },
       },
     },
-    { workspace: '/work/workspace', port: 4242, token: 't' },
+    run,
   );
-  assert.deepEqual(launched, {
-    agents: {
-      // The agent's own choices stand; only its workspace is this run's,
-      // wherever the source named one.
-      defaults: {
-        skipBootstrap: false,
-        model: { primary: 'm' },
-        workspace: '/work/workspace',
-      },
-      entries: { main: { workspace: '/work/workspace' }, helper: {} },
+  // The source's own tool choices stand, in either direction.
+  assert.deepEqual(launched.tools, {
+    profile: 'minimal',
+    fs: { workspaceOnly: false },
+    exec: { mode: 'full' },
+  });
+  // Every agent works in this run's workspace and keeps its state here.
+  assert.deepEqual(launched.agents.defaults, {
+    sandbox: { mode: 'off' },
+    skipBootstrap: true,
+    model: { primary: 'm' },
+    workspace: '/work/workspace',
+  });
+  assert.deepEqual(launched.agents.entries, {
+    main: {
+      workspace: '/work/workspace',
+      runtime: { type: 'acp', acp: { agent: 'codex' } },
     },
-    tools: { profile: 'minimal' },
-    // A definition cannot open the Gateway or drop its token.
-    gateway: {
-      controlUi: { enabled: false },
-      mode: 'local',
-      bind: 'loopback',
-      port: 4242,
-      auth: { mode: 'token', token: 't' },
-      reload: { mode: 'off' },
-    },
+    helper: { workspace: '/work/workspace' },
+  });
+  assert.deepEqual(launched.session, { scope: 'per-sender' });
+  // The Gateway is this run's alone: nothing the source says about it
+  // survives, and its log keeps the form the launcher reads.
+  assert.deepEqual(launched.gateway, gateway);
+  assert.deepEqual(launched.logging, {
+    consoleLevel: 'info',
+    consoleStyle: 'pretty',
+    level: 'debug',
   });
 });
 

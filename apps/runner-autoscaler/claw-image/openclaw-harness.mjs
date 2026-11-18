@@ -278,35 +278,79 @@ function freePort() {
   });
 }
 
-// What OpenClaw actually runs: the turn's config, plus what only this Job
-// knows. A Gateway turn takes the agent's workspace from the config, so the
-// Job's workspace replaces any the source names (a repository path means
-// nothing here), and a workspace is not bootstrapped unless the source asks.
+// `over` wins over `under`; plain objects merge key by key.
+function mergeDeep(under, over) {
+  const plain = (value) =>
+    value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!plain(under) || !plain(over)) return over;
+  const merged = { ...under };
+  for (const [key, value] of Object.entries(over))
+    merged[key] = key in under ? mergeDeep(under[key], value) : value;
+  return merged;
+}
+
+// What `openclaw agent exec` laid under a config for a headless turn
+// (OpenClaw's buildExecConfigDefaults). A Gateway turn applies none of it by
+// itself: without these, file tools are not confined to the workspace and an
+// unset tool profile means every tool. The source's own settings still win.
+const TURN_DEFAULTS = Object.freeze({
+  env: { shellEnv: { enabled: false } },
+  agents: { defaults: { sandbox: { mode: 'off' } } },
+  tools: {
+    profile: 'coding',
+    fs: { workspaceOnly: true },
+    exec: { mode: 'full' },
+  },
+});
+
+// What OpenClaw actually runs: the turn's config between the headless
+// defaults under it and what only this Job knows over it, as `agent exec`
+// composed its run config (buildExecRunConfig, pinExecAgentLocations).
+// - Every agent works in the Job's workspace: a path the source names means
+//   nothing here, and a Gateway turn takes the workspace from the config.
+//   Agent state stays under the Job's state directory.
+// - The Gateway block is this Job's alone, so a definition cannot open the
+//   Gateway, drop its token or expose it.
+// - Console logging keeps the form startGateway reads.
 export function launchConfig(config, { workspace, port, token }) {
-  const { defaults = {}, entries = {}, ...agents } = config.agents ?? {};
-  return {
-    ...config,
-    agents: {
-      ...agents,
-      defaults: { skipBootstrap: true, ...defaults, workspace },
+  const { session, gateway: _gateway, ...root } = config;
+  const { store: _store, ...sessionWithoutStore } = session ?? {};
+  const pinned = session ? { ...root, session: sessionWithoutStore } : root;
+  if (pinned.agents?.entries)
+    pinned.agents = {
+      ...pinned.agents,
       entries: Object.fromEntries(
-        Object.entries(entries).map(([name, entry]) => [
-          name,
-          entry?.workspace === undefined ? entry : { ...entry, workspace },
-        ]),
+        Object.entries(pinned.agents.entries).map(([name, entry]) => {
+          const { agentDir: _agentDir, runtime, ...rest } = entry ?? {};
+          const { cwd: _cwd, ...acp } = runtime?.acp ?? {};
+          return [
+            name,
+            {
+              ...rest,
+              workspace,
+              ...(runtime
+                ? { runtime: runtime.acp ? { ...runtime, acp } : runtime }
+                : {}),
+            },
+          ];
+        }),
       ),
-    },
+    };
+  return mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
+    agents: { defaults: { workspace, skipBootstrap: true } },
+    skills: { load: { watch: false } },
+    logging: { consoleLevel: 'info', consoleStyle: 'pretty' },
     gateway: {
-      ...config.gateway,
       mode: 'local',
       bind: 'loopback',
       port,
-      auth: { mode: 'token', token },
+      auth: { mode: 'token', token, allowTailscale: false },
+      tailscale: { mode: 'off' },
       // A config edited during the turn is never applied to the running
       // Gateway.
       reload: { mode: 'off' },
     },
-  };
+  });
 }
 
 export async function prepareState({
@@ -335,6 +379,15 @@ export async function prepareState({
     OPENCLAW_NO_AUTO_UPDATE: '1',
     OPENCLAW_HIDE_BANNER: '1',
     OPENCLAW_SUPPRESS_NOTES: '1',
+    // The Gateway serves this one turn. Nothing else it would start for a
+    // long-lived deployment runs: no channel can reach the agent, nothing is
+    // scheduled, and the model is not contacted before the turn.
+    OPENCLAW_SKIP_CHANNELS: '1',
+    OPENCLAW_SKIP_CRON: '1',
+    OPENCLAW_SKIP_GMAIL_WATCHER: '1',
+    OPENCLAW_SKIP_CANVAS_HOST: '1',
+    OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: '1',
+    OPENCLAW_SKIP_STARTUP_MODEL_PREWARM: '1',
   };
 
   const validation = await run(openclaw, ['config', 'validate', '--json'], {
@@ -441,12 +494,18 @@ export function startGateway(openclaw, { env, signal }) {
         // The group already exited.
       }
     };
-    let ready = false;
+    let settled = false;
     let tail = '';
-    const fail = (error) => {
+    const settle = () => {
+      if (settled) return false;
+      settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      void stop().then(() => reject(error));
+      return true;
+    };
+    // The Gateway is stopped, group and all, before a failure is reported.
+    const fail = (error) => {
+      if (settle()) void stop().then(() => reject(error));
     };
     const timer = setTimeout(
       () => fail(new ClawFailure('OpenClaw Gateway was not ready in time')),
@@ -456,36 +515,24 @@ export function startGateway(openclaw, { env, signal }) {
     const onAbort = () => fail(new ClawFailure('claw run was cancelled'));
     signal?.addEventListener('abort', onAbort, { once: true });
     child.stdout.setEncoding('utf8');
+    // Keep reading after ready: a full pipe would block the Gateway.
     child.stdout.on('data', (chunk) => {
-      if (ready) return;
+      if (settled) return;
       const lines = (tail + chunk).split('\n');
       tail = lines.pop().slice(-4096);
-      if (!lines.some((line) => GATEWAY_READY.test(stripAnsi(line).trimEnd())))
-        return;
-      ready = true;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      resolve(stop);
+      if (lines.some((line) => GATEWAY_READY.test(stripAnsi(line).trimEnd())))
+        if (settle()) resolve(stop);
     });
     // Gateway logs can echo resolved configuration; never forward them.
     child.stderr.resume();
     child.once('error', (error) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(error);
+      if (settle()) reject(error);
     });
-    child.once('close', (code) => {
-      if (ready) return;
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(
-        signal?.aborted
-          ? new ClawFailure('claw run was cancelled')
-          : new ClawFailure(
-              `OpenClaw Gateway exited ${code} before it was ready`,
-            ),
-      );
-    });
+    child.once('close', (code) =>
+      fail(
+        new ClawFailure(`OpenClaw Gateway exited ${code} before it was ready`),
+      ),
+    );
   });
 }
 

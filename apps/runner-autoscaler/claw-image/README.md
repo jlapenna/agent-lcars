@@ -114,12 +114,18 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    ([below](#agent-config-normalization)). The workspace is staged again
    afterwards, so Doctor's file repairs never reach the turn.
 4. `openclaw approvals set --file /work/agent/approvals.json`.
-5. The launch config: the turn's config plus what only this Job knows. The
-   agent's workspace is `/work/workspace`, replacing any the source names;
-   workspace bootstrap is skipped unless the definition sets it; and the
-   Gateway listens on loopback behind a random token with config reload off.
-   A definition cannot open the Gateway or drop its token.
-6. `openclaw gateway run`, waited on until it logs `[gateway] ready`.
+5. The launch config (`launchConfig`), composed as `agent exec` composed
+   its run config: the headless defaults under the turn's config (file tools
+   confined to the workspace, the `coding` tool profile, no shell
+   environment import, unless the source says otherwise), and over it what
+   only this Job knows. Every agent works in `/work/workspace`, replacing any
+   path the source names, and is not bootstrapped. The Gateway block is the
+   Job's alone: loopback, a random token, no Tailscale, config reload off. A
+   definition cannot open the Gateway or drop its token.
+6. `openclaw gateway run`, waited on until it logs `[gateway] ready`. It
+   serves this one turn: channels, cron, the Gmail watcher, the canvas host,
+   the browser control server and the startup model prewarm are all switched
+   off, so nothing outside the Job can reach the agent.
 7. `openclaw acp --url ws://127.0.0.1:<port> --token-file … --no-prefix-cwd`
    is the harness. After the turn the Gateway's process group is stopped.
 
@@ -145,11 +151,12 @@ login fails the attempt with `Authentication required`.
 On 2026-11-18, on a workstation, the launcher ran each harness from this
 lockfile against stand-in model endpoints:
 
-- OpenClaw 2026.10.10-beta.3 settled a report in 56 to 69 s, of which Doctor
-  and the Gateway's start are most. The agent read its `AGENTS.md`, an
-  allowlisted `date` ran and counted as evidence, `cat /etc/hostname` outside
-  the allowlist failed the attempt, and a model endpoint returning HTTP 500
-  failed it with `empty result` after 136 s of OpenClaw's own retries.
+- OpenClaw 2026.10.10-beta.3 settled a report in about 40 s, most of it
+  Doctor and the Gateway's start. The agent read its `AGENTS.md`, an
+  allowlisted `date` ran and counted as evidence, and `cat /etc/hostname`
+  outside the allowlist failed the attempt. Before the Gateway's background
+  services were switched off, a model endpoint returning HTTP 500 failed the
+  attempt with `empty result` after 136 s of OpenClaw's own retries.
 - Claude Code settled a report in 3 to 5 s; a command allowed in
   `home/.claude/settings.json` ran, and a write or network command without a
   rule was refused and failed the attempt.
