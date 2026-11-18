@@ -110,6 +110,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #runMessageChunks = new Map<string, string>();
+  readonly #runEvidence = new Map<string, RunEvidence>();
   readonly #sourceWorkIds = new Map<string, string>();
   readonly #sourceRevisions = new Map<string, WorkRevision>();
   readonly #requestRuns = new Map<string, string>();
@@ -193,6 +194,26 @@ export class MemoryStore implements OrchestratorStore {
         ),
       ),
     );
+  }
+
+  async writeRunEvidence(input: {
+    runId: string;
+    evidence: RunEvidence;
+  }): Promise<void> {
+    this.#runEvidence.set(input.runId, structuredClone(input.evidence));
+  }
+
+  async readRunEvidence(
+    runIds: readonly string[],
+  ): Promise<Map<string, RunEvidence>> {
+    const found = new Map<string, RunEvidence>();
+    for (const runId of runIds) {
+      const evidence = runEvidenceSchema.safeParse(
+        this.#runEvidence.get(runId),
+      );
+      if (evidence.success) found.set(runId, evidence.data);
+    }
+    return found;
   }
 
   async readRun(runId: string): Promise<Run | undefined> {
@@ -890,6 +911,8 @@ export class MemoryStore implements OrchestratorStore {
 import {
   type IssueReference,
   issueSourceKey,
+  type RunEvidence,
+  runEvidenceSchema,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';

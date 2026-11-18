@@ -38,6 +38,9 @@
 //   5. Settle from the session's updates (settle): a report only when the
 //      turn ended normally, the agent's last message is not empty and no
 //      tool call is unresolved; everything else is runner-failed.
+//   6. What the session showed (turnEvidence: tool calls by kind, usage,
+//      the stop reason) is reported beside the run, best effort, before the
+//      run completes.
 
 import { createHash } from 'node:crypto';
 import {
@@ -74,6 +77,9 @@ const MAX_MESSAGE_BYTES = 4 * MAX_REPORT_BYTES;
 // How long a harness host gets to listen, to answer a finished turn (for
 // OpenClaw that includes asking its Gateway how the turn ended), and to stop
 // what it started once the launcher is done with it.
+// How long reporting the session's evidence may take before the run
+// completes without it.
+const EVIDENCE_TIMEOUT_MS = 3_000;
 const HOST_CONNECT_MS = 60_000;
 const HOST_FINISH_MS = 420_000;
 const HOST_CLOSE_MS = 10_000;
@@ -121,6 +127,85 @@ function sessionFailure(meta) {
     ? failure.category
     : 'session';
 }
+// What the session showed of the turn, as the Work API records it beside
+// the run (`runEvidenceReportSchema`). No text an agent, a model or a
+// harness chose is in it: every word comes from one of ACP's own closed
+// lists, or is `other`, and the rest is numbers. A tool call is its kind,
+// never its name, title or arguments, and a number the harness got wrong is
+// left out rather than passed on.
+const EVIDENCE_TOOL_CALLS_MAX = 200;
+const TOOL_KINDS = new Set([
+  'read',
+  'edit',
+  'delete',
+  'move',
+  'search',
+  'execute',
+  'think',
+  'fetch',
+  'switch_mode',
+]);
+const TOOL_STATUSES = new Set([
+  'pending',
+  'in_progress',
+  'completed',
+  'failed',
+]);
+const STOP_REASONS = new Set([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled',
+]);
+const listed = (words, value) => (words.has(value) ? value : 'other');
+const counted = (value) =>
+  Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+export function turnEvidence({
+  stopReason,
+  tools,
+  usage,
+  context,
+  durationMs,
+}) {
+  const numbers = {
+    inputTokens: counted(usage?.inputTokens),
+    outputTokens: counted(usage?.outputTokens),
+    totalTokens: counted(usage?.totalTokens),
+    thoughtTokens: counted(usage?.thoughtTokens),
+    cachedReadTokens: counted(usage?.cachedReadTokens),
+    cachedWriteTokens: counted(usage?.cachedWriteTokens),
+    contextTokens: counted(context?.used),
+    contextWindow: counted(context?.size),
+  };
+  const cost = context?.cost;
+  const reported = {
+    ...Object.fromEntries(
+      Object.entries(numbers).filter(([, value]) => value !== undefined),
+    ),
+    ...(cost &&
+    typeof cost.amount === 'number' &&
+    cost.amount >= 0 &&
+    cost.amount <= 1_000_000 &&
+    typeof cost.currency === 'string' &&
+    /^[A-Z]{3}$/u.test(cost.currency)
+      ? { cost: { amount: cost.amount, currency: cost.currency } }
+      : {}),
+  };
+  return {
+    ...(stopReason === undefined
+      ? {}
+      : { stopReason: listed(STOP_REASONS, stopReason) }),
+    toolCallCount: tools.length,
+    toolCalls: tools.slice(0, EVIDENCE_TOOL_CALLS_MAX).map((tool) => ({
+      kind: listed(TOOL_KINDS, tool.kind),
+      status: listed(TOOL_STATUSES, tool.status),
+    })),
+    ...(Object.keys(reported).length === 0 ? {} : { usage: reported }),
+    ...(counted(durationMs) === undefined ? {} : { durationMs }),
+  };
+}
+
 // Message text a harness tags as commentary: what the agent says while it
 // works, as opposed to its final answer. Untagged text is the answer's.
 const isCommentary = (meta) => meta?.jetbrains?.air?.phase === 'commentary';
@@ -136,13 +221,16 @@ const required = (env, name) => {
   return env[name];
 };
 
-export function workClient(env, { signal, fetchImpl = fetch } = {}) {
+export function workClient(
+  env,
+  { signal, fetchImpl = fetch, timeoutMs = 10_000 } = {},
+) {
   const base = `${required(env, 'LCARS_CONSOLE_URL')}/api/work/v1/runs/${encodeURIComponent(required(env, 'LCARS_RUN_ID'))}`;
   const token = required(env, 'LCARS_RUN_TOKEN');
   return async function call(path, body) {
     const headers = { Authorization: `Bearer ${token}` };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    const timeout = AbortSignal.timeout(10_000);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const response = await fetchImpl(`${base}/${path}`, {
       method: body === undefined ? 'GET' : 'POST',
       headers,
@@ -529,9 +617,27 @@ export function acpTurn(
       turn.final = '';
       turn.overflow = false;
     };
+    // What the harness says of its own usage: the tokens in the model's
+    // context and what the session cost, and the turn's token counts on the
+    // prompt's result.
+    let context;
+    let usage;
+    // When the prompt was sent, and when the harness answered it or the
+    // session ended without an answer.
+    let prompted;
+    let answered;
     const onUpdate = (update) => {
       const failure = sessionFailure(update?._meta);
       if (failure !== undefined) turn.failure = failure;
+      if (update?.sessionUpdate === 'usage_update') {
+        // The latest reading of the context; a cost it leaves out stands.
+        context = {
+          used: update.used,
+          size: update.size,
+          cost: update.cost ?? context?.cost,
+        };
+        return;
+      }
       if (
         update?.sessionUpdate === 'agent_message_chunk' &&
         typeof update.content?.text === 'string'
@@ -566,6 +672,8 @@ export function acpTurn(
         for (const label of [update.kind, update.name])
           if (typeof label === 'string' && TOOL_LABEL.test(label))
             tool.label = label;
+        // The kind alone is what the run's evidence records.
+        if (typeof update.kind === 'string') tool.kind = update.kind;
         const changed =
           typeof update.status === 'string' && update.status !== tool.status;
         if (changed) {
@@ -668,15 +776,32 @@ export function acpTurn(
         waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));
       pending.clear();
       // The session below gets to record its outcome before this resolves.
-      setImmediate(() =>
+      setImmediate(() => {
+        const ended = Date.now();
+        let evidence;
+        try {
+          evidence = turnEvidence({
+            stopReason: turn.stopReason,
+            tools: [...tools.values()],
+            usage,
+            context,
+            durationMs:
+              prompted === undefined
+                ? undefined
+                : (answered ?? ended) - prompted,
+          });
+        } catch {
+          // Evidence is never worth the turn's outcome.
+        }
         resolve({
           ...turn,
           calls: tools.size,
           unresolved: unresolved(),
           aborted,
           code,
-        }),
-      );
+          evidence,
+        });
+      });
     };
     const onAbort = () => {
       aborted = true;
@@ -743,23 +868,27 @@ export function acpTurn(
       // The harness's own name for the session, for a harness that has a
       // record of the turn to check afterwards.
       turn.sessionId = session.sessionId;
-      const prompted = await request('session/prompt', {
+      prompted = Date.now();
+      const answer = await request('session/prompt', {
         sessionId: session.sessionId,
         prompt: [{ type: 'text', text: promptText(message) }],
         // What a harness reads from a prompt beyond ACP's own fields.
         ...(promptMeta === undefined ? {} : { _meta: promptMeta }),
       });
-      turn.stopReason = prompted.stopReason;
+      turn.stopReason = answer.stopReason;
+      if (answer.usage && typeof answer.usage === 'object')
+        usage = answer.usage;
       // The harness's last word on the turn: a failure it attaches to the
       // result stands, and a result without one does not clear a failure
       // already reported.
-      turn.failure = sessionFailure(prompted._meta) ?? turn.failure;
+      turn.failure = sessionFailure(answer._meta) ?? turn.failure;
     })()
       .catch((error) => {
         turn.error ??=
           error instanceof ClawFailure ? error.message : 'ACP session failed';
       })
       .finally(() => {
+        answered = Date.now();
         // The turn is over: the host closes the session's input, then stops
         // whatever the harness left running.
         channel.end();
@@ -851,6 +980,7 @@ async function harnessTurn({
   env,
   signal,
   started,
+  observed,
 }) {
   const channel = harnessChannel(await harnessStream(env, harnesses, signal));
   // A run that was told to stop has little time left to settle in.
@@ -877,6 +1007,8 @@ async function harnessTurn({
     turn.catch(() => undefined);
     await started();
     finished = await turn;
+    // What the session showed stands whatever becomes of the turn's result.
+    observed(finished.evidence);
   } catch (error) {
     await close();
     throw error;
@@ -955,6 +1087,14 @@ export async function main(env = process.env, deps = {}) {
   // Settlement must still be attempted after cancellation, under its own
   // request timeout only.
   const settleCall = workClient(env, { fetchImpl: deps.fetchImpl });
+  // What the session showed is reported beside the run, briefly: it must
+  // not hold up the completion that follows it.
+  const evidenceCall = workClient(env, {
+    // A run told to stop while it reports gives the report up at once.
+    signal: controller.signal,
+    fetchImpl: deps.fetchImpl,
+    timeoutMs: EVIDENCE_TIMEOUT_MS,
+  });
   const workRoot = env.CLAW_WORK_DIR || '/work';
   const started = Date.now();
   const turnDeadlineMs =
@@ -987,6 +1127,7 @@ export async function main(env = process.env, deps = {}) {
   const work = AbortSignal.any([controller.signal, deadline.signal]);
   try {
     let result;
+    let evidence;
     try {
       const brief = await call('brief');
       const request = readBrief(brief, env);
@@ -1006,6 +1147,10 @@ export async function main(env = process.env, deps = {}) {
           call('heartbeat', { providerProcessStarted: true }).catch(
             ignoreHeartbeatFailure,
           ),
+        observed: (seen) => {
+          if (seen !== undefined)
+            evidence = { source: 'acp', harness: request.harness, ...seen };
+        },
       });
       result = settle(
         {
@@ -1037,6 +1182,19 @@ export async function main(env = process.env, deps = {}) {
       if (!(error instanceof ClawFailure) && !work.aborted)
         console.error(error);
     }
+    // Best effort and never the outcome: a Console from before evidence
+    // answers 404, and a run that was told to stop has only its grace
+    // period left to settle in.
+    if (evidence !== undefined && !controller.signal.aborted)
+      await evidenceCall('evidence', { evidence }).catch((error) => {
+        // Said once, so a Console that refuses every record is not silent.
+        if (!controller.signal.aborted)
+          console.error(
+            `claw run evidence was not recorded: ${
+              error instanceof ClawFailure ? error.message : 'no answer in time'
+            }`,
+          );
+      });
     await settleCall('complete', result);
     return result;
   } finally {

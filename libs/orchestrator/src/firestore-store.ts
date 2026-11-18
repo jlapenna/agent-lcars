@@ -1,6 +1,8 @@
 import {
   type IssueReference,
   issueSourceKey,
+  type RunEvidence,
+  runEvidenceSchema,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -303,6 +305,32 @@ export class FirestoreStore implements OrchestratorStore {
         return snapshot.exists && typeof text === 'string' ? text : undefined;
       }),
     );
+  }
+
+  async writeRunEvidence(input: {
+    runId: string;
+    evidence: RunEvidence;
+  }): Promise<void> {
+    await this.#runEvidenceRef(input.runId).set(input.evidence);
+  }
+
+  async readRunEvidence(
+    runIds: readonly string[],
+  ): Promise<Map<string, RunEvidence>> {
+    const found = new Map<string, RunEvidence>();
+    if (runIds.length === 0) return found;
+    const snapshots = await this.#firestore.getAll(
+      ...runIds.map((runId) => this.#runEvidenceRef(runId)),
+    );
+    snapshots.forEach((snapshot, index) => {
+      // Evidence is a reading aid: a document this Console cannot parse is
+      // left out rather than failing the read of its run.
+      const evidence = runEvidenceSchema.safeParse(snapshot.data());
+      const runId = runIds[index];
+      if (snapshot.exists && evidence.success && runId !== undefined)
+        found.set(runId, evidence.data);
+    });
+    return found;
   }
 
   async readRun(runId: string): Promise<Run | undefined> {
@@ -1411,6 +1439,11 @@ export class FirestoreStore implements OrchestratorStore {
     return this.#runRef(runId)
       .collection('message-chunks')
       .doc(`${overflow.sha256}.${index}`);
+  }
+
+  /** One document per source beside the run, like its message chunks. */
+  #runEvidenceRef(runId: string): DocumentReference {
+    return this.#runRef(runId).collection('evidence').doc('acp');
   }
 
   #outboxRef(entryId: string): DocumentReference {

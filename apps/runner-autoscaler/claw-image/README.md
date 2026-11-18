@@ -208,6 +208,18 @@ Each step fails the attempt closed with a `runner-failed` completion:
    config and Gateway token) is read only as a regular file of a bounded
    size within a bounded time (`readSettingsFile`), and a link, a pipe, a
    device or a larger file counts as changed.
+7. Before it completes the run, the launcher reports what the session
+   showed (`turnEvidence`) to `POST /runs/{runId}/evidence`: each tool call
+   by its ACP kind and its last status (the first 200, with a count of them
+   all), the stop reason, the token usage the harness reported (the
+   prompt's result and its last `usage_update`) and how long the harness
+   took to answer the prompt. Every word is from one of ACP's closed lists
+   or is `other`: never a tool call's name, title or arguments, and a
+   number the harness got wrong is left out. The report is best effort and
+   never the outcome. It has three seconds, a Console from before it
+   answers 404 and the run completes all the same, and a run that was told
+   to stop skips it or gives it up. A report that was not recorded is said
+   once in the Job's log.
 
 Harness stderr is never forwarded, because it can echo resolved
 configuration. The outer deadline and cancellation stop the harness's process

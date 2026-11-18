@@ -43,6 +43,12 @@ export {
   quickTaskDigest,
   quickTaskMarkerMatcher,
 } from './quick-task';
+export type { RunEvidence, RunEvidenceReport } from './run-evidence';
+export {
+  RUN_EVIDENCE_TOOL_CALLS_MAX,
+  runEvidenceReportSchema,
+  runEvidenceSchema,
+} from './run-evidence';
 export {
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,

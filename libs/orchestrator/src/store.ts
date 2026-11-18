@@ -1,5 +1,6 @@
 import type {
   IssueReference,
+  RunEvidence,
   TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
@@ -297,6 +298,17 @@ export interface OrchestratorStore {
     runId: string;
     overflow: RunMessageOverflow;
   }): Promise<string | undefined>;
+  /** Store what a run's worker saw its agent do, beside the run and never
+   * in its document: a Console from before evidence existed reads the run
+   * as it always did. A later report for the same run replaces the earlier
+   * one. */
+  writeRunEvidence(input: {
+    runId: string;
+    evidence: RunEvidence;
+  }): Promise<void>;
+  /** The evidence recorded for each of `runIds` that has any. A run without
+   * evidence, or whose stored evidence no longer parses, is absent. */
+  readRunEvidence(runIds: readonly string[]): Promise<Map<string, RunEvidence>>;
 
   /**
    * Atomically reads a task's current lock and the one matching durable

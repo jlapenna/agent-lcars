@@ -7,6 +7,7 @@ import {
   type ScheduleStore,
   type Task,
   withFullRunMessages,
+  withRunEvidence,
 } from '@agent-lcars/orchestrator';
 import type { SessionDoc } from '@agent-lcars/telemetry';
 import {
@@ -98,7 +99,7 @@ export async function view(
   const { store } = context.runtime;
   const runs = await store.listRuns({ workId });
   const sessions = await context.sessionsFor(runs.map((run) => run.runId));
-  return toItemView({
+  const item = toItemView({
     workId,
     task,
     // One item's view carries every round's whole message; listings keep
@@ -114,6 +115,17 @@ export async function view(
     ),
     sessions,
   });
+  // And what each round's worker saw its agent do, where one reported it.
+  return {
+    ...item,
+    runs: await withRunEvidence(store, item.runs, (error) =>
+      logger.error(
+        'agent-lcars: run evidence unreadable for work %s; serving the item without it: %s',
+        workId,
+        String(error),
+      ),
+    ),
+  };
 }
 
 /** Who a mint's grant is checked against: the caller for `items.create`,

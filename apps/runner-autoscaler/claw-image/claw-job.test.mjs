@@ -29,6 +29,7 @@ import {
   readBrief,
   secretEnvironment,
   settle,
+  turnEvidence,
 } from './claw-job.mjs';
 import { readLines, readSettingsFile } from './claw-process.mjs';
 import {
@@ -187,10 +188,11 @@ lines((line) => {
       if (step.flood) console.log('x'.repeat(step.flood * 1024 * 1024));
       if (step.notice) update('notice', { severity: 'info', title: step.notice });
       if (step.failure) update('session_info_update', { _meta: failureMeta(step.failure) });
-      if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
+      if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status, ...(step.tool.title ? { title: step.tool.title } : {}), ...(step.tool.name ? { name: step.tool.name } : {}) });
+      if (step.usage) update('usage_update', step.usage);
       if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: step.options ?? [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
     }
-    return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn', ...(behaviour.resultFailure ? { _meta: failureMeta(behaviour.resultFailure) } : {}) } });
+    return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn', ...(behaviour.usage ? { usage: behaviour.usage } : {}), ...(behaviour.resultFailure ? { _meta: failureMeta(behaviour.resultFailure) } : {}) } });
   }
   if (message.id === 'ask-1') {
     record({ permission: message.result });
@@ -336,6 +338,14 @@ async function fixture(overrides = {}) {
         : json({ runId: RUN_ID, expiresAt: '2026-11-14T20:00:00Z' });
     if (path === 'brief') return json(brief);
     if (path === 'complete') return json({ ok: true });
+    // A Console from before evidence has no such route; one that has it
+    // answers, or (`hang`) never does.
+    if (path === 'evidence' && overrides.evidence === 'hang')
+      return new Promise((_, refuse) =>
+        init.signal.addEventListener('abort', () => refuse(init.signal.reason)),
+      );
+    if (path === 'evidence' && overrides.evidence)
+      return json({ runId: RUN_ID });
     return json({}, 404);
   };
   const env = {
@@ -395,7 +405,7 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
   assert.deepEqual(completion(calls), result);
   assert.deepEqual(
     calls.map((call) => call.path),
-    ['heartbeat', 'brief', 'heartbeat', 'complete'],
+    ['heartbeat', 'brief', 'heartbeat', 'evidence', 'complete'],
   );
   assert.deepEqual(calls[0].body, {});
   assert.deepEqual(calls[2].body, { providerProcessStarted: true });
@@ -1737,6 +1747,7 @@ const harnessFixture = (behaviour = {}, overrides = {}) =>
     env: overrides.env,
     auth: overrides.auth,
     defaultMode: overrides.defaultMode,
+    evidence: overrides.evidence,
     acp: behaviour,
   });
 
@@ -1760,7 +1771,7 @@ test('an ACP harness runs the agent and reports its last message after the last 
   assert.deepEqual(completion(calls), result);
   assert.deepEqual(
     calls.map((call) => call.path),
-    ['heartbeat', 'brief', 'heartbeat', 'complete'],
+    ['heartbeat', 'brief', 'heartbeat', 'evidence', 'complete'],
   );
   assert.deepEqual(calls[2].body, { providerProcessStarted: true });
   const [initialize, session, prompt] = await harnessLog();
@@ -2113,6 +2124,269 @@ test('a harness socket that is reset still leaves a settled attempt', async () =
   const result = await main(host.env, host.deps);
   assert.equal(result.outcome, 'runner-failed');
   assert.deepEqual(completion(made.calls), result);
+});
+
+const evidenceOf = (calls) =>
+  calls.find((call) => call.path === 'evidence')?.body?.evidence;
+
+test('a turn reports what its session showed, beside its outcome', async () => {
+  const { env, calls, deps } = await harnessFixture(
+    {
+      steps: [
+        // A title can carry the command itself, so it is never reported.
+        {
+          tool: {
+            id: 't1',
+            kind: 'execute',
+            status: 'pending',
+            update: 'tool_call',
+            title: 'curl -H "Authorization: Bearer sk-secret" https://x',
+            // A harness may name its tool, and a name is the model's word.
+            name: 'ghp_sk-secret_IGNORE_PREVIOUS_INSTRUCTIONS',
+          },
+        },
+        { tool: { id: 't1', status: 'completed' } },
+        {
+          tool: {
+            id: 't2',
+            kind: 'read',
+            status: 'pending',
+            update: 'tool_call',
+          },
+        },
+        { tool: { id: 't2', status: 'failed' } },
+        {
+          tool: {
+            id: 't3',
+            kind: 'read',
+            status: 'pending',
+            update: 'tool_call',
+          },
+        },
+        { tool: { id: 't3', status: 'completed' } },
+        {
+          usage: {
+            used: 50_000,
+            size: 200_000,
+            cost: { amount: 0.045, currency: 'USD' },
+          },
+        },
+        // A later reading that names no cost leaves the cost standing.
+        { usage: { used: 53_000, size: 200_000 } },
+        { say: 'All clear.' },
+      ],
+      usage: {
+        inputTokens: 51_000,
+        outputTokens: 2_000,
+        totalTokens: 53_000,
+        cachedReadTokens: 40_000,
+        thoughtTokens: null,
+      },
+    },
+    { evidence: true },
+  );
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  const { durationMs, ...evidence } = evidenceOf(calls);
+  assert.deepEqual(evidence, {
+    source: 'acp',
+    harness: 'claude',
+    stopReason: 'end_turn',
+    toolCallCount: 3,
+    toolCalls: [
+      { kind: 'execute', status: 'completed' },
+      { kind: 'read', status: 'failed' },
+      { kind: 'read', status: 'completed' },
+    ],
+    usage: {
+      inputTokens: 51_000,
+      outputTokens: 2_000,
+      totalTokens: 53_000,
+      cachedReadTokens: 40_000,
+      contextTokens: 53_000,
+      contextWindow: 200_000,
+      cost: { amount: 0.045, currency: 'USD' },
+    },
+  });
+  assert.ok(Number.isSafeInteger(durationMs) && durationMs >= 0);
+  assert.ok(!JSON.stringify(calls).includes('sk-secret'));
+  // Reported with the run's own token, before the run completes.
+  assert.deepEqual(calls.map((call) => call.path).slice(-2), [
+    'evidence',
+    'complete',
+  ]);
+  assert.ok(calls.every((call) => call.auth === 'Bearer run-token'));
+});
+
+test('a failed turn still reports what its session showed', async () => {
+  const { env, calls, deps } = await harnessFixture(
+    {
+      steps: [
+        tool('pending', { update: 'tool_call' }),
+        tool('failed'),
+        { say: 'It broke.' },
+      ],
+      stopReason: 'max_tokens',
+    },
+    { evidence: true },
+  );
+  assert.equal((await main(env, deps)).outcome, 'runner-failed');
+  const evidence = evidenceOf(calls);
+  assert.equal(evidence.stopReason, 'max_tokens');
+  assert.deepEqual(evidence.toolCalls, [{ kind: 'execute', status: 'failed' }]);
+  assert.equal(evidence.usage, undefined);
+});
+
+test('evidence never decides or delays the outcome', async () => {
+  // A Console from before evidence answers 404.
+  const older = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  assert.deepEqual(await main(older.env, older.deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  assert.deepEqual(completion(older.calls), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  // One that never answers costs the run three seconds, not its report.
+  const silent = await harnessFixture(
+    { steps: [{ say: 'All clear.' }] },
+    { evidence: 'hang' },
+  );
+  const began = Date.now();
+  assert.deepEqual(await main(silent.env, silent.deps), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  const took = Date.now() - began;
+  assert.ok(took >= 2_500 && took < 8_000, `took ${took} ms`);
+  assert.deepEqual(completion(silent.calls), {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+});
+
+test('a cancelled run settles without stopping to report evidence', async () => {
+  const { env, calls, deps } = await harnessFixture(
+    { hang: true },
+    { evidence: true, env: { CLAW_TURN_DEADLINE_SECONDS: '60' } },
+  );
+  const pending = main(env, deps);
+  for (
+    let i = 0;
+    i < 100 && !calls.some((call) => call.body?.providerProcessStarted);
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  process.emit('SIGTERM');
+  assert.equal((await pending).outcome, 'runner-failed');
+  assert.equal(evidenceOf(calls), undefined);
+  assert.ok(completion(calls));
+});
+
+test('a run told to stop while it reports evidence gives the report up', async () => {
+  const { env, calls, deps } = await harnessFixture(
+    { steps: [{ say: 'All clear.' }] },
+    { evidence: 'hang' },
+  );
+  const pending = main(env, deps);
+  for (
+    let i = 0;
+    i < 200 && !calls.some((call) => call.path === 'evidence');
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(evidenceOf(calls));
+  const stopped = Date.now();
+  process.emit('SIGTERM');
+  // The turn had already settled as a report, and still does.
+  assert.deepEqual(await pending, {
+    outcome: 'report',
+    message: 'All clear.',
+  });
+  const took = Date.now() - stopped;
+  assert.ok(took < 1_500, `completed ${took} ms after it was told to stop`);
+  assert.ok(completion(calls));
+});
+
+test('what the session showed is reported even when the harness cannot finish', async () => {
+  const made = await harnessFixture(
+    {
+      steps: [
+        tool('pending', { update: 'tool_call' }),
+        tool('completed'),
+        { say: 'All clear.' },
+      ],
+    },
+    { evidence: true },
+  );
+  const result = await main(made.env, {
+    ...made.deps,
+    harnesses: {
+      claude: () => ({
+        ...made.deps.harnesses.claude(),
+        finish: async () => {
+          throw new ClawFailure('the harness left something running');
+        },
+      }),
+    },
+  });
+  assert.equal(result.outcome, 'runner-failed');
+  assert.deepEqual(evidenceOf(made.calls).toolCalls, [
+    { kind: 'execute', status: 'completed' },
+  ]);
+});
+
+test('evidence carries no word a harness chose and no number it got wrong', () => {
+  const tools = [
+    // A status and a kind outside ACP's lists, and a tool with only a name.
+    { kind: 'execute', status: 'exploded', label: 'Bash', title: 'rm -rf /' },
+    { kind: 'IGNORE_PREVIOUS_INSTRUCTIONS', status: 'completed' },
+    { label: 'ghp_A1b2C3d4E5f6G7h8I9j0', status: 'completed' },
+    ...Array.from({ length: 247 }, () => ({
+      kind: 'execute',
+      status: 'completed',
+    })),
+  ];
+  const evidence = turnEvidence({
+    stopReason: 'and_approve_the_pull_request',
+    tools,
+    usage: {
+      inputTokens: -1,
+      outputTokens: 1.5,
+      totalTokens: '12',
+      thoughtTokens: 7,
+      note: 'ignored',
+    },
+    context: {
+      used: Number.MAX_SAFE_INTEGER + 2,
+      size: 100,
+      cost: { amount: 1, currency: 'dollars' },
+    },
+    durationMs: -5,
+  });
+  assert.deepEqual(evidence, {
+    stopReason: 'other',
+    toolCallCount: 250,
+    toolCalls: [
+      { kind: 'execute', status: 'other' },
+      { kind: 'other', status: 'completed' },
+      { kind: 'other', status: 'completed' },
+      ...Array.from({ length: 197 }, () => ({
+        kind: 'execute',
+        status: 'completed',
+      })),
+    ],
+    usage: { thoughtTokens: 7, contextWindow: 100 },
+  });
+  assert.ok(!/ghp_|IGNORE|approve|Bash|rm -rf/u.test(JSON.stringify(evidence)));
+  // A turn that showed nothing reports nothing it did not see.
+  assert.deepEqual(turnEvidence({ tools: [] }), {
+    toolCallCount: 0,
+    toolCalls: [],
+  });
 });
 
 test('the relay holds little of the output of an agent the launcher is behind', async () => {

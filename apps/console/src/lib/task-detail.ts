@@ -3,6 +3,7 @@ import {
   type GithubAnchorProjection,
   type Run as OrchestratorRun,
   withFullRunMessages,
+  withRunEvidence,
 } from '@agent-lcars/orchestrator';
 import type { WorkSpec } from '@agent-lcars/work';
 import type { ItemView } from '@agent-lcars/work/derive';
@@ -148,13 +149,22 @@ export async function getTaskDetail(
       : {
           history: {
             ...state.item,
-            runs: await withFullRunMessages(
+            runs: await withRunEvidence(
               store,
-              await withHandoffActions(store, state.item.runs),
-              (runId) =>
+              await withFullRunMessages(
+                store,
+                await withHandoffActions(store, state.item.runs),
+                (runId) =>
+                  logger.error(
+                    'agent-lcars: stored final message unreadable for run %s; serving its preview',
+                    runId,
+                  ),
+              ),
+              (error) =>
                 logger.error(
-                  'agent-lcars: stored final message unreadable for run %s; serving its preview',
-                  runId,
+                  'agent-lcars: run evidence unreadable for %s; serving the item without it: %s',
+                  repoKey(repo),
+                  String(error),
                 ),
             ),
             sessions: await sessionsForRuns(state.runs.map((run) => run.runId)),

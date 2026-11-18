@@ -5,6 +5,8 @@ import {
   issueReferenceSchema,
   providerRoutingSchema,
   RUN_MESSAGE_MAX_BYTES,
+  runEvidenceReportSchema,
+  runEvidenceSchema,
   runMessageBytes,
   runPlacementSchema,
   trackerIssueProjectionSchema,
@@ -183,6 +185,14 @@ export const itemRunViewSchema = z.strictObject({
       startDeadlineAt: z.string().optional(),
       placement: runPlacementSchema.optional(),
     })
+    .optional(),
+  /** What the run's worker saw its agent do: tool calls by label, token
+   *  usage and why the turn stopped, read from the agent's protocol session.
+   *  Present on single-item reads of a run whose worker reported it. */
+  evidence: runEvidenceSchema
+    .describe(
+      "What the run's worker saw its agent do; present on single-item reads of a run that reported it.",
+    )
     .optional(),
 });
 
@@ -1707,6 +1717,28 @@ export const runsContract = {
         ok: z.boolean().optional(),
       }),
     ),
+  /** What a claimed run's worker saw its agent do, reported before the run
+   *  completes. It never decides the run's outcome: `complete` does. */
+  evidence: runBase
+    .meta(
+      openapi({
+        method: 'POST',
+        path: '/runs/{runId}/evidence',
+        operationId: 'reportRunEvidence',
+        summary: "Record what a claimed run's agent did",
+        spec: withRunToken,
+      }),
+    )
+    .errors({
+      UNAUTHORIZED: { message: 'Invalid or expired run token' },
+    })
+    .input(
+      z.strictObject({
+        runId: runIdSchema,
+        evidence: runEvidenceReportSchema,
+      }),
+    )
+    .output(z.strictObject({ runId: runIdSchema })),
   complete: runBase
     .meta(
       openapi({

@@ -908,6 +908,20 @@ export const runsRouter = os.router({
     };
   }),
 
+  evidence: os.evidence.handler(async ({ input, context }) => {
+    const run = await requireRunToken(context, input.runId);
+    // Beside the run, never in it: the run's outcome is `complete`'s alone,
+    // and a later report from the same attempt replaces this one.
+    await context.store.writeRunEvidence({
+      runId: run.runId,
+      evidence: {
+        ...input.evidence,
+        recordedAt: context.now().toISOString(),
+      },
+    });
+    return { runId: run.runId };
+  }),
+
   placement: executor.placement.handler(async ({ input, context, errors }) => {
     const run = await context.store.readRun(input.runId);
     if (run === undefined) throw errors.NOT_FOUND();
