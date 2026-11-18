@@ -165,20 +165,36 @@ The core promises:
   owners: [`linear.md`](../linear.md) and
   [`tracker-sources.md`](../api/tracker-sources.md).
 - **FL-IN-9 [Shipped] Event-driven fleet issue triage.** Eligible open bug
-  issues (`bug` or `type:bug`) in watched GitHub and Linear trackers admit
-  read-only `fleet-triage` Work (`lib/fleet-triage-work.ts`, principal
+  issues in watched GitHub and Linear trackers admit read-only
+  `fleet-triage` Work (`lib/fleet-triage-work.ts`, principal
   `svc:fleet-triage`, a `report` deliverable on the `opencode` pipeline unless
   the source names another, `sourceRevision` fingerprinted by issue content).
-  Eligibility (`triageEligible` in `lib/fleet-triage-source.ts`) also requires
-  agents enabled for the repository, no assignee, no routing (`agent:*` or
-  `review:*`) label, no open PR that closes the issue, no live Console
-  ownership or parked task, and a description small enough to fingerprint. The
+  Eligibility (`triageEligible` in `lib/fleet-triage-source.ts`) requires
+  triage enabled for the source, no assignee, no label named `agent:*` or
+  `review:*`, no live Console ownership or parked task, and a description
+  small enough to fingerprint. The tracker decides what counts as a bug, as
+  routed, and as an open fixing PR:
+  - GitHub (`lib/fleet-triage-source.ts`): a `bug` or `type:bug` label, and
+    no open PR whose closing references name the issue. The check is
+    conservative: an open cross-referenced PR whose closing-reference list
+    has another page also suppresses triage, even when the first page holds
+    no match.
+  - Linear (`lib/linear-triage-source.ts`): one of the team's configured bug
+    label IDs; none of the team's configured provider dispatch label IDs
+    (`config.routes`; a repository-selection label only resolves the target
+    and can make a shared-team issue eligible); and no open
+    PR in the target repository attached to the issue. Any attached open PR
+    in the target repository suppresses triage, with or without a closing
+    reference; an attached PR in another repository is ignored.
+
+  The
   worker returns a strict `fleetTriageReportSchema` JSON report (`ready`,
   `needs-evidence`, `needs-owner`, `duplicate`, or `not-a-bug`). An idempotent
   publication outbox (`lib/fleet-triage-publish.ts`) re-verifies live ownership
   before posting or updating a single `<!-- agent-lcars:fleet-triage ... -->`
   comment and applying approved metadata/routing labels (`ready` authorizes
   configured dispatch; `needs-owner` applies `status:needs-human`).
+
 - **FL-IN-10 [Shipped] Unified cross-model pull-request review with quota fallback.**
   Non-draft `pull_request` `opened` and `ready_for_review` webhooks (excluding
   `renovate[bot]`, `dependabot[bot]`, `github-actions[bot]`,
@@ -530,12 +546,19 @@ executor is working an issue; a human assignee owns it regardless.
   If a coding agent exits 0 with no deliverable, it gets one
   completion-correction round.
 
-  Before launch, the runner binds Hindsight coding-agent memory to a
-  per-repository bank (`agent-lcars::<repo>`) when a Hindsight API token is
-  mounted and `HINDSIGHT_DISABLED` is unset; otherwise it writes a disabled
-  config. Each run logs exactly one `hindsight: enabled bank=…` or
+  Before launching a coding provider, the runner binds Hindsight
+  coding-agent memory (`runtime/hindsight-bootstrap.sh`, #3261, #3280). It
+  enables memory when it finds a Hindsight API token, unless
+  `HINDSIGHT_DISABLED` is `true` or `1`. A readable mounted token file takes
+  precedence: it consults `HINDSIGHT_API_TOKEN` only when that file is absent
+  or unreadable, so a readable empty or newline-only file disables memory
+  (`reason=no-token`) even with a usable environment token. The
+  bank defaults to the per-repository `agent-lcars::<repo>` and can be
+  overridden with `HINDSIGHT_BANK_ID`. Otherwise it writes a disabled config.
+  Each coding run logs exactly one `hindsight: enabled bank=…` or
   `hindsight: disabled reason=<explicit|no-token|no-repo|config-error>` line
-  and never the token (`runtime/hindsight-bootstrap.sh`, #3261, #3280).
+  and never the token. Goose recipes leave the direct runner before this
+  step, so they skip the bootstrap and log no Hindsight line.
 
   `claw-*` pipelines do not use the direct runner. Their runtime Jobs run the
   claw runner image's launcher instead (FL-RA-3).
@@ -600,8 +623,16 @@ executor is working an issue; a human assignee owns it regardless.
   `ResourceExhausted`, `RESOURCE_EXHAUSTED`; a typographic `’` matches as `'`), keeping ordinary `report` prose distinct from provider quota stops. GitHub PR review
   runs admitted under `svc:github-pr-review` automatically carry the
   cross-model `fallbackPipelines` order of FL-IN-10, with the authoring model
-  last. Repository Goose jobs re-run a provider-limited recipe once under the
-  operator profile's fallback profile (#3289). Production fallback evidence is
+  last. A provider-limited repository Goose recipe re-runs under its operator
+  profile's `fallbackProfile` (#3289). If that run also stops on a provider
+  limit, a second fallback runs only when the fallback profile configures an
+  eligible fallback of its own and the occurrence records its chain history
+  (`fallbackProfiles`). A fallback persisted without chain history settles
+  on its provider limit without launching its configured successor. A chain
+  uses at most two distinct fallback profiles (`MAX_FALLBACKS`) and never
+  revisits a profile (`reserveFallback` in `lib/repository-jobs.ts`;
+  regression tests chain Codex → Claude → Antigravity and stop a
+  history-less Claude fallback). Production fallback evidence is
   recorded under R7 in §12.
   - **Provider wait for PR reviews.** When every authorized provider of a
     GitHub PR review (`mode: 'review'`, not native Work) has stopped on its
@@ -636,11 +667,18 @@ executor is working an issue; a human assignee owns it regardless.
   4. One outbox drain of at most 30 entries; the reply sets
      `outboxContinuationNeeded` when it used all 30, and the next tick
      continues.
-  5. In parallel, sharing a 45-second deadline: the summary pass
-     (`executeModelWork`), repository jobs (`maintainRepositoryJobs`:
-     catalog refresh for every control-plane repository, repository-agent
-     catalog refresh, due-slot ticks and settlement), and job-credential
-     health (`observeJobCredentials`, reported as `jobCredentials`).
+  5. In parallel: the summary pass (`executeModelWork`) and repository jobs
+     (`maintainRepositoryJobs`: catalog refresh for every control-plane
+     repository, repository-agent catalog refresh, due-slot ticks and
+     settlement), and job-credential health (`observeJobCredentials`,
+     reported as `jobCredentials`). The 45-second deadline, measured from tick
+     entry, is a budget that the summary and job passes check at work
+     boundaries; it is not a timeout. Credential observation does not use it
+     and is awaited independently, so it starts even when steps 1–4 consumed
+     the budget. A repository job selected before expiry can still start its
+     due-slot admission after the deadline, and the handler awaits every
+     pass, so a slow job-store read, a reconciliation already in flight, or
+     slow credential reads can each keep maintenance pending past 45 seconds.
   6. The repository-agent catalog observation (`repositoryAgents`), started
      beside step 5 under the same deadline and attached only when it is valid
      and the reply stays within a 60 KiB budget (the executor reads at most
@@ -703,7 +741,9 @@ image is documented in
   listing the runtime of the agent's profile. Operator profiles
   (`AGENT_LCARS_AGENT_PROFILES`: `name`, `runtime`, `repositories`, optional
   `principals` and `runCallers`) decide which repositories' agents may use a
-  runtime; an agent with no `profile` uses the built-in `default` profile on
+  runtime. A profile's `principals` list is a further allowlist: a caller
+  holding `work.claw.admit` and the runtime grant is still refused when the
+  list omits it (`resolveAgentRuntime`). An agent with no `profile` uses the built-in `default` profile on
   `claw-default`. The round pins the definition (revision, digest, and each
   file's path, mode, and blob SHA) and the message, so a later merge cannot
   change an admitted round. A repeated `requestId` with the same message is
