@@ -113,13 +113,17 @@ costs one attempt.
   fails the attempt, naming the missing key or `Authentication required`.
   For OpenClaw, provider credentials are resolved into the launch config and
   left out of the Gateway's environment, so a command the agent is allowed to
-  run does not inherit the model key. That covers a variable the config names
-  as an `env` SecretRef or in a `${NAME}` template, and a key a declared
-  provider would have found in the environment by itself. A provider that is
-  not declared under `models.providers` and relied on finding its key in the
-  environment no longer authenticates; declare it. The launch config is
-  readable by the agent's user, so this keeps the key out of a command's
-  output, not out of an agent's reach. The default runtime holds
+  run does not inherit them. A variable is a credential when the pinned
+  OpenClaw lists it as one a provider reads (the same list `agent exec`
+  filtered), when the config names it as an `env` SecretRef, or when a
+  provider's `apiKey` or `headers` names it in a `${NAME}` template. A custom
+  key that is only named some other way stays in the environment, so name it
+  as a SecretRef. A declared provider with no `apiKey` is given the key it
+  would have found in the environment. A provider that is not declared under
+  `models.providers` and relied on finding its key there no longer
+  authenticates; declare it. The launch config is readable by the agent's
+  user, so this keeps a key out of a command's output, not out of an agent's
+  reach. The default runtime holds
   only a model key, so a `claude` or `codex` agent names a profile whose
   runtime carries its harness's login and lists the harness
   ([profiles](#profiles)).
@@ -311,21 +315,30 @@ agent round admitted through the generic route.
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
 
-Rolling the Console back to a version from before harnesses:
+Rolling the Console back to a version from before harnesses. Do these
+while the newer Console is still running, in this order:
 
-1. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`
-   first. The earlier Console validates profiles at startup with a strict
-   schema and does not start with a field it does not know.
+1. Take `harness` and `mode` out of every manifest that names one, on each
+   repository's default branch, and wait for the catalog to refresh (or
+   delete those agents). The catalog stores each manifest, and the earlier
+   Console reads stored rows with a strict schema: one row with a field it
+   does not know stops it listing and refreshing the catalog for every
+   repository.
 2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
    earlier Console cannot read such a round, so it can neither deliver its
    brief nor retry it. Rounds of OpenClaw agents with neither are unaffected.
-3. Agents whose manifest names `harness` or `mode` show as invalid in the
-   earlier catalog (an unknown manifest field) and admit nothing until the
-   Console is rolled forward again.
+3. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
+   The earlier Console validates profiles at startup with a strict schema and
+   does not start with a field it does not know.
+4. If the claw image is going back too, also disable every agent whose
+   definition has `home/` files (the operator veto), and let its rounds
+   finish or cancel them. The earlier Console delivers such a definition in
+   the brief the earlier launcher accepts, and that launcher stages only the
+   workspace, so the agent would run without its reviewed `home/` settings.
 
-Rolling the claw image back needs no step: a round that needs the newer
-launcher is delivered in a shape the earlier one refuses, so the attempt
-fails instead of running on OpenClaw.
+Rolling back only the claw image, with the newer Console still running,
+needs no step: a round that needs the newer launcher is delivered in a shape
+the earlier one refuses, so the attempt fails instead of running on OpenClaw.
 
 Acceptance:
 

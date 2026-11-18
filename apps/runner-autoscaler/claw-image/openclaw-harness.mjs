@@ -32,6 +32,7 @@ import {
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { ClawFailure, stopGroup } from './claw-process.mjs';
 
@@ -221,28 +222,6 @@ export async function bundledPluginProviders(openclaw, path) {
   return owners;
 }
 
-// The environment variables OpenClaw treats as provider credentials, each
-// with the providers that read it, from the bundled plugins' own manifests
-// (`setup.providers[].envVars`, `providerUsageAuthEnvVars`). These are the
-// names `agent exec` kept out of what a host command inherits.
-export async function bundledProviderAuthEnv(openclaw, path) {
-  const names = new Map();
-  const add = (name, provider) => {
-    if (typeof name !== 'string' || typeof provider !== 'string') return;
-    if (!names.has(name)) names.set(name, new Set());
-    names.get(name).add(provider.trim().toLowerCase());
-  };
-  for (const manifest of await bundledManifests(openclaw, path)) {
-    for (const provider of manifest.setup?.providers ?? [])
-      for (const name of provider?.envVars ?? []) add(name, provider.id);
-    for (const [provider, vars] of Object.entries(
-      manifest.providerUsageAuthEnvVars ?? {},
-    ))
-      for (const name of Array.isArray(vars) ? vars : []) add(name, provider);
-  }
-  return names;
-}
-
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value && typeof value === 'object')
@@ -252,6 +231,65 @@ function sortKeys(value) {
         .map((key) => [key, sortKeys(value[key])]),
     );
   return value;
+}
+
+// What OpenClaw itself treats as provider credentials, asked of the pinned
+// distribution through its public plugin SDK: the variable names `agent exec`
+// kept out of what a host command inherits (its built-in providers and every
+// bundled plugin's), and for each provider the variables it reads, in order.
+// A separate process answers, so none of OpenClaw loads into the launcher.
+const PROVIDER_ENV_SDK = join('dist', 'plugin-sdk', 'provider-env-vars.js');
+const PROVIDER_ENV_QUERY = `
+import(process.argv[1]).then((sdk) => {
+  const env = process.env;
+  process.stdout.write(JSON.stringify({
+    names: sdk.listKnownProviderAuthEnvVarNames({ env }),
+    candidates: sdk.resolveProviderAuthEnvVarCandidates({ env }),
+  }));
+});`;
+export async function providerAuthEnv(openclaw, { env, signal } = {}) {
+  const none = { names: new Set(), candidates: new Map() };
+  const sdk = join(
+    dirname(await realpath(await resolveCommand(openclaw, env?.PATH))),
+    PROVIDER_ENV_SDK,
+  );
+  try {
+    await access(sdk, constants.R_OK);
+  } catch (error) {
+    if (error.code === 'ENOENT') return none;
+    throw error;
+  }
+  const query = await run(
+    process.execPath,
+    ['-e', PROVIDER_ENV_QUERY, pathToFileURL(sdk).href],
+    { env, timeoutMs: 120_000, signal },
+  );
+  let answer;
+  try {
+    answer = JSON.parse(query.stdout);
+  } catch {
+    answer = undefined;
+  }
+  if (
+    query.code !== 0 ||
+    !Array.isArray(answer?.names) ||
+    !answer.candidates ||
+    typeof answer.candidates !== 'object'
+  )
+    throw new ClawFailure('OpenClaw did not list its provider credentials');
+  const strings = (values) =>
+    (Array.isArray(values) ? values : []).filter(
+      (value) => typeof value === 'string',
+    );
+  return {
+    names: new Set(strings(answer.names)),
+    candidates: new Map(
+      Object.entries(answer.candidates).map(([provider, vars]) => [
+        provider.trim().toLowerCase(),
+        strings(vars),
+      ]),
+    ),
+  };
 }
 
 // Runs one OpenClaw command to completion in its own process group, so a
@@ -319,65 +357,69 @@ function freePort() {
 // their variables are left out of the Gateway's environment: the model still
 // authenticates and an approved command does not inherit the key.
 //
-// A variable is treated as a credential when the config names it as an `env`
-// SecretRef, or when the image's plugins say a provider reads it
-// (`providerAuthEnv`). For each one the environment holds:
-// - every `env` SecretRef to it and every `${NAME}` in a config string is
-//   replaced by its value, as OpenClaw would resolve them;
-// - a provider credential the config never mentions is the key OpenClaw
-//   would have picked up by itself, so it becomes the `apiKey` of a declared
-//   provider that reads it and has none. With no such provider it is simply
-//   withheld, as it was from host commands before.
+// A variable the environment holds is a credential when:
+// - OpenClaw says a provider reads it (`auth.names`, the set `agent exec`
+//   filtered);
+// - the config names it as an `env` SecretRef anywhere; or
+// - a provider's `apiKey` or `headers` names it in a `${NAME}` template.
+// Every SecretRef and template for a credential is replaced by its value, as
+// OpenClaw would resolve them. Then each declared provider with no `apiKey`
+// gets the first of its own variables the environment holds, which is the
+// key OpenClaw would have found there by itself; whether that variable is
+// also used elsewhere in the config makes no difference.
 // Returns the config and the names withheld from the Gateway.
-export function resolveCredentials(config, env, providerAuthEnv = new Map()) {
+export function resolveCredentials(
+  config,
+  env,
+  auth = { names: new Set(), candidates: new Map() },
+) {
   const held = (name) => typeof env[name] === 'string' && !KEPT_ENV.has(name);
   const isReference = (value) =>
     value.source === 'env' &&
     typeof value.id === 'string' &&
     Object.keys(value).every((key) => SECRET_REF_KEYS.has(key));
-  const withheld = new Set(
-    [...providerAuthEnv.keys()].filter((name) => held(name)),
-  );
-  const collect = (value) => {
-    if (Array.isArray(value)) value.forEach(collect);
+  const withheld = new Set([...auth.names].filter((name) => held(name)));
+  const collectReferences = (value) => {
+    if (Array.isArray(value)) value.forEach(collectReferences);
     else if (value && typeof value === 'object') {
       if (isReference(value)) {
         if (held(value.id)) withheld.add(value.id);
-      } else Object.values(value).forEach(collect);
+      } else Object.values(value).forEach(collectReferences);
     }
   };
-  collect(config);
-  const mentioned = new Set();
+  collectReferences(config);
+  const collectTemplates = (value) => {
+    if (typeof value === 'string')
+      for (const [, name] of value.matchAll(ENV_TEMPLATE))
+        if (held(name)) withheld.add(name);
+    if (value && typeof value === 'object')
+      Object.values(value).forEach(collectTemplates);
+  };
+  for (const provider of Object.values(config.models?.providers ?? {})) {
+    collectTemplates(provider?.apiKey);
+    collectTemplates(provider?.headers);
+  }
   const resolve = (value) => {
     if (typeof value === 'string')
-      return value.replace(ENV_TEMPLATE, (text, name) => {
-        if (!withheld.has(name)) return text;
-        mentioned.add(name);
-        return env[name];
-      });
+      return value.replace(ENV_TEMPLATE, (text, name) =>
+        withheld.has(name) ? env[name] : text,
+      );
     if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
-    if (isReference(value) && withheld.has(value.id)) {
-      mentioned.add(value.id);
-      return env[value.id];
-    }
+    if (isReference(value) && withheld.has(value.id)) return env[value.id];
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [key, resolve(child)]),
     );
   };
   const resolved = resolve(config);
   const providers = resolved.models?.providers;
-  for (const name of withheld) {
-    if (mentioned.has(name) || !providers) continue;
-    const readers = providerAuthEnv.get(name) ?? new Set();
-    for (const [id, provider] of Object.entries(providers))
-      if (
-        readers.has(id.trim().toLowerCase()) &&
-        provider &&
-        typeof provider === 'object' &&
-        provider.apiKey === undefined
-      )
-        providers[id] = { ...provider, apiKey: env[name] };
+  for (const [id, provider] of Object.entries(providers ?? {})) {
+    if (!provider || typeof provider !== 'object') continue;
+    if (provider.apiKey !== undefined) continue;
+    const own = (auth.candidates.get(id.trim().toLowerCase()) ?? []).find(
+      (name) => held(name),
+    );
+    if (own !== undefined) providers[id] = { ...provider, apiKey: env[own] };
   }
   return { config: resolved, used: withheld };
 }
@@ -559,7 +601,7 @@ export async function prepareState({
   const { config: resolved, used } = resolveCredentials(
     turnConfig(source, normalized),
     env,
-    await bundledProviderAuthEnv(openclaw, childEnv.PATH),
+    await providerAuthEnv(openclaw, { env: childEnv, signal }),
   );
   const launched = launchConfig(resolved, { workspace, ...gateway });
   await write(launched);

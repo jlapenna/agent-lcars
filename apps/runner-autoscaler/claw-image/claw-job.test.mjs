@@ -25,10 +25,10 @@ import {
 } from './claw-job.mjs';
 import {
   bundledPluginProviders,
-  bundledProviderAuthEnv,
   comparableConfig,
   doctorChanges,
   launchConfig,
+  providerAuthEnv,
   resolveCommand,
   resolveCredentials,
   turnConfig,
@@ -767,13 +767,25 @@ test('resolveCredentials resolves what the config names and what providers read'
     MODEL_KEY: 'k1',
     LITELLM_API_KEY: 'k2',
     OPENAI_API_KEY: 'k3',
+    CODEX_API_KEY: 'k4',
+    CUSTOM_MODEL_KEY: 'k5',
     ZONE_SETTING: 'visible',
   };
-  const providerAuthEnv = new Map([
-    ['LITELLM_API_KEY', new Set(['litellm'])],
-    ['OPENAI_API_KEY', new Set(['openai'])],
-    ['ANTHROPIC_API_KEY', new Set(['anthropic'])],
-  ]);
+  // As OpenClaw answers: every name it filters, and each provider's own
+  // variables in the order it tries them.
+  const auth = {
+    names: new Set([
+      'LITELLM_API_KEY',
+      'OPENAI_API_KEY',
+      'CODEX_API_KEY',
+      'ANTHROPIC_API_KEY',
+    ]),
+    candidates: new Map([
+      ['litellm', ['LITELLM_API_KEY']],
+      ['openai', ['CODEX_API_KEY', 'OPENAI_API_KEY']],
+      ['anthropic', ['ANTHROPIC_API_KEY']],
+    ]),
+  };
   const template = (name) => '$' + `{${name}}`;
   const { config, used } = resolveCredentials(
     {
@@ -787,8 +799,15 @@ test('resolveCredentials resolves what the config names and what providers read'
               literal: `$${template('MODEL_KEY')}`,
             },
           },
+          // A custom name, given only as a template.
+          templated: { apiKey: template('CUSTOM_MODEL_KEY') },
           // Not named at all: the key OpenClaw would have found by itself.
           LiteLLM: { baseUrl: 'https://llm.test' },
+          // Its key is used in a header, and it still relies on finding its
+          // own key for `apiKey`: the first of its variables that is set.
+          openai: {
+            headers: { 'x-secondary': { source: 'env', id: 'OPENAI_API_KEY' } },
+          },
           other: {
             apiKey: { source: 'env', id: 'MISSING' },
             // Not a credential: OpenClaw resolves it, and tools keep it.
@@ -804,7 +823,7 @@ test('resolveCredentials resolves what the config names and what providers read'
       path: { source: 'env', id: 'PATH' },
     },
     env,
-    providerAuthEnv,
+    auth,
   );
   assert.deepEqual(config, {
     models: {
@@ -816,7 +835,9 @@ test('resolveCredentials resolves what the config names and what providers read'
             literal: `$${template('MODEL_KEY')}`,
           },
         },
+        templated: { apiKey: 'k5' },
         LiteLLM: { baseUrl: 'https://llm.test', apiKey: 'k2' },
+        openai: { headers: { 'x-secondary': 'k3' }, apiKey: 'k4' },
         other: {
           apiKey: { source: 'env', id: 'MISSING' },
           baseUrl: template('ZONE_SETTING'),
@@ -830,50 +851,53 @@ test('resolveCredentials resolves what the config names and what providers read'
     path: { source: 'env', id: 'PATH' },
   });
   // Every credential the environment holds is withheld from the Gateway,
-  // including one no declared provider reads; nothing else is.
+  // whether or not this config uses it; nothing else is.
   assert.deepEqual([...used].sort(), [
+    'CODEX_API_KEY',
+    'CUSTOM_MODEL_KEY',
     'LITELLM_API_KEY',
     'MODEL_KEY',
     'OPENAI_API_KEY',
   ]);
 });
 
-test('provider credential names come from the bundled plugin manifests', async () => {
+test("provider credential names are OpenClaw's own answer", async () => {
   const root = await mkdtemp(join(tmpdir(), 'claw-auth-env-'));
   const bin = join(root, 'openclaw.mjs');
   await writeFile(bin, '');
-  for (const manifest of [
-    {
-      id: 'litellm',
-      setup: { providers: [{ id: 'litellm', envVars: ['LITELLM_API_KEY'] }] },
-    },
-    {
-      id: 'openai',
-      setup: {
-        providers: [
-          { id: 'openai', envVars: ['OPENAI_API_KEY'] },
-          { id: 'openai-codex', envVars: ['OPENAI_API_KEY'] },
-        ],
-      },
-      providerUsageAuthEnvVars: { openai: ['OPENAI_ADMIN_KEY'] },
-    },
-    { id: 'browser' },
-  ]) {
-    await mkdir(join(root, 'dist', 'extensions', manifest.id), {
-      recursive: true,
-    });
-    await writeFile(
-      join(root, 'dist', 'extensions', manifest.id, 'openclaw.plugin.json'),
-      JSON.stringify(manifest),
-    );
-  }
+  // A distribution without the SDK entry names nothing.
+  assert.deepEqual(await providerAuthEnv(bin, { env: { PATH: '' } }), {
+    names: new Set(),
+    candidates: new Map(),
+  });
+  await mkdir(join(root, 'dist', 'plugin-sdk'), { recursive: true });
+  const sdk = join(root, 'dist', 'plugin-sdk', 'provider-env-vars.js');
+  await writeFile(
+    sdk,
+    `export const listKnownProviderAuthEnvVarNames = ({ env }) =>
+  ['LITELLM_API_KEY', 'CODEX_API_KEY', env.EXTRA].filter(Boolean);
+export const resolveProviderAuthEnvVarCandidates = () => ({
+  LiteLLM: ['LITELLM_API_KEY'],
+  openai: ['CODEX_API_KEY', 'OPENAI_API_KEY'],
+});
+`,
+  );
   assert.deepEqual(
-    await bundledProviderAuthEnv(bin),
-    new Map([
-      ['LITELLM_API_KEY', new Set(['litellm'])],
-      ['OPENAI_API_KEY', new Set(['openai', 'openai-codex'])],
-      ['OPENAI_ADMIN_KEY', new Set(['openai'])],
-    ]),
+    await providerAuthEnv(bin, { env: { PATH: '', EXTRA: 'VOYAGE_API_KEY' } }),
+    {
+      names: new Set(['LITELLM_API_KEY', 'CODEX_API_KEY', 'VOYAGE_API_KEY']),
+      candidates: new Map([
+        ['litellm', ['LITELLM_API_KEY']],
+        ['openai', ['CODEX_API_KEY', 'OPENAI_API_KEY']],
+      ]),
+    },
+  );
+  // An answer that cannot be read fails the attempt: guessing the set would
+  // hand a command a key it must not have.
+  await writeFile(sdk, 'export const nothing = 1;\n');
+  await assert.rejects(
+    providerAuthEnv(bin, { env: { PATH: '' } }),
+    /did not list its provider credentials/,
   );
 });
 

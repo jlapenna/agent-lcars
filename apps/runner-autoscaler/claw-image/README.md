@@ -138,12 +138,15 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    credentials are resolved into the launch config and left out of the
    Gateway's environment (`resolveCredentials`): `agent exec` kept them out
    of what a host command inherits, and a Gateway has no such scope. A
-   credential is a variable the config names as an `env` SecretRef, or one
-   the image's plugin manifests say a provider reads. Every SecretRef and
-   `${NAME}` template for it is resolved, and a key the config never
-   mentions becomes the `apiKey` of a declared provider that reads it. A
-   provider that is not declared in the config and relied on the environment
-   no longer finds its key.
+   credential is a variable the pinned OpenClaw lists as one a provider reads
+   (`providerAuthEnv` asks it through its public plugin SDK, in a process of
+   its own, for the list `agent exec` used), one the config names as an `env`
+   SecretRef, or one a provider's `apiKey` or `headers` names in a `${NAME}`
+   template. Every SecretRef and template for it is resolved, and a declared
+   provider with no `apiKey` gets the first of its own variables the
+   environment holds. A provider that is not declared in the config and
+   relied on the environment no longer finds its key, and a custom key named
+   only outside those places stays in the environment.
 6. `openclaw gateway run`, waited on until it logs `[gateway] ready`. It
    serves this one turn: channels, cron, the Gmail watcher, the canvas host,
    the browser control server and the startup model prewarm are all switched
