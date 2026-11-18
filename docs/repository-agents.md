@@ -465,14 +465,18 @@ while the newer Console is still running, in this order:
    row's `definition` as in step 5.
 8. Lift the fence with a further deploy of that version: restore the grants,
    and restore `runCallers` on each profile that had it, since the earlier
-   Console lets a dispatched run invoke an agent only through that flag. If
+   Console lets a dispatched run invoke an agent only through that flag.
    Before that, whether or not the claw image went back, deal with every
-   OpenClaw agent that relied on `home/` settings: one whose manifest named
-   `harness: openclaw`, or named only a `mode`, before step 4. With those
-   lines gone the earlier Console delivers its rounds as `files`, and no
-   launcher applies `home/` to such a round, so the agent would run without
-   its reviewed settings. If it can run without them, nothing more is
-   needed. Otherwise keep the agent fenced: no grant that holds
+   OpenClaw agent whose manifest named `harness: openclaw` or a `mode`
+   before step 4. With those lines gone the earlier Console delivers its
+   rounds as `files`, without a mode, and two things it relied on are gone:
+   - its `home/` settings, which no launcher applies to such a round;
+   - its `mode`, which for OpenClaw is a thinking level. No launcher selects
+     a mode for a round that names none, so the agent runs at OpenClaw's
+     default level, whether or not it has `home/` files.
+
+   If the agent behaves the same without both, which has to be checked and
+   not assumed, nothing more is needed. Otherwise keep the agent fenced: no grant that holds
    `work.claw.admit` lists its runtime, and `runCallers` stays off on its
    profile. Leave the runtime in the executor's own grant (`work.executor`):
    rounds of other agents already queued on it are claimed through that
@@ -490,9 +494,25 @@ while the newer Console is still running, in this order:
    its catalog row shows it disabled, and then restore the shared grant and
    `runCallers`.
 
-Rolling back only the claw image, with the newer Console still running,
-needs no step: a round that needs the newer launcher is delivered in a shape
-the earlier one refuses, so the attempt fails instead of running on OpenClaw.
+Rolling back only the claw image, with the newer Console still running, is
+safe for agents that name neither a `harness` nor a `mode`: their rounds are
+delivered as before. It is not for the others. The newer Console keeps
+admitting them and delivers their rounds in the shape the earlier launcher
+refuses, so every such attempt fails instead of running on OpenClaw, queued
+rounds included, and a `retry: terminal` round fails for good on its first
+attempt. Before reverting a runtime's image digest:
+
+1. Stop admission of the agents on that runtime that name a `harness` or a
+   `mode`. Delete those definitions from the default branch, or take the
+   runtime out of every `work.claw.admit` grant and turn `runCallers` off
+   on its profiles, which also stops the other agents there (step 8 above
+   describes what each part reaches). Check in the catalog that those
+   agents show as disabled, or that admission is refused.
+2. Wait until every round that pinned a `harness` or a `mode` on that
+   runtime has reached a terminal state, as in step 3 above: running
+   attempts and the retries they may still get included.
+3. Revert the image digest. Keep those definitions out, or the fence up,
+   for as long as the earlier image is pinned.
 
 Acceptance:
 
