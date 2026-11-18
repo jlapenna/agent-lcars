@@ -29,13 +29,183 @@ description: Read-only Homelab fleet investigator.
 profile: homelab-ops # credentials; omitted = the default profile
 retry: finite # finite (default) | terminal, for agents with effect authority
 requireToolEvidence: true # a report with no tool call is a failed attempt
+harness: claude # openclaw (default) | claude | codex; see Harnesses
+mode: plan # the harness's ACP session mode; see below when omitted
 ```
+
+Without `mode`, OpenClaw and Claude Code run in their own default mode and
+Codex runs in `workspace-write`, which the launcher selects in place of
+Codex's own default ([tool policy](#harnesses)).
 
 Concurrency and resources are not agent fields: the executor runtime the
 profile names sizes and bounds its Jobs.
 
 The agent ID is `<owner>/<repo>/<name>`, for example
 `jlapenna/homelab/investigator`.
+
+## Harnesses
+
+`harness` names the program that runs the agent's turn. The claw runner image
+carries every harness, pinned by its lockfile. A definition chooses among
+them by name and cannot supply a command of its own.
+
+| `harness`            | Runs the turn with | The definition supplies                       |
+| -------------------- | ------------------ | --------------------------------------------- |
+| `openclaw` (default) | OpenClaw           | `config.json`, `approvals.json`, `workspace/` |
+| `claude`             | Claude Code        | `workspace/` (`CLAUDE.md`), `home/.claude/`   |
+| `codex`              | Codex              | `workspace/` (`AGENTS.md`), `home/.codex/`    |
+
+`home/` is applied only to a definition whose `agent.yaml` names a `harness`
+or a `mode`. An OpenClaw agent that wants user-level settings names
+`harness: openclaw`. A definition that names neither runs as it did before
+harnesses existed, so files it happens to keep under `home/` stay unused,
+and a round already admitted for it is not changed by a newer image or
+Console.
+
+Merge or enable a definition that names a `harness` or a `mode` only once
+the runtime it runs on has a claw image that knows harnesses pinned,
+`claw-default` included. The Console admits such a definition as soon as it
+is deployed, and delivers its rounds in the brief shape an earlier launcher
+refuses. On an earlier image every such round fails, and a `retry:
+terminal` round fails for good.
+
+Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
+(ACP) agent, and the launcher is only an ACP client. It starts the harness in
+a copy of `workspace/`, copies `home/` into the harness's `HOME` for a
+definition that asked for it, sends the message as one prompt and takes the
+agent's last message after its last tool call as the report. Claude Code and Codex speak ACP through their own
+adapters. OpenClaw speaks it through its own server, `openclaw acp`, which
+forwards to a Gateway: the launcher validates the config, runs Doctor, seeds
+the exec approvals and starts a Gateway on loopback inside the Job for that
+one turn. No shared or long-lived Gateway is involved, so a lost node still
+costs one attempt.
+
+```text
+.lcars/agents/reviewer/
+  agent.yaml        # harness: claude
+  workspace/        # the agent's working directory: CLAUDE.md or AGENTS.md
+  home/             # the harness's user-level settings, copied into HOME
+    .claude/settings.json   # Claude Code: permissions
+    .codex/config.toml      # Codex: model and provider settings only
+```
+
+Codex's approval and sandbox policy is not set in that file: it comes from
+`mode` in `agent.yaml`, described under tool policy below.
+
+- **Tool policy.** The launcher refuses every permission request and gives the
+  harness no file system or terminal of its own, because an unattended run has
+  nobody to ask. What an agent may do is therefore what its harness does
+  without asking, and the definition is where reviewed source sets that:
+  - OpenClaw runs only the commands `approvals.json` allows; its config
+    selects tools and cannot widen them.
+  - Claude Code reads files and runs read-only commands (`date`) unasked. It
+    asks before writing or reaching the network, so those need an allow rule
+    in `home/.claude/settings.json`. It ignores allow rules in
+    `workspace/.claude/settings.json`, because the workspace is not a trusted
+    directory, but applies deny rules from either file.
+  - Codex runs commands in its own sandbox, and its adapter sets that sandbox
+    and approval policy from the session's mode on every turn, overriding
+    `sandbox_mode` and `approval_policy` in `home/.codex/config.toml`. The
+    adapter's own default, `agent`, lets Codex approve some escalations
+    itself, outside the sandbox and without asking. The launcher therefore
+    runs Codex in `workspace-write` unless the manifest names a mode: Codex
+    writes inside the workspace and its temporary directories unasked, and
+    asks before anything else, which the launcher refuses.
+
+  `mode` in the manifest selects the harness's ACP session mode before the
+  prompt. What a mode controls is the harness's own business. For Codex and
+  Claude Code it is the permission policy the harness enforces itself:
+  `read-only` or `workspace-write` for Codex, `plan` or `acceptEdits` for
+  Claude Code. For OpenClaw a mode such as `low` is a thinking level and
+  changes no permission: its tools stay bound by its config and
+  `approvals.json`. A harness that does not offer the mode, or refuses to
+  switch to it, runs nothing and the attempt fails.
+
+  The harness runs as the launcher's user, so an agent allowed a tool that
+  writes files could rewrite the settings that bound it. The launcher cannot
+  prevent that. It makes each pinned `home/` file read-only and fails the
+  attempt when one is not its pinned blob after the turn; it does not see a
+  file the agent added, or changed and put back. A harness that must not be
+  able to do this needs its own container (#3412).
+
+- **Credentials.** A harness signs in with the environment its runtime exports
+  from `env/` Secret items: the model key its `config.json` names for
+  `openclaw`, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` for `claude`,
+  `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. Codex opens a session with
+  a key only once its client chooses that sign-in, so the launcher signs in
+  with Codex's `api-key` method when Codex asks. A runtime without a login
+  fails the attempt, naming the missing key or `Authentication required`.
+  For OpenClaw, provider credentials are resolved into the launch config and
+  left out of the Gateway's environment, so a command the agent is allowed to
+  run does not inherit them. A variable is a credential when the pinned
+  OpenClaw lists it as one a provider reads (the same list `agent exec`
+  filtered), when the config names it as an `env` SecretRef, or when a
+  provider's `apiKey` or `headers` names it in a `${NAME}` or
+  `${NAME:-default}` template. An empty variable counts as unset, as it
+  does for OpenClaw. A custom
+  key that is only named some other way stays in the environment, so name it
+  as a SecretRef. A declared provider with no `apiKey` is given the key it
+  would have found in the environment. A provider that is not declared under
+  `models.providers` and relied on finding its key there no longer
+  authenticates; declare it. The same holds for a credential one of
+  OpenClaw's own tools or plugins reads only from the environment, such as
+  `GEMINI_API_KEY` for Google web search with no `models.providers.google`
+  entry: the Gateway no longer has it. Name it as an `env` SecretRef at the
+  tool's own key setting, which the launcher resolves like any other, and
+  migrate such definitions before the image that carries this launcher is
+  pinned. A SecretRef is resolved only as OpenClaw would
+  resolve it: through an `env` provider the config declares, within that
+  provider's `allowlist`. A variable the config defines under `env.vars` is
+  treated the same way: one that is a credential, or is built from one,
+  still reaches the provider settings that name it and is then left out of
+  what the Gateway, and so a command, inherits. Other `env.vars` entries are
+  kept. An OpenClaw definition whose model key came from an
+  auth-profile store in its configured `agentDir` no longer authenticates
+  either, because the Gateway keeps agent state under the Job's own state
+  directory; give the provider its key as an `env` SecretRef instead. The launch config is readable by the agent's
+  user, so this keeps a key out of a command's output, not out of an agent's
+  reach. The default runtime holds
+  only a model key, so a `claude` or `codex` agent names a profile whose
+  runtime carries its harness's login and lists the harness
+  ([profiles](#profiles)).
+- **Evidence.** One set of rules for every harness, read from the ACP
+  session. An answer with no text is a failed attempt. So is a tool call that
+  failed or never finished, unless a call that started after it ended
+  completed; that later call is resolved evidence, as a retried probe is.
+  `requireToolEvidence` needs at least one tool call. The report is the
+  agent's final answer. OpenClaw's ACP server streams what the agent says on
+  the way and the answer as one message when no tool ran between them, so
+  for OpenClaw the launcher finds the answer in that stream with the
+  Gateway's own record of the final reply. There is one exception an author
+  who relies on a strict output format should know: when the Gateway gives
+  no record of the reply, or the record cannot be found in the stream, the
+  report is everything OpenClaw streamed after the last tool call, which
+  can begin with what the agent said on the way (`Checking files nowDone.`
+  for `Done.`). When the record fits more than one place in the stream, the
+  attempt fails. OpenClaw's ACP server
+  ends a turn its Gateway failed like any other, even after part of an answer
+  has streamed, so the launcher also asks the Gateway how it recorded the
+  session and fails the attempt unless its last run finished. A model
+  attempt that failed before a fallback answered still finished. Neither
+  that nor the Gateway's readiness is read from its log, so a definition's
+  logging and redaction settings do not affect them. An OpenClaw turn gets
+  ten minutes whatever timeout its config sets. Codex's adapter
+  does the same when its provider fails, and reports the failure only to a
+  client that asks for it, so the launcher asks and fails the attempt on a
+  failure Codex reports as an error. Codex's adapter
+  sometimes leaves a command its sandbox blocked at once out of the session
+  (3 of 8 runs on 2.1.1), so that failure can go unseen; a Codex agent whose
+  answer must rest on a tool sets
+  `requireToolEvidence`.
+
+A change to the launcher, a harness or a pinned harness version is checked
+by running the launcher with the harnesses installed from the image's
+lockfile, as well as by its unit suite, because the launcher depends on
+behavior only the real binaries have
+([claw image](../apps/runner-autoscaler/claw-image/README.md#checking-a-change)).
+What was run for a change, and what was not, is recorded in its pull
+request; for the introduction of harnesses that is
+[#3411](https://github.com/jlapenna/agent-lcars/pull/3411).
 
 ## Catalog
 
@@ -59,6 +229,11 @@ A run takes one `message`, free text that becomes the agent's brief, and
 returns the agent's final report. LCARS imposes no shape on either. An agent
 that wants structure says so in its own `AGENTS.md`.
 
+The message is always the agent's to read. A harness would take some
+messages as commands of its own (one that begins with `/`, or a bare `halt`),
+so the launcher sends every message after one line saying it is the request
+itself, and otherwise unchanged.
+
 Typed inputs and results can be added later, as optional manifest declarations,
 when a consumer needs them.
 
@@ -76,13 +251,24 @@ array in `AGENT_LCARS_AGENT_PROFILES`, next to the job profiles, each with a
 - **`repositories`** lists the repositories whose agents may use the profile,
   and the optional **`principals`** limits who may invoke them. The caller's
   grant must also list the runtime.
+- **`harnesses`** lists the harnesses the runtime can run; omitted means
+  `openclaw` only. An operator adds `claude` or `codex` once the runtime's
+  image carries that harness and its Secret holds the harness's login. An
+  agent whose harness its profile does not list is refused at admission.
 
 The **default profile** runs on the shared executor's `claw-default` runtime,
-which holds only a model key. An agent that needs no other credential therefore
-runs from a repository PR alone.
+which holds only a model key and runs only `openclaw` agents. An OpenClaw
+agent that needs no other credential therefore runs from a repository PR
+alone.
 
-Agents that share a profile share its credentials. An agent that must not see
-another's credentials gets its own profile.
+Credentials belong to the runtime, not the profile: every Job on a runtime
+mounts that runtime's Secret, and several profiles can name one runtime. So
+agents that share a runtime share its credentials, whatever their profiles
+say. Adding a `claude` or `codex` login to a runtime gives it to every agent
+that runs there, OpenClaw agents included. An agent that must not see
+another's credentials, or a harness login that only some agents may use,
+gets its own runtime with its own Secret items, and a profile that names
+that runtime.
 
 ## Admission and delivery
 
@@ -92,8 +278,11 @@ another's credentials gets its own profile.
   `lcars investigate` becomes this call against
   `jlapenna/homelab/investigator`.
 - **Pinning:** the round's revision input pins the definition (revision,
-  digest, each file's path, mode and blob SHA), `requireToolEvidence` and the
-  message. A later merge cannot change a round already admitted. A repeated
+  digest, each file's path, mode and blob SHA), `requireToolEvidence`, the
+  `harness` whenever the manifest names one (`openclaw` included), the `mode`
+  when it names one, and the message. A round that pinned either is
+  delivered in the versioned brief and has to finish before a Console
+  downgrade ([rollback](#migration-and-acceptance)). A later merge cannot change a round already admitted. A repeated
   `requestId` with the same message is the same round, and `sourceKey`
   coalesces rounds on one subject. Admission needs no reservation transaction:
   claims already bound concurrency.
@@ -107,12 +296,19 @@ another's credentials gets its own profile.
     definition and the message. LCARS reads each file from GitHub by its blob
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
+  - A round that names a harness or a mode carries its files in the brief
+    as `definition`, not `files`, and only such a round has its `home/`
+    settings applied. A launcher from before harnesses reads only
+    `files`, so on an image that predates them (or after a rollback to one)
+    the attempt fails instead of running the agent on OpenClaw under a policy
+    its definition never asked for.
   - The launcher materializes the files into `/work/agent` and checks the
-    digest. It then runs `config validate`, `doctor --fix` on a copy (the turn
-    keeps only accepted changes such as the declared provider's plugin, and
-    never Doctor's skill toggles; any other change fails the run and names the
-    changed settings), `approvals set` and `agent exec`. A runtime's image can therefore change without every
-    repository re-normalizing its agents.
+    digest. It then runs the agent's [harness](#harnesses) as an ACP agent.
+    For OpenClaw that starts with `config validate`, `doctor --fix` on a copy
+    (the turn keeps only accepted changes such as the declared provider's
+    plugin, and never Doctor's skill toggles; any other change fails the run
+    and names the changed settings) and `approvals set`. A runtime's image can
+    therefore change without every repository re-normalizing its agents.
 
   Zone ConfigMaps carrying agent definitions are retired.
 
@@ -192,6 +388,131 @@ agent round admitted through the generic route.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
+
+Rolling the Console back to a version from before harnesses. Do these
+while the newer Console is still running, in this order:
+
+1. Cancel any affected round (step 3 says which) that you will not wait
+   for and that a grant admitted. Only the principal that admitted a round
+   can cancel it, and only while it holds `work.claw.admit` for the round's
+   pipeline, so this is not possible once the fence in step 2 is up. A
+   round a dispatched run started through `runCallers` belongs to that run,
+   which holds no grant: it cannot be cancelled this way and has to drain
+   in step 3.
+2. Stop new rounds. Remove `work.claw.admit` from every grant in
+   `AGENT_LCARS_WORK_GRANTS` and turn `runCallers` off in every profile, so
+   nothing can admit an agent round. A grant must keep at least one scope:
+   where `work.claw.admit` is a grant's only scope, as it is for
+   `svc:claw-operator`, remove the whole grant and keep a copy to restore.
+   An agent has no switch of its own to disable it; the grant is the fence.
+   These are settings of the Console's deployed revision, so the fence is a
+   deploy. Leave it in place until step 8.
+3. Wait until every affected round has reached a terminal state: finished,
+   failed for good, or cancelled. That includes attempts that are claimed or
+   running now and any retry they may still get, because a retry does not go
+   through admission. Roll back neither the Console nor the image before
+   then. Affected are:
+   the rounds that pinned a `harness` or a `mode`. The earlier Console
+   cannot read such a round, so it can neither deliver its brief nor retry
+   it. A round keeps the revision it was admitted with, so nothing done to
+   the default branch changes it. Rounds of agents that name neither are
+   unaffected: they never had `home/` settings applied.
+
+4. Take `harness` and `mode` out of every manifest that names one, on each
+   repository's default branch. For a `claude` or `codex` definition that
+   also has `config.json` and `approvals.json`, remove those two files as
+   well: without its `harness` it would otherwise be a valid OpenClaw agent
+   and run as one. Leave them in place for a definition that only spelled
+   out `harness: openclaw`; it is an OpenClaw agent either way and needs
+   them. Wait for the catalog to refresh.
+5. Hold merges that touch `.lcars/agents/` in every control-plane
+   repository from here until the cutover in step 7 is checked. The newer
+   Console keeps refreshing the catalog on every maintenance tick until
+   then, so a manifest that gains `harness` or `mode`, or a repository that
+   becomes readable again with one, would publish an incompatible row after
+   this check. Then check that no agent in the catalog, enabled or not,
+   still shows either field. Check the stored rows themselves, read-only:
+   in every document of the `orchestrator-agents` collection,
+   `definition.manifest.harness` and `definition.manifest.mode` must be
+   absent. The `repositoryAgents` observation in a maintenance reply cannot
+   show this: it is an aggregate, so it says nothing about a disabled row's
+   stored fields. The earlier Console reads stored rows with a strict schema, and
+   one row with a field it does not know stops it listing and refreshing the
+   catalog for every repository. Deleting an agent does not clear its row:
+   the row is only disabled and keeps the stored manifest. For the row of an
+   agent that is no longer in its repository, or whose repository is gone or
+   can no longer be read, remove the `definition` field from its document in
+   the `orchestrator-agents` collection and leave the rest. The row has to
+   stay, disabled, because it holds the operator's veto (`vetoedBy`): if the
+   definition or the repository comes back, a refresh that found no row
+   would enable the agent.
+6. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
+   The earlier Console validates profiles at startup with a strict schema and
+   does not start with a field it does not know.
+7. Roll the Console back with a build of the earlier version whose settings
+   carry the fence from step 2 and the profiles from step 6. Pinning the
+   earlier revision is not enough: a revision brings its own settings
+   (`apps/console/apphosting.yaml`), so its grants and `runCallers` would
+   come back at cutover and admission would reopen. Repeat the check of
+   step 5 immediately before the cutover. After it, wait for a fresh
+   `repositoryAgents` observation in a maintenance reply served by the
+   downgraded revision, and release the hold on merges only once there is
+   one. That reply can be HTTP 200 and still carry no `repositoryAgents`
+   when the earlier Console could not read the catalog, so a missing
+   observation is the signal, not the status. Find out why before changing
+   anything. If a row gained a field in between, the earlier Console cannot
+   repair that by refreshing, because it reads the catalog first: clear that
+   row's `definition` as in step 5.
+8. Lift the fence with a further deploy of that version: restore the grants,
+   and restore `runCallers` on each profile that had it, since the earlier
+   Console lets a dispatched run invoke an agent only through that flag.
+   Before that, whether or not the claw image went back, deal with every
+   OpenClaw agent whose manifest named `harness: openclaw` or a `mode`
+   before step 4. With those lines gone the earlier Console delivers its
+   rounds as `files`, without a mode, and two things it relied on are gone:
+   - its `home/` settings, which no launcher applies to such a round;
+   - its `mode`, which for OpenClaw is a thinking level. No launcher selects
+     a mode for a round that names none, so the agent runs at OpenClaw's
+     default level, whether or not it has `home/` files.
+
+   If the agent behaves the same without both, which has to be checked and
+   not assumed, nothing more is needed. Otherwise keep the agent fenced: no grant that holds
+   `work.claw.admit` lists its runtime, and `runCallers` stays off on its
+   profile. Leave the runtime in the executor's own grant (`work.executor`):
+   rounds of other agents already queued on it are claimed through that
+   grant and would stall without it.
+
+   That fence is not per agent, and its two parts reach differently. With
+   no `work.claw.admit` grant listing the runtime, nobody can admit a round
+   by grant for any agent on that runtime, whatever its profile, and every
+   agent without a profile shares `claw-default`. `runCallers` is per
+   profile: turning it off stops dispatched runs from invoking the agents of
+   that profile only, and a sibling profile on the same runtime whose flag
+   is on still admits them. To keep the other agents running, disable only
+   the incompatible one: delete its
+   definition from the default branch, which stops its admission, check that
+   its catalog row shows it disabled, and then restore the shared grant and
+   `runCallers`.
+
+Rolling back only the claw image, with the newer Console still running, is
+safe for agents that name neither a `harness` nor a `mode`: their rounds are
+delivered as before. It is not for the others. The newer Console keeps
+admitting them and delivers their rounds in the shape the earlier launcher
+refuses, so every such attempt fails instead of running on OpenClaw, queued
+rounds included, and a `retry: terminal` round fails for good on its first
+attempt. Before reverting a runtime's image digest:
+
+1. Stop admission of the agents on that runtime that name a `harness` or a
+   `mode`. Delete those definitions from the default branch, or take the
+   runtime out of every `work.claw.admit` grant and turn `runCallers` off
+   on its profiles, which also stops the other agents there (step 8 above
+   describes what each part reaches). Check in the catalog that those
+   agents show as disabled, or that admission is refused.
+2. Wait until every round that pinned a `harness` or a `mode` on that
+   runtime has reached a terminal state, as in step 3 above: running
+   attempts and the retries they may still get included.
+3. Revert the image digest. Keep those definitions out, or the fence up,
+   for as long as the earlier image is pinned.
 
 Acceptance:
 

@@ -526,6 +526,23 @@ describe('runsContract.brief claw branch', () => {
     expect(runBriefSchema.parse(brief)).toEqual(brief);
   });
 
+  it('names a harness or a mode only in the shape older launchers refuse', () => {
+    const { files, ...rest } = agentBrief;
+    const parses = (claw: Record<string, unknown>) =>
+      runBriefSchema.safeParse({ ...brief, claw }).success;
+    const versioned = (selection: Record<string, unknown>) =>
+      parses({ ...rest, ...selection, definition: files });
+    expect(versioned({ harness: 'claude' })).toBe(true);
+    expect(versioned({ harness: 'codex', mode: 'read-only' })).toBe(true);
+    expect(versioned({ mode: 'plan' })).toBe(true);
+    expect(versioned({ harness: 'bash' })).toBe(false);
+    expect(versioned({ mode: 'two words' })).toBe(false);
+    // Never beside `files`, which a launcher from before harnesses would run.
+    expect(parses({ ...agentBrief, harness: 'claude' })).toBe(false);
+    expect(parses({ ...agentBrief, mode: 'plan' })).toBe(false);
+    expect(parses({ ...agentBrief, definition: files })).toBe(false);
+  });
+
   it('refuses the retired operation brief', () => {
     expect(
       runBriefSchema.safeParse({

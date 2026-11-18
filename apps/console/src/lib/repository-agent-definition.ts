@@ -1,3 +1,8 @@
+import {
+  type AgentHarness,
+  agentHarnessSchema,
+  agentModeSchema,
+} from '@agent-lcars/work';
 import { parseDocument } from 'yaml';
 import { z } from 'zod';
 
@@ -19,6 +24,17 @@ export const agentManifestSchema = z.strictObject({
   retry: z.enum(['finite', 'terminal']).optional(),
   /** A report produced without any tool call is a failed attempt. */
   requireToolEvidence: z.boolean().optional(),
+  /** The harness that runs the agent's turn: embedded OpenClaw (the
+   * default) or an ACP harness the claw runner image carries. */
+  harness: agentHarnessSchema.optional(),
+  /** The harness's ACP session mode the turn runs in. What it controls is
+   * the harness's own: the permission policy the harness itself enforces
+   * for Codex (`read-only`) and Claude Code (`plan`), a thinking level for
+   * OpenClaw, whose tool permissions come from its config and exec
+   * approvals. Omitted means the mode the launcher runs that harness in: the
+   * harness's own default for OpenClaw and Claude Code, `workspace-write`
+   * for Codex. */
+  mode: agentModeSchema.optional(),
 });
 export type AgentManifest = z.infer<typeof agentManifestSchema>;
 
@@ -46,12 +62,16 @@ export const agentDefinitionSchema = z.strictObject({
 });
 export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 
-/** Files the launcher needs. A definition without them is invalid. */
-export const REQUIRED_AGENT_FILES = Object.freeze([
-  'agent.yaml',
-  'config.json',
-  'approvals.json',
-]);
+/** Files the launcher needs for each harness. A definition without them is
+ * invalid. Only OpenClaw reads a config and exec approvals; an ACP harness is
+ * configured by its own files in the agent's `workspace/` and `home/`. */
+export function requiredAgentFiles(
+  harness: AgentHarness = 'openclaw',
+): readonly string[] {
+  return harness === 'openclaw'
+    ? ['agent.yaml', 'config.json', 'approvals.json']
+    : ['agent.yaml'];
+}
 
 /** The agent ID: `<owner>/<repo>/<name>`. */
 export function agentId(repository: string, name: string): string {
@@ -98,7 +118,8 @@ export function parseAgentDefinition(
   const pinned = files.map(({ path, mode, sha }) =>
     agentFileSchema.parse({ path, mode, sha }),
   );
-  for (const required of REQUIRED_AGENT_FILES)
+  const manifest = parseAgentManifest(manifestText);
+  for (const required of requiredAgentFiles(manifest.harness))
     if (!pinned.some((file) => file.path === required))
       throw new Error(`Agent is missing ${required}`);
   return agentDefinitionSchema.parse({
@@ -106,7 +127,7 @@ export function parseAgentDefinition(
     name,
     revision,
     digest: agentDigest(pinned),
-    manifest: parseAgentManifest(manifestText),
+    manifest,
     fileCount: pinned.length,
   });
 }

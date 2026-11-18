@@ -20,15 +20,19 @@ const files = {
 } as const;
 const sha = (content: string) =>
   createHash('sha1').update(content).digest('hex');
-const pinned = Object.entries(files).map(([path, { content, mode }]) => ({
-  path,
-  mode,
-  sha: sha(content),
-}));
+type Definition = Record<string, { content: string; mode: string }>;
+const pin = (definition: Definition) =>
+  Object.entries(definition).map(([path, { content, mode }]) => ({
+    path,
+    mode: mode as '100644' | '100755',
+    sha: sha(content),
+  }));
+const pinned = pin(files);
 
-function github(requested: string[] = []) {
+function github(requested: string[] = [], definition: Definition = files) {
+  const pinned = pin(definition);
   const blobs = new Map(
-    Object.values(files).map(({ content }) => [sha(content), content]),
+    Object.values(definition).map(({ content }) => [sha(content), content]),
   );
   return vi.fn(async (url: string) => {
     const path = /repos\/owner\/repo\/?(.*)$/u.exec(url)![1]!;
@@ -83,12 +87,102 @@ it('serves the pinned files at the pinned revision, with git modes and base64 co
     requireToolEvidence: true,
     message: 'Why?',
   });
+  if (!('files' in brief)) throw new Error('expected an OpenClaw brief');
   const probe = brief.files.find(
     (file) => file.path === 'workspace/tools/probe',
   )!;
   expect(probe.mode).toBe('100755');
   expect(Buffer.from(probe.content, 'base64').toString()).toBe(
     '#!/bin/sh\necho ok\n',
+  );
+});
+
+it('delivers a round that names a harness or a mode in a shape older launchers refuse', async () => {
+  vi.stubGlobal('fetch', github());
+  // An OpenClaw round in its default mode keeps the shape every launcher
+  // reads.
+  const plain = await agentRunBrief(round(), tokens);
+  expect(plain).toHaveProperty('files');
+  expect(plain).not.toHaveProperty('definition');
+  expect(plain).not.toHaveProperty('harness');
+  for (const selection of [
+    { harness: 'codex' as const },
+    { mode: 'read-only' },
+    { harness: 'claude' as const, mode: 'plan' },
+  ]) {
+    const brief = await agentRunBrief({ ...round(), ...selection }, tokens);
+    expect(brief).toMatchObject(selection);
+    // No `files`: a launcher that knows no harnesses has nothing to run.
+    expect(brief).not.toHaveProperty('files');
+    expect(brief).toMatchObject({
+      definition: expect.arrayContaining([
+        expect.objectContaining({ path: 'workspace/tools/probe' }),
+      ]),
+    });
+  }
+});
+
+it('applies home settings only for a round that pinned a harness', async () => {
+  const withHome = {
+    ...files,
+    'home/.config/tool.toml': { content: 'safe = true\n', mode: '100644' },
+  };
+  vi.stubGlobal('fetch', github([], withHome));
+  const pinned = round(agentDigest(pin(withHome)));
+  // A round admitted before harnesses, whose definition happens to hold
+  // files under `home/`: no launcher ever applied them, so it is delivered
+  // as it always was.
+  const legacy = await agentRunBrief(pinned, tokens);
+  expect(legacy).toHaveProperty('files');
+  expect(legacy).not.toHaveProperty('definition');
+  // Naming the harness, OpenClaw included, asks for the launcher that
+  // stages `home/`; an older launcher refuses this shape.
+  const optedIn = await agentRunBrief(
+    { ...pinned, harness: 'openclaw' },
+    tokens,
+  );
+  expect(optedIn).not.toHaveProperty('files');
+  expect(optedIn).toMatchObject({
+    harness: 'openclaw',
+    definition: expect.arrayContaining([
+      expect.objectContaining({ path: 'home/.config/tool.toml' }),
+    ]),
+  });
+});
+
+it('runs a harness only on a profile whose runtime carries it', () => {
+  const definition = (manifest: Record<string, unknown>) => ({
+    repository: 'owner/repo',
+    name: 'reviewer',
+    revision,
+    digest: 'd'.repeat(64),
+    manifest: { description: 'x', ...manifest },
+    fileCount: 1,
+  });
+  const profiles = [
+    { name: 'ops', runtime: 'claw-ops', repositories: ['owner/repo'] },
+    {
+      name: 'coders',
+      runtime: 'claw-coders',
+      repositories: ['owner/repo'],
+      harnesses: ['claude' as const, 'openclaw' as const],
+    },
+  ];
+  const runtime = (manifest: Record<string, unknown>) =>
+    resolveAgentRuntime(definition(manifest), 'user:x', profiles).pipeline;
+  expect(runtime({})).toBe('claw-default');
+  expect(runtime({ profile: 'ops' })).toBe('claw-ops');
+  expect(runtime({ profile: 'coders', harness: 'claude' })).toBe('claw-coders');
+  expect(runtime({ profile: 'coders' })).toBe('claw-coders');
+  // The default runtime and a profile that lists nothing run OpenClaw only.
+  expect(() => runtime({ harness: 'claude' })).toThrow(
+    /default does not run claude agents/u,
+  );
+  expect(() => runtime({ profile: 'ops', harness: 'codex' })).toThrow(
+    /ops does not run codex agents/u,
+  );
+  expect(() => runtime({ profile: 'coders', harness: 'codex' })).toThrow(
+    /coders does not run codex agents/u,
   );
 });
 

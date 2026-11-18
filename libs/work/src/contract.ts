@@ -1256,25 +1256,59 @@ const githubRunBriefSchema = z.strictObject({
   ...runBriefSharedSchema,
 });
 
-/** A repository-owned agent's round (docs/repository-agents.md): the pinned
- * definition read from GitHub by blob SHA, and the message that is the
- * agent's brief. The launcher materializes `files` (base64 content, git
- * mode) and verifies `digest` before running the agent. */
-export const agentRunBriefSchema = z.strictObject({
+/** The harnesses that can run a repository-owned agent's turn
+ * (docs/repository-agents.md): embedded OpenClaw, or an ACP harness the claw
+ * runner image carries. */
+export const AGENT_HARNESSES = ['openclaw', 'claude', 'codex'] as const;
+export const agentHarnessSchema = z.enum(AGENT_HARNESSES);
+export type AgentHarness = z.infer<typeof agentHarnessSchema>;
+
+/** A harness's ACP session mode. What it controls is the harness's own:
+ * the permission policy for Codex (`read-only`) and Claude Code (`plan`), a
+ * thinking level for OpenClaw, whose tool permissions come from its config
+ * and exec approvals. */
+export const agentModeSchema = z.string().regex(/^[A-Za-z][\w-]{0,63}$/u);
+
+const agentBriefFileSchema = z.strictObject({
+  path: z.string().min(1),
+  mode: z.enum(['100644', '100755']),
+  sha: z.string().regex(/^[a-f0-9]{40}$/u),
+  content: z.string(),
+});
+const agentBriefFields = {
   agent: z.string(),
   revision: z.string().regex(/^[a-f0-9]{40}$/u),
   digest: z.string().regex(/^[a-f0-9]{64}$/u),
   requireToolEvidence: z.boolean(),
   message: z.string().min(1),
-  files: z.array(
-    z.strictObject({
-      path: z.string().min(1),
-      mode: z.enum(['100644', '100755']),
-      sha: z.string().regex(/^[a-f0-9]{40}$/u),
-      content: z.string(),
-    }),
-  ),
-});
+};
+
+/** A repository-owned agent's round (docs/repository-agents.md): the pinned
+ * definition read from GitHub by blob SHA, and the message that is the
+ * agent's brief. The launcher materializes the files (base64 content, git
+ * mode) and verifies `digest` before running the agent.
+ *
+ * A round that names a harness or a mode carries its files as `definition`,
+ * and only such a round has the definition's `home/` settings applied. A
+ * launcher from before harnesses reads only `files`, so it refuses such a
+ * brief instead of running the agent on OpenClaw under a policy its
+ * definition never asked for. */
+export const agentRunBriefSchema = z.union([
+  z.strictObject({
+    ...agentBriefFields,
+    files: z.array(agentBriefFileSchema),
+  }),
+  z.strictObject({
+    ...agentBriefFields,
+    /** The harness that runs the turn; omitted means OpenClaw. */
+    harness: agentHarnessSchema.optional(),
+    /** The ACP session mode to select before the prompt. Omitted means the
+     * mode the launcher runs that harness in: the harness's own default for
+     * OpenClaw and Claude Code, `workspace-write` for Codex. */
+    mode: agentModeSchema.optional(),
+    definition: z.array(agentBriefFileSchema),
+  }),
+]);
 export type AgentRunBrief = z.infer<typeof agentRunBriefSchema>;
 
 /** An invoked agent round as its invoking run sees it: the item state and,

@@ -680,8 +680,8 @@ image is documented in
 [`apps/runner-autoscaler/claw-image`](../../apps/runner-autoscaler/claw-image/README.md).
 
 - **FL-RA-1 [Shipped] Catalog.** A repository defines an agent in
-  `.lcars/agents/<name>/` (`agent.yaml`, OpenClaw `config.json`,
-  `approvals.json`, and `workspace/`); its ID is `<owner>/<repo>/<name>`. The
+  `.lcars/agents/<name>/`: `agent.yaml`, `workspace/`, and the files its
+  harness needs; its ID is `<owner>/<repo>/<name>`. The
   maintenance tick catalogs every control-plane repository's default-branch
   commit beside repository jobs (`refreshAgentCatalogs` in
   `lib/repository-agent-catalog.ts`, driven from
@@ -689,6 +689,12 @@ image is documented in
   invalid definition stays visible and cannot run; the digest covers every
   path, mode, and content; deletion or a failed refresh stops admission; an
   agent activates on merge and an operator veto is sticky.
+  **[Implemented]** The manifest may name a `harness` (`openclaw`, the
+  default, `claude` or `codex`) and the harness's session `mode`. The
+  required files follow the harness: `config.json` and `approvals.json` for
+  OpenClaw only. `home/` carries a harness's user-level settings and is
+  applied only to a definition that names a harness or a mode
+  ([harnesses](../repository-agents.md#harnesses)).
 - **FL-RA-2 [Shipped] Admission.**
   `POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs` with
   `{message, requestId?, sourceKey?}` (`admitAgentRun` in
@@ -706,23 +712,36 @@ image is documented in
   `POST /runs/{runId}/agents/{owner}/{repo}/{name}` as `run:<runId>` only when
   the profile sets `runCallers` (FL-WP-12), and an agent's own run cannot
   invoke agents.
-- **FL-RA-3 [Shipped] Execution.** A round is Work on its profile's `claw-*`
-  runtime pipeline. The executor whose `kubernetes.runtimes` declares that
-  pipeline claims it (FL-EX-1, FL-EX-3). Today every `claw-*` runtime,
-  including `claw-default` (which mounts only a model key), is declared by
-  Homelab's runtimes-only zone executor (`svc:claw-homelab-ops`); the shared
-  executor's grant lists no claw pipeline. The Job runs the claw
+  **[Implemented]** A profile lists the harnesses its runtime carries
+  (`harnesses`; omitted means OpenClaw only), and admission refuses an agent
+  whose harness the profile does not list. The round pins the harness and
+  the mode as the manifest names them.
+- **FL-RA-3 [Implemented] Execution.** A round is Work on its profile's
+  `claw-*` runtime pipeline. The executor whose `kubernetes.runtimes`
+  declares that pipeline claims it (FL-EX-1, FL-EX-3). Today every `claw-*`
+  runtime, including `claw-default` (which mounts only a model key), is
+  declared by Homelab's runtimes-only zone executor (`svc:claw-homelab-ops`);
+  the shared executor's grant lists no claw pipeline. The Job runs the claw
   runner image (`apps/runner-autoscaler/claw-image`, launcher `claw-job.mjs`),
-  which reads the pinned definition from the run brief, verifies every
-  file's blob SHA and the digest, validates the source config, and normalizes
-  a copy for its image with `openclaw doctor --fix`. The turn keeps only
-  accepted Doctor changes (enabling a declared provider's plugin, an empty
-  agent entry), discards Doctor's skill toggles, and fails with
-  `runner-failed` naming any other changed setting (#3409). It then applies
-  `approvals.json` and runs one `agent exec` turn. The report is the settled
-  run message; `requireToolEvidence` makes a report without a tool call a
-  failed attempt, and `retry: terminal` makes lost and failed attempts
-  terminal.
+  which reads the pinned definition from the run brief and verifies every
+  file's blob SHA and the digest. The launcher is an Agent Client Protocol
+  client and every harness is an ACP agent the image carries: it runs one
+  session with one prompt on the pinned harness, refuses every permission
+  request, and settles from the session. A round that pinned a harness or a
+  mode is delivered in a brief shape a launcher from before harnesses
+  refuses. The report is the settled run message; `requireToolEvidence`
+  makes a report without a tool call a failed attempt, and `retry: terminal`
+  makes lost and failed attempts terminal. Per-harness behavior (OpenClaw's
+  config normalization from #3409, its exec approvals and the Gateway the
+  Job runs for the turn; Claude Code and Codex settings, modes and logins)
+  is in [repository agents](../repository-agents.md#harnesses) and the
+  [image README](../../apps/runner-autoscaler/claw-image/README.md).
+  Qualification: the source is covered by the launcher's unit suite and by
+  runs of the real harness binaries against stand-in model endpoints. No
+  harness has run a real-model turn in the cluster through this launcher;
+  the previous launcher, which ran one OpenClaw `agent exec` turn, is what
+  has run there. Running agents change only when Homelab publishes and pins
+  a claw image built from this source.
 - **FL-RA-4 [Shipped] Health and canary.** Each maintenance reply carries the
   `repositoryAgents` catalog observation (FL-SC-1), which the shared executor
   exports as `lcars_repository_agents*` and `lcars_repository_agent_source_*`

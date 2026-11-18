@@ -290,6 +290,55 @@ describe('repository-owned agent runs', () => {
     });
   });
 
+  it('pins a named harness and mode with the round, and nothing for a plain OpenClaw agent', async () => {
+    const admit = async (manifest: Record<string, unknown>) => {
+      const ctx = context({
+        principal: {
+          ...caller,
+          pipelines: [...caller.pipelines, 'claw-coders'],
+        },
+        agents: agents([{ manifest: { description: 'x', ...manifest } }]),
+        agentProfiles: () => [
+          ...profiles(),
+          {
+            name: 'coders',
+            runtime: 'claw-coders',
+            repositories: ['owner/repo'],
+            harnesses: ['claude' as const, 'openclaw' as const],
+          },
+        ],
+      });
+      const response = await call(ctx, 'POST', path, { message: 'Why?' });
+      const [run] = await ctx.runtime.store.listRuns({
+        workId: response.json.id,
+      });
+      return { status: response.status, input: run?.sourceRevision?.input };
+    };
+    expect(
+      await admit({ profile: 'coders', harness: 'claude', mode: 'plan' }),
+    ).toMatchObject({
+      status: 202,
+      input: { harness: 'claude', mode: 'plan' },
+    });
+    // A round for an agent that names no harness keeps the shape it had
+    // before harnesses.
+    const plain = await admit({});
+    expect(plain.status).toBe(202);
+    expect(plain.input).not.toHaveProperty('harness');
+    expect(plain.input).not.toHaveProperty('mode');
+    // A harness is pinned as the manifest names it, OpenClaw included:
+    // naming one is how a definition asks for its `home/` settings.
+    expect(await admit({ harness: 'openclaw' })).toMatchObject({
+      status: 202,
+      input: { harness: 'openclaw' },
+    });
+    // A harness the profile's runtime does not carry is refused at admission.
+    expect((await admit({ harness: 'claude' })).status).toBe(403);
+    expect((await admit({ profile: 'coders', harness: 'codex' })).status).toBe(
+      403,
+    );
+  });
+
   it('returns the same round for the same message under one sourceKey', async () => {
     const ctx = context({
       principal: caller,
@@ -334,6 +383,88 @@ describe('repository-owned agent runs', () => {
     const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
     expect(runs).toHaveLength(1);
     expect(runs[0]!.sourceRevision?.input['revision']).toBe('c'.repeat(40));
+  });
+
+  it('replays an admitted request after the definition moves to a harness the profile does not run', async () => {
+    const store = agents([{}]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const body = { message: 'Why?', requestId: 'lost-response' };
+    const first = await call(ctx, 'POST', path, body);
+    expect(first.status).toBe(202);
+    // The catalog refreshes a Codex definition on the same OpenClaw-only
+    // profile before the caller, whose response was lost, retries.
+    const row = (await store.list())[0]!;
+    row.definition = {
+      ...row.definition!,
+      manifest: { ...row.definition!.manifest, harness: 'codex' },
+    };
+    const again = await call(ctx, 'POST', path, body);
+    expect(again.status).toBe(202);
+    expect(again.json.id).toBe(first.json.id);
+    const runs = await ctx.runtime.store.listRuns({ workId: first.json.id });
+    expect(runs).toHaveLength(1);
+    // The admitted round still pins what it was admitted with.
+    expect(runs[0]!.sourceRevision?.input).not.toHaveProperty('harness');
+    // A new round is still refused: this profile's runtime does not run
+    // Codex. The refusal reserves nothing for the source key it named.
+    expect(
+      (
+        await call(ctx, 'POST', path, {
+          message: 'Why?',
+          requestId: 'new',
+          sourceKey: 'fresh',
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      await ctx.runtime.store.readSourceWorkId(
+        `agent:owner/repo/investigator:${caller.principal}:fresh`,
+      ),
+    ).toBeUndefined();
+    // The same request id with another message conflicts, as on any replay.
+    expect(
+      (await call(ctx, 'POST', path, { ...body, message: 'Something else' }))
+        .status,
+    ).toBe(409);
+  });
+
+  it('replays an admitted round that never got a run, and answers a replay with the usual checks', async () => {
+    const store = agents([
+      { manifest: { description: 'x', profile: 'homelab-ops' } },
+    ]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const admit = (requestId: string, message = requestId) =>
+      call(ctx, 'POST', path, { message, requestId, sourceKey: 'k' });
+    // B is coalesced away by C before it gets a run; only its admission
+    // receipt remains.
+    const a = await admit('A');
+    expect(a.status).toBe(202);
+    await admit('B');
+    await admit('C');
+    const row = (await store.list())[0]!;
+    const moved = (manifest: Record<string, unknown>) => {
+      row.definition = {
+        ...row.definition!,
+        manifest: { ...row.definition!.manifest, ...manifest },
+      };
+    };
+    moved({ harness: 'codex' });
+    const replay = await admit('B');
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(a.json.id);
+    // A replay never returns Work stored on another pipeline: the agent
+    // moves to the default runtime, which the stored Work was not admitted
+    // on.
+    moved({ profile: undefined });
+    expect((await admit('B')).status).toBe(409);
   });
 
   it('replays a round that was coalesced away before it ran, after an unrelated commit', async () => {

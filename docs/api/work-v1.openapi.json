@@ -17317,61 +17317,140 @@
                           "type": "boolean"
                         },
                         "claw": {
-                          "type": "object",
-                          "properties": {
-                            "agent": {
-                              "type": "string"
-                            },
-                            "revision": {
-                              "type": "string",
-                              "pattern": "^[a-f0-9]{40}$"
-                            },
-                            "digest": {
-                              "type": "string",
-                              "pattern": "^[a-f0-9]{64}$"
-                            },
-                            "requireToolEvidence": {
-                              "type": "boolean"
-                            },
-                            "message": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "files": {
-                              "type": "array",
-                              "items": {
-                                "type": "object",
-                                "properties": {
-                                  "path": {
-                                    "type": "string",
-                                    "minLength": 1
-                                  },
-                                  "mode": {
-                                    "type": "string",
-                                    "enum": ["100644", "100755"]
-                                  },
-                                  "sha": {
-                                    "type": "string",
-                                    "pattern": "^[a-f0-9]{40}$"
-                                  },
-                                  "content": {
-                                    "type": "string"
-                                  }
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string"
                                 },
-                                "required": ["path", "mode", "sha", "content"],
-                                "additionalProperties": false
-                              }
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{40}$"
+                                },
+                                "digest": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "requireToolEvidence": {
+                                  "type": "boolean"
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "files": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "path": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "mode": {
+                                        "type": "string",
+                                        "enum": ["100644", "100755"]
+                                      },
+                                      "sha": {
+                                        "type": "string",
+                                        "pattern": "^[a-f0-9]{40}$"
+                                      },
+                                      "content": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "path",
+                                      "mode",
+                                      "sha",
+                                      "content"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "revision",
+                                "digest",
+                                "requireToolEvidence",
+                                "message",
+                                "files"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "agent": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{40}$"
+                                },
+                                "digest": {
+                                  "type": "string",
+                                  "pattern": "^[a-f0-9]{64}$"
+                                },
+                                "requireToolEvidence": {
+                                  "type": "boolean"
+                                },
+                                "message": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "harness": {
+                                  "type": "string",
+                                  "enum": ["openclaw", "claude", "codex"]
+                                },
+                                "mode": {
+                                  "type": "string",
+                                  "pattern": "^[A-Za-z][\\w-]{0,63}$"
+                                },
+                                "definition": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "path": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "mode": {
+                                        "type": "string",
+                                        "enum": ["100644", "100755"]
+                                      },
+                                      "sha": {
+                                        "type": "string",
+                                        "pattern": "^[a-f0-9]{40}$"
+                                      },
+                                      "content": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "path",
+                                      "mode",
+                                      "sha",
+                                      "content"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "agent",
+                                "revision",
+                                "digest",
+                                "requireToolEvidence",
+                                "message",
+                                "definition"
+                              ],
+                              "additionalProperties": false
                             }
-                          },
-                          "required": [
-                            "agent",
-                            "revision",
-                            "digest",
-                            "requireToolEvidence",
-                            "message",
-                            "files"
-                          ],
-                          "additionalProperties": false
+                          ]
                         }
                       },
                       "required": [

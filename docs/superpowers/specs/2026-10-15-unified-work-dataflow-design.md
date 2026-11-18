@@ -157,8 +157,16 @@ The existing `direct-runner.sh` path, now reading `agent`, `resources` and `inte
 > a repository agent round: its definition is pinned from the repository and
 > delivered in the run brief, the profile's executor runtime holds the
 > credentials and bounds concurrency, and the manifest's
-> `requireToolEvidence` replaces the evidence operation. The execution zones,
-> Job and launcher sequence below still apply.
+> `requireToolEvidence` replaces the evidence operation. The execution zones
+> and Job below still apply.
+>
+> **Status (2026-11-18):** the launcher sequence below is superseded. The
+> launcher is an ACP client and every harness is an ACP agent
+> ([harnesses](../../repository-agents.md#harnesses)). OpenClaw runs through
+> its own `openclaw acp` behind a Gateway the Job starts on loopback for that
+> one turn, in place of `openclaw agent exec`; the "no Gateway" below still
+> holds for a shared or long-lived one. The current sequence is in the
+> [claw image README](../../../apps/runner-autoscaler/claw-image/README.md).
 
 Every non-conversational OpenClaw agent runs the same way: an executor claims
 the attempt and launches one k3s Job, and the Job runs one embedded agent turn

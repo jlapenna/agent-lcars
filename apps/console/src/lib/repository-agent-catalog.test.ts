@@ -231,6 +231,59 @@ it('rejects an agent missing a launcher file or holding a symlink', async () => 
   );
 });
 
+it('catalogs an ACP agent from its manifest and workspace alone', async () => {
+  const store = new MemoryAgentStore();
+  const acp = (harness: string): Files => ({
+    'agent.yaml': { content: `description: Reviewer.\nharness: ${harness}\n` },
+    'workspace/CLAUDE.md': { content: '# Reviewer' },
+  });
+  vi.stubGlobal(
+    'fetch',
+    github({
+      reviewer: acp('claude'),
+      // Only OpenClaw reads config.json and approvals.json, and it still
+      // requires them.
+      embedded: acp('openclaw'),
+      unknown: acp('gemini'),
+    }),
+  );
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  const reviewer = store.rows.get(agentKey('owner/repo', 'reviewer'))!;
+  expect(reviewer.error).toBeUndefined();
+  expect(reviewer).toMatchObject({
+    enabled: true,
+    definition: { manifest: { harness: 'claude' }, fileCount: 2 },
+  });
+  expect(store.rows.get(agentKey('owner/repo', 'embedded'))).toMatchObject({
+    enabled: false,
+    error: 'Agent is missing config.json',
+  });
+  const unknown = store.rows.get(agentKey('owner/repo', 'unknown'))!;
+  expect(unknown.enabled).toBe(false);
+  expect(unknown.error).toMatch(/harness/u);
+});
+
+it('catalogs the session mode a manifest names, and refuses a malformed one', async () => {
+  const store = new MemoryAgentStore();
+  const withMode = (mode: string): Files => ({
+    'agent.yaml': {
+      content: `description: Reviewer.\nharness: codex\nmode: ${mode}\n`,
+    },
+  });
+  vi.stubGlobal(
+    'fetch',
+    github({ readonly: withMode('read-only'), odd: withMode('"two words"') }),
+  );
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect(store.rows.get(agentKey('owner/repo', 'readonly'))).toMatchObject({
+    enabled: true,
+    definition: { manifest: { harness: 'codex', mode: 'read-only' } },
+  });
+  const odd = store.rows.get(agentKey('owner/repo', 'odd'))!;
+  expect(odd.enabled).toBe(false);
+  expect(odd.error).toMatch(/mode/u);
+});
+
 it('keeps a vetoed agent disabled across refreshes', async () => {
   const store = new MemoryAgentStore();
   vi.stubGlobal('fetch', github({ investigator: investigator() }));

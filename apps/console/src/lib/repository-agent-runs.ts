@@ -9,6 +9,8 @@ import {
   workRevisionSchema,
 } from '@agent-lcars/orchestrator';
 import {
+  agentHarnessSchema,
+  agentModeSchema,
   type AgentRunBrief,
   agentWorkSpecSchema,
   CLAW_RUNTIME_PIPELINE,
@@ -41,6 +43,10 @@ export const agentProfileSchema = z.strictObject({
   /** Whether a dispatched run may invoke these agents with its run token
    * (`lcars investigate`), as `run:<runId>`. Off unless the operator opts in. */
   runCallers: z.boolean().optional(),
+  /** The harnesses the runtime's image and credentials can run; omitted
+   * means OpenClaw only. An operator lists another once the runtime's image
+   * carries it and its Secret holds that harness's login. */
+  harnesses: z.array(agentHarnessSchema).min(1).optional(),
 });
 export type AgentProfile = z.infer<typeof agentProfileSchema>;
 
@@ -67,6 +73,12 @@ const agentRoundSchema = z.strictObject({
   agent: z.string(),
   revision: z.string(),
   digest: z.string(),
+  /** The harness the admitted definition names; omitted means OpenClaw as a
+   * launcher from before harnesses ran it (no `home/` settings), so rounds
+   * admitted before harnesses existed read and run the same. */
+  harness: agentHarnessSchema.optional(),
+  /** The admitted definition's ACP session mode, when it names one. */
+  mode: agentModeSchema.optional(),
   requireToolEvidence: z.boolean(),
   /** The admitted definition's retry policy, pinned with the round so a
    * coalesced successor runs under its own round's policy. */
@@ -104,15 +116,45 @@ export interface ResolvedAgentRuntime {
 }
 
 /** Resolve the runtime an agent runs on, refusing a profile that does not
- * admit its repository or the caller. */
+ * admit its repository or the caller, or whose runtime does not carry the
+ * agent's harness. */
 export function resolveAgentRuntime(
   definition: AgentDefinition,
   principal: string,
   profiles: readonly AgentProfile[],
 ): ResolvedAgentRuntime {
+  const { unsupported, ...runtime } = agentRuntime(
+    definition,
+    principal,
+    profiles,
+  );
+  if (unsupported) throw unsupported;
+  return runtime;
+}
+
+/** The runtime as `resolveAgentRuntime` resolves it, with the harness check
+ * reported instead of thrown: it guards a new round, and admission replays
+ * a round it already admitted before applying it. */
+function agentRuntime(
+  definition: AgentDefinition,
+  principal: string,
+  profiles: readonly AgentProfile[],
+): ResolvedAgentRuntime & { unsupported?: AgentAdmissionError } {
   const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
+  const harness = definition.manifest.harness ?? 'openclaw';
+  // A runtime runs only the harnesses its operator says it carries, so a
+  // round never reaches an image or a Secret that cannot run it.
+  const runs = (harnesses: readonly string[] = ['openclaw']) =>
+    harnesses.includes(harness)
+      ? {}
+      : {
+          unsupported: new AgentAdmissionError(
+            'FORBIDDEN',
+            `Profile ${name} does not run ${harness} agents`,
+          ),
+        };
   if (name === DEFAULT_AGENT_PROFILE)
-    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false };
+    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false, ...runs() };
   const profile = profiles.find((candidate) => candidate.name === name);
   if (!profile)
     throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
@@ -126,7 +168,11 @@ export function resolveAgentRuntime(
       'FORBIDDEN',
       `Profile ${name} does not admit ${principal}`,
     );
-  return { pipeline: profile.runtime, runCallers: profile.runCallers === true };
+  return {
+    pipeline: profile.runtime,
+    runCallers: profile.runCallers === true,
+    ...runs(profile.harnesses),
+  };
 }
 
 /** Admit one round of a repository-owned agent. A
@@ -157,7 +203,7 @@ export async function admitAgentRun(
         : `No enabled agent ${id}`,
     );
   const definition = agent.definition;
-  const runtime = resolveAgentRuntime(
+  const { unsupported, ...runtime } = agentRuntime(
     definition,
     request.principal,
     deps.profiles(),
@@ -171,14 +217,33 @@ export async function admitAgentRun(
   const sourceKey = request.sourceKey ?? `adhoc:${request.requestId ?? ulid()}`;
   // Keys are scoped to the agent and the caller: one caller's key never
   // resolves to, supersedes or reads another caller's work.
-  const workId = await deps.store.resolveSourceWorkId(
-    `agent:${id}:${request.principal}:${sourceKey}`,
-    ulid(),
-  );
+  const sourceWorkKey = `agent:${id}:${request.principal}:${sourceKey}`;
+  // The harness check guards a new round. A caller that lost the response
+  // to a round it admitted must still get that round back, even when the
+  // definition has since moved to a harness this profile does not carry:
+  // the admitted round pins the harness it was admitted with. So on an
+  // unsupported harness the request goes on only when it names Work that
+  // already exists, found without reserving anything, and the orchestrator
+  // below then replays an admitted round or refuses to mint a new one.
+  const existingWorkId = unsupported
+    ? await deps.store.readSourceWorkId(sourceWorkKey)
+    : undefined;
+  if (unsupported && existingWorkId === undefined) throw unsupported;
+  const workId =
+    existingWorkId ??
+    (await deps.store.resolveSourceWorkId(sourceWorkKey, ulid()));
   const round: AgentRound = agentRoundSchema.parse({
     agent: id,
     revision: definition.revision,
     digest: definition.digest,
+    // Pinned as written, `openclaw` included: naming a harness is how a
+    // definition asks for the launcher that stages `home/`.
+    ...(definition.manifest.harness === undefined
+      ? {}
+      : { harness: definition.manifest.harness }),
+    ...(definition.manifest.mode === undefined
+      ? {}
+      : { mode: definition.manifest.mode }),
     requireToolEvidence: definition.manifest.requireToolEvidence ?? false,
     retry: definition.manifest.retry ?? 'finite',
     message: request.message,
@@ -232,6 +297,11 @@ export async function admitAgentRun(
     isSameSourceRevision: (admitted, replay) =>
       admitted.key === replay.key &&
       admitted.input['message'] === replay.input['message'],
+    // On a harness the profile does not run, nothing new is minted. The
+    // orchestrator applies this after the stored Work's compatibility check
+    // and the admitted-receipt replay, in the same transaction, so a replay
+    // is still answered with the same checks as any other.
+    ...(unsupported ? { isPipelineAuthorized: () => false } : {}),
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;
@@ -248,6 +318,8 @@ export async function admitAgentRun(
   if (isRefusal(outcome)) {
     if (outcome.reason === 'duplicate-request')
       return { workId, duplicate: true };
+    if (outcome.reason === 'pipeline-forbidden' && unsupported)
+      throw unsupported;
     if (
       outcome.reason === 'work-spec-mismatch' ||
       outcome.reason === 'task-closed'
@@ -295,19 +367,35 @@ export async function agentRunBrief(
     });
   if (agentDigest(files) !== round.digest)
     throw new Error(`${round.agent} does not match its pinned digest`);
-  return {
+  const delivered = await Promise.all(
+    [...files]
+      .sort((left, right) => left.path.localeCompare(right.path))
+      .map(async (file) => ({
+        ...file,
+        content: (await source.readBlob(file.sha)).toString('base64'),
+      })),
+  );
+  const brief = {
     agent: round.agent,
     revision: round.revision,
     digest: round.digest,
     requireToolEvidence: round.requireToolEvidence,
     message: round.message,
-    files: await Promise.all(
-      [...files]
-        .sort((left, right) => left.path.localeCompare(right.path))
-        .map(async (file) => ({
-          ...file,
-          content: (await source.readBlob(file.sha)).toString('base64'),
-        })),
-    ),
+  };
+  // A round that pinned a harness or a mode needs a launcher that knows
+  // them, and it alone has its `home/` settings applied. Its files go under
+  // `definition`, which a launcher from before harnesses does not read, so
+  // that launcher refuses the brief instead of running the agent without
+  // them. Every other round, including one admitted before harnesses whose
+  // definition happens to hold files under `home/`, is delivered as it
+  // always was and runs without them.
+  const needsHarnessLauncher =
+    round.harness !== undefined || round.mode !== undefined;
+  if (!needsHarnessLauncher) return { ...brief, files: delivered };
+  return {
+    ...brief,
+    ...(round.harness === undefined ? {} : { harness: round.harness }),
+    ...(round.mode === undefined ? {} : { mode: round.mode }),
+    definition: delivered,
   };
 }
