@@ -557,12 +557,12 @@ The metrics endpoint exposes the queue worker's own health:
   `..._run_exit_last_timestamp_seconds{pipeline,outcome}` is absent until the
   first exit in the process. A claim whose Job could not be built or was
   refused by the apiserver is also reported (and counted) without a Job, so
-  it has no duration. The exit route decides `replayed` inside its
-  settlement transaction (an earlier report, even a concurrent one, already
-  retired the claim), and a replayed report is not counted again unless it
-  repeats this process's own unanswered post (a dropped response). Codex
-  claims are never retired on exit, so after a restart a retained Codex Job
-  can be counted again; claw runtimes are exact. `..._run_consecutive_failures{pipeline}` counts failed or
+  it has no duration. Only exits this process watched happen are counted:
+  a Job it created or saw running, then saw end (or recovery deleted while
+  running). Every terminated Job is still reported, but one already
+  terminal when the process first sees it (retained across a restart) is
+  not counted, so a restart never recounts; an exit during executor
+  downtime is not counted either. `..._run_consecutive_failures{pipeline}` counts failed or
   lost exits since the last succeeded or canceled one, in report order; an
   unattributed exit (`pipeline="unknown"`) and a finished run without a
   result (a Console that predates `ok`) leave it unchanged. Once the exit

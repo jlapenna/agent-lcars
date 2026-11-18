@@ -69,9 +69,11 @@ func TestDeliveredExitCountsItsPipelineAndResult(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	job := queueJobFor("run-metrics", batch.JobFailed)
+	job.UID = "uid-metrics"
 	job.Annotations[queuePipelineAnnotation] = "claw-metrics-test"
 	q, _ := kubeQueueFixture(job)
 	q.exits = testExitReporter(server.URL)
+	q.watch(job.UID) // this process saw it running
 	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-metrics-test", "failed")
 	before := testutil.ToFloat64(counter)
 
@@ -98,7 +100,7 @@ func TestUndeliveredExitIsNotCounted(t *testing.T) {
 	reporter := testExitReporter(server.URL)
 	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-undelivered-test", "other")
 	before := testutil.ToFloat64(counter)
-	reporter.observeExit("run-undelivered", "", testClaimFingerprint, exitMeta{pipeline: "claw-undelivered-test"})
+	reporter.observeExit("run-undelivered", "", testClaimFingerprint, exitMeta{pipeline: "claw-undelivered-test", counted: true})
 	reporter.wg.Wait()
 	if got := testutil.ToFloat64(counter) - before; got != 0 {
 		t.Fatalf("undelivered exit counted %v", got)
@@ -140,24 +142,6 @@ func TestUnattributedExitsJoinNoRuntimeStreak(t *testing.T) {
 	}
 }
 
-func TestReplayedExitIsNotCountedAgain(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"runId":"x","state":"finished","ok":false,"replayed":true}`))
-	}))
-	t.Cleanup(server.Close)
-	reporter := testExitReporter(server.URL)
-	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-replay-test", "failed")
-	before := testutil.ToFloat64(counter)
-	reporter.observeExit("run-replayed", "", testClaimFingerprint, exitMeta{pipeline: "claw-replay-test"})
-	reporter.wg.Wait()
-	if !reporter.delivered("run-replayed", testClaimFingerprint) {
-		t.Fatal("a replay is still a delivered report")
-	}
-	if got := testutil.ToFloat64(counter) - before; got != 0 {
-		t.Fatalf("replayed exit counted %v", got)
-	}
-}
-
 func TestDeclaredRuntimesStartWithDurationBaselines(t *testing.T) {
 	initRunExitMetrics([]string{"claw-histogram-test"})
 	if n := testutil.CollectAndCount(queueExecutorRunDurationSeconds, "github_runner_autoscaler_queue_executor_run_duration_seconds"); n < len(runExitOutcomes) {
@@ -165,29 +149,43 @@ func TestDeclaredRuntimesStartWithDurationBaselines(t *testing.T) {
 	}
 }
 
-func TestRetryAfterADroppedResponseStillCountsOnce(t *testing.T) {
-	calls := 0
+func TestRetainedJobFirstSeenTerminalIsReportedButNotCounted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		if calls == 1 {
-			// The Console committed, but the answer never arrived.
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		}
-		_, _ = w.Write([]byte(`{"runId":"x","state":"lost","replayed":true}`))
+		_, _ = w.Write([]byte(`{"runId":"x","state":"lost"}`))
 	}))
 	t.Cleanup(server.Close)
-	reporter := testExitReporter(server.URL)
-	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-dropped-test", "lost")
+	retained := queueJobFor("run-retained", batch.JobFailed)
+	retained.UID = "uid-retained"
+	retained.Annotations[queuePipelineAnnotation] = "claw-retained-test"
+	running := queueJobFor("run-watched", "")
+	running.UID = "uid-watched"
+	running.Annotations[queuePipelineAnnotation] = "claw-retained-test"
+	q, client := kubeQueueFixture(retained, running)
+	q.exits = testExitReporter(server.URL)
+	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-retained-test", "lost")
 	before := testutil.ToFloat64(counter)
-	for range 3 {
-		reporter.observeExit("run-dropped", "", testClaimFingerprint, exitMeta{pipeline: "claw-dropped-test"})
-		reporter.wg.Wait()
+
+	if _, err := q.activeCount(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if calls != 2 {
-		t.Fatalf("posts = %d, want a retry then nothing", calls)
+	q.exits.wg.Wait()
+	if !q.exits.delivered("run-retained", testClaimFingerprint) {
+		t.Fatal("a retained Job's exit must still be reported")
 	}
+	if got := testutil.ToFloat64(counter) - before; got != 0 {
+		t.Fatalf("retained exit counted %v; it may be the previous process's", got)
+	}
+
+	// The running Job then ends: this process watched it, so it counts.
+	running.Status.Conditions = []batch.JobCondition{{Type: batch.JobFailed, Status: core.ConditionTrue}}
+	if _, err := client.BatchV1().Jobs(running.Namespace).UpdateStatus(context.Background(), running, meta.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.activeCount(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	q.exits.wg.Wait()
 	if got := testutil.ToFloat64(counter) - before; got != 1 {
-		t.Fatalf("lost exits counted %v, want exactly once", got)
+		t.Fatalf("watched exit counted %v, want 1", got)
 	}
 }

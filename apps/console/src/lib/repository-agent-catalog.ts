@@ -15,6 +15,9 @@ export async function refreshAgentCatalog(
   repository: string,
   tokens: DispatchTokenProvider,
   now: Date,
+  /** Collects this refresh's health writes for a caller that awaits them
+   * once, after every batch; without it the refresh awaits its own. */
+  pendingHealth?: Promise<unknown>[],
 ): Promise<void> {
   const at = now.toISOString();
   // Fairness bookkeeping only: a lost write makes this source look older.
@@ -33,9 +36,10 @@ export async function refreshAgentCatalog(
     current !== undefined && Date.parse(current.refreshedAt) > now.getTime();
   // Health telemetry only: a lost write never fails the refresh.
   // Health telemetry only. Writes start without blocking the catalog:
-  // publication and fail-closed disabling never wait on them, and the
-  // refresh waits for them at most HEALTH_WRITE_MS at the very end.
-  const healthWrites: Promise<unknown>[] = [];
+  // publication and fail-closed disabling never wait on them. A standalone
+  // refresh waits for them at most HEALTH_WRITE_MS at the very end; a
+  // batched one hands them to its caller.
+  const healthWrites = pendingHealth ?? [];
   const recordRead = (outcome: 'succeeded' | 'failed') => {
     healthWrites.push(
       store
@@ -194,7 +198,8 @@ export async function refreshAgentCatalog(
       );
     throw error;
   } finally {
-    await settleWithin(healthWrites, HEALTH_WRITE_MS);
+    if (pendingHealth === undefined)
+      await settleWithin(healthWrites, HEALTH_WRITE_MS);
   }
 }
 
@@ -243,12 +248,22 @@ export async function refreshAgentCatalogs(
       (attempted.get(left) ?? 0) - (attempted.get(right) ?? 0) ||
       left.localeCompare(right),
   );
+  // Health writes from every batch are awaited once, after the last batch
+  // and only within the time left, so they never cost a later batch its
+  // start.
+  const pendingHealth: Promise<unknown>[] = [];
   for (let offset = 0; offset < ordered.length; offset += 4) {
     if (Date.now() + 25_000 > deadline) break;
     await Promise.all(
       ordered.slice(offset, offset + 4).map(async (repository) => {
         try {
-          await refreshAgentCatalog(store, repository, tokens(), new Date());
+          await refreshAgentCatalog(
+            store,
+            repository,
+            tokens(),
+            new Date(),
+            pendingHealth,
+          );
         } catch (error) {
           logger.error(
             'Repository agent source refresh failed: %s',
@@ -259,4 +274,8 @@ export async function refreshAgentCatalogs(
       }),
     );
   }
+  await settleWithin(
+    pendingHealth,
+    Math.min(HEALTH_WRITE_MS, Math.max(0, deadline - Date.now())),
+  );
 }

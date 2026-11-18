@@ -18187,9 +18187,6 @@
                     },
                     "ok": {
                       "type": "boolean"
-                    },
-                    "replayed": {
-                      "type": "boolean"
                     }
                   },
                   "required": ["runId", "state"],

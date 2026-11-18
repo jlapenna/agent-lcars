@@ -233,9 +233,53 @@ type kubernetesQueue struct {
 	// inventory read is the worker's exit evidence.
 	retiringMu sync.Mutex
 	retiring   map[types.UID]retiringClaim
+	// watched holds Jobs this process created or saw running. Only their
+	// exits count toward run-exit metrics: a Job already terminal when this
+	// process first sees it (retained across a restart) may have been
+	// counted by the previous process. Guarded by retiringMu.
+	watched map[types.UID]struct{}
 }
 
-type retiringClaim struct{ runID, runner, fingerprint, pipeline string }
+type retiringClaim struct {
+	runID, runner, fingerprint, pipeline string
+	counted                              bool
+}
+
+// watch records that this process saw job live.
+func (q *kubernetesQueue) watch(uid types.UID) {
+	q.retiringMu.Lock()
+	defer q.retiringMu.Unlock()
+	if q.watched == nil {
+		q.watched = map[types.UID]struct{}{}
+	}
+	q.watched[uid] = struct{}{}
+}
+
+// observeInventory marks live Jobs watched, forgets Jobs that are gone, and
+// says which of them this process watched.
+func (q *kubernetesQueue) observeInventory(jobs []batch.Job) map[types.UID]bool {
+	q.retiringMu.Lock()
+	defer q.retiringMu.Unlock()
+	if q.watched == nil {
+		q.watched = map[types.UID]struct{}{}
+	}
+	present := make(map[types.UID]bool, len(jobs))
+	for _, j := range jobs {
+		if !queueJobTerminal(j) {
+			q.watched[j.UID] = struct{}{}
+		}
+		_, seen := q.watched[j.UID]
+		present[j.UID] = seen
+	}
+	for uid := range q.watched {
+		if _, ok := present[uid]; !ok {
+			if _, retiring := q.retiring[uid]; !retiring {
+				delete(q.watched, uid)
+			}
+		}
+	}
+	return present
+}
 
 func (q *kubernetesQueue) trackRetiring(job *batch.Job, runID, runner, fingerprint string) {
 	q.retiringMu.Lock()
@@ -243,7 +287,9 @@ func (q *kubernetesQueue) trackRetiring(job *batch.Job, runID, runner, fingerpri
 	if q.retiring == nil {
 		q.retiring = map[types.UID]retiringClaim{}
 	}
-	q.retiring[job.UID] = retiringClaim{runID: runID, runner: runner, fingerprint: fingerprint, pipeline: job.Annotations[queuePipelineAnnotation]}
+	// Recovery deletes a settled claim's Job while it still runs, so its
+	// disappearance is an exit this process watched.
+	q.retiring[job.UID] = retiringClaim{runID: runID, runner: runner, fingerprint: fingerprint, pipeline: job.Annotations[queuePipelineAnnotation], counted: !queueJobTerminal(*job)}
 }
 
 // reportRetired reports every tracked deletion whose Job no longer exists.
@@ -267,7 +313,7 @@ func (q *kubernetesQueue) reportRetired(jobs []batch.Job) {
 			delete(q.retiring, uid)
 			continue
 		}
-		q.exits.observeExit(claim.runID, claim.runner, claim.fingerprint, exitMeta{pipeline: claim.pipeline})
+		q.exits.observeExit(claim.runID, claim.runner, claim.fingerprint, exitMeta{pipeline: claim.pipeline, counted: claim.counted})
 	}
 }
 
@@ -377,6 +423,7 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	q.reportRetired(jobs.Items)
+	watched := q.observeInventory(jobs.Items)
 	n := 0
 	for _, j := range jobs.Items {
 		if !queueJobTerminal(j) {
@@ -390,7 +437,9 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeExit(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation], jobExitMeta(j))
+			exit := jobExitMeta(j)
+			exit.counted = watched[j.UID]
+			q.exits.observeExit(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation], exit)
 		}
 	}
 	return n, nil
@@ -753,7 +802,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		// No Job was submitted, so no worker can exist: settle the claim now
 		// instead of holding it until the start deadline expires.
 		if l.runToken != "" {
-			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline})
+			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline, counted: true})
 		}
 		return err
 	}
@@ -763,7 +812,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		// no worker exist and a retry would fail identically: settle the claim
 		// now, as above, instead of holding it until its placement deadline.
 		if l.runToken != "" {
-			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline})
+			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline, counted: true})
 		}
 		return fmt.Errorf("creating queue Job: %w", err)
 	}
@@ -782,6 +831,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		return nil
 	}
 	queueExecutorMemoryLaunchesTotal.WithLabelValues(l.pipeline, q.memoryState(ctx, l.pipeline)).Inc()
+	q.watch(job.UID)
 	secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: job.Name, Namespace: q.config.Namespace, Labels: map[string]string{queueJobLabel: "true"}, OwnerReferences: []meta.OwnerReference{{APIVersion: "batch/v1", Kind: "Job", Name: job.Name, UID: job.UID, Controller: ptr(true)}}}, Immutable: ptr(true), Data: map[string][]byte{"run-token": []byte(l.runToken)}}
 	if _, err = q.client.CoreV1().Secrets(q.config.Namespace).Create(ctx, secret, meta.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("creating queue run credential: %w", err)

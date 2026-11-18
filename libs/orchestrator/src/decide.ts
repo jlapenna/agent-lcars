@@ -1220,7 +1220,7 @@ export function executorExitedAndRetry(input: {
 
 /** Codex keeps its claim after settlement: server credential cleanup is
  * authorized by the original claim, so its executor exit never retires it. */
-export function retiresOnExit(run: Run): boolean {
+function retiresOnExit(run: Run): boolean {
   return run.pipeline !== 'codex';
 }
 

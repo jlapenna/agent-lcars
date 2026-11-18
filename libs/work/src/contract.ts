@@ -1671,11 +1671,6 @@ export const runsContract = {
         /** A finished run's result, for the executor's bounded outcome
          * metrics; absent for any other state. */
         ok: z.boolean().optional(),
-        /** True when this claim was already retired: a repeated report
-         * (for example a retained Job re-observed after a restart), not a
-         * new exit. A Codex claim is never retired on exit, so its repeats
-         * are not flagged. */
-        replayed: z.boolean().optional(),
       }),
     ),
   complete: runBase

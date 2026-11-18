@@ -53,9 +53,9 @@ func newRepositoryAgentMetrics() *repositoryAgentMetrics {
 	m.desc["observed_timestamp_seconds"] = prometheus.NewDesc("lcars_repository_agents_observed_timestamp_seconds", "Server time of the cached catalog observation; never replaced by scrape time.", nil, nil)
 	m.desc["agents"] = prometheus.NewDesc("lcars_repository_agents", "Cataloged repository-owned agents by admission state: enabled, vetoed, invalid, unavailable (source refresh failed) or removed.", []string{"state"}, nil)
 	m.desc["attempt"] = prometheus.NewDesc("lcars_repository_agent_source_last_attempt_timestamp_seconds", "Last catalog refresh attempt of a repository's .lcars/agents; zero means never.", []string{"repository"}, nil)
-	m.desc["success"] = prometheus.NewDesc("lcars_repository_agent_source_last_success_timestamp_seconds", "Last published catalog refresh that read the repository successfully; zero means never.", []string{"repository"}, nil)
+	m.desc["success"] = prometheus.NewDesc("lcars_repository_agent_source_last_success_timestamp_seconds", "Last catalog refresh whose read of the repository's .lcars/agents succeeded (repository I/O, recorded before publication); zero means never.", []string{"repository"}, nil)
 	m.desc["unavailable"] = prometheus.NewDesc("lcars_repository_agent_source_unavailable_agents", "A repository's stored agents currently disabled by a failed refresh; absent from an older Console.", []string{"repository"}, nil)
-	m.desc["failure"] = prometheus.NewDesc("lcars_repository_agent_source_last_failure_timestamp_seconds", "Last published catalog refresh that failed to read the repository; zero means never.", []string{"repository"}, nil)
+	m.desc["failure"] = prometheus.NewDesc("lcars_repository_agent_source_last_failure_timestamp_seconds", "Last catalog refresh whose read of the repository's .lcars/agents failed (repository I/O, not publication); zero means never.", []string{"repository"}, nil)
 	return m
 }
 

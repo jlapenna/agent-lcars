@@ -502,3 +502,15 @@ it('confines a non-file agent.yaml to its own definition without fetching it', a
     fetch.mock.calls.some(([url]) => String(url).includes('d'.repeat(40))),
   ).toBe(false);
 });
+
+it('hands a batched refresh its health writes instead of waiting on them', async () => {
+  const store = new MemoryAgentStore();
+  vi.stubGlobal('fetch', github({ investigator: investigator() }));
+  store.recordSourceRead = () => new Promise<void>(() => undefined);
+  const pending: Promise<unknown>[] = [];
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now, pending);
+  expect(pending).toHaveLength(1);
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: true,
+  });
+});
