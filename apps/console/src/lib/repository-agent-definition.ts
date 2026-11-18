@@ -52,7 +52,7 @@ export type AgentDefinition = z.infer<typeof agentDefinitionSchema>;
 
 /** Files the launcher needs for each harness. A definition without them is
  * invalid. Only OpenClaw reads a config and exec approvals; an ACP harness is
- * configured by its own files in the agent's `workspace/`. */
+ * configured by its own files in the agent's `workspace/` and `home/`. */
 export function requiredAgentFiles(
   harness: AgentHarness = 'openclaw',
 ): readonly string[] {

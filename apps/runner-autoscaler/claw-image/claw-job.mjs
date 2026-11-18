@@ -320,14 +320,14 @@ export function settle(
 // - the report is the agent's last message after its last tool call, so
 //   neither narration before a tool call nor a harness notice ahead of the
 //   answer is mistaken for it;
-// - the turn's last tool call must have completed. An earlier failed call that
-//   a later call followed is resolved evidence; a turn that ends on a failed
-//   or unfinished call is an unresolved tool error;
+// - a tool call that failed or never finished is an unresolved tool error
+//   unless a later call, started after it ended, completed: that later call
+//   is the agent accounting for the failure, as a retried probe does;
 // - `requireToolEvidence` needs at least one tool call.
 // A harness reports a turn that died early as an ordinary end of turn with no
 // text, so an empty result is always a failure.
 export function settleAcp(
-  { aborted, timedOut, error, stopReason, final, overflow, calls, lastTool },
+  { aborted, timedOut, error, stopReason, final, overflow, calls, unresolved },
   { requireTools = false } = {},
 ) {
   if (aborted)
@@ -346,8 +346,7 @@ export function settleAcp(
     return failed(`harness stopped with ${String(stopReason).slice(0, 80)}`);
   if (overflow)
     return failed(`report exceeds the ${MAX_REPORT_BYTES}-byte bound`);
-  if (lastTool && lastTool.status !== 'completed')
-    return failed(`unresolved ${lastTool.kind} tool call`);
+  if (unresolved) return failed(`unresolved ${unresolved.kind} tool call`);
   const report = (final ?? '').trim();
   if (!report) return failed('empty result');
   if (requireTools && !(calls > 0))
@@ -465,6 +464,9 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         pending.set(id, { answer, refuse });
         send({ id, method, params });
       });
+    let sequence = 0;
+    const running = (tool) =>
+      tool.status === 'pending' || tool.status === 'in_progress';
     let messageId;
     const startMessage = (id) => {
       messageId = id;
@@ -490,16 +492,42 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         typeof update.toolCallId === 'string'
       ) {
         const known = tools.get(update.toolCallId);
-        const tool = known ?? { kind: 'other', status: 'pending' };
+        const tool = known ?? {
+          kind: 'other',
+          status: 'pending',
+          started: ++sequence,
+        };
         if (typeof update.kind === 'string')
           tool.kind = update.kind.slice(0, 40);
-        if (typeof update.status === 'string') tool.status = update.status;
-        // The map keeps announcement order, so its last entry is the turn's
-        // last tool call.
+        if (
+          typeof update.status === 'string' &&
+          update.status !== tool.status
+        ) {
+          tool.status = update.status;
+          tool.ended = running(tool) ? undefined : ++sequence;
+        }
         if (!known) tools.set(update.toolCallId, tool);
-        // Only a message after the last tool activity is the answer.
-        startMessage(undefined);
+        // The answer is the message after the agent last started or was still
+        // running a tool. A late notice that a call finished does not erase
+        // an answer already given; if that call failed, it is unresolved.
+        if (!known || running(tool)) startMessage(undefined);
       }
+    };
+    // A call that failed or never finished is resolved only by a call that
+    // started after it ended and completed. Calls running side by side do
+    // not resolve each other.
+    const unresolved = () => {
+      const calls = [...tools.values()];
+      const open = calls.find(
+        (tool) =>
+          tool.status !== 'completed' &&
+          !calls.some(
+            (later) =>
+              later.status === 'completed' &&
+              later.started > (tool.ended ?? Infinity),
+          ),
+      );
+      return open && { kind: open.kind, status: open.status };
     };
     const onLine = (line) => {
       let incoming;
@@ -509,6 +537,16 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         return; // not protocol: a harness may log to stdout
       }
       if (!incoming || typeof incoming !== 'object') return;
+      try {
+        onMessage(incoming);
+      } catch {
+        // Nothing a harness sends may take the launcher down before it has
+        // settled the attempt.
+        turn.error ??= 'harness sent a malformed ACP message';
+        stopGroup(child);
+      }
+    };
+    const onMessage = (incoming) => {
       if (incoming.method === undefined) {
         const waiter = pending.get(incoming.id);
         if (!waiter) return;
@@ -524,7 +562,8 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         if (incoming.method === 'session/update')
           onUpdate(incoming.params?.update);
       } else if (incoming.method === 'session/request_permission') {
-        const reject = (incoming.params?.options ?? []).find(
+        const options = incoming.params?.options;
+        const reject = (Array.isArray(options) ? options : []).find(
           (option) =>
             option?.kind === 'reject_once' || option?.kind === 'reject_always',
         );
@@ -566,7 +605,7 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         resolve({
           ...turn,
           calls: tools.size,
-          lastTool: [...tools.values()].at(-1),
+          unresolved: unresolved(),
           aborted,
           code,
         }),
@@ -593,7 +632,7 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
       turn.stopReason = prompted.stopReason;
     })()
       .catch((error) => {
-        turn.error =
+        turn.error ??=
           error instanceof ClawFailure ? error.message : 'ACP session failed';
       })
       .finally(() => {
@@ -753,6 +792,9 @@ async function openclawTurn({
       signal,
     },
   );
+  // The turn is awaited after the heartbeat; a spawn failure in between must
+  // reach that await, not become an unhandled rejection.
+  turn.catch(() => undefined);
   await started();
   return turn;
 }
@@ -776,6 +818,12 @@ async function acpHarnessTurn({
   // `home/` supplies them, so the tool policy a harness trusts (it ignores
   // allow rules found in an untrusted workspace) is reviewed source too.
   await copyFromDefinition(join(definitionDir, 'home'), env.HOME);
+  const settings = request.files.filter((file) =>
+    normalize(file.path).startsWith('home/'),
+  );
+  const inHome = (file) =>
+    join(env.HOME, normalize(file.path).slice('home/'.length));
+  for (const file of settings) await chmod(inHome(file), 0o444);
   if (signal.aborted) throw new ClawFailure('claw run was cancelled');
   const turn = acpTurn(harness.command, harness.args, {
     env,
@@ -783,8 +831,22 @@ async function acpHarnessTurn({
     message: request.message,
     signal,
   });
+  turn.catch(() => undefined);
   await started();
-  return turn;
+  const finished = await turn;
+  // The harness runs as the launcher's UID, so nothing can stop an agent
+  // with a write-capable tool from rewriting the settings that bound it.
+  // What the launcher can do is refuse the result: every `home/` file must
+  // still be the pinned blob once the turn is over.
+  for (const file of settings) {
+    const content = await readFile(inHome(file)).catch(() => undefined);
+    if (content === undefined || gitBlobSha(content) !== file.sha)
+      return {
+        ...finished,
+        error: `the agent changed its harness settings (${file.path})`,
+      };
+  }
+  return finished;
 }
 
 export async function main(env = process.env, deps = {}) {

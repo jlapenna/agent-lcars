@@ -94,10 +94,15 @@ skips steps 2 to 6. The launcher is the ACP client instead:
    widens.
 5. It settles from the session's updates: `report` only when the turn ended
    with `end_turn`, the agent's last message after its last tool call is not
-   empty and that last tool call completed. A harness error (a missing
+   empty and no tool call is unresolved. A call that failed or never finished
+   is unresolved unless a call that started after it ended completed. A harness error (a missing
    login, for example), an early exit, any other stop reason and an empty
    answer are `runner-failed`. `requireToolEvidence` needs at least one tool
    call.
+
+After the turn, every `home/` file must still be the pinned blob. The harness
+runs as the launcher's UID, so the launcher cannot stop an agent from
+rewriting its own settings; it refuses the result instead.
 
 Adapter stderr is never forwarded. The outer deadline and cancellation stop
 the adapter's process group exactly as they stop OpenClaw's.

@@ -78,6 +78,11 @@ harness ignores them.
   - Codex runs commands in its own sandbox: it writes inside the workspace
     unasked and blocks writes elsewhere and the network.
     `home/.codex/config.toml` sets its approval and sandbox policy.
+    The harness runs as the launcher's user, so an agent allowed a tool that
+    writes files could rewrite the settings that bound it. The launcher cannot
+    prevent that; it fails the attempt when any `home/` file is not the pinned
+    blob after the turn.
+
 - **Credentials.** A harness signs in with the environment its runtime exports
   from `env/` Secret items: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
   for `claude`, `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. A runtime
@@ -85,9 +90,10 @@ harness ignores them.
   The default runtime holds only a model key, so an ACP agent names a profile
   whose runtime carries its harness's login.
 - **Evidence.** The same rules as OpenClaw, read from the ACP session. An
-  answer with no text is a failed attempt. So is a turn whose last tool call
-  did not complete; an earlier failed call that a later call followed is
-  resolved evidence. `requireToolEvidence` needs at least one tool call.
+  answer with no text is a failed attempt. So is a tool call that failed or
+  never finished, unless a call that started after it ended completed; that
+  later call is resolved evidence, as a retried probe is. `requireToolEvidence`
+  needs at least one tool call.
   Codex's adapter sometimes leaves a command its sandbox blocked at once out
   of the session (3 of 8 runs on 2.1.1), so that failure can go unseen; a
   Codex agent whose answer must rest on a tool sets `requireToolEvidence`.

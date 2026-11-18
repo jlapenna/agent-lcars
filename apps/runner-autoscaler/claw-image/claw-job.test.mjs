@@ -563,17 +563,24 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     prompt = message.id;
     if (behaviour.hang) return;
     if (behaviour.exit) process.exit(7);
+    if (behaviour.tamper) {
+      const settings = path.join(process.env.HOME, '.claude', 'settings.json');
+      fs.chmodSync(settings, 0o644);
+      fs.writeFileSync(settings, '{"permissions":{"allow":["Bash"]}}');
+    }
     for (const step of behaviour.steps ?? []) {
       if (step.say) say(step.say, step.id);
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
-      if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
+      if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: step.options ?? [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
     }
     return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn' } });
   }
   if (message.id === 'ask-1') {
     record({ permission: message.result });
-    update('tool_call_update', { toolCallId: 't1', status: 'failed' });
-    say('I could not run it.');
+    // The tool runs only when the client picked the allow option.
+    const allowed = message.result?.outcome?.optionId === 'yes';
+    update('tool_call_update', { toolCallId: 't1', status: allowed ? 'completed' : 'failed' });
+    say(allowed ? 'Ran it.' : 'I could not run it.');
     return send({ id: prompt, result: { stopReason: 'end_turn' } });
   }
 });
@@ -709,6 +716,118 @@ test('an ACP turn fails closed on a harness error, an early exit or no answer', 
   );
 });
 
+test('a malformed ACP permission request is answered, never a crash', async () => {
+  for (const options of [{}, 'x', [null, 7]]) {
+    const { env, calls, deps, harnessLog } = await harnessFixture({
+      steps: [tool('pending', { update: 'tool_call' }), { ask: 't1', options }],
+    });
+    const result = await main(env, deps);
+    assert.deepEqual(result, {
+      outcome: 'runner-failed',
+      message: 'Claw turn failed: unresolved execute tool call.',
+    });
+    assert.deepEqual(completion(calls), result);
+    // With no reject option to choose, the request is cancelled.
+    const asked = (await harnessLog()).find((entry) => entry.permission);
+    assert.deepEqual(asked.permission, { outcome: { outcome: 'cancelled' } });
+  }
+});
+
+test('ACP tool calls resolve only through a later completed call', async () => {
+  const outcome = async (steps) => {
+    const { env, deps } = await harnessFixture({ steps });
+    return main(env, deps);
+  };
+  const call = (id, status, update) => tool(status, { id, update });
+  const unresolved = {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: unresolved execute tool call.',
+  };
+  // A failed probe, then a later call that completed: resolved evidence.
+  assert.deepEqual(
+    await outcome([
+      call('a', 'pending', 'tool_call'),
+      call('a', 'failed'),
+      call('b', 'pending', 'tool_call'),
+      call('b', 'completed'),
+      { say: 'Host is down.' },
+    ]),
+    { outcome: 'report', message: 'Host is down.' },
+  );
+  // Calls running side by side do not resolve each other.
+  assert.deepEqual(
+    await outcome([
+      call('a', 'pending', 'tool_call'),
+      call('b', 'pending', 'tool_call'),
+      call('a', 'failed'),
+      call('b', 'completed'),
+      { say: 'All good.' },
+    ]),
+    unresolved,
+  );
+  // A call still running when the turn ends is unresolved too.
+  assert.deepEqual(
+    await outcome([
+      call('a', 'in_progress', 'tool_call'),
+      call('b', 'pending', 'tool_call'),
+      call('b', 'completed'),
+      { say: 'All good.' },
+    ]),
+    unresolved,
+  );
+  // A late notice that a call completed keeps the answer already given; a
+  // late failure does not.
+  assert.deepEqual(
+    await outcome([
+      call('a', 'in_progress', 'tool_call'),
+      { say: 'Answer.' },
+      call('a', 'completed'),
+    ]),
+    { outcome: 'report', message: 'Answer.' },
+  );
+  assert.deepEqual(
+    await outcome([
+      call('a', 'in_progress', 'tool_call'),
+      { say: 'Answer.' },
+      call('a', 'failed'),
+    ]),
+    unresolved,
+  );
+});
+
+test('cancellation stops an ACP harness and still settles', async () => {
+  const { env, calls, deps } = await harnessFixture(
+    { hang: true },
+    { env: { CLAW_TURN_DEADLINE_SECONDS: '60' } },
+  );
+  const pending = main(env, deps);
+  for (
+    let i = 0;
+    i < 100 && !calls.some((call) => call.body?.providerProcessStarted);
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  process.emit('SIGTERM');
+  const result = await pending;
+  assert.deepEqual(result, {
+    outcome: 'runner-failed',
+    message: 'Claw turn was cancelled.',
+  });
+  assert.deepEqual(completion(calls), result);
+});
+
+test('an agent that rewrites its harness settings loses its report', async () => {
+  const { env, deps } = await harnessFixture({
+    tamper: true,
+    steps: [{ say: 'All clear.' }],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message:
+      'Claw turn failed: the agent changed its harness settings (home/.claude/settings.json).',
+  });
+});
+
 test('a harness the image does not carry is refused before any turn', async () => {
   const { env, deps, harnessLog } = await harnessFixture(
     {},
@@ -739,7 +858,6 @@ test('settleAcp applies the evidence rules to an ACP turn', () => {
     calls: 0,
     ...over,
   });
-  const done = { kind: 'execute', status: 'completed' };
   assert.deepEqual(settleAcp(turn()), {
     outcome: 'report',
     message: 'Disk at 41%.',
@@ -748,17 +866,16 @@ test('settleAcp applies the evidence rules to an ACP turn', () => {
     settleAcp(turn(), { requireTools: true }).message,
     'Claw turn answered without using any tool.',
   );
-  // A failed call that a later call followed is resolved evidence.
   assert.equal(
-    settleAcp(turn({ calls: 2, lastTool: done }), { requireTools: true })
-      .outcome,
+    settleAcp(turn({ calls: 2 }), { requireTools: true }).outcome,
     'report',
   );
-  for (const status of ['failed', 'pending', 'in_progress'])
-    assert.equal(
-      settleAcp(turn({ calls: 1, lastTool: { kind: 'read', status } })).message,
-      'Claw turn failed: unresolved read tool call.',
-    );
+  assert.equal(
+    settleAcp(
+      turn({ calls: 1, unresolved: { kind: 'read', status: 'failed' } }),
+    ).message,
+    'Claw turn failed: unresolved read tool call.',
+  );
   assert.equal(
     settleAcp(turn({ final: 'x'.repeat(MAX_REPORT_BYTES + 1) })).outcome,
     'runner-failed',
