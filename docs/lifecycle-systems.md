@@ -215,9 +215,12 @@ runs, in order:
 1. Codex credential-operation recovery.
 2. `sweepExpired`: lost leases and startup deadlines, with bounded retry.
 3. `rerouteQueued`: queued runs blocked by another run's provider cooldown.
-4. One outbox drain of at most 30 entries; the reply's
-   `outboxContinuationNeeded` reports a full batch, and the next tick
-   continues it.
+4. One outbox drain of at most 30 entries. The reply's
+   `outboxContinuationNeeded` is a count-based hint: it counts only
+   dispatched, reported and failed entries, so a drain that spent claim
+   slots on other outcomes (such as a handoff-summary admission) can return
+   `false` with entries left. The next tick drains whatever remains either
+   way.
 5. In parallel: one queued summary Work attempt (inbox and handoff summaries),
    repository maintenance (`maintainRepositoryJobs`: job and claw-agent
    catalog refresh plus job schedules), and the job-credential observation.
