@@ -176,6 +176,36 @@ describe('readAuthoritativeTaskStates', () => {
     expect(readTask).not.toHaveBeenCalled();
   });
 
+  it('reads task documents before their runs and queries runs only for existing tasks', async () => {
+    await seedTask(codingTask(1));
+    const order: string[] = [];
+    const readTasks = store.readTasks.bind(store);
+    const listRunsForTasks = store.listRunsForTasks.bind(store);
+    vi.spyOn(store, 'readTasks').mockImplementation(async (ids) => {
+      order.push('readTasks:start');
+      const result = await readTasks(ids);
+      order.push('readTasks:end');
+      return result;
+    });
+    const runsSpy = vi
+      .spyOn(store, 'listRunsForTasks')
+      .mockImplementation(async (ids) => {
+        order.push('listRunsForTasks:start');
+        return listRunsForTasks(ids);
+      });
+
+    await readAuthoritativeTaskStates([ref(1), ref(99)]);
+
+    expect(order).toEqual([
+      'readTasks:start',
+      'readTasks:end',
+      'listRunsForTasks:start',
+    ]);
+    expect(runsSpy).toHaveBeenCalledWith([
+      { repo: 'jlapenna/agent-lcars', issue: 1 },
+    ]);
+  });
+
   it('marks only a task without coding Work unavailable', async () => {
     await seedTask(codingTask(1));
     await seedTask({

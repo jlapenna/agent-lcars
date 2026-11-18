@@ -143,10 +143,18 @@ export async function readAuthoritativeTaskStates(
   let versioned: Map<string, VersionedTask>;
   let runsByTask: Map<string, Run[]>;
   try {
-    [versioned, runsByTask] = await Promise.all([
-      store.readTasks([...uniqueTasks.values()]),
-      store.listRunsForTasks([...uniqueTasks.values()]),
-    ]);
+    // Sequential, never concurrent: admission writes the task and its new
+    // run together, so a run snapshot taken before the task snapshot could
+    // pair a fresh `activeRunId` with a history missing that run (and task
+    // detail would derive "completed" while a retry is queued). Reading the
+    // task first preserves the per-task read order. Only tasks that exist
+    // need their runs.
+    versioned = await store.readTasks([...uniqueTasks.values()]);
+    runsByTask = await store.listRunsForTasks(
+      [...uniqueTasks.values()].filter((taskId) =>
+        versioned.has(taskKey(taskId)),
+      ),
+    );
   } catch (error) {
     // One malformed document fails a whole batched read. Fall back to the
     // per-task reads so that document marks only its own task unavailable
