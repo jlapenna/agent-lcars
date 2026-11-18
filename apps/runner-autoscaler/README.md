@@ -465,10 +465,18 @@ outcomes for operations monitoring. A `runtimes_only` zone executor runs no
 ticker and refuses `LCARS_SCHEDULER_CREDENTIALS`
 ([zone executors](#declared-runtimes-and-zone-executors)).
 
-The same cadence posts `POST /api/work/v1/maintenance/tick`, which settles
-expired leases and drains the Console's outbox
-(`github_runner_autoscaler_maintenance_ticks_total` and
-`..._maintenance_last_success_timestamp_seconds`). Any HTTP 200 is a
+The same cadence posts `POST /api/work/v1/maintenance/tick`, the Console's
+bounded maintenance pass (context in
+[docs/lifecycle-systems.md](../../docs/lifecycle-systems.md)). Its handler,
+`handleReconcile` in `apps/console/src/lib/orchestrator-routes.ts`, is the
+authority for the full step list and failure behavior: it recovers credential
+operations, settles expired leases, reroutes queued work off cooling
+providers, drains the dispatch outbox, runs model-work, repository-job and
+job-credential passes, and attaches the optional repository-agent health
+observation. A rejected pass fails the tick; per-entry outbox failures are
+returned as `outboxDrainFailed` instead. Ticks are reported by
+`github_runner_autoscaler_maintenance_ticks_total` and
+`..._maintenance_last_success_timestamp_seconds`. Any HTTP 200 is a
 successful tick: the Console owns outbox retry and dead-lettering, so
 `outboxDrainFailed` entries in the response are logged as warnings, not
 counted as tick errors.
@@ -546,6 +554,16 @@ The metrics endpoint exposes the queue worker's own health:
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
+- `github_runner_autoscaler_queue_executor_memory_launches_total{pipeline,memory}`
+  counts launch attempts that reach a matching suspended Job (including one
+  recovered by name after an ambiguous create), by the Hindsight memory
+  credential state at launch. It increments before the run credential is
+  created and the Job resumed, so a credential-creation failure still counts
+  even though no worker starts. States: `configured`, `isolated` (goose and
+  declared runtimes; no token mounted by design), `no_token` (memory expected but `hindsight-api-token` is
+  missing, empty, or only CR/LF), or `unknown` (Secret read failed). The
+  classifier reads the Secret value and trims CR/LF the way the worker
+  bootstrap does; only the resulting state is exported.
 - `github_runner_autoscaler_queue_executor_run_exits_total{pipeline,outcome}`
   counts each delivered worker-exit report once, by claimed pipeline and the
   run's settled outcome as the exit route answers it: `succeeded` or `failed`
@@ -682,6 +700,51 @@ repository-prefix-preserving runtime grant on `agent-lcars-codex-auth` and a
 single-run canary before activation. This repository does not make that IAM
 change; queue readiness does not bypass the broker's lease and repository
 authorization checks.
+
+## Runner-image helpers
+
+Beyond `direct-runner.sh`, these single-purpose helpers live in
+`runner-image/`. Unless noted, each is present in the running image under
+`/usr/local/lib/agent-lcars/` (the `runtime/` files under its `runtime/`
+directory):
+
+- `opencode-litellm-proxy.mjs`: loopback proxy `direct-runner.sh` starts in
+  front of LiteLLM for OpenCode runs; it records the physical model behind
+  `x-litellm-model-id` to a file. That model lookup is best effort: its
+  failure never replaces the upstream response. Known limitation: the proxy
+  streams the body as `fetch` decoded it but forwards the original
+  `content-encoding` header, so a gzip-encoded upstream body reaches the
+  client unreadable.
+- `toolchain-health.sh`: present, but run at image build: predicates (pnpm through the baked
+  Corepack cache, offline fleet pnpm pins, and other job tools) sourced by
+  `verify-image-invariants.sh`, so an image with a broken job tool is never
+  published.
+- `externals-health.sh`: present, but run at image build: predicate that the baked Actions Node 24
+  runtime runs and that `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` is set.
+- `prepare-opencode-store.sh`: present, but run at image build: bakes an empty, migrated OpenCode store for
+  the runner user after checking the binary matches its pin; refuses a store
+  with session history.
+- `package-anthropic-review.sh`: build-time only, run in a builder stage and
+  absent from the running image. It packages only the code-review command,
+  license and locked revision from the `third_party/anthropic-plugins`
+  submodule and never resolves a new version. The running image holds only
+  that packaged output, under
+  `/usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review`.
+- `runtime/goose-executor.mjs`: the Goose adapter `runtime/goose-job.mjs`
+  uses for repository-job recipes; runs only inside a caller-owned, enforced
+  job allocation and bounds the result it returns.
+- `runtime/claude-job-auth.mjs`: for a recipe admitted under a Claude-harness
+  profile, reads the projected subscription token file into the worker's
+  environment and removes it on close.
+
+The image's pnpm store seed is described in
+[runner-image/pnpm-seed/README.md](runner-image/pnpm-seed/README.md).
+`.github/workflows/refresh-runner-pnpm-seed.yml` refreshes it weekly through
+`tools/sync-runner-pnpm-seed.py`, which processes only the repositories listed
+in `pnpm-seed/fleet.json` and writes filtered copies of their lockfiles (patch
+data and entries the image cannot prefetch anonymously removed) with minimal
+`package.json`/`pnpm-workspace.yaml` data. When the seed contents change it
+opens or updates one bot PR that auto-merges after normal CI.
 
 ## Deployment
 

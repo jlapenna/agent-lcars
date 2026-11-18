@@ -275,7 +275,7 @@ runtime, clientVersion }` records provenance.
 - OpenCode: add `./lcars-telemetry.js` to `agents/opencode/opencode.json`
   `plugin` next to `lcars-session.js`.
 - Env for the client: `LCARS_RUN_ID`, `INTENT_ID`, `NUM`, `LCARS_REPO`, and
-  `LCARS_TELEMETRY_CREDENTIALS=/run/secrets/telemetry-writer.json`.
+  `LCARS_TELEMETRY_CREDENTIALS_FILE=/run/secrets/telemetry-writer.json`.
 - Delete the `start` mode of `sidecar-lifecycle.sh` and the `telemetry`
   job-daemon; `finalize` and `resume` stay exactly as they are. The
   bounded stop-wait before finalize disappears with the daemon. (The shipped

@@ -3,7 +3,9 @@
 The R11 implementation supports explicit opt-in open-tab notifications and
 background Web Push, qualified in production on 2026-11-02 (#3001). It reuses the existing durable Inbox decisions,
 including native parks the current Work principal may answer. Web Push uses the existing authenticated schedule tick and browser push service;
-it does not send Slack, email or SMS.
+it does not send Slack, email or SMS. Settled native work started from a
+chat thread reports back through a separate channel, the
+[outbound outcome webhooks](#outbound-outcome-webhooks).
 
 ## Activate and unsubscribe
 
@@ -166,3 +168,52 @@ after a provider 404 or 410 is implemented but has no regression test yet.
 Browser API references: [service-worker display](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/showNotification),
 [explicit permission](https://developer.mozilla.org/en-US/docs/Web/API/Notifications_API/Using_the_Notifications_API),
 and [exclusive Web Locks](https://www.w3.org/TR/web-locks/).
+
+## Outbound outcome webhooks
+
+Separate from Inbox notifications, the Console POSTs a settled native item's
+outcome to the adapter that started it (`apps/console/src/lib/outcome-webhook.ts`).
+The outbox drain in `orchestrator-dispatch.ts` sends one when a run settles
+`finished`, `canceled` or `lost` and the item's origin carries a `thread`;
+a protected merge queues a later `deliveryStage: "complete"` event, which is
+retired without sending if the Work item closes before the outbox drains it. The
+target is chosen by `origin.channel`, which comes from the caller's
+authenticated identity, never the request body: a grant's declared channel
+wins, otherwise a caller gets `console` when it signed in through a session
+and `api` otherwise (`work-router.ts`). An operator who registers a target for
+`console` or `api` therefore receives threaded work from every such
+default-channel caller. The checked-in configuration registers `slack` only,
+which only the Sprinkles bot's grant declares. Linear is delivered natively
+([linear.md](linear.md)) and needs no entry.
+
+`AGENT_LCARS_OUTCOME_WEBHOOKS` (set in `apps/console/apphosting.yaml`) is a
+JSON object keyed by channel:
+
+```json
+{
+  "<channel>": {
+    "url": "https://<adapter>/<path>",
+    "audience": "<id-token-audience>"
+  }
+}
+```
+
+Startup rejects invalid JSON or an entry without a non-empty `url` and
+`audience`; unset or empty means no outbound targets. Each POST carries a
+Google ID token minted by the Console runtime identity for `audience` in
+`Authorization`, `Content-Type: application/json`, and `Idempotency-Key`
+when the payload has an `eventId`. The receiver verifies that token and
+audience. The JSON body (`OutcomeWebhookPayload`) holds `itemId`, `runId`,
+`state`, `ok`, `parked`, `thread` (echoed for routing), and `consoleUrl`,
+plus optional `eventId`/`deliveryStage`, `message`, `ref` (e.g. the PR URL),
+`providerFallback`, and `reroutedTo`. `message` is the run's recorded result
+message, truncated at 16,384 characters with `messageTruncated: true`: normally
+the agent's final assistant response, but when a worker fails or times out
+before one, the redacted tail of the provider's own output
+(`direct-runner.sh`); a `deliveryStage: "complete"` event carries a generated
+notice naming the protected merge commit. The full transcript is never sent,
+but treat `message` as potentially sensitive run output.
+A non-2xx response or transport error releases the outbox entry for retry
+with backoff, like a failed GitHub outcome comment. A delivery that fails 72
+hours or more after the entry's first delivery failure retires the event;
+restoring the endpoint afterwards does not replay it.

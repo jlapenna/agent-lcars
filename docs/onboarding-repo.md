@@ -30,9 +30,23 @@ One command runs the repository-change steps end to end:
 
 ```sh
 node tools/fleet-onboard-run.mjs --repo OWNER/NAME \
-  [--runner-label NAME-default] [--ci-workflow ci.yml --ci-checks "A,B"] \
-  [--copy-from OWNER/MEMBER] [--homelab ../homelab] [--dry-run]
+  [--runner-label NAME-default] \
+  [--ci-workflow ci.yml --ci-checks "A,B" [--ci-workflow-name NAME]] \
+  [--hooks auto|pre-commit|husky|none] \
+  [--repo-tools-rev TAG] [--alias NAME] [--copy-from OWNER/MEMBER] \
+  [--private-key-command CMD] [--homelab ../homelab] [--workdir DIR] \
+  [--dry-run] [--skip target|lcars|homelab|github]...
 ```
+
+`--ci-workflow-name`, when given, needs one name per `--ci-workflow`, in order.
+`--skip` is repeatable (or comma-separated) and names the steps to leave out:
+`target` (scaffold PR), `lcars` (admission PR), `homelab` (membership PR), and
+`github` (variables, secret, installations, labels). `--workdir` holds the
+clones and worktrees (default: a `fleet-onboard-NAME` directory under the
+system temp directory). `--alias` is passed to `admit`. `--private-key-command`
+is passed to the GitHub helper (see
+[fleet credentials](fleet-credentials.md#provisioning-them-with-toolsfleet-onboard-githubmjs)).
+`--hooks` and `--repo-tools-rev` are passed to the scaffolder (step 1).
 
 It scaffolds the target repository and opens its draft PR, opens this
 repository's admission PR and Homelab's membership PR, then runs the
@@ -147,8 +161,13 @@ node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME \
   [--runner-label NAME-default] \
   [--ci-workflow ci.yml --ci-checks "Check A,Check B" [--ci-workflow-name CI]] \
   [--hooks auto|pre-commit|husky|none] [--repo-tools-rev TAG] \
-  [--check] [--force]
+  [--default-branch BRANCH] [--check] [--force]
 ```
+
+`--default-branch` (default `main`) sets the `push` branch filter of the
+generated `validate`, `gitleaks` and `ruleset` workflows and disables their
+`cancel-in-progress` on that ref. The generated `agent-automerge.yml`
+concurrency keys on event and pull-request identity and does not use it.
 
 ### What the scaffolder generates
 

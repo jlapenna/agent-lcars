@@ -504,7 +504,7 @@ leaves to hand-typed `gh` calls:
 node tools/fleet-onboard-github.mjs --repo OWNER/NAME \
   --copy-from jlapenna/sync-padd \
   --private-key-command 'gcloud secrets versions access latest --secret=AGENT_LCARS_APP_PRIVATE_KEY --project=agent-lcars' \
-  [--dry-run | --verify] [--rotate-secret]
+  [--dry-run | --verify] [--rotate-secret] [--skip-labels] [--skip-installations]
 ```
 
 It sets `AGENT_BOT_LOGINS`, `AGENT_FLEET_LOGIN`, and `AGENT_LCARS_CLIENT_ID`,
@@ -531,6 +531,8 @@ autoscaler App installations include the repository, and runs
   (`RUNNER_APP_CLIENT_ID`/`RUNNER_APP_PRIVATE_KEY`; `UNVERIFIED` when
   absent). It never modifies an installation: a missing membership fails
   with the exact settings-page instruction for the maintainer.
+- `--skip-labels` skips the label sync and `--skip-installations` skips the
+  installation-membership checks; each reports `SKIP`.
 
 The same reader also has `costs.reader` for the operator's fixed-selection
 `GET /api/work/v1/costs/budget` readout. It exposes aggregate pricing/coverage
