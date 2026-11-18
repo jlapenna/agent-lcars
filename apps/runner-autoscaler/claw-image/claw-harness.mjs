@@ -22,8 +22,10 @@
 //   launcher -> host  {"claw":"end"}    the turn is over: close the agent's input
 //                     {"claw":"stop"}   stop the agent now
 //   host -> launcher  {"claw":"exit","code":0}   the agent and its group are gone
+//                     {"claw":"oversize"}  the agent wrote a line too long to relay
 //   launcher -> host  {"claw":"finish","turn":{sessionId,aborted,error}}
-//   host -> launcher  {"claw":"finished","refused":…,"reply":…}
+//   host -> launcher  {"claw":"finished","refused":…,"changed":…,"reply":…}
+//                     {"claw":"finished","failed":true,"message":…}
 // An agent's output only ever travels inside an "acp" string, so nothing it
 // prints can pass for one of the host's own frames.
 
@@ -40,9 +42,13 @@ import {
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 
-import { ClawFailure, endGroup, stopGroup } from './claw-process.mjs';
+import {
+  ClawFailure,
+  endGroup,
+  readLines,
+  stopGroup,
+} from './claw-process.mjs';
 import { openclawHarness } from './openclaw-harness.mjs';
 
 const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -53,6 +59,11 @@ const ACP_EXIT_GRACE_MS = 2_000;
 // How long what an exited harness had already written gets to be read
 // before whatever still holds its output open is stopped.
 const ACP_DRAIN_MS = 100;
+// The longest line of the agent's output the host relays, and the longest
+// frame it reads from the launcher. A report is at most a fifth of the
+// first, so a longer line is never one the launcher could accept.
+const MAX_ACP_LINE_BYTES = 20 * 1024 * 1024;
+const MAX_FRAME_BYTES = 48 * 1024 * 1024;
 
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
@@ -205,9 +216,10 @@ export function serveHarness(
       started.once('error', failed);
     });
     child = started;
-    createInterface({ input: child.stdout }).on('line', (line) =>
-      write({ acp: line }),
-    );
+    readLines(child.stdout, (line) => write({ acp: line }), {
+      maxBytes: MAX_ACP_LINE_BYTES,
+      onOversize: () => write({ claw: 'oversize' }),
+    });
     // stderr carries harness diagnostics; never forward it.
     child.stderr.resume();
     child.stdin.on('error', () => undefined);
@@ -280,31 +292,44 @@ export function serveHarness(
     } else if (frame.claw === 'stop') {
       if (child) stopGroup(child);
     } else if (frame.claw === 'finish') {
-      let verdict;
       try {
-        verdict = await finished(
-          frame.turn && typeof frame.turn === 'object' ? frame.turn : undefined,
-        );
+        write({
+          claw: 'finished',
+          ...(await finished(
+            frame.turn && typeof frame.turn === 'object'
+              ? frame.turn
+              : undefined,
+          )),
+        });
       } catch (error) {
-        if (!(error instanceof ClawFailure)) console.error(error);
-        verdict = { refused: 'the harness could not finish the turn' };
+        // The launcher reports this as it reports a failed launch.
+        if (!(error instanceof ClawFailure) && !gone.signal.aborted)
+          console.error(error);
+        write({
+          claw: 'finished',
+          failed: true,
+          ...(error instanceof ClawFailure ? { message: error.message } : {}),
+        });
       }
-      write({ claw: 'finished', ...verdict });
     }
   };
 
   // Frames are handled in the order they arrive.
   let handling = Promise.resolve();
-  createInterface({ input: stream }).on('line', (line) => {
-    let frame;
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (!frame || typeof frame !== 'object') return;
-    handling = handling.then(() => onFrame(frame)).catch(() => undefined);
-  });
+  readLines(
+    stream,
+    (line) => {
+      let frame;
+      try {
+        frame = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!frame || typeof frame !== 'object') return;
+      handling = handling.then(() => onFrame(frame)).catch(() => undefined);
+    },
+    { maxBytes: MAX_FRAME_BYTES },
+  );
   stream.on('error', () => undefined);
   return new Promise((served) => {
     const leave = () => {

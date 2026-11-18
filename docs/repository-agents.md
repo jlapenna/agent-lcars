@@ -75,14 +75,16 @@ refuses. On an earlier image every such round fails, and a `retry:
 terminal` round fails for good.
 
 Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
-(ACP) agent, and the launcher is only an ACP client. It starts the harness in
-a copy of `workspace/`, copies `home/` into the harness's `HOME` for a
-definition that asked for it, sends the message as one prompt and takes the
-agent's last message after its last tool call as the report. Claude Code and Codex speak ACP through their own
+(ACP) agent, and the launcher is only an ACP client. It writes the pinned
+definition and, for a definition that asked for it, the `home/` files into
+the harness's `HOME`. A harness host then starts the harness in a copy of
+`workspace/` ([the harness container](#the-harness-container)). The launcher
+sends the message as one prompt and takes the agent's last message after its
+last tool call as the report. Claude Code and Codex speak ACP through their own
 adapters. OpenClaw speaks it through its own server, `openclaw acp`, which
-forwards to a Gateway: the launcher validates the config, runs Doctor, seeds
-the exec approvals and starts a Gateway on loopback inside the Job for that
-one turn. No shared or long-lived Gateway is involved, so a lost node still
+forwards to a Gateway: the harness host validates the config, runs Doctor,
+seeds the exec approvals and starts a Gateway on loopback inside the Job for
+that one turn. No shared or long-lived Gateway is involved, so a lost node still
 costs one attempt.
 
 ```text
@@ -233,6 +235,12 @@ workspace and the harness itself. A runtime chooses how far apart they are
   as another user's files in sticky directories, so it can keep its own
   state beside them and cannot change, remove, rename or replace them. It
   has no run token and shares no PID namespace with the launcher.
+
+  The pinned `home/` files then belong to a user other than the one that
+  reads them. A program that insists on owning its own configuration refuses
+  such a file: OpenSSH does for `~/.ssh/config`. Give an agent that kind of
+  file through its runtime's Secret items, or leave the runtime on one
+  container.
 
 What the pod then enforces is what the runtime gives it: its Secret items,
 its mounts and its network policy. The harness's settings shape how the

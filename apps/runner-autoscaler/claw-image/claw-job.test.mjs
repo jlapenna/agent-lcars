@@ -19,6 +19,7 @@ import { test } from 'node:test';
 import { serveHarness } from './claw-harness.mjs';
 import {
   agentDigest,
+  ClawFailure,
   HARNESSES,
   main,
   materializeAgent,
@@ -105,7 +106,17 @@ const failureMeta = (failure) => ({ jetbrains: { air: { version: 1, sessionFailu
 let prompt;
 let signedIn = false;
 let delayed = false;
-require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+// Lines end at a newline and nowhere else, as in ACP's own stdio reader.
+const lines = (onLine) => {
+  let rest = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    const parts = (rest + chunk).split('\\n');
+    rest = parts.pop();
+    for (const part of parts) if (part) onLine(part);
+  });
+};
+lines((line) => {
   const message = JSON.parse(line);
   if (message.method === 'initialize') {
     const settings = path.join(process.env.HOME, '.claude', 'settings.json');
@@ -152,6 +163,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       config.tools = { profile: 'coding' };
       fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
     }
+    // Dies mid-turn, after whatever it changed above.
+    if (behaviour.exitAfterTamper) process.exit(3);
     if (behaviour.linger) {
       const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' });
       record({ lingering: child.pid });
@@ -169,6 +182,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
       if (step.say) say(step.say, step.id, step.phase);
       // A line the harness prints that is not ACP at all.
       if (step.raw) console.log(step.raw);
+      // One line of this many mebibytes.
+      if (step.flood) console.log('x'.repeat(step.flood * 1024 * 1024));
       if (step.notice) update('notice', { severity: 'info', title: step.notice });
       if (step.failure) update('session_info_update', { _meta: failureMeta(step.failure) });
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
@@ -2064,6 +2079,110 @@ test('the definition directory is emptied in place, never replaced', async () =>
   assert.equal(
     await readFile(join(dir, 'workspace', 'AGENTS.md'), 'utf8'),
     '# repository agent\n',
+  );
+});
+
+test('a message with a Unicode line separator reaches the agent whole', async () => {
+  // JSON leaves U+2028 and U+2029 unescaped, and a reader that takes them
+  // for line ends would cut the frame that carries the prompt in two.
+  const message = 'first paragraph\u2028second\u2029third';
+  for (const overSocket of [false, true]) {
+    const made = await harnessFixture(
+      { steps: [{ say: 'All clear.' }] },
+      { brief: { message }, env: { CLAW_TURN_DEADLINE_SECONDS: '20' } },
+    );
+    const run = overSocket ? await socketHost(made) : made;
+    assert.deepEqual(await main(run.env, run.deps), {
+      outcome: 'report',
+      message: 'All clear.',
+    });
+    const { prompt } = (await made.harnessLog()).find((entry) => entry.prompt);
+    assert.equal(prompt[0].text, promptText(message));
+  }
+});
+
+test('a harness socket that is reset still leaves a settled attempt', async () => {
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  // The host goes away with the launcher's request unread, which the
+  // launcher sees as a connection reset, not as an orderly close.
+  const host = await socketHost(made, (socket) => {
+    socket.pause();
+    setTimeout(() => socket.destroy(), 100);
+  });
+  const result = await main(host.env, host.deps);
+  assert.equal(result.outcome, 'runner-failed');
+  assert.deepEqual(completion(made.calls), result);
+});
+
+test('a line too long to be an answer fails the turn without being held', async () => {
+  const { env, deps } = await harnessFixture({
+    steps: [{ flood: 21 }, { say: 'All clear.' }],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: harness sent an oversized ACP message.',
+  });
+});
+
+test('cancellation reaches a harness that is still finishing', async () => {
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  let finishing = false;
+  const slow = (context) => ({
+    ...made.deps.harnesses.claude(),
+    // As OpenClaw's does while it asks its Gateway how the turn ended.
+    finish: () =>
+      new Promise((done) => {
+        finishing = true;
+        context.signal.addEventListener('abort', () => done(undefined));
+      }),
+  });
+  const pending = main(made.env, {
+    ...made.deps,
+    harnesses: { claude: slow },
+  });
+  for (let i = 0; i < 200 && !finishing; i++)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(finishing);
+  const cancelled = Date.now();
+  process.emit('SIGTERM');
+  assert.deepEqual(await pending, {
+    outcome: 'runner-failed',
+    message: 'Claw turn was cancelled.',
+  });
+  // Well inside the grace a terminated pod gets.
+  assert.ok(Date.now() - cancelled < 5_000);
+});
+
+test('a harness that changed its settings and then died is reported as that', async () => {
+  // What the harness side says about its own settings outranks how the
+  // turn itself failed.
+  const { env, deps } = await fixture({
+    acp: { tamperConfig: true, exitAfterTamper: true },
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message:
+      'Claw turn failed: the agent changed its harness settings (OpenClaw config).',
+  });
+});
+
+test('a harness whose own finishing fails is a failed attempt, as before', async () => {
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  const outcome = (finish) =>
+    main(made.env, {
+      ...made.deps,
+      harnesses: {
+        claude: () => ({ ...made.deps.harnesses.claude(), finish }),
+      },
+    });
+  assert.deepEqual(
+    await outcome(async () => {
+      throw new ClawFailure('the harness left something running');
+    }),
+    {
+      outcome: 'runner-failed',
+      message: 'Claw setup failed: the harness left something running.',
+    },
   );
 });
 

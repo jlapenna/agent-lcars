@@ -50,7 +50,6 @@ import {
 } from 'node:fs/promises';
 import { connect } from 'node:net';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
-import { createInterface } from 'node:readline';
 import { duplexPair } from 'node:stream';
 
 import {
@@ -59,7 +58,7 @@ import {
   secretEnvironment,
   serveHarness,
 } from './claw-harness.mjs';
-import { ClawFailure, readSettingsFile } from './claw-process.mjs';
+import { ClawFailure, readLines, readSettingsFile } from './claw-process.mjs';
 import { answerText } from './openclaw-harness.mjs';
 
 export { ClawFailure, HARNESSES, prepareWorkspace, secretEnvironment };
@@ -76,8 +75,16 @@ const MAX_MESSAGE_BYTES = 4 * MAX_REPORT_BYTES;
 // OpenClaw that includes asking its Gateway how the turn ended), and to stop
 // what it started once the launcher is done with it.
 const HOST_CONNECT_MS = 60_000;
-const HOST_FINISH_MS = 180_000;
-const HOST_CLOSE_MS = 20_000;
+const HOST_FINISH_MS = 420_000;
+const HOST_CLOSE_MS = 10_000;
+// How long a harness that was told to stop gets to be reported gone before
+// the turn is settled without waiting for it.
+const HOST_STOP_MS = 15_000;
+// The longest frame read from a harness host. The host relays no line of
+// the agent's output longer than a fifth of the launcher's message buffer
+// allows, so a longer frame is not one the launcher could use, and it is
+// never held in memory: the launcher's container is small.
+const MAX_FRAME_BYTES = 48 * 1024 * 1024;
 
 const ACP_PROTOCOL_VERSION = 1;
 // A harness reads some prompts as commands of its own rather than as text
@@ -330,6 +337,7 @@ export function harnessChannel(stream) {
   // The host answers `launch` and `finish` in the order they were sent.
   const replies = [];
   let onAcp = () => undefined;
+  let onOversize = () => undefined;
   let onExit;
   let exit;
   let gone = false;
@@ -339,24 +347,30 @@ export function harnessChannel(stream) {
     exit = { code };
     onExit?.(code);
   };
-  createInterface({ input: stream }).on('line', (line) => {
-    let frame;
-    try {
-      frame = JSON.parse(line);
-    } catch {
-      return;
-    }
-    if (!frame || typeof frame !== 'object') return;
-    if (typeof frame.acp === 'string') onAcp(frame.acp);
-    else if (frame.claw === 'exit')
-      left(Number.isInteger(frame.code) ? frame.code : null);
-    else if (
-      frame.claw === 'ready' ||
-      frame.claw === 'failed' ||
-      frame.claw === 'finished'
-    )
-      replies.shift()?.(frame);
-  });
+  readLines(
+    stream,
+    (line) => {
+      let frame;
+      try {
+        frame = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!frame || typeof frame !== 'object') return;
+      if (typeof frame.acp === 'string') onAcp(frame.acp);
+      else if (frame.claw === 'oversize') onOversize();
+      else if (frame.claw === 'exit')
+        left(Number.isInteger(frame.code) ? frame.code : null);
+      else if (
+        frame.claw === 'ready' ||
+        frame.claw === 'failed' ||
+        frame.claw === 'finished'
+      )
+        replies.shift()?.(frame);
+    },
+    { maxBytes: MAX_FRAME_BYTES, onOversize: () => onOversize() },
+  );
+  // A reset or a broken pipe is the host going away, which `close` reports.
   stream.on('error', () => undefined);
   // A host that goes away has taken the harness with it.
   void closed.then(() => {
@@ -417,6 +431,10 @@ export function harnessChannel(stream) {
     onAcp: (listener) => {
       onAcp = listener;
     },
+    /** Calls `listener` when the agent wrote a line too long to relay. */
+    onOversize: (listener) => {
+      onOversize = listener;
+    },
     /** Calls `listener` once, with the agent's exit code, when the agent and
      * everything in its process group have gone. */
     onExit: (listener) => {
@@ -426,19 +444,27 @@ export function harnessChannel(stream) {
     end: () => write({ claw: 'end' }),
     stop: () => write({ claw: 'stop' }),
     /** What the harness side has to say about a finished turn: a reason to
-     * refuse it, and its own record of the final reply. */
-    async finish(turn) {
+     * refuse it (`refused`), whether what bounded the harness was changed
+     * (`changed`), and its own record of the final reply. `unreported` when
+     * it said nothing, because it went away, took too long or the run was
+     * cancelled meanwhile. A harness whose own finishing failed throws, as
+     * a failed launch does. */
+    async finish(turn, signal) {
       const reply = await ask(
         { claw: 'finish', turn },
-        { timeoutMs: HOST_FINISH_MS },
+        { signal, timeoutMs: HOST_FINISH_MS },
       ).catch(() => undefined);
-      if (reply?.claw !== 'finished')
-        return { refused: "the harness did not report the turn's outcome" };
+      if (reply?.claw !== 'finished') return { unreported: true };
+      if (reply.failed === true) {
+        if (typeof reply.message === 'string')
+          throw new ClawFailure(reply.message.slice(0, 500));
+        throw new Error('the harness host could not finish the turn');
+      }
+      const text = (value) =>
+        typeof value === 'string' ? value.slice(0, 500) : undefined;
       return {
-        refused:
-          typeof reply.refused === 'string'
-            ? reply.refused.slice(0, 500)
-            : undefined,
+        refused: text(reply.refused),
+        changed: text(reply.changed),
         reply:
           reply.reply && typeof reply.reply === 'object'
             ? reply.reply
@@ -581,6 +607,11 @@ export function acpTurn(
         channel.stop();
       }
     };
+    // A line too long to be relayed, or to be held here, is no answer.
+    channel.onOversize(() => {
+      turn.error ??= 'harness sent an oversized ACP message';
+      channel.stop();
+    });
     const onMessage = (incoming) => {
       if (incoming.method === undefined) {
         const waiter = pending.get(incoming.id);
@@ -621,15 +652,12 @@ export function acpTurn(
       }
     };
     channel.onAcp(onLine);
-    const onAbort = () => {
-      aborted = true;
-      channel.stop();
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
     // The host reports the exit once the harness and everything in its
     // process group have gone, so nothing of the harness still runs while
     // the launcher checks the settings it could change and settles.
-    channel.onExit((code) => {
+    let stopping;
+    const exited = (code) => {
+      clearTimeout(stopping);
       signal?.removeEventListener('abort', onAbort);
       for (const waiter of pending.values())
         waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));
@@ -644,7 +672,17 @@ export function acpTurn(
           code,
         }),
       );
-    });
+    };
+    const onAbort = () => {
+      aborted = true;
+      channel.stop();
+      // A cancelled or overdue run is settled even when the harness cannot
+      // be seen to go: something of it may have left its process group and
+      // still hold its output open.
+      stopping = setTimeout(() => exited(null), HOST_STOP_MS);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    channel.onExit(exited);
     (async () => {
       const initialized = await request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
@@ -839,12 +877,21 @@ async function harnessTurn({
   // to refuse the turn's result. A harness with a record of its own of the
   // final reply sends that too: it says which part of what it streamed is
   // the answer (answerText).
-  const verdict = await channel.finish({
-    sessionId: finished.sessionId,
-    aborted: finished.aborted,
-    error: finished.error,
-  });
-  await channel.close();
+  let verdict;
+  try {
+    verdict = await channel.finish(
+      {
+        sessionId: finished.sessionId,
+        aborted: finished.aborted,
+        error: finished.error,
+      },
+      signal,
+    );
+  } finally {
+    await channel.close();
+  }
+  // In this order: the harness's own reason to refuse the turn, a final
+  // reply that cannot be placed, then a change to what bounded the harness.
   let refused = verdict.refused;
   if (verdict.reply !== undefined) {
     const final = verdict.reply.empty
@@ -861,6 +908,11 @@ async function harnessTurn({
         "OpenClaw's final reply could not be told from what preceded it";
     else finished = { ...finished, final };
   }
+  refused ??= verdict.changed;
+  // A harness side that said nothing fails a turn that had not already
+  // failed for a reason of its own.
+  if (verdict.unreported && !finished.error)
+    refused = "the harness did not report the turn's outcome";
   // Under an isolated harness the kernel keeps the pinned `home/` files as
   // they were written. Without one the harness runs as the launcher's UID,
   // and nothing can stop an agent with a write-capable tool from rewriting
@@ -879,10 +931,7 @@ async function harnessTurn({
         error: `the agent changed its harness settings (${file.path})`,
       };
   }
-  // What the turn itself already failed on stands.
-  return refused === undefined || finished.error
-    ? finished
-    : { ...finished, error: refused };
+  return refused === undefined ? finished : { ...finished, error: refused };
 }
 
 export async function main(env = process.env, deps = {}) {

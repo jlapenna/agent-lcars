@@ -53,6 +53,30 @@ var queueRuntimeCeiling = map[string]string{"cpu": "2", "memory": "6Gi", "epheme
 // still requests and is limited to exactly what the runtime declares.
 var queueRuntimeLauncherShare = map[string]string{"cpu": "100m", "memory": "384Mi", "ephemeral-storage": "1Gi"}
 
+// queueClusterRunsSidecars reports whether a cluster of this version runs an
+// init container with a restart policy of Always as a sidecar (1.29, where
+// the feature is on by default). Distributions suffix the minor version
+// ("29+"); a version that cannot be read is refused.
+func queueClusterRunsSidecars(major, minor string) bool {
+	number := func(value string) (int, bool) {
+		digits := strings.TrimRight(value, "+")
+		if digits == "" {
+			return 0, false
+		}
+		n := 0
+		for _, r := range digits {
+			if r < '0' || r > '9' {
+				return 0, false
+			}
+			n = n*10 + int(r-'0')
+		}
+		return n, true
+	}
+	majorNumber, okMajor := number(major)
+	minorNumber, okMinor := number(minor)
+	return okMajor && okMinor && (majorNumber > 1 || (majorNumber == 1 && minorNumber >= 29))
+}
+
 // queueRuntimeHarnessUID is the user the harness container runs as: not the
 // Pod's (the launcher's), in the same group. The claw image has a passwd
 // entry for it.
@@ -150,9 +174,15 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 		if limit.Cmp(resource.MustParse(ceiling)) > 0 {
 			return fmt.Errorf("%s limits.%s exceeds the %s per-Job ceiling", prefix, resourceName, ceiling)
 		}
-		// The harness container gets what the launcher's share leaves.
-		if share := resource.MustParse(queueRuntimeLauncherShare[resourceName]); r.HarnessContainer && limit.Cmp(share) <= 0 {
-			return fmt.Errorf("%s limits.%s must exceed the launcher's %s share when harness_container is set", prefix, resourceName, share.String())
+		// The harness container gets what the launcher's share leaves, which
+		// has to be at least as much again: the harness is the one that runs
+		// the agent.
+		if share := resource.MustParse(queueRuntimeLauncherShare[resourceName]); r.HarnessContainer {
+			least := share.DeepCopy()
+			least.Add(share)
+			if limit.Cmp(least) < 0 {
+				return fmt.Errorf("%s limits.%s must be at least %s when harness_container is set: the launcher's %s share and as much again for the harness", prefix, resourceName, least.String(), share.String())
+			}
 		}
 	}
 	if r.ActiveDeadlineSeconds < queueRuntimeTurnMargin+queueRuntimeMinTurn || r.ActiveDeadlineSeconds >= queueRunLeaseSeconds {
@@ -399,8 +429,8 @@ func (q *kubernetesQueue) isolatedRuntimeJobShape(rt queueRuntimeConfig, launche
 	// root belongs to root and is writable by every user, so only a
 	// directory the launcher's user created can be made sticky, or be a
 	// mount point the harness cannot rename.
-	shared := func(volume string, path string, readOnly bool) core.VolumeMount {
-		return core.VolumeMount{Name: volume, MountPath: path, SubPath: volume, ReadOnly: readOnly}
+	shared := func(volume string, mountPath string, readOnly bool) core.VolumeMount {
+		return core.VolumeMount{Name: volume, MountPath: mountPath, SubPath: volume, ReadOnly: readOnly}
 	}
 	socketMount := core.VolumeMount{Name: "harness-socket", MountPath: path.Dir(queueRuntimeHarnessSocket)}
 	return queueJobShape{

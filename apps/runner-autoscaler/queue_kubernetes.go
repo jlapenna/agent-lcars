@@ -397,6 +397,23 @@ func (q *kubernetesQueue) preflight(ctx context.Context) error {
 			}
 		}
 	}
+	// A harness container is a sidecar. A cluster from before sidecars drops
+	// the restart policy that makes it one and runs it as an ordinary init
+	// container, which never exits, so the Pod would sit in Init until its
+	// deadline. Refuse to start rather than fail every attempt that way.
+	for _, name := range c.runtimeNames() {
+		if !c.Runtimes[name].HarnessContainer {
+			continue
+		}
+		version, err := client.Discovery().ServerVersion()
+		if err != nil {
+			return fmt.Errorf("reading the cluster version for runtime %s harness_container: %w", name, err)
+		}
+		if !queueClusterRunsSidecars(version.Major, version.Minor) {
+			return fmt.Errorf("runtime %s harness_container needs Kubernetes 1.29 or later; the cluster reports %s.%s", name, version.Major, version.Minor)
+		}
+		break
+	}
 	if _, err := client.CoreV1().ServiceAccounts(c.Namespace).Get(ctx, c.ServiceAccount, meta.GetOptions{}); err != nil {
 		return fmt.Errorf("reading queue worker ServiceAccount: %w", err)
 	}

@@ -399,7 +399,8 @@ Validation refuses to start the executor unless:
   prefix. Neither may be `RUNNER_MODE`, `CLAW_TURN_DEADLINE_SECONDS`,
   `NODE_OPTIONS`, `PATH`, `HOME`, `CLAW_HARNESS_SOCKET`, or any `LCARS_*` or
   `OPENCLAW_*` name;
-- with `harness_container`, each limit exceeds the launcher's share (below).
+- with `harness_container`, each limit is at least twice the launcher's
+  share (below), so the harness gets at least as much as the launcher.
 
 If the apiserver still refuses a Job spec as invalid, launch settles the claim
 immediately rather than holding it until its placement deadline.
@@ -452,7 +453,10 @@ container the rest, so the Pod requests and is limited to exactly what the
 runtime declares, and admission and node-fit accounting do not change. The
 `/work` scratch is bounded by the harness's storage limit.
 
-Sidecar containers need Kubernetes 1.29 or later. The flag also needs an
+Sidecar containers need Kubernetes 1.29 or later: an earlier cluster runs
+the harness as an ordinary init container that never exits, so the executor
+reads the cluster's version at startup and refuses to start with the flag
+set on one. The flag also needs an
 image that carries `claw-harness.mjs` and a passwd entry for UID 1002. An
 earlier image has neither, so its harness container would not start and
 every attempt on that runtime would fail. Set the flag per runtime after

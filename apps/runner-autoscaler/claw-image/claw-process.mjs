@@ -7,6 +7,55 @@ import { open } from 'node:fs/promises';
 /** A failure with a message safe to settle the attempt with. */
 export class ClawFailure extends Error {}
 
+/** Calls `onLine` with each line of `stream`, split on `\n` and nothing
+ * else. Node's readline also splits on U+2028 and U+2029, which JSON leaves
+ * unescaped inside a string, so it would cut a frame that carries one in
+ * two. A line longer than `maxBytes` is never buffered whole: it is dropped
+ * as it arrives and reported through `onOversize`, so the other end of the
+ * stream cannot make this process hold more than that. A stream error ends
+ * the reading and nothing else; the caller watches the stream's own events. */
+export function readLines(stream, onLine, { maxBytes, onOversize } = {}) {
+  const decoder = new TextDecoder('utf-8');
+  let pending = [];
+  let size = 0;
+  let dropping = false;
+  const flush = () => {
+    const line = decoder.decode(Buffer.concat(pending, size));
+    pending = [];
+    size = 0;
+    onLine(line.endsWith('\r') ? line.slice(0, -1) : line);
+  };
+  stream.on('data', (chunk) => {
+    let rest = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+    for (;;) {
+      const newline = rest.indexOf(0x0a);
+      const part = newline === -1 ? rest : rest.subarray(0, newline);
+      if (
+        !dropping &&
+        maxBytes !== undefined &&
+        size + part.length > maxBytes
+      ) {
+        dropping = true;
+        pending = [];
+        size = 0;
+        onOversize?.();
+      }
+      if (!dropping && part.length > 0) {
+        pending.push(part);
+        size += part.length;
+      }
+      if (newline === -1) return;
+      if (dropping) dropping = false;
+      else flush();
+      rest = rest.subarray(newline + 1);
+    }
+  });
+  // What a stream that ends without a newline had begun is still a line.
+  stream.on('end', () => {
+    if (!dropping && size > 0) flush();
+  });
+}
+
 /** Stops whatever still runs in a child's process group and waits until
  * nothing of it does: SIGTERM, then SIGKILL once the grace is over. The wait
  * is bounded, so a process that cannot be reaped does not hold the caller. A

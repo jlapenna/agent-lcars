@@ -58,7 +58,11 @@ They speak newline-delimited JSON over one stream. The launcher asks the
 host to `launch` a harness and is told where the agent works and what the
 harness needs of an ACP client. Every line of the agent's stdio then travels
 inside an `acp` frame, so nothing an agent prints can pass for one of the
-host's own frames. At the end the launcher asks the host to `finish`: to
+host's own frames. Lines end at a newline and nowhere else (`readLines`),
+because JSON leaves the Unicode line separators unescaped, and no line
+longer than a bound is ever held: the host drops a line of the agent's
+output over 20 MiB and the launcher a frame over 48 MiB, and either fails
+the turn. At the end the launcher asks the host to `finish`: to
 stop what it started and to say whether the harness has a reason to refuse
 the turn. The header of `claw-harness.mjs` lists the frames.
 
@@ -90,8 +94,10 @@ every directory on the way to a pinned file belong to the launcher's user
 and are sticky and group-writable. A harness under another UID of the same
 group can add files there, and the kernel refuses it any change to an entry
 it does not own. `HOME` is also a mount point in the harness's container, so
-it cannot be moved aside as a whole. What is not protected is a file the
-definition does not pin: a harness that reads a second settings file from a
+it cannot be moved aside as a whole. The price is that a pinned file is
+another user's file to the harness, and a program that insists on owning
+its configuration (OpenSSH, for `~/.ssh/config`) refuses it. What is not
+protected is a file the definition does not pin: a harness that reads a second settings file from a
 directory it can write to can still be given one by its own agent.
 
 OpenClaw's own layer is as it was. Its launch config, its Gateway's token
@@ -117,7 +123,9 @@ back.
 In both, the zone Secret items are there for the agent's tools by design;
 scope each runtime's items to what that agent may use. A launcher SIGTERM
 (cancellation or pod deadline) has the host stop the harness's process group
-and OpenClaw's Gateway, and still settles the run.
+and OpenClaw's Gateway, and still settles the run: it reaches a host that is
+still finishing a turn, and a harness that cannot be seen to stop is given
+15 seconds before the run is settled without it.
 
 ## Launch sequence
 
@@ -186,7 +194,8 @@ Each step fails the attempt closed with a `runner-failed` completion:
    kernel has kept them so. Without one the harness runs as the launcher's
    UID and could have rewritten its own settings; the launcher refuses the
    result when it sees that. It does not see a file the agent added, or
-   changed and put back. A host that does not answer within three minutes,
+   changed and put back. A host whose own finishing fails is a failed attempt, as a failed launch
+   is. A host that does not answer within seven minutes,
    or has gone, fails the attempt. The check itself cannot
    hold up settlement: each settings file (these, and OpenClaw's launch
    config and Gateway token) is read only as a regular file of a bounded

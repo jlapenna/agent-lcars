@@ -1180,8 +1180,10 @@ export async function openclawHarness({
       }
       // The Gateway's record of the final reply goes to the launcher, which
       // holds what was streamed and places the answer in it (answerText).
+      const changed = await verify();
       return {
-        refused: outcome.refused ?? (await verify()),
+        ...(outcome.refused === undefined ? {} : { refused: outcome.refused }),
+        ...(changed === undefined ? {} : { changed }),
         ...(reply === undefined ? {} : { reply }),
       };
     },
