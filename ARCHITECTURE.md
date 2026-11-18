@@ -11,10 +11,13 @@ reply enters the console's Work API and orchestration layer. Repository-owned
 jobs (`.lcars/jobs`) and claw agents (`.lcars/agents`) are cataloged from each
 control-plane repository's default branch and admitted through the same layer.
 The orchestrator owns admission and durable state, writes claimable queue work,
-and reconciles leases and outcomes. The QueueExecutor reserves capacity and
-launches each run as a Kubernetes Job (the direct-runner image for coding and
-Goose pipelines, the claw image for claw runtimes, served by the shared
-executor or a runtimes-only zone executor), then reports the exit. The outbox
+and reconciles leases and outcomes. For coding, Goose and claw runs the
+QueueExecutor reserves capacity and launches a Kubernetes Job (the
+direct-runner image for coding and Goose pipelines, the claw image for claw
+runtimes, served by the shared executor or a runtimes-only zone executor), then
+reports the exit. Durable inbox and handoff summary runs never reach the
+executor: the console claims and executes them itself as `console-model-call`
+(`apps/console/src/lib/inbox-summary-work.ts`). The outbox
 delivers outcomes back to their origin: GitHub comments, Linear state, and
 signed outcome webhooks for native channels (`AGENT_LCARS_OUTCOME_WEBHOOKS`,
 `apps/console/src/lib/outcome-webhook.ts`). The console exposes the resulting
@@ -28,18 +31,19 @@ GitHub / Linear / Work API / schedule / .lcars jobs + agents
             |                              |
             v                              v
        claimable queue ----> QueueExecutor (shared or zone)
-                                      |
-                                      v
-                     Kubernetes Job: direct runner or claw image
-                                      |
-                                      v
-                         provider session + deliverable evidence
-                                      |
-                                      v
-              completion / reconcile / outbox (GitHub, Linear, webhooks)
-                                      |
-                                      v
-                                   console
+            |                         |
+            v                         v
+   console-model-call     Kubernetes Job: direct runner or claw image
+   (summary Work only)                |
+            |                         v
+            |           provider session + deliverable evidence
+            |                         |
+            +------------+------------+
+                         v
+      completion / reconcile / outbox (GitHub, Linear, webhooks)
+                         |
+                         v
+                      console
 ```
 
 ## Ownership map

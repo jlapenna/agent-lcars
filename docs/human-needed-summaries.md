@@ -9,16 +9,19 @@ mints a second summary. That Work's result holds 2–3 short actions
 Commands sort first and must be exact excerpts from the handoff. The summary is
 a reading aid, never an authorization or an executable action.
 
-Readers project the actions onto the parked run with `readHandoffActions`
-(`apps/console/src/lib/handoff-summary-work.ts`). It returns them only when the
-summary Work finished successfully for the same run and message hash; runs
-parked before this change keep their inline `result.humanNeededActions`.
+Readers project the actions onto a finished parked run with
+`readHandoffActions` (`apps/console/src/lib/handoff-summary-work.ts`). Its
+first lookup is the run's own legacy inline `result.humanNeededActions`: a run
+that has them shows them with no summary Work. Otherwise it falls back to the
+durable summary Work, and returns its actions only when that Work finished
+successfully for the same run and the same message hash.
 
 The native and GitHub Inbox detail panes show the current parked run's
 summary, and both task history pages retain the summary beside that round's
-full handoff. A new run cannot inherit an older summary. Older parks and
-label-only GitHub decisions have no stored action summary; those historical
-run records are not backfilled. They can still receive the display-time Inbox
+full handoff. A new run cannot inherit an older summary. Label-only GitHub
+decisions, and older parks that have neither legacy inline actions nor
+summary Work, have no stored action summary; those historical run records are
+not backfilled. They can still receive the display-time Inbox
 descriptions below.
 
 ## Summary types and precedence
@@ -27,10 +30,10 @@ The current decision description is the primary reading aid in an Inbox detail
 pane. A stored action summary is available in a collapsed **Earlier handoff ·
 AI summary** disclosure, explicitly identified as historical:
 
-| Reading aid                                  | Source and lifetime                                                                                                                           | Display                                                                                  |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Decision description                         | Current bounded issue/comment or native handoff context and decision state; durable `inbox-summary` Work, re-admitted when that input changes | Inbox row and detail, including older parks, label-only decisions, and completed reports |
-| Stored action summary (`humanNeededActions`) | The final handoff of one authenticated parked run; generated once by its `handoff-summary` Work and read back for that run                    | Current parked-run detail and that round's task history                                  |
+| Reading aid                                  | Source and lifetime                                                                                                                              | Display                                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Decision description                         | Current bounded issue/comment or native handoff context and decision state; durable `inbox-summary` Work, re-admitted when that input changes    | Inbox row and detail, including older parks, label-only decisions, and completed reports |
+| Stored action summary (`humanNeededActions`) | The final handoff of one authenticated parked run; legacy inline actions on the run, else its `handoff-summary` Work (same run and message hash) | Current parked-run detail and that round's task history                                  |
 
 The description explains the current decision (or summarizes a completed
 report). Stored actions preserve what the agent asked at the time it parked;

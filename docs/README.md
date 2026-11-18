@@ -59,20 +59,19 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 
 ## Component READMEs
 
-| Component                                                | README                                                                                          |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| QueueExecutor and direct-runner image                    | [`apps/runner-autoscaler/README.md`](../apps/runner-autoscaler/README.md)                       |
-| Claw runner image                                        | [`apps/runner-autoscaler/claw-image/README.md`](../apps/runner-autoscaler/claw-image/README.md) |
-| Telemetry watcher and `lcars` CLI                        | [`apps/telemetry-watcher/README.md`](../apps/telemetry-watcher/README.md)                       |
-| GitHub Actions metrics exporter                          | [`apps/github-actions-exporter/README.md`](../apps/github-actions-exporter/README.md)           |
-| Work API schemas and client                              | [`libs/work/README.md`](../libs/work/README.md)                                                 |
-| Orchestrator state machine                               | [`libs/orchestrator/README.md`](../libs/orchestrator/README.md)                                 |
-| Shared dispatch contracts                                | [`libs/dispatch-contracts/README.md`](../libs/dispatch-contracts/README.md)                     |
-| Console React providers and browser error reporting      | [`libs/app-providers/README.md`](../libs/app-providers/README.md)                               |
-| Environment-variable accessors                           | [`libs/env-vars/README.md`](../libs/env-vars/README.md)                                         |
-| Session transcript telemetry                             | [`libs/telemetry/README.md`](../libs/telemetry/README.md)                                       |
-| Server environment helpers                               | [`libs/util-server/README.md`](../libs/util-server/README.md)                                   |
-| Fleet tools (worker policy hooks and `fleet-*` commands) | [`packages/fleet-tools/README.md`](../packages/fleet-tools/README.md)                           |
+| Component                                           | README                                                                                          |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| QueueExecutor and direct-runner image               | [`apps/runner-autoscaler/README.md`](../apps/runner-autoscaler/README.md)                       |
+| Claw runner image                                   | [`apps/runner-autoscaler/claw-image/README.md`](../apps/runner-autoscaler/claw-image/README.md) |
+| Telemetry watcher and `lcars` CLI                   | [`apps/telemetry-watcher/README.md`](../apps/telemetry-watcher/README.md)                       |
+| GitHub Actions metrics exporter                     | [`apps/github-actions-exporter/README.md`](../apps/github-actions-exporter/README.md)           |
+| Work API schemas and client                         | [`libs/work/README.md`](../libs/work/README.md)                                                 |
+| Orchestrator state machine                          | [`libs/orchestrator/README.md`](../libs/orchestrator/README.md)                                 |
+| Shared dispatch contracts                           | [`libs/dispatch-contracts/README.md`](../libs/dispatch-contracts/README.md)                     |
+| Console React providers and browser error reporting | [`libs/app-providers/README.md`](../libs/app-providers/README.md)                               |
+| Environment-variable accessors                      | [`libs/env-vars/README.md`](../libs/env-vars/README.md)                                         |
+| Session transcript telemetry                        | [`libs/telemetry/README.md`](../libs/telemetry/README.md)                                       |
+| Server environment helpers                          | [`libs/util-server/README.md`](../libs/util-server/README.md)                                   |
 
 ## Product specification
 

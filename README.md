@@ -4,8 +4,9 @@ Agent LCARS is the control plane for headless agent work across the fleet. It
 admits Work from GitHub issues and pull requests, Linear issues, and native Work
 requests (API, `lcars work` CLI and Console); runs coding pipelines on Claude
 Code, Codex, OpenCode and Antigravity, repository-owned Goose jobs, and
-repository-owned OpenClaw ("claw") agents; and launches every run as a
-Kubernetes Job through the QueueExecutor. The Console shows maintainers where
+repository-owned OpenClaw ("claw") agents; and launches those runs as
+Kubernetes Jobs through the QueueExecutor. The Console runs its own short
+summary Work directly. The Console shows maintainers where
 attention is needed and retains the session evidence behind each outcome.
 
 ![Agent LCARS decision inbox showing a selected item and its takeover context](docs/images/console-inbox.png)

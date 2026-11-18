@@ -95,8 +95,13 @@ pull-request review runs admitted through `pr-review-routing.ts` populate
 `agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
 `review:codex` is requested; `opencode`/human PR -> `claude` with
 `['codex', 'agy']`). The authoring model is appended as the last alternative
-when it is not already listed, so a PR is reviewed by its own model only after
-every opposite model has stopped on its limit.
+when it is not already listed. That orders preference only; it does not
+guarantee every opposite model was tried first. Fallback prefers the first
+alternative that is available now, so when a `claude` review of an `agy` PR
+hits its limit while another run holds Codex's exclusive claim, the successor
+can go straight to `agy` although Codex never hit a limit
+(`selectFallbackPipeline` in `libs/orchestrator/src/provider-fallback.ts`;
+live-claim ceilings in `queue-admission-status.ts`).
 
 Admission intersects the list with the authenticated principal's pipeline
 grant. A failed `provider-limit` report can atomically settle its attempt,
@@ -213,14 +218,16 @@ runs, in order:
 4. One outbox drain of at most 30 entries; the reply's
    `outboxContinuationNeeded` reports a full batch, and the next tick
    continues it.
-5. In parallel, under a 45-second deadline inside the executor's 60-second
-   HTTP deadline: one queued summary Work attempt (inbox and handoff
-   summaries), repository maintenance (`maintainRepositoryJobs`: job and
-   claw-agent catalog refresh plus job schedules), and the job-credential
-   observation.
+5. In parallel: one queued summary Work attempt (inbox and handoff summaries),
+   repository maintenance (`maintainRepositoryJobs`: job and claw-agent
+   catalog refresh plus job schedules), and the job-credential observation.
 
-The repository-agent catalog observation starts beside step 5 under the same
-deadline. It is attached to the reply as `repositoryAgents` only when it
+The tick sets one deadline 45 seconds after it starts, before step 1. Summary
+Work and repository maintenance receive that deadline, and the
+repository-agent catalog observation, started before step 5, is raced against
+it. The job-credential observation is awaited without it, so a slow Firestore
+read can hold the response past 45 seconds. Separately, the production ticker
+gives the whole request a 60-second HTTP timeout. The catalog observation is attached to the reply as `repositoryAgents` only when it
 finishes in time, is valid on the wire and keeps the reply within its 60 KiB
 budget; otherwise it is omitted without failing maintenance.
 
