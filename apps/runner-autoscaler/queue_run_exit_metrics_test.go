@@ -189,3 +189,19 @@ func TestRetainedJobFirstSeenTerminalIsReportedButNotCounted(t *testing.T) {
 		t.Fatalf("watched exit counted %v, want 1", got)
 	}
 }
+
+func TestALaunchDuringAnInventoryListKeepsItsWatch(t *testing.T) {
+	q, _ := kubeQueueFixture()
+	before := q.watchedBefore()
+	q.watch("uid-launched-mid-list") // created after the list began
+	q.observeInventory(nil, before)  // a list that predates the new Job
+	if got := q.observeInventory([]batch.Job{{ObjectMeta: meta.ObjectMeta{UID: "uid-launched-mid-list"}}}, q.watchedBefore()); !got["uid-launched-mid-list"] {
+		t.Fatal("a watch registered during a list must survive it")
+	}
+	q.observeInventory(nil, q.watchedBefore())
+	ended := batch.Job{ObjectMeta: meta.ObjectMeta{UID: "uid-launched-mid-list"}}
+	ended.Status.Conditions = []batch.JobCondition{{Type: batch.JobComplete, Status: core.ConditionTrue}}
+	if got := q.observeInventory([]batch.Job{ended}, q.watchedBefore()); got["uid-launched-mid-list"] {
+		t.Fatal("a watched Job absent from a later full list is forgotten")
+	}
+}

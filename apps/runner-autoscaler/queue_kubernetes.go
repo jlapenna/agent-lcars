@@ -255,9 +255,23 @@ func (q *kubernetesQueue) watch(uid types.UID) {
 	q.watched[uid] = struct{}{}
 }
 
-// observeInventory marks live Jobs watched, forgets Jobs that are gone, and
-// says which of them this process watched.
-func (q *kubernetesQueue) observeInventory(jobs []batch.Job) map[types.UID]bool {
+// watchedBefore snapshots the watches that exist before an inventory list
+// begins; only those may be pruned by that list.
+func (q *kubernetesQueue) watchedBefore() map[types.UID]struct{} {
+	q.retiringMu.Lock()
+	defer q.retiringMu.Unlock()
+	before := make(map[types.UID]struct{}, len(q.watched))
+	for uid := range q.watched {
+		before[uid] = struct{}{}
+	}
+	return before
+}
+
+// observeInventory marks live Jobs watched, forgets watched Jobs that are
+// gone (only those watched before the list began: a Job launched while the
+// list was in flight is absent from it, not gone), and says which listed
+// Jobs this process watched.
+func (q *kubernetesQueue) observeInventory(jobs []batch.Job, before map[types.UID]struct{}) map[types.UID]bool {
 	q.retiringMu.Lock()
 	defer q.retiringMu.Unlock()
 	if q.watched == nil {
@@ -271,7 +285,7 @@ func (q *kubernetesQueue) observeInventory(jobs []batch.Job) map[types.UID]bool 
 		_, seen := q.watched[j.UID]
 		present[j.UID] = seen
 	}
-	for uid := range q.watched {
+	for uid := range before {
 		if _, ok := present[uid]; !ok {
 			if _, retiring := q.retiring[uid]; !retiring {
 				delete(q.watched, uid)
@@ -418,12 +432,13 @@ func queueJobTerminal(j batch.Job) bool {
 	return false
 }
 func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
+	before := q.watchedBefore()
 	jobs, err := q.client.BatchV1().Jobs(q.config.Namespace).List(ctx, meta.ListOptions{LabelSelector: queueJobLabel + "=true"})
 	if err != nil {
 		return 0, err
 	}
 	q.reportRetired(jobs.Items)
-	watched := q.observeInventory(jobs.Items)
+	watched := q.observeInventory(jobs.Items, before)
 	n := 0
 	for _, j := range jobs.Items {
 		if !queueJobTerminal(j) {

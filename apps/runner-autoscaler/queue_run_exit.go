@@ -136,14 +136,16 @@ func (r *runExitReporter) observeExit(runID, claimedBy, fingerprint string, meta
 		r.mu.Lock()
 		delete(r.inflight, key)
 		if err == nil {
-			r.reported[key] = r.now()
+			at := r.now()
+			r.reported[key] = at
+			// Counted once, on delivery, and only for an exit this process
+			// watched happen; recorded under the delivery lock so the
+			// failure streak follows delivery order.
+			if meta.counted {
+				recordRunExit(meta, runExitOutcome(state, ok), at)
+			}
 		}
 		r.mu.Unlock()
-		// Counted once, on delivery, and only for an exit this process
-		// watched happen.
-		if err == nil && meta.counted {
-			recordRunExit(meta, runExitOutcome(state, ok), r.now())
-		}
 		switch {
 		case err != nil:
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
