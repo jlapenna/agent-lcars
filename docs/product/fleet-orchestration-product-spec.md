@@ -175,11 +175,15 @@ The core promises:
   small enough to fingerprint. The tracker decides what counts as a bug, as
   routed, and as an open fixing PR:
   - GitHub (`lib/fleet-triage-source.ts`): a `bug` or `type:bug` label, and
-    no open PR whose closing references name the issue.
+    no open PR whose closing references name the issue. The check is
+    conservative: an open cross-referenced PR whose closing-reference list
+    has another page also suppresses triage, even when the first page holds
+    no match.
   - Linear (`lib/linear-triage-source.ts`): one of the team's configured bug
     label IDs; none of the team's configured routing label IDs; and no open
-    PR in the target repository attached to the issue. Any attached open PR suppresses triage,
-    with or without a closing reference.
+    PR in the target repository attached to the issue. Any attached open PR
+    in the target repository suppresses triage, with or without a closing
+    reference; an attached PR in another repository is ignored.
 
   The
   worker returns a strict `fleetTriageReportSchema` JSON report (`ready`,
@@ -662,11 +666,14 @@ executor is working an issue; a human assignee owns it regardless.
      (`maintainRepositoryJobs`: catalog refresh for every control-plane
      repository, repository-agent catalog refresh, due-slot ticks and
      settlement), and job-credential health (`observeJobCredentials`,
-     reported as `jobCredentials`). The 45-second deadline is a shared work
-     budget, not a timeout: the passes stop starting new work once it
-     passes, but the handler awaits every pass. A slow job-store read, a
-     job reconciliation already in flight, or slow credential reads can each
-     keep maintenance pending past 45 seconds.
+     reported as `jobCredentials`). The 45-second deadline, measured from tick
+     entry, is a budget that the summary and job passes check at work
+     boundaries; it is not a timeout. Credential observation does not use it
+     and is awaited independently, so it starts even when steps 1–4 consumed
+     the budget. A repository job selected before expiry can still start its
+     due-slot admission after the deadline, and the handler awaits every
+     pass, so a slow job-store read, a reconciliation already in flight, or
+     slow credential reads can each keep maintenance pending past 45 seconds.
   6. The repository-agent catalog observation (`repositoryAgents`), started
      beside step 5 under the same deadline and attached only when it is valid
      and the reply stays within a 60 KiB budget (the executor reads at most

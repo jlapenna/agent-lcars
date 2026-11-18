@@ -752,8 +752,12 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   Linear rows compute the target at read time from the current routing
   configuration and the projected issue labels, so changing routing can
   change the Run target without changing the stored projection
-  (`lib/issue-sources.ts`). A row bound to Work uses that Work's stored
-  target and shows **Open Work →** instead of Run. Run and Refresh issues are server actions
+  (`lib/issue-sources.ts`). The resolved target is read when the page
+  renders: a row that stays mounted through **Refresh issues** can display a
+  new target while Run still submits the one from its initial state, which
+  intake then rejects against the updated routing, so reload the page before
+  using Run after a target change. A row bound to Work uses that Work's
+  stored target and shows **Open Work →** instead of Run. Run and Refresh issues are server actions
   (`app/work/issues/actions.ts`) that call the Work router in-process
   (FE-AUTH-3); `POST /api/work/v1/issues/dispatch` and `/issues/refresh` expose
   the same operations over REST. Run's `dispatchSource` passes `{issue,
