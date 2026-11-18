@@ -54,11 +54,15 @@ function usageParts(usage: Evidence['usage']): string[] {
   const parts = named.flatMap(([value, name]) =>
     value === undefined ? [] : [`${number(value)} ${name}`],
   );
-  // The total says nothing new beside both of its halves, and is the only
-  // size of the turn when either is missing.
+  // The total is left out only when it is exactly input plus output, and
+  // so says nothing new. A harness may count cache reads and writes in its
+  // total and not in its input (Claude's ACP adapter does), so the counters
+  // shown cannot be added up into it across harnesses.
   const whole =
     usage.totalTokens !== undefined &&
-    (usage.inputTokens === undefined || usage.outputTokens === undefined);
+    (usage.inputTokens === undefined ||
+      usage.outputTokens === undefined ||
+      usage.totalTokens !== usage.inputTokens + usage.outputTokens);
   const tokens = [
     ...(!whole
       ? []

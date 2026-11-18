@@ -389,6 +389,30 @@ describe('run evidence', () => {
     expect(turn).toBe('Harness: codex · Tokens: 120 total, 20 cached');
   });
 
+  it('shows a total that is more than input plus output', () => {
+    // As Claude's ACP adapter reports a cached turn: cache reads and writes
+    // are in the total and not in the input.
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'claude',
+        toolCallCount: 0,
+        toolCalls: [],
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 200,
+          cachedReadTokens: 40_000,
+          cachedWriteTokens: 3_000,
+          totalTokens: 44_200,
+        },
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    expect(screen.getByTestId('run-evidence').children[1]?.textContent).toBe(
+      'Harness: claude · Tokens: 44,200 total, 1,000 in, 200 out, 40,000 cached, 3,000 written to cache',
+    );
+  });
+
   it("shows a total alone as the turn's tokens", () => {
     show(
       withEvidence({
