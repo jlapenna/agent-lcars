@@ -397,6 +397,35 @@ func (q *kubernetesQueue) preflight(ctx context.Context) error {
 			}
 		}
 	}
+	// A harness container is a sidecar. A cluster from before sidecars drops
+	// the restart policy that makes it one and runs it as an ordinary init
+	// container, which never exits, so the Pod would sit in Init until its
+	// deadline. Refuse to start rather than fail every attempt that way.
+	for _, name := range c.runtimeNames() {
+		if !c.Runtimes[name].HarnessContainer {
+			continue
+		}
+		version, err := client.Discovery().ServerVersion()
+		if err != nil {
+			return fmt.Errorf("reading the cluster version for runtime %s harness_container: %w", name, err)
+		}
+		if !queueClusterRunsSidecars(version.Major, version.Minor) {
+			return fmt.Errorf("runtime %s harness_container needs Kubernetes 1.29 or later; the cluster reports %s.%s", name, version.Major, version.Minor)
+		}
+		// The API server can be ahead of a node during an upgrade, and it is
+		// the kubelet that runs the containers: every node a Job can land on
+		// has to run sidecars too.
+		nodes, err := client.CoreV1().Nodes().List(ctx, meta.ListOptions{LabelSelector: labels.Set(c.NodeSelector).String()})
+		if err != nil {
+			return fmt.Errorf("reading the nodes for runtime %s harness_container: %w", name, err)
+		}
+		for _, node := range nodes.Items {
+			if kubelet := node.Status.NodeInfo.KubeletVersion; !queueKubeletRunsSidecars(kubelet) {
+				return fmt.Errorf("runtime %s harness_container needs Kubernetes 1.29 or later on every eligible node; %s runs kubelet %q", name, node.Name, kubelet)
+			}
+		}
+		break
+	}
 	if _, err := client.CoreV1().ServiceAccounts(c.Namespace).Get(ctx, c.ServiceAccount, meta.GetOptions{}); err != nil {
 		return fmt.Errorf("reading queue worker ServiceAccount: %w", err)
 	}
@@ -719,9 +748,10 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 					SecurityContext: &core.PodSecurityContext{RunAsUser: &uid, RunAsGroup: &gid, RunAsNonRoot: &yes, FSGroup: &gid},
 					// Query external API names before cluster search suffixes; musl can
 					// stop on a search response before reaching the absolute name.
-					DNSPolicy: core.DNSClusterFirst,
-					DNSConfig: &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
-					Volumes:   shape.volumes,
+					DNSPolicy:      core.DNSClusterFirst,
+					DNSConfig:      &core.PodDNSConfig{Options: []core.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
+					Volumes:        shape.volumes,
+					InitContainers: shape.initContainers,
 					Containers: []core.Container{{
 						Name: shape.container, Image: shape.image, ImagePullPolicy: shape.pullPolicy,
 						Env: shape.env, VolumeMounts: shape.mounts,

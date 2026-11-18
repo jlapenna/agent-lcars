@@ -1178,20 +1178,13 @@ export async function openclawHarness({
       } finally {
         await gateway.stop();
       }
-      // A turn the Gateway recorded as ending without a final answer has
-      // none, whatever the agent said on the way.
-      const final = !turn
-        ? undefined
-        : reply?.empty
-          ? ''
-          : answerText(turn.final, reply?.text);
+      // The Gateway's record of the final reply goes to the launcher, which
+      // holds what was streamed and places the answer in it (answerText).
+      const changed = await verify();
       return {
-        refused:
-          outcome.refused ??
-          (turn && final === undefined
-            ? "OpenClaw's final reply could not be told from what preceded it"
-            : await verify()),
-        ...(final === undefined ? {} : { final }),
+        ...(outcome.refused === undefined ? {} : { refused: outcome.refused }),
+        ...(changed === undefined ? {} : { changed }),
+        ...(reply === undefined ? {} : { reply }),
       };
     },
   };

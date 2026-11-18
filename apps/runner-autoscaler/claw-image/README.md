@@ -11,8 +11,9 @@ and [repository-owned agents](../../../docs/repository-agents.md#harnesses).
 The image holds the verified OpenClaw distribution and the ACP adapters for
 Claude Code and Codex (`package.json` and `package-lock.json`, installed with
 `npm ci` so every package is checked against its integrity hash), generic
-clients (`openssh-client`, `python3`) and the launcher with its two modules
-(`claw-process.mjs`, `openclaw-harness.mjs`). It holds no agent definition,
+clients (`openssh-client`, `python3`), the launcher (`claw-job.mjs`) and the
+harness host (`claw-harness.mjs`, with `openclaw-harness.mjs` and
+`claw-process.mjs`). It holds no agent definition,
 agent tool or credential: the definition arrives in the run brief and a zone
 executor's runtime table mounts the credentials.
 
@@ -40,24 +41,98 @@ launcher normalizes it for this image
 
 The executor supplies `LCARS_CONSOLE_URL`, `LCARS_RUN_ID`, `LCARS_RUN_TOKEN` and
 `CLAW_TURN_DEADLINE_SECONDS` (below the pod deadline, which is below the
-lease).
+lease). With a harness container it also supplies `CLAW_HARNESS_SOCKET`, and
+the table above describes the harness's container: the launcher's container
+mounts no Secret item and no scratch.
+
+## Launcher and harness host
+
+Two programs share a run. The launcher (`claw-job.mjs`) holds the run token:
+it talks to LCARS, verifies and writes the definition, speaks ACP as the
+client and decides the outcome. The harness host (`claw-harness.mjs`) holds
+what the agent may use: it reads the zone's Secret items, stages the
+workspace, prepares and starts the harness, and relays the harness's stdio.
+The host never talks to LCARS, and what it starts never has the run token:
+the harness and the agent's tools run with the zone's secret environment and
+nothing of the launcher's. With `harness_container` the host's own process
+has no run token either; without it the host runs inside the launcher's
+process, which holds one.
+
+They speak newline-delimited JSON over one stream. The launcher asks the
+host to `launch` a harness and is told where the agent works and what the
+harness needs of an ACP client. Every line of the agent's stdio then travels
+inside an `acp` frame, so nothing an agent prints can pass for one of the
+host's own frames. Lines end at a newline and nowhere else (`readLines`),
+because JSON leaves the Unicode line separators unescaped, and no line
+longer than a bound is ever held: the host drops a line of the agent's
+output over 20 MiB and the launcher a frame over 48 MiB, and either fails
+the turn. The host stops reading the agent's output while the launcher is
+behind, so it holds little of it however fast the agent writes. At the end the launcher asks the host to `finish`: to
+stop what it started and to say whether the harness has a reason to refuse
+the turn. The header of `claw-harness.mjs` lists the frames.
+
+Where the host runs is the executor's choice, per runtime
+([`harness_container`](../README.md#declared-runtimes-and-zone-executors)):
+
+- **In the launcher's process**, the default. One container, one UID. The
+  host is the same code on the other end of an in-memory stream.
+- **In a container of its own**, when the runtime sets `harness_container`.
+  The host listens on the Unix socket `CLAW_HARNESS_SOCKET` names and the
+  launcher connects to it.
 
 ## Trust boundary inside the pod
 
-The harness and the agent's tools run as the same UID as the launcher, so a tool
-the agent is allowed to run could read the launcher's environment, including
-`LCARS_RUN_TOKEN`. That token authorizes only heartbeat, brief and completion
-for this one run, and the agent's own output already becomes that run's
-report, so reading it grants no new authority. The zone Secret items are
-mounted for the agent's tools by design; scope each runtime's items to what
-that agent may use. OpenClaw's Gateway and its token are in the same
-position: a tool the agent may run could reach the Gateway as an operator.
-So is the model key: the launcher keeps it out of the environment a host
-command inherits, which stops it from showing up in a command's output by
-accident, but the launch config that holds it is readable by the same UID.
-None of this is isolation; a harness in its own container is (#3412).
-A launcher SIGTERM (cancellation or pod deadline) stops the harness's process
-group and OpenClaw's Gateway, and still settles the run.
+**With a harness container** the kernel keeps the two sides apart:
+
+| What                                   | Launcher's container (UID 1001) | Harness's container (UID 1002)                 |
+| -------------------------------------- | ------------------------------- | ---------------------------------------------- |
+| `LCARS_RUN_TOKEN`, `LCARS_CONSOLE_URL` | in its environment              | absent, and no shared PID namespace to read it |
+| Zone Secret items                      | not mounted                     | `/run/claw-secrets`, read-only                 |
+| Pinned definition, `/work/agent`       | writes it                       | mounted read-only                              |
+| Pinned `home/` files in `HOME`         | owns them, read-only modes      | cannot change, remove, rename or replace them  |
+| The rest of `HOME`                     | does not use it                 | keeps its own state there                      |
+| Workspace, OpenClaw state, `/work`     | not mounted                     | its own scratch                                |
+
+The pinned `home/` files need more than a read-only mount, because a harness
+has to write its own state next to them (`~/.claude`, `~/.codex`). `HOME` and
+every directory on the way to a pinned file belong to the launcher's user
+and are sticky and group-writable. A harness under another UID of the same
+group can add files there, and the kernel refuses it any change to an entry
+it does not own. `HOME` is also a mount point in the harness's container, so
+it cannot be moved aside as a whole. The price is that a pinned file is
+another user's file to the harness, and a program that insists on owning
+its configuration (OpenSSH, for `~/.ssh/config`) refuses it. What is not
+protected is a file the definition does not pin: a harness that reads a second settings file from a
+directory it can write to can still be given one by its own agent.
+
+OpenClaw's own layer is as it was. Its launch config, its Gateway's token
+and its exec approvals are made in the harness's container, by the user the
+agent's tools run as, because that is where OpenClaw and the zone's
+credentials are. The launcher still refuses a result when the host reports
+that the config or the token changed. The model key is still kept out of
+the environment a host command inherits and still readable in the launch
+config. The boundary that holds is the pod's: which Secret items, mounts
+and network the runtime has.
+
+**Without a harness container** nothing here is isolation. The harness and
+the agent's tools run as the launcher's UID in the launcher's container, so a
+tool the agent is allowed to run could read the launcher's environment,
+including `LCARS_RUN_TOKEN`. That token authorizes only heartbeat, brief and
+completion for this one run, and the agent's own output already becomes that
+run's report, so reading it grants no new authority. The definition is
+locked by file modes its owner can change back. The launcher checks each
+pinned `home/` file after the turn and refuses the result when one is no
+longer its blob; it does not see a file the agent added, or changed and put
+back.
+
+In both, the zone Secret items are there for the agent's tools by design;
+scope each runtime's items to what that agent may use. A launcher SIGTERM
+(cancellation or pod deadline) has the host stop the harness's process group
+and OpenClaw's Gateway, and still settles the run: it reaches a host that is
+still finishing a turn. A pod told to stop is killed 30 seconds later, and
+the completion request may take 10 of them, so a harness that cannot be seen
+to stop is given 12 seconds and its host 3 more before the run is settled
+without them.
 
 ## Launch sequence
 
@@ -68,19 +143,24 @@ Each step fails the attempt closed with a `runner-failed` completion:
    and verified definition. A round that names a harness or a mode carries
    its files as `definition` instead of `files`, which a launcher from before
    harnesses refuses.
-2. The launcher writes the verified definition to `/work/agent`, copies its
-   `workspace/` directory to a writable `/work/workspace`. For a brief that
-   carries its files as `definition` (a round that named a harness or a
-   mode), it also copies the `home/` directory into `HOME`, making each
-   pinned `home/` file read-only (an executable stays executable). A `files`
-   brief never has `home/` applied: no launcher did before harnesses, and a
-   round admitted then must run as it would have.
-3. It prepares what the harness needs (for OpenClaw, [below](#openclaw)) and
-   starts the harness the manifest names (`HARNESSES` in `claw-job.mjs`) in
-   its own process group, in the workspace, with a clean environment: the
-   zone's `env/` Secret items and nothing of the launcher's. The command
-   always comes from the image.
-4. It speaks ACP over the harness's stdio: `initialize` (protocol 1, no file
+2. The launcher writes the verified definition to `/work/agent`. The
+   directory is emptied in place, never replaced: with a harness container
+   it is a volume the other container mounts. For a brief that carries its
+   files as `definition` (a round that named a harness or a mode), it also
+   writes the definition's `home/` files into `HOME` (`stageHome`): each file
+   read-only (an executable stays executable), each directory on the way
+   sticky and group-writable. A `files` brief never has `home/` applied: no
+   launcher did before harnesses, and a round admitted then must run as it
+   would have.
+3. The launcher asks the harness host to launch the harness the manifest
+   names. The host copies the definition's `workspace/` to a writable
+   `/work/workspace`, prepares what the harness needs (for OpenClaw,
+   [below](#openclaw)) and starts the harness (`HARNESSES` in
+   `claw-harness.mjs`) in its own process group, in the workspace, with a
+   clean environment: the zone's `env/` Secret items and nothing of the
+   launcher's. The command always comes from the image. With a harness
+   container the launcher first waits up to a minute for the host's socket.
+4. It speaks ACP to the harness through the host: `initialize` (protocol 1, no file
    system or terminal capability, notices accepted so a harness's own
    remarks do not arrive as answer text), `session/new` in the workspace (after
    `authenticate`, when the harness asks to be signed in and the image names
@@ -94,9 +174,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    itself, and otherwise unchanged. It answers every
    `session/request_permission` with the reject option, so the agent can do
    only what its harness does without asking.
-5. Once the harness's process has exited, whatever is left of its process
-   group is stopped and waited for (`endGroup`), so nothing of the harness
-   runs while the launcher checks settings and settles. That starts at the
+5. Once the harness's process has exited, the host stops whatever is left
+   of its process group and waits for it (`endGroup`) before it tells the
+   launcher, so nothing of the harness runs while the launcher checks
+   settings and settles. That starts at the
    process's exit, after a moment for what it had already written to be
    read, not when its output closes: a child of its own that holds the
    output open would otherwise keep the attempt waiting. It settles from the
@@ -114,10 +195,15 @@ Each step fails the attempt closed with a `runner-failed` completion:
    with commentary and no final answer is an empty one. When the agent's
    manifest sets `requireToolEvidence`, at least one tool call is also
    required.
-6. Every pinned `home/` file must still be its blob. The harness runs as the
-   launcher's UID, so the launcher cannot stop an agent from rewriting its
-   own settings; it refuses the result when it sees that. It does not see a
-   file the agent added, or changed and put back. The check itself cannot
+6. The launcher asks the host to finish, which stops what the harness
+   started and names any reason to refuse the turn, and then checks that
+   every pinned `home/` file is still its blob. With a harness container the
+   kernel has kept them so. Without one the harness runs as the launcher's
+   UID and could have rewritten its own settings; the launcher refuses the
+   result when it sees that. It does not see a file the agent added, or
+   changed and put back. A host whose own finishing fails is a failed attempt, as a failed launch
+   is. A host that does not answer within seven minutes,
+   or has gone, fails the attempt. The check itself cannot
    hold up settlement: each settings file (these, and OpenClaw's launch
    config and Gateway token) is read only as a regular file of a bounded
    size within a bounded time (`readSettingsFile`), and a link, a pipe, a
@@ -335,4 +421,8 @@ node --test apps/runner-autoscaler/claw-image/claw-job.test.mjs
 ```
 
 The tests drive the launcher against a fake Work API, a fake `openclaw`
-(including its Gateway and ACP server) and a fake ACP harness.
+(including its Gateway and ACP server) and a fake ACP harness. Most run the
+harness host inside the launcher's process; some run it on a Unix socket, as
+the harness's container does. What separate users and read-only mounts
+enforce cannot be shown in one process: that is run with real containers,
+and recorded in the pull request that changes it.
