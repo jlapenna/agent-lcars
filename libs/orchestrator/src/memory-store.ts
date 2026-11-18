@@ -25,7 +25,6 @@ import {
   githubAnchorProjectionSchema,
   isClaimant,
   isLive,
-  isLiveClaimant,
   isWorkAnchor,
   queueOrderAt,
   requestHistoryKey,
@@ -200,30 +199,26 @@ export class MemoryStore implements OrchestratorStore {
   async writeRunEvidence(input: {
     runId: string;
     claimFingerprint: string;
-    now: string;
     evidence: RunEvidence;
   }): Promise<boolean> {
-    if (
-      !isLiveClaimant(
-        this.#runs.get(input.runId),
-        input.claimFingerprint,
-        input.now,
-      )
-    )
-      return false;
-    this.#runEvidence.set(input.runId, plainRunEvidence(input.evidence));
+    const key = `${input.runId}\0${input.claimFingerprint}`;
+    if (this.#runEvidence.has(key)) return false;
+    this.#runEvidence.set(key, plainRunEvidence(input.evidence));
     return true;
   }
 
   async readRunEvidence(
-    runIds: readonly string[],
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
   ): Promise<Map<string, RunEvidence>> {
     const found = new Map<string, RunEvidence>();
-    for (const runId of runIds) {
+    for (const run of runs) {
+      const claim = run.queue?.tokenHash;
+      if (claim === undefined) continue;
       const evidence = runEvidenceSchema.safeParse(
-        this.#runEvidence.get(runId),
+        this.#runEvidence.get(`${run.runId}\0${claim}`),
       );
-      if (evidence.success) found.set(runId, plainRunEvidence(evidence.data));
+      if (evidence.success)
+        found.set(run.runId, plainRunEvidence(evidence.data));
     }
     return found;
   }

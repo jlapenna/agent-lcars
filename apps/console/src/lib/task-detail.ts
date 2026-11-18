@@ -160,6 +160,7 @@ export async function getTaskDetail(
                     runId,
                   ),
               ),
+              state.runs,
               (error) =>
                 logger.error(
                   'agent-lcars: run evidence unreadable for %s; serving the item without it: %s',

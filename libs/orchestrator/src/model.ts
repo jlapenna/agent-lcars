@@ -889,23 +889,6 @@ export function isClaimant(run: Run, claimFingerprint: string): boolean {
   );
 }
 
-/** Whether the claim a worker authenticated with still holds at `now`: the
- * run is live, still claimed under that token's fingerprint, and inside its
- * deadline. What a worker writes beside a run is fenced on this in the same
- * transaction that writes it, as its heartbeat and completion are. */
-export function isLiveClaimant(
-  run: Run | undefined,
-  claimFingerprint: string,
-  now: string,
-): run is Run {
-  return (
-    run !== undefined &&
-    isLive(run.state) &&
-    isClaimant(run, claimFingerprint) &&
-    !recoveryDeadlineElapsed(run, now)
-  );
-}
-
 /** A recipe may explicitly consume the shared Codex provider lineage. The
  * Console separately reauthorizes its exact occurrence/profile before IO. */
 export function usesCodexCredentials(

@@ -330,9 +330,13 @@ token), and the Work item's own read returns them on that run as `evidence`:
   Console from before it reads every run as it always did, and a launcher
   from after it completes its run on a Console that answers 404. A listing
   never carries it. The Console shows it under the agent's turn on the Work
-  item. The write is fenced on the claim that reported it, in one
-  transaction: a report still in flight when its run completes, is
-  cancelled or is reclaimed writes nothing.
+  item.
+- **A record belongs to its claim.** It is stored under the fingerprint of
+  the claim that reported it and read back only through the claim the run
+  holds or settled under. A claim the run was taken from can still write,
+  and what it writes is never shown. The first record under a claim stands.
+  The write is one create that reads and locks nothing, so a report the
+  launcher gave up on can never make the run's completion wait.
 - **Read leniently.** An unknown key is dropped and an unknown word becomes
   `other`, at the route and on every read, so a launcher newer than its
   Console still records what that Console knows. A record that is refused

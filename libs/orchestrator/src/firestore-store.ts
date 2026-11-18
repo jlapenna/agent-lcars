@@ -37,7 +37,6 @@ import {
   githubAnchorProjectionSchema,
   isClaimant,
   isLive,
-  isLiveClaimant,
   isWorkAnchor,
   type LeasedOutboxEntry,
   outboxEntrySchema,
@@ -132,6 +131,15 @@ export interface FirestoreStoreOptions {
   /** Page size for exhaustive reads; defaults to
    *  {@link FIRESTORE_READ_PAGE_SIZE}. Tests lower it to exercise paging. */
   readonly readPageSize?: number;
+}
+
+/** gRPC ALREADY_EXISTS: what creating a document that exists fails with. */
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 6
+  );
 }
 
 /**
@@ -312,41 +320,41 @@ export class FirestoreStore implements OrchestratorStore {
   async writeRunEvidence(input: {
     runId: string;
     claimFingerprint: string;
-    now: string;
     evidence: RunEvidence;
   }): Promise<boolean> {
-    // The run is read in the transaction that writes beside it, so a
-    // completion, cancellation or reclaim that commits first is seen, and
-    // one that races this write waits for it or makes it run again.
-    return this.#firestore.runTransaction(async (tx) => {
-      const snapshot = await tx.get(this.#runRef(input.runId));
-      const run = snapshot.exists
-        ? runSchema.parse(snapshot.data())
-        : undefined;
-      if (!isLiveClaimant(run, input.claimFingerprint, input.now)) return false;
-      // Firestore refuses a document with a key left `undefined`, which
-      // a cost that was left out of the record is.
-      tx.set(
-        this.#runEvidenceRef(input.runId),
+    try {
+      // One create, outside any transaction: it reads and locks nothing, so
+      // it can never make the run's completion wait. Firestore refuses a
+      // document with a key left `undefined`, which a cost that was left
+      // out of the record is.
+      await this.#runEvidenceRef(input.runId, input.claimFingerprint).create(
         plainRunEvidence(input.evidence),
       );
       return true;
-    });
+    } catch (error) {
+      if (isAlreadyExists(error)) return false;
+      throw error;
+    }
   }
 
   async readRunEvidence(
-    runIds: readonly string[],
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
   ): Promise<Map<string, RunEvidence>> {
     const found = new Map<string, RunEvidence>();
-    if (runIds.length === 0) return found;
+    const claimed = runs.flatMap((run) =>
+      run.queue?.tokenHash === undefined
+        ? []
+        : [{ runId: run.runId, claim: run.queue.tokenHash }],
+    );
+    if (claimed.length === 0) return found;
     const snapshots = await this.#firestore.getAll(
-      ...runIds.map((runId) => this.#runEvidenceRef(runId)),
+      ...claimed.map(({ runId, claim }) => this.#runEvidenceRef(runId, claim)),
     );
     snapshots.forEach((snapshot, index) => {
       // Evidence is a reading aid: a document this Console cannot parse is
       // left out rather than failing the read of its run.
       const evidence = runEvidenceSchema.safeParse(snapshot.data());
-      const runId = runIds[index];
+      const runId = claimed[index]?.runId;
       if (snapshot.exists && evidence.success && runId !== undefined)
         found.set(runId, plainRunEvidence(evidence.data));
     });
@@ -1461,9 +1469,10 @@ export class FirestoreStore implements OrchestratorStore {
       .doc(`${overflow.sha256}.${index}`);
   }
 
-  /** One document per source beside the run, like its message chunks. */
-  #runEvidenceRef(runId: string): DocumentReference {
-    return this.#runRef(runId).collection('evidence').doc('acp');
+  /** One document per claim beside the run, like its message chunks. The
+   * claim's fingerprint is the SHA-256 of its token, as the run stores it. */
+  #runEvidenceRef(runId: string, claimFingerprint: string): DocumentReference {
+    return this.#runRef(runId).collection('evidence').doc(claimFingerprint);
   }
 
   #outboxRef(entryId: string): DocumentReference {

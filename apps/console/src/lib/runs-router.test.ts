@@ -2316,45 +2316,53 @@ describe('evidence', () => {
       ...context,
       bearerToken: token,
     };
-    return { ...made, runId, ctx };
+    // What the run's own read returns: the record under the claim it holds.
+    const evidenceOf = async () =>
+      (
+        await made.store.readRunEvidence([(await made.store.readRun(runId))!])
+      ).get(runId);
+    return { ...made, runId, ctx, token, evidenceOf };
   };
 
   it('records what the worker saw beside the run, never in its outcome', async () => {
-    const { store, runId, ctx, now } = await claimed('work-evidence');
+    const { store, runId, ctx, now, evidenceOf } =
+      await claimed('work-evidence');
     const before = await store.readRun(runId);
     const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
       evidence: EVIDENCE,
     });
     expect(r.status).toBe(200);
     expect(r.json).toEqual({ runId });
-    expect(await store.readRunEvidence([runId])).toEqual(
-      new Map([[runId, { ...EVIDENCE, recordedAt: now().toISOString() }]]),
-    );
+    expect(await evidenceOf()).toEqual({
+      ...EVIDENCE,
+      recordedAt: now().toISOString(),
+    });
     // The run itself is exactly as it was: still live, with no result.
     expect(await store.readRun(runId)).toEqual(before);
   });
 
-  it('keeps the latest report and drops what this Console does not know', async () => {
-    const { store, runId, ctx } = await claimed('work-evidence-again');
-    await call(ctx, 'POST', runPath(runId, '/evidence'), {
-      evidence: EVIDENCE,
-    });
-    const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
+  it('keeps the first report under a claim and drops what this Console does not know', async () => {
+    const { runId, ctx, evidenceOf } = await claimed('work-evidence-again');
+    const first = await call(ctx, 'POST', runPath(runId, '/evidence'), {
       evidence: {
         ...EVIDENCE,
-        stopReason: 'max_tokens',
         // From a worker newer than this Console.
         somethingNewer: { nested: true },
       },
     });
-    expect(r.status).toBe(200);
-    const stored = (await store.readRunEvidence([runId])).get(runId);
-    expect(stored?.stopReason).toBe('max_tokens');
+    expect(first.status).toBe(200);
+    const again = await call(ctx, 'POST', runPath(runId, '/evidence'), {
+      evidence: { ...EVIDENCE, stopReason: 'max_tokens' },
+    });
+    // A repeat is answered as the first was, and changes nothing.
+    expect(again.status).toBe(200);
+    const stored = await evidenceOf();
+    expect(stored?.stopReason).toBe('end_turn');
     expect(stored).not.toHaveProperty('somethingNewer');
   });
 
   it("stores no word of the worker's own choosing", async () => {
-    const { store, runId, ctx } = await claimed('work-evidence-words');
+    const { runId, ctx, evidenceOf } = await claimed('work-evidence-words');
     const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
       evidence: {
         ...EVIDENCE,
@@ -2371,7 +2379,7 @@ describe('evidence', () => {
       },
     });
     expect(r.status).toBe(200);
-    const stored = (await store.readRunEvidence([runId])).get(runId);
+    const stored = await evidenceOf();
     expect(stored).toMatchObject({
       harness: 'other',
       stopReason: 'other',
@@ -2402,12 +2410,12 @@ describe('evidence', () => {
     ['a negative count', { usage: { inputTokens: -1 } }],
     ['another source', { source: 'transcript' }],
   ])('refuses %s', async (_name, change) => {
-    const { store, runId, ctx } = await claimed('work-evidence-refused');
+    const { runId, ctx, evidenceOf } = await claimed('work-evidence-refused');
     const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
       evidence: { ...EVIDENCE, ...change },
     });
     expect(r.status).toBe(400);
-    expect(await store.readRunEvidence([runId])).toEqual(new Map());
+    expect(await evidenceOf()).toBeUndefined();
   });
 
   it.each([
@@ -2415,36 +2423,57 @@ describe('evidence', () => {
     ['a currency that is a word', { amount: 1, currency: 'YES' }],
     ['an amount that is no number', { amount: 'lots', currency: 'USD' }],
   ])('leaves out a cost in %s and keeps the rest', async (_name, cost) => {
-    const { store, runId, ctx } = await claimed('work-evidence-cost');
+    const { runId, ctx, evidenceOf } = await claimed('work-evidence-cost');
     const { cost: _cost, ...usage } = EVIDENCE.usage;
     const r = await call(ctx, 'POST', runPath(runId, '/evidence'), {
       evidence: { ...EVIDENCE, usage: { ...usage, cost } },
     });
     expect(r.status).toBe(200);
-    const stored = (await store.readRunEvidence([runId])).get(runId);
+    const stored = await evidenceOf();
     expect(stored?.usage).toEqual(usage);
     expect(stored?.stopReason).toBe('end_turn');
   });
 
-  it('writes nothing when the run settles while a report is in flight', async () => {
-    const { store, orchestrator, runId, ctx } =
-      await claimed('work-evidence-race');
-    // The token is checked, and then the run completes before the write.
-    const racing = new Proxy(store, {
+  // A store whose evidence write is held until `first` has happened: the
+  // report was authenticated, and then something else got there before it.
+  const after = (
+    store: ReturnType<typeof fixture>['store'],
+    first: () => Promise<unknown>,
+  ) =>
+    new Proxy(store, {
       get(target, key) {
         const value: unknown = Reflect.get(target, key, target);
         if (key !== 'writeRunEvidence')
           return typeof value === 'function' ? value.bind(target) : value;
         return async (input: Parameters<typeof store.writeRunEvidence>[0]) => {
-          const settled = await orchestrator.report(
-            runId,
-            { ok: true },
-            input.claimFingerprint,
-          );
-          expect('refused' in settled).toBe(false);
+          await first();
           return target.writeRunEvidence(input);
         };
       },
+    });
+
+  it('never shows a run the record of a claim it was taken from', async () => {
+    const { store, runId, ctx, token, evidenceOf } = await claimed(
+      'work-evidence-reclaimed',
+    );
+    // The run is released and claimed again while the report is in flight.
+    const racing = after(store, async () => {
+      expect(
+        await store.releaseQueuedRunClaim({
+          runId,
+          claimedBy: 'runner-1',
+          tokenHash: hashRunToken(token),
+          now: NOW,
+        }),
+      ).toBeTruthy();
+      const reclaimed = await store.claimQueuedRun({
+        pipelines: ['claude'],
+        now: NOW,
+        claimedBy: 'runner-2',
+        claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+        tokenHash: hashRunToken(mintRunToken()),
+      });
+      expect(reclaimed?.runId).toBe(runId);
     });
     const r = await call(
       { ...ctx, store: racing },
@@ -2452,13 +2481,38 @@ describe('evidence', () => {
       runPath(runId, '/evidence'),
       { evidence: EVIDENCE },
     );
-    expect(r.status).toBe(401);
+    expect(r.status).toBe(200);
+    // It was written, under the claim that sent it, where the run's read
+    // through its present claim does not look.
+    expect(await evidenceOf()).toBeUndefined();
+  });
+
+  it('keeps a report that was in flight when its own run completed', async () => {
+    const { store, orchestrator, runId, ctx, token, evidenceOf } =
+      await claimed('work-evidence-race');
+    const racing = after(store, async () => {
+      const settled = await orchestrator.report(
+        runId,
+        { ok: true },
+        hashRunToken(token),
+      );
+      expect('refused' in settled).toBe(false);
+    });
+    const r = await call(
+      { ...ctx, store: racing },
+      'POST',
+      runPath(runId, '/evidence'),
+      { evidence: EVIDENCE },
+    );
+    expect(r.status).toBe(200);
+    // The completion did not wait on the evidence, and the record is still
+    // what this run's own worker reported under the claim it settled with.
     expect((await store.readRun(runId))?.state).toBe('finished');
-    expect(await store.readRunEvidence([runId])).toEqual(new Map());
+    expect(await evidenceOf()).toMatchObject({ stopReason: 'end_turn' });
   });
 
   it('is refused once the run has completed', async () => {
-    const { store, runId, ctx } = await claimed('work-evidence-late');
+    const { runId, ctx, evidenceOf } = await claimed('work-evidence-late');
     const done = await call(ctx, 'POST', runPath(runId, '/complete'), {
       outcome: 'runner-failed',
       message: 'It broke.',
@@ -2468,7 +2522,7 @@ describe('evidence', () => {
       evidence: EVIDENCE,
     });
     expect(r.status).toBe(401);
-    expect(await store.readRunEvidence([runId])).toEqual(new Map());
+    expect(await evidenceOf()).toBeUndefined();
   });
 });
 

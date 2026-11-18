@@ -910,22 +910,24 @@ export const runsRouter = os.router({
 
   evidence: os.evidence.handler(async ({ input, context }) => {
     const run = await requireRunToken(context, input.runId);
-    const now = context.now().toISOString();
-    // Beside the run, never in it: the run's outcome is `complete`'s alone,
-    // and a later report from the same attempt replaces this one. The claim
-    // that authenticated this request is checked again in the transaction
-    // that writes, so a report still in flight when the run settles, is
-    // cancelled or is reclaimed never lands on it.
-    const recorded = await context.store.writeRunEvidence({
+    const claimFingerprint = run.queue?.tokenHash;
+    if (claimFingerprint === undefined)
+      throw new ORPCError('UNAUTHORIZED', { message: 'Invalid run token' });
+    // Beside the run, never in it: the run's outcome is `complete`'s alone.
+    // The record is stored under the claim that authenticated this request
+    // and read back only through the claim the run holds, so a claim the
+    // run was taken from can never replace this claim's record. The write
+    // takes no lock on the run: an evidence request the worker gave up on
+    // cannot make its completion wait. The first record under a claim
+    // stands, so a repeat changes nothing.
+    await context.store.writeRunEvidence({
       runId: run.runId,
-      claimFingerprint: run.queue?.tokenHash ?? '',
-      now,
-      evidence: { ...input.evidence, recordedAt: now },
+      claimFingerprint,
+      evidence: {
+        ...input.evidence,
+        recordedAt: context.now().toISOString(),
+      },
     });
-    if (!recorded)
-      throw new ORPCError('UNAUTHORIZED', {
-        message: 'Run evidence refused',
-      });
     return { runId: run.runId };
   }),
 

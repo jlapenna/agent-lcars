@@ -700,7 +700,6 @@ describe('claw work read and cancel rules', () => {
       await store.writeRunEvidence({
         runId: run!.runId,
         claimFingerprint: tokenHash,
-        now: NOW,
         evidence,
       }),
     ).toBe(true);

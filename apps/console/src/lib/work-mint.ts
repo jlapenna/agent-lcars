@@ -4,6 +4,7 @@ import type { TrackerIssue } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import {
   isRefusal,
+  type Run,
   type ScheduleStore,
   type Task,
   withFullRunMessages,
@@ -91,15 +92,15 @@ export async function readWorkTask(context: WorkContext, workId: string) {
   return task;
 }
 
-export async function view(
+async function viewOf(
   context: WorkContext,
   workId: string,
   task: Task,
-): Promise<ItemView> {
+): Promise<{ item: ItemView; runs: Run[] }> {
   const { store } = context.runtime;
   const runs = await store.listRuns({ workId });
   const sessions = await context.sessionsFor(runs.map((run) => run.runId));
-  return toItemView({
+  const item = toItemView({
     workId,
     task,
     // One item's view carries every round's whole message; listings keep
@@ -115,6 +116,15 @@ export async function view(
     ),
     sessions,
   });
+  return { item, runs };
+}
+
+export async function view(
+  context: WorkContext,
+  workId: string,
+  task: Task,
+): Promise<ItemView> {
+  return (await viewOf(context, workId, task)).item;
 }
 
 /** The item's own read: its view, and what each round's worker saw its
@@ -126,15 +136,19 @@ export async function viewWithEvidence(
   workId: string,
   task: Task,
 ): Promise<ItemView> {
-  const item = await view(context, workId, task);
+  const { item, runs } = await viewOf(context, workId, task);
   return {
     ...item,
-    runs: await withRunEvidence(context.runtime.store, item.runs, (error) =>
-      logger.error(
-        'agent-lcars: run evidence unreadable for work %s; serving the item without it: %s',
-        workId,
-        String(error),
-      ),
+    runs: await withRunEvidence(
+      context.runtime.store,
+      item.runs,
+      runs,
+      (error) =>
+        logger.error(
+          'agent-lcars: run evidence unreadable for work %s; serving the item without it: %s',
+          workId,
+          String(error),
+        ),
     ),
   };
 }
