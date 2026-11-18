@@ -27,6 +27,7 @@ import {
 } from './claw-job.mjs';
 import { readSettingsFile } from './claw-process.mjs';
 import {
+  answerText,
   bundledPluginProviders,
   comparableConfig,
   doctorChanges,
@@ -135,7 +136,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     if (behaviour.exit) process.exit(7);
     // The Gateway's own record that the turn failed, which OpenClaw's ACP
     // server never passes on.
-    fs.writeFileSync(path.join(__dirname, 'gateway-session.json'), JSON.stringify({ key: 'agent:main:acp-bridge:' + (behaviour.sessionKey ?? 's1'), status: behaviour.gatewayError ? 'failed' : behaviour.sessionStatus ?? 'done', lastRunError: 'LLM request timed out for sk-secret' }));
+    fs.writeFileSync(path.join(__dirname, 'gateway-session.json'), JSON.stringify({ key: 'agent:main:acp-bridge:' + (behaviour.sessionKey ?? 's1'), status: behaviour.gatewayError ? 'failed' : behaviour.sessionStatus ?? 'done', lastRunId: 'r1', reply: behaviour.terminalReply, lastRunError: 'LLM request timed out for sk-secret' }));
     if (behaviour.tamperConfig) {
       const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
       config.tools = { profile: 'coding' };
@@ -244,7 +245,15 @@ if (sub === 'gateway call') {
   if (behaviour.FAKE_CALL_EXIT) process.exit(Number(behaviour.FAKE_CALL_EXIT));
   const file = path.join(__dirname, 'gateway-session.json');
   const sessions = fs.existsSync(file) ? [JSON.parse(fs.readFileSync(file, 'utf8'))] : [];
-  console.log(JSON.stringify({ count: sessions.length, sessions: [{ key: 'agent:main:main', status: 'failed' }, ...sessions] }));
+  if (args[2] === 'agent.wait') {
+    // The run's final reply as the Gateway records it: the reply alone.
+    const { runId } = JSON.parse(args[args.indexOf('--params') + 1]);
+    const session = sessions.find((row) => row.lastRunId === runId);
+    if (!session || behaviour.FAKE_WAIT_EXIT) process.exit(1);
+    console.log(JSON.stringify({ runId, status: 'ok', ...(session.reply === undefined ? {} : { terminalReply: { disposition: 'visible', text: session.reply } }) }));
+    process.exit(0);
+  }
+  console.log(JSON.stringify({ count: sessions.length, sessions: [{ key: 'agent:main:main', status: 'failed', lastRunId: 'r0' }, ...sessions.map(({ reply, ...row }) => row)] }));
   process.exit(0);
 }
 if (args[0] === 'acp') { require(path.join(__dirname, 'harness.cjs')); return; }
@@ -370,7 +379,9 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     'approvals set',
     'gateway run',
     'acp --url',
-    // How the Gateway recorded the turn, asked before it is stopped.
+    // How the Gateway recorded the turn and its final reply, asked before
+    // it is stopped.
+    'gateway call',
     'gateway call',
   ]);
   assert.deepEqual(log[5].args, [
@@ -378,6 +389,16 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     'call',
     'sessions.list',
     '--json',
+    '--timeout',
+    '20000',
+  ]);
+  assert.deepEqual(log[6].args, [
+    'gateway',
+    'call',
+    'agent.wait',
+    '--json',
+    '--params',
+    '{"runId":"r1","timeoutMs":0}',
     '--timeout',
     '20000',
   ]);
@@ -777,6 +798,101 @@ test('a turn the Gateway recorded as failed is never a report', async () => {
     outcome: 'runner-failed',
     message: 'Claw turn failed: OpenClaw reported the turn as failed.',
   });
+});
+
+test("OpenClaw's commentary is not part of the report", async () => {
+  // OpenClaw's ACP server sends what the agent says on the way and its
+  // final answer as the same message text, with nothing between them when
+  // no tool ran. The Gateway's record of the final reply says where the
+  // answer begins.
+  const report = async (acp, fake) => {
+    const { env, deps } = await fixture({
+      acp,
+      env: fake,
+      brief: agentBrief(agentFiles, { requireToolEvidence: false }),
+    });
+    return main(env, deps);
+  };
+  const steps = [{ say: 'Checking files now' }, { say: 'Done.' }];
+  assert.deepEqual(await report({ steps, terminalReply: 'Done.' }), {
+    outcome: 'report',
+    message: 'Done.',
+  });
+  // With no record of the reply, the stream is all there is to go by.
+  assert.deepEqual(await report({ steps }), {
+    outcome: 'report',
+    message: 'Checking files nowDone.',
+  });
+  assert.deepEqual(
+    await report({ steps, terminalReply: 'Done.' }, { FAKE_WAIT_EXIT: '1' }),
+    { outcome: 'report', message: 'Checking files nowDone.' },
+  );
+});
+
+test('answerText finds the answer in what OpenClaw streamed', () => {
+  // The whole stream is the answer, or ends with it.
+  assert.equal(answerText('Done.', 'Done.'), 'Done.');
+  assert.equal(answerText('Checking files nowDone.\n', 'Done.'), 'Done.\n');
+  // A long reply is recorded cut short, with a marker: the answer begins
+  // where the recorded part first appears, and is taken whole.
+  const answer = `Report:${' line'.repeat(2000)}`;
+  assert.equal(
+    answerText(`Looking.${answer}`, `${answer.slice(0, 4095)}…`),
+    answer,
+  );
+  // A reply that itself ends with the marker is still a whole reply.
+  assert.equal(
+    answerText('Hm.More to come…', 'More to come…'),
+    'More to come…',
+  );
+  // A reply that cannot be placed, or none, leaves the stream as it is.
+  assert.equal(answerText('Checking.Done.', 'Finished.'), 'Checking.Done.');
+  assert.equal(answerText('Checking.Done.', undefined), 'Checking.Done.');
+  assert.equal(answerText('Checking.Done.', ''), 'Checking.Done.');
+});
+
+test('a config string that names a credential is resolved whole', () => {
+  // A value written in can join the text around it into a template that
+  // was not there, or turn the next one into an escape. The string is
+  // resolved as OpenClaw would have in one pass and written as literal
+  // text; a template only OpenClaw can resolve stays one.
+  const template = (name) => '$' + `{${name}}`;
+  const auth = {
+    names: new Set(['LITELLM_API_KEY']),
+    candidates: new Map([['litellm', ['LITELLM_API_KEY']]]),
+  };
+  const header = (key, text) =>
+    resolveCredentials(
+      {
+        models: {
+          providers: { litellm: { apiKey: 'x', headers: { h: text } } },
+        },
+      },
+      { LITELLM_API_KEY: key, SUFFIX: 'modified' },
+      auth,
+    ).config.models.providers.litellm.headers.h;
+  const KEY = template('LITELLM_API_KEY');
+  // A key ending in `$` before another variable: both are written in, and
+  // the join that would read as an escape is itself escaped.
+  assert.equal(header('k$', `${KEY}${template('SUFFIX')}`), 'k$modified');
+  // A key ending in `$` before literal braces would become a template.
+  assert.equal(header('k$', `${KEY}{SUFFIX}`), `k$${template('SUFFIX')}`);
+  // A variable only OpenClaw's environment holds stays its to resolve.
+  assert.equal(
+    header('k', `${KEY}-${template('ONLY_IN_GATEWAY')}`),
+    `k-${template('ONLY_IN_GATEWAY')}`,
+  );
+  // An escaped template stays the text it stands for, and every variable a
+  // provider's header names counts as a credential, so it is written in.
+  assert.equal(
+    header('k', `$${KEY} ${template('SUFFIX')}`),
+    `$${KEY} modified`,
+  );
+  // A string that names no variable the launcher withholds is untouched.
+  assert.equal(
+    header('k', `$${KEY} ${template('ONLY_IN_GATEWAY')}`),
+    `$${KEY} ${template('ONLY_IN_GATEWAY')}`,
+  );
 });
 
 test("only the Gateway's own record of the session passes a turn", async () => {

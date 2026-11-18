@@ -106,9 +106,12 @@ Codex's approval and sandbox policy is not set in that file: it comes from
     asks before anything else, which the launcher refuses.
 
   `mode` in the manifest selects the harness's ACP session mode before the
-  prompt, so it is where a definition states a policy the harness enforces
-  itself: `read-only` or `workspace-write` for Codex, `plan` or `acceptEdits`
-  for Claude Code. A harness that does not offer the mode, or refuses to
+  prompt. What a mode controls is the harness's own business. For Codex and
+  Claude Code it is the permission policy the harness enforces itself:
+  `read-only` or `workspace-write` for Codex, `plan` or `acceptEdits` for
+  Claude Code. For OpenClaw a mode such as `low` is a thinking level and
+  changes no permission: its tools stay bound by its config and
+  `approvals.json`. A harness that does not offer the mode, or refuses to
   switch to it, runs nothing and the attempt fails.
 
   The harness runs as the launcher's user, so an agent allowed a tool that
@@ -137,7 +140,13 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   as a SecretRef. A declared provider with no `apiKey` is given the key it
   would have found in the environment. A provider that is not declared under
   `models.providers` and relied on finding its key there no longer
-  authenticates; declare it. A SecretRef is resolved only as OpenClaw would
+  authenticates; declare it. The same holds for a credential one of
+  OpenClaw's own tools or plugins reads only from the environment, such as
+  `GEMINI_API_KEY` for Google web search with no `models.providers.google`
+  entry: the Gateway no longer has it. Name it as an `env` SecretRef at the
+  tool's own key setting, which the launcher resolves like any other, and
+  migrate such definitions before the image that carries this launcher is
+  pinned. A SecretRef is resolved only as OpenClaw would
   resolve it: through an `env` provider the config declares, within that
   provider's `allowlist`. A variable the config defines under `env.vars` is
   treated the same way: one that is a credential, or is built from one,
@@ -156,7 +165,11 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   session. An answer with no text is a failed attempt. So is a tool call that
   failed or never finished, unless a call that started after it ended
   completed; that later call is resolved evidence, as a retried probe is.
-  `requireToolEvidence` needs at least one tool call. OpenClaw's ACP server
+  `requireToolEvidence` needs at least one tool call. The report is the
+  agent's final answer. OpenClaw's ACP server streams what the agent says on
+  the way and the answer as one message when no tool ran between them, so
+  for OpenClaw the launcher finds the answer in that stream with the
+  Gateway's own record of the final reply. OpenClaw's ACP server
   ends a turn its Gateway failed like any other, even after part of an answer
   has streamed, so the launcher also asks the Gateway how it recorded the
   session and fails the attempt unless its last run finished. A model
@@ -393,8 +406,13 @@ while the newer Console is still running, in this order:
    and run as one. Leave them in place for a definition that only spelled
    out `harness: openclaw`; it is an OpenClaw agent either way and needs
    them. Wait for the catalog to refresh.
-5. Check that no agent in the catalog, enabled or not, still shows either
-   field. The earlier Console reads stored rows with a strict schema, and
+5. Hold merges that touch `.lcars/agents/` in every control-plane
+   repository from here until the cutover in step 7 is checked. The newer
+   Console keeps refreshing the catalog on every maintenance tick until
+   then, so a manifest that gains `harness` or `mode`, or a repository that
+   becomes readable again with one, would publish an incompatible row after
+   this check. Then check that no agent in the catalog, enabled or not,
+   still shows either field. The earlier Console reads stored rows with a strict schema, and
    one row with a field it does not know stops it listing and refreshing the
    catalog for every repository. Deleting an agent does not clear its row:
    the row is only disabled and keeps the stored manifest. For the row of an
@@ -411,7 +429,12 @@ while the newer Console is still running, in this order:
    carry the fence from step 2 and the profiles from step 6. Pinning the
    earlier revision is not enough: a revision brings its own settings
    (`apps/console/apphosting.yaml`), so its grants and `runCallers` would
-   come back at cutover and admission would reopen.
+   come back at cutover and admission would reopen. Repeat the check of
+   step 5 immediately before the cutover, and after it confirm that the
+   earlier Console lists the catalog. If it does not, a row gained a field
+   in between: the earlier Console cannot repair that by refreshing, because
+   it reads the catalog first, so clear that row's `definition` as in
+   step 5. Release the hold on merges only then.
 8. Lift the fence with a further deploy of that version: restore the grants,
    and restore `runCallers` on each profile that had it, since the earlier
    Console lets a dispatched run invoke an agent only through that flag. If

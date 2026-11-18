@@ -27,9 +27,11 @@ export const agentManifestSchema = z.strictObject({
   /** The harness that runs the agent's turn: embedded OpenClaw (the
    * default) or an ACP harness the claw runner image carries. */
   harness: agentHarnessSchema.optional(),
-  /** The harness's ACP session mode the turn runs in: the agent's permission
-   * policy as the harness itself enforces it (Codex `read-only`, Claude Code
-   * `plan`). Omitted means the mode the launcher runs that harness in: the
+  /** The harness's ACP session mode the turn runs in. What it controls is
+   * the harness's own: the permission policy the harness itself enforces
+   * for Codex (`read-only`) and Claude Code (`plan`), a thinking level for
+   * OpenClaw, whose tool permissions come from its config and exec
+   * approvals. Omitted means the mode the launcher runs that harness in: the
    * harness's own default for OpenClaw and Claude Code, `workspace-write`
    * for Codex. */
   mode: agentModeSchema.optional(),

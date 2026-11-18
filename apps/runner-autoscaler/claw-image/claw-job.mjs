@@ -748,7 +748,12 @@ async function harnessTurn({
     await finish();
     throw error;
   }
-  const refused = await finish(finished);
+  // A harness with a record of its own of the turn may also say which part
+  // of what it streamed is the answer.
+  const verdict = await finish(finished);
+  const refused = typeof verdict === 'string' ? verdict : verdict?.refused;
+  if (typeof verdict?.final === 'string')
+    finished = { ...finished, final: verdict.final };
   // The harness runs as the launcher's UID, so nothing can stop an agent
   // with a write-capable tool from rewriting the settings that bound it.
   // What the launcher can do is refuse a result when it sees that: every

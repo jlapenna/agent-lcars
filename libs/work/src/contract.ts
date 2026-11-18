@@ -1263,8 +1263,10 @@ export const AGENT_HARNESSES = ['openclaw', 'claude', 'codex'] as const;
 export const agentHarnessSchema = z.enum(AGENT_HARNESSES);
 export type AgentHarness = z.infer<typeof agentHarnessSchema>;
 
-/** A harness's ACP session mode, the agent's reviewed permission policy
- * (for example Codex's `read-only`). */
+/** A harness's ACP session mode. What it controls is the harness's own:
+ * the permission policy for Codex (`read-only`) and Claude Code (`plan`), a
+ * thinking level for OpenClaw, whose tool permissions come from its config
+ * and exec approvals. */
 export const agentModeSchema = z.string().regex(/^[A-Za-z][\w-]{0,63}$/u);
 
 const agentBriefFileSchema = z.strictObject({

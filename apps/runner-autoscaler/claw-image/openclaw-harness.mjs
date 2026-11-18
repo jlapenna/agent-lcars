@@ -386,8 +386,7 @@ export function resolveCredentials(
   const defined = configEnvironment(config.env);
   const env = { ...processEnv };
   for (const [name, raw] of defined)
-    if (!holds(processEnv, name))
-      env[name] = expandTemplates(raw, processEnv, { whole: true });
+    if (!holds(processEnv, name)) env[name] = expandTemplates(raw, processEnv);
   const set = (name) => holds(env, name);
   const isReference = (value) =>
     value.source === 'env' &&
@@ -459,8 +458,7 @@ export function resolveCredentials(
   // the variable missing, exactly as it would have with the variable there.
   const resolves = (name) => withheld.has(name) && set(name);
   const resolve = (value) => {
-    if (typeof value === 'string')
-      return expandTemplates(value, env, { only: resolves, encode: literal });
+    if (typeof value === 'string') return withCredentials(value, env, resolves);
     if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
     if (isReference(value) && allowed(value) && resolves(value.id))
@@ -533,40 +531,65 @@ function withoutVariables(environment, names) {
   return kept;
 }
 
-// Substitutes the templates in a config string as OpenClaw does: a variable
-// that holds something replaces its token, an empty or missing one gives way
-// to the token's default, and with no default the token stays as written.
-// - `only` limits substitution to some names and leaves every other token,
-//   default included, for OpenClaw.
-// - `encode` is applied to each value written in.
-// - `whole` gives the string OpenClaw ends up with, not one it will still
-//   load: an escaped token becomes the text it stands for.
-function expandTemplates(
-  text,
-  env,
-  { only = () => true, encode = (value) => value, whole = false } = {},
-) {
-  let result = '';
+// What OpenClaw makes of a config string, in pieces. It substitutes in one
+// pass over the string as written: a variable that holds something replaces
+// its token, an empty or missing one gives way to the token's default, an
+// escaped token becomes the text it stands for, and a token with neither a
+// value nor a default stays as written, for whoever loads the string next
+// (`live`).
+function templatePieces(text, env) {
+  const pieces = [];
   let end = 0;
   for (const token of envTemplateTokens(text)) {
-    let written;
-    if (token.escaped) {
-      if (!whole) continue;
-      written = text.slice(token.start + 1, token.end + 1);
-    } else {
-      if (!only(token.name)) continue;
-      const value = env[token.name];
-      if (typeof value === 'string' && value !== '') written = encode(value);
-      else if (token.fallback !== undefined) written = token.fallback;
-      else continue;
-    }
-    result += text.slice(end, token.start) + written;
+    pieces.push({ text: text.slice(end, token.start) });
     end = token.end + 1;
+    const written = text.slice(token.start, end);
+    const value = env[token.name];
+    if (token.escaped) pieces.push({ text: written.slice(1) });
+    else if (typeof value === 'string' && value !== '')
+      pieces.push({ text: value });
+    else if (token.fallback !== undefined)
+      pieces.push({ text: token.fallback });
+    else pieces.push({ text: written, live: true });
   }
-  return result + text.slice(end);
+  pieces.push({ text: text.slice(end) });
+  return pieces;
 }
 
-// A value as it has to be written into the launch config to reach OpenClaw
+// The string OpenClaw ends up with.
+function expandTemplates(text, env) {
+  return templatePieces(text, env)
+    .map((piece) => piece.text)
+    .join('');
+}
+
+// A config string that names a credential, as it has to be written into the
+// launch config for OpenClaw to end up with what it would have made of the
+// original. OpenClaw substitutes again when it loads the launch config, and
+// a value written in can join the text around it into a token that was not
+// there (a key ending in `$` before `{NAME}`), or turn the next token into
+// an escape. So the whole string is resolved here, as OpenClaw would have
+// in its one pass, and written as literal text. A token only OpenClaw can
+// resolve stays one, unless the text before it ends in `$`, which nothing
+// can express: there it stays the text it is, as it would have been shown.
+// A string that names no credential is left to OpenClaw untouched.
+function withCredentials(text, env, isCredential) {
+  const names = [...envTemplateTokens(text)].some(
+    (token) => !token.escaped && isCredential(token.name),
+  );
+  if (!names) return text;
+  let result = '';
+  let run = '';
+  for (const piece of templatePieces(text, env)) {
+    if (piece.live && !run.endsWith('$')) {
+      result += literal(run) + piece.text;
+      run = '';
+    } else run += piece.text;
+  }
+  return result + literal(run);
+}
+
+// Text as it has to be written into the launch config to reach OpenClaw
 // unchanged. OpenClaw substitutes templates in every config string it loads,
 // including the ones the launcher has already resolved, so a credential that
 // happens to contain `${NAME}` would be rewritten on the way in. A `$` in
@@ -934,11 +957,15 @@ export function startGateway(openclaw, { env, cwd, port, signal }) {
 // fallback answered is still `done`. The record is asked of the Gateway
 // itself, not read from its log, which a definition's redaction settings
 // can rewrite. OpenClaw's text for the failure is never repeated.
+// Resolves with `{ refused }`, or with `{ runId }` for a run that finished.
 export async function turnOutcome(openclaw, { env, sessionId, signal }) {
-  const unreported = "OpenClaw did not report the turn's outcome";
+  const unreported = {
+    refused: "OpenClaw did not report the turn's outcome",
+  };
   if (typeof sessionId !== 'string' || sessionId === '') return unreported;
   for (let attempt = 1; ; attempt++) {
     let status;
+    let runId;
     try {
       // The CLI finds this Job's Gateway and its token in the launch config.
       const listed = await run(
@@ -956,19 +983,71 @@ export async function turnOutcome(openclaw, { env, sessionId, signal }) {
       );
       if (session === undefined) return unreported;
       status = session.status;
+      runId = session.lastRunId;
     } catch {
       return unreported;
     }
-    if (status === 'done') return undefined;
+    if (status === 'done') return { runId };
     // Still being recorded: the ACP server answers as the run ends.
     if (
       (status !== 'running' && status !== 'queued') ||
       attempt === OUTCOME_ATTEMPTS
     )
-      return 'OpenClaw reported the turn as failed';
+      return { refused: 'OpenClaw reported the turn as failed' };
     await new Promise((done) => setTimeout(done, OUTCOME_RETRY_MS));
   }
 }
+
+// The Gateway's record of the run's final reply (`agent.wait`), or undefined
+// when it has none to give. It is the reply alone, without what the agent
+// said on the way, but capped in length, so it locates the answer and is
+// not itself the report.
+async function terminalReply(openclaw, { env, runId, signal }) {
+  if (typeof runId !== 'string' || runId === '') return undefined;
+  try {
+    const waited = await run(
+      openclaw,
+      [
+        'gateway',
+        'call',
+        'agent.wait',
+        '--json',
+        '--params',
+        JSON.stringify({ runId, timeoutMs: 0 }),
+        '--timeout',
+        '20000',
+      ],
+      { env, timeoutMs: OUTCOME_CALL_MS, signal },
+    );
+    if (waited.code !== 0 || waited.timedOut) return undefined;
+    const reply = JSON.parse(waited.stdout).terminalReply;
+    return reply?.disposition === 'visible' && typeof reply.text === 'string'
+      ? reply.text
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The answer within what OpenClaw's ACP server streamed for the turn.
+ * It sends the agent's commentary and its final answer as the same kind of
+ * message text with nothing between them, so a turn without a tool call
+ * streams both as one message. The Gateway records the final reply by
+ * itself: where the stream ends with it, the answer is that ending. A long
+ * reply is recorded cut short with a marker; then the answer begins where
+ * the recorded part first appears. A reply that cannot be placed leaves the
+ * stream as it is. */
+export function answerText(streamed, reply) {
+  if (typeof reply !== 'string' || reply === '') return streamed;
+  const body = streamed.trimEnd();
+  if (body.endsWith(reply)) return streamed.slice(body.length - reply.length);
+  const head = reply.endsWith(REPLY_CUT_MARKER)
+    ? reply.slice(0, -REPLY_CUT_MARKER.length)
+    : '';
+  const at = head === '' ? -1 : streamed.indexOf(head);
+  return at > 0 ? streamed.slice(at) : streamed;
+}
+const REPLY_CUT_MARKER = '…';
 
 /** The `openclaw` harness: OpenClaw's ACP server, bridged to a Gateway this
  * Job owns. */
@@ -1014,18 +1093,29 @@ export async function openclawHarness({
     // then stopped whatever the answer. A turn that already failed or was
     // cancelled needs no second opinion.
     finish: async (turn) => {
-      let refused;
+      let outcome = {};
+      let reply;
       try {
-        if (turn && !turn.aborted && !turn.error)
-          refused = await turnOutcome(openclaw, {
+        if (turn && !turn.aborted && !turn.error) {
+          outcome = await turnOutcome(openclaw, {
             env: turnEnv,
             sessionId: turn.sessionId,
             signal,
           });
+          if (outcome.refused === undefined)
+            reply = await terminalReply(openclaw, {
+              env: turnEnv,
+              runId: outcome.runId,
+              signal,
+            });
+        }
       } finally {
         await gateway.stop();
       }
-      return refused ?? verify();
+      return {
+        refused: outcome.refused ?? (await verify()),
+        ...(turn ? { final: answerText(turn.final, reply) } : {}),
+      };
     },
   };
 }

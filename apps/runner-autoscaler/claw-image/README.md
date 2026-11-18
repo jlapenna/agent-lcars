@@ -166,7 +166,15 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    escape (`$${…}`) wherever it contains a template of its own: a key
    arrives as the key it is. A provider that is not declared in the config and
    relied on the environment no longer finds its key, and a custom key named
-   only outside those places stays in the environment. A SecretRef is
+   only outside those places stays in the environment. That includes a
+   credential one of OpenClaw's own tools or plugins reads only from the
+   environment (`GEMINI_API_KEY` for Google web search, with no
+   `models.providers.google` entry): it is on the pinned OpenClaw's list, so
+   it is withheld, and nothing in the config asks for it. Such a definition
+   names it as an `env` SecretRef at the tool's own key setting. A string
+   that names a credential is resolved whole, as OpenClaw would have in its
+   one pass, so text around the value cannot join it into a template
+   (`withCredentials`). A SecretRef is
    resolved only as OpenClaw would resolve it: through an `env` provider the
    config declares, within that provider's `allowlist`; any other reference
    is left for OpenClaw to refuse. The config's own `env` counts as
@@ -200,8 +208,8 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    is the harness. The prompt carries `_meta.timeoutMs` of 600 000, the turn
    budget `agent exec` gave; without it the turn would run under the
    definition's `agents.defaults.timeoutSeconds` or the Gateway's default.
-8. `openclaw gateway call sessions.list`, then the Gateway's process group
-   is stopped.
+8. `openclaw gateway call sessions.list` and `agent.wait`, then the
+   Gateway's process group is stopped.
 
 OpenClaw's ACP server ends a turn the Gateway failed like any other
 (`end_turn`), even after part of an answer has streamed. So after the turn,
@@ -214,9 +222,22 @@ or has no such session. A model attempt that failed before a fallback
 answered leaves the run `done`. OpenClaw's text for the failure is not
 repeated.
 
+OpenClaw's ACP server also sends what the agent says on the way and its
+final answer as the same message text, with no boundary between them when no
+tool ran in between, so the stream alone would report `Checking files
+nowDone.` for the answer `Done.`. The Gateway records the run's final reply
+by itself (`agent.wait` for the session's `lastRunId`, `terminalReply`), cut
+to 4,096 characters. The launcher uses it to find the answer in what was
+streamed (`answerText`): the ending of the stream that equals the reply, or,
+for a reply recorded cut short, everything from where the recorded part
+first appears. The report is still the streamed text, never the recorded
+one. Where the reply cannot be placed, or the Gateway has none, the stream
+is reported as it is.
+
 Nothing the launcher decides is read from the Gateway's log: a definition's
 `logging` and `diagnostics` settings, including redaction, stay as written
-and can change every line of it. A new OpenClaw version needs `/readyz`, the
+and can change every line of it. A new OpenClaw version needs `/readyz`,
+`agent.wait`'s `terminalReply`, the
 `sessions.list` row (`key`, `status`) and the session key's form checked.
 
 After the turn the launcher also refuses the result if the Gateway's config
