@@ -38,6 +38,24 @@ describe('resolveSessionId', () => {
     });
   });
 
+  it("falls back to OpenCode 2's native OPENCODE_SESSION_ID last", () => {
+    expect(
+      resolveSessionId({
+        OPENCODE_SESSION_ID: 'ses_e10977383ffeUoThXx1Ez5JWO3',
+      }),
+    ).toEqual({
+      ok: true,
+      sessionId: 'ses_e10977383ffeUoThXx1Ez5JWO3',
+      source: 'OPENCODE_SESSION_ID',
+    });
+    expect(
+      resolveSessionId({
+        LCARS_SESSION_ID: 'lcars-1',
+        OPENCODE_SESSION_ID: 'ses_native',
+      }),
+    ).toEqual({ ok: true, sessionId: 'lcars-1', source: 'LCARS_SESSION_ID' });
+  });
+
   it.each([
     ['LCARS_SESSION_ID', { LCARS_SESSION_ID: '../escape' }],
     ['CLAUDE_CODE_SESSION_ID', { CLAUDE_CODE_SESSION_ID: '-unsafe' }],
