@@ -33,10 +33,10 @@ The current decision description is the primary reading aid in an Inbox detail
 pane. A stored action summary is available in a collapsed **Earlier handoff ·
 AI summary** disclosure, explicitly identified as historical:
 
-| Reading aid                                  | Source and lifetime                                                                                                                              | Display                                                                                  |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Decision description                         | Current bounded issue/comment or native handoff context and decision state; durable `inbox-summary` Work, re-admitted when that input changes    | Inbox row and detail, including older parks, label-only decisions, and completed reports |
-| Stored action summary (`humanNeededActions`) | The final handoff of one authenticated parked run; legacy inline actions on the run, else its `handoff-summary` Work (same run and message hash) | Current parked-run detail and that round's task history                                  |
+| Reading aid                                  | Source and lifetime                                                                                                                                                                                    | Display                                                                                  |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Decision description                         | Current bounded issue/comment or native handoff context and decision state; durable `inbox-summary` Work, admitted under the conditions in [Decision Inbox descriptions](#decision-inbox-descriptions) | Inbox row and detail, including older parks, label-only decisions, and completed reports |
+| Stored action summary (`humanNeededActions`) | The final handoff of one authenticated parked run; legacy inline actions on the run, else its `handoff-summary` Work (same run and message hash)                                                       | Current parked-run detail and that round's task history                                  |
 
 The description explains the current decision (or summarizes a completed
 report). Stored actions preserve what the agent asked at the time it parked;
@@ -106,9 +106,10 @@ commands and the resume trigger, and that the full handoff remains available.
 
 ## Decision Inbox descriptions
 
-The Inbox also generates a one- or two-sentence description for each GitHub
-and native item when it is displayed, including older parks and label-only
-GitHub decisions. The description leads with the decision, approval, missing
+When the summary settings are configured, the Inbox also generates a one- or
+two-sentence description for each displayed GitHub and native item, including
+older parks and label-only GitHub decisions. While an item is selected, only
+that item gets a description. The description leads with the decision, approval, missing
 information or intervention needed. Finished reports get a reading description,
 without inventing a decision. Rows and detail panes show this description;
 the original issue, comment or handoff stays available below it.
@@ -120,13 +121,17 @@ No tools or actions are offered to the model. The result is plain text, capped
 at 600 characters, and is advisory rather than authorization.
 
 Displaying an item admits one durable `inbox-summary` Work item per source
-(`admitInboxSummary` in `apps/console/src/lib/inbox-summary-work.ts`). Its
+(`admitInboxSummary` in `apps/console/src/lib/inbox-summary-work.ts`). With an
+item selected, the desktop queue still lists other rows, but only the selected
+item's Work is admitted. Without the summary settings, the summary reader
+(`getInboxDecisionSummary` in `apps/console/src/lib/inbox-decision-summary.ts`)
+returns before admitting Work. The Work's
 revision key hashes the bounded context and the decision's observation times,
-so an unchanged source is a duplicate request and changed comments, handoffs or
-decision state admit a new revision. Only the latest finished revision whose
+so an unchanged source is a duplicate request. Changed comments, handoffs or
+decision state become the desired revision only when at least one source
+observation advances and none is older than the recorded one. Only the latest finished revision whose
 context matches is shown. When work is pending, the request's `after` callback
-drains the outbox and runs summary attempts once the response is sent
-(`getInboxDecisionSummary` in `apps/console/src/lib/inbox-decision-summary.ts`);
+drains the outbox and runs summary attempts once the response is sent;
 the maintenance tick recovers any that callback did not finish.
 
 Summary Work uses the same durable claims, token fencing and completion

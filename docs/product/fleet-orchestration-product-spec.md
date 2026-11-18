@@ -624,16 +624,10 @@ executor is working an issue; a human assignee owns it regardless.
   runs admitted under `svc:github-pr-review` automatically carry the
   cross-model `fallbackPipelines` order of FL-IN-10, with the authoring model
   last. A provider-limited repository Goose recipe re-runs under its operator
-  profile's `fallbackProfile` (#3289). If that run also stops on a provider
-  limit, a second fallback runs only when the fallback profile configures an
-  eligible fallback of its own and the occurrence records its chain history
-  (`fallbackProfiles`). A fallback persisted without chain history settles
-  on its provider limit without launching its configured successor. A chain
-  uses at most two distinct fallback profiles (`MAX_FALLBACKS`) and never
-  revisits a profile (`reserveFallback` in `lib/repository-jobs.ts`;
-  regression tests chain Codex → Claude → Antigravity and stop a
-  history-less Claude fallback). Production fallback evidence is
-  recorded under R7 in §12.
+  profile's `fallbackProfile` (#3289);
+  [Repository-owned jobs](../repository-jobs.md#provider-limit-fallback)
+  owns the chain limit, persisted chain history and legacy behavior.
+  Production fallback evidence is recorded under R7 in §12.
   - **Provider wait for PR reviews.** When every authorized provider of a
     GitHub PR review (`mode: 'review'`, not native Work) has stopped on its
     limit or capacity, the review waits instead of failing (#3300): it mints
