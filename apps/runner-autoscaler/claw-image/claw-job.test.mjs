@@ -133,10 +133,16 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     record({ prompt: message.params.prompt, ...(message.params._meta ? { promptMeta: message.params._meta } : {}) });
     prompt = message.id;
     if (behaviour.hang) return;
+    if (behaviour.holdsOutput) {
+      // A child of the harness that keeps the harness's stderr open after the
+      // harness itself is gone.
+      const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: ['ignore', 'ignore', 'inherit'] });
+      record({ lingering: child.pid });
+    }
     if (behaviour.exit) process.exit(7);
     // The Gateway's own record that the turn failed, which OpenClaw's ACP
     // server never passes on.
-    fs.writeFileSync(path.join(__dirname, 'gateway-session.json'), JSON.stringify({ key: 'agent:main:acp-bridge:' + (behaviour.sessionKey ?? 's1'), status: behaviour.gatewayError ? 'failed' : behaviour.sessionStatus ?? 'done', lastRunId: 'r1', reply: behaviour.terminalReply, lastRunError: 'LLM request timed out for sk-secret' }));
+    fs.writeFileSync(path.join(__dirname, 'gateway-session.json'), JSON.stringify({ key: 'agent:main:acp-bridge:' + (behaviour.sessionKey ?? 's1'), status: behaviour.gatewayError ? 'failed' : behaviour.sessionStatus ?? 'done', lastRunId: 'r1', reply: behaviour.terminalReply, disposition: behaviour.terminalDisposition, lastRunError: 'LLM request timed out for sk-secret' }));
     if (behaviour.tamperConfig) {
       const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
       config.tools = { profile: 'coding' };
@@ -250,10 +256,10 @@ if (sub === 'gateway call') {
     const { runId } = JSON.parse(args[args.indexOf('--params') + 1]);
     const session = sessions.find((row) => row.lastRunId === runId);
     if (!session || behaviour.FAKE_WAIT_EXIT) process.exit(1);
-    console.log(JSON.stringify({ runId, status: 'ok', ...(session.reply === undefined ? {} : { terminalReply: { disposition: 'visible', text: session.reply } }) }));
+    console.log(JSON.stringify({ runId, status: 'ok', ...(session.disposition ? { terminalReply: { disposition: session.disposition } } : session.reply === undefined ? {} : { terminalReply: { disposition: 'visible', text: session.reply } }) }));
     process.exit(0);
   }
-  console.log(JSON.stringify({ count: sessions.length, sessions: [{ key: 'agent:main:main', status: 'failed', lastRunId: 'r0' }, ...sessions.map(({ reply, ...row }) => row)] }));
+  console.log(JSON.stringify({ count: sessions.length, sessions: [{ key: 'agent:main:main', status: 'failed', lastRunId: 'r0' }, ...sessions.map(({ reply, disposition, ...row }) => row)] }));
   process.exit(0);
 }
 if (args[0] === 'acp') { require(path.join(__dirname, 'harness.cjs')); return; }
@@ -416,6 +422,7 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     sandbox: { mode: 'off' },
     skipBootstrap: true,
     workspace,
+    cwd: workspace,
   });
   assert.equal(config.agents.entries.main.workspace, workspace);
   assert.equal(config.gateway.mode, 'local');
@@ -827,6 +834,16 @@ test("OpenClaw's commentary is not part of the report", async () => {
     await report({ steps, terminalReply: 'Done.' }, { FAKE_WAIT_EXIT: '1' }),
     { outcome: 'report', message: 'Checking files nowDone.' },
   );
+  // A run the Gateway recorded as ending silent, or with no reply, has no
+  // answer: what the agent said on the way is not one.
+  for (const terminalDisposition of ['silent', 'empty'])
+    assert.deepEqual(
+      await report({
+        steps: [{ say: 'Checking files now' }],
+        terminalDisposition,
+      }),
+      { outcome: 'runner-failed', message: 'Claw turn failed: empty result.' },
+    );
 });
 
 test('answerText finds the answer in what OpenClaw streamed', () => {
@@ -877,10 +894,15 @@ test('a config string that names a credential is resolved whole', () => {
   assert.equal(header('k$', `${KEY}${template('SUFFIX')}`), 'k$modified');
   // A key ending in `$` before literal braces would become a template.
   assert.equal(header('k$', `${KEY}{SUFFIX}`), `k$${template('SUFFIX')}`);
-  // A variable only OpenClaw's environment holds stays its to resolve.
+  // A variable only OpenClaw's environment holds stays its to resolve,
+  // default included: the workspace's `.env` may still set it.
   assert.equal(
     header('k', `${KEY}-${template('ONLY_IN_GATEWAY')}`),
     `k-${template('ONLY_IN_GATEWAY')}`,
+  );
+  assert.equal(
+    header('k', `${KEY}:${template('REPORT_REGION:-dev')}`),
+    `k:${template('REPORT_REGION:-dev')}`,
   );
   // An escaped template stays the text it stands for, and every variable a
   // provider's header names counts as a credential, so it is written in.
@@ -1354,6 +1376,7 @@ test('launchConfig runs the reviewed config under headless defaults and this run
       defaults: {
         sandbox: { mode: 'off' },
         workspace: '/work/workspace',
+        cwd: '/work/workspace',
         skipBootstrap: true,
       },
     },
@@ -1369,10 +1392,15 @@ test('launchConfig runs the reviewed config under headless defaults and this run
   const launched = launchConfig(
     {
       agents: {
-        defaults: { skipBootstrap: false, model: { primary: 'm' } },
+        defaults: {
+          skipBootstrap: false,
+          model: { primary: 'm' },
+          cwd: '/tmp',
+        },
         entries: {
           main: {
             workspace: '/repo/workspace',
+            cwd: '/tmp',
             agentDir: '/repo/agent',
             runtime: { type: 'acp', acp: { agent: 'codex', cwd: '/repo' } },
           },
@@ -1399,16 +1427,19 @@ test('launchConfig runs the reviewed config under headless defaults and this run
     fs: { workspaceOnly: false },
     exec: { mode: 'full' },
   });
-  // Every agent works in this run's workspace and keeps its state here.
+  // Every agent works in this run's workspace, starts its commands there
+  // whatever directory the source names, and keeps its state here.
   assert.deepEqual(launched.agents.defaults, {
     sandbox: { mode: 'off' },
     skipBootstrap: true,
     model: { primary: 'm' },
+    cwd: '/work/workspace',
     workspace: '/work/workspace',
   });
   assert.deepEqual(launched.agents.entries, {
     main: {
       workspace: '/work/workspace',
+      cwd: '/work/workspace',
       runtime: { type: 'acp', acp: { agent: 'codex' } },
     },
     helper: { workspace: '/work/workspace' },
@@ -1821,6 +1852,22 @@ test('ACP tool calls resolve only through a later completed call', async () => {
     ]),
     unresolved,
   );
+});
+
+test('a harness that exits is reported at once, whatever holds its output open', async () => {
+  // The harness dies mid-turn while a child of its own keeps its stderr
+  // open for a minute. The attempt is not kept waiting for that child.
+  const { env, deps, harnessLog } = await harnessFixture({
+    holdsOutput: true,
+    exit: true,
+  });
+  const started = Date.now();
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: harness exited 7 mid-turn.',
+  });
+  assert.ok(Date.now() - started < 10_000);
+  gone((await harnessLog()).find((entry) => entry.lingering).lingering);
 });
 
 test('nothing of the harness runs on once its turn has resolved', async () => {

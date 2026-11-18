@@ -96,7 +96,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    only what its harness does without asking.
 5. Once the harness's process has exited, whatever is left of its process
    group is stopped and waited for (`endGroup`), so nothing of the harness
-   runs while the launcher checks settings and settles. It settles from the
+   runs while the launcher checks settings and settles. That starts at the
+   process's exit, after a moment for what it had already written to be
+   read, not when its output closes: a child of its own that holds the
+   output open would otherwise keep the attempt waiting. It settles from the
    session's updates: `report` only when the turn ended
    with `end_turn`, the agent's last message after its last tool call is not
    empty and no tool call is unresolved. A call that failed or never finished
@@ -144,7 +147,11 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    confined to the workspace, the `coding` tool profile, no shell
    environment import, unless the source says otherwise), and over it what
    only this Job knows. Every agent works in `/work/workspace`, replacing any
-   path the source names, and is not bootstrapped. The Gateway block is the
+   path the source names, and is not bootstrapped. Its commands start there
+   too: the native `cwd` setting is pinned to the workspace in the defaults
+   and in every entry that names one, as `agent exec --cwd` overrode it.
+   OpenClaw's ACP server does not pass the session's directory on to the
+   Gateway, so the config is what decides. The Gateway block is the
    Job's alone: loopback, a random token, no Tailscale, config reload off. A
    definition cannot open the Gateway or drop its token. Nobody is authorized
    to give the Gateway commands (`commands.allowFrom` is empty), so a `/word`
@@ -172,9 +179,14 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    `models.providers.google` entry): it is on the pinned OpenClaw's list, so
    it is withheld, and nothing in the config asks for it. Such a definition
    names it as an `env` SecretRef at the tool's own key setting. A string
-   that names a credential is resolved whole, as OpenClaw would have in its
-   one pass, so text around the value cannot join it into a template
-   (`withCredentials`). A SecretRef is
+   that names a credential is taken apart as OpenClaw would in its one pass
+   (`withCredentials`): the credentials are written in and become literal
+   text with what surrounds them, so a value cannot join that text into a
+   template. Every other template in the string stays OpenClaw's to resolve
+   when it loads the launch config, default included, because a variable
+   may come from the workspace's `.env`, which the launcher does not read.
+   The one exception is a template directly after text ending in `$`, which
+   nothing can express: that one is resolved by the launcher. A SecretRef is
    resolved only as OpenClaw would resolve it: through an `env` provider the
    config declares, within that provider's `allowlist`; any other reference
    is left for OpenClaw to refuse. The config's own `env` counts as
@@ -231,8 +243,10 @@ to 4,096 characters. The launcher uses it to find the answer in what was
 streamed (`answerText`): the ending of the stream that equals the reply, or,
 for a reply recorded cut short, everything from where the recorded part
 first appears. The report is still the streamed text, never the recorded
-one. Where the reply cannot be placed, or the Gateway has none, the stream
-is reported as it is.
+one. Where the reply cannot be placed, or the Gateway has no record of one,
+the stream is reported as it is. A run the Gateway recorded as ending
+`silent` or `empty` has no answer, whatever the agent said on the way, and
+fails as an empty result.
 
 Nothing the launcher decides is read from the Gateway's log: a definition's
 `logging` and `diagnostics` settings, including redaction, stay as written

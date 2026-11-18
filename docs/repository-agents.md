@@ -248,8 +248,14 @@ which holds only a model key and runs only `openclaw` agents. An OpenClaw
 agent that needs no other credential therefore runs from a repository PR
 alone.
 
-Agents that share a profile share its credentials. An agent that must not see
-another's credentials gets its own profile.
+Credentials belong to the runtime, not the profile: every Job on a runtime
+mounts that runtime's Secret, and several profiles can name one runtime. So
+agents that share a runtime share its credentials, whatever their profiles
+say. Adding a `claude` or `codex` login to a runtime gives it to every agent
+that runs there, OpenClaw agents included. An agent that must not see
+another's credentials, or a harness login that only some agents may use,
+gets its own runtime with its own Secret items, and a profile that names
+that runtime.
 
 ## Admission and delivery
 

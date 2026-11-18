@@ -129,6 +129,9 @@ function sessionFailure(meta) {
 }
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
+// How long what an exited harness had already written gets to be read
+// before whatever still holds its output open is stopped.
+const ACP_DRAIN_MS = 100;
 
 // Periodic heartbeats are best effort: the lease and its recovery belong to
 // LCARS, and only the startup acknowledgement gates provider work.
@@ -534,7 +537,19 @@ export function acpTurn(
       signal?.removeEventListener('abort', onAbort);
       reject(error);
     });
+    // The harness's own process can be gone while a child of its own holds
+    // its output open, and `close` does not come until that child lets go.
+    // What the harness had written is read first; then what is left of its
+    // group is ended, and `close` follows.
+    let drained;
+    child.once('exit', () => {
+      drained = setTimeout(
+        () => void endGroup(child, ACP_EXIT_GRACE_MS),
+        ACP_DRAIN_MS,
+      );
+    });
     child.on('close', (code) => {
+      clearTimeout(drained);
       signal?.removeEventListener('abort', onAbort);
       for (const waiter of pending.values())
         waiter.refuse(new ClawFailure(`harness exited ${code} mid-turn`));

@@ -568,25 +568,40 @@ function expandTemplates(text, env) {
 // original. OpenClaw substitutes again when it loads the launch config, and
 // a value written in can join the text around it into a token that was not
 // there (a key ending in `$` before `{NAME}`), or turn the next token into
-// an escape. So the whole string is resolved here, as OpenClaw would have
-// in its one pass, and written as literal text. A token only OpenClaw can
-// resolve stays one, unless the text before it ends in `$`, which nothing
-// can express: there it stays the text it is, as it would have been shown.
+// an escape. So the string is taken apart as OpenClaw would in its one
+// pass: the credentials are written in, and they, the text between the
+// templates and the escaped ones become literal text. Every other template
+// stays OpenClaw's to resolve when it loads the launch config, default
+// included, with what it has by then: a variable from the workspace's
+// `.env` is not known here. The one exception is a template right after
+// text ending in `$`, which would read as an escape and which nothing can
+// express: that one is resolved here, with what the launcher knows.
 // A string that names no credential is left to OpenClaw untouched.
 function withCredentials(text, env, isCredential) {
-  const names = [...envTemplateTokens(text)].some(
-    (token) => !token.escaped && isCredential(token.name),
-  );
-  if (!names) return text;
+  const tokens = [...envTemplateTokens(text)];
+  if (!tokens.some((token) => !token.escaped && isCredential(token.name)))
+    return text;
   let result = '';
   let run = '';
-  for (const piece of templatePieces(text, env)) {
-    if (piece.live && !run.endsWith('$')) {
-      result += literal(run) + piece.text;
+  let end = 0;
+  for (const token of tokens) {
+    run += text.slice(end, token.start);
+    end = token.end + 1;
+    const written = text.slice(token.start, end);
+    if (token.escaped) run += written.slice(1);
+    else if (isCredential(token.name)) run += env[token.name];
+    else if (!run.endsWith('$')) {
+      result += literal(run) + written;
       run = '';
-    } else run += piece.text;
+    } else {
+      const value = env[token.name];
+      run +=
+        typeof value === 'string' && value !== ''
+          ? value
+          : (token.fallback ?? written);
+    }
   }
-  return result + literal(run);
+  return result + literal(run + text.slice(end));
 }
 
 // Text as it has to be written into the launch config to reach OpenClaw
@@ -689,6 +704,9 @@ export function launchConfig(config, { workspace, port, token }) {
             {
               ...rest,
               workspace,
+              // The directory a run's commands start in, which `agent exec`
+              // set to the workspace whatever the config said.
+              ...('cwd' in rest ? { cwd: workspace } : {}),
               ...(runtime
                 ? { runtime: runtime.acp ? { ...runtime, acp } : runtime }
                 : {}),
@@ -702,7 +720,7 @@ export function launchConfig(config, { workspace, port, token }) {
   if (pinned.env !== undefined)
     pinned.env = withoutVariables(pinned.env, GATEWAY_VARIABLES);
   return mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
-    agents: { defaults: { workspace, skipBootstrap: true } },
+    agents: { defaults: { workspace, cwd: workspace, skipBootstrap: true } },
     skills: { load: { watch: false } },
     // Nobody is authorized to give the Gateway commands or directives, so a
     // `/word` inside a message stays text for the agent, as it was under
@@ -998,8 +1016,9 @@ export async function turnOutcome(openclaw, { env, sessionId, signal }) {
   }
 }
 
-// The Gateway's record of the run's final reply (`agent.wait`), or undefined
-// when it has none to give. It is the reply alone, without what the agent
+// The Gateway's record of the run's final reply (`agent.wait`): `{ text }`,
+// `{ empty }` for a run it recorded as ending silent or with no reply, or
+// undefined when it has no record to give. It is the reply alone, without what the agent
 // said on the way, but capped in length, so it locates the answer and is
 // not itself the report.
 async function terminalReply(openclaw, { env, runId, signal }) {
@@ -1021,8 +1040,12 @@ async function terminalReply(openclaw, { env, runId, signal }) {
     );
     if (waited.code !== 0 || waited.timedOut) return undefined;
     const reply = JSON.parse(waited.stdout).terminalReply;
-    return reply?.disposition === 'visible' && typeof reply.text === 'string'
-      ? reply.text
+    if (reply?.disposition === 'visible' && typeof reply.text === 'string')
+      return { text: reply.text };
+    // The run finished and the agent gave no final answer: not the same as
+    // having no record to go by.
+    return reply?.disposition === 'silent' || reply?.disposition === 'empty'
+      ? { empty: true }
       : undefined;
   } catch {
     return undefined;
@@ -1114,7 +1137,11 @@ export async function openclawHarness({
       }
       return {
         refused: outcome.refused ?? (await verify()),
-        ...(turn ? { final: answerText(turn.final, reply) } : {}),
+        // A turn the Gateway recorded as ending without a final answer
+        // has none, whatever the agent said on the way.
+        ...(turn
+          ? { final: reply?.empty ? '' : answerText(turn.final, reply?.text) }
+          : {}),
       };
     },
   };
