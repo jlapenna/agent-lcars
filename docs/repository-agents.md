@@ -518,24 +518,8 @@ runtime table, in this order:
 
 To go back, clear the flag first and pin the earlier image after. The Console
 is not involved either way: the brief, the round and the definition are the
-same with or without a harness container.
-
-Pinning a claw image whose launcher predates agent-lcars#3409 is not
-image-only for an agent with a source config, such as `smoke`: that launcher
-refuses any config Doctor would change, so the agent's rounds fail before the
-model runs. A round re-reads its definition at the revision it pinned, so a
-later config commit does not rescue it. In order:
-
-1. Cancel any round of an affected agent you will not wait for; cancelling
-   needs the admitting grant, so do it before the fence.
-2. Fence admission for the affected runtimes, as in step 2 of the Console
-   rollback below (here only the grants and profiles covering those
-   runtimes), then wait until every round of an affected agent is terminal,
-   including queued attempts and their retries.
-3. Commit each affected agent's `config.json` normalized for the rollback
-   image, and wait until the catalog shows those revisions.
-4. Pin the rollback image and wait until the executor runs it.
-5. Restore admission.
+same with or without a harness container. Pinning an image older than
+agent-lcars#3409 or #3411 follows the image-only rollback below.
 
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
@@ -643,24 +627,38 @@ while the newer Console is still running, in this order:
    `runCallers`.
 
 Rolling back only the claw image, with the newer Console still running, is
-safe for agents that name neither a `harness` nor a `mode`: their rounds are
-delivered as before. It is not for the others. The newer Console keeps
-admitting them and delivers their rounds in the shape the earlier launcher
-refuses, so every such attempt fails instead of running on OpenClaw, queued
-rounds included, and a `retry: terminal` round fails for good on its first
-attempt. Before reverting a runtime's image digest:
+safe for an agent that names neither a `harness` nor a `mode` and whose
+`config.json` the earlier launcher accepts. It is not for the others:
 
-1. Stop admission of the agents on that runtime that name a `harness` or a
-   `mode`. Delete those definitions from the default branch, or take the
-   runtime out of every `work.claw.admit` grant and turn `runCallers` off
-   on its profiles, which also stops the other agents there (step 8 above
-   describes what each part reaches). Check in the catalog that those
-   agents show as disabled, or that admission is refused.
-2. Wait until every round that pinned a `harness` or a `mode` on that
-   runtime has reached a terminal state, as in step 3 above: running
-   attempts and the retries they may still get included.
-3. Revert the image digest. Keep those definitions out, or the fence up,
-   for as long as the earlier image is pinned.
+- **Harness or mode.** The newer Console keeps admitting these agents and
+  delivers their rounds in the shape the earlier launcher refuses, so every
+  attempt fails instead of running on OpenClaw, queued rounds included, and
+  a `retry: terminal` round fails for good on its first attempt.
+- **Source configs.** A launcher older than agent-lcars#3409 refuses any
+  config Doctor would change, such as `smoke`'s. A round re-reads its
+  definition at the revision it pinned, so a later config commit does not
+  rescue a round already admitted.
+
+Before reverting a runtime's image digest:
+
+1. Cancel any affected round you will not wait for; cancelling needs the
+   admitting grant, so do it before the fence.
+2. Stop admission of the affected agents on that runtime. Delete their
+   definitions from the default branch, or take the runtime out of every
+   `work.claw.admit` grant and turn `runCallers` off on its profiles, which
+   also stops the other agents there (step 8 above describes what each part
+   reaches). Check in the catalog that those agents show as disabled, or
+   that admission is refused.
+3. Wait until every affected round on that runtime has reached a terminal
+   state, as in step 3 above: running attempts and the retries they may
+   still get included.
+4. For a source-config agent you want back on the earlier image, commit its
+   `config.json` normalized for that image and wait until the catalog shows
+   that revision.
+5. Revert the image digest and wait until the executor runs it. Then restore
+   admission only for the agents the earlier launcher accepts: keep agents
+   that name a `harness` or a `mode`, and source-config agents you did not
+   normalize, deleted or fenced for as long as the earlier image is pinned.
 
 ## Acceptance
 
