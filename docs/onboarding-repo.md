@@ -165,9 +165,10 @@ node tools/fleet-onboard.mjs scaffold --repo OWNER/NAME --target ../NAME \
 ```
 
 `--default-branch` (default `main`) sets the `push` branch filter of the
-generated `validate`, `gitleaks` and `ruleset` workflows and disables their
-`cancel-in-progress` on that ref. The generated `agent-automerge.yml`
-concurrency keys on event and pull-request identity and does not use it.
+generated `validate`, `gitleaks`, `ruleset` and `agent-automerge.yml`
+workflows, and disables `cancel-in-progress` on that ref for `validate`,
+`gitleaks` and `ruleset`. The generated `agent-automerge.yml` concurrency keys
+on event and pull-request identity and does not use it.
 
 ### What the scaffolder generates
 

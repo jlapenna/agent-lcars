@@ -128,12 +128,14 @@ hold it until it can run. Missing opt-in or revoked authority settle without a
 successor, as do exhausted alternatives for native Work and non-review runs.
 
 A GitHub PR review (`mode: review`) whose authorized alternatives are all
-exhausted waits for quota instead of failing (#3300): the decision mints a
+exhausted by quota or capacity failures backs off instead of failing (#3300),
+whether or not a provider reported a reset: the decision mints a
 deferred successor on the round's first provider, with
 `providerFallback.providerWait` recording the attempt and `retryAt`. The wait
 starts at 15 minutes and doubles up to 6 hours, for at most
 `MAX_PROVIDER_WAITS` (7) waits, about 20 hours in all; after that the review
-settles failed. Each wait still requires current authority, the claim fence
+settles failed. Each wait starts a fresh fallback round, so a provider tried
+before the wait can be selected again. Each wait still requires current authority, the claim fence
 still applies the provider's cooldown, and queued-cooldown rerouting can move
 the due run to a free alternative. Sources: `waitForProvider` in
 `libs/orchestrator/src/provider-fallback.ts` and `MAX_PROVIDER_WAITS` in
@@ -191,14 +193,13 @@ ceilings. Rerouting runs in a bounded maintenance batch outside the executor's
 claim deadline; deferred, claimed and unavailable work stays untouched.
 
 Run provenance records the original intent, predecessor, triggering failure
-and attempted providers. Alternatives are tried deterministically without
-cycles, and cross-provider successors drop session/transcript resume artifacts
+and attempted providers. Within one fallback round, alternatives are tried
+deterministically without cycles, and cross-provider successors drop session/transcript resume artifacts
 while retaining the human request and context. Work/task/conversation views
 and outcome delivery identify fresh fallback attempts. A real provider-limit
-journey has completed in production: on 2026-11-10 a review of
-`jlapenna/agent-lcars#3292` went Codex, then Antigravity (`provider-limit`),
-then Claude, which posted the review (FL-IN-10 in the
-[fleet orchestration spec](product/fleet-orchestration-product-spec.md)).
+journey has completed in production; R7 in the
+[fleet orchestration spec](product/fleet-orchestration-product-spec.md#12-gaps-and-roadmap)
+records the run history.
 
 ## Console acknowledgement and maintenance
 
@@ -224,8 +225,9 @@ runs, in order:
    `outboxContinuationNeeded` is a count-based hint: it counts only
    dispatched, reported and failed entries, so a drain that spent claim
    slots on other outcomes (such as a handoff-summary admission) can return
-   `false` with entries left. The next tick drains whatever remains either
-   way.
+   `false` with entries left. Regardless of the flag, later ticks continue
+   draining eligible entries in batches of up to 30; a pending entry whose
+   retry time is still in the future is skipped until that time.
 5. In parallel: one queued summary Work attempt (inbox and handoff summaries),
    repository maintenance (`maintainRepositoryJobs`: job and claw-agent
    catalog refresh plus job schedules), and the job-credential observation.

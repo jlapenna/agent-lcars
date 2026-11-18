@@ -270,11 +270,19 @@ The authenticated `/jobs` screen uses these Work API endpoints:
 - `GET /api/work/v1/jobs/{id}/profiles` lists the execution profiles eligible
   under the caller's Work grant and the job configuration. Listing does not
   check credential grants: a credential-backed profile can still appear after
-  its credential grant is revoked, and invoking it then returns 409.
+  its credential grant is revoked. A fresh invocation of it then fails its
+  credential check and returns 409. While the job is already active, the
+  invocation skips the credential check: the digest-addressed endpoint returns
+  HTTP 200 with a skipped occurrence, and the named endpoint
+  `POST /api/work/v1/jobs/invoke` returns HTTP 200 with `outcome: busy`.
+  Replaying a matching `requestId` can return its existing occurrence.
 
 Both `GET` endpoints require the `work.operator` scope and the `goose`
 pipeline grant; a caller whose grant covers the repository but lacks either
-gets 403.
+gets 403. Repository-bound callers, such as a GitHub Actions OIDC principal,
+can list jobs but cannot use the profiles endpoint: the Work API's
+repository-bound operation allowlist omits it, so they get 403 even with both
+grants and a matching repository.
 
 - `POST /api/work/v1/jobs/refresh` with a managed `repository`.
 - `POST /api/work/v1/jobs/{id}/enable` with the current `digest` and `enabled`:

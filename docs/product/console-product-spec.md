@@ -176,7 +176,10 @@ Shared URL state:
     `app/work/schedules/actions.ts`, `app/work/issues/actions.ts`) call the
     Work router in-process, not over HTTP, and are authorized by the caller's
     resolved Work grant, not by admin status alone. The Work API's REST
-    routes expose the same operations to other callers.
+    routes expose the same router procedures to other callers. The
+    evidence-backed creation action (`createItemWithEvidence`) accepts a
+    screenshot and prepares it before calling Work creation; the REST create
+    operation accepts structured Work input with no screenshot upload.
   - Jobs and credentials have no server actions. `jobs-panel.tsx`,
     `job-detail.tsx`, and `credentials-panel.tsx` call the Work API from the
     browser with the session cookie (`jobsApi` posts to
@@ -322,10 +325,13 @@ the work that has stopped, and the work in flight.
   - Recent outcomes, headed by "N merged · 24h": pull requests merged in the
     last day across the watched repositories (or the page's repository
     scope), counted from GitHub itself (`app/merged-last-day.tsx`,
-    `lib/merged-pulls.ts`). The count streams in after the page and is
-    cached for five minutes. One 5-second deadline covers the whole count
-    across repositories, so a single stalled repository makes the figure
-    unavailable (never zero) even when others answered; it is also
+    `lib/merged-pulls.ts`). The count streams in after the page; its cache
+    revalidates in the background every five minutes. When a request waits
+    for a fresh count, one 5-second deadline covers the whole count across
+    repositories, so a single stalled repository makes the figure
+    unavailable (never zero) even when others answered. With a usable cache
+    entry, the page can show the previous count while a stalled repository
+    delays background revalidation. The figure is also
     unavailable when no repository could be read. `N+` means the count
     finished but is a lower bound: some repository read failed, or a
     repository's 100-PR page may have been truncated inside the window.
@@ -754,9 +760,11 @@ GitHub issues, browse and dispatch tracker sources, and manage recurring work.
   change the Run target without changing the stored projection
   (`lib/issue-sources.ts`). The resolved target is read when the page
   renders: a row that stays mounted through **Refresh issues** can display a
-  new target while Run still submits the one from its initial state, which
-  intake then rejects against the updated routing, so reload the page before
-  using Run after a target change. A row bound to Work uses that Work's
+  new target while Run still holds the one from its initial state. Run is
+  then disabled when that held target has no matching pipeline (such as the
+  empty repository of a previously unrouted row whose selector disappears),
+  or it submits the stale target, which intake then rejects against the
+  updated routing, so reload the page before using Run after a target change. A row bound to Work uses that Work's
   stored target and shows **Open Work →** instead of Run. Run and Refresh issues are server actions
   (`app/work/issues/actions.ts`) that call the Work router in-process
   (FE-AUTH-3); `POST /api/work/v1/issues/dispatch` and `/issues/refresh` expose
