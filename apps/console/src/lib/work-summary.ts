@@ -44,13 +44,17 @@ export async function listWorkSummaries(
   input: ListWorkSummariesInput,
 ): Promise<WorkSummaryPage> {
   const tasks = await store.listTasks(input.limit, input.cursor);
-  const items = await Promise.all(
-    tasks.map(async ({ task }) =>
-      toWorkSummary({
-        task,
-        runs: await store.listRuns(task.task),
-      }),
-    ),
+  // One bounded read of every task's run history instead of one query per
+  // task: at this page's limit the per-task read was ~200 datastore round
+  // trips for a panel that renders a screenful.
+  const runsByTask = await store.listRunsForTasks(
+    tasks.map(({ task }) => task.task),
+  );
+  const items = tasks.map(({ task }) =>
+    toWorkSummary({
+      task,
+      runs: runsByTask.get(taskKey(task.task)) ?? [],
+    }),
   );
 
   const last = tasks[tasks.length - 1];

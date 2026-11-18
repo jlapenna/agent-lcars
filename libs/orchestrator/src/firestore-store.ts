@@ -203,6 +203,38 @@ export class FirestoreStore implements OrchestratorStore {
     return snapshot.exists ? taskDocSchema.parse(snapshot.data()) : undefined;
   }
 
+  /** Firestore batches a `getAll` itself, but the request bound grows with the
+   * ref count, so the console's hundred-task pages are read in chunks of this
+   * size rather than as one oversized document read. */
+  static readonly #getAllSize = 100;
+
+  async readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>> {
+    const entries = [
+      ...new Map(ids.map((id) => [taskKey(id), this.#taskRef(id)])).entries(),
+    ];
+    const chunked: [string, DocumentReference][][] = [];
+    for (
+      let offset = 0;
+      offset < entries.length;
+      offset += FirestoreStore.#getAllSize
+    )
+      chunked.push(entries.slice(offset, offset + FirestoreStore.#getAllSize));
+    const found = new Map<string, VersionedTask>();
+    const got = await Promise.all(
+      chunked.map((chunk) =>
+        this.#firestore.getAll(...chunk.map(([, ref]) => ref)),
+      ),
+    );
+    got.forEach((snapshots, chunkIndex) =>
+      snapshots.forEach((snapshot, position) => {
+        const key = chunked[chunkIndex]?.[position]?.[0];
+        if (key !== undefined && snapshot.exists)
+          found.set(key, taskDocSchema.parse(snapshot.data()));
+      }),
+    );
+    return found;
+  }
+
   async readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords> {
@@ -287,6 +319,70 @@ export class FirestoreStore implements OrchestratorStore {
   async listRuns(id: TaskId): Promise<Run[]> {
     const snapshot = await this.#runsForTask(id).get();
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
+  /** Firestore's ceiling on the disjuncts of one `in` filter. */
+  static readonly #inFilterSize = 30;
+
+  async listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>> {
+    const keys = new Set<string>();
+    const workIds: string[] = [];
+    const issuesByRepo = new Map<string, number[]>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      if (keys.has(key)) continue;
+      keys.add(key);
+      if (isWorkAnchor(id)) workIds.push(id.workId);
+      else
+        issuesByRepo.set(id.repo, [
+          ...(issuesByRepo.get(id.repo) ?? []),
+          id.issue,
+        ]);
+    }
+
+    const runs = new Map<string, Run[]>([...keys].map((key) => [key, []]));
+    const queries: Query[] = [];
+    for (
+      let offset = 0;
+      offset < workIds.length;
+      offset += FirestoreStore.#inFilterSize
+    )
+      queries.push(
+        this.#runs.where(
+          'task.workId',
+          'in',
+          workIds.slice(offset, offset + FirestoreStore.#inFilterSize),
+        ),
+      );
+    for (const [repo, issues] of issuesByRepo)
+      for (
+        let offset = 0;
+        offset < issues.length;
+        offset += FirestoreStore.#inFilterSize
+      )
+        queries.push(
+          this.#runs
+            .where('task.repo', '==', repo)
+            .where(
+              'task.issue',
+              'in',
+              issues.slice(offset, offset + FirestoreStore.#inFilterSize),
+            ),
+        );
+
+    // One query per bounded chunk rather than one per task: the same
+    // equality-only shape `#runsForTask` stays on, so this needs no new
+    // composite index. A chunk's `in` disjuncts can each miss, so a chunk
+    // returning nothing still leaves its tasks mapped to the empty list.
+    const pages = await Promise.all(queries.map((query) => query.get()));
+    for (const page of pages)
+      for (const doc of page.docs) {
+        const run = runSchema.parse(doc.data());
+        const key = taskKey(run.task);
+        const bucket = runs.get(key);
+        if (bucket) bucket.push(run);
+      }
+    return runs;
   }
 
   async transactRequest(input: {

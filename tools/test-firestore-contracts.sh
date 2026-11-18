@@ -15,7 +15,7 @@ export REQUIRE_FIRESTORE_EMULATOR=1
 timeout_ms=60000
 
 pnpm exec vitest run --config libs/orchestrator/vitest.config.mts \
-  store-contract.spec.ts \
+  store-contract.spec.ts batched-reads.spec.ts \
   credential-fallback.spec.ts provider-fallback.spec.ts \
   --maxWorkers=1 --no-passWithNoTests --testTimeout="$timeout_ms"
 pnpm exec vitest run --config apps/console/vitest.config.mts \

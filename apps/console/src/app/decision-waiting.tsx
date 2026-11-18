@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { decisionSlaSummary, isOverDecisionSla } from './decision-sla';
 import { RelativeTime, TICK_MS } from './relative-time';
+import { subscribeToTick } from './shared-tick';
 
 /**
  * The current time, re-read on RelativeTime's cadence so an SLA flag turns
@@ -17,8 +18,12 @@ function useNow(): number | null {
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
     setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => clearInterval(id);
+    // The shared ticker, not a per-row interval: `DecisionWaiting` renders one
+    // per decision row, and `RelativeTime` in the same row already subscribes
+    // to this cadence. A private timer per row meant one React state update
+    // per row per 30s instead of the single coalesced batch shared-tick.ts
+    // exists to provide.
+    return subscribeToTick(TICK_MS, () => setNow(Date.now()));
   }, []);
   return now;
 }

@@ -127,6 +127,17 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(this.#tasks.get(taskKey(id)));
   }
 
+  async readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>> {
+    const found = new Map<string, VersionedTask>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      const versioned = this.#tasks.get(key);
+      if (versioned !== undefined && !found.has(key))
+        found.set(key, structuredClone(versioned));
+    }
+    return found;
+  }
+
   async readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords> {
@@ -200,6 +211,21 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(
       [...this.#runs.values()].filter((run) => taskKey(run.task) === key),
     );
+  }
+
+  async listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>> {
+    const runs = new Map<string, Run[]>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      if (runs.has(key)) continue;
+      runs.set(
+        key,
+        [...this.#runs.values()]
+          .filter((run) => taskKey(run.task) === key)
+          .map((run) => structuredClone(run)),
+      );
+    }
+    return runs;
   }
 
   async transactRequest(input: {
