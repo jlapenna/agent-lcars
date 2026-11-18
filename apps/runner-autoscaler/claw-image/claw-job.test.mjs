@@ -15,8 +15,8 @@ import { test } from 'node:test';
 
 import {
   agentDigest,
-  comparableConfig,
   bundledPluginProviders,
+  comparableConfig,
   doctorChanges,
   main,
   materializeAgent,
