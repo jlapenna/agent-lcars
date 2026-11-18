@@ -2,16 +2,16 @@
   "releases": [
     {
       "repository": "anomalyco/opencode",
-      "version": "v1.19.6",
+      "version": "v2.3.2",
       "asset": "opencode-linux-x64-baseline.tar.gz",
-      "sha256": "8443113b3f3dfebf8b0fa91c4377e5519a62b9231732d9344a5df001e4a852b3",
+      "sha256": "563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0",
       "architecture": "amd64"
     },
     {
       "repository": "anomalyco/opencode",
-      "version": "v1.19.6",
+      "version": "v2.3.2",
       "asset": "opencode-linux-arm64.tar.gz",
-      "sha256": "5b68c1f4c5e75b4134e664cc8f36d634d64208d4fcfe5bcf3b48bab699c2dbac",
+      "sha256": "9d10185acdb72336e086e699ca363a6065f410fd3c1caed0dc8046e95ac06ccb",
       "architecture": "arm64"
     },
     {
