@@ -1,6 +1,7 @@
 # Repository-owned claw agents
 
-Status: design (2026-11-15). This replaces the per-agent claw code shipped for
+Status: shipped (#3382 through #3411); see [Acceptance](#acceptance) for what
+production has shown. This replaces the per-agent claw code shipped for
 `claw/investigator` (phase 3a of the
 [unified work dataflow design](superpowers/specs/2026-10-15-unified-work-dataflow-design.md#claw)).
 It follows [repository jobs](repository-jobs.md): a repository defines what
@@ -518,14 +519,20 @@ attempt. Before reverting a runtime's image digest:
 3. Revert the image digest. Keep those definitions out, or the fence up,
    for as long as the earlier image is pinned.
 
-Acceptance:
+## Acceptance
 
-- A real investigation runs from `jlapenna/homelab/investigator` through the
-  generic route, and `lcars investigate` works again.
-- An agent with no profile, added by a repository PR alone, runs end to end on
-  k3s.
-- A manifest naming a profile that does not list its repository is visible and
-  refused.
+- **Met:** a real investigation ran from `jlapenna/homelab/investigator`
+  through the generic operator route (#3402), and the zone executor records
+  `claw-investigator` runs exiting `succeeded`. Still open: a production
+  `lcars investigate` invocation that settles successfully, since the CLI
+  uses the run-token routes and waits for the result.
+- **Met:** an agent with no profile, added by a repository PR alone, runs end
+  to end on k3s. The `.lcars/agents/smoke/` canary runs on `claw-default`, and
+  the zone executor records `claw-default` runs exiting `succeeded`.
+- **Open:** a manifest naming a profile that does not list its repository is
+  visible and refused. Admission refuses it (`Profile <name> does not admit
+<repository>`, `apps/console/src/lib/repository-agent-runs.ts`), but no
+  test or production refusal records it yet.
 
 On-call is not a claw agent and does not depend on LCARS (2026-11-15
 decision).
