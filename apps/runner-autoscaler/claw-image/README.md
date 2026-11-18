@@ -69,7 +69,8 @@ Each step fails the attempt closed with a `runner-failed` completion:
    its files as `definition` instead of `files`, which a launcher from before
    harnesses refuses.
 2. The launcher writes the verified definition to `/work/agent`, copies its
-   `workspace/` to a writable `/work/workspace` and copies its `home/` into
+   `workspace/` directory to a writable `/work/workspace` and copies its
+   `home/` directory into
    `HOME`, making each pinned `home/` file read-only (an executable stays
    executable).
 3. It prepares what the harness needs (for OpenClaw, [below](#openclaw)) and
@@ -142,7 +143,8 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    (`providerAuthEnv` asks it through its public plugin SDK, in a process of
    its own, for the list `agent exec` used), one the config names as an `env`
    SecretRef, or one a provider's `apiKey` or `headers` names in a `${NAME}`
-   template. Every SecretRef and template for it is resolved, and a declared
+   or `${NAME:-default}` template (OpenClaw's own grammar; an empty variable
+   counts as unset). Every SecretRef and template for it is resolved, and a declared
    provider with no `apiKey` gets the first of its own variables the
    environment holds. A provider that is not declared in the config and
    relied on the environment no longer finds its key, and a custom key named

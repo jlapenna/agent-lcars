@@ -769,6 +769,8 @@ test('resolveCredentials resolves what the config names and what providers read'
     OPENAI_API_KEY: 'k3',
     CODEX_API_KEY: 'k4',
     CUSTOM_MODEL_KEY: 'k5',
+    ANTHROPIC_OAUTH_TOKEN: '',
+    ANTHROPIC_API_KEY: 'k6',
     ZONE_SETTING: 'visible',
   };
   // As OpenClaw answers: every name it filters, and each provider's own
@@ -778,12 +780,13 @@ test('resolveCredentials resolves what the config names and what providers read'
       'LITELLM_API_KEY',
       'OPENAI_API_KEY',
       'CODEX_API_KEY',
+      'ANTHROPIC_OAUTH_TOKEN',
       'ANTHROPIC_API_KEY',
     ]),
     candidates: new Map([
       ['litellm', ['LITELLM_API_KEY']],
       ['openai', ['CODEX_API_KEY', 'OPENAI_API_KEY']],
-      ['anthropic', ['ANTHROPIC_API_KEY']],
+      ['anthropic', ['ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']],
     ]),
   };
   const template = (name) => '$' + `{${name}}`;
@@ -799,8 +802,14 @@ test('resolveCredentials resolves what the config names and what providers read'
               literal: `$${template('MODEL_KEY')}`,
             },
           },
-          // A custom name, given only as a template.
-          templated: { apiKey: template('CUSTOM_MODEL_KEY') },
+          // A custom name, given only as a template, with a default that
+          // must not win over the key the environment holds.
+          templated: { apiKey: '$' + '{CUSTOM_MODEL_KEY:-fallback}' },
+          // Its first variable is empty, so OpenClaw uses the next one; and
+          // an empty credential in a template is left for OpenClaw's default.
+          anthropic: {
+            headers: { 'x-beta': '$' + '{ANTHROPIC_OAUTH_TOKEN:-none}' },
+          },
           // Not named at all: the key OpenClaw would have found by itself.
           LiteLLM: { baseUrl: 'https://llm.test' },
           // Its key is used in a header, and it still relies on finding its
@@ -836,6 +845,10 @@ test('resolveCredentials resolves what the config names and what providers read'
           },
         },
         templated: { apiKey: 'k5' },
+        anthropic: {
+          headers: { 'x-beta': '$' + '{ANTHROPIC_OAUTH_TOKEN:-none}' },
+          apiKey: 'k6',
+        },
         LiteLLM: { baseUrl: 'https://llm.test', apiKey: 'k2' },
         openai: { headers: { 'x-secondary': 'k3' }, apiKey: 'k4' },
         other: {
@@ -853,6 +866,8 @@ test('resolveCredentials resolves what the config names and what providers read'
   // Every credential the environment holds is withheld from the Gateway,
   // whether or not this config uses it; nothing else is.
   assert.deepEqual([...used].sort(), [
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_OAUTH_TOKEN',
     'CODEX_API_KEY',
     'CUSTOM_MODEL_KEY',
     'LITELLM_API_KEY',
@@ -1535,6 +1550,19 @@ test('readBrief names the harness and mode, defaulting to OpenClaw', () => {
       /no agent definition/,
     );
   }
+});
+
+test('a definition file named home or workspace is not staged as a directory', async () => {
+  // An existing definition may hold such a file; only a directory is staged.
+  const { env, deps } = await fixture({
+    brief: agentBrief({
+      'agent.yaml': agentFiles['agent.yaml'],
+      'config.json': agentFiles['config.json'],
+      'approvals.json': agentFiles['approvals.json'],
+      home: { content: 'notes\n' },
+    }),
+  });
+  assert.equal((await main(env, deps)).outcome, 'report');
 });
 
 test('a message that begins with a slash reaches the agent as text, not as a command', async () => {

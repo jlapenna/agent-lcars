@@ -116,7 +116,9 @@ costs one attempt.
   run does not inherit them. A variable is a credential when the pinned
   OpenClaw lists it as one a provider reads (the same list `agent exec`
   filtered), when the config names it as an `env` SecretRef, or when a
-  provider's `apiKey` or `headers` names it in a `${NAME}` template. A custom
+  provider's `apiKey` or `headers` names it in a `${NAME}` or
+  `${NAME:-default}` template. An empty variable counts as unset, as it
+  does for OpenClaw. A custom
   key that is only named some other way stays in the environment, so name it
   as a SecretRef. A declared provider with no `apiKey` is given the key it
   would have found in the environment. A provider that is not declared under
@@ -319,11 +321,12 @@ Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
 
 1. Take `harness` and `mode` out of every manifest that names one, on each
-   repository's default branch, and wait for the catalog to refresh (or
-   delete those agents). The catalog stores each manifest, and the earlier
-   Console reads stored rows with a strict schema: one row with a field it
-   does not know stops it listing and refreshing the catalog for every
-   repository.
+   repository's default branch, and wait for the catalog to refresh. Then
+   check that no agent in the catalog, enabled or not, still shows either
+   field. Deleting an agent is not enough: its row is only disabled and
+   keeps the stored manifest. The earlier Console reads stored rows with a
+   strict schema, and one row with a field it does not know stops it listing
+   and refreshing the catalog for every repository.
 2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
    earlier Console cannot read such a round, so it can neither deliver its
    brief nor retry it. Rounds of OpenClaw agents with neither are unaffected.

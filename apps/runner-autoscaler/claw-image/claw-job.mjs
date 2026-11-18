@@ -587,7 +587,11 @@ async function copyFromDefinition(source, target) {
   try {
     // A ConfigMap mount presents a directory as a symlink into its
     // timestamped data directory; copy the resolved files, not the link.
-    await cp(await realpath(source), target, {
+    const directory = await realpath(source);
+    // A definition may hold a plain file of that name; only a directory is
+    // staged.
+    if (!(await stat(directory)).isDirectory()) return;
+    await cp(directory, target, {
       recursive: true,
       dereference: true,
     });

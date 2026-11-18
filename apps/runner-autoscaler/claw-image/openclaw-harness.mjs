@@ -361,7 +361,8 @@ function freePort() {
 // - OpenClaw says a provider reads it (`auth.names`, the set `agent exec`
 //   filtered);
 // - the config names it as an `env` SecretRef anywhere; or
-// - a provider's `apiKey` or `headers` names it in a `${NAME}` template.
+// - a provider's `apiKey` or `headers` names it in a `${NAME}` or
+//   `${NAME:-default}` template.
 // Every SecretRef and template for a credential is replaced by its value, as
 // OpenClaw would resolve them. Then each declared provider with no `apiKey`
 // gets the first of its own variables the environment holds, which is the
@@ -373,25 +374,36 @@ export function resolveCredentials(
   env,
   auth = { names: new Set(), candidates: new Map() },
 ) {
-  const held = (name) => typeof env[name] === 'string' && !KEPT_ENV.has(name);
+  // As OpenClaw reads the environment: an empty variable is a missing one.
+  const set = (name) =>
+    typeof env[name] === 'string' && env[name].trim() !== '';
+  const kept = (name) => KEPT_ENV.has(name);
   const isReference = (value) =>
     value.source === 'env' &&
     typeof value.id === 'string' &&
     Object.keys(value).every((key) => SECRET_REF_KEYS.has(key));
-  const withheld = new Set([...auth.names].filter((name) => held(name)));
+  // Withheld whether or not it holds anything: an empty credential variable
+  // is not a command's to see either.
+  const withheld = new Set(
+    [...auth.names].filter(
+      (name) => typeof env[name] === 'string' && !kept(name),
+    ),
+  );
+  const credential = (name) => {
+    if (set(name) && !kept(name)) withheld.add(name);
+  };
   const collectReferences = (value) => {
     if (Array.isArray(value)) value.forEach(collectReferences);
     else if (value && typeof value === 'object') {
-      if (isReference(value)) {
-        if (held(value.id)) withheld.add(value.id);
-      } else Object.values(value).forEach(collectReferences);
+      if (isReference(value)) credential(value.id);
+      else Object.values(value).forEach(collectReferences);
     }
   };
   collectReferences(config);
   const collectTemplates = (value) => {
     if (typeof value === 'string')
-      for (const [, name] of value.matchAll(ENV_TEMPLATE))
-        if (held(name)) withheld.add(name);
+      for (const token of envTemplateTokens(value))
+        if (!token.escaped) credential(token.name);
     if (value && typeof value === 'object')
       Object.values(value).forEach(collectTemplates);
   };
@@ -399,14 +411,25 @@ export function resolveCredentials(
     collectTemplates(provider?.apiKey);
     collectTemplates(provider?.headers);
   }
+  // A withheld variable that is set is written in. One that is empty is
+  // left for OpenClaw, which then takes the template's default or reports
+  // the variable missing, exactly as it would have with the variable there.
+  const resolves = (name) => withheld.has(name) && set(name);
+  const substitute = (text) => {
+    let result = '';
+    let end = 0;
+    for (const token of envTemplateTokens(text)) {
+      if (token.escaped || !resolves(token.name)) continue;
+      result += text.slice(end, token.start) + env[token.name];
+      end = token.end + 1;
+    }
+    return result + text.slice(end);
+  };
   const resolve = (value) => {
-    if (typeof value === 'string')
-      return value.replace(ENV_TEMPLATE, (text, name) =>
-        withheld.has(name) ? env[name] : text,
-      );
+    if (typeof value === 'string') return substitute(value);
     if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
-    if (isReference(value) && withheld.has(value.id)) return env[value.id];
+    if (isReference(value) && resolves(value.id)) return env[value.id];
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [key, resolve(child)]),
     );
@@ -416,8 +439,10 @@ export function resolveCredentials(
   for (const [id, provider] of Object.entries(providers ?? {})) {
     if (!provider || typeof provider !== 'object') continue;
     if (provider.apiKey !== undefined) continue;
+    // The first of the provider's variables that holds something, as
+    // OpenClaw chooses among them.
     const own = (auth.candidates.get(id.trim().toLowerCase()) ?? []).find(
-      (name) => held(name),
+      (name) => set(name) && !kept(name),
     );
     if (own !== undefined) providers[id] = { ...provider, apiKey: env[own] };
   }
@@ -425,9 +450,37 @@ export function resolveCredentials(
 }
 const SECRET_REF_KEYS = new Set(['source', 'provider', 'id']);
 const KEPT_ENV = new Set(['PATH', 'HOME', 'LANG']);
-// `${NAME}` as OpenClaw substitutes it in config strings; `$${NAME}` is its
-// escape for the literal text.
-const ENV_TEMPLATE = /(?<!\$)\$\{([A-Z_][A-Z0-9_]*)\}/gu;
+
+// The `${NAME}` and `${NAME:-default}` tokens in a config string, by
+// OpenClaw's own grammar (its env-substitution `iterateEnvTemplateTokens`):
+// `$${…}` is the escape for the literal text, a name is upper-case, and a
+// default holds neither `$` nor `{`.
+const ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]*$/u;
+function* envTemplateTokens(value) {
+  for (
+    let index = value.indexOf('$');
+    index !== -1;
+    index = value.indexOf('$', index + 1)
+  ) {
+    const escaped = value[index + 1] === '$' && value[index + 2] === '{';
+    if (!escaped && value[index + 1] !== '{') continue;
+    const start = index + (escaped ? 3 : 2);
+    const end = value.indexOf('}', start);
+    if (end === -1) continue;
+    const body = value.slice(start, end);
+    const operator = body.indexOf(':-');
+    const name = operator === -1 ? body : body.slice(0, operator);
+    const fallback = operator === -1 ? undefined : body.slice(operator + 2);
+    if (
+      !ENV_VAR_NAME.test(name) ||
+      fallback?.includes('$') ||
+      fallback?.includes('{')
+    )
+      continue;
+    yield { escaped, name, start: index, end };
+    index = end;
+  }
+}
 
 // `over` wins over `under`; plain objects merge key by key.
 function mergeDeep(under, over) {
