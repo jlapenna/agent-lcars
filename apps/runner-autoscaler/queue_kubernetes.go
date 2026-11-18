@@ -271,6 +271,15 @@ func (q *kubernetesQueue) reportRetired(jobs []batch.Job) {
 	}
 }
 
+// declaredRuntimes names this queue's declared runtimes for metrics.
+func (q *kubernetesQueue) declaredRuntimes() []string {
+	runtimes := make([]string, 0, len(q.config.Runtimes))
+	for name := range q.config.Runtimes {
+		runtimes = append(runtimes, name)
+	}
+	return runtimes
+}
+
 func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *slog.Logger) (*kubernetesQueue, error) {
 	cfg, err := queueKubernetesRESTConfig(&c)
 	if err != nil {
@@ -291,11 +300,6 @@ func newKubernetesQueue(ctx context.Context, c queueKubernetesConfig, logger *sl
 	}
 	q := &kubernetesQueue{config: c, client: client, image: image, logger: logger, workerPolicyProviders: providers,
 		verifyRun: queueRunFence(strings.TrimSpace(os.Getenv("LCARS_CONSOLE_URL")))}
-	runtimes := make([]string, 0, len(c.Runtimes))
-	for name := range c.Runtimes {
-		runtimes = append(runtimes, name)
-	}
-	initRunExitMetrics(runtimes)
 	if err := q.preflight(ctx); err != nil {
 		return nil, err
 	}

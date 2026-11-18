@@ -27,10 +27,11 @@ type repositoryAgentCounts struct {
 }
 
 type repositoryAgentSourceIn struct {
-	Repository  string `json:"repository"`
-	AttemptedAt string `json:"attemptedAt"`
-	SucceededAt string `json:"succeededAt"`
-	FailedAt    string `json:"failedAt"`
+	Repository  string  `json:"repository"`
+	AttemptedAt string  `json:"attemptedAt"`
+	SucceededAt string  `json:"succeededAt"`
+	FailedAt    string  `json:"failedAt"`
+	Unavailable *uint64 `json:"unavailable"`
 }
 
 // The control-plane repository list is operator configuration, so a
@@ -53,6 +54,7 @@ func newRepositoryAgentMetrics() *repositoryAgentMetrics {
 	m.desc["agents"] = prometheus.NewDesc("lcars_repository_agents", "Cataloged repository-owned agents by admission state: enabled, vetoed, invalid, unavailable (source refresh failed) or removed.", []string{"state"}, nil)
 	m.desc["attempt"] = prometheus.NewDesc("lcars_repository_agent_source_last_attempt_timestamp_seconds", "Last catalog refresh attempt of a repository's .lcars/agents; zero means never.", []string{"repository"}, nil)
 	m.desc["success"] = prometheus.NewDesc("lcars_repository_agent_source_last_success_timestamp_seconds", "Last published catalog refresh that read the repository successfully; zero means never.", []string{"repository"}, nil)
+	m.desc["unavailable"] = prometheus.NewDesc("lcars_repository_agent_source_unavailable_agents", "A repository's stored agents currently disabled by a failed refresh; absent from an older Console.", []string{"repository"}, nil)
 	m.desc["failure"] = prometheus.NewDesc("lcars_repository_agent_source_last_failure_timestamp_seconds", "Last published catalog refresh that failed to read the repository; zero means never.", []string{"repository"}, nil)
 	return m
 }
@@ -91,6 +93,9 @@ func validRepositoryAgentObservation(o *repositoryAgentObservation, now time.Tim
 			return false
 		}
 		seen[s.Repository] = true
+		if s.Unavailable != nil && *s.Unavailable > 9007199254740991 {
+			return false
+		}
 		for _, value := range []string{s.AttemptedAt, s.SucceededAt, s.FailedAt} {
 			if _, ok := observationTime(value, true, now); !ok {
 				return false
@@ -152,5 +157,8 @@ func (m *repositoryAgentMetrics) Collect(ch chan<- prometheus.Metric) {
 		emit("attempt", unix(s.AttemptedAt), s.Repository)
 		emit("success", unix(s.SucceededAt), s.Repository)
 		emit("failure", unix(s.FailedAt), s.Repository)
+		if s.Unavailable != nil {
+			emit("unavailable", float64(*s.Unavailable), s.Repository)
+		}
 	}
 }

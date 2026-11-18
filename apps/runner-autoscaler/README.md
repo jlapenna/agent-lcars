@@ -557,12 +557,17 @@ The metrics endpoint exposes the queue worker's own health:
   `..._run_exit_last_timestamp_seconds{pipeline,outcome}` is absent until the
   first exit in the process. A claim whose Job could not be built or was
   refused by the apiserver is also reported (and counted) without a Job, so
-  it has no duration. `..._run_consecutive_failures{pipeline}` counts failed
-  or lost exits since the last succeeded, finished or canceled one, in report
-  order. A runtimes-only executor zero-initializes each declared runtime's
-  outcome counters and streak at start, and every executor sets
+  it has no duration. A report the route flags `replayed` (the claim was
+  already retired, e.g. a retained Job re-observed after a restart) is not
+  counted again. `..._run_consecutive_failures{pipeline}` counts failed or
+  lost exits since the last succeeded or canceled one, in report order; an
+  unattributed exit (`pipeline="unknown"`) and a finished run without a
+  result (a Console that predates `ok`) leave it unchanged. Once the exit
+  reporter starts, the executor zero-initializes each declared runtime's
+  outcome counters, duration histograms and streak and sets
   `..._run_exit_metrics_supported 1`: an absent series is then unknown (scrape
-  down or older producer), a zero streak with no exit timestamp is idle.
+  down, preflight failed or older producer), a zero streak with no exit
+  timestamp is idle.
 - `lcars_repository_agents*` (shared executor only, registered with the
   maintenance ticker) export the repository
   agent catalog observation from the maintenance reply: agents by admission

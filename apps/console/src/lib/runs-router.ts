@@ -1033,6 +1033,7 @@ export const runsRouter = os.router({
         ...(current.state === 'finished' && current.result !== undefined
           ? { ok: current.result.ok }
           : {}),
+        ...(run.queue?.state === 'retired' ? { replayed: true } : {}),
       };
     }
     logger.warn(

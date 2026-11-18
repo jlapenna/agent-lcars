@@ -32,12 +32,23 @@ export async function refreshAgentCatalog(
   const newer = (current: CatalogAgent | undefined) =>
     current !== undefined && Date.parse(current.refreshedAt) > now.getTime();
   // Health telemetry only: a lost write never fails the refresh.
-  const recordRead = (outcome: 'succeeded' | 'failed') =>
-    store
-      .recordSourceRead(repository, at, outcome)
-      .catch((error: unknown) =>
-        logger.error('Agent source health not recorded: %s', repository, error),
-      );
+  // Health telemetry only. Writes start without blocking the catalog:
+  // publication and fail-closed disabling never wait on them, and the
+  // refresh waits for them at most HEALTH_WRITE_MS at the very end.
+  const healthWrites: Promise<unknown>[] = [];
+  const recordRead = (outcome: 'succeeded' | 'failed') => {
+    healthWrites.push(
+      store
+        .recordSourceRead(repository, at, outcome)
+        .catch((error: unknown) =>
+          logger.error(
+            'Agent source health not recorded: %s',
+            repository,
+            error,
+          ),
+        ),
+    );
+  };
   let read = false;
   try {
     const source = await openRepositorySource(
@@ -73,15 +84,22 @@ export async function refreshAgentCatalog(
           path: entry.path.slice(prefix.length),
         }));
       const manifest = files.find((file) => file.path === 'agent.yaml');
+      // Only a regular-file manifest is fetched: a submodule or symlink
+      // named agent.yaml is this definition's own error, decided locally.
+      const regular =
+        manifest !== undefined &&
+        manifest.type === 'blob' &&
+        (manifest.mode === '100644' || manifest.mode === '100755');
       // Repository I/O stays outside the definition's own catch: a failed
       // read fails the refresh (agents unavailable), never marks one invalid.
-      const manifestText =
-        manifest === undefined
-          ? undefined
-          : (await source.readBlob(manifest.sha)).toString('utf8');
+      const manifestText = regular
+        ? (await source.readBlob(manifest.sha)).toString('utf8')
+        : undefined;
       try {
-        if (manifestText === undefined)
+        if (manifest === undefined)
           throw new Error('Agent is missing agent.yaml');
+        if (manifestText === undefined)
+          throw new Error('agent.yaml must be a regular file');
         row.definition = parseAgentDefinition(
           repository,
           source.revision,
@@ -96,7 +114,7 @@ export async function refreshAgentCatalog(
       rows.push(row);
     }
     read = true;
-    await recordRead('succeeded');
+    recordRead('succeeded');
     // Publish after the complete read so a partial fetch cannot remove agents,
     // and only while no newer observation of this repository has published.
     if (!(await store.claimObservation(repository, at))) return;
@@ -156,7 +174,7 @@ export async function refreshAgentCatalog(
   } catch (error) {
     // Health records repository reads only: a publication (storage) error
     // after a complete read is not a source failure.
-    if (!read) await recordRead('failed');
+    if (!read) recordRead('failed');
     if (!(await store.claimObservation(repository, at))) throw error;
     for (const agent of await repositoryRows())
       await store.mutate(
@@ -175,7 +193,28 @@ export async function refreshAgentCatalog(
         fence,
       );
     throw error;
+  } finally {
+    await settleWithin(healthWrites, HEALTH_WRITE_MS);
   }
+}
+
+/** The longest a refresh waits, after its catalog work, for its health
+ * telemetry writes; a slower write keeps going and is simply not awaited. */
+const HEALTH_WRITE_MS = 5_000;
+
+async function settleWithin(
+  writes: readonly Promise<unknown>[],
+  ms: number,
+): Promise<void> {
+  if (writes.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.all(writes),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 /** Refresh every control-plane repository's agents, least recently attempted

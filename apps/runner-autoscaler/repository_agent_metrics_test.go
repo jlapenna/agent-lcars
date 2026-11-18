@@ -11,7 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const repositoryAgentFixture = `{"version":1,"observedAt":"2026-11-18T10:00:00Z","agents":{"enabled":2,"vetoed":0,"invalid":1,"unavailable":0,"removed":0},"sources":[{"repository":"jlapenna/homelab","attemptedAt":"2026-11-18T09:59:00Z","succeededAt":"2026-11-18T09:59:00Z"},{"repository":"jlapenna/agent-lcars","attemptedAt":"2026-11-18T09:58:00Z","failedAt":"2026-11-18T09:58:00Z","succeededAt":"2026-11-18T09:00:00Z"}]}`
+const repositoryAgentFixture = `{"version":1,"observedAt":"2026-11-18T10:00:00Z","agents":{"enabled":2,"vetoed":0,"invalid":1,"unavailable":0,"removed":0},"sources":[{"repository":"jlapenna/homelab","attemptedAt":"2026-11-18T09:59:00Z","succeededAt":"2026-11-18T09:59:00Z"},{"repository":"jlapenna/agent-lcars","attemptedAt":"2026-11-18T09:58:00Z","failedAt":"2026-11-18T09:58:00Z","succeededAt":"2026-11-18T09:00:00Z","unavailable":2}]}`
 
 func repositoryAgentScrape(t *testing.T, m *repositoryAgentMetrics) string {
 	t.Helper()
@@ -49,6 +49,7 @@ func TestRepositoryAgentMetricsExportCatalogHealth(t *testing.T) {
 		`lcars_repository_agent_source_last_failure_timestamp_seconds{repository="jlapenna/agent-lcars"} 1.79499588e+09` + "\n",
 		`lcars_repository_agent_source_last_failure_timestamp_seconds{repository="jlapenna/homelab"} 0` + "\n",
 		`lcars_repository_agent_source_last_success_timestamp_seconds{repository="jlapenna/homelab"} 1.79499594e+09` + "\n",
+		`lcars_repository_agent_source_unavailable_agents{repository="jlapenna/agent-lcars"} 2` + "\n",
 	} {
 		if !strings.Contains(scrape, want) {
 			t.Errorf("scrape lacks %q:\n%s", want, scrape)

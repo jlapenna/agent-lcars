@@ -66,7 +66,7 @@ var (
 	}, []string{"pipeline", "outcome"})
 	queueExecutorRunConsecutiveFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_queue_executor_run_consecutive_failures",
-		Help: "Delivered exits since the pipeline's last succeeded, finished or canceled one that were failed or lost, in report order. Zero for each declared runtime at start; resets with the process.",
+		Help: "Delivered first exit reports since the pipeline's last succeeded or canceled one that were failed or lost, in report order. Unattributed exits, replays and finished runs without a result leave it unchanged. Zero for each declared runtime once the exit reporter starts; resets with the process.",
 	}, []string{"pipeline"})
 	queueExecutorRunExitMetricsSupported = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_queue_executor_run_exit_metrics_supported",
@@ -138,11 +138,17 @@ func recordRunExit(meta exitMeta, outcome string, at time.Time) {
 		pipeline = "unknown"
 	}
 	queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome).Inc()
-	switch outcome {
-	case "failed", "lost":
-		queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Inc()
-	case "succeeded", "finished", "canceled":
-		queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Set(0)
+	// An unattributed exit (a Job from before the pipeline annotation) has
+	// no runtime streak to join. A finished run without a result (a Console
+	// that predates `ok`) is neither a failure nor a success: it leaves the
+	// streak as it was.
+	if meta.pipeline != "" {
+		switch outcome {
+		case "failed", "lost":
+			queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Inc()
+		case "succeeded", "canceled":
+			queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Set(0)
+		}
 	}
 	queueExecutorRunExitTimestamp.WithLabelValues(pipeline, outcome).Set(float64(at.Unix()))
 	if meta.duration > 0 {
@@ -162,6 +168,7 @@ func initRunExitMetrics(pipelines []string) {
 	for _, pipeline := range pipelines {
 		for _, outcome := range runExitOutcomes {
 			queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome)
+			queueExecutorRunDurationSeconds.WithLabelValues(pipeline, outcome)
 		}
 		queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline)
 	}

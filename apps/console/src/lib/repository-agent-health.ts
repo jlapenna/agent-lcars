@@ -41,6 +41,13 @@ export function observeAgentCatalog(
     else if (agent.definition === undefined) counts.invalid++;
     else counts.vetoed++;
   }
+  const unavailable = new Map<string, number>();
+  for (const agent of agents)
+    if (!agent.enabled && agent.error === SOURCE_FAILED)
+      unavailable.set(
+        agent.repository,
+        (unavailable.get(agent.repository) ?? 0) + 1,
+      );
   const known = new Set(configured);
   for (const agent of agents) known.add(agent.repository);
   const attempted = new Map(attempts.map((row) => [row.repository, row]));
@@ -61,6 +68,7 @@ export function observeAgentCatalog(
           ...(attemptedAt === undefined ? {} : { attemptedAt }),
           ...(succeededAt === undefined ? {} : { succeededAt }),
           ...(failedAt === undefined ? {} : { failedAt }),
+          unavailable: unavailable.get(repository) ?? 0,
         };
       }),
   };

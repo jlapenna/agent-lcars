@@ -119,12 +119,48 @@ func TestRunExitStreakCountsFailuresInReportOrder(t *testing.T) {
 		outcome string
 		want    float64
 	}{
-		{"failed", 1}, {"lost", 2}, {"unknown_run", 2}, {"canceled", 0},
+		{"failed", 1}, {"lost", 2}, {"unknown_run", 2}, {"finished", 2}, {"canceled", 0},
 		{"lost", 1}, {"succeeded", 0}, {"failed", 1},
 	} {
 		recordRunExit(exitMeta{pipeline: "claw-streak-test"}, step.outcome, at)
 		if got := testutil.ToFloat64(streak); got != step.want {
 			t.Fatalf("after %s streak = %v, want %v", step.outcome, got, step.want)
 		}
+	}
+}
+
+func TestUnattributedExitsJoinNoRuntimeStreak(t *testing.T) {
+	recordRunExit(exitMeta{}, "lost", time.Unix(1_800_000_000, 0))
+	recordRunExit(exitMeta{}, "failed", time.Unix(1_800_000_000, 0))
+	if got := testutil.ToFloat64(queueExecutorRunConsecutiveFailures.WithLabelValues("unknown")); got != 0 {
+		t.Fatalf("unknown streak = %v, want 0", got)
+	}
+	if testutil.ToFloat64(queueExecutorRunExitsTotal.WithLabelValues("unknown", "lost")) < 1 {
+		t.Fatal("unattributed exits must still count in the totals")
+	}
+}
+
+func TestReplayedExitIsNotCountedAgain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"runId":"x","state":"finished","ok":false,"replayed":true}`))
+	}))
+	t.Cleanup(server.Close)
+	reporter := testExitReporter(server.URL)
+	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-replay-test", "failed")
+	before := testutil.ToFloat64(counter)
+	reporter.observeExit("run-replayed", "", testClaimFingerprint, exitMeta{pipeline: "claw-replay-test"})
+	reporter.wg.Wait()
+	if !reporter.delivered("run-replayed", testClaimFingerprint) {
+		t.Fatal("a replay is still a delivered report")
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 0 {
+		t.Fatalf("replayed exit counted %v", got)
+	}
+}
+
+func TestDeclaredRuntimesStartWithDurationBaselines(t *testing.T) {
+	initRunExitMetrics([]string{"claw-histogram-test"})
+	if n := testutil.CollectAndCount(queueExecutorRunDurationSeconds, "github_runner_autoscaler_queue_executor_run_duration_seconds"); n < len(runExitOutcomes) {
+		t.Fatalf("duration histograms = %d, want a child per outcome", n)
 	}
 }

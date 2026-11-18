@@ -46,8 +46,13 @@ it('counts agents by admission state and reports refreshed repositories without 
     agents: { enabled: 1, vetoed: 1, invalid: 1, unavailable: 1, removed: 1 },
     // owner/a holds stored agents; owner/gone is neither configured nor stored.
     sources: [
-      { repository: 'owner/a', attemptedAt: at, failedAt: at },
-      { repository: 'owner/b', attemptedAt: at, succeededAt: at },
+      { repository: 'owner/a', attemptedAt: at, failedAt: at, unavailable: 1 },
+      {
+        repository: 'owner/b',
+        attemptedAt: at,
+        succeededAt: at,
+        unavailable: 0,
+      },
     ],
   });
   expect(repositoryAgentObservationSchema.parse(observation)).toEqual(

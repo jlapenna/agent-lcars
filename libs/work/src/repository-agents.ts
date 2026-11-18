@@ -26,6 +26,9 @@ export const repositoryAgentObservationSchema = z.strictObject({
       attemptedAt: z.iso.datetime().optional(),
       succeededAt: z.iso.datetime().optional(),
       failedAt: z.iso.datetime().optional(),
+      /** Its stored agents currently disabled by a failed refresh: the
+       * admission state a recovered read must still publish over. */
+      unavailable: count.optional(),
     }),
   ),
 });

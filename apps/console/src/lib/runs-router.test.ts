@@ -2906,6 +2906,31 @@ describe('exit', () => {
     expect(await store.listRuns({ workId: wid('exit-claude') })).toHaveLength(
       1,
     );
+
+    // The first report retired the claim; a repeat (a retained Job seen
+    // again after an executor restart) is flagged so it is not a new exit.
+    const repeat = await call(
+      {
+        store,
+        orchestrator,
+        now,
+        ...context,
+        drain,
+        principal: executorPrincipal(['claude']),
+      },
+      'POST',
+      runPath(runId, '/exit'),
+      { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
+    );
+    expect(repeat).toEqual({
+      status: 200,
+      json: {
+        runId,
+        state: 'finished',
+        ok: settled?.result?.ok,
+        replayed: true,
+      },
+    });
   });
 
   it('releases the Codex subscription lease of a lost Codex run', async () => {
@@ -4977,9 +5002,15 @@ for (const backend of ['MemoryStore', 'FirestoreStore'] as const) {
           const terminal = await call(ctx, 'POST', runPath(runId, '/exit'), {
             runner: 'same-runner',
           });
+          // The loss settlement retired the claim, so this is a replay; a
+          // Codex claim is never retired on exit and cannot be told apart.
           expect(terminal).toEqual({
             status: 200,
-            json: { runId, state: 'lost' },
+            json: {
+              runId,
+              state: 'lost',
+              ...(pipeline === 'codex' ? {} : { replayed: true }),
+            },
           });
           expect(drain).toHaveBeenCalledOnce();
         } finally {

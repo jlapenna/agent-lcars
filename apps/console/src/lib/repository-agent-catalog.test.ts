@@ -472,3 +472,33 @@ it('records no source failure when only publication fails after a complete read'
     succeededAt: now.toISOString(),
   });
 });
+
+it('confines a non-file agent.yaml to its own definition without fetching it', async () => {
+  const store = new MemoryAgentStore();
+  const fetch = github(
+    { investigator: investigator() },
+    {
+      extra: [
+        { path: 'broken', mode: '040000', type: 'tree', sha: 'broken-tree' },
+        {
+          path: 'broken/agent.yaml',
+          mode: '160000',
+          type: 'commit',
+          sha: 'd'.repeat(40),
+        },
+      ],
+    },
+  );
+  vi.stubGlobal('fetch', fetch);
+  await refreshAgentCatalog(store, 'owner/repo', tokens, now);
+  expect(store.rows.get(agentKey('owner/repo', 'broken'))).toMatchObject({
+    enabled: false,
+    error: 'agent.yaml must be a regular file',
+  });
+  expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
+    enabled: true,
+  });
+  expect(
+    fetch.mock.calls.some(([url]) => String(url).includes('d'.repeat(40))),
+  ).toBe(false);
+});

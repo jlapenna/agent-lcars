@@ -137,9 +137,12 @@ existing metrics endpoints; nothing here adds a scrape target.
 - **Catalog:** each maintenance reply carries `repositoryAgents`: agents by
   admission state (enabled, vetoed, invalid, unavailable, removed) and, for
   up to 100 still-refreshed repositories, the last refresh attempt,
-  successful read and failed read. Read outcomes cover repository I/O only
+  successful read, failed read and how many of its stored agents a failed
+  refresh left unavailable (so a read that recovers before its publication
+  does is still visible). Read outcomes cover repository I/O only
   (a failed manifest read fails the refresh; a storage error after a
-  complete read is not a source failure) and live in their own
+  complete read is not a source failure; a non-file `agent.yaml` is that
+  definition's own error, never fetched) and live in their own
   `orchestrator-agent-source-health` collection, so the strict source
   document is unchanged. The shared executor exports it as
   `lcars_repository_agents*`. A failed observation, or one still pending at
