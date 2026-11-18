@@ -217,10 +217,21 @@ export async function admitAgentRun(
   const sourceKey = request.sourceKey ?? `adhoc:${request.requestId ?? ulid()}`;
   // Keys are scoped to the agent and the caller: one caller's key never
   // resolves to, supersedes or reads another caller's work.
-  const workId = await deps.store.resolveSourceWorkId(
-    `agent:${id}:${request.principal}:${sourceKey}`,
-    ulid(),
-  );
+  const sourceWorkKey = `agent:${id}:${request.principal}:${sourceKey}`;
+  // The harness check guards a new round. A caller that lost the response
+  // to a round it admitted must still get that round back, even when the
+  // definition has since moved to a harness this profile does not carry:
+  // the admitted round pins the harness it was admitted with. So on an
+  // unsupported harness the request goes on only when it names Work that
+  // already exists, found without reserving anything, and the orchestrator
+  // below then replays an admitted round or refuses to mint a new one.
+  const existingWorkId = unsupported
+    ? await deps.store.readSourceWorkId(sourceWorkKey)
+    : undefined;
+  if (unsupported && existingWorkId === undefined) throw unsupported;
+  const workId =
+    existingWorkId ??
+    (await deps.store.resolveSourceWorkId(sourceWorkKey, ulid()));
   const round: AgentRound = agentRoundSchema.parse({
     agent: id,
     revision: definition.revision,
@@ -256,19 +267,6 @@ export async function admitAgentRun(
     )
     .digest('hex');
   const revision = workRevisionSchema.parse({ key, input: round });
-  // The harness check guards a new round. A caller that lost the response
-  // to a round it admitted must still get that round back, even when the
-  // definition has since moved to a harness this profile does not carry:
-  // the admitted round pins the harness it was admitted with.
-  if (unsupported) {
-    const admitted = (await deps.store.listRuns({ workId })).some(
-      (run) =>
-        run.requestId === key &&
-        run.sourceRevision?.input['message'] === request.message,
-    );
-    if (admitted) return { workId, duplicate: true };
-    throw unsupported;
-  }
   const title = `${id}: ${request.message.split('\n')[0]}`;
   const spec = agentWorkSpecSchema.parse({
     title:
@@ -299,6 +297,11 @@ export async function admitAgentRun(
     isSameSourceRevision: (admitted, replay) =>
       admitted.key === replay.key &&
       admitted.input['message'] === replay.input['message'],
+    // On a harness the profile does not run, nothing new is minted. The
+    // orchestrator applies this after the stored Work's compatibility check
+    // and the admitted-receipt replay, in the same transaction, so a replay
+    // is still answered with the same checks as any other.
+    ...(unsupported ? { isPipelineAuthorized: () => false } : {}),
     isStoredWorkCompatible: (stored) => {
       const parsed = storedWorkPayloadSchema.safeParse(stored);
       if (!parsed.success) return false;
@@ -315,6 +318,8 @@ export async function admitAgentRun(
   if (isRefusal(outcome)) {
     if (outcome.reason === 'duplicate-request')
       return { workId, duplicate: true };
+    if (outcome.reason === 'pipeline-forbidden' && unsupported)
+      throw unsupported;
     if (
       outcome.reason === 'work-spec-mismatch' ||
       outcome.reason === 'task-closed'

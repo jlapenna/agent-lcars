@@ -409,16 +409,62 @@ describe('repository-owned agent runs', () => {
     expect(runs).toHaveLength(1);
     // The admitted round still pins what it was admitted with.
     expect(runs[0]!.sourceRevision?.input).not.toHaveProperty('harness');
-    // A new round, or the same request id with another message, is still
-    // refused: this profile's runtime does not run Codex.
+    // A new round is still refused: this profile's runtime does not run
+    // Codex. The refusal reserves nothing for the source key it named.
     expect(
-      (await call(ctx, 'POST', path, { message: 'Why?', requestId: 'new' }))
-        .status,
+      (
+        await call(ctx, 'POST', path, {
+          message: 'Why?',
+          requestId: 'new',
+          sourceKey: 'fresh',
+        })
+      ).status,
     ).toBe(403);
+    expect(
+      await ctx.runtime.store.readSourceWorkId(
+        `agent:owner/repo/investigator:${caller.principal}:fresh`,
+      ),
+    ).toBeUndefined();
+    // The same request id with another message conflicts, as on any replay.
     expect(
       (await call(ctx, 'POST', path, { ...body, message: 'Something else' }))
         .status,
-    ).toBe(403);
+    ).toBe(409);
+  });
+
+  it('replays an admitted round that never got a run, and answers a replay with the usual checks', async () => {
+    const store = agents([
+      { manifest: { description: 'x', profile: 'homelab-ops' } },
+    ]);
+    const ctx = context({
+      principal: caller,
+      agents: store,
+      agentProfiles: profiles,
+    });
+    const admit = (requestId: string, message = requestId) =>
+      call(ctx, 'POST', path, { message, requestId, sourceKey: 'k' });
+    // B is coalesced away by C before it gets a run; only its admission
+    // receipt remains.
+    const a = await admit('A');
+    expect(a.status).toBe(202);
+    await admit('B');
+    await admit('C');
+    const row = (await store.list())[0]!;
+    const moved = (manifest: Record<string, unknown>) => {
+      row.definition = {
+        ...row.definition!,
+        manifest: { ...row.definition!.manifest, ...manifest },
+      };
+    };
+    moved({ harness: 'codex' });
+    const replay = await admit('B');
+    expect(replay.status).toBe(202);
+    expect(replay.json.id).toBe(a.json.id);
+    // A replay never returns Work stored on another pipeline: the agent
+    // moves to the default runtime, which the stored Work was not admitted
+    // on.
+    moved({ profile: undefined });
+    expect((await admit('B')).status).toBe(409);
   });
 
   it('replays a round that was coalesced away before it ran, after an unrelated commit', async () => {

@@ -427,6 +427,14 @@ while the newer Console is still running, in this order:
    rounds of other agents already queued on it are claimed through that
    grant and would stall without it.
 
+   That fence is per runtime and per profile, not per agent. While it
+   stays, no other agent on the same runtime or profile can be admitted
+   either, and every agent without a profile shares `claw-default`. To keep
+   those agents running, disable only the incompatible one: delete its
+   definition from the default branch, which stops its admission, check that
+   its catalog row shows it disabled, and then restore the shared grant and
+   `runCallers`.
+
 Rolling back only the claw image, with the newer Console still running,
 needs no step: a round that needs the newer launcher is delivered in a shape
 the earlier one refuses, so the attempt fails instead of running on OpenClaw.
