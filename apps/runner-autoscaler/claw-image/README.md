@@ -86,9 +86,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    `session/set_mode` when the manifest names a mode or the image sets one
    for the harness (`workspace-write` for Codex; a harness that does not
    offer the mode runs nothing), and one `session/prompt` carrying the
-   message. Every harness reads a prompt that begins with `/` as one of its
-   own commands, so a message that begins that way is sent after one line
-   saying it is the request itself; any other message is sent as it is. It answers every
+   message. A harness takes some prompts as commands of its own (one that
+   begins with `/`, or a bare `halt`, which OpenClaw's Gateway reads as an
+   abort), so every message is sent after one line saying it is the request
+   itself, and otherwise unchanged. It answers every
    `session/request_permission` with the reject option, so the agent can do
    only what its harness does without asking.
 5. It settles from the session's updates: `report` only when the turn ended
@@ -148,7 +149,15 @@ turn and speaks no ACP itself. Each step fails the attempt closed:
    provider with no `apiKey` gets the first of its own variables the
    environment holds. A provider that is not declared in the config and
    relied on the environment no longer finds its key, and a custom key named
-   only outside those places stays in the environment.
+   only outside those places stays in the environment. A SecretRef is
+   resolved only as OpenClaw would resolve it: through an `env` provider the
+   config declares, within that provider's `allowlist`; any other reference
+   is left for OpenClaw to refuse. A definition whose model key came from an
+   auth-profile store in its configured `agentDir` no longer authenticates,
+   because the launch config, like `agent exec`, drops `agentDir` to keep
+   agent state under the Job's state directory, and the Gateway does not
+   read auth profiles from the original directory as `agent exec` did. Give
+   the provider its key as an `env` SecretRef.
 6. `openclaw gateway run`, waited on until it logs `[gateway] ready`. It
    serves this one turn: channels, cron, the Gmail watcher, the canvas host,
    the browser control server and the startup model prewarm are all switched

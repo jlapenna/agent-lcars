@@ -123,7 +123,12 @@ costs one attempt.
   as a SecretRef. A declared provider with no `apiKey` is given the key it
   would have found in the environment. A provider that is not declared under
   `models.providers` and relied on finding its key there no longer
-  authenticates; declare it. The launch config is readable by the agent's
+  authenticates; declare it. A SecretRef is resolved only as OpenClaw would
+  resolve it: through an `env` provider the config declares, within that
+  provider's `allowlist`. An OpenClaw definition whose model key came from an
+  auth-profile store in its configured `agentDir` no longer authenticates
+  either, because the Gateway keeps agent state under the Job's own state
+  directory; give the provider its key as an `env` SecretRef instead. The launch config is readable by the agent's
   user, so this keeps a key out of a command's output, not out of an agent's
   reach. The default runtime holds
   only a model key, so a `claude` or `codex` agent names a profile whose
@@ -167,10 +172,13 @@ covers every path, mode and content.
 ## A run
 
 A run takes one `message`, free text that becomes the agent's brief, and
-returns the agent's final report. A message that begins with `/` is the
-agent's to read like any other: no harness treats it as one of its own
-commands. LCARS imposes no shape on either. An agent
+returns the agent's final report. LCARS imposes no shape on either. An agent
 that wants structure says so in its own `AGENTS.md`.
+
+The message is always the agent's to read. A harness would take some
+messages as commands of its own (one that begins with `/`, or a bare `halt`),
+so the launcher sends every message after one line saying it is the request
+itself, and otherwise unchanged.
 
 Typed inputs and results can be added later, as optional manifest declarations,
 when a consumer needs them.
@@ -320,24 +328,35 @@ agent round admitted through the generic route.
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
 
-1. Take `harness` and `mode` out of every manifest that names one, on each
-   repository's default branch, and wait for the catalog to refresh. Then
-   check that no agent in the catalog, enabled or not, still shows either
-   field. Deleting an agent is not enough: its row is only disabled and
-   keeps the stored manifest. The earlier Console reads stored rows with a
-   strict schema, and one row with a field it does not know stops it listing
-   and refreshing the catalog for every repository.
+1. Stop new rounds. Remove `work.claw.admit` from every grant in
+   `AGENT_LCARS_WORK_GRANTS` and turn `runCallers` off in every profile, so
+   nothing can admit an agent round. An agent has no switch of its own to
+   disable it; the grant is the fence. Leave it in place until step 6.
 2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
    earlier Console cannot read such a round, so it can neither deliver its
    brief nor retry it. Rounds of OpenClaw agents with neither are unaffected.
-3. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
+3. Take `harness` and `mode` out of every manifest that names one, on each
+   repository's default branch. If that definition also has `config.json`
+   and `approvals.json`, remove them too: without its `harness` it would
+   otherwise be a valid OpenClaw agent and run as one. Wait for the catalog
+   to refresh.
+4. Check that no agent in the catalog, enabled or not, still shows either
+   field. The earlier Console reads stored rows with a strict schema, and
+   one row with a field it does not know stops it listing and refreshing the
+   catalog for every repository. Deleting an agent does not clear its row:
+   the row is only disabled and keeps the stored manifest. For a row whose
+   repository is gone or can no longer be read, delete its document from the
+   `orchestrator-agents` collection.
+5. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
    The earlier Console validates profiles at startup with a strict schema and
    does not start with a field it does not know.
-4. If the claw image is going back too, also disable every agent whose
-   definition has `home/` files (the operator veto), and let its rounds
-   finish or cancel them. The earlier Console delivers such a definition in
-   the brief the earlier launcher accepts, and that launcher stages only the
-   workspace, so the agent would run without its reviewed `home/` settings.
+6. Roll the Console back, then restore the grants from step 1. If the claw
+   image went back too, first deal with every agent whose definition has
+   `home/` files: remove that directory if the agent can run without it, or
+   keep the agent's runtime out of every grant. The earlier Console delivers
+   such a definition in the brief the earlier launcher accepts, and that
+   launcher stages only the workspace, so the agent would run without its
+   reviewed `home/` settings.
 
 Rolling back only the claw image, with the newer Console still running,
 needs no step: a round that needs the newer launcher is delivered in a shape

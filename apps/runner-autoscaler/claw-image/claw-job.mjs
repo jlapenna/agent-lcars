@@ -93,14 +93,15 @@ export const HARNESSES = Object.freeze({
   }),
 });
 const ACP_PROTOCOL_VERSION = 1;
-// Every harness reads a prompt that begins with `/` as one of its own
-// commands (OpenClaw's Gateway, Claude Code and Codex all do). A Work message
-// is the agent's to read, so one that begins that way follows this line and
-// is no longer the start of the prompt.
+// A harness reads some prompts as commands of its own rather than as text
+// for the agent: one that begins with `/` (OpenClaw's Gateway, Claude Code
+// and Codex all do), or a bare control word such as `halt`, which OpenClaw's
+// Gateway takes as an abort. A Work message is always the agent's to read,
+// so every message follows this line and is never the whole prompt or its
+// start.
 const LITERAL_MESSAGE =
   'The message below is the request itself, not a command.';
-export const promptText = (message) =>
-  /^\s*\//u.test(message) ? `${LITERAL_MESSAGE}\n\n${message}` : message;
+export const promptText = (message) => `${LITERAL_MESSAGE}\n\n${message}`;
 const ACP_AUTH_REQUIRED = -32000;
 const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
 // How long an ACP harness gets to exit by itself once its turn has ended.

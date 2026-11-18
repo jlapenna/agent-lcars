@@ -382,6 +382,22 @@ export function resolveCredentials(
     value.source === 'env' &&
     typeof value.id === 'string' &&
     Object.keys(value).every((key) => SECRET_REF_KEYS.has(key));
+  // OpenClaw resolves an `env` SecretRef through the provider it names, or
+  // the default one. A provider the config declares may limit the names it
+  // serves (`allowlist`), or not be an `env` provider at all. A reference
+  // OpenClaw would refuse is left for OpenClaw to refuse.
+  const secrets = config.secrets ?? {};
+  const allowed = (reference) => {
+    const alias = reference.provider ?? secrets.defaults?.env ?? 'default';
+    const provider = secrets.providers?.[alias];
+    if (provider === undefined) return alias === 'default';
+    if (provider?.source !== 'env') return false;
+    return (
+      provider.allowlist === undefined ||
+      (Array.isArray(provider.allowlist) &&
+        provider.allowlist.includes(reference.id))
+    );
+  };
   // Withheld whether or not it holds anything: an empty credential variable
   // is not a command's to see either.
   const withheld = new Set(
@@ -395,8 +411,9 @@ export function resolveCredentials(
   const collectReferences = (value) => {
     if (Array.isArray(value)) value.forEach(collectReferences);
     else if (value && typeof value === 'object') {
-      if (isReference(value)) credential(value.id);
-      else Object.values(value).forEach(collectReferences);
+      if (isReference(value)) {
+        if (allowed(value)) credential(value.id);
+      } else Object.values(value).forEach(collectReferences);
     }
   };
   collectReferences(config);
@@ -429,7 +446,8 @@ export function resolveCredentials(
     if (typeof value === 'string') return substitute(value);
     if (Array.isArray(value)) return value.map(resolve);
     if (!value || typeof value !== 'object') return value;
-    if (isReference(value) && resolves(value.id)) return env[value.id];
+    if (isReference(value) && allowed(value) && resolves(value.id))
+      return env[value.id];
     return Object.fromEntries(
       Object.entries(value).map(([key, child]) => [key, resolve(child)]),
     );

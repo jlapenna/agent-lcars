@@ -830,6 +830,22 @@ test('resolveCredentials resolves what the config names and what providers read'
       // Not a reference: it has a field of its own.
       tools: { source: 'env', id: 'MODEL_KEY', profile: 'coding' },
       path: { source: 'env', id: 'PATH' },
+      secrets: {
+        providers: {
+          narrow: { source: 'env', allowlist: ['MODEL_KEY'] },
+          files: { source: 'file', path: '/secrets.json' },
+        },
+      },
+      // References OpenClaw itself would refuse are left for it to refuse:
+      // a name outside the provider's allowlist, a provider that is not an
+      // `env` provider, and one that is not declared.
+      refused: [
+        { source: 'env', provider: 'narrow', id: 'ZONE_SETTING' },
+        { source: 'env', provider: 'files', id: 'ZONE_SETTING' },
+        { source: 'env', provider: 'undeclared', id: 'ZONE_SETTING' },
+      ],
+      // The same provider serves a name on its list.
+      served: { source: 'env', provider: 'narrow', id: 'MODEL_KEY' },
     },
     env,
     auth,
@@ -862,6 +878,18 @@ test('resolveCredentials resolves what the config names and what providers read'
     },
     tools: { source: 'env', id: 'MODEL_KEY', profile: 'coding' },
     path: { source: 'env', id: 'PATH' },
+    secrets: {
+      providers: {
+        narrow: { source: 'env', allowlist: ['MODEL_KEY'] },
+        files: { source: 'file', path: '/secrets.json' },
+      },
+    },
+    refused: [
+      { source: 'env', provider: 'narrow', id: 'ZONE_SETTING' },
+      { source: 'env', provider: 'files', id: 'ZONE_SETTING' },
+      { source: 'env', provider: 'undeclared', id: 'ZONE_SETTING' },
+    ],
+    served: 'k1',
   });
   // Every credential the environment holds is withheld from the Gateway,
   // whether or not this config uses it; nothing else is.
@@ -1215,13 +1243,19 @@ test('gives the agent a writable copy of its locked workspace', async () => {
   );
 });
 
-test('sends a repository agent exactly its message, without a wrapper', async () => {
+test('sends a repository agent its message unchanged, after one line', async () => {
   const { env, deps, harnessLog } = await fixture({
     brief: agentBrief(agentFiles, { message: 'Reply with JSON only.' }),
   });
   await main(env, deps);
   const { prompt } = (await harnessLog()).find((entry) => entry.prompt);
-  assert.deepEqual(prompt, [{ type: 'text', text: 'Reply with JSON only.' }]);
+  // One line saying the message is the request, then exactly the message.
+  assert.deepEqual(prompt, [
+    {
+      type: 'text',
+      text: 'The message below is the request itself, not a command.\n\nReply with JSON only.',
+    },
+  ]);
 });
 
 const harnessFiles = {
@@ -1291,7 +1325,7 @@ test('an ACP harness runs the agent and reports its last message after the last 
     mcpServers: [],
   });
   assert.deepEqual(prompt.prompt, [
-    { type: 'text', text: 'Why is the disk alert firing?' },
+    { type: 'text', text: promptText('Why is the disk alert firing?') },
   ]);
   assert.equal(
     await readFile(join(env.CLAW_WORK_DIR, 'workspace', 'CLAUDE.md'), 'utf8'),
@@ -1565,22 +1599,20 @@ test('a definition file named home or workspace is not staged as a directory', a
   assert.equal((await main(env, deps)).outcome, 'report');
 });
 
-test('a message that begins with a slash reaches the agent as text, not as a command', async () => {
+test('a message is always sent as text for the agent, never as a harness command', async () => {
   const sent = async (message) => {
     const made = await fixture({ brief: agentBrief(agentFiles, { message }) });
     await main(made.env, made.deps);
     return (await made.harnessLog()).find((entry) => entry.prompt).prompt;
   };
   const lead = 'The message below is the request itself, not a command.';
-  for (const message of ['/help', '  /status check the disk'])
+  // A leading slash and a bare control word are both commands to some
+  // harness; neither is ever the whole prompt or its start.
+  for (const message of ['/help', 'halt', 'Check /var/log for errors.'])
     assert.deepEqual(await sent(message), [
       { type: 'text', text: `${lead}\n\n${message}` },
     ]);
-  // Any other message is sent exactly as it is.
-  assert.equal(
-    promptText('Check /var/log for errors.'),
-    'Check /var/log for errors.',
-  );
+  assert.equal(promptText('stop'), `${lead}\n\nstop`);
 });
 
 test("a harness's own remarks on the turn never replace the answer", async () => {
