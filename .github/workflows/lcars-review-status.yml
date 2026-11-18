@@ -1,0 +1,55 @@
+name: Publish LCARS review status
+
+# Use the default branch's workflow and token for fork reviews as well.
+# Never check out PR code or consume artifacts from the triggering run.
+on:
+  workflow_run:
+    workflows: ['LCARS review event']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: publish-lcars-review-status
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Reconcile open PR heads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          # Re-read every open head. Fork events can lack PR numbers, and
+          # GitHub may coalesce queued runs in the concurrency group.
+          pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha] | @tsv')
+          while read -r pr head; do
+            [[ -n "$pr" ]] || continue
+            reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews?per_page=100")
+            state=$(jq -r --arg head "$head" '
+              [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head) ]
+              | reduce .[] as $r ("pending";
+                  if $r.state == "CHANGES_REQUESTED" then "blocked"
+                  elif ($r.body // "" | test("\\S")) and
+                    ($r.state == "APPROVED" or ($r.state == "COMMENTED" and . != "blocked"))
+                  then "success" else . end)
+            ' <<< "$reviews")
+            case "$state" in
+              blocked) state=pending; description="LCARS requested changes" ;;
+              pending) description="Awaiting LCARS code review of this commit" ;;
+              success) description="LCARS reviewed this commit" ;;
+            esac
+            current=$(gh api "repos/$REPO/commits/$head/status" --jq '.statuses[] | select(.context == "LCARS review") | [.state, .description] | @tsv')
+            [[ "$current" != "$state"$'\t'"$description" ]] || continue
+            gh api --method POST "repos/$REPO/statuses/$head" -f context='LCARS review' \
+              -f state="$state" -f description="$description" \
+              -f target_url="https://github.com/$REPO/pull/$pr" --silent
+          done <<< "$pulls"
