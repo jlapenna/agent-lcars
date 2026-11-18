@@ -1,6 +1,11 @@
 # Repository-owned claw agents
 
-Status: design (2026-11-15). This replaces the per-agent claw code shipped for
+Status: the catalog, admission and the OpenClaw launcher path are in
+production (#3382 through #3410). The ACP launcher that runs agents on
+OpenClaw, Claude Code or Codex (#3411) is implemented, but production still
+runs an earlier `claw-runner` image; it reaches production with a new image
+publish and Homelab pin. [Acceptance](#acceptance) records what production
+has shown. This replaces the per-agent claw code shipped for
 `claw/investigator` (phase 3a of the
 [unified work dataflow design](superpowers/specs/2026-10-15-unified-work-dataflow-design.md#claw)).
 It follows [repository jobs](repository-jobs.md): a repository defines what
@@ -518,14 +523,25 @@ attempt. Before reverting a runtime's image digest:
 3. Revert the image digest. Keep those definitions out, or the fence up,
    for as long as the earlier image is pinned.
 
-Acceptance:
+## Acceptance
 
-- A real investigation runs from `jlapenna/homelab/investigator` through the
-  generic route, and `lcars investigate` works again.
-- An agent with no profile, added by a repository PR alone, runs end to end on
-  k3s.
-- A manifest naming a profile that does not list its repository is visible and
-  refused.
+- **Met:** a real investigation ran from `jlapenna/homelab/investigator`
+  through the generic operator route on the OpenClaw launcher (#3402). Still
+  open: a production `lcars investigate` invocation that settles
+  successfully, since the CLI uses the run-token routes and waits for the
+  result.
+- **Open:** an agent with no profile, added by a repository PR alone, runs
+  end to end on k3s. The zone executor records `claw-default` runs exiting
+  `succeeded`, but that counter does not identify the agent; the check needs
+  a successful Work item or report for the `.lcars/agents/smoke/` canary.
+- **Partly met:** a manifest naming a profile that does not list its
+  repository is refused. Admission refuses it with "Profile NAME does not
+  admit REPOSITORY" (`apps/console/src/lib/repository-agent-runs.ts`), and
+  the operator-route test in `apps/console/src/lib/work-router.test.ts`
+  asserts HTTP 403 for it. Its catalog visibility and a production refusal
+  remain open.
+- **Open:** the ACP launcher (#3411) running a round in production, after its
+  `claw-runner` image is published and pinned.
 
 On-call is not a claw agent and does not depend on LCARS (2026-11-15
 decision).
