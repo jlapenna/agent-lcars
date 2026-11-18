@@ -22,7 +22,14 @@ import {
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
-import { comparableConfig, launchConfig } from './openclaw-harness.mjs';
+import {
+  bundledPluginProviders,
+  comparableConfig,
+  doctorChanges,
+  launchConfig,
+  resolveCommand,
+  turnConfig,
+} from './openclaw-harness.mjs';
 
 const RUN_ID = 'run-123';
 
@@ -58,6 +65,8 @@ const agentFiles = {
   'config.json': {
     content: JSON.stringify({
       tools: { profile: 'minimal', exec: { mode: 'allowlist' } },
+      // A repository path, meaningless in the job: the turn's workspace wins.
+      agents: { entries: { main: { workspace: '/repo/workspace' } } },
     }),
   },
   'approvals.json': { content: '{"version":1}' },
@@ -96,6 +105,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     prompt = message.id;
     if (behaviour.hang) return;
     if (behaviour.exit) process.exit(7);
+    if (behaviour.tamperConfig) {
+      const config = JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8'));
+      config.tools = { profile: 'coding' };
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
+    }
     if (behaviour.tamper) {
       const settings = path.join(process.env.HOME, '.claude', 'settings.json');
       fs.chmodSync(settings, 0o644);
@@ -135,7 +149,7 @@ fs.appendFileSync(behaviour.FAKE_LOG, JSON.stringify({
   args,
   pid: process.pid,
   key: process.env.LITELLM_API_KEY ?? null,
-  config: sub === 'gateway run' ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined,
+  config: configPath && fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : undefined,
 }) + '\\n');
 if (sub === 'config validate') {
   console.log(JSON.stringify({ valid: behaviour.FAKE_INVALID !== '1' }));
@@ -147,6 +161,16 @@ if (args[0] === 'doctor') {
   config.meta = { lastTouchedVersion: 'fake' };
   config.wizard = { lastRunAt: new Date().toISOString() };
   if (behaviour.FAKE_DOCTOR_WIDENS === '1') config.tools = { profile: 'coding' };
+  // Doctor repairing a workspace the source names: the turn's directory.
+  if (behaviour.FAKE_DOCTOR_REPAIRS_WORKSPACE === '1') {
+    const ws = path.join(path.dirname(process.env.OPENCLAW_STATE_DIR), 'workspace');
+    fs.mkdirSync(ws, { recursive: true });
+    fs.writeFileSync(path.join(ws, 'AGENTS.md'), 'merged by doctor');
+  }
+  if (behaviour.FAKE_DOCTOR_NARROWS === '1') {
+    config.skills = { entries: { gog: { enabled: false } } };
+    config.agents.entries.helper = {};
+  }
   fs.writeFileSync(configPath, JSON.stringify(config));
   process.exit(0);
 }
@@ -291,9 +315,11 @@ test('an OpenClaw turn runs its own ACP server behind a Gateway this run owns', 
     exec: { mode: 'allowlist' },
   });
   assert.deepEqual(config.agents.defaults, { skipBootstrap: true, workspace });
+  assert.equal(config.agents.entries.main.workspace, workspace);
   assert.equal(config.gateway.mode, 'local');
   assert.equal(config.gateway.bind, 'loopback');
   assert.equal(config.gateway.auth.mode, 'token');
+  assert.deepEqual(config.gateway.reload, { mode: 'off' });
   // OpenClaw's ACP server is the agent, pointed at that Gateway.
   const acp = log[4].args;
   assert.equal(acp[2], `ws://127.0.0.1:${config.gateway.port}`);
@@ -332,18 +358,233 @@ test('an invalid pinned config fails closed before the Gateway starts', async ()
   assert.deepEqual(ran(await openclawLog()), ['config validate']);
 });
 
-test('a Doctor change beyond its own stamps fails closed', async () => {
+test('a Doctor change that would widen the agent fails closed, naming it', async () => {
   const { env, calls, deps, openclawLog } = await fixture({
     env: { FAKE_DOCTOR_WIDENS: '1' },
   });
   const result = await main(env, deps);
   assert.equal(result.outcome, 'runner-failed');
-  assert.match(result.message, /Doctor-normalized/);
+  assert.match(
+    result.message,
+    /beyond narrowing it: tools\.exec\.mode, tools\.profile\.$/,
+  );
   assert.deepEqual(ran(await openclawLog()), [
     'config validate',
     'doctor --fix',
   ]);
   assert.deepEqual(completion(calls), result);
+});
+
+test("an un-normalized source config runs Doctor's accepted changes, without its skill toggles", async () => {
+  const { env, calls, deps, openclawLog } = await fixture({
+    env: { FAKE_DOCTOR_NARROWS: '1' },
+  });
+  const result = await main(env, deps);
+  assert.equal(result.outcome, 'report');
+  assert.deepEqual(completion(calls), result);
+  const [validate, doctor, , gateway] = await openclawLog();
+  // Validation and Doctor see the source as written: the launcher supplies
+  // no workspace, so Doctor's repairs never touch the turn's.
+  for (const entry of [validate, doctor]) {
+    assert.equal(entry.config.agents.entries.main.workspace, '/repo/workspace');
+    assert.equal(entry.config.agents.defaults, undefined);
+    assert.equal(entry.config.gateway, undefined);
+  }
+  // The turn keeps Doctor's accepted change (an empty agent entry) but not
+  // its skill toggle: OpenClaw gates skills at load time in the turn itself.
+  assert.deepEqual(gateway.config.agents.entries.helper, {});
+  assert.equal(gateway.config.skills, undefined);
+});
+
+test("Doctor's repairs to the turn's directory never reach the turn", async () => {
+  const { env, deps } = await fixture({
+    env: { FAKE_DOCTOR_REPAIRS_WORKSPACE: '1' },
+  });
+  const result = await main(env, deps);
+  assert.equal(result.outcome, 'report');
+  const workspace = join(env.CLAW_WORK_DIR, 'workspace');
+  assert.equal(
+    await readFile(join(workspace, 'AGENTS.md'), 'utf8'),
+    '# repository agent\n',
+  );
+  assert.ok((await stat(join(workspace, 'tools'))).isDirectory());
+});
+
+test('a bare OpenClaw command resolves through PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claw-path-'));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'openclaw'), '');
+  await chmod(join(bin, 'openclaw'), 0o755);
+  // A non-executable file earlier on PATH is skipped, as spawn skips it.
+  const shadow = join(root, 'shadow');
+  await mkdir(shadow);
+  await writeFile(join(shadow, 'openclaw'), '');
+  assert.equal(
+    await resolveCommand('openclaw', `/nonexistent:${shadow}:${bin}`),
+    join(bin, 'openclaw'),
+  );
+  assert.equal(await resolveCommand('/abs/openclaw', ''), '/abs/openclaw');
+  await assert.rejects(
+    resolveCommand('openclaw', '/nonexistent'),
+    /not found on PATH/,
+  );
+  assert.deepEqual(await bundledPluginProviders('openclaw', bin), new Map());
+});
+
+test('turnConfig restores the source skill settings', () => {
+  assert.deepEqual(
+    turnConfig(
+      { skills: { entries: { tmux: { enabled: true } } } },
+      {
+        skills: {
+          entries: { tmux: { enabled: false }, gog: { enabled: false } },
+        },
+        plugins: { entries: { litellm: { enabled: true } } },
+      },
+    ),
+    {
+      skills: { entries: { tmux: { enabled: true } } },
+      plugins: { entries: { litellm: { enabled: true } } },
+    },
+  );
+  assert.deepEqual(
+    turnConfig({}, { skills: { entries: { gog: { enabled: false } } } }),
+    {},
+  );
+});
+
+test('plugin ownership comes from the bundled plugin manifests', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claw-plugins-'));
+  const bin = join(root, 'openclaw.mjs');
+  await writeFile(bin, '');
+  for (const [id, manifest] of [
+    [
+      'google',
+      {
+        id: 'google',
+        providers: ['google'],
+        autoEnableWhenConfiguredProviders: ['google-vertex'],
+      },
+    ],
+    ['litellm', { id: 'litellm', providers: ['litellm'] }],
+  ]) {
+    await mkdir(join(root, 'dist', 'extensions', id), { recursive: true });
+    await writeFile(
+      join(root, 'dist', 'extensions', id, 'openclaw.plugin.json'),
+      JSON.stringify(manifest),
+    );
+  }
+  await mkdir(join(root, 'dist', 'extensions', 'no-manifest'));
+  assert.deepEqual(
+    await bundledPluginProviders(bin),
+    new Map([
+      ['google', new Set(['google', 'google-vertex'])],
+      ['litellm', new Set(['litellm'])],
+    ]),
+  );
+});
+
+test("Doctor's skill toggles are ignored; plugins only for declared providers", () => {
+  const owners = new Map([
+    ['litellm', new Set(['litellm'])],
+    ['google', new Set(['google', 'google-vertex'])],
+  ]);
+  const source = {
+    models: { providers: { litellm: { baseUrl: 'https://llm.test' } } },
+    tools: { profile: 'minimal', deny: ['exec'] },
+    skills: { entries: { tmux: { enabled: true } } },
+  };
+  const narrowed = {
+    ...source,
+    meta: { lastTouchedVersion: 'x' },
+    wizard: { lastRunAt: 'now' },
+    plugins: { entries: { litellm: { enabled: true } } },
+    skills: { entries: { tmux: { enabled: false }, gog: { enabled: false } } },
+    agents: { entries: { main: {} } },
+  };
+  assert.deepEqual(doctorChanges(source, narrowed, owners), []);
+  assert.deepEqual(
+    doctorChanges(
+      source,
+      {
+        ...narrowed,
+        plugins: {
+          entries: { litellm: { enabled: true }, browser: { enabled: true } },
+        },
+        skills: {
+          entries: { tmux: { enabled: true }, gog: { enabled: true } },
+        },
+        tools: { profile: 'minimal', deny: [] },
+        agents: { entries: { main: { tools: { profile: 'coding' } } } },
+        gateway: {},
+      },
+      owners,
+    ),
+    [
+      'agents.entries.main.tools.profile',
+      'gateway',
+      'plugins.entries.browser.enabled',
+      'tools.deny',
+    ],
+  );
+  // Explicit empty maps may be filled with allowed entries, but a new empty
+  // section is still a change.
+  const empty = {
+    ...source,
+    plugins: { entries: {} },
+    skills: { entries: {} },
+    agents: { entries: {} },
+  };
+  assert.deepEqual(doctorChanges(empty, narrowed, owners), []);
+  assert.deepEqual(doctorChanges(source, { ...source, gateway: {} }, owners), [
+    'gateway',
+  ]);
+  // OpenClaw matches provider IDs case-insensitively.
+  const upper = { models: { providers: { LITELLM: {} } } };
+  assert.deepEqual(
+    doctorChanges(
+      upper,
+      { ...upper, plugins: { entries: { litellm: { enabled: true } } } },
+      owners,
+    ),
+    [],
+  );
+  // A provider owned by a differently named plugin (google-vertex → google).
+  const vertex = { models: { providers: { 'google-vertex': {} } } };
+  assert.deepEqual(
+    doctorChanges(
+      vertex,
+      { ...vertex, plugins: { entries: { google: { enabled: true } } } },
+      owners,
+    ),
+    [],
+  );
+  // A plugin the source disabled stays disabled; Doctor removing settings is
+  // a change too.
+  const disabled = {
+    ...source,
+    plugins: { entries: { litellm: { enabled: false } } },
+  };
+  assert.deepEqual(
+    doctorChanges(
+      disabled,
+      {
+        ...disabled,
+        plugins: { entries: { litellm: { enabled: true } } },
+      },
+      owners,
+    ),
+    ['plugins.entries.litellm.enabled'],
+  );
+  assert.deepEqual(
+    doctorChanges(
+      source,
+      { models: source.models, skills: source.skills },
+      owners,
+    ),
+    ['tools.deny', 'tools.profile'],
+  );
 });
 
 test('a Gateway that never becomes ready fails closed before the turn', async () => {
@@ -387,6 +628,17 @@ test('a denied OpenClaw tool call fails the attempt', async () => {
   });
 });
 
+test('an agent that rewrites the Gateway config loses its report', async () => {
+  const { env, deps } = await fixture({
+    acp: { ...CLEAN_TURN, tamperConfig: true },
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message:
+      'Claw turn failed: the agent changed its harness settings (OpenClaw config).',
+  });
+});
+
 test('the outer deadline stops an OpenClaw turn and its Gateway', async () => {
   const { env, deps, openclawLog } = await fixture({
     acp: { hang: true },
@@ -425,7 +677,7 @@ test('launchConfig adds only what this run knows to the reviewed config', () => 
     {
       agents: {
         defaults: { skipBootstrap: false, model: { primary: 'm' } },
-        entries: { main: {} },
+        entries: { main: { workspace: '/repo/workspace' }, helper: {} },
       },
       tools: { profile: 'minimal' },
       gateway: {
@@ -438,13 +690,14 @@ test('launchConfig adds only what this run knows to the reviewed config', () => 
   );
   assert.deepEqual(launched, {
     agents: {
-      // The agent's own choices stand; only its workspace is this run's.
+      // The agent's own choices stand; only its workspace is this run's,
+      // wherever the source named one.
       defaults: {
         skipBootstrap: false,
         model: { primary: 'm' },
         workspace: '/work/workspace',
       },
-      entries: { main: {} },
+      entries: { main: { workspace: '/work/workspace' }, helper: {} },
     },
     tools: { profile: 'minimal' },
     // A definition cannot open the Gateway or drop its token.
@@ -454,6 +707,7 @@ test('launchConfig adds only what this run knows to the reviewed config', () => 
       bind: 'loopback',
       port: 4242,
       auth: { mode: 'token', token: 't' },
+      reload: { mode: 'off' },
     },
   });
 });
@@ -498,7 +752,8 @@ test('cancellation stops an OpenClaw turn and its Gateway, and still settles', a
   let log = [];
   for (let i = 0; i < 200 && !ran(log).includes('acp --url'); i++) {
     await new Promise((resolve) => setTimeout(resolve, 50));
-    log = await openclawLog();
+    // Nothing has been logged until the first OpenClaw command starts.
+    log = await openclawLog().catch(() => []);
   }
   assert.deepEqual(ran(log).slice(3), ['gateway run', 'acp --url']);
   for (

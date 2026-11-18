@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@google-cloud/firestore": "9.4.1",
-    "@google-cloud/storage": "^8.0.0",
+    "@google-cloud/storage": "^9.0.0",
     "@google-cloud/tasks": "^7.0.0",
     "@jlapenna/fleet-runtime": "github:jlapenna/fleet-runtime#main",
     "@mantine/core": "^9.0.2",

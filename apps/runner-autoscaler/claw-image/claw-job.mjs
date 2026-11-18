@@ -64,8 +64,9 @@ const RESERVED_ENV =
 
 // The harnesses this image carries (Dockerfile). Each entry prepares what
 // its harness needs and returns the ACP agent to run on stdio: its command,
-// an environment when it needs more than the zone's, and a `stop` for
-// anything it started. A manifest names a harness; the command comes from
+// an environment when it needs more than the zone's, a `verify` that names
+// any of its own settings the turn changed, and a `stop` for anything it
+// started. A manifest names a harness; the command comes from
 // the image, never from the definition, so reviewed source cannot choose the
 // program that speaks for the agent.
 const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
@@ -564,6 +565,8 @@ async function harnessTurn({
     definitionDir,
     workRoot,
     workspace,
+    // For a harness whose own preparation may write into the workspace.
+    stageWorkspace: () => prepareWorkspace(definitionDir, workRoot),
     openclaw,
     env,
     signal,
@@ -586,15 +589,21 @@ async function harnessTurn({
     // What the launcher can do is refuse a result when it sees that: every
     // pinned `home/` file must still be its blob once the turn is over. A
     // file the agent added, or changed and put back, is not seen.
-    for (const file of settings) {
-      const content = await readFile(inHome(file)).catch(() => undefined);
-      if (content === undefined || gitBlobSha(content) !== file.sha)
-        return {
+    const changed = async () => {
+      for (const file of settings) {
+        const content = await readFile(inHome(file)).catch(() => undefined);
+        if (content === undefined || gitBlobSha(content) !== file.sha)
+          return file.path;
+      }
+      return harness.verify?.();
+    };
+    const what = await changed();
+    return what === undefined
+      ? finished
+      : {
           ...finished,
-          error: `the agent changed its harness settings (${file.path})`,
+          error: `the agent changed its harness settings (${what})`,
         };
-    }
-    return finished;
   } finally {
     await harness.stop?.();
   }
