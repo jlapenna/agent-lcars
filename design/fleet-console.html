@@ -818,7 +818,7 @@ function recentWorkPanel() {
     <div class="empty-note">Showing up to 200 native tasks. <a href="#">Next work page →</a></div></div></section>`;
 }
 function workDetailPanel() {
-  return `<section class="panel" data-od-id="panel-work-detail"><div><div class="panel-head"><h2>Work detail</h2><span class="count">1 round</span><span class="meta">jlapenna/homelab · investigator · report</span></div>
+  return `<section class="panel" data-od-id="panel-work-detail"><div><div class="panel-head"><h2>Work detail</h2><span class="count">2 rounds</span><span class="meta">jlapenna/homelab · investigator · report</span></div>
     <div class="round" data-od-id="work-detail-round">
       <div class="speaker">user:jlapenna · api</div>
       <p class="said">Is the backup volume on pike filling up?</p>
@@ -827,6 +827,16 @@ function workDetailPanel() {
       <div class="seen" data-od-id="work-detail-run-evidence">
         <div>Tool calls: 4 (execute 2, read 1, fetch 1; 1 failed; 1 unfinished)</div>
         <div>Harness: openclaw · Stopped: end_turn · Tokens: 51,000 in, 2,000 out, 40,000 cached · Context: 53,000 of 200,000 · Cost: USD 0.0450 · Turn: 41 s</div>
+      </div>
+    </div>
+    <div class="round" data-od-id="work-detail-round-total">
+      <div class="speaker">user:jlapenna · console</div>
+      <p class="said">And the snapshots volume?</p>
+      <div class="speaker">Agent · report</div>
+      <p class="said">At 63%, steady since the retention change on the 4th.</p>
+      <div class="seen" data-od-id="work-detail-run-evidence-total">
+        <div>Tool calls: 1 (execute 1)</div>
+        <div>Harness: claude · Stopped: end_turn · Tokens: 44,200 total, 1,000 in, 200 out, 40,000 cached, 3,000 written to cache · Turn: 12 s</div>
       </div>
     </div></div></section>`;
 }
