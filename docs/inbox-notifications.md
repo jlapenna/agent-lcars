@@ -175,7 +175,8 @@ Separate from Inbox notifications, the Console POSTs a settled native item's
 outcome to the adapter that started it (`apps/console/src/lib/outcome-webhook.ts`).
 The outbox drain in `orchestrator-dispatch.ts` sends one when a run settles
 `finished`, `canceled` or `lost` and the item's origin carries a `thread`;
-a later `deliveryStage: "complete"` event follows a protected merge. The
+a protected merge queues a later `deliveryStage: "complete"` event, which is
+retired without sending if the Work item closes before the outbox drains it. The
 target is chosen by `origin.channel`, which comes from the caller's
 authenticated identity, never the request body: a grant's declared channel
 wins, otherwise a caller gets `console` when it signed in through a session

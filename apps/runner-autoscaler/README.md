@@ -466,13 +466,17 @@ ticker and refuses `LCARS_SCHEDULER_CREDENTIALS`
 ([zone executors](#declared-runtimes-and-zone-executors)).
 
 The same cadence posts `POST /api/work/v1/maintenance/tick`, the Console's
-bounded maintenance pass: it recovers credential operations, settles expired
-leases, reroutes queued work off cooling providers, drains the dispatch outbox,
-and runs model-work, repository-job and job-credential passes. The full list
-and failure semantics live in
-[docs/lifecycle-systems.md](../../docs/lifecycle-systems.md)
-(`github_runner_autoscaler_maintenance_ticks_total` and
-`..._maintenance_last_success_timestamp_seconds`). Any HTTP 200 is a
+bounded maintenance pass (context in
+[docs/lifecycle-systems.md](../../docs/lifecycle-systems.md)). Its handler,
+`handleReconcile` in `apps/console/src/lib/orchestrator-routes.ts`, is the
+authority for the full step list and failure behavior: it recovers credential
+operations, settles expired leases, reroutes queued work off cooling
+providers, drains the dispatch outbox, runs model-work, repository-job and
+job-credential passes, and attaches the optional repository-agent health
+observation. A rejected pass fails the tick; per-entry outbox failures are
+returned as `outboxDrainFailed` instead. Ticks are reported by
+`github_runner_autoscaler_maintenance_ticks_total` and
+`..._maintenance_last_success_timestamp_seconds`. Any HTTP 200 is a
 successful tick: the Console owns outbox retry and dead-lettering, so
 `outboxDrainFailed` entries in the response are logged as warnings, not
 counted as tick errors.
@@ -699,8 +703,10 @@ authorization checks.
 
 ## Runner-image helpers
 
-Beyond `direct-runner.sh`, the image bakes these single-purpose helpers from
-`runner-image/`:
+Beyond `direct-runner.sh`, these single-purpose helpers live in
+`runner-image/`. Unless noted, each is present in the running image under
+`/usr/local/lib/agent-lcars/` (the `runtime/` files under its `runtime/`
+directory):
 
 - `opencode-litellm-proxy.mjs`: loopback proxy `direct-runner.sh` starts in
   front of LiteLLM for OpenCode runs; it records the physical model behind
@@ -709,18 +715,21 @@ Beyond `direct-runner.sh`, the image bakes these single-purpose helpers from
   streams the body as `fetch` decoded it but forwards the original
   `content-encoding` header, so a gzip-encoded upstream body reaches the
   client unreadable.
-- `toolchain-health.sh`: image-build predicates (pnpm through the baked
+- `toolchain-health.sh`: present, but run at image build: predicates (pnpm through the baked
   Corepack cache, offline fleet pnpm pins, and other job tools) sourced by
   `verify-image-invariants.sh`, so an image with a broken job tool is never
   published.
-- `externals-health.sh`: image-build predicate that the baked Actions Node 24
+- `externals-health.sh`: present, but run at image build: predicate that the baked Actions Node 24
   runtime runs and that `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` is set.
-- `prepare-opencode-store.sh`: bakes an empty, migrated OpenCode store for
+- `prepare-opencode-store.sh`: present, but run at image build: bakes an empty, migrated OpenCode store for
   the runner user after checking the binary matches its pin; refuses a store
   with session history.
-- `package-anthropic-review.sh`: packages only the code-review command,
+- `package-anthropic-review.sh`: build-time only, run in a builder stage and
+  absent from the running image. It packages only the code-review command,
   license and locked revision from the `third_party/anthropic-plugins`
-  submodule during the image build; never resolves a new version.
+  submodule and never resolves a new version. The running image holds only
+  that packaged output, under
+  `/usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review`.
 - `runtime/goose-executor.mjs`: the Goose adapter `runtime/goose-job.mjs`
   uses for repository-job recipes; runs only inside a caller-owned, enforced
   job allocation and bounds the result it returns.

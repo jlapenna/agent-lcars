@@ -39,12 +39,15 @@ the dispatched-worker `PreToolUse` policy for each provider
 (`worker-policy.cjs`, through `worker-hook-bridge.cjs` or the OpenCode plugin
 `worker-opencode-plugin.mjs`), bind the provider session (`worker-session.cjs`,
 `worker-opencode-session.mjs`), and check review state (`worker-review.cjs`).
-`worker-readiness.cjs` evaluates offline canary evidence.
+`worker-readiness.cjs` evaluates offline canary evidence. Their contract tests
+live in `tools/contract-tests/worker-*.test.ts`.
 
 The image always ships these modules, but enforcement is rolled out per
-provider: the bootstrap registers the policy only when the run's pipeline is
-listed in `LCARS_WORKER_POLICY_PROVIDERS` (comma-separated `claude`, `codex`,
-`opencode`, `agy`), which the trusted autoscaler sets on each worker Job
-([runner-autoscaler README](../../apps/runner-autoscaler/README.md)). Unset or
-empty skips registration entirely; an unknown provider name fails the launch. Their contract tests
-live in `tools/contract-tests/worker-*.test.ts`.
+provider for legacy direct-runner Jobs: the trusted autoscaler forwards its
+`LCARS_WORKER_POLICY_PROVIDERS` setting (comma-separated `claude`, `codex`,
+`opencode`, `agy`) to those Jobs, and the bootstrap registers the policy only
+when the run's pipeline is listed. Unset or empty skips registration entirely.
+Declared-runtime Jobs use a separate environment and do not receive this
+setting. An executor that launches direct-runner Jobs refuses to start when
+the setting holds an unknown provider name, before any Job is attempted
+([runner-autoscaler README](../../apps/runner-autoscaler/README.md)).

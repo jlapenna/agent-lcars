@@ -20,9 +20,14 @@ including the retired `runner sidecar`, is a usage error.
 
 ## `lcars` commands
 
-`src/session-title-cli.ts` dispatches these. A bad invocation prints usage,
-including a missing or unknown `hook` subcommand (on stderr), but `hook`
-always exits 0, even for a usage error; its other decisions go to `hook.log`:
+Both installed launchers (`bin/install-session-title-cli.sh` and the runner
+image's `lcars.sh`) send `lcars hook ...` to a separate bundle built from
+`src/hook-cli.ts`; every other command goes to the operator CLI dispatched by
+`src/session-title-cli.ts`. The hook bundle prints usage to stderr for a
+missing or unknown hook subcommand and always exits 0, even then; its other
+decisions go to `hook.log`. Other commands report errors their own way: for
+example, a bare `lcars investigate` reports `invalid-input`, and its usage is
+printed only for `--help`.
 
 - `lcars session title "<text>"` / `--clear` and `lcars session status
 "<text>"` / `--clear`: the declared title and the current-activity line
