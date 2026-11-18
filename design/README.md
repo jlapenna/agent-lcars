@@ -51,9 +51,12 @@ Decisions the prototype already carries:
   do: its tool calls by kind, then the harness, stop reason, tokens, context,
   cost and turn time. A round with no record shows neither line. The lines
   wrap anywhere, so a phone never scrolls sideways for them. Every word in
-  them comes from a closed list; none is the agent's. The prototype draws one
-  such round in a panel below Recent work; production shows it on the Work
-  item's own page.
+  them comes from a closed list; none is the agent's. The token total is
+  left out only when it is exactly input plus output: a harness may count
+  cache reads and writes in its total and not in its input, and then the
+  total leads the counts. The prototype draws both cases as two rounds in a
+  panel below Recent work; production shows them on the Work item's own
+  page.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source
   revisions represent admitted work, not every raw webhook delivery.
