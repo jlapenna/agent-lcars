@@ -1455,6 +1455,10 @@ test('launchConfig runs the reviewed config under headless defaults and this run
       session: { store: '/repo/sessions', scope: 'per-sender' },
       logging: { consoleLevel: 'silent', consoleStyle: 'json', level: 'debug' },
       diagnostics: { enabled: false, flags: ['x'] },
+      commands: {
+        text: true,
+        allowFrom: { internal: ['*'], webchat: ['someone'], '*': ['anyone'] },
+      },
       gateway: {
         bind: 'lan',
         auth: { mode: 'none', allowTailscale: true },
@@ -1499,6 +1503,11 @@ test('launchConfig runs the reviewed config under headless defaults and this run
     level: 'debug',
   });
   assert.deepEqual(launched.diagnostics, { enabled: false, flags: ['x'] });
+  // Nobody may give this Gateway commands. The source's rules for single
+  // origins go too: OpenClaw puts one for the internal origin, which an
+  // ACP turn arrives from, ahead of the rule for every origin. Its other
+  // command settings stay.
+  assert.deepEqual(launched.commands, { text: true, allowFrom: { '*': [] } });
 });
 
 test('readBrief requires this run and a non-empty agent message', () => {

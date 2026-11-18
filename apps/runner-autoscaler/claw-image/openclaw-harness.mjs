@@ -719,14 +719,9 @@ export function launchConfig(config, { workspace, port, token }) {
   // are not a definition's to set through its own `env` either.
   if (pinned.env !== undefined)
     pinned.env = withoutVariables(pinned.env, GATEWAY_VARIABLES);
-  return mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
+  const launched = mergeDeep(mergeDeep(TURN_DEFAULTS, pinned), {
     agents: { defaults: { workspace, cwd: workspace, skipBootstrap: true } },
     skills: { load: { watch: false } },
-    // Nobody is authorized to give the Gateway commands or directives, so a
-    // `/word` inside a message stays text for the agent, as it was under
-    // `agent exec`. (A message that begins with one is handled by the
-    // launcher: promptText.)
-    commands: { allowFrom: { '*': [] } },
     gateway: {
       mode: 'local',
       bind: 'loopback',
@@ -738,6 +733,16 @@ export function launchConfig(config, { workspace, port, token }) {
       reload: { mode: 'off' },
     },
   });
+  // Nobody is authorized to give the Gateway commands or directives, so a
+  // `/word` inside a message stays text for the agent, as it was under
+  // `agent exec`. (A message that begins with one is handled by the
+  // launcher: promptText.) The map replaces the definition's, not merges
+  // with it: a rule the definition has for one origin, such as the internal
+  // one an ACP turn arrives from, takes precedence in OpenClaw over the
+  // rule for every origin, and would otherwise survive. The definition's
+  // other command settings stay.
+  launched.commands = { ...launched.commands, allowFrom: { '*': [] } };
+  return launched;
 }
 
 export async function prepareState({
