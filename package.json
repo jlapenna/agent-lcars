@@ -22,10 +22,10 @@
     "work:openapi": "tsx tools/work-openapi.mts"
   },
   "private": true,
-  "packageManager": "pnpm@11.28.11",
+  "packageManager": "pnpm@11.28.12",
   "engines": {
     "node": ">=26.13.0 <27",
-    "pnpm": "11.28.11"
+    "pnpm": "11.28.12"
   },
   "dependencies": {
     "@google-cloud/firestore": "9.4.1",
@@ -62,10 +62,10 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@eslint-react/eslint-plugin": "5.30.2",
+    "@eslint-react/eslint-plugin": "5.30.3",
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.1",
-    "@jlapenna/repo-tools": "github:jlapenna/repo-tools#v4.7.3",
+    "@jlapenna/repo-tools": "github:jlapenna/repo-tools#v4.9.2",
     "@naxodev/gonx": "5.0.0",
     "@next/eslint-plugin-next": "^16.2.4",
     "@nx/devkit": "24.0.6",
