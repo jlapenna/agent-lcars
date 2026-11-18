@@ -42,9 +42,9 @@ jobs:
               | reduce .[] as $r ("pending";
                   if $r.state == "CHANGES_REQUESTED" then "blocked"
                   elif $r.state == "COMMENTED" and . != "blocked" and
-                    ($r.body // "" | test("^<!-- lcars-review:block -->$"; "m")) then "comment_blocked"
+                    ($r.body // "" | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:block -->")) then "comment_blocked"
                   elif ($r.body // "" | contains("<!-- attempt-claim:")) and
-                    ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | test("^<!-- lcars-review:pass -->$"; "m")) and . != "blocked"))
+                    ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
                   then "success" else . end)
             ' <<< "$reviews")
             case "$state" in
