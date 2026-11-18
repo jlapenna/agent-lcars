@@ -99,6 +99,9 @@ func runOrchestrator(ctx context.Context, cfg OrchestratorConfig) error {
 			queue.claimSettled = queueClaimStatus(consoleURL, func() (string, error) {
 				return idTokenFromSource(tokenSource)
 			})
+			// Only now can an exit be recorded, so only now may a zero
+			// streak read as idle rather than unknown.
+			initRunExitMetrics(queue.declaredRuntimes())
 			queueStatus.configureCapacity(queue.config.MaxConcurrent, queue.activeCount)
 			// Only a writing publisher has somewhere to put the inventory.
 			if hosts, ok := statusPublisher.(hostStatusPublisher); ok {

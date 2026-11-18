@@ -21,6 +21,7 @@ import {
   jobCredentialObservationSchema,
   jobSecretDeliverySchema,
 } from './job-secrets';
+import { repositoryAgentObservationSchema } from './repository-agents';
 import {
   clawWorkSpecSchema,
   fallbackPipelinesSchema,
@@ -227,6 +228,7 @@ const base = oc.meta(openapi({ tags: ['items'], spec: withBearer }));
 
 export const maintenanceTickOutputSchema = z.strictObject({
   jobCredentials: jobCredentialObservationSchema.optional(),
+  repositoryAgents: repositoryAgentObservationSchema.optional(),
   credentialRecovery: z
     .strictObject({
       recovered: z.array(z.string()),
@@ -1662,7 +1664,15 @@ export const runsContract = {
           .optional(),
       }),
     )
-    .output(z.strictObject({ runId: runIdSchema, state: z.string() })),
+    .output(
+      z.strictObject({
+        runId: runIdSchema,
+        state: z.string(),
+        /** A finished run's result, for the executor's bounded outcome
+         * metrics; absent for any other state. */
+        ok: z.boolean().optional(),
+      }),
+    ),
   complete: runBase
     .meta(
       openapi({

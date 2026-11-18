@@ -1533,6 +1533,81 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 });
 
 describe('handleReconcile', () => {
+  it('reports repository agent catalog health, and omits it without failing when the read fails', async () => {
+    const { deps } = fixture();
+    const observation = {
+      version: 1 as const,
+      observedAt: T0,
+      agents: { enabled: 2, vetoed: 0, invalid: 1, unavailable: 0, removed: 0 },
+      sources: [{ repository: 'owner/repo', succeededAt: T0 }],
+    };
+    expect(
+      await handleReconcile({
+        ...deps,
+        observeRepositoryAgents: async () => observation,
+      }),
+    ).toMatchObject({ status: 200, body: { repositoryAgents: observation } });
+
+    const failed = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => {
+        throw new Error('firestore unavailable');
+      },
+    });
+    expect(failed.status).toBe(200);
+    expect(failed.body).not.toHaveProperty('repositoryAgents');
+  });
+
+  it('omits a catalog observation that is invalid on the wire or would overflow the reply', async () => {
+    const { deps } = fixture();
+    const base = {
+      version: 1 as const,
+      observedAt: T0,
+      agents: { enabled: 0, vetoed: 0, invalid: 0, unavailable: 0, removed: 0 },
+    };
+    const invalid = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => ({
+        ...base,
+        sources: [{ repository: 'owner/repo+suffix' }],
+      }),
+    });
+    expect(invalid.status).toBe(200);
+    expect(invalid.body).not.toHaveProperty('repositoryAgents');
+
+    const huge = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => ({
+        ...base,
+        sources: Array.from({ length: 1000 }, (_, index) => ({
+          repository: `owner/${'r'.repeat(80)}${index}`,
+          attemptedAt: T0,
+        })),
+      }),
+    });
+    expect(huge.status).toBe(200);
+    expect(huge.body).not.toHaveProperty('repositoryAgents');
+  });
+
+  it('omits a catalog observation still pending at the maintenance deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      const { deps } = fixture();
+      const reply = handleReconcile({
+        ...deps,
+        // Never settles: the deadline must answer for it.
+        observeRepositoryAgents: () =>
+          new Promise<never>((resolve) => void resolve),
+      });
+      await vi.advanceTimersByTimeAsync(45_000);
+      const result = await reply;
+      expect(result.status).toBe(200);
+      expect(result.body).not.toHaveProperty('repositoryAgents');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('performs no GitHub lifecycle reads: a closed anchor is caught at claim time, not by a sweep', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'queued-before-close');

@@ -26,6 +26,7 @@ import { providerFallbackAuthority } from '@/lib/work-provider-fallback';
 import { reconcileFleetTriage } from './fleet-triage-work';
 import { executeSummaries } from './inbox-summary-work';
 import { observeJobCredentials } from './job-secrets-runtime';
+import { observeRepositoryAgents } from './repository-agents-runtime';
 import { maintainRepositoryJobs } from './repository-jobs-runtime';
 
 /**
@@ -114,6 +115,7 @@ export function createOrchestratorRuntime(): OrchestratorRouteDeps {
       await maintainRepositoryJobs(deadline, createOrchestratorRuntime());
     },
     observeJobCredentials,
+    observeRepositoryAgents,
     executeModelWork: (deadline) =>
       executeSummaries(createOrchestratorRuntime(), undefined, deadline),
     recoverCredentialOperations: () =>

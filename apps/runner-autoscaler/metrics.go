@@ -51,6 +51,27 @@ var (
 		Name: "github_runner_autoscaler_maintenance_ticks_total",
 		Help: "Server-owned control-plane maintenance tick attempts by outcome.",
 	}, []string{"outcome"})
+	queueExecutorRunExitsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_exits_total",
+		Help: "Delivered worker-exit reports by claimed pipeline and the run's settled outcome: succeeded or failed (finished with that result), finished (no result), lost (died without reporting), canceled, unknown_run, not_claimant or other. Counted once per delivered report.",
+	}, []string{"pipeline", "outcome"})
+	queueExecutorRunDurationSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "github_runner_autoscaler_queue_executor_run_duration_seconds",
+		Help:    "Worker Job wall time from start to its terminal condition, by claimed pipeline and settled outcome, for exits observed on a terminal Job.",
+		Buckets: []float64{15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200},
+	}, []string{"pipeline", "outcome"})
+	queueExecutorRunExitTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_exit_last_timestamp_seconds",
+		Help: "Unix time of the most recent delivered worker-exit report, by claimed pipeline and settled outcome. Absent until the first one in this process: no runs is idle, not failure.",
+	}, []string{"pipeline", "outcome"})
+	queueExecutorRunConsecutiveFailures = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_consecutive_failures",
+		Help: "Delivered first exit reports since the pipeline's last succeeded or canceled one that were failed or lost, in report order. Unattributed exits, replays and finished runs without a result leave it unchanged. Zero for each declared runtime once the exit reporter starts; resets with the process.",
+	}, []string{"pipeline"})
+	queueExecutorRunExitMetricsSupported = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_exit_metrics_supported",
+		Help: "1 when this executor exports run-exit outcome metrics, so an absent exit series means idle rather than an older producer.",
+	})
 	maintenanceLastSuccessTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_maintenance_last_success_timestamp_seconds",
 		Help: "Unix timestamp of the most recent successful control-plane maintenance tick.",
@@ -86,6 +107,88 @@ func recordQueueExecutorPollOutcome(outcome queuePollOutcome) {
 	}
 }
 
+// runExitOutcome maps an exit report's answer to a bounded outcome label.
+func runExitOutcome(state string, ok *bool) string {
+	switch state {
+	case "finished":
+		switch {
+		case ok == nil:
+			return "finished"
+		case *ok:
+			return "succeeded"
+		default:
+			return "failed"
+		}
+	case "lost", "canceled":
+		return state
+	case "unknown-run":
+		return "unknown_run"
+	case stateNotClaimant:
+		return "not_claimant"
+	default:
+		return "other"
+	}
+}
+
+// recordRunExit counts one delivered exit report. An empty pipeline (a Job
+// created before the pipeline annotation) is "unknown".
+func recordRunExit(meta exitMeta, outcome string, at time.Time) {
+	pipeline := meta.pipeline
+	if pipeline == "" {
+		pipeline = "unknown"
+	}
+	queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome).Inc()
+	// An unattributed exit (a Job from before the pipeline annotation) has
+	// no runtime streak to join. A finished run without a result (a Console
+	// that predates `ok`) is neither a failure nor a success: it leaves the
+	// streak as it was.
+	if meta.pipeline != "" {
+		switch outcome {
+		case "failed", "lost":
+			queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Inc()
+		case "succeeded", "canceled":
+			queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline).Set(0)
+		}
+	}
+	queueExecutorRunExitTimestamp.WithLabelValues(pipeline, outcome).Set(float64(at.Unix()))
+	if meta.duration > 0 {
+		queueExecutorRunDurationSeconds.WithLabelValues(pipeline, outcome).Observe(meta.duration.Seconds())
+	}
+}
+
+// runExitOutcomes are the run outcomes a declared runtime starts at zero, so
+// increase() has a baseline for its first exit and the streak reads 0 (idle)
+// rather than absent (unknown).
+var runExitOutcomes = []string{"succeeded", "failed", "finished", "lost", "canceled"}
+
+// initRunExitMetrics marks this executor as exporting run-exit metrics and
+// zero-initializes each declared runtime's outcome counters and streak.
+func initRunExitMetrics(pipelines []string) {
+	queueExecutorRunExitMetricsSupported.Set(1)
+	// The healthy poll answers start at zero too, so the first idle answer
+	// or claim after startup registers as an increase.
+	for _, outcome := range []queuePollOutcome{queuePollOutcomeIdle204, queuePollOutcomeIdleEmpty} {
+		queueExecutorPollsTotal.WithLabelValues(string(outcome))
+	}
+	for _, pipeline := range pipelines {
+		queueExecutorClaimsTotal.WithLabelValues(pipeline)
+		for _, outcome := range runExitOutcomes {
+			queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome)
+			queueExecutorRunDurationSeconds.WithLabelValues(pipeline, outcome)
+		}
+		queueExecutorRunConsecutiveFailures.WithLabelValues(pipeline)
+	}
+}
+
+// registerRepositoryAgentMetrics exports the catalog observation only on
+// the executor that runs the maintenance ticker; a runtimes-only zone
+// executor never reads it and must not report it unavailable.
+var repositoryAgentMetricsOnce sync.Once
+
+func registerRepositoryAgentMetrics() {
+	repositoryAgentMetricsOnce.Do(func() { prometheus.MustRegister(repositoryAgentsMetrics) })
+}
+
 func recordScheduleTick(success bool) {
 	outcome := "error"
 	if success {
@@ -113,6 +216,11 @@ func registerMetrics() {
 			queueExecutorClaimsTotal,
 			queueExecutorLaunchesTotal,
 			queueExecutorMemoryLaunchesTotal,
+			queueExecutorRunExitsTotal,
+			queueExecutorRunDurationSeconds,
+			queueExecutorRunExitTimestamp,
+			queueExecutorRunConsecutiveFailures,
+			queueExecutorRunExitMetricsSupported,
 			scheduleTicksTotal,
 			maintenanceTicksTotal,
 			maintenanceLastSuccessTimestamp,

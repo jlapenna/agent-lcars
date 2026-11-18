@@ -213,6 +213,8 @@ function agents(
     sources: async () => [],
     recordAttempt: async () => undefined,
     claimObservation: async () => true,
+    recordSourceRead: async () => undefined,
+    sourceHealth: async () => [],
     mutate: async () => ({}),
   };
 }

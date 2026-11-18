@@ -15,6 +15,9 @@ export async function refreshAgentCatalog(
   repository: string,
   tokens: DispatchTokenProvider,
   now: Date,
+  /** Collects this refresh's health writes for a caller that awaits them
+   * once, after every batch; without it the refresh awaits its own. */
+  pendingHealth?: Promise<unknown>[],
 ): Promise<void> {
   const at = now.toISOString();
   // Fairness bookkeeping only: a lost write makes this source look older.
@@ -31,6 +34,25 @@ export async function refreshAgentCatalog(
   // Never let a slower, older observation replace a newer one.
   const newer = (current: CatalogAgent | undefined) =>
     current !== undefined && Date.parse(current.refreshedAt) > now.getTime();
+  // Health telemetry only: a lost write never fails the refresh.
+  // Health telemetry only. Writes start without blocking the catalog:
+  // publication and fail-closed disabling never wait on them. A standalone
+  // refresh waits for them at most HEALTH_WRITE_MS at the very end; a
+  // batched one hands them to its caller.
+  const healthWrites = pendingHealth ?? [];
+  const recordRead = (outcome: 'succeeded' | 'failed') => {
+    healthWrites.push(
+      store
+        .recordSourceRead(repository, at, outcome)
+        .catch((error: unknown) =>
+          logger.error(
+            'Agent source health not recorded: %s',
+            repository,
+            error,
+          ),
+        ),
+    );
+  };
   try {
     const source = await openRepositorySource(
       repository,
@@ -55,24 +77,38 @@ export async function refreshAgentCatalog(
         refreshedAt: now.toISOString(),
         enabled: false,
       };
+      const prefix = `${name}/`;
+      const files = entries
+        .filter(
+          (entry) => entry.path.startsWith(prefix) && entry.type !== 'tree',
+        )
+        .map((entry) => ({
+          ...entry,
+          path: entry.path.slice(prefix.length),
+        }));
+      const manifest = files.find((file) => file.path === 'agent.yaml');
+      // Only a regular-file manifest is fetched: a submodule or symlink
+      // named agent.yaml is this definition's own error, decided locally.
+      const regular =
+        manifest !== undefined &&
+        manifest.type === 'blob' &&
+        (manifest.mode === '100644' || manifest.mode === '100755');
+      // Repository I/O stays outside the definition's own catch: a failed
+      // read fails the refresh (agents unavailable), never marks one invalid.
+      const manifestText = regular
+        ? (await source.readBlob(manifest.sha)).toString('utf8')
+        : undefined;
       try {
-        const prefix = `${name}/`;
-        const files = entries
-          .filter(
-            (entry) => entry.path.startsWith(prefix) && entry.type !== 'tree',
-          )
-          .map((entry) => ({
-            ...entry,
-            path: entry.path.slice(prefix.length),
-          }));
-        const manifest = files.find((file) => file.path === 'agent.yaml');
-        if (!manifest) throw new Error('Agent is missing agent.yaml');
+        if (manifest === undefined)
+          throw new Error('Agent is missing agent.yaml');
+        if (manifestText === undefined)
+          throw new Error('agent.yaml must be a regular file');
         row.definition = parseAgentDefinition(
           repository,
           source.revision,
           name,
           files,
-          (await source.readBlob(manifest.sha)).toString('utf8'),
+          manifestText,
         );
       } catch (error) {
         row.error =
@@ -136,7 +172,13 @@ export async function refreshAgentCatalog(
               },
         fence,
       );
+    // Success means the catalog now reflects this read: published, not
+    // merely fetched. A refresh superseded by a newer one records nothing.
+    recordRead('succeeded');
   } catch (error) {
+    // Any failure, reading GitHub or publishing to the catalog, is a failed
+    // refresh; the Console log line names which.
+    recordRead('failed');
     if (!(await store.claimObservation(repository, at))) throw error;
     for (const agent of await repositoryRows())
       await store.mutate(
@@ -155,7 +197,29 @@ export async function refreshAgentCatalog(
         fence,
       );
     throw error;
+  } finally {
+    if (pendingHealth === undefined)
+      await settleWithin(healthWrites, HEALTH_WRITE_MS);
   }
+}
+
+/** The longest a refresh waits, after its catalog work, for its health
+ * telemetry writes; a slower write keeps going and is simply not awaited. */
+const HEALTH_WRITE_MS = 5_000;
+
+async function settleWithin(
+  writes: readonly Promise<unknown>[],
+  ms: number,
+): Promise<void> {
+  if (writes.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.all(writes),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 /** Refresh every control-plane repository's agents, least recently attempted
@@ -184,12 +248,22 @@ export async function refreshAgentCatalogs(
       (attempted.get(left) ?? 0) - (attempted.get(right) ?? 0) ||
       left.localeCompare(right),
   );
+  // Health writes from every batch are awaited once, after the last batch
+  // and only within the time left, so they never cost a later batch its
+  // start.
+  const pendingHealth: Promise<unknown>[] = [];
   for (let offset = 0; offset < ordered.length; offset += 4) {
     if (Date.now() + 25_000 > deadline) break;
     await Promise.all(
       ordered.slice(offset, offset + 4).map(async (repository) => {
         try {
-          await refreshAgentCatalog(store, repository, tokens(), new Date());
+          await refreshAgentCatalog(
+            store,
+            repository,
+            tokens(),
+            new Date(),
+            pendingHealth,
+          );
         } catch (error) {
           logger.error(
             'Repository agent source refresh failed: %s',
@@ -200,4 +274,8 @@ export async function refreshAgentCatalogs(
       }),
     );
   }
+  await settleWithin(
+    pendingHealth,
+    Math.min(HEALTH_WRITE_MS, Math.max(0, deadline - Date.now())),
+  );
 }

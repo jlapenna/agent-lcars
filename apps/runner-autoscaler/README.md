@@ -546,6 +546,44 @@ The metrics endpoint exposes the queue worker's own health:
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
+- `github_runner_autoscaler_queue_executor_run_exits_total{pipeline,outcome}`
+  counts each delivered worker-exit report once, by claimed pipeline and the
+  run's settled outcome as the exit route answers it: `succeeded` or `failed`
+  (finished with that result), `finished` (no result), `lost`, `canceled`,
+  `unknown_run`, `not_claimant` or `other`. Jobs carry an
+  `agent-lcars.pipeline` annotation for this; one created before it reports
+  `pipeline="unknown"`. `..._run_duration_seconds{pipeline,outcome}` is the
+  Job's start-to-terminal wall time (inventory-observed exits only), and
+  `..._run_exit_last_timestamp_seconds{pipeline,outcome}` is absent until the
+  first exit in the process. A claim whose Job could not be built or was
+  refused by the apiserver is also reported (and counted) without a Job, so
+  it has no duration. Only exits this process watched happen are counted:
+  a Job it created or saw running, then saw end (or recovery deleted while
+  running). Every terminated Job is still reported, but one already
+  terminal when the process first sees it (retained across a restart) is
+  not counted, so a restart never recounts; an exit during executor
+  downtime is not counted either. `..._run_consecutive_failures{pipeline}` counts failed or
+  lost exits since the last succeeded or canceled one, in report order; an
+  unattributed exit (`pipeline="unknown"`) and a finished run without a
+  result (a Console that predates `ok`) leave it unchanged. Once the exit
+  reporter starts, the executor zero-initializes each declared runtime's
+  `succeeded`, `failed`, `finished`, `lost` and `canceled` counters and
+  duration histograms and its streak, and sets
+  `..._run_exit_metrics_supported 1`, and starts the claim counters and the
+  `idle_204`/`idle_empty` poll answers at zero (support reads 0 until then, including after a failed
+  preflight). The diagnostic `unknown_run`, `not_claimant` and `other`
+  outcomes appear only once observed. An absent streak is unknown (scrape
+  down, preflight failed or older producer); a zero streak with no exit
+  timestamp is idle. These are best-effort operational metrics: exits during
+  executor downtime are not counted, Jobs shorter than a second record no
+  duration, and a terminal Job kept past the reporter's 48-hour receipt
+  could be counted again.
+- `lcars_repository_agents*` and the per-repository
+  `lcars_repository_agent_source_*` gauges (shared executor only, registered
+  with the maintenance ticker) export the repository
+  agent catalog observation from the maintenance reply: agents by admission
+  state, and per repository the last refresh attempt, success and failure
+  ([docs/repository-agents.md](../../docs/repository-agents.md#health)).
 
 The existing v2 `runner-status` document carries an additive `claims` sample
 for Shuttlebay. It differences these same four provider counters over an
