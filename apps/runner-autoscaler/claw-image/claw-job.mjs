@@ -1,31 +1,30 @@
 #!/usr/bin/env node
-// Claw runner: one agent turn per LCARS run attempt, run by the harness the
-// agent's manifest names: embedded OpenClaw (the default) or an ACP harness
-// this image carries.
+// Claw runner: one agent turn per LCARS run attempt.
 //
 // Contract: docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md
-// ("### `claw`"). The QueueExecutor launches this image with RUNNER_MODE=claw,
-// LCARS_RUN_ID, LCARS_CONSOLE_URL and LCARS_RUN_TOKEN, plus only the agent's
-// own zone Secret items under CLAW_SECRETS_DIR. A repository-owned agent
-// (docs/repository-agents.md) arrives in the brief: its files pinned by commit,
-// each verified against its git blob SHA and the definition digest before it
-// runs. Work input never selects the agent or its zone.
+// ("### `claw`") and docs/repository-agents.md. The QueueExecutor launches
+// this image with RUNNER_MODE=claw, LCARS_RUN_ID, LCARS_CONSOLE_URL and
+// LCARS_RUN_TOKEN, plus only the agent's own zone Secret items under
+// CLAW_SECRETS_DIR. A repository-owned agent arrives in the brief: its files
+// pinned by commit, each verified against its git blob SHA and the definition
+// digest before it runs. Work input never selects the agent or its zone.
+//
+// The launcher is an ACP client (Agent Client Protocol,
+// agentclientprotocol.com) and every harness is an ACP agent this image
+// carries: OpenClaw through openclaw-acp.mjs, Claude Code and Codex through
+// their adapters. The agent's manifest names the harness.
 //
 // Sequence (each step fails the attempt closed):
 //   1. Acknowledged startup heartbeat, then the brief.
-//   2. Fresh state: writable config copy, OPENCLAW_STATE_DIR/CONFIG_PATH.
-//   3. `openclaw config validate --json` must report valid.
-//   4. `openclaw doctor --fix --non-interactive`; it must not change the
-//      pinned config beyond its own `meta`/`wizard` stamps.
-//   5. `openclaw approvals set --file` seeds the enforcing exec approvals.
-//   6. `openclaw agent exec --json` under the outer turn deadline.
-//   7. Settle: a report only when the envelope is ok, has a final message and
-//      no unresolved tool error; everything else is runner-failed.
-//
-// An ACP harness (Agent Client Protocol, agentclientprotocol.com) replaces
-// steps 2 to 6: the launcher is the ACP client. It starts the image's adapter
-// in the agent's workspace copy, sends the message as one prompt, refuses
-// every permission request and settles from the session's updates (settleAcp).
+//   2. The verified definition under <work>/agent, a writable copy of its
+//      `workspace/`, and its `home/` copied into HOME.
+//   3. The harness, started in its own process group in the workspace, with
+//      the zone's secret environment and nothing of the launcher's.
+//   4. One ACP session and one prompt carrying the message. Every permission
+//      request is refused.
+//   5. Settle from the session's updates (settle): a report only when the
+//      turn ended normally, the agent's last message is not empty and no
+//      tool call is unresolved; everything else is runner-failed.
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -33,7 +32,6 @@ import {
   chmod,
   cp,
   mkdir,
-  mkdtemp,
   readdir,
   readFile,
   realpath,
@@ -43,34 +41,41 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
 // The Work API stores a report of any size whole, up to its completion bound
 // (RUN_MESSAGE_MAX_BYTES, libs/dispatch-contracts/src/run-message.ts). A
 // longer one is a failed attempt, never a truncated report.
 export const MAX_REPORT_BYTES = 4 * 1024 * 1024;
-// OpenClaw's JSON envelope carries the report plus metadata and escaping;
-// keep room for a maximal report so it is measured, not misparsed.
-const MAX_ENVELOPE_BYTES = 4 * MAX_REPORT_BYTES;
+// A message is buffered up to this size, so an oversized report is measured
+// and refused rather than cut short.
+const MAX_MESSAGE_BYTES = 4 * MAX_REPORT_BYTES;
 const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RESERVED_ENV =
   /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
 
-// The ACP harnesses this image carries (Dockerfile). A manifest names one;
-// its command comes from the image, never from the definition, so reviewed
-// source cannot choose the program that speaks for the agent.
+// The harnesses this image carries (Dockerfile), each an ACP agent on stdio.
+// A manifest names one; its command comes from the image, never from the
+// definition, so reviewed source cannot choose the program that speaks for
+// the agent.
 const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
-export const ACP_HARNESSES = Object.freeze({
-  claude: {
+const adapter = (path) => () => ({ command: process.execPath, args: [path] });
+export const HARNESSES = Object.freeze({
+  openclaw: ({ definitionDir, workRoot, openclaw }) => ({
     command: process.execPath,
-    args: [`${ACP_MODULES}/claude-agent-acp/dist/index.js`],
-  },
-  codex: {
-    command: process.execPath,
-    args: [`${ACP_MODULES}/codex-acp/dist/index.js`],
-  },
+    args: [
+      fileURLToPath(new URL('./openclaw-acp.mjs', import.meta.url)),
+      definitionDir,
+      workRoot,
+      openclaw,
+    ],
+  }),
+  claude: adapter(`${ACP_MODULES}/claude-agent-acp/dist/index.js`),
+  codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`),
 });
 const ACP_PROTOCOL_VERSION = 1;
+const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
 
@@ -106,24 +111,6 @@ export function workClient(env, { signal, fetchImpl = fetch } = {}) {
       throw new ClawFailure(`Work API ${path} HTTP ${response.status}`);
     return text ? JSON.parse(text) : {};
   };
-}
-
-// Strip OpenClaw's own bookkeeping so the pinned config can be compared with
-// what Doctor leaves behind. Anything else Doctor changes fails the attempt.
-export function comparableConfig(config) {
-  const { meta: _meta, wizard: _wizard, ...rest } = config;
-  return JSON.stringify(sortKeys(rest));
-}
-
-function sortKeys(value) {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === 'object')
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, sortKeys(value[key])]),
-    );
-  return value;
 }
 
 // Zone Secret items under <secrets>/env/<NAME> become environment variables
@@ -245,88 +232,18 @@ function boundedReport(report) {
   return { outcome: 'report', message: report };
 }
 
-// Decide the attempt outcome from the `agent exec --json` envelope. Exit 0 and
-// ok:true are returned even when every tool call was denied, so tool failures
-// are read from toolSummary rather than the exit code.
-// An agent whose manifest sets `requireToolEvidence` must rest its answer on
-// tool evidence: a report with no tool call is an unsupported answer. A tool
-// call that failed and was then resolved (for example a probe of a host that
-// is down) is evidence, not a runner failure; an unresolved tool error still
-// fails the attempt.
-
-export function settle(
-  { code, timedOut, aborted, stdout },
-  { requireTools = false } = {},
-) {
-  if (aborted)
-    return { outcome: 'runner-failed', message: 'Claw turn was cancelled.' };
-  if (timedOut)
-    return {
-      outcome: 'runner-failed',
-      message: 'Claw turn exceeded its deadline.',
-    };
-  let envelope;
-  try {
-    envelope = JSON.parse(stdout);
-  } catch {
-    return {
-      outcome: 'runner-failed',
-      message: `OpenClaw exited ${code} without a JSON result.`,
-    };
-  }
-  const final = typeof envelope.final === 'string' ? envelope.final.trim() : '';
-  const unresolved = envelope.toolSummary?.unresolvedError;
-  const calls = Number(envelope.toolSummary?.calls ?? 0);
-  if (
-    envelope.ok === true &&
-    final &&
-    !unresolved &&
-    requireTools &&
-    !(calls > 0)
-  )
-    return {
-      outcome: 'runner-failed',
-      message: 'Claw turn answered without using any tool.',
-    };
-  if (
-    envelope.ok === true &&
-    final &&
-    !unresolved &&
-    (code === 0 || code === 1)
-  ) {
-    const cleanup =
-      code === 1
-        ? '\n\n(OpenClaw reported a cleanup failure after this result.)'
-        : '';
-    return boundedReport(final + cleanup);
-  }
-  if (code === 2)
-    return {
-      outcome: 'runner-failed',
-      message: 'OpenClaw model attempt timed out.',
-    };
-  const reason = unresolved
-    ? `unresolved ${unresolved.toolName ?? 'tool'} error`
-    : envelope.error?.message
-      ? String(envelope.error.message).slice(0, 500)
-      : final
-        ? `OpenClaw exited ${code}`
-        : 'empty result';
-  return { outcome: 'runner-failed', message: `Claw turn failed: ${reason}.` };
-}
-
-// Decide the attempt outcome from an ACP turn (acpTurn). The same rules as the
-// OpenClaw envelope, read from the session instead:
+// Decide the attempt outcome from an ACP turn (acpTurn):
 // - the report is the agent's last message after its last tool call, so
 //   neither narration before a tool call nor a harness notice ahead of the
 //   answer is mistaken for it;
 // - a tool call that failed or never finished is an unresolved tool error
 //   unless a later call, started after it ended, completed: that later call
 //   is the agent accounting for the failure, as a retried probe does;
-// - `requireToolEvidence` needs at least one tool call.
-// A harness reports a turn that died early as an ordinary end of turn with no
-// text, so an empty result is always a failure.
-export function settleAcp(
+// - an agent whose manifest sets `requireToolEvidence` must rest its answer
+//   on tool evidence: a report with no tool call is an unsupported answer.
+// A harness can report a turn that died early as an ordinary end of turn
+// with no text, so an empty result is always a failure.
+export function settle(
   { aborted, timedOut, error, stopReason, final, overflow, calls, unresolved },
   { requireTools = false } = {},
 ) {
@@ -346,7 +263,7 @@ export function settleAcp(
     return failed(`harness stopped with ${String(stopReason).slice(0, 80)}`);
   if (overflow)
     return failed(`report exceeds the ${MAX_REPORT_BYTES}-byte bound`);
-  if (unresolved) return failed(`unresolved ${unresolved.kind} tool call`);
+  if (unresolved) return failed(`unresolved ${unresolved.label} tool call`);
   const report = (final ?? '').trim();
   if (!report) return failed('empty result');
   if (requireTools && !(calls > 0))
@@ -358,8 +275,8 @@ export function settleAcp(
 }
 
 // Stops a child's whole process group: SIGTERM, then SIGKILL for whatever is
-// still running ten seconds later.
-function stopGroup(child) {
+// still running after the grace period.
+export function stopGroup(child, graceMs = 10_000) {
   const killTree = (killSignal) => {
     try {
       process.kill(-child.pid, killSignal);
@@ -368,65 +285,7 @@ function stopGroup(child) {
     }
   };
   killTree('SIGTERM');
-  setTimeout(() => killTree('SIGKILL'), 10_000).unref();
-}
-
-// Runs one OpenClaw command in its own process group, so a deadline or a
-// cancellation (SIGTERM to the launcher) stops the whole tree, including any
-// tool processes the agent started.
-export function run(
-  command,
-  args,
-  { env, cwd, timeoutMs, input, signal } = {},
-) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new ClawFailure('claw run was cancelled'));
-      return;
-    }
-    const child = spawn(command, args, {
-      env,
-      cwd,
-      detached: true,
-      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderrBytes = 0;
-    let timedOut = false;
-    let aborted = false;
-    const stop = () => stopGroup(child);
-    const timer =
-      timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            stop();
-          }, timeoutMs)
-        : undefined;
-    const onAbort = () => {
-      aborted = true;
-      stop();
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    child.stdout.on('data', (chunk) => {
-      if (stdout.length < MAX_ENVELOPE_BYTES) stdout += chunk;
-    });
-    // stderr carries OpenClaw diagnostics; count it but never forward it,
-    // since it can echo resolved configuration.
-    child.stderr.on('data', (chunk) => {
-      stderrBytes += chunk.length;
-    });
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      reject(error);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-      resolve({ code, timedOut, aborted, stdout, stderrBytes });
-    });
-    if (input !== undefined) child.stdin.end(input);
-  });
+  setTimeout(() => killTree('SIGKILL'), graceMs).unref();
 }
 
 // Runs one ACP turn: starts the harness in its own process group, speaks
@@ -481,7 +340,7 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
         // A new message replaces the one before it: the report is the agent's
         // last message, not a harness notice that preceded it.
         if (update.messageId !== messageId) startMessage(update.messageId);
-        if (turn.final.length + update.content.text.length > MAX_ENVELOPE_BYTES)
+        if (turn.final.length + update.content.text.length > MAX_MESSAGE_BYTES)
           turn.overflow = true;
         else turn.final += update.content.text;
         return;
@@ -493,24 +352,26 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
       ) {
         const known = tools.get(update.toolCallId);
         const tool = known ?? {
-          kind: 'other',
+          label: 'other',
           status: 'pending',
           started: ++sequence,
         };
-        if (typeof update.kind === 'string')
-          tool.kind = update.kind.slice(0, 40);
-        if (
-          typeof update.status === 'string' &&
-          update.status !== tool.status
-        ) {
+        // A harness may name the tool; its ACP kind is the fallback. The
+        // title is never used: it can carry the command itself.
+        for (const label of [update.kind, update.name])
+          if (typeof label === 'string' && TOOL_LABEL.test(label))
+            tool.label = label;
+        const changed =
+          typeof update.status === 'string' && update.status !== tool.status;
+        if (changed) {
           tool.status = update.status;
           tool.ended = running(tool) ? undefined : ++sequence;
         }
         if (!known) tools.set(update.toolCallId, tool);
-        // The answer is the message after the agent last started or was still
-        // running a tool. A late notice that a call finished does not erase
-        // an answer already given; if that call failed, it is unresolved.
-        if (!known || running(tool)) startMessage(undefined);
+        // The answer is the message after the last change in any tool call,
+        // so text written while a tool was still running is never the
+        // report. A repeated notice of a status already seen changes nothing.
+        if (!known || changed) startMessage(undefined);
       }
     };
     // A call that failed or never finished is resolved only by a call that
@@ -527,7 +388,7 @@ export function acpTurn(command, args, { env, cwd, message, signal } = {}) {
               later.started > (tool.ended ?? Infinity),
           ),
       );
-      return open && { kind: open.kind, status: open.status };
+      return open && { label: open.label, status: open.status };
     };
     const onLine = (line) => {
       let incoming;
@@ -680,66 +541,6 @@ export async function prepareWorkspace(agentDir, workRoot) {
   return workspace;
 }
 
-export async function prepareState({
-  agentDir,
-  workRoot,
-  openclaw,
-  env,
-  signal,
-}) {
-  const stateDir = await mkdtemp(join(workRoot, 'state-'));
-  const workspace = await prepareWorkspace(agentDir, workRoot);
-  const pinned = JSON.parse(
-    await readFile(join(agentDir, 'config.json'), 'utf8'),
-  );
-  const configPath = join(stateDir, 'agent-config.json');
-  await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
-    mode: 0o600,
-  });
-  const childEnv = {
-    ...env,
-    OPENCLAW_STATE_DIR: stateDir,
-    OPENCLAW_CONFIG_PATH: configPath,
-    OPENCLAW_NO_AUTO_UPDATE: '1',
-  };
-
-  const validation = await run(openclaw, ['config', 'validate', '--json'], {
-    env: childEnv,
-    timeoutMs: 120_000,
-    signal,
-  });
-  let valid;
-  try {
-    valid = JSON.parse(validation.stdout).valid === true;
-  } catch {
-    valid = false;
-  }
-  if (!valid) throw new ClawFailure('pinned OpenClaw config failed validation');
-
-  const doctor = await run(openclaw, ['doctor', '--fix', '--non-interactive'], {
-    env: childEnv,
-    timeoutMs: 300_000,
-    signal,
-  });
-  if (doctor.code !== 0 || doctor.timedOut)
-    throw new ClawFailure(`openclaw doctor exited ${doctor.code}`);
-  const after = JSON.parse(await readFile(configPath, 'utf8'));
-  if (comparableConfig(after) !== comparableConfig(pinned))
-    throw new ClawFailure(
-      'openclaw doctor changed the pinned config; pin the Doctor-normalized config',
-    );
-
-  const approvals = await run(
-    openclaw,
-    ['approvals', 'set', '--file', join(agentDir, 'approvals.json')],
-    { env: childEnv, timeoutMs: 120_000, signal },
-  );
-  if (approvals.code !== 0 || approvals.timedOut)
-    throw new ClawFailure(`openclaw approvals set exited ${approvals.code}`);
-
-  return { stateDir, workspace, configPath, childEnv };
-}
-
 function positiveInteger(env, name, fallback) {
   if (env[name] === undefined || env[name] === '') return fallback;
   const value = Number(env[name]);
@@ -748,10 +549,11 @@ function positiveInteger(env, name, fallback) {
   return value;
 }
 
-// Each starter prepares its harness, starts the turn, tells LCARS that
-// provider work has begun and resolves with the finished turn.
-async function openclawTurn({
+// Prepares the agent's workspace and HOME, runs its turn on the harness it
+// names and resolves with the finished turn.
+async function harnessTurn({
   request,
+  harnesses,
   definitionDir,
   workRoot,
   openclaw,
@@ -759,60 +561,13 @@ async function openclawTurn({
   signal,
   started,
 }) {
-  const { stateDir, workspace, configPath, childEnv } = await prepareState({
-    agentDir: definitionDir,
+  if (!Object.hasOwn(harnesses, request.harness))
+    throw new ClawFailure(`this image carries no ${request.harness} harness`);
+  const harness = harnesses[request.harness]({
+    definitionDir,
     workRoot,
     openclaw,
-    env,
-    signal,
   });
-  if (signal.aborted) throw new ClawFailure('claw run was cancelled');
-  const messageFile = join(stateDir, 'brief.md');
-  await writeFile(messageFile, request.message, {
-    mode: 0o600,
-  });
-  const turn = run(
-    openclaw,
-    [
-      'agent',
-      'exec',
-      '--config',
-      configPath,
-      '--state-dir',
-      stateDir,
-      '--message-file',
-      messageFile,
-      '--cwd',
-      workspace,
-      '--json',
-    ],
-    {
-      env: childEnv,
-      cwd: workspace,
-      signal,
-    },
-  );
-  // The turn is awaited after the heartbeat; a spawn failure in between must
-  // reach that await, not become an unhandled rejection.
-  turn.catch(() => undefined);
-  await started();
-  return turn;
-}
-
-async function acpHarnessTurn({
-  request,
-  harnesses,
-  definitionDir,
-  workRoot,
-  env,
-  signal,
-  started,
-}) {
-  const harness = Object.hasOwn(harnesses, request.harness)
-    ? harnesses[request.harness]
-    : undefined;
-  if (!harness)
-    throw new ClawFailure(`this image carries no ${request.harness} harness`);
   const workspace = await prepareWorkspace(definitionDir, workRoot);
   // A harness reads its user-level settings from HOME. The definition's
   // `home/` supplies them, so the tool policy a harness trusts (it ignores
@@ -836,8 +591,9 @@ async function acpHarnessTurn({
   const finished = await turn;
   // The harness runs as the launcher's UID, so nothing can stop an agent
   // with a write-capable tool from rewriting the settings that bound it.
-  // What the launcher can do is refuse the result: every `home/` file must
-  // still be the pinned blob once the turn is over.
+  // What the launcher can do is refuse a result when it sees that: every
+  // pinned `home/` file must still be its blob once the turn is over. A file
+  // the agent added, or changed and put back, is not seen.
   for (const file of settings) {
     const content = await readFile(inHome(file)).catch(() => undefined);
     if (content === undefined || gitBlobSha(content) !== file.sha)
@@ -911,10 +667,9 @@ export async function main(env = process.env, deps = {}) {
         ...(await secretEnvironment(secretsDir)),
       };
       await mkdir(baseEnv.HOME, { recursive: true });
-      const acp = request.harness !== 'openclaw';
-      const finished = await (acp ? acpHarnessTurn : openclawTurn)({
+      const finished = await harnessTurn({
         request,
-        harnesses: deps.harnesses ?? ACP_HARNESSES,
+        harnesses: { ...HARNESSES, ...deps.harnesses },
         definitionDir,
         workRoot,
         openclaw,
@@ -925,7 +680,7 @@ export async function main(env = process.env, deps = {}) {
             ignoreHeartbeatFailure,
           ),
       });
-      result = (acp ? settleAcp : settle)(
+      result = settle(
         {
           ...finished,
           aborted: controller.signal.aborted,

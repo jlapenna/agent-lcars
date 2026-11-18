@@ -15,15 +15,14 @@ import { test } from 'node:test';
 
 import {
   agentDigest,
-  comparableConfig,
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
   readBrief,
   secretEnvironment,
   settle,
-  settleAcp,
 } from './claw-job.mjs';
+import { comparableConfig, sessionFromEnvelope } from './openclaw-acp.mjs';
 
 const RUN_ID = 'run-123';
 
@@ -96,8 +95,9 @@ if (args[0] === 'doctor') {
 if (sub === 'approvals set') process.exit(0);
 if (sub === 'agent exec') {
   if (behaviour.FAKE_EXEC_SLEEP) { setTimeout(() => {}, 60000); return; }
-  console.log(behaviour.FAKE_ENVELOPE ?? JSON.stringify({ ok: true, final: 'All clear: disk at 41%.', toolSummary: { calls: 1, failures: 0 } }));
-  process.exit(Number(behaviour.FAKE_EXEC_CODE ?? 0));
+  // Exit only once a large envelope has reached the pipe.
+  process.stdout.write((behaviour.FAKE_ENVELOPE ?? JSON.stringify({ ok: true, final: 'All clear: disk at 41%.', toolSummary: { calls: 1, failures: 0 } })) + '\\n', () => process.exit(Number(behaviour.FAKE_EXEC_CODE ?? 0)));
+  return;
 }
 process.exit(64);
 `;
@@ -244,7 +244,7 @@ test('denied tools settle as failure even though exec exits 0', async () => {
   });
   const result = await main(env, { fetchImpl });
   assert.equal(result.outcome, 'runner-failed');
-  assert.match(result.message, /unresolved exec error/);
+  assert.equal(result.message, 'Claw turn failed: unresolved exec tool call.');
 });
 
 test('the outer deadline stops a turn that runs too long', async () => {
@@ -266,67 +266,98 @@ test('reserved or malformed secret env names are refused', async () => {
   assert.deepEqual(await secretEnvironment(join(root, 'missing')), {});
 });
 
-test('settle maps envelopes conservatively', () => {
-  assert.deepEqual(settle({ code: 0, timedOut: false, stdout: 'not json' }), {
+test('OpenClaw envelopes settle conservatively through the adapter', async () => {
+  const outcome = async (envelope, code = 0) => {
+    const { env, fetchImpl } = await fixture({
+      env: {
+        FAKE_ENVELOPE:
+          typeof envelope === 'string' ? envelope : JSON.stringify(envelope),
+        FAKE_EXEC_CODE: String(code),
+      },
+    });
+    return main(env, { fetchImpl });
+  };
+  const evidence = { calls: 1, failures: 0 };
+  assert.deepEqual(await outcome('not json'), {
     outcome: 'runner-failed',
-    message: 'OpenClaw exited 0 without a JSON result.',
+    message: 'Claw turn failed: OpenClaw exited 0 without a JSON result.',
   });
   assert.equal(
-    settle({
-      code: 0,
-      timedOut: false,
-      stdout: JSON.stringify({ ok: true, final: '' }),
-    }).outcome,
-    'runner-failed',
+    (await outcome({ ok: true, final: '', toolSummary: evidence })).message,
+    'Claw turn failed: empty result.',
   );
   assert.equal(
-    settle({
-      code: 1,
-      timedOut: false,
-      stdout: JSON.stringify({
-        ok: false,
-        error: { message: 'model refused' },
-      }),
-    }).message,
+    (await outcome({ ok: false, error: { message: 'model refused' } }, 1))
+      .message,
     'Claw turn failed: model refused.',
   );
-  const cleanup = settle({
-    code: 1,
-    timedOut: false,
-    stdout: JSON.stringify({
-      ok: true,
-      final: 'Report.',
-      toolSummary: { calls: 0 },
-    }),
-  });
+  const cleanup = await outcome(
+    { ok: true, final: 'Report.', toolSummary: evidence },
+    1,
+  );
   assert.equal(cleanup.outcome, 'report');
-  assert.match(cleanup.message, /cleanup failure/);
+  assert.match(cleanup.message, /^Report\.\n\n\(OpenClaw reported a cleanup/);
   assert.equal(
-    settle({ code: 2, timedOut: false, stdout: JSON.stringify({ ok: false }) })
-      .message,
-    'OpenClaw model attempt timed out.',
+    (await outcome({ ok: false }, 2)).message,
+    'Claw turn failed: OpenClaw model attempt timed out.',
   );
   // A long report settles whole: 200 KB, far past the former 16,000 cut.
   const long = '# Findings\n' + '監視 report line 😀\n'.repeat(10_000) + 'end';
   assert.ok(Buffer.byteLength(long) > 200_000);
-  const huge = settle({
-    code: 0,
-    timedOut: false,
-    stdout: JSON.stringify({ ok: true, final: long }),
-  });
-  assert.equal(huge.outcome, 'report');
-  assert.equal(huge.message, long);
+  assert.deepEqual(
+    await outcome({ ok: true, final: long, toolSummary: evidence }),
+    { outcome: 'report', message: long },
+  );
   // Past the completion bound it is a failed attempt, never a truncated report.
-  const oversized = settle({
-    code: 0,
-    timedOut: false,
-    stdout: JSON.stringify({
-      ok: true,
-      final: 'x'.repeat(MAX_REPORT_BYTES + 1),
-    }),
+  const oversized = await outcome({
+    ok: true,
+    final: 'x'.repeat(MAX_REPORT_BYTES + 1),
+    toolSummary: evidence,
   });
   assert.equal(oversized.outcome, 'runner-failed');
   assert.match(oversized.message, /completion bound/);
+});
+
+test('sessionFromEnvelope turns tool evidence into ACP tool calls', () => {
+  const session = (envelope, code = 0) =>
+    sessionFromEnvelope({ code, stdout: JSON.stringify(envelope) });
+  const statuses = ({ updates }) =>
+    updates
+      .filter((update) => update.sessionUpdate === 'tool_call_update')
+      .map((update) => [update.toolCallId, update.status]);
+  // Resolved failures are evidence: one completed call stands for them all.
+  const resolved = session({
+    ok: true,
+    final: 'Host is down.',
+    toolSummary: { calls: 3, failures: 1 },
+  });
+  assert.equal(resolved.stopReason, 'end_turn');
+  assert.deepEqual(statuses(resolved), [['openclaw-tools', 'completed']]);
+  assert.equal(resolved.updates.at(-1).content.text, 'Host is down.');
+  // An unresolved error is a failed call after the evidence, named for the
+  // tool, even when OpenClaw itself called the turn ok.
+  const denied = session({
+    ok: true,
+    final: 'Both commands were refused.',
+    toolSummary: {
+      calls: 2,
+      failures: 2,
+      unresolvedError: { toolName: 'exec' },
+    },
+  });
+  assert.deepEqual(statuses(denied), [
+    ['openclaw-tools', 'completed'],
+    ['openclaw-unresolved', 'failed'],
+  ]);
+  assert.equal(
+    denied.updates.find((update) => update.toolCallId === 'openclaw-unresolved')
+      .name,
+    'exec',
+  );
+  // No tool call, no evidence.
+  assert.deepEqual(statuses(session({ ok: true, final: 'Hello.' })), []);
+  assert.throws(() => session({ ok: true, final: '' }), /empty result/);
+  assert.throws(() => session({ ok: false, final: 'x' }, 3), /exited 3/);
 });
 
 test('comparableConfig ignores only meta and wizard stamps', () => {
@@ -618,7 +649,9 @@ async function harnessFixture(behaviour = {}, overrides = {}) {
     harnessLog,
     deps: {
       fetchImpl: made.fetchImpl,
-      harnesses: { claude: { command: process.execPath, args: [script] } },
+      harnesses: {
+        claude: () => ({ command: process.execPath, args: [script] }),
+      },
     },
   };
 }
@@ -775,11 +808,22 @@ test('ACP tool calls resolve only through a later completed call', async () => {
     ]),
     unresolved,
   );
-  // A late notice that a call completed keeps the answer already given; a
-  // late failure does not.
+  // Text written while a call was still running is narration, never the
+  // report.
   assert.deepEqual(
     await outcome([
       call('a', 'in_progress', 'tool_call'),
+      { say: 'Let me wait for the disk check...' },
+      call('a', 'completed'),
+    ]),
+    { outcome: 'runner-failed', message: 'Claw turn failed: empty result.' },
+  );
+  // A repeated notice of a status already seen keeps the answer; a late
+  // failure does not.
+  assert.deepEqual(
+    await outcome([
+      call('a', 'in_progress', 'tool_call'),
+      call('a', 'completed'),
       { say: 'Answer.' },
       call('a', 'completed'),
     ]),
@@ -851,41 +895,40 @@ test('the outer deadline stops an ACP harness that never answers', async () => {
   });
 });
 
-test('settleAcp applies the evidence rules to an ACP turn', () => {
+test('settle applies the evidence rules to an ACP turn', () => {
   const turn = (over) => ({
     stopReason: 'end_turn',
     final: 'Disk at 41%.',
     calls: 0,
     ...over,
   });
-  assert.deepEqual(settleAcp(turn()), {
+  assert.deepEqual(settle(turn()), {
     outcome: 'report',
     message: 'Disk at 41%.',
   });
   assert.equal(
-    settleAcp(turn(), { requireTools: true }).message,
+    settle(turn(), { requireTools: true }).message,
     'Claw turn answered without using any tool.',
   );
   assert.equal(
-    settleAcp(turn({ calls: 2 }), { requireTools: true }).outcome,
+    settle(turn({ calls: 2 }), { requireTools: true }).outcome,
     'report',
   );
   assert.equal(
-    settleAcp(
-      turn({ calls: 1, unresolved: { kind: 'read', status: 'failed' } }),
-    ).message,
+    settle(turn({ calls: 1, unresolved: { label: 'read', status: 'failed' } }))
+      .message,
     'Claw turn failed: unresolved read tool call.',
   );
   assert.equal(
-    settleAcp(turn({ final: 'x'.repeat(MAX_REPORT_BYTES + 1) })).outcome,
+    settle(turn({ final: 'x'.repeat(MAX_REPORT_BYTES + 1) })).outcome,
     'runner-failed',
   );
   assert.equal(
-    settleAcp(turn({ aborted: true })).message,
+    settle(turn({ aborted: true })).message,
     'Claw turn was cancelled.',
   );
   assert.equal(
-    settleAcp(turn({ timedOut: true })).message,
+    settle(turn({ timedOut: true })).message,
     'Claw turn exceeded its deadline.',
   );
 });

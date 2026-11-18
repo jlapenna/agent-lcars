@@ -44,18 +44,20 @@ The agent ID is `<owner>/<repo>/<name>`, for example
 carries every harness, pinned by its lockfile. A definition chooses among
 them by name and cannot supply a command of its own.
 
-| `harness`            | Runs the turn with                        | The definition supplies                       |
-| -------------------- | ----------------------------------------- | --------------------------------------------- |
-| `openclaw` (default) | embedded OpenClaw (`openclaw agent exec`) | `config.json`, `approvals.json`, `workspace/` |
-| `claude`             | Claude Code, over ACP                     | `workspace/`, `home/`                         |
-| `codex`              | Codex, over ACP                           | `workspace/`, `home/`                         |
+| `harness`            | Runs the turn with                           | The definition supplies                       |
+| -------------------- | -------------------------------------------- | --------------------------------------------- |
+| `openclaw` (default) | OpenClaw, one Gateway-less `agent exec` turn | `config.json`, `approvals.json`, `workspace/` |
+| `claude`             | Claude Code                                  | `workspace/` (`CLAUDE.md`), `home/.claude/`   |
+| `codex`              | Codex                                        | `workspace/` (`AGENTS.md`), `home/.codex/`    |
 
-`claude` and `codex` are [Agent Client Protocol](https://agentclientprotocol.com/)
-(ACP) harnesses. The launcher is their ACP client: it starts the harness in a
-copy of `workspace/`, sends the message as one prompt and takes the agent's
-last message after its last tool call as the report. Only `agent.yaml` is
-required; `config.json` and `approvals.json` are OpenClaw's files and an ACP
-harness ignores them.
+Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
+(ACP) agent, and the launcher is only an ACP client. It starts the harness in
+a copy of `workspace/`, copies `home/` into the harness's `HOME`, sends the
+message as one prompt and takes the agent's last message after its last tool
+call as the report. Claude Code and Codex speak ACP through their own
+adapters. OpenClaw's own ACP server only bridges to a Gateway, so the image
+carries a small adapter that runs each prompt as one `agent exec` turn and
+turns its result into the same session.
 
 ```text
 .lcars/agents/reviewer/
@@ -69,7 +71,9 @@ harness ignores them.
 - **Tool policy.** The launcher refuses every permission request and gives the
   harness no file system or terminal of its own, because an unattended run has
   nobody to ask. What an agent may do is therefore what its harness does
-  without asking, and `home/` is where reviewed source widens that:
+  without asking, and the definition is where reviewed source sets that:
+  - OpenClaw runs only the commands `approvals.json` allows; its config
+    selects tools and cannot widen them.
   - Claude Code reads files and runs read-only commands (`date`) unasked. It
     asks before writing or reaching the network, so those need an allow rule
     in `home/.claude/settings.json`. It ignores allow rules in
@@ -78,34 +82,36 @@ harness ignores them.
   - Codex runs commands in its own sandbox: it writes inside the workspace
     unasked and blocks writes elsewhere and the network.
     `home/.codex/config.toml` sets its approval and sandbox policy.
-    The harness runs as the launcher's user, so an agent allowed a tool that
-    writes files could rewrite the settings that bound it. The launcher cannot
-    prevent that; it fails the attempt when any `home/` file is not the pinned
-    blob after the turn.
+
+  The harness runs as the launcher's user, so an agent allowed a tool that
+  writes files could rewrite the settings that bound it. The launcher cannot
+  prevent that. It makes each pinned `home/` file read-only and fails the
+  attempt when one is not its pinned blob after the turn; it does not see a
+  file the agent added, or changed and put back. A harness that must not be
+  able to do this needs its own container (#3412).
 
 - **Credentials.** A harness signs in with the environment its runtime exports
-  from `env/` Secret items: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`
-  for `claude`, `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. A runtime
-  without one fails the attempt with the harness's `Authentication required`.
-  The default runtime holds only a model key, so an ACP agent names a profile
-  whose runtime carries its harness's login.
-- **Evidence.** The same rules as OpenClaw, read from the ACP session. An
-  answer with no text is a failed attempt. So is a tool call that failed or
-  never finished, unless a call that started after it ended completed; that
-  later call is resolved evidence, as a retried probe is. `requireToolEvidence`
-  needs at least one tool call.
-  Codex's adapter sometimes leaves a command its sandbox blocked at once out
-  of the session (3 of 8 runs on 2.1.1), so that failure can go unseen; a
-  Codex agent whose answer must rest on a tool sets `requireToolEvidence`.
+  from `env/` Secret items: the model key its `config.json` names for
+  `openclaw`, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` for `claude`,
+  `CODEX_API_KEY` or `OPENAI_API_KEY` for `codex`. A runtime without one fails
+  the attempt with the harness's `Authentication required`. The default
+  runtime holds only a model key, so a `claude` or `codex` agent names a
+  profile whose runtime carries its harness's login.
+- **Evidence.** One set of rules for every harness, read from the ACP
+  session. An answer with no text is a failed attempt. So is a tool call that
+  failed or never finished, unless a call that started after it ended
+  completed; that later call is resolved evidence, as a retried probe is.
+  `requireToolEvidence` needs at least one tool call. OpenClaw's adapter
+  reports the turn's tool calls as one completed call and an unresolved tool
+  error as a failed one. Codex's adapter sometimes leaves a command its
+  sandbox blocked at once out of the session (3 of 8 runs on 2.1.1), so that
+  failure can go unseen; a Codex agent whose answer must rest on a tool sets
+  `requireToolEvidence`.
 
-Verified on 2026-11-18 with the pinned adapters against stand-in model
-endpoints, on a workstation. No real model turn and no run on k3s has been
-made yet, and Codex's sandbox is untested inside a pod.
-
-OpenClaw could run as an ACP agent too, but its ACP server (`openclaw acp`)
-only bridges to a Gateway. The launcher would have to start a Gateway in every
-Job, which measured 22 to 34 seconds on a workstation (2026-11-18,
-2026.10.10-beta.3), so OpenClaw keeps its Gateway-less `agent exec` path.
+Verified on 2026-11-18 on a workstation, with the pinned OpenClaw and both
+adapters against stand-in model endpoints. No real model turn and no run on
+k3s has been made through this path yet, and Codex's sandbox is untested
+inside a pod.
 
 ## Catalog
 

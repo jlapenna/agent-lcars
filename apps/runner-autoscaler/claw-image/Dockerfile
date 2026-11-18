@@ -1,5 +1,5 @@
-# Claw runner: one agent turn per LCARS run attempt, on embedded OpenClaw or
-# an ACP harness (Claude Code, Codex) the agent's manifest names.
+# Claw runner: one agent turn per LCARS run attempt, on the ACP harness the
+# agent's manifest names: OpenClaw (the default), Claude Code or Codex.
 # Spec: docs/superpowers/specs/2026-10-15-unified-work-dataflow-design.md
 # ("### `claw`"). Published by Homelab (docs/image-publish-routing.md) and
 # pinned by digest in each zone executor's runtime table.
@@ -23,7 +23,7 @@ RUN apt-get update \
 # and every dependency checked against package-lock.json integrity hashes.
 # Root-owned and never writable by the runtime UID, so nothing staged at
 # runtime can replace them. The adapter paths are the ones claw-job.mjs
-# starts (ACP_HARNESSES); a missing one fails the build, not the first run.
+# starts (HARNESSES); a missing one fails the build, not the first run.
 WORKDIR /opt/openclaw
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-fund --no-audit \
@@ -32,7 +32,7 @@ RUN npm ci --omit=dev --no-fund --no-audit \
  && test -f node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js \
  && test -f node_modules/@agentclientprotocol/codex-acp/dist/index.js
 
-COPY claw-job.mjs /opt/claw/claw-job.mjs
+COPY claw-job.mjs openclaw-acp.mjs /opt/claw/
 
 # Self-update stays off: the image digest is the only way to change OpenClaw.
 ENV OPENCLAW_NO_AUTO_UPDATE=1 \
