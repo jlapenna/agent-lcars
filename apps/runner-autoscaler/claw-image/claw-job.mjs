@@ -77,9 +77,14 @@ const MAX_MESSAGE_BYTES = 4 * MAX_REPORT_BYTES;
 const HOST_CONNECT_MS = 60_000;
 const HOST_FINISH_MS = 420_000;
 const HOST_CLOSE_MS = 10_000;
-// How long a harness that was told to stop gets to be reported gone before
-// the turn is settled without waiting for it.
-const HOST_STOP_MS = 15_000;
+// A pod that is told to stop is killed 30 seconds later (Kubernetes' default
+// grace period, which the Job keeps), and the completion request may itself
+// take 10. So what a cancelled run still waits for of its harness is bounded
+// to leave room for it: 12 seconds for the harness to be reported gone, then
+// 3 for the host to let go. After that the run settles without them, and the
+// pod's own teardown ends whatever is left.
+const HOST_STOP_MS = 12_000;
+const HOST_CANCELLED_CLOSE_MS = 3_000;
 // The longest frame read from a harness host. The host relays no line of
 // the agent's output longer than a fifth of the launcher's message buffer
 // allows, so a longer frame is not one the launcher could use, and it is
@@ -472,13 +477,13 @@ export function harnessChannel(stream) {
       };
     },
     /** Lets the host stop what it started, and waits for it, within a bound. */
-    async close() {
+    async close(withinMs = HOST_CLOSE_MS) {
       stream.end();
       let timer;
       await Promise.race([
         closed,
         new Promise((done) => {
-          timer = setTimeout(done, HOST_CLOSE_MS);
+          timer = setTimeout(done, withinMs);
         }),
       ]);
       clearTimeout(timer);
@@ -848,6 +853,9 @@ async function harnessTurn({
   started,
 }) {
   const channel = harnessChannel(await harnessStream(env, harnesses, signal));
+  // A run that was told to stop has little time left to settle in.
+  const close = () =>
+    channel.close(signal.aborted ? HOST_CANCELLED_CLOSE_MS : undefined);
   let finished;
   let settings;
   try {
@@ -870,7 +878,7 @@ async function harnessTurn({
     await started();
     finished = await turn;
   } catch (error) {
-    await channel.close();
+    await close();
     throw error;
   }
   // The harness side stops whatever it started and names any reason it has
@@ -888,7 +896,7 @@ async function harnessTurn({
       signal,
     );
   } finally {
-    await channel.close();
+    await close();
   }
   // In this order: the harness's own reason to refuse the turn, a final
   // reply that cannot be placed, then a change to what bounded the harness.
@@ -921,7 +929,9 @@ async function harnessTurn({
   // the agent added, or changed and put back, is not seen. Its tools could
   // also have put anything at these paths, so each is read only as a
   // regular file of its pinned size, within a bounded time.
-  for (const file of settings) {
+  // A run that was cancelled or ran out of time settles as that whatever
+  // its settings hold, so it does not stop to read them.
+  for (const file of signal.aborted ? [] : settings) {
     const content = await readSettingsFile(file.target, {
       maxBytes: Buffer.byteLength(file.content, 'base64'),
     });

@@ -2166,6 +2166,41 @@ test('a line too long to be an answer fails the turn without being held', async 
   });
 });
 
+test('a cancelled run completes inside the grace a stopped pod gets', async () => {
+  // A host that started the harness and then neither reports it gone nor
+  // lets go of the connection, whatever it is told.
+  const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
+  let socket;
+  const host = await socketHost(made, (connection) => {
+    socket = connection;
+    readLines(connection, (line) => {
+      if (JSON.parse(line).claw === 'launch')
+        connection.write(
+          `${JSON.stringify({ claw: 'ready', cwd: made.root })}\n`,
+        );
+    });
+  });
+  const pending = main(host.env, host.deps);
+  for (
+    let i = 0;
+    i < 100 && !made.calls.some((call) => call.body?.providerProcessStarted);
+    i++
+  )
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  const stopped = Date.now();
+  process.emit('SIGTERM');
+  assert.deepEqual(await pending, {
+    outcome: 'runner-failed',
+    message: 'Claw turn was cancelled.',
+  });
+  // Kubernetes kills the pod 30 seconds after telling it to stop, and the
+  // completion request may take 10 of them.
+  const took = Date.now() - stopped;
+  assert.ok(took < 20_000, `settled ${took} ms after it was told to stop`);
+  assert.ok(completion(made.calls));
+  socket.destroy();
+});
+
 test('cancellation reaches a harness that is still finishing', async () => {
   const made = await harnessFixture({ steps: [{ say: 'All clear.' }] });
   let finishing = false;

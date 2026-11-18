@@ -52,7 +52,11 @@ it talks to LCARS, verifies and writes the definition, speaks ACP as the
 client and decides the outcome. The harness host (`claw-harness.mjs`) holds
 what the agent may use: it reads the zone's Secret items, stages the
 workspace, prepares and starts the harness, and relays the harness's stdio.
-The host never sees the run token and never talks to LCARS.
+The host never talks to LCARS, and what it starts never has the run token:
+the harness and the agent's tools run with the zone's secret environment and
+nothing of the launcher's. With `harness_container` the host's own process
+has no run token either; without it the host runs inside the launcher's
+process, which holds one.
 
 They speak newline-delimited JSON over one stream. The launcher asks the
 host to `launch` a harness and is told where the agent works and what the
@@ -125,8 +129,10 @@ In both, the zone Secret items are there for the agent's tools by design;
 scope each runtime's items to what that agent may use. A launcher SIGTERM
 (cancellation or pod deadline) has the host stop the harness's process group
 and OpenClaw's Gateway, and still settles the run: it reaches a host that is
-still finishing a turn, and a harness that cannot be seen to stop is given
-15 seconds before the run is settled without it.
+still finishing a turn. A pod told to stop is killed 30 seconds later, and
+the completion request may take 10 of them, so a harness that cannot be seen
+to stop is given 12 seconds and its host 3 more before the run is settled
+without them.
 
 ## Launch sequence
 

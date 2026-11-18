@@ -223,8 +223,8 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 		return err
 	}
 	// The declared env list and every Secret item under env/ (which the claw
-	// launcher exports as an environment variable named by the rest of the
-	// path) share one namespace: neither may set a reserved name or repeat
+	// harness host exports as an environment variable named by the rest of
+	// the path) share one namespace: neither may set a reserved name or repeat
 	// the other.
 	envNames := map[string]bool{}
 	claim := func(source, name string) error {
@@ -260,8 +260,9 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 	return nil
 }
 
-// queueRuntimeEnvItemPrefix marks Secret items the claw launcher exports as
-// environment variables (env/LITELLM_API_KEY -> LITELLM_API_KEY).
+// queueRuntimeEnvItemPrefix marks Secret items the claw harness host exports
+// to the harness as environment variables (env/LITELLM_API_KEY ->
+// LITELLM_API_KEY).
 const queueRuntimeEnvItemPrefix = "env/"
 
 // queueRuntimeEnvReserved names the variables only the executor (LCARS_*,

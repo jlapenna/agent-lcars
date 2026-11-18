@@ -394,7 +394,7 @@ Validation refuses to start the executor unless:
   reserves `..data`). They do not repeat, and none is a parent of another
   (`ssh` alongside `ssh/id_ed25519`);
 - declared `env` names, and the name after `env/` in each Secret item path
-  (which the launcher exports as a variable), are valid and share one
+  (which the harness host exports as a variable), are valid and share one
   namespace without repeats. An `env/` path has exactly one segment after the
   prefix. Neither may be `RUNNER_MODE`, `CLAW_TURN_DEADLINE_SECONDS`,
   `NODE_OPTIONS`, `PATH`, `HOME`, `CLAW_HARNESS_SOCKET`, or any `LCARS_*` or
@@ -420,8 +420,9 @@ tolerations) and differs only in:
   `CLAW_TURN_DEADLINE_SECONDS` (the Pod deadline minus 300 s, so the launcher's
   outer turn deadline ends first) and the declared `env`;
 - the only Secret material is the declared items of `secret_name`, read-only
-  at `/run/claw-secrets` (the launcher exports items under `env/` as
-  environment variables). Secret items stay 0440 and are never executable;
+  at `/run/claw-secrets` (the harness host exports items under `env/` as
+  environment variables for the harness, and with `harness_container` only
+  the harness's container mounts them). Secret items stay 0440 and are never executable;
 - `/work` is an `emptyDir` bounded by the runtime's ephemeral-storage limit
   (OpenClaw state, workspace copy, `HOME=/work/home`), and `/tmp` is a second
   `emptyDir`.
