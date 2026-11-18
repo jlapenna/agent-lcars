@@ -11,8 +11,8 @@ and [repository-owned agents](../../../docs/repository-agents.md#harnesses).
 The image holds the verified OpenClaw distribution and the ACP adapters for
 Claude Code and Codex (`package.json` and `package-lock.json`, installed with
 `npm ci` so every package is checked against its integrity hash), generic
-clients (`openssh-client`, `python3`), the launcher and `openclaw-acp.mjs`,
-the adapter that makes OpenClaw an ACP agent. It holds no agent definition,
+clients (`openssh-client`, `python3`) and the launcher with its two modules
+(`claw-process.mjs`, `openclaw-harness.mjs`). It holds no agent definition,
 agent tool or credential: the definition arrives in the run brief and a zone
 executor's runtime table mounts the credentials.
 
@@ -49,8 +49,10 @@ the agent is allowed to run could read the launcher's environment, including
 for this one run, and the agent's own output already becomes that run's
 report, so reading it grants no new authority. The zone Secret items are
 mounted for the agent's tools by design; scope each runtime's items to what
-that agent may use. A launcher SIGTERM (cancellation or pod deadline) stops
-the whole harness process group and still settles the run.
+that agent may use. OpenClaw's Gateway and its token are in the same
+position: a tool the agent may run could reach the Gateway as an operator.
+A launcher SIGTERM (cancellation or pod deadline) stops the harness's process
+group and OpenClaw's Gateway, and still settles the run.
 
 ## Launch sequence
 
@@ -62,8 +64,9 @@ Each step fails the attempt closed with a `runner-failed` completion:
 2. The launcher writes the verified definition to `/work/agent`, copies its
    `workspace/` to a writable `/work/workspace` and copies its `home/` into
    `HOME`, making each pinned `home/` file read-only.
-3. It starts the harness the manifest names (`HARNESSES` in `claw-job.mjs`)
-   in its own process group, in the workspace, with a clean environment: the
+3. It prepares what the harness needs (for OpenClaw, [below](#openclaw)) and
+   starts the harness the manifest names (`HARNESSES` in `claw-job.mjs`) in
+   its own process group, in the workspace, with a clean environment: the
    zone's `env/` Secret items and nothing of the launcher's. The command
    always comes from the image.
 4. It speaks ACP over the harness's stdio: `initialize` (protocol 1, no file
@@ -92,25 +95,30 @@ group and still settle the run.
 
 ### OpenClaw
 
-OpenClaw's own ACP server (`openclaw acp`) only bridges to a Gateway.
-`openclaw-acp.mjs` is the ACP agent instead: it runs each prompt as one
-embedded, Gateway-less turn and fails the prompt at any step:
+The agent is OpenClaw's own ACP server, `openclaw acp`, which forwards each
+prompt to a Gateway. `openclaw-harness.mjs` prepares that Gateway for this one
+turn and speaks no ACP itself. Each step fails the attempt closed:
 
 1. Fresh state directory with a writable copy of the pinned `config.json`.
-2. `openclaw config validate --json` must report `valid: true`.
-   `agent exec` itself silently ignores unknown keys.
-3. `openclaw doctor --fix --non-interactive` initializes state (without it
-   every config-pinned turn fails with "Auth profile read requested an
-   uncaptured shared owner"). If it changes anything but `meta`/`wizard`,
-   the pinned config was not normalized and the attempt fails.
+2. `openclaw config validate --json` must report `valid: true`: OpenClaw
+   silently ignores unknown keys.
+3. `openclaw doctor --fix --non-interactive` initializes state. If it changes
+   anything but `meta`/`wizard`, the pinned config was not normalized and the
+   attempt fails.
 4. `openclaw approvals set --file /work/agent/approvals.json`.
-5. `openclaw agent exec --config … --state-dir … --message-file … --cwd … --json`.
-6. The JSON envelope becomes the session: the turn's tool calls as one
-   completed call, an unresolved tool error as a failed call after it, and
-   the final message as the answer. `agent exec` exits 0 with `ok: true` even
-   when every tool call was denied, so the exit code alone proves nothing. A
-   tool call that failed and was resolved (a probe of a host that is down) is
-   evidence, not a failure.
+5. The launch config: the pinned config plus what only this Job knows. The
+   agent's workspace is `/work/workspace`, workspace bootstrap is skipped
+   unless the definition sets it, and the Gateway listens on loopback behind
+   a random token. A definition cannot open the Gateway or drop its token.
+6. `openclaw gateway run`, waited on until it logs `[gateway] ready`.
+7. `openclaw acp --url ws://127.0.0.1:<port> --token-file … --no-prefix-cwd`
+   is the harness. After the turn the Gateway's process group is stopped.
+
+Exec approvals stay the enforcement layer: a denied command is a failed tool
+call in the session and fails the attempt. A turn that fails inside the
+Gateway (a model endpoint that is down, for example) ends with no text, which
+is a failed attempt. The Gateway and its token belong to the same UID as the
+agent's tools, like everything else in the pod (below).
 
 ### Claude Code and Codex
 
@@ -124,18 +132,21 @@ login fails the attempt with `Authentication required`.
 On 2026-11-18, on a workstation, the launcher ran each harness from this
 lockfile against stand-in model endpoints:
 
-- OpenClaw 2026.10.10-beta.3 settled a report in about 50 s; an allowlisted
-  `date` ran and counted as evidence, and `cat /etc/hostname` outside the
-  allowlist failed the attempt as an unresolved `exec` call.
+- OpenClaw 2026.10.10-beta.3 settled a report in 56 to 69 s, of which Doctor
+  and the Gateway's start are most. The agent read its `AGENTS.md`, an
+  allowlisted `date` ran and counted as evidence, `cat /etc/hostname` outside
+  the allowlist failed the attempt, and a model endpoint returning HTTP 500
+  failed it with `empty result` after 136 s of OpenClaw's own retries.
 - Claude Code settled a report in 3 to 5 s; a command allowed in
   `home/.claude/settings.json` ran, and a write or network command without a
   rule was refused and failed the attempt.
 - Codex settled a report in 3 to 4 s, ran a command in its sandbox, and its
   sandbox blocked the network.
 
-No real model turn and no run on k3s has been made through this path yet. An
-earlier real-image check of the previous launcher (2026-11-14, Spark lane,
-2 CPU / 3 GiB) settled an OpenClaw report in 58 s.
+No real model turn and no run on k3s has been made through this path yet. The
+previous launcher, which ran `openclaw agent exec` without a Gateway, settled
+an OpenClaw report in 58 s on the real image (2026-11-14, Spark lane, 2 CPU /
+3 GiB); the Gateway's memory under that limit is unmeasured.
 
 ## Normalize an agent config
 
@@ -161,5 +172,5 @@ Re-run this whenever the zone adopts a new image digest.
 node --test apps/runner-autoscaler/claw-image/claw-job.test.mjs
 ```
 
-The tests drive the launcher against a fake Work API, the real OpenClaw
-adapter over a fake `openclaw`, and a fake ACP harness.
+The tests drive the launcher against a fake Work API, a fake `openclaw`
+(including its Gateway and ACP server) and a fake ACP harness.

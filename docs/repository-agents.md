@@ -44,20 +44,22 @@ The agent ID is `<owner>/<repo>/<name>`, for example
 carries every harness, pinned by its lockfile. A definition chooses among
 them by name and cannot supply a command of its own.
 
-| `harness`            | Runs the turn with                           | The definition supplies                       |
-| -------------------- | -------------------------------------------- | --------------------------------------------- |
-| `openclaw` (default) | OpenClaw, one Gateway-less `agent exec` turn | `config.json`, `approvals.json`, `workspace/` |
-| `claude`             | Claude Code                                  | `workspace/` (`CLAUDE.md`), `home/.claude/`   |
-| `codex`              | Codex                                        | `workspace/` (`AGENTS.md`), `home/.codex/`    |
+| `harness`            | Runs the turn with | The definition supplies                                |
+| -------------------- | ------------------ | ------------------------------------------------------ |
+| `openclaw` (default) | OpenClaw           | `config.json`, `approvals.json`, `workspace/`, `home/` |
+| `claude`             | Claude Code        | `workspace/` (`CLAUDE.md`), `home/.claude/`            |
+| `codex`              | Codex              | `workspace/` (`AGENTS.md`), `home/.codex/`             |
 
 Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
 (ACP) agent, and the launcher is only an ACP client. It starts the harness in
 a copy of `workspace/`, copies `home/` into the harness's `HOME`, sends the
 message as one prompt and takes the agent's last message after its last tool
 call as the report. Claude Code and Codex speak ACP through their own
-adapters. OpenClaw's own ACP server only bridges to a Gateway, so the image
-carries a small adapter that runs each prompt as one `agent exec` turn and
-turns its result into the same session.
+adapters. OpenClaw speaks it through its own server, `openclaw acp`, which
+forwards to a Gateway: the launcher validates the config, runs Doctor, seeds
+the exec approvals and starts a Gateway on loopback inside the Job for that
+one turn. No shared or long-lived Gateway is involved, so a lost node still
+costs one attempt.
 
 ```text
 .lcars/agents/reviewer/
@@ -101,11 +103,10 @@ turns its result into the same session.
   session. An answer with no text is a failed attempt. So is a tool call that
   failed or never finished, unless a call that started after it ended
   completed; that later call is resolved evidence, as a retried probe is.
-  `requireToolEvidence` needs at least one tool call. OpenClaw's adapter
-  reports the turn's tool calls as one completed call and an unresolved tool
-  error as a failed one. Codex's adapter sometimes leaves a command its
-  sandbox blocked at once out of the session (3 of 8 runs on 2.1.1), so that
-  failure can go unseen; a Codex agent whose answer must rest on a tool sets
+  `requireToolEvidence` needs at least one tool call. Codex's adapter
+  sometimes leaves a command its sandbox blocked at once out of the session
+  (3 of 8 runs on 2.1.1), so that failure can go unseen; a Codex agent whose
+  answer must rest on a tool sets
   `requireToolEvidence`.
 
 Verified on 2026-11-18 on a workstation, with the pinned OpenClaw and both
@@ -184,9 +185,10 @@ another's credentials gets its own profile.
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
   - The launcher materializes the files into `/work/agent` and checks the
-    digest. It then runs today's sequence: `config validate`, `doctor` (which
-    must change nothing, proving the reviewed config is what runs),
-    `approvals set` and `agent exec`.
+    digest. It then runs the agent's [harness](#harnesses) as an ACP agent.
+    For OpenClaw that starts with `config validate`, `doctor` (which must
+    change nothing, proving the reviewed config is what runs) and
+    `approvals set`.
 
   Zone ConfigMaps carrying agent definitions are retired.
 

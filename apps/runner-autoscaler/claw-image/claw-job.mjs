@@ -11,15 +11,18 @@
 //
 // The launcher is an ACP client (Agent Client Protocol,
 // agentclientprotocol.com) and every harness is an ACP agent this image
-// carries: OpenClaw through openclaw-acp.mjs, Claude Code and Codex through
-// their adapters. The agent's manifest names the harness.
+// carries: OpenClaw through its own ACP server and a Gateway this Job starts
+// (openclaw-harness.mjs), Claude Code and Codex through their adapters. The
+// agent's manifest names the harness.
 //
 // Sequence (each step fails the attempt closed):
 //   1. Acknowledged startup heartbeat, then the brief.
 //   2. The verified definition under <work>/agent, a writable copy of its
 //      `workspace/`, and its `home/` copied into HOME.
-//   3. The harness, started in its own process group in the workspace, with
-//      the zone's secret environment and nothing of the launcher's.
+//   3. Whatever the harness needs before it can speak (for OpenClaw: config
+//      validation, Doctor, exec approvals and a Gateway), then the harness
+//      itself, in its own process group in the workspace, with the zone's
+//      secret environment and nothing of the launcher's.
 //   4. One ACP session and one prompt carrying the message. Every permission
 //      request is refused.
 //   5. Settle from the session's updates (settle): a report only when the
@@ -41,7 +44,11 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
-import { fileURLToPath } from 'node:url';
+
+import { ClawFailure, stopGroup } from './claw-process.mjs';
+import { openclawHarness } from './openclaw-harness.mjs';
+
+export { ClawFailure };
 
 export const HEARTBEAT_INTERVAL_MS = 300_000;
 // The Work API stores a report of any size whole, up to its completion bound
@@ -55,22 +62,17 @@ const SECRET_ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 const RESERVED_ENV =
   /^(LCARS_|RUNNER_MODE$|OPENCLAW_|NODE_OPTIONS$|PATH$|HOME$)/;
 
-// The harnesses this image carries (Dockerfile), each an ACP agent on stdio.
-// A manifest names one; its command comes from the image, never from the
-// definition, so reviewed source cannot choose the program that speaks for
-// the agent.
+// The harnesses this image carries (Dockerfile). Each entry prepares what
+// its harness needs and returns the ACP agent to run on stdio: its command,
+// an environment when it needs more than the zone's, and a `stop` for
+// anything it started. A manifest names a harness; the command comes from
+// the image, never from the definition, so reviewed source cannot choose the
+// program that speaks for the agent.
 const ACP_MODULES = '/opt/openclaw/node_modules/@agentclientprotocol';
 const adapter = (path) => () => ({ command: process.execPath, args: [path] });
 export const HARNESSES = Object.freeze({
-  openclaw: ({ definitionDir, workRoot, openclaw }) => ({
-    command: process.execPath,
-    args: [
-      fileURLToPath(new URL('./openclaw-acp.mjs', import.meta.url)),
-      definitionDir,
-      workRoot,
-      openclaw,
-    ],
-  }),
+  // OpenClaw's own ACP server, bridged to a Gateway this Job owns.
+  openclaw: openclawHarness,
   claude: adapter(`${ACP_MODULES}/claude-agent-acp/dist/index.js`),
   codex: adapter(`${ACP_MODULES}/codex-acp/dist/index.js`),
 });
@@ -78,8 +80,6 @@ const ACP_PROTOCOL_VERSION = 1;
 const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
-
-export class ClawFailure extends Error {}
 
 // Periodic heartbeats are best effort: the lease and its recovery belong to
 // LCARS, and only the startup acknowledgement gates provider work.
@@ -272,20 +272,6 @@ export function settle(
       message: 'Claw turn answered without using any tool.',
     };
   return boundedReport(report);
-}
-
-// Stops a child's whole process group: SIGTERM, then SIGKILL for whatever is
-// still running after the grace period.
-export function stopGroup(child, graceMs = 10_000) {
-  const killTree = (killSignal) => {
-    try {
-      process.kill(-child.pid, killSignal);
-    } catch {
-      // The group already exited.
-    }
-  };
-  killTree('SIGTERM');
-  setTimeout(() => killTree('SIGKILL'), graceMs).unref();
 }
 
 // Runs one ACP turn: starts the harness in its own process group, speaks
@@ -563,11 +549,6 @@ async function harnessTurn({
 }) {
   if (!Object.hasOwn(harnesses, request.harness))
     throw new ClawFailure(`this image carries no ${request.harness} harness`);
-  const harness = harnesses[request.harness]({
-    definitionDir,
-    workRoot,
-    openclaw,
-  });
   const workspace = await prepareWorkspace(definitionDir, workRoot);
   // A harness reads its user-level settings from HOME. The definition's
   // `home/` supplies them, so the tool policy a harness trusts (it ignores
@@ -579,30 +560,44 @@ async function harnessTurn({
   const inHome = (file) =>
     join(env.HOME, normalize(file.path).slice('home/'.length));
   for (const file of settings) await chmod(inHome(file), 0o444);
-  if (signal.aborted) throw new ClawFailure('claw run was cancelled');
-  const turn = acpTurn(harness.command, harness.args, {
+  const harness = await harnesses[request.harness]({
+    definitionDir,
+    workRoot,
+    workspace,
+    openclaw,
     env,
-    cwd: workspace,
-    message: request.message,
     signal,
   });
-  turn.catch(() => undefined);
-  await started();
-  const finished = await turn;
-  // The harness runs as the launcher's UID, so nothing can stop an agent
-  // with a write-capable tool from rewriting the settings that bound it.
-  // What the launcher can do is refuse a result when it sees that: every
-  // pinned `home/` file must still be its blob once the turn is over. A file
-  // the agent added, or changed and put back, is not seen.
-  for (const file of settings) {
-    const content = await readFile(inHome(file)).catch(() => undefined);
-    if (content === undefined || gitBlobSha(content) !== file.sha)
-      return {
-        ...finished,
-        error: `the agent changed its harness settings (${file.path})`,
-      };
+  try {
+    if (signal.aborted) throw new ClawFailure('claw run was cancelled');
+    const turn = acpTurn(harness.command, harness.args, {
+      env: harness.env ?? env,
+      cwd: workspace,
+      message: request.message,
+      signal,
+    });
+    // The turn is awaited after the heartbeat; a spawn failure in between
+    // must reach that await, not become an unhandled rejection.
+    turn.catch(() => undefined);
+    await started();
+    const finished = await turn;
+    // The harness runs as the launcher's UID, so nothing can stop an agent
+    // with a write-capable tool from rewriting the settings that bound it.
+    // What the launcher can do is refuse a result when it sees that: every
+    // pinned `home/` file must still be its blob once the turn is over. A
+    // file the agent added, or changed and put back, is not seen.
+    for (const file of settings) {
+      const content = await readFile(inHome(file)).catch(() => undefined);
+      if (content === undefined || gitBlobSha(content) !== file.sha)
+        return {
+          ...finished,
+          error: `the agent changed its harness settings (${file.path})`,
+        };
+    }
+    return finished;
+  } finally {
+    await harness.stop?.();
   }
-  return finished;
 }
 
 export async function main(env = process.env, deps = {}) {

@@ -32,7 +32,7 @@ RUN npm ci --omit=dev --no-fund --no-audit \
  && test -f node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js \
  && test -f node_modules/@agentclientprotocol/codex-acp/dist/index.js
 
-COPY claw-job.mjs openclaw-acp.mjs /opt/claw/
+COPY claw-job.mjs claw-process.mjs openclaw-harness.mjs /opt/claw/
 
 # Self-update stays off: the image digest is the only way to change OpenClaw.
 ENV OPENCLAW_NO_AUTO_UPDATE=1 \
