@@ -497,7 +497,10 @@ agent round admitted through the generic route.
    investigator Secret), and an operator adds profile `homelab-ops` for
    `jlapenna/homelab`.
 2. Homelab's zone executor gains runtime `claw-default` with a model key only.
-   `.lcars/agents/smoke/` in this repository is its canary (done).
+   `.lcars/agents/smoke/` in this repository is its canary (done). Its
+   `config.json` is deliberately a source config (no Doctor-added plugin or
+   agent entries), so every run also proves the launcher normalizes configs
+   for whichever image runs them.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
@@ -622,6 +625,12 @@ while the newer Console is still running, in this order:
    its catalog row shows it disabled, and then restore the shared grant and
    `runCallers`.
 
+A claw image whose launcher predates agent-lcars#3409 is not a rollback
+target, alone or together with the Console: it refuses source configs, which
+any repository may commit (`smoke`'s is one), and a round re-reads the config
+it pinned, so no later commit rescues it. Roll forward instead. The steps
+below cover images from #3409 on.
+
 Rolling back only the claw image, with the newer Console still running, is
 safe for agents that name neither a `harness` nor a `mode`: their rounds are
 delivered as before. It is not for the others. The newer Console keeps
@@ -649,10 +658,11 @@ attempt. Before reverting a runtime's image digest:
   open: a production `lcars investigate` invocation that settles
   successfully, since the CLI uses the run-token routes and waits for the
   result.
-- **Open:** an agent with no profile, added by a repository PR alone, runs
-  end to end on k3s. The zone executor records `claw-default` runs exiting
-  `succeeded`, but that counter does not identify the agent; the check needs
-  a successful Work item or report for the `.lcars/agents/smoke/` canary.
+- **Met:** an agent with no profile, added by a repository PR alone, runs
+  end to end on k3s. The `.lcars/agents/smoke/` canary (#3406) finished on
+  runtime `claw-default` with a report as Work items
+  `01M7M0971YRED8SC4E08KD82Z9` (2026-11-17) and `01M7QNY66GRY4H71BYJ6QRV02J`
+  (2026-11-18, on the #3409 launcher).
 - **Partly met:** a manifest naming a profile that does not list its
   repository is refused. Admission refuses it with "Profile NAME does not
   admit REPOSITORY" (`apps/console/src/lib/repository-agent-runs.ts`), and
