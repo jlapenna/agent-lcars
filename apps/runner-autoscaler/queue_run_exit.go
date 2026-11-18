@@ -45,6 +45,10 @@ type runExitReporter struct {
 	mu       sync.Mutex
 	reported map[string]time.Time
 	inflight map[string]struct{}
+	// attempted holds claims this process already posted without an
+	// answer (a dropped response may have committed). A later `replayed`
+	// answer for one of them is this process's own first report.
+	attempted map[string]time.Time
 	// wg lets tests wait for the asynchronous reports to land.
 	wg sync.WaitGroup
 }
@@ -61,6 +65,7 @@ func newRunExitReporter(consoleURL, runnerName string, idToken func() (string, e
 		now:          time.Now,
 		reported:     map[string]time.Time{},
 		inflight:     map[string]struct{}{},
+		attempted:    map[string]time.Time{},
 	}
 }
 
@@ -110,6 +115,11 @@ func (r *runExitReporter) observeExit(runID, claimedBy, fingerprint string, meta
 			delete(r.reported, id)
 		}
 	}
+	for id, at := range r.attempted {
+		if now.Sub(at) > runExitReportedRetention {
+			delete(r.attempted, id)
+		}
+	}
 	key := exitClaimKey(runID, fingerprint)
 	if _, done := r.reported[key]; done {
 		return
@@ -125,16 +135,22 @@ func (r *runExitReporter) observeExit(runID, claimedBy, fingerprint string, meta
 		if runner == "" {
 			runner = r.runnerName
 		}
+		r.mu.Lock()
+		_, retried := r.attempted[key]
+		r.attempted[key] = r.now()
+		r.mu.Unlock()
 		state, ok, replayed, err := r.postContext(context.Background(), runID, runner, fingerprint)
 		r.mu.Lock()
 		delete(r.inflight, key)
 		if err == nil {
 			r.reported[key] = r.now()
+			delete(r.attempted, key)
 		}
 		r.mu.Unlock()
-		// A replay (this claim was already retired, e.g. a retained Job
-		// re-reported after a restart) is not a new exit.
-		if err == nil && !replayed {
+		// A replay (an earlier report already retired this claim, e.g. a
+		// retained Job re-observed after a restart) is not a new exit,
+		// unless the earlier report was this process's own unanswered one.
+		if err == nil && (!replayed || retried) {
 			recordRunExit(meta, runExitOutcome(state, ok), r.now())
 		}
 		switch {

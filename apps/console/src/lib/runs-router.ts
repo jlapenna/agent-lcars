@@ -6,7 +6,7 @@ import {
   parseRunGeneration,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
-import { usesCodexCredentials } from '@agent-lcars/orchestrator';
+import { retiresOnExit, usesCodexCredentials } from '@agent-lcars/orchestrator';
 import {
   type DeliveryBinding,
   deliveryWaiting,
@@ -1033,7 +1033,15 @@ export const runsRouter = os.router({
         ...(current.state === 'finished' && current.result !== undefined
           ? { ok: current.result.ok }
           : {}),
-        ...(run.queue?.state === 'retired' ? { replayed: true } : {}),
+        // Decided inside the settlement transaction: a pipeline whose
+        // first exit report retires its claim refuses `run-not-live` only
+        // when an earlier report (even a concurrent one) already did. A
+        // Codex claim is never retired on exit, so its repeats are unknown.
+        ...(isRefusal(settled) &&
+        settled.reason === 'run-not-live' &&
+        retiresOnExit(run)
+          ? { replayed: true }
+          : {}),
       };
     }
     logger.warn(

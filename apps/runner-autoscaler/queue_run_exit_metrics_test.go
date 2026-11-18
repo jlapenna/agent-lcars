@@ -164,3 +164,30 @@ func TestDeclaredRuntimesStartWithDurationBaselines(t *testing.T) {
 		t.Fatalf("duration histograms = %d, want a child per outcome", n)
 	}
 }
+
+func TestRetryAfterADroppedResponseStillCountsOnce(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			// The Console committed, but the answer never arrived.
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		_, _ = w.Write([]byte(`{"runId":"x","state":"lost","replayed":true}`))
+	}))
+	t.Cleanup(server.Close)
+	reporter := testExitReporter(server.URL)
+	counter := queueExecutorRunExitsTotal.WithLabelValues("claw-dropped-test", "lost")
+	before := testutil.ToFloat64(counter)
+	for range 3 {
+		reporter.observeExit("run-dropped", "", testClaimFingerprint, exitMeta{pipeline: "claw-dropped-test"})
+		reporter.wg.Wait()
+	}
+	if calls != 2 {
+		t.Fatalf("posts = %d, want a retry then nothing", calls)
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 1 {
+		t.Fatalf("lost exits counted %v, want exactly once", got)
+	}
+}
