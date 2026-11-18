@@ -53,13 +53,14 @@ The fleet-consumed skills live in `agents/shared/skills/`:
 | `lcars-session-updates` | Set LCARS session titles or status on request; routes dispatched workers to their protocol. |
 | `lcars-usage`           | Operate LCARS interactively and check Work ownership before implementing an enrolled issue. |
 
-Dispatched workers receive the layer-1 list in
-`apps/runner-autoscaler/runner-image/runtime/layer1-skills.conf`
-(`agent-protocol` and `lcars-session-updates`): the runner image build runs
-`runtime/install-skills.sh` into the job user's Claude and Antigravity skill
-directories, and `prepare-dispatch.sh` exports `AGENT_PROTOCOL_PATH` to the
-baked protocol. `lcars-usage` is for interactive sessions and is not baked
-into workers. In this repository all three are linked from `.agents/skills/`
+The runner image copies the whole `agents/shared/skills/` tree, including
+`lcars-usage`, to `/usr/local/lib/agent-lcars/agents/shared/skills`. The
+layer-1 list in `apps/runner-autoscaler/runner-image/runtime/layer1-skills.conf`
+(`agent-protocol` and `lcars-session-updates`) limits which of them the image
+build installs, through `runtime/install-skills.sh`, into the job user's Claude
+and Antigravity skill directories; `prepare-dispatch.sh` exports
+`AGENT_PROTOCOL_PATH` to the baked protocol. `lcars-usage` is meant for
+interactive sessions and is not installed as a worker skill. In this repository all three are linked from `.agents/skills/`
 and listed in its `agent-lcars-skills` plugin manifest; onboarding does not
 install skills on member workstations or into member repositories.
 

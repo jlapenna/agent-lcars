@@ -176,9 +176,14 @@ outcome to the adapter that started it (`apps/console/src/lib/outcome-webhook.ts
 The outbox drain in `orchestrator-dispatch.ts` sends one when a run settles
 `finished`, `canceled` or `lost` and the item's origin carries a `thread`;
 a later `deliveryStage: "complete"` event follows a protected merge. The
-target is chosen by `origin.channel`, which comes from the caller's Work grant,
-never the request, so only a grant declaring that channel can route there.
-Linear is delivered natively ([linear.md](linear.md)) and needs no entry.
+target is chosen by `origin.channel`, which comes from the caller's
+authenticated identity, never the request body: a grant's declared channel
+wins, otherwise a caller gets `console` when it signed in through a session
+and `api` otherwise (`work-router.ts`). An operator who registers a target for
+`console` or `api` therefore receives threaded work from every such
+default-channel caller. The checked-in configuration registers `slack` only,
+which only the Sprinkles bot's grant declares. Linear is delivered natively
+([linear.md](linear.md)) and needs no entry.
 
 `AGENT_LCARS_OUTCOME_WEBHOOKS` (set in `apps/console/apphosting.yaml`) is a
 JSON object keyed by channel:
@@ -199,8 +204,13 @@ Google ID token minted by the Console runtime identity for `audience` in
 when the payload has an `eventId`. The receiver verifies that token and
 audience. The JSON body (`OutcomeWebhookPayload`) holds `itemId`, `runId`,
 `state`, `ok`, `parked`, `thread` (echoed for routing), and `consoleUrl`,
-plus optional `eventId`/`deliveryStage`, `message` (the run's final message,
-truncated at 16,384 characters with `messageTruncated: true`), `ref` (e.g. the
-PR URL), `providerFallback`, and `reroutedTo`. No transcript content is sent.
+plus optional `eventId`/`deliveryStage`, `message`, `ref` (e.g. the PR URL),
+`providerFallback`, and `reroutedTo`. `message` is the run's recorded result
+message, truncated at 16,384 characters with `messageTruncated: true`: normally
+the agent's final assistant response, but when a worker fails or times out
+before one, the redacted tail of the provider's own output
+(`direct-runner.sh`); a `deliveryStage: "complete"` event carries a generated
+notice naming the protected merge commit. The full transcript is never sent,
+but treat `message` as potentially sensitive run output.
 A non-2xx response or transport error releases the outbox entry for retry
 with backoff, like a failed GitHub outcome comment.

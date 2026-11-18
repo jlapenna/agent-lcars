@@ -30,13 +30,15 @@ One command runs the repository-change steps end to end:
 
 ```sh
 node tools/fleet-onboard-run.mjs --repo OWNER/NAME \
-  [--runner-label NAME-default] [--ci-workflow ci.yml --ci-checks "A,B"] \
-  [--ci-workflow-name NAME] [--hooks auto|pre-commit|husky|none] \
+  [--runner-label NAME-default] \
+  [--ci-workflow ci.yml --ci-checks "A,B" [--ci-workflow-name NAME]] \
+  [--hooks auto|pre-commit|husky|none] \
   [--repo-tools-rev TAG] [--alias NAME] [--copy-from OWNER/MEMBER] \
   [--private-key-command CMD] [--homelab ../homelab] [--workdir DIR] \
   [--dry-run] [--skip target|lcars|homelab|github]...
 ```
 
+`--ci-workflow-name`, when given, needs one name per `--ci-workflow`, in order.
 `--skip` is repeatable (or comma-separated) and names the steps to leave out:
 `target` (scaffold PR), `lcars` (admission PR), `homelab` (membership PR), and
 `github` (variables, secret, installations, labels). `--workdir` holds the

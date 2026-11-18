@@ -28,8 +28,12 @@ except `hook`, which logs to `hook.log` and always exits 0:
   ([Session titles](#session-titles-issue-1212)).
 - `lcars session archive --consent <path>` / `--revoke`: consented transcript
   snapshot ([Archived CLI transcripts](#archived-cli-transcripts)).
-- `lcars hook <claude|codex|opencode|agy> [--inline]` and `lcars hook flush`:
-  the hook client ([Hook client](#hook-client-lcars-hook)).
+- `lcars hook <claude|codex|opencode> [--inline]`,
+  `lcars hook agy [<event>] [--inline]`, and `lcars hook flush`: the hook
+  client ([Hook client](#hook-client-lcars-hook)). For `agy`, the event
+  argument names the hook event when the payload has no `hook_event_name`;
+  without either the event is silently dropped. The installed integration
+  always passes it.
 - `lcars integration <install|uninstall|status> <claude|codex|opencode|agy|all>`:
   installs or removes the runtime hook entries ([Host setup](#host-setup)).
 - `lcars work ...`: the Work API client (`create`, `status`, `list`,

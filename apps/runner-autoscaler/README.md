@@ -552,10 +552,11 @@ The metrics endpoint exposes the queue worker's own health:
   followed by a failed launch, rather than looking like an idle poll.
 - `github_runner_autoscaler_queue_executor_memory_launches_total{pipeline,memory}`
   counts new direct-runner Jobs by the Hindsight memory credential state at
-  launch: `configured` (token key present), `isolated` (goose and declared
-  runtimes; no token mounted by design), `no_token` (memory expected but the
-  credential Secret lacks a nonempty `hindsight-api-token`), or `unknown`
-  (Secret read failed). It never reads or exports the token value.
+  launch: `configured`, `isolated` (goose and declared runtimes; no token
+  mounted by design), `no_token` (memory expected but `hindsight-api-token` is
+  missing, empty, or only CR/LF), or `unknown` (Secret read failed). The
+  classifier reads the Secret value and trims CR/LF the way the worker
+  bootstrap does; only the resulting state is exported.
 - `github_runner_autoscaler_queue_executor_run_exits_total{pipeline,outcome}`
   counts each delivered worker-exit report once, by claimed pipeline and the
   run's settled outcome as the exit route answers it: `succeeded` or `failed`
@@ -720,10 +721,14 @@ Beyond `direct-runner.sh`, the image bakes these single-purpose helpers from
   profile, reads the projected subscription token file into the worker's
   environment and removes it on close.
 
-The image's pnpm store seed under `runner-image/pnpm-seed/fleet/` is refreshed
-weekly by `.github/workflows/refresh-runner-pnpm-seed.yml`, which copies every
-fleet JavaScript repository's lockfile there through
-`tools/sync-runner-pnpm-seed.py` and opens an auto-merging bot PR.
+The image's pnpm store seed is described in
+[runner-image/pnpm-seed/README.md](runner-image/pnpm-seed/README.md).
+`.github/workflows/refresh-runner-pnpm-seed.yml` refreshes it weekly through
+`tools/sync-runner-pnpm-seed.py`, which processes only the repositories listed
+in `pnpm-seed/fleet.json` and writes filtered copies of their lockfiles (patch
+data and entries the image cannot prefetch anonymously removed) with minimal
+`package.json`/`pnpm-workspace.yaml` data. When the seed contents change it
+opens or updates one bot PR that auto-merges after normal CI.
 
 ## Deployment
 
