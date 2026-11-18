@@ -106,7 +106,11 @@ Each step fails the attempt closed with a `runner-failed` completion:
 6. Every pinned `home/` file must still be its blob. The harness runs as the
    launcher's UID, so the launcher cannot stop an agent from rewriting its
    own settings; it refuses the result when it sees that. It does not see a
-   file the agent added, or changed and put back.
+   file the agent added, or changed and put back. The check itself cannot
+   hold up settlement: each settings file (these, and OpenClaw's launch
+   config and Gateway token) is read only as a regular file of a bounded
+   size within a bounded time (`readSettingsFile`), and a link, a pipe, a
+   device or a larger file counts as changed.
 
 Harness stderr is never forwarded, because it can echo resolved
 configuration. The outer deadline and cancellation stop the harness's process

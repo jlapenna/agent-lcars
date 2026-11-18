@@ -68,8 +68,11 @@ costs one attempt.
   workspace/        # the agent's working directory: CLAUDE.md or AGENTS.md
   home/             # the harness's user-level settings, copied into HOME
     .claude/settings.json   # Claude Code: permissions
-    .codex/config.toml      # Codex: model route, approval and sandbox policy
+    .codex/config.toml      # Codex: model and provider settings only
 ```
+
+Codex's approval and sandbox policy is not set in that file: it comes from
+`mode` in `agent.yaml`, described under tool policy below.
 
 - **Tool policy.** The launcher refuses every permission request and gives the
   harness no file system or terminal of its own, because an unattended run has
@@ -336,8 +339,12 @@ Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
 
 1. Cancel any affected round (step 3 says which) that you will not wait
-   for. Cancelling a round needs the same `work.claw.admit` grant that
-   admitted it, so it is not possible once the fence in step 2 is up.
+   for and that a grant admitted. Only the principal that admitted a round
+   can cancel it, and only while it holds `work.claw.admit` for the round's
+   pipeline, so this is not possible once the fence in step 2 is up. A
+   round a dispatched run started through `runCallers` belongs to that run,
+   which holds no grant: it cannot be cancelled this way and has to drain
+   in step 3.
 2. Stop new rounds. Remove `work.claw.admit` from every grant in
    `AGENT_LCARS_WORK_GRANTS` and turn `runCallers` off in every profile, so
    nothing can admit an agent round. A grant must keep at least one scope:

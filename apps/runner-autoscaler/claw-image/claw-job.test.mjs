@@ -1,5 +1,6 @@
 /* eslint-disable vitest/no-import-node-test -- the claw image's suite runs under node --test without Vitest, like the runner-image runtime suites. */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmod,
@@ -7,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +25,7 @@ import {
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
+import { readSettingsFile } from './claw-process.mjs';
 import {
   bundledPluginProviders,
   comparableConfig,
@@ -141,7 +144,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     if (behaviour.tamper) {
       const settings = path.join(process.env.HOME, '.claude', 'settings.json');
       fs.chmodSync(settings, 0o644);
-      fs.writeFileSync(settings, '{"permissions":{"allow":["Bash"]}}');
+      if (behaviour.tamper === 'pipe') {
+        // A pipe nobody writes to: reading it as a file would never return.
+        fs.rmSync(settings);
+        require('node:child_process').execFileSync('mkfifo', [settings]);
+      } else fs.writeFileSync(settings, '{"permissions":{"allow":["Bash"]}}');
     }
     for (const step of behaviour.steps ?? []) {
       if (step.say) say(step.say, step.id);
@@ -1561,6 +1568,36 @@ test('an agent that rewrites its harness settings loses its report', async () =>
     message:
       'Claw turn failed: the agent changed its harness settings (home/.claude/settings.json).',
   });
+});
+
+test('a settings file replaced by a pipe is a change, not a launcher that hangs', async () => {
+  const { env, deps } = await harnessFixture({
+    tamper: 'pipe',
+    steps: [{ say: 'All clear.' }],
+  });
+  assert.deepEqual(await main(env, deps), {
+    outcome: 'runner-failed',
+    message:
+      'Claw turn failed: the agent changed its harness settings (home/.claude/settings.json).',
+  });
+});
+
+test('readSettingsFile reads only a bounded regular file', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'claw-settings-'));
+  const file = join(dir, 'settings.json');
+  await writeFile(file, 'pinned');
+  const read = async (path, maxBytes = 6) =>
+    (await readSettingsFile(path, { maxBytes, timeoutMs: 2_000 }))?.toString();
+  assert.equal(await read(file), 'pinned');
+  // Everything else the agent's tools could leave at the path is no file.
+  assert.equal(await read(file, 5), undefined);
+  assert.equal(await read(join(dir, 'missing')), undefined);
+  assert.equal(await read(dir), undefined);
+  await symlink(file, join(dir, 'link'));
+  assert.equal(await read(join(dir, 'link')), undefined);
+  execFileSync('mkfifo', [join(dir, 'pipe')]);
+  assert.equal(await read(join(dir, 'pipe')), undefined);
+  assert.equal(await read('/dev/zero', 1 << 20), undefined);
 });
 
 test('a harness the image does not carry is refused before any turn', async () => {

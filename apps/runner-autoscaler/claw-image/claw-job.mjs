@@ -45,7 +45,7 @@ import {
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 import { createInterface } from 'node:readline';
 
-import { ClawFailure, stopGroup } from './claw-process.mjs';
+import { ClawFailure, readSettingsFile, stopGroup } from './claw-process.mjs';
 import { openclawHarness } from './openclaw-harness.mjs';
 
 export { ClawFailure };
@@ -729,8 +729,12 @@ async function harnessTurn({
   // What the launcher can do is refuse a result when it sees that: every
   // pinned `home/` file must still be its blob once the turn is over. A
   // file the agent added, or changed and put back, is not seen.
+  // Its tools could also have put anything at these paths, so each is read
+  // only as a regular file of its pinned size, within a bounded time.
   for (const file of settings) {
-    const content = await readFile(inHome(file)).catch(() => undefined);
+    const content = await readSettingsFile(inHome(file), {
+      maxBytes: Buffer.byteLength(file.content, 'base64'),
+    });
     if (content === undefined || gitBlobSha(content) !== file.sha)
       return {
         ...finished,

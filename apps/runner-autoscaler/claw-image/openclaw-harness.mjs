@@ -34,7 +34,10 @@ import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { ClawFailure, stopGroup } from './claw-process.mjs';
+import { ClawFailure, readSettingsFile, stopGroup } from './claw-process.mjs';
+
+// Room for OpenClaw to have rewritten its config with its own additions.
+const SETTINGS_SLACK_BYTES = 64 * 1024;
 
 // Enough for `config validate --json`; no other command's output is read.
 const MAX_OUTPUT_CHARS = 1024 * 1024;
@@ -759,18 +762,31 @@ export async function prepareState({
   // tools. Nothing here can stop a tool from rewriting them, so the turn's
   // result is refused when either is no longer what was launched. Exec
   // approvals live in OpenClaw's state database and are not covered.
+  // Either path can by then hold anything, so each is read only as a regular
+  // file of a bounded size, within a bounded time; anything else is a change.
+  const launchedText = JSON.stringify(launched);
+  const tokenText = `${gateway.token}\n`;
   const verify = async () => {
-    const text = (file) => readFile(file, 'utf8').catch(() => '');
+    const text = async (file, maxBytes) =>
+      (await readSettingsFile(file, { maxBytes }))?.toString('utf8') ?? '';
     let config;
     try {
-      config = comparableConfig(JSON.parse(await text(configPath)));
+      // OpenClaw may have rewritten its config in its own formatting.
+      config = comparableConfig(
+        JSON.parse(
+          await text(
+            configPath,
+            SETTINGS_SLACK_BYTES + 4 * Buffer.byteLength(launchedText),
+          ),
+        ),
+      );
     } catch {
       config = undefined;
     }
     const changed =
       config !== comparableConfig(launched)
         ? 'OpenClaw config'
-        : (await text(tokenFile)) !== `${gateway.token}\n`
+        : (await text(tokenFile, Buffer.byteLength(tokenText))) !== tokenText
           ? 'OpenClaw Gateway token'
           : undefined;
     return changed && `the agent changed its harness settings (${changed})`;
