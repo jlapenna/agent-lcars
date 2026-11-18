@@ -772,6 +772,7 @@ test('resolveCredentials resolves what the config names and what providers read'
     ANTHROPIC_OAUTH_TOKEN: '',
     ANTHROPIC_API_KEY: 'k6',
     ZONE_SETTING: 'visible',
+    REFUSED_KEY: 'k7',
   };
   // As OpenClaw answers: every name it filters, and each provider's own
   // variables in the order it tries them.
@@ -840,9 +841,9 @@ test('resolveCredentials resolves what the config names and what providers read'
       // a name outside the provider's allowlist, a provider that is not an
       // `env` provider, and one that is not declared.
       refused: [
-        { source: 'env', provider: 'narrow', id: 'ZONE_SETTING' },
-        { source: 'env', provider: 'files', id: 'ZONE_SETTING' },
-        { source: 'env', provider: 'undeclared', id: 'ZONE_SETTING' },
+        { source: 'env', provider: 'narrow', id: 'REFUSED_KEY' },
+        { source: 'env', provider: 'files', id: 'REFUSED_KEY' },
+        { source: 'env', provider: 'undeclared', id: 'REFUSED_KEY' },
       ],
       // The same provider serves a name on its list.
       served: { source: 'env', provider: 'narrow', id: 'MODEL_KEY' },
@@ -885,14 +886,15 @@ test('resolveCredentials resolves what the config names and what providers read'
       },
     },
     refused: [
-      { source: 'env', provider: 'narrow', id: 'ZONE_SETTING' },
-      { source: 'env', provider: 'files', id: 'ZONE_SETTING' },
-      { source: 'env', provider: 'undeclared', id: 'ZONE_SETTING' },
+      { source: 'env', provider: 'narrow', id: 'REFUSED_KEY' },
+      { source: 'env', provider: 'files', id: 'REFUSED_KEY' },
+      { source: 'env', provider: 'undeclared', id: 'REFUSED_KEY' },
     ],
     served: 'k1',
   });
   // Every credential the environment holds is withheld from the Gateway,
-  // whether or not this config uses it; nothing else is.
+  // whether or not this config uses it, and so is one named by a reference
+  // OpenClaw would refuse; nothing else is.
   assert.deepEqual([...used].sort(), [
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_OAUTH_TOKEN',
@@ -901,6 +903,7 @@ test('resolveCredentials resolves what the config names and what providers read'
     'LITELLM_API_KEY',
     'MODEL_KEY',
     'OPENAI_API_KEY',
+    'REFUSED_KEY',
   ]);
 });
 

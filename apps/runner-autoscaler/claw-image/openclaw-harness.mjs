@@ -385,7 +385,8 @@ export function resolveCredentials(
   // OpenClaw resolves an `env` SecretRef through the provider it names, or
   // the default one. A provider the config declares may limit the names it
   // serves (`allowlist`), or not be an `env` provider at all. A reference
-  // OpenClaw would refuse is left for OpenClaw to refuse.
+  // OpenClaw would refuse is left for OpenClaw to refuse; its variable is
+  // withheld all the same.
   const secrets = config.secrets ?? {};
   const allowed = (reference) => {
     const alias = reference.provider ?? secrets.defaults?.env ?? 'default';
@@ -411,9 +412,10 @@ export function resolveCredentials(
   const collectReferences = (value) => {
     if (Array.isArray(value)) value.forEach(collectReferences);
     else if (value && typeof value === 'object') {
-      if (isReference(value)) {
-        if (allowed(value)) credential(value.id);
-      } else Object.values(value).forEach(collectReferences);
+      // Withheld even when OpenClaw would refuse the reference: only what is
+      // written into the launch config depends on `allowed`.
+      if (isReference(value)) credential(value.id);
+      else Object.values(value).forEach(collectReferences);
     }
   };
   collectReferences(config);
