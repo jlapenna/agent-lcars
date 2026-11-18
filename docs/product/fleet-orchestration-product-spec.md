@@ -3,7 +3,7 @@
 - **Status:** Product specification of record for the agent fleet control
   plane. Originally written from `main` at `608500a`; requirement statuses,
   state model, runtime, worker contract, published interfaces, and roadmap
-  were reviewed against `6c118a4b` (2026-11-08). Part 1 is
+  were reviewed against `8798e640` (2026-11-18). Part 1 is
   [the console](console-product-spec.md).
 - **Authority:** Code, configuration, and generated contracts define current
   behavior. When this spec and the code disagree, the code wins and this spec
@@ -15,6 +15,8 @@
   - [`lifecycle-systems.md`](../lifecycle-systems.md): dispatch, startup
     placement, provider fallback, and ready deliverable ownership.
   - [`repository-jobs.md`](../repository-jobs.md): repository-owned Goose jobs.
+  - [`repository-agents.md`](../repository-agents.md): repository-owned claw
+    agents.
   - [`job-secrets.md`](../job-secrets.md): per-job credential sets and GCP
     Secret Manager bindings.
   - [`linear.md`](../linear.md) and
@@ -74,6 +76,8 @@ The core promises:
 | Work-create workflow  | `workflow:work-create` (`codex-agent` service account)                                 | `work-create.yml`: create, get, cancel, and redispatch items; create and disable schedules                               |
 | Slack bot             | Sprinkles App Hosting service account, channel `slack`                                 | Creates items; receives outcomes over webhook                                                                            |
 | Production verifier   | `svc:production-verifier`                                                              | Authenticated live verification with `work.operator`                                                                     |
+| Claw admission        | `svc:claw-operator` (`work.claw.admit`), `user:jlapenna`, or a run as `run:<runId>`    | Admits repository-owned claw agent rounds (FL-RA-2)                                                                      |
+| Claw zone executor    | `svc:claw-homelab-ops` (`work.executor` for the zone's `claw-*` runtimes only)         | A runtimes-only QueueExecutor that claims and runs claw Jobs (FL-EX-1, FL-RA-3)                                          |
 | Session reaper        | `session:expiry` (GitHub OIDC from `work-session-expiry.yml`)                          | Read-only item access (`work.reaper`) to expire sessions of closed items                                                 |
 | Homelab               | Platform operator                                                                      | Runs k3s, ARC, QueueExecutor and the claw zone; holds host and execution bootstrap credentials                           |
 
@@ -160,10 +164,15 @@ The core promises:
   `canceled`, and `completed` only after protected GitHub PR merge). Canonical
   owners: [`linear.md`](../linear.md) and
   [`tracker-sources.md`](../api/tracker-sources.md).
-- **FL-IN-9 [Shipped] Event-driven fleet issue triage.** Eligible unassigned
-  open bug issues (`bug` or `type:bug`) in watched GitHub and Linear trackers
-  admit read-only `fleet-triage` Work (`lib/fleet-triage-work.ts`, principal
-  `svc:fleet-triage`, `sourceRevision` fingerprinted by issue content). The
+- **FL-IN-9 [Shipped] Event-driven fleet issue triage.** Eligible open bug
+  issues (`bug` or `type:bug`) in watched GitHub and Linear trackers admit
+  read-only `fleet-triage` Work (`lib/fleet-triage-work.ts`, principal
+  `svc:fleet-triage`, a `report` deliverable on the `opencode` pipeline unless
+  the source names another, `sourceRevision` fingerprinted by issue content).
+  Eligibility (`triageEligible` in `lib/fleet-triage-source.ts`) also requires
+  agents enabled for the repository, no assignee, no routing (`agent:*` or
+  `review:*`) label, no open PR that closes the issue, no live Console
+  ownership or parked task, and a description small enough to fingerprint. The
   worker returns a strict `fleetTriageReportSchema` JSON report (`ready`,
   `needs-evidence`, `needs-owner`, `duplicate`, or `not-a-bug`). An idempotent
   publication outbox (`lib/fleet-triage-publish.ts`) re-verifies live ownership
@@ -204,17 +213,26 @@ The core promises:
 
 The coding pipeline registry is `PIPELINE_CONTRACTS` in
 `libs/dispatch-contracts/src/pipelines.ts`. Internal stored work pipelines are
-declared in `STORED_PIPELINES` (`libs/work/src/spec.ts`).
+declared in `STORED_PIPELINES` (`libs/work/src/spec.ts`), and any pipeline
+matching `CLAW_RUNTIME_PIPELINE` (`^claw-[a-z0-9-]+$`) is a repository-agent
+runtime (FL-RA-3). Server-owned live-claim ceilings are
+`QUEUE_PIPELINE_MAX_LIVE_CLAIMS` in
+`libs/orchestrator/src/queue-admission-status.ts`: `codex` 1, `opencode` 1,
+`inbox-summary` 3, `handoff-summary` 1. Since #3398 the Codex ceiling is lifted
+for a claim when the shared login's next refresh is more than
+`CODEX_SHARED_HORIZON_MS` (3.5 hours) away (`codexRunSharesLogin`,
+`pipelineLiveClaimCeiling`); see FL-EX-6.
 
 | Pipeline          | Implement label  | Review label      | Reply command          | Deliverable author | Concurrency rule                             |
 | ----------------- | ---------------- | ----------------- | ---------------------- | ------------------ | -------------------------------------------- |
 | `claude`          | `agent:claude`   | `review:claude`   | `@claude`, `@agent`    | `claude[bot]`      | Bounded by executor `max_concurrent`         |
-| `codex`           | `agent:codex`    | `review:codex`    | `/codex`               | `agent-lcars[bot]` | Serialized (one global credential lease)     |
+| `codex`           | `agent:codex`    | `review:codex`    | `/codex`               | `agent-lcars[bot]` | One live claim unless the login is shared    |
 | `opencode`        | `agent:opencode` | `review:opencode` | `/oc`, `/opencode`     | `agent-lcars[bot]` | Serialized (one shared inference backend)    |
 | `agy`             | `agent:agy`      | `review:agy`      | `/agy`, `/antigravity` | `agent-lcars[bot]` | Bounded by executor `max_concurrent`         |
 | `goose`           | — (repo job)     | —                 | —                      | `agent-lcars[bot]` | Bounded by executor `max_concurrent`         |
-| `inbox-summary`   | — (internal)     | —                 | —                      | console model call | Bounded server-side summary pass + cron tick |
-| `handoff-summary` | — (internal)     | —                 | —                      | console model call | Bounded server-side summary pass + cron tick |
+| `inbox-summary`   | — (internal)     | —                 | —                      | console model call | At most 3 live claims; maintenance-tick pass |
+| `handoff-summary` | — (internal)     | —                 | —                      | console model call | At most 1 live claim; maintenance-tick pass  |
+| `claw-*`          | — (repo agent)   | —                 | —                      | final report only  | Bounded by the executor runtime that runs it |
 
 - **FL-PL-1 [Shipped]** A Work grant lists the pipelines its principal may
   request. Not every caller may trigger every provider.
@@ -260,9 +278,14 @@ These are stored in the `dispatch-controller` Firestore database.
 | **GitHub / Linear projections**                           | `owner/name#N` or `linear:<uuid>`                              | Bounded projections of GitHub and Linear issue/anchor state                                                                                                                           |
 | **Priority position** (`orchestrator-priority-positions`) | pipeline                                                       | The durable weighted-priority cursor (FL-CL-5)                                                                                                                                        |
 
-A **WorkSpec** for native items is `{title ≤256, description ≤16 KiB, pipeline,
+A **WorkSpec** for native items is `{title ≤256, description, pipeline,
 target:{repo}, priority, fallbackPipelines?, deliverable?, operation?,
-sourceKey?, recipe?, issue?}`; `priority` defaults to `normal`. An
+sourceKey?, recipe?, issue?}`; `priority` defaults to `normal`. A description
+has no character cap; its serialized size is bounded by
+`WORK_DESCRIPTION_MAX_BYTES` (the 262,144-byte Work payload budget less
+8 KiB, `libs/dispatch-contracts/src/work-budgets.ts`). GitHub-anchor dispatch
+accepts a body of up to 65,536 characters (`GITHUB_DISPATCH_DESCRIPTION_MAX`,
+`libs/work/src/contract.ts`, #3387), GitHub's own limit. An
 `issueReferenceSchema` is `{source: 'github', repo, number, url?}` or
 `{source: 'linear', id, identifier?, url?}`. A **WorkOrigin** is `{principal,
 channel: api|cron|console|github|slack|linear, thread?}`.
@@ -406,8 +429,11 @@ executor is working an issue; a human assignee owns it regardless.
   claim from its grant.
 - **FL-CL-2 [Shipped] Provider-fair selection.** The server picks the provider
   with the fewest live claimed runs, then the oldest head of queue. Within a
-  provider, order is FIFO within each priority class. Server-owned ceilings serialize Codex and
-  OpenCode, and pipelines in cooldown are skipped.
+  provider, order is FIFO within each priority class. Server-owned ceilings
+  (§4.2) hold OpenCode and `handoff-summary` to one live claim and
+  `inbox-summary` to three. Codex is held to one live claim unless the claim
+  would be a shared reader of the subscription login (FL-EX-6), in which case
+  no ceiling applies. Pipelines in cooldown are skipped.
 - **FL-CL-3 [Shipped]** Before issuing a run token for an implement run, the
   server reads the anchor's GitHub state, with a 4s deadline:
   - If the anchor is closed, the run is canceled.
@@ -429,9 +455,13 @@ executor is working an issue; a human assignee owns it regardless.
 
 ### 6.3 Executor and runtime
 
-- **FL-EX-1 [Shipped]** The QueueExecutor (`apps/runner-autoscaler`, Go) is a
-  singleton. Before each claim it reserves capacity by counting unfinished
-  Jobs and checking node readiness, taints, and free resources (see R8).
+- **FL-EX-1 [Shipped]** The QueueExecutor (`apps/runner-autoscaler`, Go) runs
+  as one shared executor for the coding and Goose pipelines, plus optional
+  runtimes-only zone executors that claim only their declared `claw-*`
+  runtimes, `claw-default` included, under their own grant (the homelab-ops zone runs as
+  `svc:claw-homelab-ops`, #3351). Each instance is a singleton for its grant.
+  Before each claim it reserves capacity by counting unfinished Jobs and
+  checking node readiness, taints, and free resources.
 - **FL-EX-2 [Shipped]** Each run gets one deterministic Kubernetes Job:
   - The Job is created suspended. A per-run token Secret is created, then the
     Job is resumed.
@@ -449,7 +479,16 @@ executor is working an issue; a human assignee owns it regardless.
   - `server`.
   - `kubernetes`: `namespace`, `kubeconfig`, `credentials_secret`,
     `service_account`, `max_concurrent`, `node_selector`, `requests`,
-    `limits`, `tolerations`, and the optional `capacity` receipt block.
+    `limits`, `tolerations`, plus:
+    - `runtimes`: per-pipeline execution runtimes keyed by `claw-*` pipeline
+      name, each with a digest-pinned `image`, `requests` equal to `limits`
+      within 2 CPU / 6 GiB / 40 GiB, an `active_deadline_seconds` below the
+      two-hour lease, the `secret_name` and `items` it mounts at
+      `/run/claw-secrets`, and optional `env` (`queue_runtimes.go`). A claimed
+      pipeline with an entry runs from that entry alone.
+    - `runtimes_only`: makes a zone executor that serves only its declared
+      runtimes. It takes no `credentials_secret`, `requests`, `limits`, runner
+      image, or provider keys, and refuses any pipeline without a runtime.
   - `arc_lanes`.
 
   Changes require a restart. The retired keys of the Docker backend and the
@@ -491,13 +530,30 @@ executor is working an issue; a human assignee owns it regardless.
   If a coding agent exits 0 with no deliverable, it gets one
   completion-correction round.
 
+  Before launch, the runner binds Hindsight coding-agent memory to a
+  per-repository bank (`agent-lcars::<repo>`) when a Hindsight API token is
+  mounted and `HINDSIGHT_DISABLED` is unset; otherwise it writes a disabled
+  config. Each run logs exactly one `hindsight: enabled bank=…` or
+  `hindsight: disabled reason=<explicit|no-token|no-repo|config-error>` line
+  and never the token (`runtime/hindsight-bootstrap.sh`, #3261, #3280).
+
+  `claw-*` pipelines do not use the direct runner. Their runtime Jobs run the
+  claw runner image's launcher instead (FL-RA-3).
+
 - **FL-EX-6 [Shipped] Credential separation.** The agent never receives
   `github.token`. It receives its own App token and separate telemetry
   credentials:
   - Claude: an OAuth token from a projected file.
-  - Codex: `auth.json` brokered through `/runs/{id}/codex-auth` under a global
-    lease, waiting up to 30 minutes on a 409; refreshed OAuth tokens can be
-    persisted back through `PUT /runs/{id}/codex-auth`.
+  - Codex: `auth.json` brokered through `/runs/{id}/codex-auth`. When the
+    login's next refresh is more than 3.5 hours after the claim
+    (`CODEX_SHARED_HORIZON_MS`), the run is a shared reader: it receives a copy
+    with an empty `refresh_token`, takes no lease, persists nothing, and runs
+    concurrently with other Codex runs (#3398). Otherwise (no recorded
+    credential window, a record the live lineage contradicts, or a claim
+    within the horizon) the run takes the exclusive subscription lease,
+    waiting up to 30 minutes on a 409, and may persist a refreshed token back
+    through `PUT /runs/{id}/codex-auth`. The canonical contract is
+    [fleet credentials](../fleet-credentials.md#shared-codex-lease).
   - OpenCode: a LiteLLM virtual key.
   - Antigravity: an OAuth token from a projected file (`AGY_AUTH_JSON_FILE`).
   - Goose recipes: LiteLLM virtual key by default, leased Codex auth when
@@ -542,9 +598,21 @@ executor is working an issue; a human assignee owns it regardless.
   `exceeded your current quota`, `credit balance is too low`,
   `monthly spend limit`, `service_spend_limit_reached`, `org_spend_cap_reached`,
   `ResourceExhausted`, `RESOURCE_EXHAUSTED`; a typographic `’` matches as `'`), keeping ordinary `report` prose distinct from provider quota stops. GitHub PR review
-  runs admitted under `svc:github-pr-review` automatically carry cross-model
-  `fallbackPipelines` (e.g. `['agy']` for `codex`/`claude` reviews).
-  Real provider-limit qualification is tracked under R7.
+  runs admitted under `svc:github-pr-review` automatically carry the
+  cross-model `fallbackPipelines` order of FL-IN-10, with the authoring model
+  last. Repository Goose jobs re-run a provider-limited recipe once under the
+  operator profile's fallback profile (#3289). Production fallback evidence is
+  recorded under R7 in §12.
+  - **Provider wait for PR reviews.** When every authorized provider of a
+    GitHub PR review (`mode: 'review'`, not native Work) has stopped on its
+    limit or capacity, the review waits instead of failing (#3300): it mints
+    a deferred successor on the round's first provider. The wait doubles from
+    15 minutes up to a 6-hour cap (`PROVIDER_WAIT_BASE_MS`,
+    `PROVIDER_WAIT_MAX_MS`) for at most `MAX_PROVIDER_WAITS` = 7 waits, about
+    20 hours in all, after which the attempt settles failed. The claim fence
+    still honors the provider's own cooldown, and the queued-cooldown reroute
+    may move the due run to a free alternative
+    (`libs/orchestrator/src/provider-fallback.ts`, `model.ts`).
 - **FL-RT-4 [Shipped]** Only an explicit `park` result adds
   `status:needs-human`. A later successful non-park run removes it, with
   generation guards so an older run cannot clear a newer park.
@@ -559,13 +627,32 @@ executor is working an issue; a human assignee owns it regardless.
 
 - **FL-SC-1 [Shipped]** The autoscaler's ticker calls `POST /maintenance/tick`
   and `POST /schedules/tick` every 5 minutes as `svc:job-scheduler`, whose
-  dedicated key is never runner-mounted, using the `work.cron` scope (#3217). The
-  maintenance tick sweeps expired leases, executes a bounded summary pass,
-  evaluates job-credential health (`jobCredentials`), notifies closed-tab
-  Inbox Web Push subscribers, and drains the outbox. The schedule tick
-  evaluates both operator schedules and repository-owned Goose jobs,
-  coalescing each cron slot into one item through deterministic IDs so a
-  missed tick never double-fires.
+  dedicated key is never runner-mounted, using the `work.cron` scope (#3217).
+  The maintenance tick (`handleReconcile` in
+  `apps/console/src/lib/orchestrator-routes.ts`) runs, in order:
+  1. Codex credential-operation recovery.
+  2. `sweepExpired` (lost leases and their auto-retries).
+  3. `rerouteQueued` (provider-cooldown reroutes of unclaimed queued runs).
+  4. One outbox drain of at most 30 entries; the reply sets
+     `outboxContinuationNeeded` when it used all 30, and the next tick
+     continues.
+  5. In parallel, sharing a 45-second deadline: the summary pass
+     (`executeModelWork`), repository jobs (`maintainRepositoryJobs`:
+     catalog refresh for every control-plane repository, repository-agent
+     catalog refresh, due-slot ticks and settlement), and job-credential
+     health (`observeJobCredentials`, reported as `jobCredentials`).
+  6. The repository-agent catalog observation (`repositoryAgents`), started
+     beside step 5 under the same deadline and attached only when it is valid
+     and the reply stays within a 60 KiB budget (the executor reads at most
+     64 KiB). A failed or late observation is omitted without failing
+     maintenance.
+
+  The schedule tick evaluates operator schedules, coalescing each cron slot
+  into one item through deterministic IDs so a missed tick never
+  double-fires, and then delivers closed-tab Inbox Web Push
+  (`deliverInboxPush`, part 1 FE-IN-10). Repository-owned Goose jobs are
+  evaluated by the maintenance tick, not the schedule tick (FL-JB-1).
+
 - **FL-SC-2 [Shipped]** A schedule is auto-disabled when its creator's grant is
   revoked (`grant-revoked`) or its spec becomes `invalid`.
 - **FL-JB-1 [Shipped] Repository-owned Goose job catalog and merged-to-main
@@ -573,7 +660,9 @@ executor is working an issue; a human assignee owns it regardless.
   and `recipe.yaml` on `main`. When a job declares a `schedule` and the
   configured scheduler principal holds `work.cron` for that repository and
   `goose`, `POST /maintenance/tick` refreshes the catalog and evaluates due
-  slots automatically. An operator pause (`POST /api/work/v1/jobs/{jobId}/enable`
+  slots automatically. A job activates on merge only when its execution
+  profile admits that automation principal; otherwise it stays disabled until
+  an operator reviews and enables its current digest. An operator pause (`POST /api/work/v1/jobs/{jobId}/enable`
   with `digest` and `enabled: false`) sets a sticky veto (`vetoedBy`) that
   persists across future `main` commits until an operator explicitly re-enables
   the job. Canonical owner: [`repository-jobs.md`](../repository-jobs.md).
@@ -583,6 +672,67 @@ executor is working an issue; a human assignee owns it regardless.
   invocations (`POST /api/work/v1/jobs/invoke` or `/jobs/{jobId}/invoke`) share
   that same single-active slot. Reconciled successful occurrences advance the
   catalog job's comparison-keyed `baseline` (`{ occurrence, comparison }`).
+
+### 6.6 Repository-owned claw agents
+
+Canonical owner: [repository agents](../repository-agents.md). The claw runner
+image is documented in
+[`apps/runner-autoscaler/claw-image`](../../apps/runner-autoscaler/claw-image/README.md).
+
+- **FL-RA-1 [Shipped] Catalog.** A repository defines an agent in
+  `.lcars/agents/<name>/` (`agent.yaml`, OpenClaw `config.json`,
+  `approvals.json`, and `workspace/`); its ID is `<owner>/<repo>/<name>`. The
+  maintenance tick catalogs every control-plane repository's default-branch
+  commit beside repository jobs (`refreshAgentCatalogs` in
+  `lib/repository-agent-catalog.ts`, driven from
+  `lib/repository-agents-runtime.ts`). The manifest is strict YAML; an
+  invalid definition stays visible and cannot run; the digest covers every
+  path, mode, and content; deletion or a failed refresh stops admission; an
+  agent activates on merge and an operator veto is sticky.
+- **FL-RA-2 [Shipped] Admission.**
+  `POST /api/work/v1/claw/agents/{owner}/{repo}/{name}/runs` with
+  `{message, requestId?, sourceKey?}` (`admitAgentRun` in
+  `libs/work/src/contract.ts` and `lib/repository-agent-runs.ts`) admits one
+  round of an enabled agent. The caller needs `work.claw.admit` and a grant
+  listing the runtime of the agent's profile. Operator profiles
+  (`AGENT_LCARS_AGENT_PROFILES`: `name`, `runtime`, `repositories`, optional
+  `principals` and `runCallers`) decide which repositories' agents may use a
+  runtime; an agent with no `profile` uses the built-in `default` profile on
+  `claw-default`. The round pins the definition (revision, digest, and each
+  file's path, mode, and blob SHA) and the message, so a later merge cannot
+  change an admitted round. A repeated `requestId` with the same message is
+  the same round, and `sourceKey` coalesces rounds on one subject. Interactive
+  admission uses `svc:claw-operator`; a dispatched run may admit through
+  `POST /runs/{runId}/agents/{owner}/{repo}/{name}` as `run:<runId>` only when
+  the profile sets `runCallers` (FL-WP-12), and an agent's own run cannot
+  invoke agents.
+- **FL-RA-3 [Shipped] Execution.** A round is Work on its profile's `claw-*`
+  runtime pipeline. The executor whose `kubernetes.runtimes` declares that
+  pipeline claims it (FL-EX-1, FL-EX-3). Today every `claw-*` runtime,
+  including `claw-default` (which mounts only a model key), is declared by
+  Homelab's runtimes-only zone executor (`svc:claw-homelab-ops`); the shared
+  executor's grant lists no claw pipeline. The Job runs the claw
+  runner image (`apps/runner-autoscaler/claw-image`, launcher `claw-job.mjs`),
+  which reads the pinned definition from the run brief, verifies every
+  file's blob SHA and the digest, validates the source config, and normalizes
+  a copy for its image with `openclaw doctor --fix`. The turn keeps only
+  accepted Doctor changes (enabling a declared provider's plugin, an empty
+  agent entry), discards Doctor's skill toggles, and fails with
+  `runner-failed` naming any other changed setting (#3409). It then applies
+  `approvals.json` and runs one `agent exec` turn. The report is the settled
+  run message; `requireToolEvidence` makes a report without a tool call a
+  failed attempt, and `retry: terminal` makes lost and failed attempts
+  terminal.
+- **FL-RA-4 [Shipped] Health and canary.** Each maintenance reply carries the
+  `repositoryAgents` catalog observation (FL-SC-1), which the shared executor
+  exports as `lcars_repository_agents*` and `lcars_repository_agent_source_*`
+  (`apps/runner-autoscaler/repository_agent_metrics.go`). A missing or late
+  observation reports `lcars_repository_agents_read_available 0`, never a
+  healthy zero. Run outcomes use every executor's existing
+  `github_runner_autoscaler_queue_executor_run_exits_total` and
+  `..._run_consecutive_failures` series by pipeline. This repository's
+  `.lcars/agents/smoke/` is the `claw-default` canary. Homelab owns the
+  dashboard and alerts.
 
 ## 7. Worker contract
 
@@ -674,7 +824,10 @@ consumed by every dispatched run in every member repository.
 ## 9. Resumable conversations
 
 - **FL-RC-1 [Shipped]** A _round_ is one run. Round 1's human turn is
-  `spec.description`, and round n's is `params.reply` (up to 16 KiB). The run
+  `spec.description`, and round n's is `params.reply` (up to 122,880 UTF-8
+  bytes serialized, `WORK_PARAM_TEXT_MAX_BYTES` in
+  `libs/dispatch-contracts/src/work-budgets.ts`, below Linux's 131,072-byte
+  single-argument limit). The run
   records `replyChannel` (`github`, `linear`, `slack`, `console`, or `api`) and
   `replyPrincipal`; the channel address of the turn (a comment URL, a Slack
   ts) lives only in the run's idempotent `requestId` (`reply:<ref>`).
@@ -808,12 +961,12 @@ consumed by every dispatched run in every member repository.
 - **FL-FM-4 [Shipped] Authority separation.** These authorities are
   deliberately distinct:
   - Work grants (`AGENT_LCARS_WORK_GRANTS`, with scopes `work.operator`,
-    `work.reader` (tracker ownership and issue-source reads), `costs.reader`
+    `work.reader` (the anchor and issue owner query only), `costs.reader`
     (aggregate Costs budget readout only), `work.executor`, `work.cron`,
     `work.claw.admit` (internal repository-agent admission,
     `POST /claw/agents/{owner}/{repo}/{name}/runs`, and reading and cancelling
-    its own Work on the claw runtimes the same grant lists), `work.admin`,
-    and `secrets.admin` (per-job credential administration,
+    its own Work on the claw runtimes the same grant lists), and
+    `secrets.admin` (per-job credential administration,
     refused for repository-bound OIDC callers)). `work.reaper` is not a
     grantable scope. It is fixed to the `session:expiry` identity.
   - The worker's App token and optional per-job credential grant
@@ -853,15 +1006,29 @@ consumed by every dispatched run in every member repository.
 
 ## 12. Gaps and roadmap
 
-| #   | Item                                                                                                                                 | Why                                                                                                                               | Priority |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| R1  | Unify the "needs a human" surface: native parks and GitHub `status:needs-human` in one queue (shipped, #2210; part 1 FE-IN-1)        | Native parks now appear in the Inbox beside GitHub decisions                                                                      | P0       |
-| R2  | Enable standing worker-policy enforcement (FL-WP-11) once runner-image publication qualifies every provider automatically            | AMD64 Claude/Codex/OpenCode and ARM64 Codex dispatches are proven (#2956), but standing production selection remains off          | P0       |
-| R3  | Shorten launch-failure detection (FL-RT-5) with a first-heartbeat deadline (shipped at 15 minutes, #2264)                            | A failed launch no longer stalls a task for about 2h                                                                              | P1       |
-| R4  | A priority field on runs (`urgent`, `normal`, `background`), honored inside provider-fair selection (FL-CL-5, shipped, #2324)        | Scheduled maintenance work and urgent fixes no longer share one FIFO                                                              | P1       |
-| R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend                          | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
-| R7  | Optional provider fallback on `provider-limit` (reroute to an allowed pipeline instead of waiting out the cooldown), opt in per task | During a Claude weekly-limit window, runs wait for days. That was 15 of 59 failures in the 2026-09-11 audit                       | P2       |
-| R8  | A highly available QueueExecutor, or a server-side distributed `max_concurrent`                                                      | The singleton is a single point of failure                                                                                        | P2       |
+This table lists only remaining work. Shipped and retired entries are
+recorded below it; their behavior is owned by the requirements they name.
+Existing IDs are not reused.
+
+| #   | Item                                                                                                                      | Why                                                                                                                               | Priority |
+| --- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| R2  | Enable standing worker-policy enforcement (FL-WP-11) once runner-image publication qualifies every provider automatically | AMD64 Claude/Codex/OpenCode and ARM64 Codex dispatches are proven (#2956), but standing production selection remains off          | P0       |
+| R5  | Verify the genuine human Slack reply hop (FL-RC-3) and session continuity on the current Kubernetes backend               | Historical three-provider continuity and Slack inbound/outbound proofs exist; human Slack reply and current-backend proofs remain | P1       |
+
+Shipped and retired:
+
+- **R1** (shipped, #2210): native parks and GitHub `status:needs-human` share
+  one decision queue (part 1 FE-IN-1).
+- **R3** (shipped, #2264): a 15-minute first-heartbeat deadline shortens
+  launch-failure detection (FL-RT-5).
+- **R4** (shipped, #2324): run priority (`urgent`, `normal`, `background`)
+  inside provider-fair selection (FL-CL-5).
+- **R7** (shipped): opt-in provider fallback on `provider-limit` and
+  `provider-capacity` through `fallbackPipelines` (FL-RT-3), the PR-review
+  provider wait (#3300), and the repository-job recipe fallback profile
+  (#3289). Production evidence follows.
+- **R8** (retired): see below.
+- **R9** (retired): see below.
 
 R7's explicit opt-in source contract is documented in
 [Lifecycle systems](../lifecycle-systems.md#explicit-provider-fallback).
@@ -879,11 +1046,15 @@ Claude-authored `jlapenna/agent-lcars#3292` went Codex (`r1`), then `agy`
 (`r2`, `provider-limit`), then Claude (`r3`), which finished and posted the
 review on 2026-11-10.
 
-R8 is retired: the [failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
+R8 (a highly available QueueExecutor or a server-side distributed
+`max_concurrent`) is retired: the
+[failover design](https://github.com/jlapenna/agent-lcars/issues/2199)
 selected server-owned capacity receipts, which shipped disabled
 ([#2311](https://github.com/jlapenna/agent-lcars/issues/2311)) and were never
-enabled. They were deleted on 2026-10-29; the executor is a singleton that
-restarts after a crash, and #2312 and Homelab #2245 were closed as not planned.
+enabled. They were deleted on 2026-10-29, and the executor no longer accepts
+a `capacity` config block; each executor is a singleton for its grant that
+restarts after a crash (FL-EX-1), and #2312 and Homelab #2245 were closed as
+not planned.
 
 R9 is retired: [#1298](https://github.com/jlapenna/agent-lcars/issues/1298)
 is closed, and the hosted provider workflows whose YAML copies it concerned
@@ -927,9 +1098,11 @@ lifecycle snapshot proves that billing join or a useful-outcome rate.
 
 ## 14. Open questions
 
-1. Should Codex and OpenCode serialization stay hard-coded on the server, or
-   move into configuration owned by Homelab along with `max_concurrent`?
-2. Is cross-provider fallback (R7) acceptable, given that pipelines are
+1. Should the server-owned live-claim ceilings (OpenCode, the summaries, and
+   Codex outside its shared-login window) stay hard-coded, or move into
+   configuration owned by Homelab along with `max_concurrent`?
+2. Cross-provider fallback (R7) shipped as an opt-in policy, except
+   only for PR reviews, which carry it automatically. Should it be offered more widely, given that pipelines are
    currently chosen explicitly by the maintainer through the label?
 3. Should a park on a GitHub anchor time out and be canceled automatically
    after N days, or stay parked until a human acts?
