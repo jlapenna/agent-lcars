@@ -113,7 +113,7 @@ const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].sp
 fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib}));
 child.unref();
 }
-const workspace=process.argv[process.argv.indexOf('--dir')+1];
+const workspace=process.cwd();
 const config=JSON.parse(fs.readFileSync(path.join(workspace,'opencode.json')));
 const url=config.provider['continuation-contract'].options.baseURL+'/chat/completions?private-query';
 const system='Commit and push at the first working slice ROOT_INSTRUCTION_SENTINEL';

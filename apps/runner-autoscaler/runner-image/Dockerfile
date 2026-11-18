@@ -860,13 +860,14 @@ RUN uv --version && \
     terraform version -json | jq -e --arg expected "$TERRAFORM_VERSION" '.terraform_version == $expected'
 RUN bash /usr/local/lib/agent-lcars/python-hooks.test.sh
 
-# OpenCode installs its plugin SDK in each configuration directory on cold
-# startup. Bake the version matching the reviewed CLI here; direct-runner's
-# existing configuration copy then carries package.json, lock, and modules
-# into the attempt configuration without doing an installation during work.
+# Bake the plugin SDK matching the reviewed CLI so global plugins can import
+# it without an installation during work. OpenCode 2 publishes it as
+# `@opencode/plugin` (OpenCode 1 used `@opencode-ai/plugin`, which has no 2.x
+# release). direct-runner's existing configuration copy carries package.json,
+# lock, and modules into the attempt configuration.
 RUN OPENCODE_VERSION="$(tr -d '\r\n' < /usr/local/share/agent-lcars-tooling/opencode-version)" && \
     npm install --prefix /home/runner/.config/opencode --ignore-scripts --save-exact \
-      "@opencode-ai/plugin@${OPENCODE_VERSION#v}"
+      "@opencode/plugin@${OPENCODE_VERSION#v}"
 
 # The store is image-owned, version-bound, and contains no sessions. Keep this
 # in its own layer so the next command exercises copy-up from the baked layer.

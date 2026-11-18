@@ -26,7 +26,7 @@ import struct
 import sys
 import time
 
-assert sys.argv[1:] == ['--pure', 'session', 'list', '--format', 'json'], sys.argv
+assert sys.argv[1:] == ['session', 'list', '--standalone', '--format', 'json'], sys.argv
 assert os.environ['XDG_CONFIG_HOME'] != os.environ['REAL_CONFIG_HOME']
 state = os.environ['FAKE_STATE']
 path = os.path.join(os.environ['XDG_DATA_HOME'], 'opencode', 'opencode.db')
@@ -72,7 +72,7 @@ if os.environ.get('FAKE_FAIL_ORDINAL') == str(ordinal):
 db = sqlite3.connect(path, timeout=0, isolation_level=None)
 db.execute('PRAGMA journal_mode = WAL')
 db.execute('PRAGMA busy_timeout = 5000')
-sessions = [row[0] for row in db.execute('SELECT id FROM session')]
+sessions = [row[0] for row in db.execute('SELECT id FROM session_v2')]
 db.close()
 if sessions:
     print(json.dumps([{'id': session} for session in sessions]))
@@ -88,7 +88,7 @@ import sqlite3
 import sys
 db = sqlite3.connect(sys.argv[1], isolation_level=None)
 db.execute('PRAGMA journal_mode = WAL')
-db.execute('CREATE TABLE session (id TEXT)')
+db.execute('CREATE TABLE session_v2 (id TEXT)')
 db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 db.close()
 PY
@@ -131,7 +131,7 @@ if run_gate failing-cold FAKE_FAIL_ORDINAL=1; then
 fi
 
 make_store nonempty
-python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("INSERT INTO session VALUES (1)"); db.commit()' \
+python3 -c 'import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); db.execute("INSERT INTO session_v2 VALUES (1)"); db.commit()' \
   "$tmp/nonempty/data/opencode/opencode.db"
 if run_gate nonempty; then
   fail 'a store with session history passed'

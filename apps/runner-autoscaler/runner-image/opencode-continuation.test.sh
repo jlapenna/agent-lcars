@@ -24,7 +24,8 @@ actual_version="$(timeout -k 2s "${version_timeout_seconds}s" "$opencode_bin" --
   version_status=$?
   fail "pinned OpenCode version probe did not complete (exit $version_status)" "$version_status"
 }
-[ "$actual_version" = "$expected_version" ] ||
+actual_version="${actual_version#opencode }"
+[ "${actual_version#v}" = "$expected_version" ] ||
   fail "test must run against pinned OpenCode $expected_version"
 
 tmp="$(mktemp -d)"
@@ -149,7 +150,8 @@ JSON
 
 framework_started_seconds=$SECONDS
 framework_status=0
-env -i \
+# OpenCode 2 has no `run --dir`; the workspace is the working directory.
+(cd "$tmp/workspace" && env -i \
   PATH="$tmp/bin:$PATH" \
   LCARS_RUN_ID=hook-test-run LCARS_REPO=hook-test/repo LCARS_ISSUE_NUMBER=7 \
   LCARS_TELEMETRY_CREDENTIALS_FILE="$tmp/not-a-credential.json" \
@@ -164,10 +166,10 @@ env -i \
   XDG_DATA_HOME="$tmp/data" \
   XDG_STATE_HOME="$tmp/state" \
   timeout -k 2s "${framework_timeout_seconds}s" "$opencode_bin" run \
+  --standalone \
   --model continuation-contract/test \
   --auto \
-  --dir "$tmp/workspace" \
-  "Read fixture.txt, preserve the task state, and continue after compaction." \
+  "Read fixture.txt, preserve the task state, and continue after compaction.") \
   >"$tmp/opencode.out" 2>&1 || framework_status=$?
 printf '%s\n' "$framework_status" > "$tmp/opencode.exit"
 echo "OpenCode continuation CLI: exit=$framework_status elapsed=$((SECONDS - framework_started_seconds))s deadline=${framework_timeout_seconds}s" >&2
