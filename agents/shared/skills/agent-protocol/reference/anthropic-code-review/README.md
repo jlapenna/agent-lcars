@@ -125,9 +125,8 @@ review and comment-quality guidance applies.
    one review; do not substitute a top-level issue comment or terminal output.
 
 Keep the review body concise: verdict, actionable findings, reviewed SHA,
-material verification limits, and a short procedure receipt that quotes the
-full 40-character packaged Anthropic revision exactly as written in `revision`,
-then the completed review passes and validation results. Zero
+material verification limits, and a short procedure receipt naming the
+packaged Anthropic revision, completed review passes and validation results. Zero
 validated findings is a valid result. The receipt describes work actually done;
 the attempt marker proves artifact delivery, not review quality. End with
 `REVIEW <url>` or the shared protocol's `PARK <blocker and resume trigger>`.
