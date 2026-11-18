@@ -125,7 +125,7 @@ export function isTrustedOpenCodePath(
  * Privileged telemetry capture resolves only the root-owned runner-image
  * location. The action-installed `$HOME/.opencode/bin/opencode` is writable by
  * the same uid as the agent and is therefore intentionally never eligible,
- * even with `--pure` and a scrubbed child environment. PATH is never consulted.
+ * even with a scrubbed child environment. PATH is never consulted.
  * Until the runner image owns this executable, capture fails closed and the
  * separate non-privileged trajectory artifact remains the available archive.
  */
@@ -410,15 +410,31 @@ function allowlistedTokens(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** OpenCode 2 tool content: `{type: 'tool', name, time: {created, ran,
+ *  completed}}`. Normalized to the OpenCode 1 part shape the archive keeps. */
+function openCode2ToolTime(value: unknown): Record<string, number> | undefined {
+  const source = asRecord(value);
+  if (!source) return undefined;
+  const start = finiteNumber(source['ran']) ?? finiteNumber(source['created']);
+  const end = finiteNumber(source['completed']);
+  const result: Record<string, number> = {
+    ...(start !== undefined && { start }),
+    ...(end !== undefined && { end }),
+  };
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function allowlistedToolPart(
   value: unknown,
 ): Record<string, unknown> | undefined {
   const part = asRecord(value);
   if (!part || part['type'] !== 'tool') return undefined;
-  const tool = boundedString(part['tool'], 128);
+  const tool = boundedString(part['tool'] ?? part['name'], 128);
   if (!tool) return undefined;
-  const state = asRecord(part['state']);
-  const time = allowlistedTime(state?.['time'], ['start', 'end']);
+  const time =
+    part['tool'] !== undefined
+      ? allowlistedTime(asRecord(part['state'])?.['time'], ['start', 'end'])
+      : openCode2ToolTime(part['time']);
   return {
     type: 'tool',
     tool,
@@ -426,12 +442,51 @@ function allowlistedToolPart(
   };
 }
 
+function allowlistedParts(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.flatMap((part) => {
+        const allowlisted = allowlistedToolPart(part);
+        return allowlisted ? [allowlisted] : [];
+      })
+    : [];
+}
+
+/** OpenCode 2 exports flat, typed messages (`{type: 'user' | 'assistant' |
+ *  'idle' | 'synthetic' | ..., content, model: {id, providerID}}`). Only
+ *  user and assistant turns map onto the OpenCode 1 `{info, parts}` archive
+ *  contract; every other message type is dropped. */
+function allowlistedOpenCode2Message(
+  message: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const role =
+    message['type'] === 'user' || message['type'] === 'assistant'
+      ? message['type']
+      : undefined;
+  if (!role) return undefined;
+  const time = allowlistedTime(message['time'], ['created', 'completed']);
+  const model = asRecord(message['model']);
+  const providerID = boundedString(model?.['providerID']);
+  const modelID = boundedString(model?.['id']);
+  const tokens = allowlistedTokens(message['tokens']);
+  const cost = finiteNumber(message['cost']);
+  const info: Record<string, unknown> = {
+    role,
+    ...(time && { time }),
+    ...(providerID && { providerID }),
+    ...(modelID && { modelID }),
+    ...(tokens && { tokens }),
+    ...(cost !== undefined && { cost }),
+  };
+  return { info, parts: allowlistedParts(message['content']) };
+}
+
 function allowlistedMessage(
   value: unknown,
 ): Record<string, unknown> | undefined {
   const message = asRecord(value);
-  const sourceInfo = asRecord(message?.['info']);
-  if (!message || !sourceInfo) return undefined;
+  if (!message) return undefined;
+  const sourceInfo = asRecord(message['info']);
+  if (!sourceInfo) return allowlistedOpenCode2Message(message);
 
   const role =
     sourceInfo['role'] === 'user' || sourceInfo['role'] === 'assistant'
@@ -450,13 +505,7 @@ function allowlistedMessage(
     ...(tokens && { tokens }),
     ...(cost !== undefined && { cost }),
   };
-  const parts = Array.isArray(message['parts'])
-    ? message['parts'].flatMap((part) => {
-        const allowlisted = allowlistedToolPart(part);
-        return allowlisted ? [allowlisted] : [];
-      })
-    : [];
-  return { info, parts };
+  return { info, parts: allowlistedParts(message['parts']) };
 }
 
 /**
@@ -505,7 +554,7 @@ function isCommandUnavailable(error: unknown): boolean {
 /**
  * Materializes OpenCode's SQLite-backed sessions into bounded one-record
  * JSONL files. OpenCode owns the database schema; this capture uses its public
- * `session list --format json` and sanitized `export <id>` commands instead
+ * `session list --format json` and sanitized `session export <id>` commands instead
  * of querying tables directly. The runner watcher can then reuse its existing
  * file/change-detection/archive pipeline without coupling to that schema.
  */
@@ -535,7 +584,7 @@ export async function captureOpenCodeExports(
   let listOutput: string;
   try {
     listOutput = await runOpenCode(
-      ['--pure', 'session', 'list', '--format', 'json'],
+      ['session', 'list', '--standalone', '--format', 'json'],
       { timeout: commandTimeoutMs, maxBytes: LIST_MAX_BYTES },
     );
   } catch (error) {
@@ -579,7 +628,7 @@ export async function captureOpenCodeExports(
     const normalizedFile = `${destination}.tmp-${process.pid}-${Date.now()}`;
     try {
       await runOpenCodeToFile(
-        ['--pure', 'export', session.id, '--sanitize'],
+        ['session', 'export', '--standalone', session.id, '--sanitize'],
         captureFile,
         {
           timeout: commandTimeoutMs,
@@ -629,7 +678,7 @@ export async function captureOpenCodeExports(
       const rawTemporary = `${rawDestination}.tmp-${process.pid}-${Date.now()}`;
       try {
         await runOpenCodeToFile(
-          ['--pure', 'export', session.id],
+          ['session', 'export', '--standalone', session.id],
           rawTemporary,
           {
             timeout: commandTimeoutMs,

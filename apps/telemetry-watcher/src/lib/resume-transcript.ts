@@ -195,10 +195,22 @@ async function resumeOpenCodeSession(
     });
     writeFile(temporary, contents);
     try {
-      await runOpenCode(['--pure', 'import', temporary], {
-        timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
-        maxBytes: IMPORT_MAX_BYTES,
-      });
+      // OpenCode 2 cannot import an OpenCode 1 export (it rejects the shape
+      // with "Bad Request"), so a pre-upgrade session fails closed here.
+      await runOpenCode(
+        [
+          'session',
+          'import',
+          '--standalone',
+          temporary,
+          '--directory',
+          options.cwd,
+        ],
+        {
+          timeout: OPENCODE_CAPTURE_LIMITS.timeoutMs,
+          maxBytes: IMPORT_MAX_BYTES,
+        },
+      );
       return options.sessionId;
     } finally {
       try {

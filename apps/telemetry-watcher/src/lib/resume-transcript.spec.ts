@@ -191,7 +191,14 @@ describe('resumeTranscript', () => {
       mkdir: () => undefined,
       writeFile: () => undefined,
     });
-    expect(ran[0]).toEqual(['--pure', 'import', expect.any(String)]);
+    expect(ran[0]).toEqual([
+      'session',
+      'import',
+      '--standalone',
+      expect.any(String),
+      '--directory',
+      '/home/runner/_work/checkout',
+    ]);
     expect(path).toBe('ses_1');
   });
 
