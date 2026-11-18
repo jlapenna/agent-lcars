@@ -1,6 +1,7 @@
 import {
   RUN_MESSAGE_MAX_BYTES,
   RUN_MESSAGE_PREVIEW_MAX,
+  runEvidenceSchema,
   runMessageBytes,
 } from '@agent-lcars/dispatch-contracts';
 import { describe, expect, it } from 'vitest';
@@ -2983,6 +2984,32 @@ export function runOrchestratorStoreContract(
         const stored = async () =>
           (await store.readRunEvidence([run.runId])).get(run.runId);
         expect(await stored()).toEqual(later);
+
+        // A cost the record left out is a key holding `undefined`, exactly
+        // as the route's parser hands it over. It is stored without the key,
+        // and the rest of the usage with it.
+        const parsed = runEvidenceSchema.parse({
+          ...later,
+          usage: { inputTokens: 42, cost: { amount: 1, currency: 'BTC' } },
+        });
+        expect(parsed.usage).toHaveProperty('cost', undefined);
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: clock.now(),
+            evidence: parsed,
+          }),
+        ).toBe(true);
+        expect((await stored())?.usage).toStrictEqual({ inputTokens: 42 });
+        expect(
+          await store.writeRunEvidence({
+            runId: run.runId,
+            ...claim,
+            now: clock.now(),
+            evidence: later,
+          }),
+        ).toBe(true);
 
         // Past the claim's deadline the same fingerprint writes nothing.
         expect(

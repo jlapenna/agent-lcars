@@ -133,3 +133,10 @@ export const runEvidenceSchema = report
   })
   .refine(counted, COUNTED);
 export type RunEvidence = z.infer<typeof runEvidenceSchema>;
+
+/** The record as plain JSON: no key is left holding `undefined`. A cost that
+ * was left out still has its key after parsing, and a document store may
+ * refuse a record over it. */
+export function plainRunEvidence(evidence: RunEvidence): RunEvidence {
+  return JSON.parse(JSON.stringify(evidence)) as RunEvidence;
+}

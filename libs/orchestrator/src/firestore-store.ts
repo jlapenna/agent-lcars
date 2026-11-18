@@ -1,6 +1,7 @@
 import {
   type IssueReference,
   issueSourceKey,
+  plainRunEvidence,
   type RunEvidence,
   runEvidenceSchema,
   type TrackerIssueProjection,
@@ -323,7 +324,12 @@ export class FirestoreStore implements OrchestratorStore {
         ? runSchema.parse(snapshot.data())
         : undefined;
       if (!isLiveClaimant(run, input.claimFingerprint, input.now)) return false;
-      tx.set(this.#runEvidenceRef(input.runId), input.evidence);
+      // Firestore refuses a document with a key left `undefined`, which
+      // a cost that was left out of the record is.
+      tx.set(
+        this.#runEvidenceRef(input.runId),
+        plainRunEvidence(input.evidence),
+      );
       return true;
     });
   }
@@ -342,7 +348,7 @@ export class FirestoreStore implements OrchestratorStore {
       const evidence = runEvidenceSchema.safeParse(snapshot.data());
       const runId = runIds[index];
       if (snapshot.exists && evidence.success && runId !== undefined)
-        found.set(runId, evidence.data);
+        found.set(runId, plainRunEvidence(evidence.data));
     });
     return found;
   }

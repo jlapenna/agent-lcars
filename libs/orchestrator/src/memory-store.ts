@@ -211,7 +211,7 @@ export class MemoryStore implements OrchestratorStore {
       )
     )
       return false;
-    this.#runEvidence.set(input.runId, structuredClone(input.evidence));
+    this.#runEvidence.set(input.runId, plainRunEvidence(input.evidence));
     return true;
   }
 
@@ -223,7 +223,7 @@ export class MemoryStore implements OrchestratorStore {
       const evidence = runEvidenceSchema.safeParse(
         this.#runEvidence.get(runId),
       );
-      if (evidence.success) found.set(runId, evidence.data);
+      if (evidence.success) found.set(runId, plainRunEvidence(evidence.data));
     }
     return found;
   }
@@ -923,6 +923,7 @@ export class MemoryStore implements OrchestratorStore {
 import {
   type IssueReference,
   issueSourceKey,
+  plainRunEvidence,
   type RunEvidence,
   runEvidenceSchema,
   type TrackerIssueProjection,

@@ -714,6 +714,7 @@ describe('claw work read and cancel rules', () => {
     expect(JSON.stringify(listed.json)).not.toContain('toolCallCount');
 
     // Evidence the store cannot read costs the item nothing but the evidence.
+    let lookups = 0;
     const failing = {
       ...ctx,
       runtime: {
@@ -722,6 +723,7 @@ describe('claw work read and cancel rules', () => {
           get(target, key) {
             if (key === 'readRunEvidence')
               return async () => {
+                lookups++;
                 throw new Error('evidence unavailable');
               };
             const value: unknown = Reflect.get(target, key, target);
@@ -733,6 +735,16 @@ describe('claw work read and cancel rules', () => {
     const without = await call(failing, 'GET', `/items/${ID}`);
     expect(without.status).toBe(200);
     expect(without.json.runs[0]).not.toHaveProperty('evidence');
+
+    expect(lookups).toBe(1);
+
+    // A change answers without the lookup: the confirmation of what has
+    // already committed never waits on evidence.
+    const cancelled = await call(failing, 'POST', `/items/${ID}/cancel`);
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.json.state).toBe('canceled');
+    expect(cancelled.json.runs[0]).not.toHaveProperty('evidence');
+    expect(lookups).toBe(1);
   });
 
   it('lets a claw admitter read its own run and report, and nothing else', async () => {

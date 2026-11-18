@@ -45,6 +45,7 @@ export {
 } from './quick-task';
 export type { RunEvidence, RunEvidenceReport } from './run-evidence';
 export {
+  plainRunEvidence,
   RUN_EVIDENCE_TOOL_CALLS_MAX,
   runEvidenceReportSchema,
   runEvidenceSchema,
