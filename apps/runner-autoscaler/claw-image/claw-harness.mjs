@@ -170,9 +170,9 @@ export function serveHarness(
   const workRoot = env.CLAW_WORK_DIR || '/work';
   // Aborted when the launcher goes away, whatever the harness is doing.
   const gone = new AbortController();
-  const write = (frame) => {
-    if (stream.writable) stream.write(`${JSON.stringify(frame)}\n`);
-  };
+  // False when the launcher is behind and what was written is waiting.
+  const write = (frame) =>
+    stream.writable ? stream.write(`${JSON.stringify(frame)}\n`) : true;
   let child;
   let exited = Promise.resolve();
   let finish;
@@ -216,9 +216,24 @@ export function serveHarness(
       started.once('error', failed);
     });
     child = started;
-    readLines(child.stdout, (line) => write({ acp: line }), {
+    // The agent's output waits while the launcher is behind, so what this
+    // process holds of it stays bounded however fast the agent writes: the
+    // bound on one line is no bound on all of them.
+    const output = started.stdout;
+    const relay = (frame) => {
+      if (write(frame) || output.isPaused()) return;
+      output.pause();
+      const resume = () => {
+        stream.off('drain', resume);
+        stream.off('close', resume);
+        output.resume();
+      };
+      stream.once('drain', resume);
+      stream.once('close', resume);
+    };
+    readLines(output, (line) => relay({ acp: line }), {
       maxBytes: MAX_ACP_LINE_BYTES,
-      onOversize: () => write({ claw: 'oversize' }),
+      onOversize: () => relay({ claw: 'oversize' }),
     });
     // stderr carries harness diagnostics; never forward it.
     child.stderr.resume();

@@ -787,6 +787,17 @@ func TestQueueRuntimeHarnessContainerShape(t *testing.T) {
 		}
 	}
 
+	// The two containers share the definition at one fixed path, so a runtime
+	// with a harness container cannot move the work root.
+	moved := testClawRuntime()
+	moved.Env = append(moved.Env, queueRuntimeEnv{Name: "CLAW_WORK_DIR", Value: "/tmp/work"})
+	if err := moved.validate("claw-investigator", "runner-credentials"); err != nil {
+		t.Fatal(err)
+	}
+	moved.HarnessContainer = true
+	if err := moved.validate("claw-investigator", "runner-credentials"); err == nil || !strings.Contains(err.Error(), "CLAW_WORK_DIR") {
+		t.Fatalf("a moved work root with a harness container: %v", err)
+	}
 	// A runtime that would leave the harness less than the launcher's own
 	// share is refused at startup; twice the share is the least that fits.
 	for name, sizes := range map[string][2]string{"cpu": {"150m", "200m"}, "memory": {"767Mi", "768Mi"}, "ephemeral-storage": {"1Gi", "2Gi"}} {
@@ -845,26 +856,49 @@ func TestQueueRuntimeHarnessContainerNeedsSidecars(t *testing.T) {
 		}
 	}
 	secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: "claw-investigator", Namespace: "lcars-work"}, Data: map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": []byte("m")}}
-	for minor, wantErr := range map[string]string{"28": "needs Kubernetes 1.29", "36+": ""} {
-		q, c := zoneQueueFixture(secret)
+	node := func(name, kubelet string, eligible bool) *core.Node {
+		n := queueReadyNode()
+		n.Name = name
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		if !eligible {
+			n.Labels = nil
+		}
+		return n
+	}
+	for name, tc := range map[string]struct {
+		server  string
+		nodes   []*core.Node
+		wantErr string
+	}{
+		"an older API server":            {server: "28", wantErr: "needs Kubernetes 1.29"},
+		"a current cluster":              {server: "36+", nodes: []*core.Node{node("a", "v1.36.1+k3s1", true)}},
+		"an eligible node still on 1.28": {server: "29", nodes: []*core.Node{node("a", "v1.29.0", true), node("b", "v1.28.9+k3s1", true)}, wantErr: `b runs kubelet "v1.28.9+k3s1"`},
+		"an older node no Job lands on":  {server: "29", nodes: []*core.Node{node("a", "v1.29.0", true), node("b", "v1.28.9", false)}},
+		"a node that reports no version": {server: "29", nodes: []*core.Node{node("a", "", true)}, wantErr: "every eligible node"},
+	} {
+		objects := []runtime.Object{secret}
+		for _, n := range tc.nodes {
+			objects = append(objects, n)
+		}
+		q, c := zoneQueueFixture(objects...)
 		rt := testClawRuntime()
 		rt.HarnessContainer = true
 		q.config.Runtimes["claw-investigator"] = rt
-		c.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: minor}
+		c.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: tc.server}
 		err := q.preflight(context.Background())
-		if wantErr == "" {
-			// Whatever else the fixture lacks, the version is not the complaint.
+		if tc.wantErr == "" {
+			// Whatever else the fixture lacks, sidecars are not the complaint.
 			if err != nil && strings.Contains(err.Error(), "harness_container") {
-				t.Fatalf("1.%s: %v", minor, err)
+				t.Fatalf("%s: %v", name, err)
 			}
 			continue
 		}
-		if err == nil || !strings.Contains(err.Error(), wantErr) {
-			t.Fatalf("1.%s: %v", minor, err)
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	// A runtime without a harness container never asks for the version.
-	q, c := zoneQueueFixture(secret)
+	// A runtime without a harness container never asks for either version.
+	q, c := zoneQueueFixture(secret, node("a", "v1.20.0", true))
 	c.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: "20"}
 	if err := q.preflight(context.Background()); err != nil && strings.Contains(err.Error(), "harness_container") {
 		t.Fatal(err)

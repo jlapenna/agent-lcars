@@ -62,7 +62,8 @@ host's own frames. Lines end at a newline and nowhere else (`readLines`),
 because JSON leaves the Unicode line separators unescaped, and no line
 longer than a bound is ever held: the host drops a line of the agent's
 output over 20 MiB and the launcher a frame over 48 MiB, and either fails
-the turn. At the end the launcher asks the host to `finish`: to
+the turn. The host stops reading the agent's output while the launcher is
+behind, so it holds little of it however fast the agent writes. At the end the launcher asks the host to `finish`: to
 stop what it started and to say whether the harness has a reason to refuse
 the turn. The header of `claw-harness.mjs` lists the frames.
 

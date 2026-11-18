@@ -77,6 +77,18 @@ func queueClusterRunsSidecars(major, minor string) bool {
 	return okMajor && okMinor && (majorNumber > 1 || (majorNumber == 1 && minorNumber >= 29))
 }
 
+// queueKubeletRunsSidecars reports the same of one node's kubelet, from the
+// version it reports ("v1.31.4+k3s1"). The API server can be ahead of a
+// node during an upgrade, and it is the kubelet that runs the containers.
+func queueKubeletRunsSidecars(kubeletVersion string) bool {
+	major, rest, ok := strings.Cut(strings.TrimPrefix(kubeletVersion, "v"), ".")
+	if !ok {
+		return false
+	}
+	minor, _, _ := strings.Cut(rest, ".")
+	return queueClusterRunsSidecars(major, minor)
+}
+
 // queueRuntimeHarnessUID is the user the harness container runs as: not the
 // Pod's (the launcher's), in the same group. The claw image has a passwd
 // entry for it.
@@ -183,6 +195,14 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 			if limit.Cmp(least) < 0 {
 				return fmt.Errorf("%s limits.%s must be at least %s when harness_container is set: the launcher's %s share and as much again for the harness", prefix, resourceName, least.String(), share.String())
 			}
+		}
+	}
+	// The definition, HOME and scratch are mounted at fixed paths under
+	// /work in both containers. A work root anywhere else would have the
+	// launcher verify a definition the harness never sees.
+	for _, env := range r.Env {
+		if r.HarnessContainer && env.Name == "CLAW_WORK_DIR" {
+			return fmt.Errorf("%s.env must not set CLAW_WORK_DIR when harness_container is set: the containers share the definition at %s only", prefix, queueRuntimeDefinitionMountPath)
 		}
 	}
 	if r.ActiveDeadlineSeconds < queueRuntimeTurnMargin+queueRuntimeMinTurn || r.ActiveDeadlineSeconds >= queueRunLeaseSeconds {

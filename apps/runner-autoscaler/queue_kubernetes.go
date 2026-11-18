@@ -412,6 +412,18 @@ func (q *kubernetesQueue) preflight(ctx context.Context) error {
 		if !queueClusterRunsSidecars(version.Major, version.Minor) {
 			return fmt.Errorf("runtime %s harness_container needs Kubernetes 1.29 or later; the cluster reports %s.%s", name, version.Major, version.Minor)
 		}
+		// The API server can be ahead of a node during an upgrade, and it is
+		// the kubelet that runs the containers: every node a Job can land on
+		// has to run sidecars too.
+		nodes, err := client.CoreV1().Nodes().List(ctx, meta.ListOptions{LabelSelector: labels.Set(c.NodeSelector).String()})
+		if err != nil {
+			return fmt.Errorf("reading the nodes for runtime %s harness_container: %w", name, err)
+		}
+		for _, node := range nodes.Items {
+			if kubelet := node.Status.NodeInfo.KubeletVersion; !queueKubeletRunsSidecars(kubelet) {
+				return fmt.Errorf("runtime %s harness_container needs Kubernetes 1.29 or later on every eligible node; %s runs kubelet %q", name, node.Name, kubelet)
+			}
+		}
 		break
 	}
 	if _, err := client.CoreV1().ServiceAccounts(c.Namespace).Get(ctx, c.ServiceAccount, meta.GetOptions{}); err != nil {

@@ -14,6 +14,7 @@ import {
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { duplexPair } from 'node:stream';
 import { test } from 'node:test';
 
 import { serveHarness } from './claw-harness.mjs';
@@ -29,7 +30,7 @@ import {
   secretEnvironment,
   settle,
 } from './claw-job.mjs';
-import { readSettingsFile } from './claw-process.mjs';
+import { readLines, readSettingsFile } from './claw-process.mjs';
 import {
   answerText,
   bundledPluginProviders,
@@ -2112,6 +2113,47 @@ test('a harness socket that is reset still leaves a settled attempt', async () =
   const result = await main(host.env, host.deps);
   assert.equal(result.outcome, 'runner-failed');
   assert.deepEqual(completion(made.calls), result);
+});
+
+test('the relay holds little of the output of an agent the launcher is behind', async () => {
+  const made = await harnessFixture({ steps: [] });
+  // An agent that writes 64 MiB of well-formed lines as fast as it can. Each
+  // line is within the bound on one line; together they are not.
+  const lines = 1024;
+  const flood = () => ({
+    command: process.execPath,
+    args: [
+      '-e',
+      `const line = JSON.stringify({ jsonrpc: '2.0', method: 'x', params: 'y'.repeat(64000) }) + '\\n';
+       let written = 0;
+       const go = () => {
+         while (written < ${lines}) {
+           written++;
+           if (!process.stdout.write(line)) return process.stdout.once('drain', go);
+         }
+       };
+       go();`,
+    ],
+    finish: async () => undefined,
+  });
+  const [near, far] = duplexPair();
+  serveHarness(far, { harnesses: { flood }, env: made.env });
+  near.write(`${JSON.stringify({ claw: 'launch', harness: 'flood' })}\n`);
+  // Nobody reads the launcher's end for a while.
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  assert.ok(
+    far.writableLength < 2 * 1024 * 1024,
+    `the host held ${far.writableLength} bytes of unread output`,
+  );
+  // Once the launcher reads again, every line arrives.
+  let relayed = 0;
+  readLines(near, (line) => {
+    if (typeof JSON.parse(line).acp === 'string') relayed++;
+  });
+  for (let i = 0; i < 400 && relayed < lines; i++)
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(relayed, lines);
+  near.end();
 });
 
 test('a line too long to be an answer fails the turn without being held', async () => {
