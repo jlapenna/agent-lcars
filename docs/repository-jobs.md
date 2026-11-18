@@ -267,8 +267,15 @@ The authenticated `/jobs` screen uses these Work API endpoints:
 
 - `GET /api/work/v1/jobs` lists the jobs whose repositories the caller's grant
   covers.
-- `GET /api/work/v1/jobs/{id}/profiles` lists the execution profiles the
-  caller may use for that job.
+- `GET /api/work/v1/jobs/{id}/profiles` lists the execution profiles eligible
+  under the caller's Work grant and the job configuration. Listing does not
+  check credential grants: a credential-backed profile can still appear after
+  its credential grant is revoked, and invoking it then returns 409.
+
+Both `GET` endpoints require the `work.operator` scope and the `goose`
+pipeline grant; a caller whose grant covers the repository but lacks either
+gets 403.
+
 - `POST /api/work/v1/jobs/refresh` with a managed `repository`.
 - `POST /api/work/v1/jobs/{id}/enable` with the current `digest` and `enabled`:
   `false` records the operator veto, `true` clears it and enables that digest.

@@ -34,7 +34,9 @@ its holders must act only within the requested task.
 `work.reader` authorizes only the read-only issue-owner query,
 `GET /anchors/github/owner` (`lcars work owner <owner/repo>#<n>`). It cannot
 list or read items, mutate, or manage schedules. `costs.reader` separately
-authorizes the read-only spend readout `GET /costs/budget`. Interactive Claude and Codex
+authorizes the read-only spend readout `GET /costs/budget`, which requires
+an explicit `days` selection (for example `?days=1h`; a bare request returns
+400; see [cost ledger](docs/cost-ledger.md)). Interactive Claude and Codex
 sessions use it through `LCARS_SERVICE_ACCOUNT=work-reader@agent-lcars.iam.gserviceaccount.com`;
 only the maintainer's Google account may impersonate that identity.
 

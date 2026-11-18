@@ -91,11 +91,16 @@ and `lcars work create/redispatch --fallback-pipelines codex,opencode` expose th
 same contract; `--fallback-pipelines none` disables an inherited list. GitHub
 pull-request review runs admitted through `pr-review-routing.ts` populate
 `spec.fallbackPipelines` automatically under principal `svc:github-pr-review`
-(`codex` PR -> `claude` with `['agy']`; `claude` PR -> `codex` with `['agy']`;
+(listed before the author fallback is appended: `codex` PR -> `claude` with
+`['agy']`; `claude` PR -> `codex` with `['agy']`;
 `agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
 `review:codex` is requested; `opencode`/human PR -> `claude` with
-`['codex', 'agy']`). The authoring model is appended as the last alternative
-when it is not already listed. That orders preference only; it does not
+`['codex', 'agy']`). The selector then appends a recognized authoring
+pipeline as the last alternative only when it is supported, differs from the
+primary and is not already listed, so an OpenCode-authored review gets
+`['codex', 'agy', 'opencode']` and a human-authored one keeps
+`['codex', 'agy']`. Admission records the resulting order on
+`run.providerFallback.allowedPipelines`. That orders preference only; it does not
 guarantee every opposite model was tried first. Fallback prefers the first
 alternative that is available now, so when a `claude` review of an `agy` PR
 hits its limit while another run holds Codex's exclusive claim, the successor
