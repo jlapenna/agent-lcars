@@ -8,6 +8,15 @@ import { Orchestrator } from './orchestrator';
 
 const emulatorHost = process.env['FIRESTORE_EMULATOR_HOST'];
 
+if (
+  process.env['REQUIRE_FIRESTORE_EMULATOR'] === '1' &&
+  emulatorHost === undefined
+) {
+  throw new Error(
+    'REQUIRE_FIRESTORE_EMULATOR=1 but FIRESTORE_EMULATOR_HOST is unset',
+  );
+}
+
 /** Crockford base32, 26 characters; the pattern excludes I, L, O and U. */
 function workId(seedValue: number): string {
   const alphabet = '0123456789ABCDEFGHJKMNPQRSTVZX';

@@ -71,11 +71,23 @@ export async function readAuthoritativeTaskState({
   const taskId = { repo: repository, issue };
   const versioned = await store.readTask(taskId);
   if (!versioned) return undefined;
-  const runs = await store.listRuns(taskId);
+  return projectAuthoritativeTaskState(
+    taskId,
+    versioned,
+    await store.listRuns(taskId),
+  );
+}
+
+/** The one projection of a task document and its run history, shared by the
+ * single-task read and the batched set read so the two cannot drift. */
+function projectAuthoritativeTaskState(
+  taskId: { repo: string; issue: number },
+  versioned: VersionedTask,
+  runs: Run[],
+): AuthoritativeTaskState {
   const payload = workPayloadSchema.safeParse(versioned.task.work);
   if (!payload.success)
     throw new Error('Authoritative task state requires coding Work');
-  const spec = payload.data.spec;
   return {
     schema: AUTHORITATIVE_TASK_STATE_SCHEMA,
     task: taskId,
@@ -85,9 +97,9 @@ export async function readAuthoritativeTaskState({
       ? {}
       : { activeRunId: versioned.task.activeRunId }),
     runs,
-    spec,
+    spec: payload.data.spec,
     item: toItemView({
-      workId: `${repository}#${issue}`,
+      workId: `${taskId.repo}#${taskId.issue}`,
       task: versioned.task,
       runs,
     }),
@@ -102,17 +114,28 @@ export async function readAuthoritativeTaskState({
 export async function readAuthoritativeTaskStates(
   tasks: TaskRef[],
 ): Promise<AuthoritativeTaskStateSet> {
-  const uniqueTasks = new Map(tasks.map((task) => [taskRefKey(task), task]));
+  const uniqueTasks = new Map(
+    tasks.map((task) => [
+      taskRefKey(task),
+      { repo: repoKey(task.repository), issue: task.issueNumber },
+    ]),
+  );
   const states = new Map<string, AuthoritativeTaskState>();
   const unavailableTaskKeys = new Set<string>();
   const warnings: string[] = [];
   if (uniqueTasks.size === 0) return { states, unavailableTaskKeys, warnings };
 
+  const markUnavailable = (key: string, error: unknown) => {
+    logger.error(
+      'agent-lcars: failed to read authoritative task state (%s):',
+      key,
+      error,
+    );
+    unavailableTaskKeys.add(key);
+    warnings.push(`Authoritative lifecycle state unavailable for ${key}.`);
+  };
+
   const { store } = createOrchestratorRuntime();
-  const taskIds = [...uniqueTasks.values()].map((task) => ({
-    repo: repoKey(task.repository),
-    issue: task.issueNumber,
-  }));
   // Two bounded datastore passes for the whole set instead of one document
   // read and one run query per task: the Agents page asks for every queue
   // item and recent run at once, so the per-task shape was ~2 reads per item
@@ -121,52 +144,45 @@ export async function readAuthoritativeTaskStates(
   let runsByTask: Map<string, Run[]>;
   try {
     [versioned, runsByTask] = await Promise.all([
-      store.readTasks(taskIds),
-      store.listRunsForTasks(taskIds),
+      store.readTasks([...uniqueTasks.values()]),
+      store.listRunsForTasks([...uniqueTasks.values()]),
     ]);
   } catch (error) {
+    // One malformed document fails a whole batched read. Fall back to the
+    // per-task reads so that document marks only its own task unavailable
+    // instead of blanking lifecycle state for every task in the view.
     logger.error(
-      'agent-lcars: failed to read authoritative task states:',
+      'agent-lcars: batched authoritative task read failed; reading per task:',
       error,
     );
-    for (const key of uniqueTasks.keys()) unavailableTaskKeys.add(key);
-    warnings.push('Authoritative lifecycle state unavailable for this view.');
+    await Promise.all(
+      [...uniqueTasks].map(async ([key, taskId]) => {
+        try {
+          const state = await readAuthoritativeTaskState({
+            repository: taskId.repo,
+            issue: taskId.issue,
+          });
+          if (state) states.set(key, state);
+        } catch (taskError) {
+          markUnavailable(key, taskError);
+        }
+      }),
+    );
     return { states, unavailableTaskKeys, warnings };
   }
 
-  for (const [key, task] of uniqueTasks) {
-    const taskId = { repo: repoKey(task.repository), issue: task.issueNumber };
+  for (const [key, taskId] of uniqueTasks) {
     try {
       const current = versioned.get(taskKey(taskId));
       if (current === undefined) continue;
-      const payload = workPayloadSchema.safeParse(current.task.work);
-      if (!payload.success)
-        throw new Error('Authoritative task state requires coding Work');
-      const runs = runsByTask.get(taskKey(taskId)) ?? [];
-      states.set(key, {
-        schema: AUTHORITATIVE_TASK_STATE_SCHEMA,
-        task: taskId,
-        storageRevision: current.revision,
-        updatedAt: current.task.updatedAt,
-        ...(current.task.activeRunId === undefined
-          ? {}
-          : { activeRunId: current.task.activeRunId }),
-        runs,
-        spec: payload.data.spec,
-        item: toItemView({
-          workId: `${repoKey(task.repository)}#${task.issueNumber}`,
-          task: current.task,
-          runs,
-        }),
-      });
+      const runs = runsByTask.get(taskKey(taskId));
+      // `listRunsForTasks` maps every requested task, `[]` when it has none;
+      // an absent entry is a broken read, never "no runs".
+      if (runs === undefined)
+        throw new Error('Batched run read omitted a requested task');
+      states.set(key, projectAuthoritativeTaskState(taskId, current, runs));
     } catch (error) {
-      logger.error(
-        'agent-lcars: failed to read authoritative task state (%s):',
-        key,
-        error,
-      );
-      unavailableTaskKeys.add(key);
-      warnings.push(`Authoritative lifecycle state unavailable for ${key}.`);
+      markUnavailable(key, error);
     }
   }
 
