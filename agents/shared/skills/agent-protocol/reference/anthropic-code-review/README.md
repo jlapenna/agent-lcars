@@ -114,7 +114,10 @@ review and comment-quality guidance applies.
    nonblocking findings. If the publishing identity is the PR author (all
    direct-runner providers use the LCARS App identity), GitHub forbids its own
    approval/change-request review: use COMMENT with the explicit verdict and
-   findings instead. Do not change credentials to evade that restriction.
+   findings instead. For a COMMENT review of the current head, put the verdict
+   on its own line in the body: `<!-- lcars-review:pass -->` for no blocking
+   defects or `<!-- lcars-review:block -->` for blocking defects. Historical
+   reviews omit both verdict markers. Do not change credentials to evade that restriction.
    An incomplete procedure never produces an approval or
    a completed-review receipt; preserve its cause using the failure/parking
    distinction above.
