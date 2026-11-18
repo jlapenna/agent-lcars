@@ -269,6 +269,18 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
       'tools.deny',
     ],
   );
+  // Explicit empty maps may be filled with allowed entries, but a new empty
+  // section is still a change.
+  const empty = {
+    ...source,
+    plugins: { entries: {} },
+    skills: { entries: {} },
+    agents: { entries: {} },
+  };
+  assert.deepEqual(doctorChanges(empty, narrowed), []);
+  assert.deepEqual(doctorChanges(source, { ...source, gateway: {} }), [
+    'gateway',
+  ]);
   // A plugin the source disabled stays disabled; Doctor removing settings is
   // a change too.
   const disabled = {

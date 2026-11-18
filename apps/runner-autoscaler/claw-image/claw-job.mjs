@@ -103,13 +103,19 @@ export function comparableConfig(config) {
 // stamps aside); any such change fails the attempt.
 export function doctorChanges(source, after) {
   const providers = new Set(Object.keys(source?.models?.providers ?? {}));
-  const before = leaves(JSON.parse(comparableConfig(source)));
-  const normalized = leaves(JSON.parse(comparableConfig(after)));
+  const before = nodes(JSON.parse(comparableConfig(source)));
+  const normalized = nodes(JSON.parse(comparableConfig(after)));
   const refused = [];
   for (const path of new Set([...before.keys(), ...normalized.keys()])) {
     const was = before.get(path);
     const now = normalized.get(path);
     if (was === now) continue;
+    // An object that stays an object is judged by its children; a new
+    // non-empty object (a container on an allowed path) likewise.
+    if (isObjectNode(was) && isObjectNode(now)) continue;
+    if (was === undefined && now === NON_EMPTY) continue;
+    // A removed non-empty object is reported through its removed children.
+    if (was === NON_EMPTY && now === undefined) continue;
     const [root, entries, name, field, ...rest] = path.split('\u0000');
     const entry =
       root !== undefined &&
@@ -130,7 +136,7 @@ export function doctorChanges(source, after) {
       entries === 'entries' &&
       field === undefined &&
       was === undefined &&
-      now === '{}'
+      now === EMPTY
     )
       continue;
     refused.push(path.split('\u0000').join('.'));
@@ -138,17 +144,18 @@ export function doctorChanges(source, after) {
   return refused.sort();
 }
 
-// Leaf values by path (segments joined with NUL, which no key holds in
-// practice); arrays and empty objects are leaves.
-function leaves(value, prefix = [], out = new Map()) {
-  if (
-    value &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    Object.keys(value).length > 0
-  ) {
-    for (const [key, child] of Object.entries(value))
-      leaves(child, [...prefix, key], out);
+// Every node by path (segments joined with NUL, which no key holds in
+// practice): objects as EMPTY or NON_EMPTY markers, everything else (arrays
+// included) as its JSON value.
+const EMPTY = '\u0000{}';
+const NON_EMPTY = '\u0000{...}';
+const isObjectNode = (node) => node === EMPTY || node === NON_EMPTY;
+
+function nodes(value, prefix = [], out = new Map()) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    out.set(prefix.join('\u0000'), keys.length > 0 ? NON_EMPTY : EMPTY);
+    for (const key of keys) nodes(value[key], [...prefix, key], out);
   } else {
     out.set(prefix.join('\u0000'), JSON.stringify(value));
   }
