@@ -23,13 +23,19 @@ export const catalogAgentSchema = z.strictObject({
 export type CatalogAgent = z.infer<typeof catalogAgentSchema>;
 
 /** Per-repository refresh bookkeeping: when a refresh last started (for
- * oldest-first fairness) and the newest observation that published. */
+ * oldest-first fairness), the newest observation that published, and when
+ * the newest published observation read the source successfully or failed
+ * (catalog health metrics). */
 export const agentSourceSchema = z.strictObject({
   repository: z.string(),
   attemptedAt: z.iso.datetime().optional(),
   observedAt: z.iso.datetime().optional(),
+  succeededAt: z.iso.datetime().optional(),
+  failedAt: z.iso.datetime().optional(),
 });
 export type AgentSource = z.infer<typeof agentSourceSchema>;
+
+export type ObservationOutcome = 'succeeded' | 'failed';
 
 export interface AgentStore {
   list(): Promise<CatalogAgent[]>;
@@ -37,8 +43,14 @@ export interface AgentStore {
   recordAttempt(repository: string, at: string): Promise<void>;
   /** Atomically claim the right to publish an observation made at `at`:
    * false when a newer observation of the repository already published, so a
-   * slow older refresh can never resurrect what a newer one removed. */
-  claimObservation(repository: string, at: string): Promise<boolean>;
+   * slow older refresh can never resurrect what a newer one removed. A claim
+   * also records whether that observation read the source (`succeeded`) or
+   * failed. */
+  claimObservation(
+    repository: string,
+    at: string,
+    outcome: ObservationOutcome,
+  ): Promise<boolean>;
   read(id: string): Promise<CatalogAgent | undefined>;
   /** Read-modify-write one agent atomically. Returning `{}` writes nothing.
    * With `fence`, nothing is written when a newer observation of
@@ -76,7 +88,11 @@ export class FirestoreAgentStore implements AgentStore {
       { merge: true },
     );
   }
-  async claimObservation(repository: string, at: string): Promise<boolean> {
+  async claimObservation(
+    repository: string,
+    at: string,
+    outcome: ObservationOutcome,
+  ): Promise<boolean> {
     const ref = this.source(repository);
     return this.database.runTransaction(async (transaction) => {
       const current = await transaction.get(ref);
@@ -85,7 +101,15 @@ export class FirestoreAgentStore implements AgentStore {
         : undefined;
       if (source?.observedAt && Date.parse(source.observedAt) > Date.parse(at))
         return false;
-      transaction.set(ref, { repository, observedAt: at }, { merge: true });
+      transaction.set(
+        ref,
+        {
+          repository,
+          observedAt: at,
+          [outcome === 'succeeded' ? 'succeededAt' : 'failedAt']: at,
+        },
+        { merge: true },
+      );
       return true;
     });
   }

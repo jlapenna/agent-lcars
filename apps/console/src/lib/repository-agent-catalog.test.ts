@@ -36,13 +36,18 @@ class MemoryAgentStore implements AgentStore {
       attemptedAt: at,
     });
   }
-  async claimObservation(repository: string, at: string) {
+  async claimObservation(
+    repository: string,
+    at: string,
+    outcome: 'succeeded' | 'failed',
+  ) {
     const observedAt = this.sourceRows.get(repository)?.observedAt;
     if (observedAt && Date.parse(observedAt) > Date.parse(at)) return false;
     this.sourceRows.set(repository, {
       ...this.sourceRows.get(repository),
       repository,
       observedAt: at,
+      [outcome === 'succeeded' ? 'succeededAt' : 'failedAt']: at,
     });
     return true;
   }
@@ -262,6 +267,11 @@ it('disables a removed agent and every agent when the source refresh fails', asy
   expect(store.rows.get(agentKey('owner/repo', 'investigator'))).toMatchObject({
     enabled: false,
     error: 'Source refresh failed',
+  });
+  // Health bookkeeping: the last good read stays visible beside the failure.
+  expect(store.sourceRows.get('owner/repo')).toMatchObject({
+    succeededAt: new Date(now.getTime() + 1000).toISOString(),
+    failedAt: new Date(now.getTime() + 2000).toISOString(),
   });
 });
 

@@ -82,7 +82,7 @@ export async function refreshAgentCatalog(
     }
     // Publish after the complete read so a partial fetch cannot remove agents,
     // and only while no newer observation of this repository has published.
-    if (!(await store.claimObservation(repository, at))) return;
+    if (!(await store.claimObservation(repository, at, 'succeeded'))) return;
     const publish = (row: CatalogAgent) =>
       store.mutate(
         row.id,
@@ -137,7 +137,7 @@ export async function refreshAgentCatalog(
         fence,
       );
   } catch (error) {
-    if (!(await store.claimObservation(repository, at))) throw error;
+    if (!(await store.claimObservation(repository, at, 'failed'))) throw error;
     for (const agent of await repositoryRows())
       await store.mutate(
         agent.id,

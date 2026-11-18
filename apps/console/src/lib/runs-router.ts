@@ -1026,8 +1026,14 @@ export const runsRouter = os.router({
     if (isRefusal(settled) || settled.outbox.length === 0) {
       // The usual case: the worker reported its outcome, then exited. A
       // first report for a settled run retires its claim (physical exit).
-      const current = await context.store.readRun(run.runId);
-      return { runId: run.runId, state: current?.state ?? run.state };
+      const current = (await context.store.readRun(run.runId)) ?? run;
+      return {
+        runId: run.runId,
+        state: current.state,
+        ...(current.state === 'finished' && current.result !== undefined
+          ? { ok: current.result.ok }
+          : {}),
+      };
     }
     logger.warn(
       'agent-lcars: run %s lost: executor %s reported its worker exited before completing',

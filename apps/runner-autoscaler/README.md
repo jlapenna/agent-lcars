@@ -546,6 +546,20 @@ The metrics endpoint exposes the queue worker's own health:
   then records whether that claim launched a direct runner (`success` or
   `error`). A launch error therefore remains visible as a successful claim
   followed by a failed launch, rather than looking like an idle poll.
+- `github_runner_autoscaler_queue_executor_run_exits_total{pipeline,outcome}`
+  counts each delivered worker-exit report once, by claimed pipeline and the
+  run's settled outcome as the exit route answers it: `succeeded` or `failed`
+  (finished with that result), `finished` (no result), `lost`, `canceled`,
+  `unknown_run`, `not_claimant` or `other`. Jobs carry an
+  `agent-lcars.pipeline` annotation for this; one created before it reports
+  `pipeline="unknown"`. `..._run_duration_seconds{pipeline,outcome}` is the
+  Job's start-to-terminal wall time (inventory-observed exits only), and
+  `..._run_exit_last_timestamp_seconds{pipeline,outcome}` is absent until the
+  first exit in the process, so no runs reads as idle, not failure.
+- `lcars_repository_agents*` (shared executor only) export the repository
+  agent catalog observation from the maintenance reply: agents by admission
+  state, and per repository the last refresh attempt, success and failure
+  ([docs/repository-agents.md](../../docs/repository-agents.md#health)).
 
 The existing v2 `runner-status` document carries an additive `claims` sample
 for Shuttlebay. It differences these same four provider counters over an

@@ -86,6 +86,19 @@ func (r *runExitReporter) delivered(runID, fingerprint string) bool {
 // name. Empty falls back to this process's own runner name. It never blocks
 // the caller (a claim admission or a status read) on the Work API.
 func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string) {
+	r.observeExit(runID, claimedBy, fingerprint, exitMeta{})
+}
+
+// exitMeta is what the observer knows about a terminated worker for metrics:
+// its claimed pipeline and, from a terminal Job, its wall time. Both are
+// optional and never change whether or how the exit is reported.
+type exitMeta struct {
+	pipeline string
+	duration time.Duration
+}
+
+// observeExit is observeTerminated with the worker's metrics metadata.
+func (r *runExitReporter) observeExit(runID, claimedBy, fingerprint string, meta exitMeta) {
 	if r == nil || runID == "" || fingerprint == "" {
 		return
 	}
@@ -112,13 +125,16 @@ func (r *runExitReporter) observeTerminated(runID, claimedBy, fingerprint string
 		if runner == "" {
 			runner = r.runnerName
 		}
-		state, err := r.postContext(context.Background(), runID, runner, fingerprint)
+		state, ok, err := r.postContext(context.Background(), runID, runner, fingerprint)
 		r.mu.Lock()
 		delete(r.inflight, key)
 		if err == nil {
 			r.reported[key] = r.now()
 		}
 		r.mu.Unlock()
+		if err == nil {
+			recordRunExit(meta, runExitOutcome(state, ok), r.now())
+		}
 		switch {
 		case err != nil:
 			r.logger.Warn("Run exit report failed; retrying on the next observation", slog.String("runId", runID), slog.String("error", err.Error()))
@@ -143,10 +159,10 @@ const stateNotClaimant = "not-claimant"
 // longer exists) and its claimant-mismatch 403 are final for this original
 // claim, so both count as delivered; a pipeline-grant 403 is retried. A
 // different same-run claim has a separate delivery key.
-func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string) (string, error) {
+func (r *runExitReporter) postContext(ctx context.Context, runID, runner, fingerprint string) (string, *bool, error) {
 	token, err := r.acquireToken(ctx)
 	if err != nil {
-		return "", fmt.Errorf("minting exit report id token: %w", err)
+		return "", nil, fmt.Errorf("minting exit report id token: %w", err)
 	}
 	payload := struct {
 		Runner           string `json:"runner"`
@@ -154,7 +170,7 @@ func (r *runExitReporter) postContext(ctx context.Context, runID, runner, finger
 	}{Runner: runner, ClaimFingerprint: fingerprint}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req, err := http.NewRequestWithContext(
 		ctx, http.MethodPost,
@@ -162,36 +178,37 @@ func (r *runExitReporter) postContext(ctx context.Context, runID, runner, finger
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("exit report request: %w", err)
+		return "", nil, fmt.Errorf("exit report request: %w", err)
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, claimResponseBodyLimit))
 	if err != nil {
-		return "", fmt.Errorf("reading exit report response: %w", err)
+		return "", nil, fmt.Errorf("reading exit report response: %w", err)
 	}
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var result struct {
 			State string `json:"state"`
+			OK    *bool  `json:"ok"`
 		}
 		if err := json.Unmarshal(respBody, &result); err != nil {
-			return "", fmt.Errorf("decoding exit report response: %w", err)
+			return "", nil, fmt.Errorf("decoding exit report response: %w", err)
 		}
-		return result.State, nil
+		return result.State, result.OK, nil
 	case http.StatusNotFound:
 		// Only the route's own answer means the run is gone. A 404 from a
 		// console that does not serve this route yet (or a wrong URL) must
 		// stay retryable rather than silently fall back to lease expiry.
 		if bytes.Contains(respBody, []byte("unknown run")) {
-			return "unknown-run", nil
+			return "unknown-run", nil, nil
 		}
-		return "", fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
+		return "", nil, fmt.Errorf("exit report returned 404 without the route's unknown-run answer")
 	case http.StatusForbidden:
 		// A missing pipeline grant is configuration that can be restored, so
 		// it stays retryable: a restored grant then settles the run without
@@ -199,11 +216,11 @@ func (r *runExitReporter) postContext(ctx context.Context, runID, runner, finger
 		// runner name claimed the run (or it was claimed before claims
 		// recorded their principal); retrying cannot change that.
 		if bytes.Contains(respBody, []byte("pipeline not granted")) {
-			return "", fmt.Errorf("exit report refused: this executor is not granted the run's pipeline")
+			return "", nil, fmt.Errorf("exit report refused: this executor is not granted the run's pipeline")
 		}
-		return stateNotClaimant, nil
+		return stateNotClaimant, nil, nil
 	default:
-		return "", fmt.Errorf("exit report returned %d", resp.StatusCode)
+		return "", nil, fmt.Errorf("exit report returned %d", resp.StatusCode)
 	}
 }
 

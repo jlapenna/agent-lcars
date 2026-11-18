@@ -129,6 +129,25 @@ Trust follows from this:
 - LCARS chooses neither the credentials nor the tool policy. It delivers the
   reviewed definition.
 
+## Health
+
+Catalog and run health reach Homelab's Prometheus through the executors'
+existing metrics endpoints; nothing here adds a scrape target.
+
+- **Catalog:** each maintenance reply carries `repositoryAgents`: agents by
+  admission state (enabled, vetoed, invalid, unavailable, removed) and each
+  repository's last refresh attempt, successful read and failed read. The
+  shared executor exports it as `lcars_repository_agents*`. A failed
+  observation omits it without failing maintenance, and the executor then
+  reports `read_available 0`, never a healthy zero. Agent names, errors and
+  messages never leave the console.
+- **Runs:** every executor counts delivered worker exits by pipeline and
+  settled outcome (`github_runner_autoscaler_queue_executor_run_exits_total`),
+  with Job wall time. The zone executor's series are the claw runtimes'
+  (`claw-investigator`, `claw-default`). The exit route answers a finished
+  run's `ok` for this.
+- Homelab owns the dashboard and alerts (its `docs/claw-zone.md`).
+
 ## What this retired
 
 The per-agent investigator path is gone. Every claw run is a repository-owned

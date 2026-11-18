@@ -2895,9 +2895,12 @@ describe('exit', () => {
       { runner: 'runner-1', claimFingerprint: hashRunToken(token) },
     );
 
+    // A finished run's result rides along for the executor's outcome metrics.
+    const settled = await store.readRun(runId);
+    expect(typeof settled?.result?.ok).toBe('boolean');
     expect(response).toEqual({
       status: 200,
-      json: { runId, state: 'finished' },
+      json: { runId, state: 'finished', ok: settled?.result?.ok },
     });
     expect(drain).not.toHaveBeenCalled();
     expect(await store.listRuns({ workId: wid('exit-claude') })).toHaveLength(

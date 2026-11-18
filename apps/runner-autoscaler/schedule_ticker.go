@@ -48,12 +48,13 @@ type scheduleTickFailure struct {
 }
 
 type maintenanceTickResponse struct {
-	JobCredentials           *jobCredentialObservation `json:"jobCredentials"`
-	Lost                     []string                  `json:"lost"`
-	Dispatched               []string                  `json:"dispatched"`
-	Reported                 []string                  `json:"reported"`
-	OutboxProcessed          int                       `json:"outboxProcessed"`
-	OutboxContinuationNeeded bool                      `json:"outboxContinuationNeeded"`
+	JobCredentials           *jobCredentialObservation   `json:"jobCredentials"`
+	RepositoryAgents         *repositoryAgentObservation `json:"repositoryAgents"`
+	Lost                     []string                    `json:"lost"`
+	Dispatched               []string                    `json:"dispatched"`
+	Reported                 []string                    `json:"reported"`
+	OutboxProcessed          int                         `json:"outboxProcessed"`
+	OutboxContinuationNeeded bool                        `json:"outboxContinuationNeeded"`
 	OutboxDrainFailed        []struct {
 		EntryID string `json:"entryId"`
 		Error   string `json:"error"`
@@ -238,6 +239,7 @@ func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *sl
 		result, err := tickMaintenanceOnce(cfg)
 		if err != nil {
 			credentialMetrics.record(nil, time.Now())
+			repositoryAgentsMetrics.record(nil, time.Now())
 			recordMaintenanceTick(false)
 			logger.Warn("maintenance tick failed", slog.String("error", err.Error()))
 			return
@@ -250,6 +252,9 @@ func runScheduleTicker(ctx context.Context, cfg scheduleTickerConfig, logger *sl
 			if *result.JobCredentials.Configured && (!*result.JobCredentials.MetadataAvailable || result.JobCredentials.Dependency == "unavailable") {
 				logger.Warn("job credential metadata dependency unavailable")
 			}
+		}
+		if !repositoryAgentsMetrics.record(result.RepositoryAgents, time.Now()) {
+			logger.Warn("repository agent catalog observation unavailable")
 		}
 		recordMaintenanceTick(true)
 		for _, failure := range result.OutboxDrainFailed {

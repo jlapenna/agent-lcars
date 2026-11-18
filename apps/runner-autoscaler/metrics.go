@@ -51,6 +51,19 @@ var (
 		Name: "github_runner_autoscaler_maintenance_ticks_total",
 		Help: "Server-owned control-plane maintenance tick attempts by outcome.",
 	}, []string{"outcome"})
+	queueExecutorRunExitsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_exits_total",
+		Help: "Delivered worker-exit reports by claimed pipeline and the run's settled outcome: succeeded or failed (finished with that result), finished (no result), lost (died without reporting), canceled, unknown_run, not_claimant or other. Counted once per delivered report.",
+	}, []string{"pipeline", "outcome"})
+	queueExecutorRunDurationSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "github_runner_autoscaler_queue_executor_run_duration_seconds",
+		Help:    "Worker Job wall time from start to its terminal condition, by claimed pipeline and settled outcome, for exits observed on a terminal Job.",
+		Buckets: []float64{15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200},
+	}, []string{"pipeline", "outcome"})
+	queueExecutorRunExitTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "github_runner_autoscaler_queue_executor_run_exit_last_timestamp_seconds",
+		Help: "Unix time of the most recent delivered worker-exit report, by claimed pipeline and settled outcome. Absent until the first one in this process: no runs is idle, not failure.",
+	}, []string{"pipeline", "outcome"})
 	maintenanceLastSuccessTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "github_runner_autoscaler_maintenance_last_success_timestamp_seconds",
 		Help: "Unix timestamp of the most recent successful control-plane maintenance tick.",
@@ -86,6 +99,43 @@ func recordQueueExecutorPollOutcome(outcome queuePollOutcome) {
 	}
 }
 
+// runExitOutcome maps an exit report's answer to a bounded outcome label.
+func runExitOutcome(state string, ok *bool) string {
+	switch state {
+	case "finished":
+		switch {
+		case ok == nil:
+			return "finished"
+		case *ok:
+			return "succeeded"
+		default:
+			return "failed"
+		}
+	case "lost", "canceled":
+		return state
+	case "unknown-run":
+		return "unknown_run"
+	case stateNotClaimant:
+		return "not_claimant"
+	default:
+		return "other"
+	}
+}
+
+// recordRunExit counts one delivered exit report. An empty pipeline (a Job
+// created before the pipeline annotation) is "unknown".
+func recordRunExit(meta exitMeta, outcome string, at time.Time) {
+	pipeline := meta.pipeline
+	if pipeline == "" {
+		pipeline = "unknown"
+	}
+	queueExecutorRunExitsTotal.WithLabelValues(pipeline, outcome).Inc()
+	queueExecutorRunExitTimestamp.WithLabelValues(pipeline, outcome).Set(float64(at.Unix()))
+	if meta.duration > 0 {
+		queueExecutorRunDurationSeconds.WithLabelValues(pipeline, outcome).Observe(meta.duration.Seconds())
+	}
+}
+
 func recordScheduleTick(success bool) {
 	outcome := "error"
 	if success {
@@ -107,12 +157,16 @@ func registerMetrics() {
 	metricsOnce.Do(func() {
 		prometheus.MustRegister(
 			credentialMetrics,
+			repositoryAgentsMetrics,
 			queueExecutorReadyGauge,
 			queueExecutorStateGauge,
 			queueExecutorPollsTotal,
 			queueExecutorClaimsTotal,
 			queueExecutorLaunchesTotal,
 			queueExecutorMemoryLaunchesTotal,
+			queueExecutorRunExitsTotal,
+			queueExecutorRunDurationSeconds,
+			queueExecutorRunExitTimestamp,
 			scheduleTicksTotal,
 			maintenanceTicksTotal,
 			maintenanceLastSuccessTimestamp,

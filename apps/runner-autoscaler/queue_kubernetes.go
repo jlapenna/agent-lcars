@@ -38,6 +38,28 @@ const queueClaimAnnotation = "agent-lcars.claim-fingerprint"
 // which its exit report must repeat (see directRunnerLaunch.runner).
 const queueRunnerAnnotation = "agent-lcars.claimed-by"
 
+// queuePipelineAnnotation records the claimed pipeline for exit metrics only.
+// It never takes part in claim identity or recovery matching.
+const queuePipelineAnnotation = "agent-lcars.pipeline"
+
+// jobExitMeta is the metrics metadata of a terminal queue Job: its pipeline
+// annotation and its wall time from start to the terminal condition.
+func jobExitMeta(j batch.Job) exitMeta {
+	meta := exitMeta{pipeline: j.Annotations[queuePipelineAnnotation]}
+	if j.Status.StartTime == nil {
+		return meta
+	}
+	for _, c := range j.Status.Conditions {
+		if (c.Type == batch.JobComplete || c.Type == batch.JobFailed) && c.Status == core.ConditionTrue && !c.LastTransitionTime.IsZero() {
+			if d := c.LastTransitionTime.Sub(j.Status.StartTime.Time); d > 0 {
+				meta.duration = d
+			}
+			break
+		}
+	}
+	return meta
+}
+
 const directRunnerHindsightMountPath = "/run/hindsight"
 const directRunnerHindsightTokenPath = "/run/hindsight/hindsight-api-token"
 
@@ -213,7 +235,7 @@ type kubernetesQueue struct {
 	retiring   map[types.UID]retiringClaim
 }
 
-type retiringClaim struct{ runID, runner, fingerprint string }
+type retiringClaim struct{ runID, runner, fingerprint, pipeline string }
 
 func (q *kubernetesQueue) trackRetiring(job *batch.Job, runID, runner, fingerprint string) {
 	q.retiringMu.Lock()
@@ -221,7 +243,7 @@ func (q *kubernetesQueue) trackRetiring(job *batch.Job, runID, runner, fingerpri
 	if q.retiring == nil {
 		q.retiring = map[types.UID]retiringClaim{}
 	}
-	q.retiring[job.UID] = retiringClaim{runID: runID, runner: runner, fingerprint: fingerprint}
+	q.retiring[job.UID] = retiringClaim{runID: runID, runner: runner, fingerprint: fingerprint, pipeline: job.Annotations[queuePipelineAnnotation]}
 }
 
 // reportRetired reports every tracked deletion whose Job no longer exists.
@@ -245,7 +267,7 @@ func (q *kubernetesQueue) reportRetired(jobs []batch.Job) {
 			delete(q.retiring, uid)
 			continue
 		}
-		q.exits.observeTerminated(claim.runID, claim.runner, claim.fingerprint)
+		q.exits.observeExit(claim.runID, claim.runner, claim.fingerprint, exitMeta{pipeline: claim.pipeline})
 	}
 }
 
@@ -359,7 +381,7 @@ func (q *kubernetesQueue) activeCount(ctx context.Context) (int, error) {
 		// until its lease expires. Only a Job whose name is derived from its
 		// own run annotation identifies a run.
 		if runID := j.Annotations[queueRunAnnotation]; runID != "" && j.Name == queueJobName(runID) {
-			q.exits.observeTerminated(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation])
+			q.exits.observeExit(runID, j.Annotations[queueRunnerAnnotation], j.Annotations[queueClaimAnnotation], jobExitMeta(j))
 		}
 	}
 	return n, nil
@@ -591,6 +613,9 @@ func (q *kubernetesQueue) job(l directRunnerLaunch) (*batch.Job, error) {
 	if l.runner != "" {
 		annotations[queueRunnerAnnotation] = l.runner
 	}
+	if l.pipeline != "" {
+		annotations[queuePipelineAnnotation] = l.pipeline
+	}
 	// Suspend until the run-token Secret exists. Recovery only unsuspends the
 	// same never-started Job; it never recreates or restarts an exited attempt.
 	job := &batch.Job{
@@ -719,7 +744,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		// No Job was submitted, so no worker can exist: settle the claim now
 		// instead of holding it until the start deadline expires.
 		if l.runToken != "" {
-			q.exits.observeTerminated(l.runID, l.runner, queueClaimFingerprint(l.runToken))
+			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline})
 		}
 		return err
 	}
@@ -729,7 +754,7 @@ func (q *kubernetesQueue) launch(ctx context.Context, l directRunnerLaunch) erro
 		// no worker exist and a retry would fail identically: settle the claim
 		// now, as above, instead of holding it until its placement deadline.
 		if l.runToken != "" {
-			q.exits.observeTerminated(l.runID, l.runner, queueClaimFingerprint(l.runToken))
+			q.exits.observeExit(l.runID, l.runner, queueClaimFingerprint(l.runToken), exitMeta{pipeline: l.pipeline})
 		}
 		return fmt.Errorf("creating queue Job: %w", err)
 	}

@@ -1533,6 +1533,31 @@ describe('handleWebhookDelivery tagged reply resume routing', () => {
 });
 
 describe('handleReconcile', () => {
+  it('reports repository agent catalog health, and omits it without failing when the read fails', async () => {
+    const { deps } = fixture();
+    const observation = {
+      version: 1 as const,
+      observedAt: T0,
+      agents: { enabled: 2, vetoed: 0, invalid: 1, unavailable: 0, removed: 0 },
+      sources: [{ repository: 'owner/repo', succeededAt: T0 }],
+    };
+    expect(
+      await handleReconcile({
+        ...deps,
+        observeRepositoryAgents: async () => observation,
+      }),
+    ).toMatchObject({ status: 200, body: { repositoryAgents: observation } });
+
+    const failed = await handleReconcile({
+      ...deps,
+      observeRepositoryAgents: async () => {
+        throw new Error('firestore unavailable');
+      },
+    });
+    expect(failed.status).toBe(200);
+    expect(failed.body).not.toHaveProperty('repositoryAgents');
+  });
+
   it('performs no GitHub lifecycle reads: a closed anchor is caught at claim time, not by a sweep', async () => {
     const { deps, store } = fixture();
     const runId = await dispatchedRun(deps, 'queued-before-close');

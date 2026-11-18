@@ -12,7 +12,10 @@ import {
   type Run,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import type { JobCredentialObservation } from '@agent-lcars/work';
+import type {
+  JobCredentialObservation,
+  RepositoryAgentObservation,
+} from '@agent-lcars/work';
 import { z } from 'zod';
 
 import type { GithubAnchorLifecycle } from '@/lib/github-anchor-lifecycle';
@@ -57,6 +60,8 @@ export interface OrchestratorRouteDeps {
   ) => Promise<void>;
   executeRepositoryJobs?: (deadline: number) => Promise<void>;
   observeJobCredentials?: () => Promise<JobCredentialObservation>;
+  /** Repository-owned agent catalog health; a failed read omits it. */
+  observeRepositoryAgents?: () => Promise<RepositoryAgentObservation>;
   /** Fence journalled credential IO before expiry can admit a successor. */
   recoverCredentialOperations?: () => Promise<{
     recovered: string[];
@@ -579,6 +584,14 @@ export async function handleReconcile(
     ]);
     for (const result of maintenance)
       if (result.status === 'rejected') throw result.reason;
+    // Health telemetry only: a failed catalog read omits the observation
+    // (the executor then reports it unavailable) and never fails maintenance.
+    const repositoryAgents = await deps
+      .observeRepositoryAgents?.()
+      .catch((error: unknown) => {
+        logger.error('Repository agent observation failed', error);
+        return undefined;
+      });
     const outboxProcessed =
       drained.dispatched.length +
       drained.reported.length +
@@ -592,6 +605,7 @@ export async function handleReconcile(
       status: 200,
       body: {
         ...(jobCredentials === undefined ? {} : { jobCredentials }),
+        ...(repositoryAgents === undefined ? {} : { repositoryAgents }),
         ...(credentialRecovery === undefined ? {} : { credentialRecovery }),
         lost: swept.lost.map((run) => run.runId),
         retried: swept.retried,

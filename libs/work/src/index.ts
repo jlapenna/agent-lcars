@@ -3,6 +3,7 @@ export * from './cron';
 export * from './derive';
 export * from './job-secrets';
 export * from './openapi';
+export * from './repository-agents';
 export * from './repository-job-limits';
 export * from './spec';
 export * from './ulid';
