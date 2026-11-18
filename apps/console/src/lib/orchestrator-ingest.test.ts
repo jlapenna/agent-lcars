@@ -1284,7 +1284,7 @@ describe('unified cross-model PR review intake', () => {
     });
   });
 
-  it('ignores draft PRs and dependency bot PRs on opened', () => {
+  it('ignores drafts and requests a review for dependency bot PRs in LCARS', () => {
     expect(
       interpretDelivery({
         event: 'pull_request',
@@ -1323,7 +1323,7 @@ describe('unified cross-model PR review intake', () => {
           sender: { login: 'renovate[bot]' },
         },
       }),
-    ).toEqual({ kind: 'ignore', reason: 'excluded-review-author' });
+    ).toMatchObject({ kind: 'request' });
   });
 
   it('supports the unified review label and redirects same-model review:* labels to the opposite model', () => {

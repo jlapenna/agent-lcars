@@ -1,0 +1,15 @@
+name: LCARS review event
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions: {}
+
+jobs:
+  notify:
+    if: github.event.review.user.login == 'agent-lcars[bot]'
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    steps:
+      - run: echo "LCARS review updated"
