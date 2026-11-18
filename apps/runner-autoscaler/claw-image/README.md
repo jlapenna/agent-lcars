@@ -52,6 +52,10 @@ report, so reading it grants no new authority. The zone Secret items are
 mounted for the agent's tools by design; scope each runtime's items to what
 that agent may use. OpenClaw's Gateway and its token are in the same
 position: a tool the agent may run could reach the Gateway as an operator.
+So is the model key: the launcher keeps it out of the environment a host
+command inherits, which stops it from showing up in a command's output by
+accident, but the launch config that holds it is readable by the same UID.
+None of this is isolation; a harness in its own container is (#3412).
 A launcher SIGTERM (cancellation or pod deadline) stops the harness's process
 group and OpenClaw's Gateway, and still settles the run.
 

@@ -110,9 +110,11 @@ costs one attempt.
   fails the attempt, naming the missing key or `Authentication required`.
   For OpenClaw, a credential its config names as an `env` SecretRef is
   written into the launch config and left out of the Gateway's environment,
-  so a command the agent is allowed to run does not inherit the model key. The default
-  runtime holds only a model key, so a `claude` or `codex` agent names a
-  profile whose runtime carries its harness's login and lists the harness
+  so a command the agent is allowed to run does not inherit the model key.
+  That file is readable by the agent's user, so this keeps the key out of a
+  command's output, not out of an agent's reach. The default runtime holds
+  only a model key, so a `claude` or `codex` agent names a profile whose
+  runtime carries its harness's login and lists the harness
   ([profiles](#profiles)).
 - **Evidence.** One set of rules for every harness, read from the ACP
   session. An answer with no text is a failed attempt. So is a tool call that
