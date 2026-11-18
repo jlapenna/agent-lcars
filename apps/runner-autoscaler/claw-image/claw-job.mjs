@@ -95,14 +95,19 @@ export function comparableConfig(config) {
 // normalization depends on the image, but it may only narrow the agent:
 //   - disable a bundled skill (`skills.entries.<name>.enabled: false`), which
 //     Doctor does for skills whose binaries the image lacks;
-//   - enable the plugin of a model provider the config already declares
-//     (`plugins.entries.<provider>.enabled: true`);
+//   - enable a plugin that, by the image's own plugin manifests
+//     (`pluginProviders`), owns a model provider the config declares
+//     (`plugins.entries.<plugin>.enabled: true`), unless the source set it;
 //   - add an empty agent entry (`agents.entries.<name>: {}`), an agent with
 //     no overrides of the config's defaults.
 // Returns the dotted paths of every other change (OpenClaw's `meta`/`wizard`
 // stamps aside); any such change fails the attempt.
-export function doctorChanges(source, after) {
+export function doctorChanges(source, after, pluginProviders = new Map()) {
   const providers = new Set(Object.keys(source?.models?.providers ?? {}));
+  const ownsDeclaredProvider = (plugin) =>
+    [...(pluginProviders.get(plugin) ?? [])].some((provider) =>
+      providers.has(provider),
+    );
   const before = nodes(JSON.parse(comparableConfig(source)));
   const normalized = nodes(JSON.parse(comparableConfig(after)));
   const refused = [];
@@ -128,7 +133,7 @@ export function doctorChanges(source, after) {
       root === 'plugins' &&
       now === 'true' &&
       was === undefined &&
-      providers.has(name)
+      ownsDeclaredProvider(name)
     )
       continue;
     if (
@@ -160,6 +165,57 @@ function nodes(value, prefix = [], out = new Map()) {
     out.set(prefix.join('\u0000'), JSON.stringify(value));
   }
   return out;
+}
+
+// Which model providers each plugin bundled in this image owns, from its
+// `openclaw.plugin.json` (`providers` and `autoEnableWhenConfiguredProviders`).
+// The manifests ship in the image, so a repository cannot widen this map.
+export async function bundledPluginProviders(openclaw) {
+  const extensions = join(
+    dirname(await realpath(openclaw)),
+    'dist',
+    'extensions',
+  );
+  const owners = new Map();
+  let entries;
+  try {
+    entries = await readdir(extensions, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === 'ENOENT') return owners;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    let manifest;
+    try {
+      manifest = JSON.parse(
+        await readFile(
+          join(extensions, entry.name, 'openclaw.plugin.json'),
+          'utf8',
+        ),
+      );
+    } catch (error) {
+      if (error.code === 'ENOENT') continue;
+      throw error;
+    }
+    const provides = [
+      ...(manifest.providers ?? []),
+      ...(manifest.autoEnableWhenConfiguredProviders ?? []),
+    ].filter((provider) => typeof provider === 'string');
+    owners.set(manifest.id ?? entry.name, new Set(provides));
+  }
+  return owners;
+}
+
+// The config the turn runs: the source with the agent's workspace set to the
+// turn's workspace, so Doctor judges skill readiness (a repository skill
+// replacing a bundled one) against the same skills the turn loads.
+export function launchConfig(source, workspace) {
+  const config = structuredClone(source);
+  config.agents ??= {};
+  config.agents.defaults ??= {};
+  config.agents.defaults.workspace = workspace;
+  return config;
 }
 
 function sortKeys(value) {
@@ -456,8 +512,9 @@ export async function prepareState({
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  const pinned = JSON.parse(
-    await readFile(join(agentDir, 'config.json'), 'utf8'),
+  const pinned = launchConfig(
+    JSON.parse(await readFile(join(agentDir, 'config.json'), 'utf8')),
+    workspace,
   );
   const configPath = join(stateDir, 'agent-config.json');
   await writeFile(configPath, `${JSON.stringify(pinned, null, 2)}\n`, {
@@ -495,6 +552,7 @@ export async function prepareState({
   const refused = doctorChanges(
     pinned,
     JSON.parse(await readFile(configPath, 'utf8')),
+    await bundledPluginProviders(openclaw),
   );
   if (refused.length > 0)
     throw new ClawFailure(

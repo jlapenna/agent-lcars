@@ -16,6 +16,7 @@ import { test } from 'node:test';
 import {
   agentDigest,
   comparableConfig,
+  bundledPluginProviders,
   doctorChanges,
   main,
   materializeAgent,
@@ -77,7 +78,9 @@ const args = process.argv.slice(2);
 const log = behaviour.FAKE_LOG;
 const messageAt = args.indexOf('--message-file');
 const message = messageAt < 0 ? null : fs.readFileSync(args[messageAt + 1], 'utf8');
-if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message }) + '\\n');
+const configAt = args.indexOf('--config');
+const config = configAt < 0 ? null : JSON.parse(fs.readFileSync(args[configAt + 1], 'utf8'));
+if (log) fs.appendFileSync(log, JSON.stringify({ args, key: process.env.LITELLM_API_KEY ?? null, message, config }) + '\\n');
 const sub = args.slice(0, 2).join(' ');
 if (args[0] === 'config' && args[1] === 'validate') {
   console.log(JSON.stringify({ valid: behaviour.FAKE_INVALID !== '1' }));
@@ -232,10 +235,52 @@ test("an un-normalized source config runs on Doctor's narrowed copy", async () =
   assert.equal(result.outcome, 'report');
   assert.deepEqual(completion(calls), result);
   const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
-  assert.equal(JSON.parse(log.at(-1)).args[1], 'exec');
+  const exec = JSON.parse(log.at(-1));
+  assert.equal(exec.args[1], 'exec');
+  // The turn runs Doctor's copy, whose workspace is the turn's own.
+  assert.equal(exec.config.skills.entries.gog.enabled, false);
+  assert.equal(
+    exec.config.agents.defaults.workspace,
+    exec.args[exec.args.indexOf('--cwd') + 1],
+  );
+});
+
+test('plugin ownership comes from the bundled plugin manifests', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claw-plugins-'));
+  const bin = join(root, 'openclaw.mjs');
+  await writeFile(bin, '');
+  for (const [id, manifest] of [
+    [
+      'google',
+      {
+        id: 'google',
+        providers: ['google'],
+        autoEnableWhenConfiguredProviders: ['google-vertex'],
+      },
+    ],
+    ['litellm', { id: 'litellm', providers: ['litellm'] }],
+  ]) {
+    await mkdir(join(root, 'dist', 'extensions', id), { recursive: true });
+    await writeFile(
+      join(root, 'dist', 'extensions', id, 'openclaw.plugin.json'),
+      JSON.stringify(manifest),
+    );
+  }
+  await mkdir(join(root, 'dist', 'extensions', 'no-manifest'));
+  assert.deepEqual(
+    await bundledPluginProviders(bin),
+    new Map([
+      ['google', new Set(['google', 'google-vertex'])],
+      ['litellm', new Set(['litellm'])],
+    ]),
+  );
 });
 
 test("Doctor may only disable skills and enable declared providers' plugins", () => {
+  const owners = new Map([
+    ['litellm', new Set(['litellm'])],
+    ['google', new Set(['google', 'google-vertex'])],
+  ]);
   const source = {
     models: { providers: { litellm: { baseUrl: 'https://llm.test' } } },
     tools: { profile: 'minimal', deny: ['exec'] },
@@ -249,18 +294,24 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
     skills: { entries: { tmux: { enabled: false }, gog: { enabled: false } } },
     agents: { entries: { main: {} } },
   };
-  assert.deepEqual(doctorChanges(source, narrowed), []);
+  assert.deepEqual(doctorChanges(source, narrowed, owners), []);
   assert.deepEqual(
-    doctorChanges(source, {
-      ...narrowed,
-      plugins: {
-        entries: { litellm: { enabled: true }, browser: { enabled: true } },
+    doctorChanges(
+      source,
+      {
+        ...narrowed,
+        plugins: {
+          entries: { litellm: { enabled: true }, browser: { enabled: true } },
+        },
+        skills: {
+          entries: { tmux: { enabled: true }, gog: { enabled: true } },
+        },
+        tools: { profile: 'minimal', deny: [] },
+        agents: { entries: { main: { tools: { profile: 'coding' } } } },
+        gateway: {},
       },
-      skills: { entries: { tmux: { enabled: true }, gog: { enabled: true } } },
-      tools: { profile: 'minimal', deny: [] },
-      agents: { entries: { main: { tools: { profile: 'coding' } } } },
-      gateway: {},
-    }),
+      owners,
+    ),
     [
       'agents.entries.main.tools.profile',
       'gateway',
@@ -277,10 +328,20 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
     skills: { entries: {} },
     agents: { entries: {} },
   };
-  assert.deepEqual(doctorChanges(empty, narrowed), []);
-  assert.deepEqual(doctorChanges(source, { ...source, gateway: {} }), [
+  assert.deepEqual(doctorChanges(empty, narrowed, owners), []);
+  assert.deepEqual(doctorChanges(source, { ...source, gateway: {} }, owners), [
     'gateway',
   ]);
+  // A provider owned by a differently named plugin (google-vertex → google).
+  const vertex = { models: { providers: { 'google-vertex': {} } } };
+  assert.deepEqual(
+    doctorChanges(
+      vertex,
+      { ...vertex, plugins: { entries: { google: { enabled: true } } } },
+      owners,
+    ),
+    [],
+  );
   // A plugin the source disabled stays disabled; Doctor removing settings is
   // a change too.
   const disabled = {
@@ -288,14 +349,22 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
     plugins: { entries: { litellm: { enabled: false } } },
   };
   assert.deepEqual(
-    doctorChanges(disabled, {
-      ...disabled,
-      plugins: { entries: { litellm: { enabled: true } } },
-    }),
+    doctorChanges(
+      disabled,
+      {
+        ...disabled,
+        plugins: { entries: { litellm: { enabled: true } } },
+      },
+      owners,
+    ),
     ['plugins.entries.litellm.enabled'],
   );
   assert.deepEqual(
-    doctorChanges(source, { models: source.models, skills: source.skills }),
+    doctorChanges(
+      source,
+      { models: source.models, skills: source.skills },
+      owners,
+    ),
     ['tools.deny', 'tools.profile'],
   );
 });
