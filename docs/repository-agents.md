@@ -256,10 +256,14 @@ array in `AGENT_LCARS_AGENT_PROFILES`, next to the job profiles, each with a
   image carries that harness and its Secret holds the harness's login. An
   agent whose harness its profile does not list is refused at admission.
 
-The **default profile** runs on the shared executor's `claw-default` runtime,
-which holds only a model key and runs only `openclaw` agents. An OpenClaw
+The **default profile** runs on the `claw-default` runtime, which holds only
+a model key and runs only `openclaw` agents. Homelab's runtimes-only zone
+executor declares it; the shared executor's grant lists no claw pipeline. An OpenClaw
 agent that needs no other credential therefore runs from a repository PR
 alone.
+The name `default` is reserved: it resolves directly to `claw-default`, and a
+`default` entry in `AGENT_LCARS_AGENT_PROFILES` makes profile parsing fail,
+including for admissions that would use the built-in default.
 
 Credentials belong to the runtime, not the profile: every Job on a runtime
 mounts that runtime's Secret, and several profiles can name one runtime. So
@@ -383,7 +387,7 @@ agent round admitted through the generic route.
    `.lcars/agents/investigator/`. It keeps runtime `claw-homelab-ops` (today's
    investigator Secret), and an operator adds profile `homelab-ops` for
    `jlapenna/homelab`.
-2. The shared executor gains runtime `claw-default` with a model key only.
+2. Homelab's zone executor gains runtime `claw-default` with a model key only.
    `.lcars/agents/smoke/` in this repository is its canary (done).
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic

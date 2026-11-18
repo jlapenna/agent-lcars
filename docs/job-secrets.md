@@ -241,7 +241,8 @@ the existing renewable App-token path or explicitly rotate stored user tokens.
 
 To revoke a job, submit the same grant with `enabled:false`. To block a secret
 for all jobs, disable its registry record. Disabled secrets can still receive
-admin uploads and promotions; enabling delivery validates the promoted version. These stop subsequent delivery; they
+admin uploads and promotions; enabling validates the promoted version if one exists. A secret disabled
+before its first promotion can be enabled and still has no deliverable version. These stop subsequent delivery; they
 cannot erase a value already copied into a worker. Emergency containment also
 requires cancelling affected Work and revoking/rotating the credential at its
 issuer. Two sets referencing the same broad token have the same issuer-side
@@ -252,15 +253,16 @@ permissions.
 All administration paths below are under `/api/work/v1/credentials`, require
 `secrets.admin`, and return metadata only. All Work responses use `no-store`.
 
-| Method/path                        | Operation                                             |
-| ---------------------------------- | ----------------------------------------------------- |
-| `GET /secrets`, `/sets`, `/grants` | List bounded metadata                                 |
-| `POST /secrets`                    | Register a provisioned container's name/type/login    |
-| `POST /secrets/{name}/versions`    | Upload `{"value":"..."}` and return `{"version":"N"}` |
-| `POST /secrets/{name}/promote`     | Validate/promote `{"version":"N"}`                    |
-| `POST /secrets/{name}/disable`     | Stop further delivery; body `{}`                      |
-| `POST /sets`                       | Create an immutable set revision                      |
-| `POST /grants`                     | Create/update/revoke an exact job grant               |
+| Method/path                        | Operation                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------ |
+| `GET /secrets`, `/sets`, `/grants` | List bounded metadata                                                    |
+| `POST /secrets`                    | Register a provisioned container's name/type/login                       |
+| `POST /secrets/{name}/versions`    | Upload `{"value":"..."}` and return `{"version":"N"}`                    |
+| `POST /secrets/{name}/promote`     | Validate/promote `{"version":"N"}`                                       |
+| `POST /secrets/{name}/disable`     | Stop further delivery; body `{}`                                         |
+| `POST /secrets/{name}/enable`      | Resume delivery; validates the promoted version if one exists; body `{}` |
+| `POST /sets`                       | Create an immutable set revision                                         |
+| `POST /grants`                     | Create/update/revoke an exact job grant                                  |
 
 The separate runtime delivery route uses the existing run-token contract,
 documented in the generated Work OpenAPI. No runtime route lists the store.

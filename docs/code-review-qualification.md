@@ -58,7 +58,10 @@ home, where the in-container evidence collector reads them. The container
 drops to the caller's UID. The image's normal runner UID and setup
 are checked by the image build gates; this caller-authenticated test does not
 establish LCARS control-plane dispatch coverage. Never change accounts or
-models to evade an exhausted provider quota.
+models to evade an exhausted provider quota. Dispatched PR reviews handle quota through
+the control plane instead: they fall back across models and then wait for
+quota with a bounded backoff
+([explicit provider fallback](lifecycle-systems.md#explicit-provider-fallback)).
 
 The explicit PR argument selects the current candidate. The historical anchors
 remain fixed. The committed cases cover the actual candidate PR, the earlier real PR revision

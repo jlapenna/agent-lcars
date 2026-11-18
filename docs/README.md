@@ -21,6 +21,7 @@ Use this index to retrieve the smallest current contract for a task.
 | Tracker-source HTTP API for external clients                           | [`api/tracker-sources.md`](api/tracker-sources.md)             |
 | Linear issue tracker and operator workflows                            | [`linear.md`](linear.md)                                       |
 | Repository-owned jobs                                                  | [`repository-jobs.md`](repository-jobs.md)                     |
+| Repository-owned claw agents                                           | [`repository-agents.md`](repository-agents.md)                 |
 
 ## Identity, credentials, and security
 
@@ -56,6 +57,22 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
 | OpenCode context limits          | [`opencode-context-limit.md`](opencode-context-limit.md)                     |
 | Hooks-based session telemetry    | [`hooks-telemetry-design.md`](hooks-telemetry-design.md)                     |
 
+## Component READMEs
+
+| Component                                           | README                                                                                          |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| QueueExecutor and direct-runner image               | [`apps/runner-autoscaler/README.md`](../apps/runner-autoscaler/README.md)                       |
+| Claw runner image                                   | [`apps/runner-autoscaler/claw-image/README.md`](../apps/runner-autoscaler/claw-image/README.md) |
+| Telemetry watcher and `lcars` CLI                   | [`apps/telemetry-watcher/README.md`](../apps/telemetry-watcher/README.md)                       |
+| GitHub Actions metrics exporter                     | [`apps/github-actions-exporter/README.md`](../apps/github-actions-exporter/README.md)           |
+| Work API schemas and client                         | [`libs/work/README.md`](../libs/work/README.md)                                                 |
+| Orchestrator state machine                          | [`libs/orchestrator/README.md`](../libs/orchestrator/README.md)                                 |
+| Shared dispatch contracts                           | [`libs/dispatch-contracts/README.md`](../libs/dispatch-contracts/README.md)                     |
+| Console React providers and browser error reporting | [`libs/app-providers/README.md`](../libs/app-providers/README.md)                               |
+| Environment-variable accessors                      | [`libs/env-vars/README.md`](../libs/env-vars/README.md)                                         |
+| Session transcript telemetry                        | [`libs/telemetry/README.md`](../libs/telemetry/README.md)                                       |
+| Server environment helpers                          | [`libs/util-server/README.md`](../libs/util-server/README.md)                                   |
+
 ## Product specification
 
 | Need                                        | Document                                                                                     |
@@ -72,8 +89,10 @@ with the [local console/control-plane SUT](playbooks/local-console-sut.md).
   resulting code and canonical docs before treating them as current behavior.
 - The QueueExecutor failover design
   ([#2199](https://github.com/jlapenna/agent-lcars/issues/2199)) is retired:
-  its capacity receipts shipped disabled and were deleted 2026-10-29; the
-  executor stays a singleton.
+  its capacity receipts shipped disabled and were deleted 2026-10-29. There is
+  one shared QueueExecutor; optional runtimes-only zone executors serve only
+  their declared claw runtimes (`runtimes_only` in
+  `apps/runner-autoscaler/queue_kubernetes.go`, #3351).
 - Dated audit and support-evidence documents describe the named observation,
   revision, and conditions; they are not live state:
   [scale-set Support evidence](scale-set-support-evidence.md) (#1716).

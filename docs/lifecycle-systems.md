@@ -91,10 +91,22 @@ and `lcars work create/redispatch --fallback-pipelines codex,opencode` expose th
 same contract; `--fallback-pipelines none` disables an inherited list. GitHub
 pull-request review runs admitted through `pr-review-routing.ts` populate
 `spec.fallbackPipelines` automatically under principal `svc:github-pr-review`
-(`codex` PR -> `claude` with `['agy']`; `claude` PR -> `codex` with `['agy']`;
+(listed before the author fallback is appended: `codex` PR -> `claude` with
+`['agy']`; `claude` PR -> `codex` with `['agy']`;
 `agy` PR -> `claude` with `['codex']`, or `codex` with `['claude']` when
 `review:codex` is requested; `opencode`/human PR -> `claude` with
-`['codex', 'agy']`).
+`['codex', 'agy']`). The selector then appends a recognized authoring
+pipeline as the last alternative only when it is supported, differs from the
+primary and is not already listed, so an OpenCode-authored review gets
+`['codex', 'agy', 'opencode']` and a human-authored one keeps
+`['codex', 'agy']`. Admission records the resulting order on
+`run.providerFallback.allowedPipelines`. That orders preference only; it does not
+guarantee every opposite model was tried first. Fallback prefers the first
+alternative that is available now, so when a `claude` review of an `agy` PR
+hits its limit while another run holds Codex's exclusive claim, the successor
+can go straight to `agy` although Codex never hit a limit
+(`selectFallbackPipeline` in `libs/orchestrator/src/provider-fallback.ts`;
+live-claim ceilings in `queue-admission-status.ts`).
 
 Admission intersects the list with the authenticated principal's pipeline
 grant. A failed `provider-limit` report can atomically settle its attempt,
@@ -112,8 +124,21 @@ records: `usage_limit_reached`, `insufficient_quota`,
 It prefers an available authorized alternative. When all remaining alternatives
 are temporarily occupied or cooling down, the first authorized unattempted
 alternative remains a fresh queued intent; ordinary claim ceilings and cooldowns
-hold it until it can run. Missing opt-in, revoked authority or exhausted
-alternatives still settle without a successor.
+hold it until it can run. Missing opt-in or revoked authority settle without a
+successor, as do exhausted alternatives for native Work and non-review runs.
+
+A GitHub PR review (`mode: review`) whose authorized alternatives are all
+exhausted waits for quota instead of failing (#3300): the decision mints a
+deferred successor on the round's first provider, with
+`providerFallback.providerWait` recording the attempt and `retryAt`. The wait
+starts at 15 minutes and doubles up to 6 hours, for at most
+`MAX_PROVIDER_WAITS` (7) waits, about 20 hours in all; after that the review
+settles failed. Each wait still requires current authority, the claim fence
+still applies the provider's cooldown, and queued-cooldown rerouting can move
+the due run to a free alternative. Sources: `waitForProvider` in
+`libs/orchestrator/src/provider-fallback.ts` and `MAX_PROVIDER_WAITS` in
+`model.ts`; waiting runs are counted by the `provider_wait_runs` lifecycle
+gauge.
 A `provider-capacity` report is the same availability class with no window to wait on: the direct
 runner derives it from the provider's own structured failure events when a round stops before any
 final message, so an empty last message cannot degrade it to a generic agent failure. It holds that
@@ -169,9 +194,11 @@ Run provenance records the original intent, predecessor, triggering failure
 and attempted providers. Alternatives are tried deterministically without
 cycles, and cross-provider successors drop session/transcript resume artifacts
 while retaining the human request and context. Work/task/conversation views
-and outcome delivery identify fresh fallback attempts. Source tests and local
-emulator proof qualify this mechanism; protected CI, normal deployment and a
-real provider-limit journey remain separate delivery gates.
+and outcome delivery identify fresh fallback attempts. A real provider-limit
+journey has completed in production: on 2026-11-10 a review of
+`jlapenna/agent-lcars#3292` went Codex, then Antigravity (`provider-limit`),
+then Claude, which posted the review (FL-IN-10 in the
+[fleet orchestration spec](product/fleet-orchestration-product-spec.md)).
 
 ## Console acknowledgement and maintenance
 
@@ -186,6 +213,36 @@ lease expiry and durable outbox retry. A failed or held maintenance pass cannot
 delay a successful merge acknowledgement. Pending entries and expired drain
 leases remain eligible for the next five-minute tick; no request-lifetime
 background promise carries required work.
+
+One tick (`handleReconcile` in `apps/console/src/lib/orchestrator-routes.ts`)
+runs, in order:
+
+1. Codex credential-operation recovery.
+2. `sweepExpired`: lost leases and startup deadlines, with bounded retry.
+3. `rerouteQueued`: queued runs blocked by another run's provider cooldown.
+4. One outbox drain of at most 30 entries. The reply's
+   `outboxContinuationNeeded` is a count-based hint: it counts only
+   dispatched, reported and failed entries, so a drain that spent claim
+   slots on other outcomes (such as a handoff-summary admission) can return
+   `false` with entries left. The next tick drains whatever remains either
+   way.
+5. In parallel: one queued summary Work attempt (inbox and handoff summaries),
+   repository maintenance (`maintainRepositoryJobs`: job and claw-agent
+   catalog refresh plus job schedules), and the job-credential observation.
+
+The tick sets one deadline 45 seconds after it starts, before step 1. Summary
+Work and repository maintenance receive that deadline, and the
+repository-agent catalog observation, started before step 5, is raced against
+it. The job-credential observation is awaited without it, so a slow Firestore
+read can hold the response past 45 seconds. Separately, the production ticker
+gives the whole request a 60-second HTTP timeout. The catalog observation is attached to the reply as `repositoryAgents` only when it
+finishes in time, is valid on the wire and keeps the reply within its 60 KiB
+budget; otherwise it is omitted without failing maintenance.
+
+Inbox Web Push delivery runs on the schedule tick instead
+(`deliverInboxPush` in `apps/console/src/lib/schedule-router.ts`), after due
+schedules are admitted; a delivery failure is logged and does not fail the
+tick.
 
 The hermetic Inbox journey keeps a 20-second merge-action allowance, distinct
 from #2201's navigation-to-ready phone p95 contract.

@@ -6,27 +6,46 @@ exact contract.
 
 ## System trajectory
 
-An inbound GitHub event, native Work request, schedule tick, or reply enters the
-console's Work API and orchestration layer. The orchestrator owns admission and
-durable state, writes claimable queue work, and reconciles leases and outcomes.
-QueueExecutor reserves capacity, launches the direct-runner environment, and
-reports completion. The console exposes the resulting decisions, active runs,
-and session evidence to maintainers.
+An inbound GitHub or Linear webhook, native Work request, schedule tick, or
+reply enters the console's Work API and orchestration layer. Repository-owned
+jobs (`.lcars/jobs`) and claw agents (`.lcars/agents`) are cataloged from each
+control-plane repository's default branch and admitted through the same layer.
+The orchestrator owns admission and durable state, writes claimable queue work,
+and reconciles leases and outcomes. For coding, Goose and claw runs the
+QueueExecutor reserves capacity and launches a Kubernetes Job (the
+direct-runner image for coding and Goose pipelines, the claw image for claw
+runtimes, served by the shared executor or a runtimes-only zone executor), then
+reports the exit. Durable inbox and handoff summary runs never reach the
+executor: the console claims and executes them itself as `console-model-call`
+(`apps/console/src/lib/inbox-summary-work.ts`). The outbox
+delivers outcomes back to their origin: GitHub comments, Linear state, and
+outcome webhooks for configured native channels with a threaded origin,
+authenticated by an audience-specific Google ID token rather than a payload
+signature (`AGENT_LCARS_OUTCOME_WEBHOOKS`,
+`apps/console/src/lib/outcome-webhook.ts`). The console exposes the resulting
+decisions, active runs, and session evidence to maintainers.
 
 ```text
-GitHub / Work API / schedule
+GitHub / Linear / Work API / schedule / .lcars jobs + agents
             |
             v
   console + orchestrator ----> durable work/run/outbox state
             |                              |
             v                              v
-       claimable queue ----> QueueExecutor / direct runner
-                                      |
-                                      v
-                         provider session + deliverable evidence
-                                      |
-                                      v
-                         completion / reconcile / console
+       claimable queue ----> QueueExecutor (shared or zone)
+            |                         |
+            v                         v
+   console-model-call     Kubernetes Job: direct runner or claw image
+   (summary Work only)                |
+            |                         v
+            |           provider session + deliverable evidence
+            |                         |
+            +------------+------------+
+                         v
+      completion / reconcile / outbox (GitHub, Linear, webhooks)
+                         |
+                         v
+                      console
 ```
 
 ## Ownership map
@@ -36,8 +55,13 @@ GitHub / Work API / schedule
 | `apps/console/src/app/api/work`, console server modules | Authenticated Work API, webhook intake, operator and console surfaces                          | API contract tests, console build/E2E, live logs           |
 | `libs/orchestrator`                                     | Task/run state machine, admission, leases, retry, reconciliation, outbox                       | Model/decision tests and store integration tests           |
 | `libs/work`                                             | Shared Work API schemas and client-facing contracts                                            | OpenAPI freshness and consumer tests                       |
+| `libs/dispatch-contracts`                               | Shared pipeline registry, budgets, and cross-system dispatch formats                           | Contract tests in every consuming system                   |
+| `libs/telemetry`                                        | Session transcript reduction into structured summaries                                         | Reducer tests against recorded transcripts                 |
 | `apps/runner-autoscaler` and direct-runner image        | Queue claims, capacity reservation, bootstrap, provider execution, completion reporting        | Go/contract tests, image checks, controlled smoke evidence |
+| `apps/runner-autoscaler/claw-image`                     | Claw agent launcher: verified definition, config normalization, one OpenClaw turn              | Launcher tests and real-image checks                       |
 | `apps/telemetry-watcher`                                | Provider hook client, runner finalize/resume, and session publication                          | Adapter tests and session evidence                         |
+| `apps/github-actions-exporter`                          | GitHub Actions run and job metrics                                                             | Exporter tests and live metrics                            |
+| `packages/fleet-tools`                                  | Worker policy hooks and `fleet-*` commands installed on agent hosts and runners                | Package tests and hook behavior in dispatched runs         |
 | `.github/actions` and reusable workflows                | Published fleet CI capabilities                                                                | Published-action contracts and member-repo consumer checks |
 | `agents/shared/skills`                                  | Headless worker behavior consumed across the fleet                                             | Runtime loading tests and observed dispatched trajectories |
 | `infra/github-ruleset` and `infra/terraform`            | Repository policy and GCP resource declarations                                                | Protected Terraform plan/apply path and drift checks       |
