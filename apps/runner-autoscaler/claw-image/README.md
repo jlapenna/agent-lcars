@@ -61,8 +61,8 @@ Each step fails the attempt closed with a `runner-failed` completion:
 4. `openclaw doctor --fix --non-interactive` initializes state (without it
    every config-pinned turn fails with "Auth profile read requested an
    uncaptured shared owner") and normalizes the config copy for this image.
-   The turn runs on that copy. Doctor may only narrow the agent; any other
-   change fails the attempt and names the changed settings (below).
+   The turn runs on that copy without Doctor's skill toggles; any change
+   beyond the accepted ones fails the attempt and names the settings (below).
 5. `openclaw approvals set --file /work/agent/approvals.json`.
 6. `openclaw agent exec --config … --state-dir … --message-file … --cwd … --json`
    under the outer deadline. OpenClaw's stderr is never forwarded, because it
@@ -77,34 +77,29 @@ Each step fails the attempt closed with a `runner-failed` completion:
 ## Agent config normalization
 
 An agent's `config.json` is a source config: it does not have to match any
-particular image. Doctor's normalization depends on the image (for example it
-disables bundled skills whose binaries are absent), so the launcher runs it on
-a copy inside the image that executes the turn, and the turn uses that copy.
-The verified definition under `/work/agent` is never modified.
+particular image. Doctor's normalization depends on the image, so the launcher
+validates the source as written, runs Doctor on a copy inside the image that
+executes the turn, and builds the turn's config from the result
+(`doctorChanges` and `turnConfig` in `claw-job.mjs`). The verified definition
+under `/work/agent` is never modified, and the launcher gives Doctor no
+workspace of its own, so Doctor's file repairs never reach the turn's.
 
-The source config is validated as written. Doctor then runs from a
-disposable copy of the turn's workspace, as the turn runs from its own (so
-relative paths such as `skills.load.extraDirs` resolve to equivalent places),
-and the config copy's `agents.defaults.workspace` and every roster entry's
-`workspace` point at it (overriding source values, as `agent exec --cwd`
-does). Doctor
-therefore judges skill readiness against the skills the turn loads (a
-repository skill replacing a bundled one keeps it enabled), while its file
-repairs (such as its `TOOLS.md` migration) never reach the turn. The turn's
-config then points those workspaces back at the turn's own workspace.
+The turn keeps only these Doctor changes:
 
-Doctor may only narrow the agent (`doctorChanges` in `claw-job.mjs`):
+- enabling a plugin that owns a model provider the config declares
+  (`plugins.entries.<plugin>.enabled: true`, not one the config set).
+  Ownership comes from the image's bundled
+  `dist/extensions/*/openclaw.plugin.json` (`providers`,
+  `autoEnableWhenConfiguredProviders`), matched case-insensitively as OpenClaw
+  does, so `google-vertex` authorizes the `google` plugin and `LITELLM` the
+  `litellm` plugin;
+- adding an empty agent entry (`agents.entries.<name>: {}`).
 
-- disable a skill (`skills.entries.<name>.enabled: false`): a bundled skill
-  whose binaries the image lacks, or a repository skill whose declared
-  requirements this image does not meet;
-- enable a plugin that owns a model provider the config declares
-  (`plugins.entries.<plugin>.enabled: true`, not one the config set). Ownership
-  comes from the image's bundled `dist/extensions/*/openclaw.plugin.json`
-  (`providers`, `autoEnableWhenConfiguredProviders`), matched
-  case-insensitively as OpenClaw does, so `google-vertex` authorizes the
-  `google` plugin and `LITELLM` the `litellm` plugin;
-- add an empty agent entry (`agents.entries.<name>: {}`).
+Skill toggles Doctor writes (`skills.entries.<name>.enabled`, for bundled
+skills whose binaries the image lacks) are discarded, not carried: Doctor
+judges readiness outside the turn's working directory, workspace and exec
+defaults, while OpenClaw already filters ineligible skills at load time in the
+turn itself. The turn runs with the source's own `skills` settings.
 
 Any other change, apart from OpenClaw's `meta`/`wizard` stamps, fails the
 attempt with `runner-failed` naming the changed settings, for example

@@ -108,10 +108,10 @@ another's credentials gets its own profile.
     SHA, so nothing large is stored inline. A report too large for the run
     record is stored out of line, not truncated.
   - The launcher materializes the files into `/work/agent` and checks the
-    digest. It then runs `config validate`, `doctor --fix` on a copy (which
-    may only narrow the reviewed config for the image it runs on; any other
-    change fails the run and names the changed settings), `approvals set` and
-    `agent exec`. A runtime's image can therefore change without every
+    digest. It then runs `config validate`, `doctor --fix` on a copy (the turn
+    keeps only accepted changes such as the declared provider's plugin, and
+    never Doctor's skill toggles; any other change fails the run and names the
+    changed settings), `approvals set` and `agent exec`. A runtime's image can therefore change without every
     repository re-normalizing its agents.
 
   Zone ConfigMaps carrying agent definitions are retired.

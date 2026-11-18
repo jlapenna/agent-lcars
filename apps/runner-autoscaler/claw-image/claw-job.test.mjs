@@ -18,13 +18,13 @@ import {
   bundledPluginProviders,
   comparableConfig,
   doctorChanges,
-  launchConfig,
   main,
   materializeAgent,
   MAX_REPORT_BYTES,
   readBrief,
   secretEnvironment,
   settle,
+  turnConfig,
 } from './claw-job.mjs';
 
 const RUN_ID = 'run-123';
@@ -99,10 +99,10 @@ if (args[0] === 'doctor') {
   config.meta = { lastTouchedVersion: 'fake' };
   config.wizard = { lastRunAt: new Date().toISOString() };
   if (behaviour.FAKE_DOCTOR_WIDENS === '1') config.tools = { profile: 'coding' };
-  if (behaviour.FAKE_DOCTOR_NARROWS === '1') config.skills = { entries: { gog: { enabled: false } } };
-  // Doctor's file repairs (for example its TOOLS.md migration) act on the
-  // configured workspace.
-  if (behaviour.FAKE_DOCTOR_REPAIRS_WORKSPACE === '1') fs.rmSync(require('node:path').join(config.agents.defaults.workspace, 'AGENTS.md'));
+  if (behaviour.FAKE_DOCTOR_NARROWS === '1') {
+    config.skills = { entries: { gog: { enabled: false } } };
+    config.agents.entries.helper = {};
+  }
   fs.writeFileSync(path, JSON.stringify(config));
   process.exit(0);
 }
@@ -238,78 +238,54 @@ test('a Doctor change that would widen the agent fails closed, naming it', async
   assert.deepEqual(completion(calls), result);
 });
 
-test("an un-normalized source config runs on Doctor's narrowed copy", async () => {
+test("an un-normalized source config runs Doctor's accepted changes, without its skill toggles", async () => {
   const { env, calls, fetchImpl } = await fixture({
     env: { FAKE_DOCTOR_NARROWS: '1' },
   });
   const result = await main(env, { fetchImpl });
   assert.equal(result.outcome, 'report');
   assert.deepEqual(completion(calls), result);
-  const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
-  const doctor = JSON.parse(
-    log.find((line) => JSON.parse(line).args[0] === 'doctor'),
-  );
-  const exec = JSON.parse(log.at(-1));
-  assert.equal(exec.args[1], 'exec');
-  const cwd = exec.args[exec.args.indexOf('--cwd') + 1];
-  // Doctor judged a disposable copy of the turn's workspace; the turn runs
-  // Doctor's normalized config pointed back at its own workspace.
-  assert.notEqual(doctor.config.agents.defaults.workspace, cwd);
-  assert.equal(doctor.cwd, doctor.config.agents.defaults.workspace);
-  assert.equal(
-    doctor.config.agents.entries.main.workspace,
-    doctor.config.agents.defaults.workspace,
-  );
-  assert.equal(exec.cwd, cwd);
-  // Validation saw the source as written, before workspaces were supplied.
-  const validate = JSON.parse(log[0]);
+  const log = (await readFile(env.FAKE_LOG, 'utf8'))
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const [validate, doctor] = log;
+  const exec = log.at(-1);
   assert.deepEqual(validate.args.slice(0, 2), ['config', 'validate']);
-  assert.equal(
-    validate.config.agents.entries.main.workspace,
-    '/repo/workspace',
-  );
-  assert.equal(validate.config.agents.defaults, undefined);
-  assert.equal(exec.config.skills.entries.gog.enabled, false);
-  assert.equal(exec.config.agents.defaults.workspace, cwd);
-  assert.equal(exec.config.agents.entries.main.workspace, cwd);
-});
-
-test("Doctor's workspace repairs never reach the turn's workspace", async () => {
-  const { env, fetchImpl } = await fixture({
-    env: { FAKE_DOCTOR_REPAIRS_WORKSPACE: '1' },
-  });
-  const result = await main(env, { fetchImpl });
-  assert.equal(result.outcome, 'report');
-  const log = (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n');
-  const doctor = JSON.parse(
-    log.find((line) => JSON.parse(line).args[0] === 'doctor'),
-  );
-  const exec = JSON.parse(log.at(-1));
+  assert.equal(doctor.args[0], 'doctor');
+  assert.equal(exec.args[1], 'exec');
+  // Validation and Doctor see the source as written: the launcher supplies
+  // no workspace, so Doctor's repairs never touch the turn's.
+  for (const entry of [validate, doctor]) {
+    assert.equal(entry.config.agents.entries.main.workspace, '/repo/workspace');
+    assert.equal(entry.config.agents.defaults, undefined);
+  }
   assert.ok(exec.cwdFiles.includes('AGENTS.md'));
-  assert.ok(exec.cwdFiles.includes('tools'));
-  await assert.rejects(stat(doctor.config.agents.defaults.workspace), {
-    code: 'ENOENT',
-  });
+  // The turn keeps Doctor's accepted change (an empty agent entry) but not
+  // its skill toggle: OpenClaw gates skills at load time in the turn itself.
+  assert.deepEqual(exec.config.agents.entries.helper, {});
+  assert.equal(exec.config.skills, undefined);
 });
 
-test('every configured agent workspace follows the turn', () => {
+test('turnConfig restores the source skill settings', () => {
   assert.deepEqual(
-    launchConfig(
+    turnConfig(
+      { skills: { entries: { tmux: { enabled: true } } } },
       {
-        agents: {
-          defaults: { workspace: '/elsewhere' },
-          entries: { main: { workspace: '/other' }, helper: { model: 'm' } },
+        skills: {
+          entries: { tmux: { enabled: false }, gog: { enabled: false } },
         },
+        plugins: { entries: { litellm: { enabled: true } } },
       },
-      '/work/workspace',
-    ).agents,
+    ),
     {
-      defaults: { workspace: '/work/workspace' },
-      entries: {
-        main: { workspace: '/work/workspace' },
-        helper: { model: 'm', workspace: '/work/workspace' },
-      },
+      skills: { entries: { tmux: { enabled: true } } },
+      plugins: { entries: { litellm: { enabled: true } } },
     },
+  );
+  assert.deepEqual(
+    turnConfig({}, { skills: { entries: { gog: { enabled: false } } } }),
+    {},
   );
 });
 
@@ -344,7 +320,7 @@ test('plugin ownership comes from the bundled plugin manifests', async () => {
   );
 });
 
-test("Doctor may only disable skills and enable declared providers' plugins", () => {
+test("Doctor's skill toggles are ignored; plugins only for declared providers", () => {
   const owners = new Map([
     ['litellm', new Set(['litellm'])],
     ['google', new Set(['google', 'google-vertex'])],
@@ -384,7 +360,6 @@ test("Doctor may only disable skills and enable declared providers' plugins", ()
       'agents.entries.main.tools.profile',
       'gateway',
       'plugins.entries.browser.enabled',
-      'skills.entries.gog.enabled',
       'tools.deny',
     ],
   );
