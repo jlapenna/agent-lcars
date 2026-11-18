@@ -19980,21 +19980,12 @@
                         "const": "acp"
                       },
                       "harness": {
-                        "default": "other",
                         "type": "string",
-                        "enum": ["openclaw", "claude", "codex", "other"]
+                        "maxLength": 64
                       },
                       "stopReason": {
-                        "default": "other",
                         "type": "string",
-                        "enum": [
-                          "end_turn",
-                          "max_tokens",
-                          "max_turn_requests",
-                          "refusal",
-                          "cancelled",
-                          "other"
-                        ]
+                        "maxLength": 64
                       },
                       "toolCallCount": {
                         "type": "integer",
@@ -20008,31 +19999,12 @@
                           "type": "object",
                           "properties": {
                             "kind": {
-                              "default": "other",
                               "type": "string",
-                              "enum": [
-                                "read",
-                                "edit",
-                                "delete",
-                                "move",
-                                "search",
-                                "execute",
-                                "think",
-                                "fetch",
-                                "switch_mode",
-                                "other"
-                              ]
+                              "maxLength": 64
                             },
                             "status": {
-                              "default": "other",
                               "type": "string",
-                              "enum": [
-                                "pending",
-                                "in_progress",
-                                "completed",
-                                "failed",
-                                "other"
-                              ]
+                              "maxLength": 64
                             }
                           },
                           "required": ["kind", "status"]
@@ -20085,22 +20057,11 @@
                             "type": "object",
                             "properties": {
                               "amount": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1000000
+                                "type": "number"
                               },
                               "currency": {
                                 "type": "string",
-                                "enum": [
-                                  "USD",
-                                  "EUR",
-                                  "GBP",
-                                  "JPY",
-                                  "CNY",
-                                  "CAD",
-                                  "AUD",
-                                  "CHF"
-                                ]
+                                "maxLength": 64
                               }
                             },
                             "required": ["amount", "currency"]

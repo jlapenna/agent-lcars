@@ -365,6 +365,46 @@ describe('run evidence', () => {
     );
   });
 
+  it('keeps the total when the breakdown is incomplete, and calls nothing unfinished it cannot tell is', () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'codex',
+        toolCallCount: 3,
+        toolCalls: [
+          { kind: 'execute', status: 'completed' },
+          // A newer harness's word for a status this Console does not know.
+          { kind: 'read', status: 'other' },
+          { kind: 'read', status: 'pending' },
+        ],
+        usage: { totalTokens: 120, cachedReadTokens: 20 },
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    const [tools, turn] = Array.from(
+      screen.getByTestId('run-evidence').children,
+      (line) => line.textContent,
+    );
+    expect(tools).toBe('Tool calls: 3 (execute 1, read 2; 1 unfinished)');
+    expect(turn).toBe('Harness: codex · Tokens: 120 total, 20 cached');
+  });
+
+  it("shows a total alone as the turn's tokens", () => {
+    show(
+      withEvidence({
+        source: 'acp',
+        harness: 'codex',
+        toolCallCount: 0,
+        toolCalls: [],
+        usage: { totalTokens: 53_000 },
+        recordedAt: '2026-08-26T10:05:00.000Z',
+      }),
+    );
+    expect(screen.getByTestId('run-evidence').children[1]?.textContent).toBe(
+      'Harness: codex · Tokens: 53,000',
+    );
+  });
+
   it('shows nothing for a run whose worker reported none', () => {
     show(itemWithTwoRounds);
     expect(screen.queryByTestId('run-evidence')).toBeNull();

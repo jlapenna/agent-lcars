@@ -46,6 +46,7 @@ export {
 export type { RunEvidence, RunEvidenceReport } from './run-evidence';
 export {
   plainRunEvidence,
+  recordRunEvidence,
   RUN_EVIDENCE_TOOL_CALLS_MAX,
   runEvidenceReportSchema,
   runEvidenceSchema,

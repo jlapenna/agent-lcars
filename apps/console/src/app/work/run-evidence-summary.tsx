@@ -19,8 +19,10 @@ function toolLine(evidence: Evidence): string {
   const failed = evidence.toolCalls.filter(
     (call) => call.status === 'failed',
   ).length;
+  // Only a status known to be unfinished counts: `other` may be a newer
+  // harness's word for a call that ended.
   const unfinished = evidence.toolCalls.filter(
-    (call) => call.status !== 'failed' && call.status !== 'completed',
+    (call) => call.status === 'pending' || call.status === 'in_progress',
   ).length;
   const notes = [
     ...(evidence.toolCalls.length === 0 ? [] : [byKind(evidence.toolCalls)]),
@@ -49,15 +51,26 @@ function usageParts(usage: Evidence['usage']): string[] {
     [usage.cachedWriteTokens, 'written to cache'],
     [usage.thoughtTokens, 'thinking'],
   ];
-  const tokens = named.flatMap(([value, name]) =>
+  const parts = named.flatMap(([value, name]) =>
     value === undefined ? [] : [`${number(value)} ${name}`],
   );
+  // The total says nothing new beside both of its halves, and is the only
+  // size of the turn when either is missing.
+  const whole =
+    usage.totalTokens !== undefined &&
+    (usage.inputTokens === undefined || usage.outputTokens === undefined);
+  const tokens = [
+    ...(!whole
+      ? []
+      : [
+          parts.length === 0
+            ? number(usage.totalTokens ?? 0)
+            : `${number(usage.totalTokens ?? 0)} total`,
+        ]),
+    ...parts,
+  ];
   return [
-    ...(tokens.length === 0
-      ? usage.totalTokens === undefined
-        ? []
-        : [`Tokens: ${number(usage.totalTokens)}`]
-      : [`Tokens: ${tokens.join(', ')}`]),
+    ...(tokens.length === 0 ? [] : [`Tokens: ${tokens.join(', ')}`]),
     ...(usage.contextTokens === undefined
       ? usage.contextWindow === undefined
         ? []

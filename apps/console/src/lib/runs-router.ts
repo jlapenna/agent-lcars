@@ -4,6 +4,7 @@ import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   parseRunGeneration,
+  recordRunEvidence,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { usesCodexCredentials } from '@agent-lcars/orchestrator';
@@ -923,10 +924,9 @@ export const runsRouter = os.router({
     await context.store.writeRunEvidence({
       runId: run.runId,
       claimFingerprint,
-      evidence: {
-        ...input.evidence,
-        recordedAt: context.now().toISOString(),
-      },
+      // What is stored is never the report as sent: every word in it is
+      // reduced to its closed list first.
+      evidence: recordRunEvidence(input.evidence, context.now().toISOString()),
     });
     return { runId: run.runId };
   }),

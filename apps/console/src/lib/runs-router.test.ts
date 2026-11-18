@@ -2408,6 +2408,11 @@ describe('evidence', () => {
     ],
     ['fewer calls counted than listed', { toolCallCount: 1 }],
     ['a negative count', { usage: { inputTokens: -1 } }],
+    [
+      'a cost whose amount is no number',
+      { usage: { cost: { amount: 'lots', currency: 'USD' } } },
+    ],
+    ['a word longer than any vocabulary', { stopReason: 'x'.repeat(65) }],
     ['another source', { source: 'transcript' }],
   ])('refuses %s', async (_name, change) => {
     const { runId, ctx, evidenceOf } = await claimed('work-evidence-refused');
@@ -2421,7 +2426,7 @@ describe('evidence', () => {
   it.each([
     ['a currency outside the list', { amount: 1, currency: 'BTC' }],
     ['a currency that is a word', { amount: 1, currency: 'YES' }],
-    ['an amount that is no number', { amount: 'lots', currency: 'USD' }],
+    ['an amount below nothing', { amount: -1, currency: 'USD' }],
   ])('leaves out a cost in %s and keeps the rest', async (_name, cost) => {
     const { runId, ctx, evidenceOf } = await claimed('work-evidence-cost');
     const { cost: _cost, ...usage } = EVIDENCE.usage;

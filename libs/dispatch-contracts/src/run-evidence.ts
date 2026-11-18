@@ -97,7 +97,7 @@ export const runEvidenceUsageSchema = z.object({
     .catch(undefined),
 });
 
-const report = z.object({
+const record = z.object({
   source: z.literal('acp'),
   /** The harness the session belonged to. */
   harness: word(RUN_EVIDENCE_HARNESSES),
@@ -117,22 +117,56 @@ const report = z.object({
   durationMs: count.optional(),
 });
 /** A record cannot list more calls than it counts. */
-const counted = (record: { toolCallCount: number; toolCalls: unknown[] }) =>
-  record.toolCallCount >= record.toolCalls.length;
+const counted = (value: { toolCallCount: number; toolCalls: unknown[] }) =>
+  value.toolCallCount >= value.toolCalls.length;
 const COUNTED = { message: 'toolCallCount is less than the calls listed' };
 
-/** What a worker reports. */
-export const runEvidenceReportSchema = report.refine(counted, COUNTED);
+/** A word as a worker sends it: any short string. What is stored of it is
+ * decided by {@link runEvidenceSchema}, so a worker with a newer vocabulary
+ * than its Console is not refused for it. */
+const sent = z.string().max(64);
+
+/** What a worker reports: the record's shape with its words left open. The
+ * Console stores it through {@link recordRunEvidence}, never as sent. */
+export const runEvidenceReportSchema = z
+  .object({
+    source: z.literal('acp'),
+    harness: sent,
+    stopReason: sent.optional(),
+    toolCallCount: count,
+    toolCalls: z
+      .array(z.object({ kind: sent, status: sent }))
+      .max(RUN_EVIDENCE_TOOL_CALLS_MAX),
+    usage: z
+      .object({
+        ...runEvidenceUsageSchema.shape,
+        cost: z.object({ amount: z.number(), currency: sent }).optional(),
+      })
+      .optional(),
+    durationMs: count.optional(),
+  })
+  .refine(counted, COUNTED);
 export type RunEvidenceReport = z.infer<typeof runEvidenceReportSchema>;
 
-/** A report as it is stored and read back. */
-export const runEvidenceSchema = report
+/** A report as it is stored and read back: every word from its closed list
+ * or `other`. */
+export const runEvidenceSchema = record
   .extend({
     /** When the Console recorded it. */
     recordedAt: z.iso.datetime({ offset: false }).max(32),
   })
   .refine(counted, COUNTED);
 export type RunEvidence = z.infer<typeof runEvidenceSchema>;
+
+/** The record a report becomes: its words reduced to their closed lists, a
+ * cost outside the listed currencies left out, and no key left holding
+ * `undefined`. */
+export function recordRunEvidence(
+  report: RunEvidenceReport,
+  recordedAt: string,
+): RunEvidence {
+  return plainRunEvidence(runEvidenceSchema.parse({ ...report, recordedAt }));
+}
 
 /** The record as plain JSON: no key is left holding `undefined`. A cost that
  * was left out still has its key after parsing, and a document store may
