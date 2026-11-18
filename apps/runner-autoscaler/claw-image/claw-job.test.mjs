@@ -22,6 +22,7 @@ import {
   materializeAgent,
   MAX_REPORT_BYTES,
   readBrief,
+  resolveCommand,
   secretEnvironment,
   settle,
   turnConfig,
@@ -99,6 +100,12 @@ if (args[0] === 'doctor') {
   config.meta = { lastTouchedVersion: 'fake' };
   config.wizard = { lastRunAt: new Date().toISOString() };
   if (behaviour.FAKE_DOCTOR_WIDENS === '1') config.tools = { profile: 'coding' };
+  // Doctor repairing a workspace the source names: the turn's directory.
+  if (behaviour.FAKE_DOCTOR_REPAIRS_WORKSPACE === '1') {
+    const ws = require('node:path').join(require('node:path').dirname(process.env.OPENCLAW_STATE_DIR), 'workspace');
+    fs.mkdirSync(ws, { recursive: true });
+    fs.writeFileSync(require('node:path').join(ws, 'AGENTS.md'), 'merged by doctor');
+  }
   if (behaviour.FAKE_DOCTOR_NARROWS === '1') {
     config.skills = { entries: { gog: { enabled: false } } };
     config.agents.entries.helper = {};
@@ -265,6 +272,40 @@ test("an un-normalized source config runs Doctor's accepted changes, without its
   // its skill toggle: OpenClaw gates skills at load time in the turn itself.
   assert.deepEqual(exec.config.agents.entries.helper, {});
   assert.equal(exec.config.skills, undefined);
+});
+
+test("Doctor's repairs to the turn's directory never reach the turn", async () => {
+  const { env, fetchImpl } = await fixture({
+    env: { FAKE_DOCTOR_REPAIRS_WORKSPACE: '1' },
+  });
+  const result = await main(env, { fetchImpl });
+  assert.equal(result.outcome, 'report');
+  const exec = JSON.parse(
+    (await readFile(env.FAKE_LOG, 'utf8')).trim().split('\n').at(-1),
+  );
+  const cwd = exec.args[exec.args.indexOf('--cwd') + 1];
+  assert.equal(
+    await readFile(join(cwd, 'AGENTS.md'), 'utf8'),
+    '# repository agent\n',
+  );
+  assert.ok(exec.cwdFiles.includes('tools'));
+});
+
+test('a bare OpenClaw command resolves through PATH', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'claw-path-'));
+  const bin = join(root, 'bin');
+  await mkdir(bin);
+  await writeFile(join(bin, 'openclaw'), '');
+  assert.equal(
+    await resolveCommand('openclaw', `/nonexistent:${bin}`),
+    join(bin, 'openclaw'),
+  );
+  assert.equal(await resolveCommand('/abs/openclaw', ''), '/abs/openclaw');
+  await assert.rejects(
+    resolveCommand('openclaw', '/nonexistent'),
+    /not found on PATH/,
+  );
+  assert.deepEqual(await bundledPluginProviders('openclaw', bin), new Map());
 });
 
 test('turnConfig restores the source skill settings', () => {

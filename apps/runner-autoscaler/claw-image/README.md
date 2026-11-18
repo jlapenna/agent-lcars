@@ -81,8 +81,9 @@ particular image. Doctor's normalization depends on the image, so the launcher
 validates the source as written, runs Doctor on a copy inside the image that
 executes the turn, and builds the turn's config from the result
 (`doctorChanges` and `turnConfig` in `claw-job.mjs`). The verified definition
-under `/work/agent` is never modified, and the launcher gives Doctor no
-workspace of its own, so Doctor's file repairs never reach the turn's.
+under `/work/agent` is never modified, and the turn's workspace is staged
+from it only after Doctor runs, so Doctor's file repairs never reach the turn
+(even for a source that names that directory as its workspace).
 
 The turn keeps only these Doctor changes:
 

@@ -157,6 +157,21 @@ export function doctorChanges(source, after, pluginProviders = new Map()) {
   return refused.sort();
 }
 
+// The file `spawn` runs for `command`: a path as given, a bare name from PATH.
+export async function resolveCommand(command, path = '') {
+  if (command.includes('/')) return command;
+  for (const dir of path.split(':')) {
+    if (!dir) continue;
+    const candidate = join(dir, command);
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    }
+  }
+  throw new ClawFailure(`OpenClaw executable not found on PATH: ${command}`);
+}
+
 // The config the turn runs: Doctor's normalized copy with the source's own
 // skill settings, so no skill toggle Doctor wrote reaches the turn.
 export function turnConfig(source, normalized) {
@@ -187,9 +202,12 @@ function nodes(value, prefix = [], out = new Map()) {
 // Which model providers each plugin bundled in this image owns, from its
 // `openclaw.plugin.json` (`providers` and `autoEnableWhenConfiguredProviders`).
 // The manifests ship in the image, so a repository cannot widen this map.
-export async function bundledPluginProviders(openclaw) {
+export async function bundledPluginProviders(
+  openclaw,
+  path = process.env.PATH,
+) {
   const extensions = join(
-    dirname(await realpath(openclaw)),
+    dirname(await realpath(await resolveCommand(openclaw, path))),
     'dist',
     'extensions',
   );
@@ -503,21 +521,6 @@ export async function prepareState({
 }) {
   const stateDir = await mkdtemp(join(workRoot, 'state-'));
   const workspace = join(workRoot, 'workspace');
-  await rm(workspace, { recursive: true, force: true });
-  await mkdir(workspace, { recursive: true });
-  try {
-    // A ConfigMap mount presents workspace/ as a symlink into its
-    // timestamped data directory; copy the resolved files, not the link.
-    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
-      recursive: true,
-      dereference: true,
-    });
-    // The pinned definition stays locked; its execution copy is the agent's
-    // writable workspace, so give the owner write access back.
-    await ownerWritable(workspace);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
   const source = JSON.parse(
     await readFile(join(agentDir, 'config.json'), 'utf8'),
   );
@@ -558,7 +561,7 @@ export async function prepareState({
   const refused = doctorChanges(
     source,
     normalized,
-    await bundledPluginProviders(openclaw),
+    await bundledPluginProviders(openclaw, childEnv.PATH),
   );
   if (refused.length > 0)
     throw new ClawFailure(
@@ -569,6 +572,24 @@ export async function prepareState({
     `${JSON.stringify(turnConfig(source, normalized), null, 2)}\n`,
     { mode: 0o600 },
   );
+
+  // Stage the turn's workspace only after Doctor, so its file repairs (for a
+  // source that names this directory as its workspace) never reach the turn.
+  await rm(workspace, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true });
+  try {
+    // A ConfigMap mount presents workspace/ as a symlink into its
+    // timestamped data directory; copy the resolved files, not the link.
+    await cp(await realpath(join(agentDir, 'workspace')), workspace, {
+      recursive: true,
+      dereference: true,
+    });
+    // The pinned definition stays locked; its execution copy is the agent's
+    // writable workspace, so give the owner write access back.
+    await ownerWritable(workspace);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
 
   const approvals = await run(
     openclaw,
