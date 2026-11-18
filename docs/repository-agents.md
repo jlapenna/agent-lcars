@@ -143,6 +143,9 @@ costs one attempt.
   has streamed, so the launcher also reads the Gateway's own log and fails
   the attempt when it recorded the message's outcome as an error. A model
   attempt that failed before a fallback answered is not one. Codex's adapter
+  does the same when its provider fails, and reports the failure only to a
+  client that asks for it, so the launcher asks and fails the attempt on a
+  failure Codex reports as an error. Codex's adapter
   sometimes leaves a command its sandbox blocked at once out of the session
   (3 of 8 runs on 2.1.1), so that failure can go unseen; a Codex agent whose
   answer must rest on a tool sets
@@ -334,7 +337,12 @@ while the newer Console is still running, in this order:
    disable it; the grant is the fence. Leave it in place until step 6.
 2. Let rounds that pinned a `harness` or a `mode` finish, or cancel them. The
    earlier Console cannot read such a round, so it can neither deliver its
-   brief nor retry it. Rounds of OpenClaw agents with neither are unaffected.
+   brief nor retry it. If the claw image is going back too, do the same for
+   every queued or retrying round whose pinned definition has `home/` files:
+   a round keeps the revision it was admitted with, so nothing done to the
+   default branch changes it, and the earlier Console and launcher together
+   would run it without those settings. Other rounds of OpenClaw agents are
+   unaffected.
 3. Take `harness` and `mode` out of every manifest that names one, on each
    repository's default branch. If that definition also has `config.json`
    and `approvals.json`, remove them too: without its `harness` it would
@@ -350,10 +358,13 @@ while the newer Console is still running, in this order:
 5. Remove `harnesses` from every profile in `AGENT_LCARS_AGENT_PROFILES`.
    The earlier Console validates profiles at startup with a strict schema and
    does not start with a field it does not know.
-6. Roll the Console back, then restore the grants from step 1. If the claw
-   image went back too, first deal with every agent whose definition has
-   `home/` files: remove that directory if the agent can run without it, or
-   keep the agent's runtime out of every grant. The earlier Console delivers
+6. Roll the Console back, then lift the fence from step 1: restore the
+   grants, and restore `runCallers` on each profile that had it, since the
+   earlier Console lets a dispatched run invoke an agent only through that
+   flag. If the claw image went back too, first deal with every agent whose
+   definition has `home/` files: remove that directory if the agent can run
+   without it, or keep the agent fenced by leaving its runtime out of every
+   grant and `runCallers` off on its profile. The earlier Console delivers
    such a definition in the brief the earlier launcher accepts, and that
    launcher stages only the workspace, so the agent would run without its
    reviewed `home/` settings.

@@ -104,6 +104,24 @@ const LITERAL_MESSAGE =
 export const promptText = (message) => `${LITERAL_MESSAGE}\n\n${message}`;
 const ACP_AUTH_REQUIRED = -32000;
 const TOOL_LABEL = /^[\w.:-]{1,40}$/u;
+// The session-failure extension Codex's adapter implements: a client that
+// declares it is told of a failed provider turn in `_meta`, on a session
+// update and on the prompt's result.
+const SESSION_FAILURE_CAPABILITY = Object.freeze({
+  jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } },
+});
+// The category of a failure a harness reports as an error (`provider`,
+// `limit`, …), or undefined. A warning is a retry in progress, not a
+// failure. The failure's own text is never used: it can quote the request.
+function sessionFailure(meta) {
+  const failure = meta?.jetbrains?.air?.sessionFailure;
+  if (!failure || typeof failure !== 'object' || failure.severity !== 'error')
+    return undefined;
+  return typeof failure.category === 'string' &&
+    TOOL_LABEL.test(failure.category)
+    ? failure.category
+    : 'session';
+}
 // How long an ACP harness gets to exit by itself once its turn has ended.
 const ACP_EXIT_GRACE_MS = 2_000;
 
@@ -283,7 +301,17 @@ function boundedReport(report) {
 // A harness can report a turn that died early as an ordinary end of turn
 // with no text, so an empty result is always a failure.
 export function settle(
-  { aborted, timedOut, error, stopReason, final, overflow, calls, unresolved },
+  {
+    aborted,
+    timedOut,
+    error,
+    failure,
+    stopReason,
+    final,
+    overflow,
+    calls,
+    unresolved,
+  },
   { requireTools = false } = {},
 ) {
   if (aborted)
@@ -298,6 +326,9 @@ export function settle(
     message: `Claw turn failed: ${reason}.`,
   });
   if (error) return failed(String(error).slice(0, 500));
+  // A harness can end a turn its provider failed like any other; what it
+  // then calls the answer may be an error message or half of one.
+  if (failure) return failed(`harness reported a ${failure} failure`);
   if (stopReason !== 'end_turn')
     return failed(`harness stopped with ${String(stopReason).slice(0, 80)}`);
   if (overflow)
@@ -362,6 +393,8 @@ export function acpTurn(
       turn.overflow = false;
     };
     const onUpdate = (update) => {
+      const failure = sessionFailure(update?._meta);
+      if (failure !== undefined) turn.failure = failure;
       if (
         update?.sessionUpdate === 'agent_message_chunk' &&
         typeof update.content?.text === 'string'
@@ -517,6 +550,10 @@ export function acpTurn(
           // it as a `notice`, not as message text (Claude Code does, for a
           // client that declares this).
           session: { notices: {} },
+          // A harness whose provider failed sends that as a typed session
+          // failure, not as message text ending an ordinary turn (Codex
+          // does, for a client that declares this).
+          _meta: SESSION_FAILURE_CAPABILITY,
         },
         clientInfo: { name: 'lcars-claw-runner', version: '1' },
       });
@@ -560,6 +597,10 @@ export function acpTurn(
         prompt: [{ type: 'text', text: promptText(message) }],
       });
       turn.stopReason = prompted.stopReason;
+      // The harness's last word on the turn: a failure it attaches to the
+      // result stands, and a result without one does not clear a failure
+      // already reported.
+      turn.failure = sessionFailure(prompted._meta) ?? turn.failure;
     })()
       .catch((error) => {
         turn.error ??=

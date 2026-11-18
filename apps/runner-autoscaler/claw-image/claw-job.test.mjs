@@ -91,6 +91,9 @@ const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', 
 const update = (sessionUpdate, fields) =>
   send({ method: 'session/update', params: { sessionId: 's1', update: { sessionUpdate, ...fields } } });
 const say = (text, messageId) => update('agent_message_chunk', { ...(messageId ? { messageId } : {}), content: { type: 'text', text } });
+// A provider failure as Codex's adapter reports it to a client that declared
+// the capability.
+const failureMeta = (failure) => ({ jetbrains: { air: { version: 1, sessionFailure: { id: 'f1', revision: 1, title: 'unexpected status 400 for sk-secret', actions: [], ...failure } } } });
 let prompt;
 let signedIn = false;
 let delayed = false;
@@ -143,10 +146,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     for (const step of behaviour.steps ?? []) {
       if (step.say) say(step.say, step.id);
       if (step.notice) update('notice', { severity: 'info', title: step.notice });
+      if (step.failure) update('session_info_update', { _meta: failureMeta(step.failure) });
       if (step.tool) update(step.tool.update ?? 'tool_call_update', { toolCallId: step.tool.id, kind: step.tool.kind, status: step.tool.status });
       if (step.ask) return send({ id: 'ask-1', method: 'session/request_permission', params: { sessionId: 's1', toolCall: { toolCallId: step.ask }, options: step.options ?? [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }] } });
     }
-    return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn' } });
+    return send({ id: prompt, result: { stopReason: behaviour.stopReason ?? 'end_turn', ...(behaviour.resultFailure ? { _meta: failureMeta(behaviour.resultFailure) } : {}) } });
   }
   if (message.id === 'ask-1') {
     record({ permission: message.result });
@@ -1322,6 +1326,9 @@ test('an ACP harness runs the agent and reports its last message after the last 
     fs: { readTextFile: false, writeTextFile: false },
     terminal: false,
     session: { notices: {} },
+    _meta: {
+      jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } },
+    },
   });
   assert.deepEqual(session.session, {
     cwd: join(env.CLAW_WORK_DIR, 'workspace'),
@@ -1616,6 +1623,39 @@ test('a message is always sent as text for the agent, never as a harness command
       { type: 'text', text: `${lead}\n\n${message}` },
     ]);
   assert.equal(promptText('stop'), `${lead}\n\nstop`);
+});
+
+test('a turn the harness reports as a provider failure is never a report', async () => {
+  const outcome = async (behaviour) => {
+    const { env, deps } = await harnessFixture(behaviour);
+    return main(env, deps);
+  };
+  const failed = {
+    outcome: 'runner-failed',
+    message: 'Claw turn failed: harness reported a provider failure.',
+  };
+  const error = { category: 'provider', severity: 'error' };
+  // Codex ends such a turn normally, with part of an answer or the error
+  // itself as message text. The failure arrives on a session update, on the
+  // prompt's result, or both; its text is never repeated.
+  assert.deepEqual(
+    await outcome({ steps: [{ failure: error }, { say: 'The disk is' }] }),
+    failed,
+  );
+  assert.deepEqual(
+    await outcome({ steps: [{ say: 'The disk is' }], resultFailure: error }),
+    failed,
+  );
+  // A warning is a retry in progress: the turn that then answers stands.
+  assert.deepEqual(
+    await outcome({
+      steps: [
+        { failure: { category: 'provider', severity: 'warning' } },
+        { say: 'Disk at 41%.' },
+      ],
+    }),
+    { outcome: 'report', message: 'Disk at 41%.' },
+  );
 });
 
 test("a harness's own remarks on the turn never replace the answer", async () => {

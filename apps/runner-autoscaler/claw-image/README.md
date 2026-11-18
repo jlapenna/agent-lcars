@@ -97,7 +97,10 @@ Each step fails the attempt closed with a `runner-failed` completion:
    empty and no tool call is unresolved. A call that failed or never finished
    is unresolved unless a call that started after it ended completed. A
    harness error (a missing login, for example), an early exit, any other
-   stop reason and an empty answer are `runner-failed`. When the agent's
+   stop reason and an empty answer are `runner-failed`. So is a turn the
+   harness itself reports as failed: Codex ends a turn its provider failed
+   with `end_turn` and the error as message text, and tells only a client
+   that declares the session-failure extension, which the launcher does. When the agent's
    manifest sets `requireToolEvidence`, at least one tool call is also
    required.
 6. Every pinned `home/` file must still be its blob. The harness runs as the
