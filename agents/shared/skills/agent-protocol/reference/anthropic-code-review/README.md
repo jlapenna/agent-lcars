@@ -84,8 +84,9 @@ review and comment-quality guidance applies.
    On OpenCode's shared serial inference lane, run one child at a time. Child
    reviewers and validators return evidence only and never recursively
    delegate or publish to GitHub.
-   Validators in step 5 must be fresh agents, separate from the discoverer;
-   validate every candidate, including guidance violations. Wait for all
+   For each candidate in step 5, start a separate fresh validator session.
+   Give it exactly one candidate, including when two findings are related.
+   Record its own native session ID for that candidate. Wait for all
    reviewers and validators before deciding. If independent delegation is
    unavailable or an essential pass cannot finish, report that limitation;
    do not present a single-agent inspection as this completed procedure.
