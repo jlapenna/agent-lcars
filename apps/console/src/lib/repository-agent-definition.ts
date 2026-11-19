@@ -14,6 +14,9 @@ import { jobDigest } from './repository-job-definition';
 const agentNameSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/u);
 const repositorySchema = z.string().regex(/^[\w.-]+\/[\w.-]+$/u);
 
+export const SOURCE_FAILED = 'Source refresh failed';
+export const REMOVED = 'Definition removed';
+
 export const agentManifestSchema = z.strictObject({
   description: z.string().min(1),
   /** The operator-owned profile granting this agent's credentials; omitted

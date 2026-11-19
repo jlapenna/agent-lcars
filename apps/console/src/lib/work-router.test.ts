@@ -488,6 +488,39 @@ describe('repository-owned agent runs', () => {
 
   it.each([
     ['an unknown agent', [], 404],
+    [
+      'a cataloged profile refusal',
+      [
+        {
+          enabled: false,
+          manifest: { description: 'x', profile: 'nope' },
+          error: 'Unknown agent profile nope',
+        },
+      ],
+      403,
+    ],
+    [
+      'a cataloged profile refusal whose reason changed',
+      [
+        {
+          enabled: false,
+          manifest: { description: 'x', profile: 'nope' },
+          error: 'Profile nope does not admit owner/repo',
+        },
+      ],
+      403,
+    ],
+    [
+      'a removed definition with a revoked profile',
+      [
+        {
+          enabled: false,
+          manifest: { description: 'x', profile: 'nope' },
+          error: 'Definition removed',
+        },
+      ],
+      404,
+    ],
     ['a disabled agent', [{ enabled: false, error: 'Invalid YAML' }], 404],
     [
       'a profile that does not exist',

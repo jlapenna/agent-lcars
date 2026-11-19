@@ -1,7 +1,13 @@
 import { logger } from '@agent-lcars/logging';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { agentKey, parseAgentDefinition } from './repository-agent-definition';
+import {
+  agentKey,
+  parseAgentDefinition,
+  REMOVED,
+  SOURCE_FAILED,
+} from './repository-agent-definition';
+import { agentProfiles, repositoryProfile } from './repository-agent-runs';
 import type { AgentStore, CatalogAgent } from './repository-agent-store';
 import { openRepositorySource } from './repository-source';
 
@@ -19,6 +25,7 @@ export async function refreshAgentCatalog(
    * once, after every batch; without it the refresh awaits its own. */
   pendingHealth?: Promise<unknown>[],
 ): Promise<void> {
+  const profiles = agentProfiles();
   const at = now.toISOString();
   // Fairness bookkeeping only: a lost write makes this source look older.
   await store
@@ -110,6 +117,7 @@ export async function refreshAgentCatalog(
           files,
           manifestText,
         );
+        repositoryProfile(row.definition, profiles);
       } catch (error) {
         row.error =
           error instanceof Error ? error.message : 'Invalid definition';
@@ -129,7 +137,10 @@ export async function refreshAgentCatalog(
             agent: {
               ...row,
               vetoedBy,
-              enabled: row.definition !== undefined && vetoedBy === null,
+              enabled:
+                row.definition !== undefined &&
+                row.error === undefined &&
+                vetoedBy === null,
             },
           };
         },
@@ -166,7 +177,7 @@ export async function refreshAgentCatalog(
                 agent: {
                   ...current,
                   enabled: false,
-                  error: 'Definition removed',
+                  error: REMOVED,
                   refreshedAt: now.toISOString(),
                 },
               },
@@ -190,7 +201,7 @@ export async function refreshAgentCatalog(
                 agent: {
                   ...current,
                   enabled: false,
-                  error: 'Source refresh failed',
+                  error: SOURCE_FAILED,
                   refreshedAt: now.toISOString(),
                 },
               },
