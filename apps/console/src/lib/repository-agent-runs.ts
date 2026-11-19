@@ -115,6 +115,24 @@ export interface ResolvedAgentRuntime {
   runCallers: boolean;
 }
 
+/** Resolve only the repository-wide grant, independent of the calling principal. */
+export function repositoryProfile(
+  definition: AgentDefinition,
+  profiles: readonly AgentProfile[],
+) {
+  const name = definition.manifest.profile ?? DEFAULT_AGENT_PROFILE;
+  if (name === DEFAULT_AGENT_PROFILE) return undefined;
+  const profile = profiles.find((candidate) => candidate.name === name);
+  if (!profile)
+    throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
+  if (!profile.repositories.includes(definition.repository))
+    throw new AgentAdmissionError(
+      'FORBIDDEN',
+      `Profile ${name} does not admit ${definition.repository}`,
+    );
+  return profile;
+}
+
 /** Resolve the runtime an agent runs on, refusing a profile that does not
  * admit its repository or the caller, or whose runtime does not carry the
  * agent's harness. */
@@ -153,16 +171,9 @@ function agentRuntime(
             `Profile ${name} does not run ${harness} agents`,
           ),
         };
-  if (name === DEFAULT_AGENT_PROFILE)
-    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false, ...runs() };
-  const profile = profiles.find((candidate) => candidate.name === name);
+  const profile = repositoryProfile(definition, profiles);
   if (!profile)
-    throw new AgentAdmissionError('FORBIDDEN', `Unknown agent profile ${name}`);
-  if (!profile.repositories.includes(definition.repository))
-    throw new AgentAdmissionError(
-      'FORBIDDEN',
-      `Profile ${name} does not admit ${definition.repository}`,
-    );
+    return { pipeline: DEFAULT_AGENT_RUNTIME, runCallers: false, ...runs() };
   if (profile.principals && !profile.principals.includes(principal))
     throw new AgentAdmissionError(
       'FORBIDDEN',
@@ -195,6 +206,18 @@ export async function admitAgentRun(
   const agent = await deps.agents.read(
     agentKey(request.repository, request.name),
   );
+  // Preserve the profile refusal for a cataloged definition disabled by that
+  // policy. Other disabled states retain their usual not-found response.
+  if (!agent?.enabled && agent?.definition && agent.error && !agent.vetoedBy)
+    try {
+      repositoryProfile(agent.definition, deps.profiles());
+    } catch (error) {
+      if (
+        !(error instanceof AgentAdmissionError) ||
+        error.message === agent.error
+      )
+        throw error;
+    }
   if (!agent?.enabled || agent.definition === undefined)
     throw new AgentAdmissionError(
       'NOT_FOUND',

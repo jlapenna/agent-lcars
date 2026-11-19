@@ -42,7 +42,8 @@ export function observeAgentCatalog(
     if (agent.enabled) counts.enabled++;
     else if (agent.error === SOURCE_FAILED) counts.unavailable++;
     else if (agent.error === REMOVED) counts.removed++;
-    else if (agent.definition === undefined) counts.invalid++;
+    else if (agent.definition === undefined || agent.error !== undefined)
+      counts.invalid++;
     else counts.vetoed++;
   }
   const unavailable = new Map<string, number>();

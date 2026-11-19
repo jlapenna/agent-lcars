@@ -31,7 +31,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { ClawFailure, readSettingsFile, stopGroup } from './claw-process.mjs';
@@ -132,8 +132,7 @@ export function doctorChanges(source, after, pluginProviders = new Map()) {
 export async function resolveCommand(command, path = '') {
   if (command.includes('/')) return command;
   for (const dir of path.split(':')) {
-    if (!dir) continue;
-    const candidate = join(dir, command);
+    const candidate = resolve(dir, command);
     try {
       // As execvp does: the first regular, executable file on PATH.
       if ((await stat(candidate)).isFile()) {
@@ -1126,6 +1125,8 @@ export async function openclawHarness({
   env,
   signal,
 }) {
+  // Pin the operator executable before any child changes to the agent workspace.
+  openclaw = resolve(await resolveCommand(openclaw, env.PATH));
   const { turnEnv, port, tokenFile, verify } = await prepareState({
     agentDir: definitionDir,
     workRoot,

@@ -598,6 +598,16 @@ test('a bare OpenClaw command resolves through PATH', async () => {
     await resolveCommand('openclaw', `/nonexistent:${shadow}:${bin}`),
     join(bin, 'openclaw'),
   );
+  const previousCwd = process.cwd();
+  try {
+    process.chdir(bin);
+    assert.equal(
+      await resolveCommand('openclaw', `:${shadow}`),
+      join(bin, 'openclaw'),
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
   assert.equal(await resolveCommand('/abs/openclaw', ''), '/abs/openclaw');
   await assert.rejects(
     resolveCommand('openclaw', '/nonexistent'),

@@ -16,6 +16,7 @@ import type {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 class MemoryAgentStore implements AgentStore {
@@ -175,6 +176,34 @@ it('catalogs and enables a valid agent with only a description, pinning every fi
     manifest: { description: 'Read-only investigator.' },
   });
   expect(agent.definition!.fileCount).toBe(5);
+});
+
+it('keeps a repository refused by its profile visible and disabled until the grant changes', async () => {
+  const store = new MemoryAgentStore();
+  const profile = {
+    name: 'ops',
+    runtime: 'claw-ops',
+    repositories: ['other/repo'],
+  };
+  const observe = async (when: Date) => {
+    vi.stubEnv('AGENT_LCARS_AGENT_PROFILES', JSON.stringify([profile]));
+    await refreshAgentCatalog(store, 'owner/repo', tokens, when);
+    return store.rows.get(agentKey('owner/repo', 'investigator'));
+  };
+  vi.stubGlobal(
+    'fetch',
+    github({
+      investigator: investigator('description: Investigator\nprofile: ops\n'),
+    }),
+  );
+  expect(await observe(now)).toMatchObject({
+    enabled: false,
+    error: 'Profile ops does not admit owner/repo',
+  });
+  profile.repositories.push('owner/repo');
+  expect(await observe(new Date(now.getTime() + 1000))).toMatchObject({
+    enabled: true,
+  });
 });
 
 it('changes the digest when any file changes, including its mode', async () => {

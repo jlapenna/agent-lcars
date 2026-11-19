@@ -667,8 +667,9 @@ attempt. Before reverting a runtime's image digest:
   repository is refused. Admission refuses it with "Profile NAME does not
   admit REPOSITORY" (`apps/console/src/lib/repository-agent-runs.ts`), and
   the operator-route test in `apps/console/src/lib/work-router.test.ts`
-  asserts HTTP 403 for it. Its catalog visibility and a production refusal
-  remain open.
+  asserts HTTP 403 for it. The catalog test verifies that it stays visible
+  and disabled with the refusal reason until its repository is granted access.
+  A production refusal remains open.
 - **Open:** the ACP launcher (#3411) running a round in production, after its
   `claw-runner` image is published and pinned.
 
