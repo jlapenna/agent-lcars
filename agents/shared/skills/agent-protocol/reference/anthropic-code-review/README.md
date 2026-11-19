@@ -109,9 +109,10 @@ review and comment-quality guidance applies.
 6. **Publication.** Replace upstream steps 7–9 and the `--comment` gate. Submit
    one real GitHub pull-request review through `gh api`, bound by `commit_id`
    to the full reviewed SHA, with a non-empty body and this attempt's exact
-   claim marker. If the PR has changed base, include the standalone line
+   claim marker. Include the standalone line
    `<!-- lcars-review:base-event NODE_ID -->`, using the event ID captured
-   before reading the reviewed diff. Include validated, deduplicated findings as inline review
+   before reading the reviewed diff. When that query succeeded and returned no event,
+   use the literal value `initial` for NODE_ID. Include validated, deduplicated findings as inline review
    comments at changed lines, using full-SHA links for supporting evidence.
    A finding without a valid changed-line location belongs in the review body.
    Use REQUEST_CHANGES for validated blocking defects, APPROVE for a completed
