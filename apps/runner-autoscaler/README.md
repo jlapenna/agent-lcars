@@ -777,9 +777,9 @@ directory):
   the runner user after checking the binary matches its pin; refuses a store
   with session history.
 - `package-anthropic-review.sh`: build-time only, run in a builder stage and
-  absent from the running image. It packages only the code-review command,
-  license and locked revision from the `third_party/anthropic-plugins`
-  submodule and never resolves a new version. The running image holds only
+  absent from the running image. It packages the code-review command and license from the locked
+  `third_party/anthropic-plugins` submodule, records its revision and
+  renders that revision into the LCARS reviewer instructions. The running image holds only
   that packaged output, under
   `/usr/local/lib/agent-lcars/agents/shared/skills/agent-protocol/reference/anthropic-code-review`.
 - `runtime/goose-executor.mjs`: the Goose adapter `runtime/goose-job.mjs`
