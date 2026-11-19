@@ -2616,6 +2616,10 @@ export FAKE_CLAUDE_STDOUT="You've hit your monthly spend limit."
 run_scenario claude-monthly-spend-limit
 [ "$rc" -ne 0 ] || fail "claude spend limit: expected failure"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "claude spend limit: wrong failure classification"
+export FAKE_CLAUDE_STDOUT="You've hit your org's monthly spend limit · ask your admin to raise it at https://claude.ai/admin-settings/usage"
+FAKE_ANCHOR=github FAKE_GITHUB_PR=1 FAKE_MODE=review run_scenario claude-review-org-spend-limit
+[ "$rc" -ne 0 ] || fail "claude review org spend limit: expected failure"
+jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "claude review org spend limit: wrong failure classification"
 export FAKE_CLAUDE_STDOUT='API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"This organization has reached its monthly spend limit."}}'
 run_scenario claude-org-spend-limit-400
 [ "$rc" -ne 0 ] || fail "claude org spend 400: expected failure"
