@@ -58,6 +58,22 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
+it.each([
+  ['0', undefined],
+  ['1', true],
+])(
+  'marks only redeliveries for freshness checks (%s)',
+  async (count, retry) => {
+    handleWebhookDelivery.mockResolvedValue({
+      status: 503,
+      body: { deferred: 'review-task-busy' },
+    });
+    const response = await POST(request(count as string));
+    expect(response.status).toBe(503);
+    expect(handleWebhookDelivery.mock.calls[0]?.[1].retry).toBe(retry);
+  },
+);
+
 afterEach(() => {
   delete process.env['AGENT_LCARS_WEBHOOK_SECRET'];
   vi.restoreAllMocks();

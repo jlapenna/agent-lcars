@@ -35,12 +35,15 @@ review and comment-quality guidance applies.
 
 1. **Eligibility and source.** LCARS has already selected this PR for review.
    Replace upstream step 1: fetch the live PR metadata, complete changed-file
-   list and diff through `gh`, recording the full head SHA. Do not skip because
+   list and diff through `gh`. Before reading the diff, record the full head
+   SHA, base branch, and the latest `BASE_REF_CHANGED_EVENT` node ID from
+   `pullRequest.timelineItems(last: 1, itemTypes: [BASE_REF_CHANGED_EVENT])`.
+   A PR that has never changed base has no such event. Do not skip because
    the change is small, automated, draft, closed, or previously commented on:
    LCARS supports explicitly requested reviews of closed anchors too. Review
    the requested change at that head; distinguish historical review from merge
    approval. Read existing review threads to avoid duplicate findings. Before
-   publication, re-read the head; if it changed, review the new revision within
+   publication, re-read the head, base and event ID. If any changed, review the new comparison within
    the remaining budget or report the incomplete review with the unreviewed SHA.
    Never approve a head
    that the independent passes did not review.
@@ -106,7 +109,9 @@ review and comment-quality guidance applies.
 6. **Publication.** Replace upstream steps 7–9 and the `--comment` gate. Submit
    one real GitHub pull-request review through `gh api`, bound by `commit_id`
    to the full reviewed SHA, with a non-empty body and this attempt's exact
-   claim marker. Include validated, deduplicated findings as inline review
+   claim marker. If the PR has changed base, include the standalone line
+   `<!-- lcars-review:base-event NODE_ID -->`, using the event ID captured
+   before reading the reviewed diff. Include validated, deduplicated findings as inline review
    comments at changed lines, using full-SHA links for supporting evidence.
    A finding without a valid changed-line location belongs in the review body.
    Use REQUEST_CHANGES for validated blocking defects, APPROVE for a completed

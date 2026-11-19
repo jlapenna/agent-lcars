@@ -105,6 +105,8 @@ export interface RequestInput {
   pipeline: string;
   priority?: QueuePriority;
   params?: Record<string, string>;
+  /** Signed GitHub review intake for the PR currently bound to delivery. */
+  githubReview?: boolean;
   /** Typed action provenance supplied only by a trusted admission adapter. */
   intervention?: OperationalIntervention;
   work?: WorkPayload;
@@ -257,6 +259,7 @@ export class Orchestrator {
         const requestArgs = {
           now,
           taskId: input.taskId,
+          githubReview: input.githubReview,
           requestId,
           requestSource,
           pipeline,

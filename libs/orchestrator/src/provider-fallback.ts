@@ -74,6 +74,7 @@ function successor(input: {
     activeRun: undefined,
     requestId: `fallback:${previous.runId}`,
     requestSource: 'provider-fallback',
+    githubReview: previous.params?.mode === 'review',
     pipeline: input.pipeline,
     priority: previous.priority ?? 'normal',
     ...(params === undefined ? {} : { params }),

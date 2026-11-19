@@ -219,6 +219,7 @@ export function isEffectfulRun(run: {
 }
 
 export interface RequestRunInput {
+  githubReview?: boolean;
   now: string;
   task: Task | undefined;
   taskId: TaskId;
@@ -260,6 +261,13 @@ export function requestRun(input: RequestRunInput): Decision | Refusal {
   if (
     input.task !== undefined &&
     deliveryWaiting(input.task) &&
+    !(
+      input.githubReview === true &&
+      input.params?.mode === 'review' &&
+      !isWorkAnchor(taskId) &&
+      input.task.delivery?.repo === taskId.repo &&
+      input.task.delivery.number === taskId.issue
+    ) &&
     !(
       input.params?.mode === 'reply' &&
       input.params.replyPrincipal !== undefined

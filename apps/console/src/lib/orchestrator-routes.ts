@@ -26,6 +26,7 @@ import {
   githubAnchorProjectionFromDelivery,
 } from '@/lib/github-anchor-projection';
 import { refreshCurrentGithubAnchorProjection } from '@/lib/github-anchor-refresh';
+import { getGithubClient } from '@/lib/github-client';
 import { admitGithubWork } from '@/lib/github-work-admission';
 import { issueFromGithubProjection } from '@/lib/issue-trackers';
 import type { DrainOutboxResult } from '@/lib/orchestrator-dispatch';
@@ -249,7 +250,12 @@ async function wakeDeliveryMonitors(
 
 export async function handleWebhookDelivery(
   deps: OrchestratorRouteDeps,
-  input: { event: string; deliveryId: string; payload: unknown },
+  input: {
+    event: string;
+    deliveryId: string;
+    payload: unknown;
+    retry?: boolean;
+  },
 ): Promise<RouteResult> {
   try {
     // Observe a bound PR's change now rather than on the fallback clock. A
@@ -267,6 +273,38 @@ export async function handleWebhookDelivery(
     const interpreted = interpretDelivery(input);
     if (interpreted.kind === 'ignore')
       return await handleIgnoredDelivery(deps, input, interpreted);
+    if (
+      input.retry &&
+      interpreted.kind === 'request' &&
+      interpreted.reviewContext &&
+      !isWorkAnchor(interpreted.taskId)
+    ) {
+      const { taskId } = interpreted;
+      const [owner, repo] = taskId.repo.split('/') as [string, string];
+      const { data: current } = await getGithubClient().rest.pulls.get({
+        owner,
+        repo,
+        pull_number: taskId.issue,
+      });
+      const pushed = z
+        .object({
+          pull_request: z.object({
+            head: z.object({ sha: z.string() }),
+            base: z.object({ ref: z.string() }),
+          }),
+        })
+        .safeParse(input.payload);
+      if (
+        current.state !== 'open' ||
+        current.draft ||
+        (pushed.success &&
+          (pushed.data.pull_request.head.sha !== current.head.sha ||
+            pushed.data.pull_request.base.ref !== current.base.ref))
+      ) {
+        await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+        return { status: 200, body: { ignored: 'superseded-review' } };
+      }
+    }
     const result = await decideDelivery(deps, input, interpreted);
     // Every acknowledged outcome refreshes the anchor's projection exactly
     // once, after the durable decision; a rejected admission (500) is retried
@@ -489,6 +527,7 @@ async function decideDelivery(
       ? {}
       : { issue: issueFromGithubProjection(projection) }),
     anchor: resolvedDecision.taskId,
+    githubReview: resolvedDecision.reviewContext !== undefined,
     requestId: resolvedDecision.requestId,
     params,
     work: resolvedDecision.work,
@@ -506,6 +545,10 @@ async function decideDelivery(
 
   switch (outcome.kind) {
     case 'busy':
+      // The authenticated Cloud Tasks delivery owns retries. Acknowledging here
+      // would lose the final push if the active review just read the old head.
+      if (resolvedDecision.reviewContext !== undefined)
+        return { status: 503, body: { deferred: 'review-task-busy' } };
       return { status: 200, body: { refused: 'task-busy' } };
     case 'duplicate':
       return { status: 200, body: { duplicate: true, runId: outcome.runId } };

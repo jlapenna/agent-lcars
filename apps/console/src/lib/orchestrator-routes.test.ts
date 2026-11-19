@@ -1256,6 +1256,89 @@ describe('handleWebhookDelivery', () => {
     );
   });
 
+  it('retries a push during review and admits it once after release', async () => {
+    const { deps, store } = fixture();
+    const payload = {
+      action: 'synchronize',
+      repository: { full_name: REPO },
+      pull_request: {
+        state: 'open',
+        draft: false,
+        number: ISSUE.issue,
+        title: 'Review this PR',
+        body: '',
+        user: { login: 'jlapenna' },
+        labels: [],
+      },
+      sender: { login: 'jlapenna' },
+    };
+    const first = await handleWebhookDelivery(deps, {
+      event: 'pull_request',
+      deliveryId: 'first-head',
+      payload,
+    });
+    const next = { event: 'pull_request', deliveryId: 'next-head', payload };
+    expect(await handleWebhookDelivery(deps, next)).toMatchObject({
+      status: 503,
+    });
+    await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
+    expect(await handleWebhookDelivery(deps, next)).toMatchObject({
+      status: 200,
+    });
+    expect(await handleWebhookDelivery(deps, next)).toMatchObject({
+      body: { duplicate: true },
+    });
+    expect(await store.listRuns(ISSUE)).toHaveLength(2);
+  });
+
+  it('admits a maintainer review on the PR bound to waiting delivery and retains ownership', async () => {
+    const { deps, store } = fixture();
+    const runId = await dispatchedRun(deps, 'implementation');
+    await deps.orchestrator.report(runId, { ok: true });
+    const stored = await store.readTask(ISSUE);
+    if (!stored) throw new Error('Missing task');
+    const delivery = {
+      repo: REPO,
+      number: ISSUE.issue,
+      runId,
+      baseRef: 'main',
+      head: 'a'.repeat(40),
+      state: 'waiting' as const,
+      observedAt: T0,
+    };
+    await store.apply({
+      decision: { task: { ...stored.task, delivery }, outbox: [] },
+      expectedRevision: stored.revision,
+    });
+    const result = await handleWebhookDelivery(deps, {
+      event: 'issue_comment',
+      deliveryId: 'maintainer-review',
+      payload: {
+        action: 'created',
+        repository: { full_name: REPO },
+        sender: { login: 'jlapenna' },
+        issue: {
+          number: ISSUE.issue,
+          state: 'open',
+          title: 'Issue title',
+          body: 'Issue body',
+          pull_request: {},
+          labels: [],
+        },
+        comment: {
+          body: '/review',
+          author_association: 'OWNER',
+          user: { type: 'User' },
+        },
+      },
+    });
+    expect(result.body['runId']).toBeTruthy();
+    await deps.orchestrator.report(result.body['runId'] as string, {
+      ok: true,
+    });
+    expect((await store.readTask(ISSUE))?.task.delivery).toEqual(delivery);
+  });
+
   it('gives a later review-label redispatch the same comment window', async () => {
     const { clock, deps, store } = fixture();
     const reviewPayload = {

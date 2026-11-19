@@ -37,6 +37,7 @@ import {
  * user-facing response, but none may make an independent request/drain
  * decision. */
 export interface GithubWorkAdmissionInput {
+  githubReview?: boolean;
   issue?: TrackerIssue;
   anchor: TaskId;
   requestId: string;
@@ -200,6 +201,7 @@ export async function admitGithubWork(
 
   const outcome = await runtime.orchestrator.request({
     taskId: anchor,
+    githubReview: input.githubReview,
     requestId: input.requestId,
     ...(input.requestBinding === undefined
       ? {}
