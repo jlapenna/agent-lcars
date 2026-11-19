@@ -1683,6 +1683,7 @@ is_provider_limit_message() {
     [[ "$text" == "You've hit your usage limit"* ]] ||
     [[ "$text" == "Credit balance is too low"* ]] ||
     [[ "$text" == "You've hit your monthly spend limit"* ]] ||
+    [[ "$text" == "You've hit your org's monthly spend limit"* ]] ||
     [[ "$text" == "You've hit your channel's monthly spend limit"* ]] ||
     # Claude Code prints an API refusal as `API Error: <status> <body>`; an
     # organization spend cap arrives as a 400, not a 429.
