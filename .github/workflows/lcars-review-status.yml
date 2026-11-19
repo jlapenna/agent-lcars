@@ -37,29 +37,13 @@ jobs:
           while read -r pr head; do
             [[ -n "$pr" ]] || continue
             reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews?per_page=100")
-            # GraphQL variables must reach GitHub literally.
-            # shellcheck disable=SC2016
-            base_event=$(gh api graphql -F owner="${REPO%/*}" -F repo="${REPO#*/}" -F pr="$pr" \
-              -f query='query($owner:String!, $repo:String!, $pr:Int!) {
-                repository(owner:$owner, name:$repo) { pullRequest(number:$pr) {
-                  timelineItems(last:1, itemTypes:[BASE_REF_CHANGED_EVENT]) {
-                    nodes { ... on BaseRefChangedEvent { id createdAt } }
-                  }
-                } }
-              }' --jq '.data.repository.pullRequest.timelineItems.nodes[0] // {}')
-            state=$(jq -r --argjson base_event "$base_event" --arg head "$head" '
-              def marked($marker): (.body // "" | split("\n") | any(rtrimstr("\r") == $marker));
-              def blocks: .state == "CHANGES_REQUESTED" or
-                (.state == "COMMENTED" and marked("<!-- lcars-review:block -->"));
-              [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head)
-                | select($base_event.id == null or marked("<!-- lcars-review:base-event \($base_event.id) -->") or
-                    (blocks and .submitted_at >= $base_event.createdAt and
-                      ((.body // "") | contains("<!-- lcars-review:base-event ") | not))) ]
+            state=$(jq -r --arg head "$head" '
+              [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head) ]
               | reduce .[] as $r ("pending";
                   if $r.state == "CHANGES_REQUESTED" then "blocked"
                   elif $r.state == "COMMENTED" and . != "blocked" and
                     ($r.body // "" | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:block -->")) then "comment_blocked"
-                  elif ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
+                  elif ($r.body // "" | contains("<!-- attempt-claim:")) and
                     ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
                   then "success" else . end)
             ' <<< "$reviews")

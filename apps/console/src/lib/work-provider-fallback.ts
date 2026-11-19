@@ -18,7 +18,7 @@ import { repositoryForbiddenReason } from './work-authorization';
 import { grantForPrincipal, type WorkGrant, workGrants } from './work-grants';
 
 /** Synthetic principal recorded on signed GitHub webhook PR review admissions
- * so quota/cooldown fallback can re-verify repository admission andreview-mode
+ * so quota/cooldown fallback can re-verify repository admission and review-mode
  * scope without requiring an operator Work grant. */
 export const GITHUB_PR_REVIEW_PRINCIPAL = 'svc:github-pr-review';
 
@@ -87,7 +87,7 @@ export function currentFallbackPipelines(
   if (policy.principal === GITHUB_PR_REVIEW_PRINCIPAL) {
     if (
       run.params?.['mode'] !== 'review' ||
-      payload.data.origin.channel !== 'github' ||
+      policy.sourceRepository !== repository ||
       isWorkAnchor(task.task)
     )
       return [];

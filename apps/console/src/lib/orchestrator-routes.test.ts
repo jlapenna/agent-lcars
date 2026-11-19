@@ -1334,7 +1334,24 @@ describe('handleWebhookDelivery', () => {
     const { deps, store } = fixture(
       (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
     );
-    const runId = await dispatchedRun(deps, 'implementation');
+    const implementationRequest = await admitGithubWork(deps, {
+      anchor: ISSUE,
+      requestId: 'implementation',
+      params: { mode: 'implement' },
+      work: {
+        origin: { principal: 'user:operator', channel: 'api' },
+        spec: workPayloadFromGithub({
+          title: 'Issue title',
+          body: 'Issue body',
+          pipeline: 'claude',
+          repo: REPO,
+          actor: 'jlapenna',
+        }).spec,
+      },
+    });
+    if (implementationRequest.kind !== 'accepted')
+      throw new Error('Missing API implementation');
+    const runId = implementationRequest.runId;
     await deps.orchestrator.report(runId, { ok: true });
     const stored = await store.readTask(ISSUE);
     if (!stored) throw new Error('Missing task');
