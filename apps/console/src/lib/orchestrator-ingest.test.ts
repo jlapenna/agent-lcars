@@ -1091,6 +1091,10 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
   it.each(['jlapenna/homelab', 'jlapenna/nx-cache-server'])(
     'reviews new dependency-bot commits in %s',
     (repository) => {
+      const [owner, name] = repository.split('/');
+      process.env['AGENT_LCARS_WATCHED_REPOS'] = JSON.stringify([
+        { owner, name },
+      ]);
       process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] = repository;
       const result = interpretDelivery({
         event: 'pull_request',
