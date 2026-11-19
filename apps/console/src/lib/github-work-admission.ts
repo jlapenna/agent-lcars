@@ -7,6 +7,7 @@ import {
   isRefusal,
   isWorkAnchor,
   type RequestBinding,
+  type Task,
   type TaskId,
   taskIdSchema,
 } from '@agent-lcars/orchestrator';
@@ -89,9 +90,7 @@ export type GithubWorkAdmissionOutcome =
   | {
       kind: 'conflict';
       message: string;
-      providerRouting?: NonNullable<
-        import('@agent-lcars/orchestrator').Task['providerRouting']
-      >;
+      providerRouting?: NonNullable<Task['providerRouting']>;
     }
   | RoutingLabelConflict
   | { kind: 'invalid'; message: string }
@@ -209,9 +208,8 @@ export async function admitGithubWork(
     labelProviderRequest,
     ...(input.githubReview
       ? {
-          priorityForStoredTask: (
-            task: import('@agent-lcars/orchestrator').Task,
-          ) => storedWorkPayloadSchema.parse(task.work).spec.priority,
+          priorityForStoredTask: (task: Task) =>
+            storedWorkPayloadSchema.parse(task.work).spec.priority,
         }
       : {}),
     pipelineForStoredTask: (task) =>
@@ -376,13 +374,6 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     useEffectivePipeline: true,
-    ...(input.githubReview
-      ? {
-          priorityForStoredTask: (
-            task: import('@agent-lcars/orchestrator').Task,
-          ) => storedWorkPayloadSchema.parse(task.work).spec.priority,
-        }
-      : {}),
     pipelineForStoredTask: (task) =>
       storedWorkPayloadSchema.parse(task.work).spec.pipeline,
     isPipelineAuthorized: (pipeline) =>

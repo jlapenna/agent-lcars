@@ -52,6 +52,7 @@ const requiredReviewRepositories = new Set([
 ]);
 
 export interface IngestReviewContext {
+  automatic?: true;
   requestedPipeline?: Pipeline;
   authorPipeline?: Pipeline;
   claimRunId?: string;
@@ -270,6 +271,7 @@ function terminalQuickTaskBinding(
 }
 
 function buildReviewRequestDecision(input: {
+  automatic?: true;
   repo: string;
   issue: number;
   deliveryId: string;
@@ -323,6 +325,7 @@ function buildReviewRequestDecision(input: {
     labelRouting,
     selection.fallbackPipelines,
     {
+      ...(input.automatic && { automatic: true as const }),
       ...(input.requestedPipeline === undefined
         ? {}
         : { requestedPipeline: input.requestedPipeline }),
@@ -438,6 +441,7 @@ function interpretPullRequestEvent(
       ({ name }) => REVIEW_LABELS.get(name) ?? [],
     );
     return buildReviewRequestDecision({
+      automatic: true,
       repo: repository.full_name,
       issue: pullRequest.number,
       deliveryId,

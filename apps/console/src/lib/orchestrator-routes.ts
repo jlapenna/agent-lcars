@@ -276,7 +276,7 @@ export async function handleWebhookDelivery(
     if (
       input.retry &&
       interpreted.kind === 'request' &&
-      interpreted.reviewContext &&
+      interpreted.reviewContext?.automatic &&
       !isWorkAnchor(interpreted.taskId)
     ) {
       const { taskId } = interpreted;
