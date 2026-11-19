@@ -106,7 +106,6 @@ export async function POST(request: Request): Promise<NextResponse> {
           revalidateTag(AUTHORITATIVE_QUEUE_TAG, 'max'),
       },
       {
-        ...(attempt > 1 || reviewDeferral > 0 ? { retry: true } : {}),
         event: eventName,
         deliveryId,
         payload,

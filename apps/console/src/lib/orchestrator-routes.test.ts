@@ -6,7 +6,7 @@ import {
   Orchestrator,
   type TaskId,
 } from '@agent-lcars/orchestrator';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
 import { admitGithubWork } from './github-work-admission';
@@ -26,6 +26,17 @@ vi.mock('./github-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./github-client')>()),
   getGithubClient: () => ({ rest: { pulls: { get: readReviewPr } } }),
 }));
+
+beforeEach(() => {
+  readReviewPr.mockResolvedValue({
+    data: {
+      state: 'open',
+      draft: false,
+      head: { sha: 'b'.repeat(40) },
+      base: { ref: 'main' },
+    },
+  });
+});
 
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
@@ -1290,7 +1301,7 @@ describe('handleWebhookDelivery', () => {
       status: 503,
     });
     await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
-    const retried = { ...next, retry: true };
+    const retried = next;
     readReviewPr.mockResolvedValue({
       data: {
         state: 'open',
@@ -1336,8 +1347,14 @@ describe('handleWebhookDelivery', () => {
       state: 'waiting' as const,
       observedAt: T0,
     };
+    const implementation = await store.readRun(runId);
+    if (!implementation) throw new Error('Missing implementation');
     await store.apply({
-      decision: { task: { ...stored.task, delivery }, outbox: [] },
+      decision: {
+        task: { ...stored.task, delivery },
+        run: { ...implementation, delivery },
+        outbox: [],
+      },
       expectedRevision: stored.revision,
     });
     const result = await handleWebhookDelivery(deps, {
@@ -1380,8 +1397,24 @@ describe('handleWebhookDelivery', () => {
     if (isRefusal(settled)) throw new Error(settled.reason);
     const next = settled.additionalRuns?.[0];
     if (!next) throw new Error('Missing fallback');
+    const mergeCommit = 'e'.repeat(40);
+    const observed = await deps.orchestrator.observeDelivery(
+      runId,
+      { kind: 'merged', head: delivery.head, mergeCommit },
+      () => false,
+    );
+    expect(observed).toMatchObject({
+      task: {
+        activeRunId: next.runId,
+        delivery: { ...delivery, state: 'complete', mergeCommit },
+      },
+    });
     await deps.orchestrator.report(next.runId, { ok: true });
-    expect((await store.readTask(ISSUE))?.task.delivery).toEqual(delivery);
+    expect((await store.readTask(ISSUE))?.task.delivery).toMatchObject({
+      runId,
+      state: 'complete',
+      mergeCommit,
+    });
   });
 
   it('gives a later review-label redispatch the same comment window', async () => {

@@ -27,6 +27,7 @@ export function advanceDelivery(input: {
   observation: DeliveryObservation;
   /** Re-resolved original intake grant, never the monitoring caller's grant. */
   correctionAuthorized: boolean;
+  concurrentReviewId?: string;
 }): Decision | Refusal {
   const { now, task, run, observation } = input;
   if (task.closedAt !== undefined) return refused('task-closed');
@@ -36,7 +37,11 @@ export function advanceDelivery(input: {
     binding.runId !== run.runId ||
     run.delivery?.head !== binding.head ||
     binding.head !== observation.head ||
-    task.activeRunId !== undefined ||
+    (task.activeRunId !== undefined &&
+      !(
+        task.activeRunId === input.concurrentReviewId &&
+        (observation.kind === 'merged' || observation.kind === 'withdrawn')
+      )) ||
     run.state !== 'finished' ||
     !run.result?.ok
   )

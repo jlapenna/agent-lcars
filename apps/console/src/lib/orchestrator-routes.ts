@@ -254,7 +254,6 @@ export async function handleWebhookDelivery(
     event: string;
     deliveryId: string;
     payload: unknown;
-    retry?: boolean;
   },
 ): Promise<RouteResult> {
   try {
@@ -274,7 +273,6 @@ export async function handleWebhookDelivery(
     if (interpreted.kind === 'ignore')
       return await handleIgnoredDelivery(deps, input, interpreted);
     if (
-      input.retry &&
       interpreted.kind === 'request' &&
       interpreted.reviewContext?.automatic &&
       !isWorkAnchor(interpreted.taskId)
@@ -309,8 +307,19 @@ export async function handleWebhookDelivery(
     // Every acknowledged outcome refreshes the anchor's projection exactly
     // once, after the durable decision; a rejected admission (500) is retried
     // by Cloud Tasks and refreshes on the retry that acknowledges it.
-    if (result.status === 200)
+    if (result.body['deferred'] === 'review-task-busy') {
+      // Keep the successor enqueue reachable even if the projection read fails.
+      // Its next attempt refreshes this anchor again.
+      await refreshGithubAnchorProjectionAfterAdmission(deps, input).catch(
+        (error) =>
+          logger.warn(
+            'agent-lcars: deferred PR review projection refresh failed',
+            error,
+          ),
+      );
+    } else if (result.status === 200) {
       await refreshGithubAnchorProjectionAfterAdmission(deps, input);
+    }
     return result;
   } catch (error) {
     if (error instanceof ProjectionRefreshError) throw error;

@@ -58,27 +58,17 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
-it.each([
-  ['0', undefined],
-  ['1', true],
-])(
-  'marks only redeliveries for freshness checks (%s)',
-  async (count, retry) => {
-    handleWebhookDelivery.mockResolvedValue({
-      status: 503,
-      body: { deferred: 'review-task-busy' },
-    });
-    const response = await POST(request(count as string));
-    expect(response.status).toBe(200);
-    expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reviewDeferral: 1,
-        notBefore: expect.any(Date),
-      }),
-    );
-    expect(handleWebhookDelivery.mock.calls[0]?.[1].retry).toBe(retry);
-  },
-);
+it('acknowledges a busy review only after scheduling its successor', async () => {
+  handleWebhookDelivery.mockResolvedValue({
+    status: 503,
+    body: { deferred: 'review-task-busy' },
+  });
+  const response = await POST(request('0'));
+  expect(response.status).toBe(200);
+  expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
+    expect.objectContaining({ reviewDeferral: 1, notBefore: expect.any(Date) }),
+  );
+});
 
 afterEach(() => {
   delete process.env['AGENT_LCARS_WEBHOOK_SECRET'];

@@ -397,8 +397,15 @@ export class Orchestrator {
     observation: DeliveryObservation,
     authorize: (task: Task, run: Run) => boolean,
   ): Promise<Decision | Refusal> {
+    let concurrentReviewId: string | undefined;
+    if (observation.kind === 'merged' || observation.kind === 'withdrawn') {
+      const owner = await this.store.readRun(runId);
+      const active = owner && (await this.store.readActiveRun(owner.task));
+      if (active?.params?.mode === 'review') concurrentReviewId = active.runId;
+    }
     return this.transactOnRun(runId, (task, run) =>
       advanceDelivery({
+        concurrentReviewId,
         now: this.clock.now(),
         task,
         run,
