@@ -272,7 +272,12 @@ export async function admitGithubWork(
           : {
               ...work.spec,
               pipeline: spec.pipeline,
-              ...(input.githubReview ? { priority: spec.priority } : {}),
+              ...(input.githubReview
+                ? {
+                    priority: spec.priority,
+                    fallbackPipelines: spec.fallbackPipelines,
+                  }
+                : {}),
             };
       return sameSpec(
         spec,

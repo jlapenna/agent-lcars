@@ -17,6 +17,7 @@ export interface GitHubWebhookEnvelope {
    * retry count, and travels as an internal task header so each successor can
    * allocate a distinct name after its own retry budget is exhausted. */
   repairGeneration?: number;
+  reviewDeferral?: number;
   /** Earliest time the task may run. A repair successor uses it so a
    *  poisoned anchor retries on a schedule instead of thrashing the queue. */
   notBefore?: Date;
@@ -145,12 +146,15 @@ export async function enqueueGitHubWebhook(
         envelope.repairGeneration === undefined
           ? ''
           : `-repair-${envelope.repairGeneration}`
-      }`,
+      }${envelope.reviewDeferral ? `-review-${envelope.reviewDeferral}` : ''}`,
       url: target,
       headers: {
         'content-type': 'application/json',
         'x-github-delivery': envelope.deliveryId,
         'x-github-event': envelope.eventName,
+        ...(envelope.reviewDeferral
+          ? { 'x-agent-lcars-review-deferral': String(envelope.reviewDeferral) }
+          : {}),
         'x-hub-signature-256': envelope.signature,
         ...(envelope.repairGeneration === undefined
           ? {}

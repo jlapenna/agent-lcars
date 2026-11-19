@@ -92,6 +92,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         cause: error,
       });
     }
+    const reviewDeferral = parseRepairGeneration(
+      request.headers.get('x-agent-lcars-review-deferral'),
+    );
     const result = await handleWebhookDelivery(
       {
         ...createOrchestratorRuntime(),
@@ -103,12 +106,38 @@ export async function POST(request: Request): Promise<NextResponse> {
           revalidateTag(AUTHORITATIVE_QUEUE_TAG, 'max'),
       },
       {
-        ...(attempt > 1 ? { retry: true } : {}),
+        ...(attempt > 1 || reviewDeferral > 0 ? { retry: true } : {}),
         event: eventName,
         deliveryId,
         payload,
       },
     );
+    if (result.body['deferred'] === 'review-task-busy') {
+      // A named successor retains the signed delivery before we acknowledge it.
+      // Contention on one PR must not signal congestion on the shared queue.
+      try {
+        await enqueueGitHubWebhook({
+          rawBody,
+          deliveryId,
+          eventName,
+          signature: header(request, 'x-hub-signature-256'),
+          reviewDeferral: reviewDeferral + 1,
+          notBefore: new Date(
+            Date.now() + Math.min(15, reviewDeferral + 1) * 60_000,
+          ),
+        });
+      } catch (error) {
+        logger.error(
+          'agent-lcars: failed to persist deferred PR review',
+          error,
+        );
+        return NextResponse.json(
+          { error: 'Review deferral unavailable' },
+          { status: 500 },
+        );
+      }
+      return NextResponse.json({ outcome: 'review-deferred' }, { status: 200 });
+    }
     logger.info('agent-lcars: orchestrator webhook delivery processed', result);
     return NextResponse.json(result.body, {
       status: result.status,

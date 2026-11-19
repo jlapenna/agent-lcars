@@ -157,6 +157,13 @@ const issuesEventSchema = z.object({
 });
 
 const pullRequestEventSchema = z.object({
+  changes: z
+    .object({
+      base: z
+        .object({ ref: z.object({ from: z.string() }).optional() })
+        .optional(),
+    })
+    .optional(),
   action: z.string(),
   repository: repositorySchema,
   pull_request: pullRequestAnchorSchema,
@@ -410,7 +417,11 @@ function interpretPullRequestEvent(
   if (
     action === 'opened' ||
     action === 'ready_for_review' ||
-    (requiresReview && (action === 'synchronize' || action === 'reopened'))
+    (requiresReview &&
+      (action === 'synchronize' ||
+        action === 'reopened' ||
+        (action === 'edited' &&
+          parsed.data.changes?.base?.ref?.from !== undefined)))
   ) {
     if (pullRequest.state !== 'open') return ignore('anchor-closed');
     if (pullRequest.draft === true) return ignore('draft-pull-request');

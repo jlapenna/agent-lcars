@@ -1110,7 +1110,13 @@ async function reviewCanClearHandoff(
   store: OrchestratorStore,
   review: Run,
 ): Promise<boolean> {
-  const history = await store.listRuns(review.task);
+  const history = await store.listRuns(review.task).catch((error: unknown) => {
+    logger.error(
+      'agent-lcars: preserving handoff label after unavailable run history',
+      error,
+    );
+    return [];
+  });
   const parks = history.filter(runNeedsHumanLabel);
   return (
     parks.some((run) => run.params?.mode === 'review') &&

@@ -69,7 +69,13 @@ it.each([
       body: { deferred: 'review-task-busy' },
     });
     const response = await POST(request(count as string));
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(200);
+    expect(enqueueGitHubWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewDeferral: 1,
+        notBefore: expect.any(Date),
+      }),
+    );
     expect(handleWebhookDelivery.mock.calls[0]?.[1].retry).toBe(retry);
   },
 );
