@@ -134,6 +134,7 @@ export interface RequestInput {
   };
   /** The Work owner decodes its pipeline inside the request transaction. */
   pipelineForStoredTask?: (task: Task) => string;
+  priorityForStoredTask?: (task: Task) => QueuePriority | undefined;
   /** GitHub replies/retries follow an accepted handoff, not incidental run history. */
   useEffectivePipeline?: boolean;
   expectedEffectivePipeline?: string;
@@ -264,6 +265,7 @@ export class Orchestrator {
           requestSource,
           pipeline,
           priority:
+            (task && input.priorityForStoredTask?.(task.task)) ??
             input.priority ??
             (input.replaceQueuedRunId ? activeRun?.priority : undefined),
           ...(input.params === undefined ? {} : { params: input.params }),

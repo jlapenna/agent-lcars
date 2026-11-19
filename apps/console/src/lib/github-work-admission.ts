@@ -207,6 +207,13 @@ export async function admitGithubWork(
       ? {}
       : { requestBinding: input.requestBinding }),
     labelProviderRequest,
+    ...(input.githubReview
+      ? {
+          priorityForStoredTask: (
+            task: import('@agent-lcars/orchestrator').Task,
+          ) => storedWorkPayloadSchema.parse(task.work).spec.priority,
+        }
+      : {}),
     pipelineForStoredTask: (task) =>
       storedWorkPayloadSchema.parse(task.work).spec.pipeline,
     useEffectivePipeline:
@@ -264,7 +271,11 @@ export async function admitGithubWork(
       const candidate =
         labelProviderRequest === undefined && input.params['mode'] !== 'review'
           ? work.spec
-          : { ...work.spec, pipeline: spec.pipeline };
+          : {
+              ...work.spec,
+              pipeline: spec.pipeline,
+              ...(input.githubReview ? { priority: spec.priority } : {}),
+            };
       return sameSpec(
         spec,
         input.workMirrorsAnchor === true
@@ -365,6 +376,13 @@ export async function redispatchGithubWork(
     taskId: anchor,
     requestId: input.requestId,
     useEffectivePipeline: true,
+    ...(input.githubReview
+      ? {
+          priorityForStoredTask: (
+            task: import('@agent-lcars/orchestrator').Task,
+          ) => storedWorkPayloadSchema.parse(task.work).spec.priority,
+        }
+      : {}),
     pipelineForStoredTask: (task) =>
       storedWorkPayloadSchema.parse(task.work).spec.pipeline,
     isPipelineAuthorized: (pipeline) =>

@@ -690,7 +690,11 @@ async function handleReportOutcome(
     // The symmetric out-of-order case: an older success can be delivered
     // after a newer park/failure. That newer terminal result still needs the
     // operator signal, so never let this old success clear it.
-    if (!(await hasLaterNeedsHumanRun(store, run))) {
+    if (
+      !(await hasLaterNeedsHumanRun(store, run)) &&
+      (run.params?.mode !== 'review' ||
+        (await reviewCanClearHandoff(store, run)))
+    ) {
       await removeNeedsHumanLabelBestEffort(
         fetchImpl,
         tokens,
@@ -1102,6 +1106,27 @@ function runResolvesNeedsHumanLabel(run: Run): boolean {
  * A read failure remains best-effort: preserving the current park/failure
  * signal is safer than turning the outcome comment into a retry.
  */
+async function reviewCanClearHandoff(
+  store: OrchestratorStore,
+  review: Run,
+): Promise<boolean> {
+  const history = await store.listRuns(review.task);
+  const parks = history.filter(runNeedsHumanLabel);
+  return (
+    parks.some((run) => run.params?.mode === 'review') &&
+    parks.every(
+      (park) =>
+        park.params?.mode === 'review' ||
+        history.some(
+          (run) =>
+            run.params?.mode !== 'review' &&
+            isLaterRun(run, park) &&
+            runResolvesNeedsHumanLabel(run),
+        ),
+    )
+  );
+}
+
 async function hasLaterSuccessfulNonParkRun(
   store: OrchestratorStore,
   run: Run,
@@ -1109,7 +1134,9 @@ async function hasLaterSuccessfulNonParkRun(
   return hasLaterRunMatching(
     store,
     run,
-    runResolvesNeedsHumanLabel,
+    (candidate) =>
+      runResolvesNeedsHumanLabel(candidate) &&
+      (candidate.params?.mode !== 'review' || run.params?.mode === 'review'),
     'before labeling',
   );
 }

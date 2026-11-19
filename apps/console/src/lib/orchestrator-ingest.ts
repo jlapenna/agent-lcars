@@ -434,6 +434,9 @@ function interpretPullRequestEvent(
     ) {
       return ignore('explicit-review-label-present');
     }
+    const selectedProviders = labels.flatMap(
+      ({ name }) => REVIEW_LABELS.get(name) ?? [],
+    );
     return buildReviewRequestDecision({
       repo: repository.full_name,
       issue: pullRequest.number,
@@ -442,9 +445,8 @@ function interpretPullRequestEvent(
       body: pullRequest.body,
       actor: sender.login,
       labels,
-      requestedPipeline: labels
-        .map((item) => REVIEW_LABELS.get(item.name))
-        .find((pipeline) => pipeline !== undefined),
+      requestedPipeline:
+        selectedProviders.length === 1 ? selectedProviders[0] : undefined,
       userLogin: pullRequest.user.login,
       headRef: pullRequest.head?.ref,
     });
