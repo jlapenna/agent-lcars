@@ -654,10 +654,11 @@ attempt. Before reverting a runtime's image digest:
 ## Acceptance
 
 - **Met:** a real investigation ran from `jlapenna/homelab/investigator`
-  through the generic operator route on the OpenClaw launcher (#3402). Still
-  open: a production `lcars investigate` invocation that settles
-  successfully, since the CLI uses the run-token routes and waits for the
-  result.
+  through the generic operator route on the OpenClaw launcher (#3402). On
+  2026-11-19, dispatched Work item `01M7T00000W7K2TMVZX7GR17DP` invoked
+  `lcars investigate` with its run token. The investigator read the reboot
+  marker on pike. Child `01M7S3GT4G2YJ4DCWNN3KRK1RR` returned a report
+  on its second attempt, and the calling item finished with that result.
 - **Met:** an agent with no profile, added by a repository PR alone, runs
   end to end on k3s. The `.lcars/agents/smoke/` canary (#3406) finished on
   runtime `claw-default` with a report as Work items
