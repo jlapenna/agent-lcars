@@ -21,6 +21,12 @@ import {
 import { workPayloadFromGithub } from './work-from-github';
 import { providerFallbackAuthority } from './work-provider-fallback';
 
+const { readReviewPr } = vi.hoisted(() => ({ readReviewPr: vi.fn() }));
+vi.mock('./github-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./github-client')>()),
+  getGithubClient: () => ({ rest: { pulls: { get: readReviewPr } } }),
+}));
+
 // No env vars are set in this test environment, so `controlPlaneRepository()`
 // falls back to this deployment's default -- see deployment.ts/.test.ts.
 const REPO = 'jlapenna/agent-lcars';
@@ -1265,6 +1271,8 @@ describe('handleWebhookDelivery', () => {
         state: 'open',
         draft: false,
         number: ISSUE.issue,
+        head: { sha: 'b'.repeat(40) },
+        base: { ref: 'main' },
         title: 'Review this PR',
         body: '',
         user: { login: 'jlapenna' },
@@ -1282,7 +1290,27 @@ describe('handleWebhookDelivery', () => {
       status: 503,
     });
     await deps.orchestrator.report(first.body['runId'] as string, { ok: true });
-    expect(await handleWebhookDelivery(deps, next)).toMatchObject({
+    const retried = { ...next, retry: true };
+    readReviewPr.mockResolvedValue({
+      data: {
+        state: 'open',
+        draft: false,
+        head: { sha: 'c'.repeat(40) },
+        base: { ref: 'main' },
+      },
+    });
+    expect(await handleWebhookDelivery(deps, retried)).toMatchObject({
+      body: { ignored: 'superseded-review' },
+    });
+    readReviewPr.mockResolvedValue({
+      data: {
+        state: 'open',
+        draft: false,
+        head: { sha: 'b'.repeat(40) },
+        base: { ref: 'main' },
+      },
+    });
+    expect(await handleWebhookDelivery(deps, retried)).toMatchObject({
       status: 200,
     });
     expect(await handleWebhookDelivery(deps, next)).toMatchObject({
@@ -1292,7 +1320,9 @@ describe('handleWebhookDelivery', () => {
   });
 
   it('admits a maintainer review on the PR bound to waiting delivery and retains ownership', async () => {
-    const { deps, store } = fixture();
+    const { deps, store } = fixture(
+      (s, clock) => new Orchestrator(s, clock, providerFallbackAuthority),
+    );
     const runId = await dispatchedRun(deps, 'implementation');
     await deps.orchestrator.report(runId, { ok: true });
     const stored = await store.readTask(ISSUE);
@@ -1333,9 +1363,24 @@ describe('handleWebhookDelivery', () => {
       },
     });
     expect(result.body['runId']).toBeTruthy();
-    await deps.orchestrator.report(result.body['runId'] as string, {
-      ok: true,
+    const settled = await deps.orchestrator.report(
+      result.body['runId'] as string,
+      {
+        ok: false,
+        summary: 'provider-limit',
+      },
+    );
+    expect(settled).toMatchObject({
+      additionalRuns: [
+        expect.objectContaining({
+          params: expect.objectContaining({ mode: 'review' }),
+        }),
+      ],
     });
+    if (isRefusal(settled)) throw new Error(settled.reason);
+    const next = settled.additionalRuns?.[0];
+    if (!next) throw new Error('Missing fallback');
+    await deps.orchestrator.report(next.runId, { ok: true });
     expect((await store.readTask(ISSUE))?.task.delivery).toEqual(delivery);
   });
 
