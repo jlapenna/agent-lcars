@@ -202,7 +202,10 @@ The core promises:
   `review:*` label), the unified `review` label, `/review` PR comments by an
   `OWNER` or `MEMBER`, and `review:{claude,codex,opencode,agy}` labels admit
   `mode: 'review'` runs through `lib/pr-review-routing.ts` with principal
-  `svc:github-pr-review`. Authoring pipeline detection resolves the stored
+  `svc:github-pr-review`. For admitted, watched repositories with required
+  review intake (Agent LCARS, Homelab, and Nx Cache Server), automatic review
+  also handles `synchronize` and `reopened`. Their bot and label exclusions
+  are lifted for open, non-draft PRs. Authoring pipeline detection resolves the stored
   `Run.pipeline` from the PR's `<!-- attempt-claim:g<n>:<runId> -->` marker (or
   the latest prior `implement` run on the task) before falling back to static PR
   signals (`agent:*` label, `claude[bot]` login, `Claude-Session:` /

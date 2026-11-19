@@ -83,13 +83,15 @@ The GitHub App subscribes to issue, issue-comment, and pull-request events.
 `orchestrator-ingest.ts` acts on `labeled` for both label families (#565), on
 non-draft `pull_request` `opened` and `ready_for_review` events for automatic
 cross-model review, and on `issue_comment`'s `created` action for reply and
-`/review` commands. An
+`/review` commands. In Agent LCARS, Homelab, and Nx Cache Server, admitted
+open, non-draft PRs also trigger reviews on `synchronize` and `reopened`,
+including dependency bot PRs and PRs already carrying review labels. An
 `issues` or `pull_request` `closed` action also retires a queued, unclaimed
 `mode: implement` run for that anchor (#1937). The transition is transactional
 with queue claiming and fenced by GitHub's `closed_at`, so claimed workers and
 a newer post-reopen generation survive a racing or delayed close delivery.
 Review and tagged-reply modes remain usable on closed anchors. `unlabeled`,
-`reopened`, and other actions are otherwise received but ignored
+`reopened` outside required-review intake, and other actions are otherwise received but ignored
 (`ignore('unhandled-action')` / `ignore('unhandled-event')`). The native
 outcome verifier keeps the deliverable contract aligned for every mode
 regardless of how the run was requested.
