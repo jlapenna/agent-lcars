@@ -1098,14 +1098,6 @@ function runResolvesNeedsHumanLabel(run: Run): boolean {
   );
 }
 
-/**
- * Reads the task's durable run history only while considering an add, the
- * rare path where the human-attention projection is changing. Outbox entries
- * are intentionally fair rather than strictly FIFO, so an older report can
- * otherwise land after a newer successful result and recreate a stale label.
- * A read failure remains best-effort: preserving the current park/failure
- * signal is safer than turning the outcome comment into a retry.
- */
 async function reviewCanClearHandoff(
   store: OrchestratorStore,
   review: Run,
@@ -1133,6 +1125,14 @@ async function reviewCanClearHandoff(
   );
 }
 
+/**
+ * Reads the task's durable run history only while considering an add, the
+ * rare path where the human-attention projection is changing. Outbox entries
+ * are intentionally fair rather than strictly FIFO, so an older report can
+ * otherwise land after a newer successful result and recreate a stale label.
+ * A read failure remains best-effort: preserving the current park/failure
+ * signal is safer than turning the outcome comment into a retry.
+ */
 async function hasLaterSuccessfulNonParkRun(
   store: OrchestratorStore,
   run: Run,

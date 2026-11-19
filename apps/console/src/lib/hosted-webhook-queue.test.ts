@@ -52,6 +52,19 @@ describe('hosted GitHub webhook queue', () => {
     });
   });
 
+  it('names a repeated deferral by delivery and generation', async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    await enqueueGitHubWebhook({ ...envelope, reviewDeferral: 2 }, { enqueue });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: `github-${envelope.deliveryId}-review-2`,
+        headers: expect.objectContaining({
+          'x-agent-lcars-review-deferral': '2',
+        }),
+      }),
+    );
+  });
+
   it('carries a repair generation in the successor task envelope', async () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const queue: WebhookTaskQueue = { enqueue };

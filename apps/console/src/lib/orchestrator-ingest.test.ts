@@ -1119,6 +1119,29 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
     },
   );
 
+  it.each([
+    [{ base: { ref: { from: 'staging' } } }, 'request'],
+    [{ title: { from: 'old title' } }, 'ignore'],
+  ])('requests review only for a base-changing edit', (changes, kind) => {
+    const result = interpretDelivery({
+      event: 'pull_request',
+      deliveryId: DELIVERY_ID,
+      payload: pullRequestLabeledPayload({
+        action: 'edited',
+        changes,
+        pull_request: {
+          state: 'open',
+          draft: false,
+          number: 7,
+          title: 'Updated PR',
+          user: { login: 'jlapenna' },
+          labels: [],
+        },
+      }),
+    });
+    expect(result.kind).toBe(kind);
+  });
+
   it('admits a second repository once the allow-list env var lists it', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${REPO},${SECOND_REPO}`;

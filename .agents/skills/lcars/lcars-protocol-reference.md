@@ -84,7 +84,7 @@ The GitHub App subscribes to issue, issue-comment, and pull-request events.
 non-draft `pull_request` `opened` and `ready_for_review` events for automatic
 cross-model review, and on `issue_comment`'s `created` action for reply and
 `/review` commands. In Agent LCARS, Homelab, and Nx Cache Server, admitted
-open, non-draft PRs also trigger reviews on `synchronize` and `reopened`,
+open, non-draft PRs also trigger reviews on `synchronize`, `reopened`, and base branch changes,
 including dependency bot PRs and PRs already carrying review labels. An
 `issues` or `pull_request` `closed` action also retires a queued, unclaimed
 `mode: implement` run for that anchor (#1937). The transition is transactional
