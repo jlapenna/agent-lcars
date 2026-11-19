@@ -307,7 +307,10 @@ async function handleMonitorDelivery(
   }
   await settleClaim(deps, entry, 'pending', {
     nextAttemptAt: new Date(
-      Date.parse(now(deps)) + DELIVERY_MONITOR_FALLBACK_MS,
+      Date.parse(now(deps)) +
+        ('refused' in decision && decision.reason === 'stale-lease'
+          ? 60_000
+          : DELIVERY_MONITOR_FALLBACK_MS),
     ).toISOString(),
     recovered: true,
   });
@@ -574,9 +577,21 @@ async function handleReportOutcome(
   // it (a native anchor never reaches `describeLostOutcome`: it bails at
   // the `target.issue === undefined` check just below).
   const task =
-    isWorkAnchor(run.task) || run.state === 'lost'
+    isWorkAnchor(run.task) ||
+    run.state === 'lost' ||
+    run.params?.mode === 'review'
       ? (await store.readTask(run.task))?.task
       : undefined;
+  if (
+    run.params?.mode === 'review' &&
+    task?.delivery?.state === 'waiting' &&
+    task.activeRunId === undefined
+  ) {
+    await store.wakeOutbox({
+      entryId: `delivery/${task.delivery.runId}`,
+      now: now(deps),
+    });
+  }
   if (task !== undefined && isSourceManagedWork(task.work)) {
     await settleClaim(deps, entry, 'done');
     result.reported.push(run.runId);

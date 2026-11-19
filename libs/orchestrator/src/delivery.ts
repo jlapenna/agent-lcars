@@ -40,7 +40,7 @@ export function advanceDelivery(input: {
     (task.activeRunId !== undefined &&
       !(
         task.activeRunId === input.concurrentReviewId &&
-        (observation.kind === 'merged' || observation.kind === 'withdrawn')
+        observation.kind !== 'correction'
       )) ||
     run.state !== 'finished' ||
     !run.result?.ok

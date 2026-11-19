@@ -15,7 +15,9 @@ available through Git history.
 ## Dispatch contract
 
 1. A webhook request creates a task-scoped run only when no live run exists.
-   Duplicate or concurrent requests are refused rather than queued.
+   Duplicate requests reuse their existing receipt. Signed GitHub review requests
+   that encounter a busy PR are deferred, including explicit review labels
+   and maintainer `/review` commands. Other concurrent requests are refused.
 2. The orchestrator records the decision atomically and enqueues a
    `dispatch-run` outbox entry. The outbox writes the run to QueueExecutor's
    claimable queue state; it does not dispatch a GitHub Actions workflow.

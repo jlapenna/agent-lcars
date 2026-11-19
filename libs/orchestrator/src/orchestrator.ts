@@ -398,7 +398,7 @@ export class Orchestrator {
     authorize: (task: Task, run: Run) => boolean,
   ): Promise<Decision | Refusal> {
     let concurrentReviewId: string | undefined;
-    if (observation.kind === 'merged' || observation.kind === 'withdrawn') {
+    if (observation.kind !== 'correction' && observation.kind !== 'waiting') {
       const owner = await this.store.readRun(runId);
       const active = owner && (await this.store.readActiveRun(owner.task));
       if (active?.params?.mode === 'review') concurrentReviewId = active.runId;

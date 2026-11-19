@@ -4725,6 +4725,13 @@ describe('exact outcome links cross the authenticated completion boundary', () =
     },
     { outcome: 'comment', reference: comment, ref: comment.url, state: 'done' },
     { outcome: 'review', reference: review, ref: review.url, state: 'done' },
+    {
+      outcome: 'review',
+      reference: review,
+      ref: review.url,
+      state: 'running',
+      waiting: true,
+    },
     { outcome: 'park', reference: comment, ref: comment.url, state: 'parked' },
     { outcome: 'no-op', reference: comment, ref: comment.url, state: 'done' },
     {
@@ -4742,7 +4749,7 @@ describe('exact outcome links cross the authenticated completion boundary', () =
     },
   ])(
     'stores $outcome without losing its artifact or lifecycle semantics',
-    async ({ outcome, reference, ref, state, ...rest }) => {
+    async ({ outcome, reference, ref, state, waiting, ...rest }) => {
       const { store, orchestrator, now } = fixture();
       const runId = await seedQueuedGithubRun(
         store,
@@ -4764,6 +4771,23 @@ describe('exact outcome links cross the authenticated completion boundary', () =
       );
       expect(claimed.status).toBe(200);
       const { token } = claimed.json as { token: string };
+      const binding = {
+        runId: `${repo}#42/original`,
+        repo,
+        number: 42,
+        baseRef: 'main',
+        head: 'a'.repeat(40),
+        state: 'waiting' as const,
+        observedAt: NOW,
+      };
+      if (waiting) {
+        const stored = await store.readTask({ repo, issue: 42 });
+        if (!stored) throw new Error('Missing PR task');
+        await store.apply({
+          decision: { task: { ...stored.task, delivery: binding }, outbox: [] },
+          expectedRevision: stored.revision,
+        });
+      }
       const complete = await call(
         { store, orchestrator, now, ...context, bearerToken: token },
         'POST',
@@ -4781,6 +4805,7 @@ describe('exact outcome links cross the authenticated completion boundary', () =
       });
       const taskId = { repo, issue: 42 };
       const task = await store.readTask(taskId);
+      if (waiting) expect(task?.task.delivery).toEqual(binding);
       expect(deriveItemState(task!.task, await store.listRuns(taskId))).toBe(
         state,
       );

@@ -1126,7 +1126,9 @@ export const runsRouter = os.router({
       run.params?.deliveryPredecessor !== undefined ||
       (task !== undefined &&
         deliveryWaiting(task) &&
-        task.delivery?.runId !== run.runId);
+        (task.delivery?.correctionRunId === run.runId ||
+          (run.params?.mode === 'reply' &&
+            task.delivery?.runId !== run.runId)));
     if (
       deliveryCorrection &&
       result.ok &&
