@@ -45,6 +45,12 @@ import { workPayloadFromGithub } from './work-from-github';
 
 export type { Pipeline };
 
+const requiredReviewRepositories = new Set([
+  'jlapenna/agent-lcars',
+  'jlapenna/homelab',
+  'jlapenna/nx-cache-server',
+]);
+
 export interface IngestReviewContext {
   requestedPipeline?: Pipeline;
   authorPipeline?: Pipeline;
@@ -395,8 +401,9 @@ function interpretPullRequestEvent(
   const repoIgnore = checkRepository(repository.full_name);
   if (repoIgnore) return repoIgnore;
 
-  const requiresReview =
-    repository.full_name.toLowerCase() === 'jlapenna/agent-lcars';
+  const requiresReview = requiredReviewRepositories.has(
+    repository.full_name.toLowerCase(),
+  );
   if (
     action === 'opened' ||
     action === 'ready_for_review' ||

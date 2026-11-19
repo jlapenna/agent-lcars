@@ -1088,6 +1088,33 @@ describe('interpretDelivery repository allow-list (#1190)', () => {
     delete process.env['AGENT_LCARS_WATCHED_REPOS'];
   });
 
+  it.each(['jlapenna/homelab', 'jlapenna/nx-cache-server'])(
+    'reviews new dependency-bot commits in %s',
+    (repository) => {
+      process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] = repository;
+      const result = interpretDelivery({
+        event: 'pull_request',
+        deliveryId: DELIVERY_ID,
+        payload: pullRequestLabeledPayload({
+          action: 'synchronize',
+          repository: { full_name: repository },
+          pull_request: {
+            state: 'open',
+            draft: false,
+            number: 7,
+            title: 'update deps',
+            user: { login: 'renovate[bot]' },
+            labels: [{ name: 'bot:renovate' }],
+          },
+        }),
+      });
+      expect(result).toMatchObject({
+        kind: 'request',
+        params: { mode: 'review' },
+      });
+    },
+  );
+
   it('admits a second repository once the allow-list env var lists it', () => {
     process.env['AGENT_LCARS_CONTROL_PLANE_REPOSITORIES'] =
       `${REPO},${SECOND_REPO}`;
