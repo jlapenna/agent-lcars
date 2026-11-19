@@ -4805,7 +4805,12 @@ describe('exact outcome links cross the authenticated completion boundary', () =
       });
       const taskId = { repo, issue: 42 };
       const task = await store.readTask(taskId);
-      if (waiting) expect(task?.task.delivery).toEqual(binding);
+      const expectedDelivery = waiting
+        ? binding
+        : outcome === 'pull-request'
+          ? expect.objectContaining({ runId, number: 12 })
+          : undefined;
+      expect(task?.task.delivery).toEqual(expectedDelivery);
       expect(deriveItemState(task!.task, await store.listRuns(taskId))).toBe(
         state,
       );

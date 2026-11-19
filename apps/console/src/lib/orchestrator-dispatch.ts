@@ -308,7 +308,9 @@ async function handleMonitorDelivery(
   await settleClaim(deps, entry, 'pending', {
     nextAttemptAt: new Date(
       Date.parse(now(deps)) +
-        ('refused' in decision && decision.reason === 'stale-lease'
+        (observed.kind === 'correction' &&
+        'refused' in decision &&
+        decision.reason === 'stale-lease'
           ? 60_000
           : DELIVERY_MONITOR_FALLBACK_MS),
     ).toISOString(),

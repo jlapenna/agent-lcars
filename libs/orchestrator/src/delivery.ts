@@ -37,17 +37,18 @@ export function advanceDelivery(input: {
     binding.runId !== run.runId ||
     run.delivery?.head !== binding.head ||
     binding.head !== observation.head ||
-    (task.activeRunId !== undefined &&
-      !(
-        task.activeRunId === input.concurrentReviewId &&
-        observation.kind !== 'correction'
-      )) ||
     run.state !== 'finished' ||
     !run.result?.ok
   )
     return refused('stale-lease');
   if (binding.state !== 'waiting' || observation.kind === 'waiting')
     return { task, run, outbox: [] };
+  if (
+    task.activeRunId !== undefined &&
+    (task.activeRunId !== input.concurrentReviewId ||
+      observation.kind === 'correction')
+  )
+    return refused('stale-lease');
   if (observation.kind === 'revision') {
     const delivery = { ...binding, head: observation.newHead, observedAt: now };
     return {
