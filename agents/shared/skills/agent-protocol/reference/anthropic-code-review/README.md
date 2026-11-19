@@ -20,8 +20,11 @@ The runner build packages the unmodified
 `plugins/code-review/commands/code-review.md` and its Apache-2.0 `LICENSE`
 from that locked checkout. `apps/runner-autoscaler/runner-image/package-anthropic-review.sh` refuses a
 revision mismatch or modified review source, and writes the exact revision to
-`revision` beside this adapter. Read that file for the upstream revision used
-in the procedure receipt. The rest of the marketplace is excluded from the
+`revision` beside this adapter. Use the packaged upstream revision below in the procedure receipt.
+
+Packaged upstream revision: `@ANTHROPIC_REVIEW_REVISION@`.
+
+The rest of the marketplace is excluded from the
 runtime image. No worker downloads or resolves the dependency at runtime.
 
 When Renovate updates the gitlink, review the upstream command and reconcile
