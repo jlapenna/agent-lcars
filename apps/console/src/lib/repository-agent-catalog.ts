@@ -1,7 +1,12 @@
 import { logger } from '@agent-lcars/logging';
 
 import type { DispatchTokenProvider } from './github-app-tokens';
-import { agentKey, parseAgentDefinition } from './repository-agent-definition';
+import {
+  agentKey,
+  parseAgentDefinition,
+  REMOVED,
+  SOURCE_FAILED,
+} from './repository-agent-definition';
 import { agentProfiles, repositoryProfile } from './repository-agent-runs';
 import type { AgentStore, CatalogAgent } from './repository-agent-store';
 import { openRepositorySource } from './repository-source';
@@ -172,7 +177,7 @@ export async function refreshAgentCatalog(
                 agent: {
                   ...current,
                   enabled: false,
-                  error: 'Definition removed',
+                  error: REMOVED,
                   refreshedAt: now.toISOString(),
                 },
               },
@@ -196,7 +201,7 @@ export async function refreshAgentCatalog(
                 agent: {
                   ...current,
                   enabled: false,
-                  error: 'Source refresh failed',
+                  error: SOURCE_FAILED,
                   refreshedAt: now.toISOString(),
                 },
               },

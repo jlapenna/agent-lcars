@@ -1,15 +1,11 @@
 import type { RepositoryAgentObservation } from '@agent-lcars/work';
 
+import { REMOVED, SOURCE_FAILED } from './repository-agent-definition';
 import type {
   AgentSource,
   AgentSourceHealth,
   CatalogAgent,
 } from './repository-agent-store';
-
-/** The refresh error rows that say why a definition cannot run because of
- * its source rather than its own content (repository-agent-catalog.ts). */
-const SOURCE_FAILED = 'Source refresh failed';
-const REMOVED = 'Definition removed';
 
 /** At most this many repositories ride the maintenance reply: well inside
  * the executor's 200-source bound and its 64 KiB response cap (about 150

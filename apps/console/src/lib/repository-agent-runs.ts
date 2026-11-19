@@ -26,6 +26,8 @@ import {
   agentDigest,
   agentId,
   agentKey,
+  REMOVED,
+  SOURCE_FAILED,
 } from './repository-agent-definition';
 import type { AgentStore } from './repository-agent-store';
 import { openRepositorySource } from './repository-source';
@@ -208,16 +210,15 @@ export async function admitAgentRun(
   );
   // Preserve the profile refusal for a cataloged definition disabled by that
   // policy. Other disabled states retain their usual not-found response.
-  if (!agent?.enabled && agent?.definition && agent.error && !agent.vetoedBy)
-    try {
-      repositoryProfile(agent.definition, deps.profiles());
-    } catch (error) {
-      if (
-        !(error instanceof AgentAdmissionError) ||
-        error.message === agent.error
-      )
-        throw error;
-    }
+  if (
+    !agent?.enabled &&
+    agent?.definition &&
+    !agent.vetoedBy &&
+    agent.error &&
+    agent.error !== REMOVED &&
+    agent.error !== SOURCE_FAILED
+  )
+    repositoryProfile(agent.definition, deps.profiles());
   if (!agent?.enabled || agent.definition === undefined)
     throw new AgentAdmissionError(
       'NOT_FOUND',

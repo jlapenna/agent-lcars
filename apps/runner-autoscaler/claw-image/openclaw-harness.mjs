@@ -129,9 +129,9 @@ export function doctorChanges(source, after, pluginProviders = new Map()) {
 }
 
 // The file `spawn` runs for `command`: a path as given, a bare name from PATH.
-export async function resolveCommand(command, path = '') {
+export async function resolveCommand(command, path) {
   if (command.includes('/')) return command;
-  for (const dir of path.split(':')) {
+  for (const dir of path?.split(':') ?? []) {
     const candidate = resolve(dir, command);
     try {
       // As execvp does: the first regular, executable file on PATH.

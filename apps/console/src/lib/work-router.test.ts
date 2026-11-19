@@ -500,6 +500,17 @@ describe('repository-owned agent runs', () => {
       403,
     ],
     [
+      'a cataloged profile refusal whose reason changed',
+      [
+        {
+          enabled: false,
+          manifest: { description: 'x', profile: 'nope' },
+          error: 'Profile nope does not admit owner/repo',
+        },
+      ],
+      403,
+    ],
+    [
       'a removed definition with a revoked profile',
       [
         {
