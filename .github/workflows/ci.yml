@@ -629,7 +629,10 @@ jobs:
   e2e-control-flag:
     name: E2E control flag
     if: ${{ vars.E2E_ENABLED == 'false' }}
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
+    # Keep on GitHub-hosted ubuntu-slim so the owner-visible pause notice and
+    # restore command still render during an ARC outage (docs/ci-control-flags.md,
+    # documented exception for jlapenna/homelab#3284).
+    runs-on: ubuntu-slim
     timeout-minutes: 2
     steps:
       - uses: jlapenna/agent-lcars/.github/actions/control-flag@main

@@ -259,8 +259,9 @@ labels there is the opt-in; a caller with no declared labels gets a no-op. Set
 `check-runner-labels: false` only for classic runners that carry both labels.
 
 It runs repo-tools' `repo-check-schedules` in a `schedule justifications` job
-that follows the caller's `runs-on` input (provisioning Node if absent on
-PATH), and the required `repository validation` job also requires it. Every systemd timer, workflow cron or Kubernetes CronJob in the
+that follows the caller's `runs-on` input (explicitly provisioning Node 24
+without package-manager caching), and the required `repository validation` job
+also requires it. Every systemd timer, workflow cron or Kubernetes CronJob in the
 caller's tracked files that fires more often than hourly needs an adjacent
 `# schedule-justification: <reason>` comment; frequent polling usually means
 the design should react to an event instead. The job prints the caller's full

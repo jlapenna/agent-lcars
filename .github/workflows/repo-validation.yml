@@ -105,8 +105,9 @@ jobs:
           node "$RUNNER_TEMP/check-runner-labels.mjs"
 
   # Follows inputs.runs-on (jlapenna/homelab#3284) and stays pinned to an exact
-  # repo-tools commit. Provisions Node only if absent on PATH so minimal Linux
-  # callers without preinstalled node still succeed.
+  # repo-tools commit. Explicitly provisions Node 24 without package-manager
+  # caching so caller-selected Linux runners always have a compatible runtime
+  # regardless of preinstalled Node versions or repo lockfiles.
   schedules:
     name: schedule justifications
     if: inputs.check-schedules
@@ -117,19 +118,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Check for Node on PATH
-        id: node-check
-        run: |
-          if command -v node >/dev/null 2>&1; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - uses: actions/setup-node@v7
-        if: steps.node-check.outputs.found != 'true'
         with:
           node-version: '24'
+          package-manager-cache: false
 
       - name: Reject unjustified sub-hourly schedules
         env:
