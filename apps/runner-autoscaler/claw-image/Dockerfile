@@ -4,16 +4,15 @@
 # ("### `claw`"). Published by Homelab (docs/image-publish-routing.md) and
 # pinned by digest in each zone executor's runtime table.
 #
-# The image carries only the program and generic clients. Agent definitions
-# (pinned config, exec approvals, workspace files), agent tools and
-# credentials are mounted by the zone deployment, never baked in.
+# LCARS supplies the pinned agent definition and tools in the run brief.
+# The launcher verifies and writes the files. The zone supplies credentials.
 FROM node:24.21.0-bookworm@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0
 
 ARG CACHE_BUST=unset
 LABEL org.opencontainers.image.title="claw-runner" \
       org.opencontainers.image.source="https://github.com/jlapenna/agent-lcars"
 
-# openssh-client and python3 serve zone-mounted agent tools (for example
+# openssh-client and python3 serve repository-defined agent tools (for example
 # Homelab's homelab-investigate, which runs typed probes over fixed SSH).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates openssh-client python3 \
