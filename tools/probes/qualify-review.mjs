@@ -87,13 +87,7 @@ const packager = join(
   'apps/runner-autoscaler/runner-image/package-anthropic-review.sh',
 );
 run('bash', [packager, procedure]);
-const adapter = readFileSync(
-  join(
-    root,
-    'agents/shared/skills/agent-protocol/reference/anthropic-code-review/README.md',
-  ),
-);
-writeFileSync(join(procedure, 'README.md'), adapter);
+const adapter = readFileSync(join(procedure, 'README.md'));
 const imageId = process.env.LCARS_REVIEW_QUALIFICATION_IMAGE_ID;
 if (imageId && !sourceRef && head !== git('rev-parse', 'HEAD').trim())
   throw new Error(

@@ -23,6 +23,8 @@ cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/commands/code-
 cmp "$repo_root/third_party/anthropic-plugins/plugins/code-review/LICENSE" "$review_package/LICENSE"
 [ "$(cat "$review_package/revision")" = "$(git -C "$repo_root" rev-parse :third_party/anthropic-plugins)" ]
 
+grep -Fq "$(cat "$review_package/revision")" "$review_package/README.md"
+
 # A valid source checkout at a different locked revision must never package.
 # Give the production packager an isolated parent index, keeping the real
 # dependency checkout and its index untouched.
