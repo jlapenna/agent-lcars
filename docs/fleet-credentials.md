@@ -30,7 +30,10 @@ Two GitHub Apps exist and are easy to confuse:
 
 - **Fleet App** (`agent-lcars`, client `Iv23liO6X8pLJLcTFzyv`): what the
   lanes and console authenticate as — claims, PRs, comments as
-  `agent-lcars[bot]`. Installations:
+  `agent-lcars[bot]`. Since 2026-11-19 it also carries `checks: write`
+  (App settings UI) so it can publish code-review check runs on Homelab PRs
+  (jlapenna/homelab#3647); modelled in `tools/iam-contract/model.json`.
+  Installations:
   [jlapenna 150568943](https://github.com/settings/installations/150568943),
   [supersprinklesracing 150568991](https://github.com/organizations/supersprinklesracing/settings/installations/150568991).
 - **Autoscaler App** (`agent-lcars-autoscaler`, client `Iv23lir3t9e2k4RAkWxw`):

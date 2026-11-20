@@ -42,13 +42,14 @@
       "permissions": {
         "actions": "write",
         "administration": "read",
-        "checks": "read",
+        "checks": "write",
         "contents": "write",
         "issues": "write",
         "metadata": "read",
         "pull_requests": "write",
         "workflows": "write"
-      }
+      },
+      "_checksNote": "checks: write since 2026-11-19 so the bot can publish Homelab code-review check runs (jlapenna/homelab#3647)."
     },
     {
       "key": "autoscaler",
