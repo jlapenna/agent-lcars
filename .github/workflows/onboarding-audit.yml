@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   audit:
-    runs-on: ubuntu-slim
+    runs-on: ['agent-lcars-ci']
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
