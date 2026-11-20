@@ -42,13 +42,14 @@
       "permissions": {
         "actions": "write",
         "administration": "read",
-        "checks": "read",
+        "checks": "write",
         "contents": "write",
         "issues": "write",
         "metadata": "read",
         "pull_requests": "write",
         "workflows": "write"
-      }
+      },
+      "_checksNote": "checks: write since 2026-11-19 so the bot can publish Homelab code-review check runs (jlapenna/homelab#3647)."
     },
     {
       "key": "autoscaler",
@@ -214,7 +215,9 @@
       "serviceAccount": "work-reader@agent-lcars.iam.gserviceaccount.com",
       "rationale": "The read-only Work API identity for interactive maintainer sessions (jlapenna/agent-lcars#2502). Its Console grant carries work.reader (the issue-owner query) and costs.reader (the read-only fixed-selection budget assessment), and it holds no project role. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend Console reads to that principal. Declared by google_service_account_iam_member.work_reader_token_creator in infra/terraform/main.tf.",
       "bindings": {
-        "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
+        "roles/iam.serviceAccountTokenCreator": [
+          "user:jlapenna@gmail.com"
+        ]
       }
     },
     {
@@ -222,7 +225,9 @@
       "serviceAccount": "claw-operator@agent-lcars.iam.gserviceaccount.com",
       "rationale": "The maintainer's claw admission identity for interactive sessions (agent-lcars#3349). Its Console grant carries only work.claw.admit for the claw pipelines (admit and cancel its own read-only investigations), and it holds no project role or key. Exactly one principal - the maintainer's Google account - may mint its tokens; another member would extend claw admission to that principal. Declared by google_service_account_iam_member.claw_operator_token_creator in infra/terraform/main.tf.",
       "bindings": {
-        "roles/iam.serviceAccountTokenCreator": ["user:jlapenna@gmail.com"]
+        "roles/iam.serviceAccountTokenCreator": [
+          "user:jlapenna@gmail.com"
+        ]
       }
     }
   ]
