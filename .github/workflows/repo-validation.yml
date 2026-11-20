@@ -81,15 +81,15 @@ on:
 permissions: {}
 
 jobs:
-  # Follows inputs.runs-on so fleet callers run all validation jobs on their
-  # ARC lanes (jlapenna/homelab#3284) while preserving the ubuntu-slim default
-  # for callers without a deployed lane. repo-tools' dependency-free checker
-  # (repo-check-runner-labels) is pinned to an exact commit so a repo-tools
-  # push cannot change what runs here.
+  # Independent of inputs.runs-on and with no `needs`: when the caller routes
+  # repository validation itself onto `[self-hosted, <scale-set>]`, that job
+  # never starts, and this one still reports why (docs/published-actions.md).
+  # repo-tools' dependency-free checker (repo-check-runner-labels) is pinned to
+  # an exact commit so a repo-tools push cannot change what runs here.
   runner-labels:
     name: runner label combinations
     if: inputs.check-runner-labels
-    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
       contents: read
@@ -104,8 +104,9 @@ jobs:
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-runner-labels.mjs"
           node "$RUNNER_TEMP/check-runner-labels.mjs"
 
-  # Same shape as runner-labels: follows inputs.runs-on (jlapenna/homelab#3284)
-  # and stays pinned to an exact repo-tools commit.
+  # Follows inputs.runs-on (jlapenna/homelab#3284) and stays pinned to an exact
+  # repo-tools commit. Provisions Node only if absent on PATH so minimal Linux
+  # callers without preinstalled node still succeed.
   schedules:
     name: schedule justifications
     if: inputs.check-schedules
@@ -115,6 +116,20 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
+
+      - name: Check for Node on PATH
+        id: node-check
+        run: |
+          if command -v node >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        if: steps.node-check.outputs.found != 'true'
+        with:
+          node-version: '24'
 
       - name: Reject unjustified sub-hourly schedules
         env:

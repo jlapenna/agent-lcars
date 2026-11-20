@@ -25,9 +25,11 @@ env:
 jobs:
   terraform:
     name: repository-owned Terraform
-    # Trusted refs run on the ARC lane (baked python3 + Terraform); untrusted
-    # fork PRs stay on GitHub-hosted ubuntu-slim (jlapenna/homelab#3284).
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci' }}
+    # This credential-free check takes seconds; keep it independent of the
+    # agent-lcars-ci pool used by both full-verification shards to avoid
+    # queueing a ~12s check behind multi-minute verification shards (#2208,
+    # documented exception for jlapenna/homelab#3284).
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
