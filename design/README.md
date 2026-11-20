@@ -46,6 +46,17 @@ Decisions the prototype already carries:
   upload/promotion and credential-set consumers. The prototype uses only
   simulated values; production requires the explicit secrets administration grant.
 - Work includes an Issue sources subview for GitHub and Linear, with source links, current status, target repository, existing Work links, bounded refresh and explicit Run controls. The prototype shows its source panel below Work; production opens it from the Work toolbar. Source refresh never dispatches work.
+- Work detail shows each round as its human turn, the agent's turn and, under
+  the agent's turn, two small dim lines of what the run's worker saw the agent
+  do: its tool calls by kind, then the harness, stop reason, tokens, context,
+  cost and turn time. A round with no record shows neither line. The lines
+  wrap anywhere, so a phone never scrolls sideways for them. Every word in
+  them comes from a closed list; none is the agent's. The token total is
+  left out only when it is exactly input plus output: a harness may count
+  cache reads and writes in its total and not in its input, and then the
+  total leads the counts. The prototype draws both cases as two rounds in a
+  panel below Recent work; production shows them on the Work item's own
+  page.
 - Bridge includes recent event-driven triage and summaries, linking into Work.
   Work exposes an event-driven filter and source activity on detail pages; source
   revisions represent admitted work, not every raw webhook delivery.

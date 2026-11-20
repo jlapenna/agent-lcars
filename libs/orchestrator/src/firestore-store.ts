@@ -1,6 +1,9 @@
 import {
   type IssueReference,
   issueSourceKey,
+  plainRunEvidence,
+  type RunEvidence,
+  runEvidenceSchema,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';
@@ -130,6 +133,15 @@ export interface FirestoreStoreOptions {
   readonly readPageSize?: number;
 }
 
+/** gRPC ALREADY_EXISTS: what creating a document that exists fails with. */
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === 6
+  );
+}
+
 /**
  * Firestore-backed `OrchestratorStore`. No caching, no cleverness: every
  * method is a direct read or write against the collections below, matching
@@ -203,6 +215,38 @@ export class FirestoreStore implements OrchestratorStore {
     return snapshot.exists ? taskDocSchema.parse(snapshot.data()) : undefined;
   }
 
+  /** Firestore batches a `getAll` itself, but the request bound grows with the
+   * ref count, so the console's hundred-task pages are read in chunks of this
+   * size rather than as one oversized document read. */
+  static readonly #getAllSize = 100;
+
+  async readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>> {
+    const entries = [
+      ...new Map(ids.map((id) => [taskKey(id), this.#taskRef(id)])).entries(),
+    ];
+    const chunked: [string, DocumentReference][][] = [];
+    for (
+      let offset = 0;
+      offset < entries.length;
+      offset += FirestoreStore.#getAllSize
+    )
+      chunked.push(entries.slice(offset, offset + FirestoreStore.#getAllSize));
+    const found = new Map<string, VersionedTask>();
+    const got = await Promise.all(
+      chunked.map((chunk) =>
+        this.#firestore.getAll(...chunk.map(([, ref]) => ref)),
+      ),
+    );
+    got.forEach((snapshots, chunkIndex) =>
+      snapshots.forEach((snapshot, position) => {
+        const key = chunked[chunkIndex]?.[position]?.[0];
+        if (key !== undefined && snapshot.exists)
+          found.set(key, taskDocSchema.parse(snapshot.data()));
+      }),
+    );
+    return found;
+  }
+
   async readLifecycleMetricRecords(
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords> {
@@ -273,6 +317,50 @@ export class FirestoreStore implements OrchestratorStore {
     );
   }
 
+  async writeRunEvidence(input: {
+    runId: string;
+    claimFingerprint: string;
+    evidence: RunEvidence;
+  }): Promise<boolean> {
+    try {
+      // One create, outside any transaction: it reads and locks nothing, so
+      // it can never make the run's completion wait. Firestore refuses a
+      // document with a key left `undefined`, which a cost that was left
+      // out of the record is.
+      await this.#runEvidenceRef(input.runId, input.claimFingerprint).create(
+        plainRunEvidence(input.evidence),
+      );
+      return true;
+    } catch (error) {
+      if (isAlreadyExists(error)) return false;
+      throw error;
+    }
+  }
+
+  async readRunEvidence(
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
+  ): Promise<Map<string, RunEvidence>> {
+    const found = new Map<string, RunEvidence>();
+    const claimed = runs.flatMap((run) =>
+      run.queue?.tokenHash === undefined
+        ? []
+        : [{ runId: run.runId, claim: run.queue.tokenHash }],
+    );
+    if (claimed.length === 0) return found;
+    const snapshots = await this.#firestore.getAll(
+      ...claimed.map(({ runId, claim }) => this.#runEvidenceRef(runId, claim)),
+    );
+    snapshots.forEach((snapshot, index) => {
+      // Evidence is a reading aid: a document this Console cannot parse is
+      // left out rather than failing the read of its run.
+      const evidence = runEvidenceSchema.safeParse(snapshot.data());
+      const runId = claimed[index]?.runId;
+      if (snapshot.exists && evidence.success && runId !== undefined)
+        found.set(runId, plainRunEvidence(evidence.data));
+    });
+    return found;
+  }
+
   async readRun(runId: string): Promise<Run | undefined> {
     const snapshot = await this.#runRef(runId).get();
     return snapshot.exists ? runSchema.parse(snapshot.data()) : undefined;
@@ -287,6 +375,70 @@ export class FirestoreStore implements OrchestratorStore {
   async listRuns(id: TaskId): Promise<Run[]> {
     const snapshot = await this.#runsForTask(id).get();
     return snapshot.docs.map((doc) => runSchema.parse(doc.data()));
+  }
+
+  /** Firestore's ceiling on the disjuncts of one `in` filter. */
+  static readonly #inFilterSize = 30;
+
+  async listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>> {
+    const keys = new Set<string>();
+    const workIds: string[] = [];
+    const issuesByRepo = new Map<string, number[]>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      if (keys.has(key)) continue;
+      keys.add(key);
+      if (isWorkAnchor(id)) workIds.push(id.workId);
+      else
+        issuesByRepo.set(id.repo, [
+          ...(issuesByRepo.get(id.repo) ?? []),
+          id.issue,
+        ]);
+    }
+
+    const runs = new Map<string, Run[]>([...keys].map((key) => [key, []]));
+    const queries: Query[] = [];
+    for (
+      let offset = 0;
+      offset < workIds.length;
+      offset += FirestoreStore.#inFilterSize
+    )
+      queries.push(
+        this.#runs.where(
+          'task.workId',
+          'in',
+          workIds.slice(offset, offset + FirestoreStore.#inFilterSize),
+        ),
+      );
+    for (const [repo, issues] of issuesByRepo)
+      for (
+        let offset = 0;
+        offset < issues.length;
+        offset += FirestoreStore.#inFilterSize
+      )
+        queries.push(
+          this.#runs
+            .where('task.repo', '==', repo)
+            .where(
+              'task.issue',
+              'in',
+              issues.slice(offset, offset + FirestoreStore.#inFilterSize),
+            ),
+        );
+
+    // One query per bounded chunk rather than one per task: the same
+    // equality-only shape `#runsForTask` stays on, so this needs no new
+    // composite index. A chunk's `in` disjuncts can each miss, so a chunk
+    // returning nothing still leaves its tasks mapped to the empty list.
+    const pages = await Promise.all(queries.map((query) => query.get()));
+    for (const page of pages)
+      for (const doc of page.docs) {
+        const run = runSchema.parse(doc.data());
+        const key = taskKey(run.task);
+        const bucket = runs.get(key);
+        if (bucket) bucket.push(run);
+      }
+    return runs;
   }
 
   async transactRequest(input: {
@@ -1315,6 +1467,12 @@ export class FirestoreStore implements OrchestratorStore {
     return this.#runRef(runId)
       .collection('message-chunks')
       .doc(`${overflow.sha256}.${index}`);
+  }
+
+  /** One document per claim beside the run, like its message chunks. The
+   * claim's fingerprint is the SHA-256 of its token, as the run stores it. */
+  #runEvidenceRef(runId: string, claimFingerprint: string): DocumentReference {
+    return this.#runRef(runId).collection('evidence').doc(claimFingerprint);
   }
 
   #outboxRef(entryId: string): DocumentReference {

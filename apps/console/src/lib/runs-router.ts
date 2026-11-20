@@ -4,6 +4,7 @@ import type { IssueReference } from '@agent-lcars/dispatch-contracts';
 import {
   formatAttemptId,
   parseRunGeneration,
+  recordRunEvidence,
 } from '@agent-lcars/dispatch-contracts';
 import { logger } from '@agent-lcars/logging';
 import { usesCodexCredentials } from '@agent-lcars/orchestrator';
@@ -906,6 +907,28 @@ export const runsRouter = os.router({
       runId: run.runId,
       expiresAt,
     };
+  }),
+
+  evidence: os.evidence.handler(async ({ input, context }) => {
+    const run = await requireRunToken(context, input.runId);
+    const claimFingerprint = run.queue?.tokenHash;
+    if (claimFingerprint === undefined)
+      throw new ORPCError('UNAUTHORIZED', { message: 'Invalid run token' });
+    // Beside the run, never in it: the run's outcome is `complete`'s alone.
+    // The record is stored under the claim that authenticated this request
+    // and read back only through the claim the run holds, so a claim the
+    // run was taken from can never replace this claim's record. The write
+    // takes no lock on the run: an evidence request the worker gave up on
+    // cannot make its completion wait. The first record under a claim
+    // stands, so a repeat changes nothing.
+    await context.store.writeRunEvidence({
+      runId: run.runId,
+      claimFingerprint,
+      // What is stored is never the report as sent: every word in it is
+      // reduced to its closed list first.
+      evidence: recordRunEvidence(input.evidence, context.now().toISOString()),
+    });
+    return { runId: run.runId };
   }),
 
   placement: executor.placement.handler(async ({ input, context, errors }) => {

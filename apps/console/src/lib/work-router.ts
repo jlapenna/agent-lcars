@@ -53,6 +53,7 @@ import {
   mintItem,
   readWorkTask,
   view,
+  viewWithEvidence,
   type WorkContext,
 } from './work-mint';
 import { authorizeProviderFallback } from './work-provider-fallback';
@@ -342,11 +343,11 @@ export const workRouter = os.router({
         !ownsClawWork(principal, stored.task.work)
       )
         throw errors.NOT_FOUND();
-      return view(context, input.id, stored.task);
+      return viewWithEvidence(context, input.id, stored.task);
     }
     const task = await readWorkTask(context, input.id);
     if (task === undefined) throw errors.NOT_FOUND();
-    return view(context, input.id, task.task);
+    return viewWithEvidence(context, input.id, task.task);
   }),
 
   list: reader.list.handler(async ({ input, context }) => {

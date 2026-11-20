@@ -1,6 +1,11 @@
 # Repository-owned claw agents
 
-Status: design (2026-11-15). This replaces the per-agent claw code shipped for
+Status: the catalog, admission and the OpenClaw launcher path are in
+production (#3382 through #3410). The ACP launcher that runs agents on
+OpenClaw, Claude Code or Codex (#3411) is implemented, but production still
+runs an earlier `claw-runner` image; it reaches production with a new image
+publish and Homelab pin. [Acceptance](#acceptance) records what production
+has shown. This replaces the per-agent claw code shipped for
 `claw/investigator` (phase 3a of the
 [unified work dataflow design](superpowers/specs/2026-10-15-unified-work-dataflow-design.md#claw)).
 It follows [repository jobs](repository-jobs.md): a repository defines what
@@ -70,14 +75,16 @@ refuses. On an earlier image every such round fails, and a `retry:
 terminal` round fails for good.
 
 Every harness is an [Agent Client Protocol](https://agentclientprotocol.com/)
-(ACP) agent, and the launcher is only an ACP client. It starts the harness in
-a copy of `workspace/`, copies `home/` into the harness's `HOME` for a
-definition that asked for it, sends the message as one prompt and takes the
-agent's last message after its last tool call as the report. Claude Code and Codex speak ACP through their own
+(ACP) agent, and the launcher is only an ACP client. It writes the pinned
+definition and, for a definition that asked for it, the `home/` files into
+the harness's `HOME`. A harness host then starts the harness in a copy of
+`workspace/` ([the harness container](#the-harness-container)). The launcher
+sends the message as one prompt and takes the agent's last message after its
+last tool call as the report. Claude Code and Codex speak ACP through their own
 adapters. OpenClaw speaks it through its own server, `openclaw acp`, which
-forwards to a Gateway: the launcher validates the config, runs Doctor, seeds
-the exec approvals and starts a Gateway on loopback inside the Job for that
-one turn. No shared or long-lived Gateway is involved, so a lost node still
+forwards to a Gateway: the harness host validates the config, runs Doctor,
+seeds the exec approvals and starts a Gateway on loopback inside the Job for
+that one turn. No shared or long-lived Gateway is involved, so a lost node still
 costs one attempt.
 
 ```text
@@ -121,12 +128,14 @@ Codex's approval and sandbox policy is not set in that file: it comes from
   `approvals.json`. A harness that does not offer the mode, or refuses to
   switch to it, runs nothing and the attempt fails.
 
-  The harness runs as the launcher's user, so an agent allowed a tool that
-  writes files could rewrite the settings that bound it. The launcher cannot
-  prevent that. It makes each pinned `home/` file read-only and fails the
-  attempt when one is not its pinned blob after the turn; it does not see a
-  file the agent added, or changed and put back. A harness that must not be
-  able to do this needs its own container (#3412).
+  Whether an agent with a tool that writes files can rewrite the settings
+  that bound it depends on where its harness runs
+  ([the harness container](#the-harness-container)). In a container of its
+  own, it cannot: the kernel keeps the pinned definition and each pinned
+  `home/` file as the launcher wrote them. In the launcher's container it
+  can, and the launcher can only fail the attempt when a pinned `home/` file
+  is not its blob after the turn; it does not see a file the agent added, or
+  changed and put back.
 
 - **Credentials.** A harness signs in with the environment its runtime exports
   from `env/` Secret items: the model key its `config.json` names for
@@ -207,6 +216,45 @@ What was run for a change, and what was not, is recorded in its pull
 request; for the introduction of harnesses that is
 [#3411](https://github.com/jlapenna/agent-lcars/pull/3411).
 
+### The harness container
+
+A claw run has two sides. The launcher holds the run token, talks to LCARS,
+verifies and writes the pinned definition, and decides the outcome. The
+harness side holds what the agent may use: the runtime's Secret items, the
+workspace and the harness itself. A runtime chooses how far apart they are
+(`harness_container` in the executor's runtime table,
+[runner-autoscaler](../apps/runner-autoscaler/README.md#declared-runtimes-and-zone-executors)):
+
+- **One container** (the default). The harness runs under the launcher's
+  UID. Nothing separates them but file modes their shared owner can change,
+  and a tool the agent may run can read the run token.
+- **A harness container.** The harness runs in a second container of the
+  same Pod, under another UID, and the two talk over a Unix socket. The
+  harness's container has the Secret items and a scratch volume. It sees the
+  pinned definition through a read-only mount, and the pinned `home/` files
+  as another user's files in sticky directories, so it can keep its own
+  state beside them and cannot change, remove, rename or replace them. It
+  has no run token and shares no PID namespace with the launcher.
+
+  The pinned `home/` files then belong to a user other than the one that
+  reads them. A program that insists on owning its own configuration refuses
+  such a file: OpenSSH does for `~/.ssh/config`. Give an agent that kind of
+  file through its runtime's Secret items, or leave the runtime on one
+  container.
+
+What the pod then enforces is what the runtime gives it: its Secret items,
+its mounts and its network policy. The harness's settings shape how the
+agent behaves inside that. Two things stay outside the kernel's reach. A
+harness that reads a settings file the definition does not pin, from a
+directory it can write to, can be given one by its own agent. And
+OpenClaw's launch config, Gateway token and exec approvals are made and
+kept on the harness's side, where OpenClaw runs
+([claw image](../apps/runner-autoscaler/claw-image/README.md#trust-boundary-inside-the-pod)).
+
+A harness container needs a claw image that carries the harness host, so it
+is switched on per runtime after that runtime's image is pinned
+([migration](#migration-and-acceptance)).
+
 ## Catalog
 
 Agents are cataloged by the repository-job catalog, with the same rules:
@@ -236,6 +284,67 @@ itself, and otherwise unchanged.
 
 Typed inputs and results can be added later, as optional manifest declarations,
 when a consumer needs them.
+
+### What a run records of its agent
+
+Every harness is an ACP agent, so the launcher sees the same three things of
+every turn in the session itself: the agent's tool calls, the tokens the
+harness says it used and why the turn stopped. It reports them to the Work
+API beside the run (`POST /runs/{runId}/evidence`, with the run's own
+token), and the Work item's own read returns them on that run as `evidence`:
+
+```json
+{
+  "source": "acp",
+  "harness": "openclaw",
+  "stopReason": "end_turn",
+  "toolCallCount": 3,
+  "toolCalls": [
+    { "kind": "execute", "status": "completed" },
+    { "kind": "read", "status": "failed" },
+    { "kind": "read", "status": "completed" }
+  ],
+  "usage": { "inputTokens": 51000, "outputTokens": 2000, "totalTokens": 53000 },
+  "durationMs": 41250,
+  "recordedAt": "2026-11-18T17:40:00.000Z"
+}
+```
+
+- **No word of the agent's.** Every word in a record comes from a closed
+  list: the harness, ACP's tool kinds (`read`, `edit`, `delete`, `move`,
+  `search`, `execute`, `think`, `fetch`, `switch_mode`), its tool call
+  statuses and its stop reasons. Anything else is recorded as `other`. A
+  cost is kept only in one of a few listed currencies (`USD`, `EUR`, `GBP`,
+  `JPY`, `CNY`, `CAD`, `AUD`, `CHF`) and left out otherwise. A
+  tool call's name, title and arguments are never recorded: they can hold a
+  command, a path, a credential or text the model chose. A record lists the
+  first 200 calls and counts them all.
+- **What the harness said, not a bill.** `usage` is the harness's own
+  account: the token counts on the prompt's result, the context size from
+  its last `usage_update`, and a cost when it names one. A harness that
+  reports none has none. It is not added to the session cost totals, which
+  still come from provider transcripts. `durationMs` runs from the prompt to
+  the harness's answer.
+- **Beside the run, never the outcome.** The run's result is `complete`'s
+  alone. Evidence is stored in a document of its own under the run, so a
+  Console from before it reads every run as it always did, and a launcher
+  from after it completes its run on a Console that answers 404. A listing
+  never carries it. The Console shows it under the agent's turn on the Work
+  item.
+- **A record belongs to its claim.** It is stored under the fingerprint of
+  the claim that reported it and read back only through the claim the run
+  holds or settled under. A claim the run was taken from can still write,
+  and what it writes is never shown. The first record under a claim stands.
+  The write is one create that reads and locks nothing, so a report the
+  launcher gave up on can never make the run's completion wait.
+- **Read leniently.** An unknown key is dropped and an unknown word becomes
+  `other`, at the route and on every read, so a launcher newer than its
+  Console still records what that Console knows. A record that is refused
+  (a malformed number, more than 200 calls listed) costs the run nothing:
+  the launcher says so once in the Job's log and completes.
+- **One source.** No provider transcript is parsed for it. The same route
+  takes a record from any worker that holds a run token; claw runs are the
+  first to send one.
 
 ## Profiles
 
@@ -388,10 +497,28 @@ agent round admitted through the generic route.
    investigator Secret), and an operator adds profile `homelab-ops` for
    `jlapenna/homelab`.
 2. Homelab's zone executor gains runtime `claw-default` with a model key only.
-   `.lcars/agents/smoke/` in this repository is its canary (done).
+   `.lcars/agents/smoke/` in this repository is its canary (done). Its
+   `config.json` is deliberately a source config (no Doctor-added plugin or
+   agent entries), so every run also proves the launcher normalizes configs
+   for whichever image runs them.
 3. LCARS ships the catalog extension, the generic route, `/runs/{id}/agent`
    and the launcher change. It then points `lcars investigate` at the generic
    route and removes the investigator-specific code (done).
+
+Switching a runtime to a harness container
+([above](#the-harness-container)) is Homelab's change to its zone executor's
+runtime table, in this order:
+
+1. Deploy an executor that knows `harness_container`. An earlier one refuses
+   the key when it starts.
+2. Pin a claw image that carries the harness host on that runtime. An
+   earlier image has no program for the harness's container to run.
+3. Set `harness_container: true` on that runtime and restart the executor.
+   Jobs already created keep the shape they were created with.
+
+To go back, clear the flag first and pin the earlier image after. The Console
+is not involved either way: the brief, the round and the definition are the
+same with or without a harness container.
 
 Rolling the Console back to a version from before harnesses. Do these
 while the newer Console is still running, in this order:
@@ -498,6 +625,12 @@ while the newer Console is still running, in this order:
    its catalog row shows it disabled, and then restore the shared grant and
    `runCallers`.
 
+A claw image whose launcher predates agent-lcars#3409 is not a rollback
+target, alone or together with the Console: it refuses source configs, which
+any repository may commit (`smoke`'s is one), and a round re-reads the config
+it pinned, so no later commit rescues it. Roll forward instead. The steps
+below cover images from #3409 on.
+
 Rolling back only the claw image, with the newer Console still running, is
 safe for agents that name neither a `harness` nor a `mode`: their rounds are
 delivered as before. It is not for the others. The newer Console keeps
@@ -518,14 +651,28 @@ attempt. Before reverting a runtime's image digest:
 3. Revert the image digest. Keep those definitions out, or the fence up,
    for as long as the earlier image is pinned.
 
-Acceptance:
+## Acceptance
 
-- A real investigation runs from `jlapenna/homelab/investigator` through the
-  generic route, and `lcars investigate` works again.
-- An agent with no profile, added by a repository PR alone, runs end to end on
-  k3s.
-- A manifest naming a profile that does not list its repository is visible and
-  refused.
+- **Met:** a real investigation ran from `jlapenna/homelab/investigator`
+  through the generic operator route on the OpenClaw launcher (#3402). On
+  2026-11-19, dispatched Work item `01M7T00000W7K2TMVZX7GR17DP` invoked
+  `lcars investigate` with its run token. The investigator read the reboot
+  marker on pike. Child `01M7S3GT4G2YJ4DCWNN3KRK1RR` returned a report
+  on its second attempt, and the calling item finished with that result.
+- **Met:** an agent with no profile, added by a repository PR alone, runs
+  end to end on k3s. The `.lcars/agents/smoke/` canary (#3406) finished on
+  runtime `claw-default` with a report as Work items
+  `01M7M0971YRED8SC4E08KD82Z9` (2026-11-17) and `01M7QNY66GRY4H71BYJ6QRV02J`
+  (2026-11-18, on the #3409 launcher).
+- **Partly met:** a manifest naming a profile that does not list its
+  repository is refused. Admission refuses it with "Profile NAME does not
+  admit REPOSITORY" (`apps/console/src/lib/repository-agent-runs.ts`), and
+  the operator-route test in `apps/console/src/lib/work-router.test.ts`
+  asserts HTTP 403 for it. The catalog test verifies that it stays visible
+  and disabled with the refusal reason until its repository is granted access.
+  A production refusal remains open.
+- **Open:** the ACP launcher (#3411) running a round in production, after its
+  `claw-runner` image is published and pinned.
 
 On-call is not a claw agent and does not depend on LCARS (2026-11-15
 decision).

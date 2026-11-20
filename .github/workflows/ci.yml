@@ -26,7 +26,9 @@ jobs:
   terraform:
     name: repository-owned Terraform
     # This credential-free check takes seconds; keep it independent of the
-    # large self-hosted pool used by full verification and E2E (#2208).
+    # agent-lcars-ci pool used by both full-verification shards to avoid
+    # queueing a ~12s check behind multi-minute verification shards (#2208,
+    # documented exception for jlapenna/homelab#3284).
     runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
@@ -52,13 +54,13 @@ jobs:
   # actionlint accepts `self-hosted` beside any label, but a runner scale set
   # (every label in .github/actionlint.yaml) matches only its own name, so
   # `[self-hosted, agent-lcars-ci]` queues forever (homelab hit exactly this on
-  # 2026-10-04). This runs on a GitHub-hosted runner with no `needs`, so it
-  # still reports when the label error is on a self-hosted job itself. The
-  # dependency-free check comes from @jlapenna/repo-tools at the commit the
-  # lockfile pins, without a pnpm install.
+  # 2026-10-04). Runs on the lightweight control lane for trusted refs and
+  # ubuntu-slim for fork PRs (jlapenna/homelab#3284). The dependency-free check
+  # comes from @jlapenna/repo-tools at the commit the lockfile pins, without a
+  # pnpm install.
   runner-labels:
     name: Runner label combinations
-    runs-on: ubuntu-slim
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -84,7 +86,7 @@ jobs:
   # @jlapenna/repo-tools at the commit the lockfile pins.
   schedules:
     name: Schedule justifications
-    runs-on: ubuntu-slim
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -540,7 +542,7 @@ jobs:
     name: Verify
     needs: [verify-full, verify-full-console, runner-labels, schedules]
     if: always()
-    runs-on: ubuntu-slim
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
     timeout-minutes: 5
     steps:
       - name: Require full verification
@@ -579,10 +581,12 @@ jobs:
 
   runner-image-pnpm-store-seed:
     name: Runner image pnpm-store seed
-    # Native input checks remain a required merge result on the capped hosted
-    # lane. The full real-fetch/CLI/layer/mount proof is an unconditional
-    # dependency of the production Dockerfile, gating artifact publication.
-    runs-on: ubuntu-slim
+    # Native input checks remain a required merge result on the lightweight
+    # control lane for trusted refs (fork fallback: ubuntu-slim;
+    # jlapenna/homelab#3284). The full real-fetch/CLI/layer/mount proof is an
+    # unconditional dependency of the production Dockerfile, gating artifact
+    # publication.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
     timeout-minutes: 15
 
     steps:
@@ -625,6 +629,9 @@ jobs:
   e2e-control-flag:
     name: E2E control flag
     if: ${{ vars.E2E_ENABLED == 'false' }}
+    # Keep on GitHub-hosted ubuntu-slim so the owner-visible pause notice and
+    # restore command still render during an ARC outage (docs/ci-control-flags.md,
+    # documented exception for jlapenna/homelab#3284).
     runs-on: ubuntu-slim
     timeout-minutes: 2
     steps:
@@ -638,8 +645,9 @@ jobs:
     name: Console E2E selection
     if: ${{ vars.E2E_ENABLED != 'false' }}
     # Selection must finish before reserving the scarce pinned browser pool.
-    # This graph/diff query needs no fleet network or runtime credentials.
-    runs-on: ubuntu-slim
+    # Trusted refs run on the ARC CI lane; untrusted fork PRs stay on
+    # ubuntu-slim (jlapenna/homelab#3284).
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci' }}
     timeout-minutes: 10
     outputs:
       run: ${{ steps.e2e-scope.outputs.run }}
@@ -859,7 +867,7 @@ jobs:
     # always() exposes selection/browser failure rather than skipping a
     # required check because one dependency failed or was cancelled.
     if: ${{ always() && vars.E2E_ENABLED != 'false' }}
-    runs-on: ubuntu-slim
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'ubuntu-slim' || 'agent-lcars-ci-control' }}
     timeout-minutes: 2
     steps:
       - name: Require successful E2E selection and selected browser execution

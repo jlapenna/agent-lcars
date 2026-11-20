@@ -142,8 +142,8 @@ RUN ./tools/nx bundle @agent-lcars/telemetry-watcher && \
     ./tools/nx hook-flush-cli @agent-lcars/telemetry-watcher
 
 # Native Git dependency: .gitmodules declares upstream and the gitlink locks
-# its revision. Package only the review command, license and revision; the
-# plugin marketplace's other files never enter the runtime image. Keep the
+# its revision. Package the command, license, revision and rendered LCARS
+# instructions. Other marketplace files stay outside the runtime image. Keep the
 # output at the dependency root so the publisher's COPY-derived input inventory
 # observes a gitlink update and republishes the runner.
 RUN git submodule update --init --depth 1 -- third_party/anthropic-plugins && \

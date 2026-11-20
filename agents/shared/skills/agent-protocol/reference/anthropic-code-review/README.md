@@ -20,8 +20,11 @@ The runner build packages the unmodified
 `plugins/code-review/commands/code-review.md` and its Apache-2.0 `LICENSE`
 from that locked checkout. `apps/runner-autoscaler/runner-image/package-anthropic-review.sh` refuses a
 revision mismatch or modified review source, and writes the exact revision to
-`revision` beside this adapter. Read that file for the upstream revision used
-in the procedure receipt. The rest of the marketplace is excluded from the
+`revision` beside this adapter. Use the packaged upstream revision below in the procedure receipt.
+
+Packaged upstream revision: `@ANTHROPIC_REVIEW_REVISION@`.
+
+The rest of the marketplace is excluded from the
 runtime image. No worker downloads or resolves the dependency at runtime.
 
 When Renovate updates the gitlink, review the upstream command and reconcile
@@ -81,8 +84,10 @@ review and comment-quality guidance applies.
    On OpenCode's shared serial inference lane, run one child at a time. Child
    reviewers and validators return evidence only and never recursively
    delegate or publish to GitHub.
-   Validators in step 5 must be fresh agents, separate from the discoverer;
-   validate every candidate, including guidance violations. Wait for all
+   Validate every candidate from all four review passes, including guidance
+   violations. Start a separate fresh validator session for each candidate.
+   Give it exactly one candidate, including when two findings are related.
+   Record its own native session ID for that candidate. Wait for all
    reviewers and validators before deciding. If independent delegation is
    unavailable or an essential pass cannot finish, report that limitation;
    do not present a single-agent inspection as this completed procedure.

@@ -110,6 +110,7 @@ export class MemoryStore implements OrchestratorStore {
   readonly #priorityPositions = new Map<string, number>();
   readonly #runs = new Map<string, Run>();
   readonly #runMessageChunks = new Map<string, string>();
+  readonly #runEvidence = new Map<string, RunEvidence>();
   readonly #sourceWorkIds = new Map<string, string>();
   readonly #sourceRevisions = new Map<string, WorkRevision>();
   readonly #requestRuns = new Map<string, string>();
@@ -125,6 +126,17 @@ export class MemoryStore implements OrchestratorStore {
 
   async readTask(id: TaskId): Promise<VersionedTask | undefined> {
     return structuredClone(this.#tasks.get(taskKey(id)));
+  }
+
+  async readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>> {
+    const found = new Map<string, VersionedTask>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      const versioned = this.#tasks.get(key);
+      if (versioned !== undefined && !found.has(key))
+        found.set(key, structuredClone(versioned));
+    }
+    return found;
   }
 
   async readLifecycleMetricRecords(
@@ -184,6 +196,33 @@ export class MemoryStore implements OrchestratorStore {
     );
   }
 
+  async writeRunEvidence(input: {
+    runId: string;
+    claimFingerprint: string;
+    evidence: RunEvidence;
+  }): Promise<boolean> {
+    const key = `${input.runId}\0${input.claimFingerprint}`;
+    if (this.#runEvidence.has(key)) return false;
+    this.#runEvidence.set(key, plainRunEvidence(input.evidence));
+    return true;
+  }
+
+  async readRunEvidence(
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
+  ): Promise<Map<string, RunEvidence>> {
+    const found = new Map<string, RunEvidence>();
+    for (const run of runs) {
+      const claim = run.queue?.tokenHash;
+      if (claim === undefined) continue;
+      const evidence = runEvidenceSchema.safeParse(
+        this.#runEvidence.get(`${run.runId}\0${claim}`),
+      );
+      if (evidence.success)
+        found.set(run.runId, plainRunEvidence(evidence.data));
+    }
+    return found;
+  }
+
   async readRun(runId: string): Promise<Run | undefined> {
     return structuredClone(this.#runs.get(runId));
   }
@@ -200,6 +239,21 @@ export class MemoryStore implements OrchestratorStore {
     return structuredClone(
       [...this.#runs.values()].filter((run) => taskKey(run.task) === key),
     );
+  }
+
+  async listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>> {
+    const runs = new Map<string, Run[]>();
+    for (const id of ids) {
+      const key = taskKey(id);
+      if (runs.has(key)) continue;
+      runs.set(
+        key,
+        [...this.#runs.values()]
+          .filter((run) => taskKey(run.task) === key)
+          .map((run) => structuredClone(run)),
+      );
+    }
+    return runs;
   }
 
   async transactRequest(input: {
@@ -864,6 +918,9 @@ export class MemoryStore implements OrchestratorStore {
 import {
   type IssueReference,
   issueSourceKey,
+  plainRunEvidence,
+  type RunEvidence,
+  runEvidenceSchema,
   type TrackerIssueProjection,
   trackerIssueProjectionSchema,
 } from '@agent-lcars/dispatch-contracts';

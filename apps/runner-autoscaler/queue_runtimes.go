@@ -46,6 +46,67 @@ var queueRuntimeImagePattern = regexp.MustCompile(`^[^@\s]+@sha256:[a-f0-9]{64}$
 // fit (requests equal limits): 2 CPU, 6 GiB memory, 40 GiB ephemeral storage.
 var queueRuntimeCeiling = map[string]string{"cpu": "2", "memory": "6Gi", "ephemeral-storage": "40Gi"}
 
+// queueRuntimeLauncherShare is what the launcher's container takes out of a
+// runtime's declared resources when the harness runs in a container of its
+// own (harness_container). The launcher only speaks to LCARS and relays one
+// ACP session; the harness container gets the rest, so the Pod as a whole
+// still requests and is limited to exactly what the runtime declares.
+var queueRuntimeLauncherShare = map[string]string{"cpu": "100m", "memory": "384Mi", "ephemeral-storage": "1Gi"}
+
+// queueClusterRunsSidecars reports whether a cluster of this version runs an
+// init container with a restart policy of Always as a sidecar (1.29, where
+// the feature is on by default). Distributions suffix the minor version
+// ("29+"); a version that cannot be read is refused.
+func queueClusterRunsSidecars(major, minor string) bool {
+	number := func(value string) (int, bool) {
+		digits := strings.TrimRight(value, "+")
+		if digits == "" {
+			return 0, false
+		}
+		n := 0
+		for _, r := range digits {
+			if r < '0' || r > '9' {
+				return 0, false
+			}
+			n = n*10 + int(r-'0')
+		}
+		return n, true
+	}
+	majorNumber, okMajor := number(major)
+	minorNumber, okMinor := number(minor)
+	return okMajor && okMinor && (majorNumber > 1 || (majorNumber == 1 && minorNumber >= 29))
+}
+
+// queueKubeletRunsSidecars reports the same of one node's kubelet, from the
+// version it reports ("v1.31.4+k3s1"). The API server can be ahead of a
+// node during an upgrade, and it is the kubelet that runs the containers.
+func queueKubeletRunsSidecars(kubeletVersion string) bool {
+	major, rest, ok := strings.Cut(strings.TrimPrefix(kubeletVersion, "v"), ".")
+	if !ok {
+		return false
+	}
+	minor, _, _ := strings.Cut(rest, ".")
+	return queueClusterRunsSidecars(major, minor)
+}
+
+// queueRuntimeHarnessUID is the user the harness container runs as: not the
+// Pod's (the launcher's), in the same group. The claw image has a passwd
+// entry for it.
+const queueRuntimeHarnessUID = int64(1002)
+
+// queueRuntimeHarnessSocket is where the harness container listens and the
+// launcher connects, on an emptyDir only those two containers mount.
+const queueRuntimeHarnessSocket = "/run/claw/harness.sock"
+
+// queueRuntimeDefinitionMountPath is where the launcher writes the pinned
+// agent definition and where the harness container sees it read-only.
+// queueRuntimeHomeMountPath is HOME: the launcher writes the definition's
+// pinned settings there, and the harness keeps its own state beside them.
+const (
+	queueRuntimeDefinitionMountPath = queueRuntimeWorkMountPath + "/agent"
+	queueRuntimeHomeMountPath       = queueRuntimeWorkMountPath + "/home"
+)
+
 type queueRuntimeSecretItem struct {
 	Key  string `yaml:"key"`
 	Path string `yaml:"path"`
@@ -74,6 +135,12 @@ type queueRuntimeConfig struct {
 	// The agent definition is never mounted: a repository-owned agent's
 	// pinned files arrive in its run brief (docs/repository-agents.md).
 	Env []queueRuntimeEnv `yaml:"env,omitempty"`
+	// HarnessContainer runs the agent's harness in a container of its own,
+	// under another UID, with the run token and the writable definition
+	// left in the launcher's container (docs/repository-agents.md). It needs
+	// a claw image that carries claw-harness.mjs, so it is set per runtime
+	// once that runtime's image does.
+	HarnessContainer bool `yaml:"harness_container,omitempty"`
 }
 
 // queueRuntimeTurnMargin is how far inside the Pod deadline the launcher's
@@ -119,6 +186,24 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 		if limit.Cmp(resource.MustParse(ceiling)) > 0 {
 			return fmt.Errorf("%s limits.%s exceeds the %s per-Job ceiling", prefix, resourceName, ceiling)
 		}
+		// The harness container gets what the launcher's share leaves, which
+		// has to be at least as much again: the harness is the one that runs
+		// the agent.
+		if share := resource.MustParse(queueRuntimeLauncherShare[resourceName]); r.HarnessContainer {
+			least := share.DeepCopy()
+			least.Add(share)
+			if limit.Cmp(least) < 0 {
+				return fmt.Errorf("%s limits.%s must be at least %s when harness_container is set: the launcher's %s share and as much again for the harness", prefix, resourceName, least.String(), share.String())
+			}
+		}
+	}
+	// The definition, HOME and scratch are mounted at fixed paths under
+	// /work in both containers. A work root anywhere else would have the
+	// launcher verify a definition the harness never sees.
+	for _, env := range r.Env {
+		if r.HarnessContainer && env.Name == "CLAW_WORK_DIR" {
+			return fmt.Errorf("%s.env must not set CLAW_WORK_DIR when harness_container is set: the containers share the definition at %s only", prefix, queueRuntimeDefinitionMountPath)
+		}
 	}
 	if r.ActiveDeadlineSeconds < queueRuntimeTurnMargin+queueRuntimeMinTurn || r.ActiveDeadlineSeconds >= queueRunLeaseSeconds {
 		return fmt.Errorf("%s.active_deadline_seconds must be at least %d and below the %d s run lease", prefix, queueRuntimeTurnMargin+queueRuntimeMinTurn, queueRunLeaseSeconds)
@@ -138,8 +223,8 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 		return err
 	}
 	// The declared env list and every Secret item under env/ (which the claw
-	// launcher exports as an environment variable named by the rest of the
-	// path) share one namespace: neither may set a reserved name or repeat
+	// harness host exports as an environment variable named by the rest of
+	// the path) share one namespace: neither may set a reserved name or repeat
 	// the other.
 	envNames := map[string]bool{}
 	claim := func(source, name string) error {
@@ -175,16 +260,17 @@ func (r queueRuntimeConfig) validate(name, legacyCredentialsSecret string) error
 	return nil
 }
 
-// queueRuntimeEnvItemPrefix marks Secret items the claw launcher exports as
-// environment variables (env/LITELLM_API_KEY -> LITELLM_API_KEY).
+// queueRuntimeEnvItemPrefix marks Secret items the claw harness host exports
+// to the harness as environment variables (env/LITELLM_API_KEY ->
+// LITELLM_API_KEY).
 const queueRuntimeEnvItemPrefix = "env/"
 
 // queueRuntimeEnvReserved names the variables only the executor (LCARS_*,
-// RUNNER_MODE, CLAW_TURN_DEADLINE_SECONDS) or the claw launcher (OPENCLAW_*,
-// NODE_OPTIONS, PATH, HOME) may set.
+// RUNNER_MODE, CLAW_TURN_DEADLINE_SECONDS, CLAW_HARNESS_SOCKET) or the claw
+// launcher (OPENCLAW_*, NODE_OPTIONS, PATH, HOME) may set.
 func queueRuntimeEnvReserved(name string) bool {
 	switch name {
-	case "RUNNER_MODE", "CLAW_TURN_DEADLINE_SECONDS", "NODE_OPTIONS", "PATH", "HOME":
+	case "RUNNER_MODE", "CLAW_TURN_DEADLINE_SECONDS", "CLAW_HARNESS_SOCKET", "NODE_OPTIONS", "PATH", "HOME":
 		return true
 	}
 	return strings.HasPrefix(name, "LCARS_") || strings.HasPrefix(name, "OPENCLAW_")
@@ -297,11 +383,113 @@ func (q *kubernetesQueue) runtimeJobShape(l directRunnerLaunch, rt queueRuntimeC
 		{Name: "work", MountPath: queueRuntimeWorkMountPath},
 		{Name: "tmp", MountPath: "/tmp"},
 	}
+	if rt.HarnessContainer {
+		return q.isolatedRuntimeJobShape(rt, env), nil
+	}
 	return queueJobShape{
 		container: "claw", image: rt.Image, pullPolicy: core.PullIfNotPresent,
 		env: env, volumes: volumes, mounts: mounts, readOnlyRootFilesystem: true,
 		requests: rt.Requests, limits: rt.Limits, deadline: rt.ActiveDeadlineSeconds,
 	}, nil
+}
+
+// isolatedRuntimeJobShape is a declared runtime's Job with the harness in a
+// container of its own (harness_container). Three containers share the Pod:
+//
+//   - claw-home, an init container, creates the two directories the others
+//     mount, as the launcher's user: the definition directory and HOME. HOME
+//     is sticky and group-writable, so the harness can keep its state in it
+//     and cannot remove or rename what the launcher puts there.
+//   - harness, a sidecar (an init container that restarts), runs
+//     claw-harness.mjs as queueRuntimeHarnessUID. It alone mounts the zone's
+//     Secret items and the writable scratch, and it sees the definition
+//     read-only. The kubelet stops it when the launcher exits.
+//   - claw, the Pod's only regular container, is the launcher. It alone
+//     holds the run token and can write the definition. Its exit decides the
+//     Pod's phase, as it does without a harness container.
+//
+// The two talk over a Unix socket on an emptyDir of their own. They do not
+// share a PID namespace, so the harness cannot read the launcher's
+// environment. The launcher's share and the harness's remainder add up to
+// the runtime's declared resources.
+func (q *kubernetesQueue) isolatedRuntimeJobShape(rt queueRuntimeConfig, launcherEnv []core.EnvVar) queueJobShape {
+	mode := int32(0440)
+	no, yes := false, true
+	harnessUID := queueRuntimeHarnessUID
+	always := core.ContainerRestartPolicyAlways
+	launcher, harness := map[string]string{}, map[string]string{}
+	for name, share := range queueRuntimeLauncherShare {
+		launcher[name] = share
+		rest := resource.MustParse(rt.Limits[name])
+		rest.Sub(resource.MustParse(share))
+		harness[name] = rest.String()
+	}
+	// The harness's scratch is bounded by its whole ephemeral-storage limit;
+	// the kubelet evicts the Pod if it is exceeded.
+	scratch := queueResources(harness)[core.ResourceEphemeralStorage]
+	emptyDir := func(name string) core.Volume {
+		return core.Volume{Name: name, VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{}}}
+	}
+	volumes := []core.Volume{
+		{Name: "claw-secrets", VolumeSource: core.VolumeSource{Secret: &core.SecretVolumeSource{SecretName: rt.SecretName, Items: queueRuntimeKeyToPaths(rt.Items), DefaultMode: &mode}}},
+		{Name: "work", VolumeSource: core.VolumeSource{EmptyDir: &core.EmptyDirVolumeSource{SizeLimit: &scratch}}},
+		emptyDir("definition"), emptyDir("home"), emptyDir("harness-socket"), emptyDir("tmp"), emptyDir("harness-tmp"),
+	}
+	socket := core.EnvVar{Name: "CLAW_HARNESS_SOCKET", Value: queueRuntimeHarnessSocket}
+	harnessEnv := []core.EnvVar{socket}
+	for _, declared := range rt.Env {
+		harnessEnv = append(harnessEnv, core.EnvVar{Name: declared.Name, Value: declared.Value})
+	}
+	security := func(uid *int64) *core.SecurityContext {
+		return &core.SecurityContext{RunAsUser: uid, AllowPrivilegeEscalation: &no, ReadOnlyRootFilesystem: &yes, Capabilities: &core.Capabilities{Drop: []core.Capability{"ALL"}}}
+	}
+	resources := func(values map[string]string) core.ResourceRequirements {
+		return core.ResourceRequirements{Requests: queueResources(values), Limits: queueResources(values)}
+	}
+	// Both directories are subdirectories of their volumes: a volume's own
+	// root belongs to root and is writable by every user, so only a
+	// directory the launcher's user created can be made sticky, or be a
+	// mount point the harness cannot rename.
+	shared := func(volume string, mountPath string, readOnly bool) core.VolumeMount {
+		return core.VolumeMount{Name: volume, MountPath: mountPath, SubPath: volume, ReadOnly: readOnly}
+	}
+	socketMount := core.VolumeMount{Name: "harness-socket", MountPath: path.Dir(queueRuntimeHarnessSocket)}
+	return queueJobShape{
+		container: "claw", image: rt.Image, pullPolicy: core.PullIfNotPresent,
+		env: append(launcherEnv, socket), volumes: volumes, readOnlyRootFilesystem: true,
+		mounts: []core.VolumeMount{
+			shared("definition", queueRuntimeDefinitionMountPath, false),
+			shared("home", queueRuntimeHomeMountPath, false),
+			socketMount,
+			{Name: "tmp", MountPath: "/tmp"},
+		},
+		requests: launcher, limits: launcher, deadline: rt.ActiveDeadlineSeconds,
+		initContainers: []core.Container{
+			{
+				Name: "claw-home", Image: rt.Image, ImagePullPolicy: core.PullIfNotPresent,
+				Command: []string{"mkdir", "-m", "1775", "/claw/definition/definition", "/claw/home/home"},
+				VolumeMounts: []core.VolumeMount{
+					{Name: "definition", MountPath: "/claw/definition"},
+					{Name: "home", MountPath: "/claw/home"},
+				},
+				Resources: resources(launcher), SecurityContext: security(nil),
+			},
+			{
+				Name: "harness", Image: rt.Image, ImagePullPolicy: core.PullIfNotPresent,
+				Command: []string{"node", "/opt/claw/claw-harness.mjs"}, RestartPolicy: &always,
+				Env: harnessEnv,
+				VolumeMounts: []core.VolumeMount{
+					{Name: "claw-secrets", MountPath: queueRuntimeSecretMountPath, ReadOnly: true},
+					{Name: "work", MountPath: queueRuntimeWorkMountPath},
+					shared("definition", queueRuntimeDefinitionMountPath, true),
+					shared("home", queueRuntimeHomeMountPath, false),
+					socketMount,
+					{Name: "harness-tmp", MountPath: "/tmp"},
+				},
+				Resources: resources(harness), SecurityContext: security(&harnessUID),
+			},
+		},
+	}
 }
 
 func queueRuntimeKeyToPaths(items []queueRuntimeSecretItem) []core.KeyToPath {
@@ -329,4 +517,7 @@ type queueJobShape struct {
 	// readOnlyRootFilesystem is set for runtimes, whose only writable paths
 	// are their declared emptyDirs.
 	readOnlyRootFilesystem bool
+	// initContainers run before the container above, in order; one with a
+	// restart policy of Always is a sidecar that runs beside it.
+	initContainers []core.Container
 }

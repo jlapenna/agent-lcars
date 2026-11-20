@@ -308,6 +308,13 @@ table.sess .cell-clip { max-width: none; width: auto; overflow: hidden; }
 .admit-foot { font-size: 12px; color: var(--ink-dim); padding-top: 10px; }
 
 .empty-note { color: var(--ink-dim); font-size: 13px; padding: 12px 0; }
+/* ---- Work detail: one round, and what its agent was seen to do ---- */
+.round { display: grid; gap: 8px; padding: 12px 0; }
+.round .speaker { font: 500 11px/1.3 var(--f-mono); text-transform: uppercase; letter-spacing: .04em; color: var(--ink-dim); }
+.round .said { margin: 0; }
+/* Two small lines under the agent's turn. They wrap anywhere: on a phone a
+   turn's token counts are longer than the panel is wide. */
+.round .seen { display: grid; gap: 2px; font-size: 12px; line-height: 1.5; color: var(--ink-dim); overflow-wrap: anywhere; }
 .cost-7d { width: 38%; }
 .cost-bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; }
 .cost-bar > span { white-space: nowrap; }
@@ -810,6 +817,29 @@ function recentWorkPanel() {
     <table><thead><tr><th>Pri</th><th>Item</th><th>Agent</th><th>State</th><th class="num">Updated</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="empty-note">Showing up to 200 native tasks. <a href="#">Next work page →</a></div></div></section>`;
 }
+function workDetailPanel() {
+  return `<section class="panel" data-od-id="panel-work-detail"><div><div class="panel-head"><h2>Work detail</h2><span class="count">2 rounds</span><span class="meta">jlapenna/homelab · investigator · report</span></div>
+    <div class="round" data-od-id="work-detail-round">
+      <div class="speaker">user:jlapenna · api</div>
+      <p class="said">Is the backup volume on pike filling up?</p>
+      <div class="speaker">Agent · report</div>
+      <p class="said">No. The volume is at 41% and grew 0.3% over the last week. The nightly job finished at 03:12 with no errors.</p>
+      <div class="seen" data-od-id="work-detail-run-evidence">
+        <div>Tool calls: 4 (execute 2, read 1, fetch 1; 1 failed; 1 unfinished)</div>
+        <div>Harness: openclaw · Stopped: end_turn · Tokens: 51,000 in, 2,000 out, 40,000 cached · Context: 53,000 of 200,000 · Cost: USD 0.0450 · Turn: 41 s</div>
+      </div>
+    </div>
+    <div class="round" data-od-id="work-detail-round-total">
+      <div class="speaker">user:jlapenna · console</div>
+      <p class="said">And the snapshots volume?</p>
+      <div class="speaker">Agent · report</div>
+      <p class="said">At 63%, steady since the retention change on the 4th.</p>
+      <div class="seen" data-od-id="work-detail-run-evidence-total">
+        <div>Tool calls: 1 (execute 1)</div>
+        <div>Harness: claude · Stopped: end_turn · Tokens: 44,200 total, 1,000 in, 200 out, 40,000 cached, 3,000 written to cache · Turn: 12 s</div>
+      </div>
+    </div></div></section>`;
+}
 function runnersPanel() {
   const cls = { busy: 'busy', idle: 'idle', drain: 'warn', off: 'fail' }, lab = { busy: 'Busy', idle: 'Idle', drain: 'Draining', off: 'Offline' };
   const rows = RUNNERS.map((r) => `<tr><td><span class="mono" title="${r[1]}-${r[0]}">${r[0]}</span><span class="host-spec">${r[1]} · ${r[2]}</span></td><td><span class="state ${cls[r[3]]}">${lab[r[3]]}</span></td>
@@ -909,7 +939,7 @@ const VIEWS = {
   shuttlebay: { warn: true, folded: [repoSelect(), agentSelect(PIPES)], tools: [windowSeg(['30m', '1h', '24h', '7d'], '30m', ['1h', '24h', '7d']), '<span class="tb-note">Runner telemetry keeps the last 30 minutes</span>', find('runner lane')],
     body: () => `<div class="cols"><div class="stack">${runnersPanel()}${admissionPanel()}</div><div class="stack">${fleetPanel()}</div></div>` },
   work: { create: false, folded: [repoSelect(), agentSelect(PIPES.map((p) => 'agent:' + p)), '<select class="field" aria-label="Activity"><option>All work</option><option>Event-driven work</option></select>'], after: [more('<select class="field" aria-label="State"><option>All states</option><option>running</option><option>done</option><option>parked</option><option>failed</option><option>canceled</option></select><input class="field" aria-label="Principal" placeholder="All principals"><a href="#work">Clear filters</a>')], tools: [windowSeg(['1h', '24h', '7d', 'all'], 'all'), find('title, repo, work id'), '<a class="compact-link" href="#work">Schedules →</a>'],
-    primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}${issueSourcesPanel()}` },
+    primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">New work</button>', body: () => `${queuePanel()}${recentWorkPanel()}${workDetailPanel()}${issueSourcesPanel()}` },
   sessions: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [more(SOURCE)], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], body: () => sessionsPanel() },
   costs: { folded: [repoSelect(), agentSelect(SESSION_AGENTS)], after: [SOURCE], tools: [windowSeg(ARCHIVE_WINDOWS, '14d'), find('issue, PR, session id')], primary: '<button class="btn btn-primary push" type="button" data-od-id="primary-action">Export ledger</button>', body: () => `${readouts()}${costsPanel()}${ledgerPanels()}` },
 };

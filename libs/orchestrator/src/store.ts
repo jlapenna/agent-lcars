@@ -1,5 +1,6 @@
 import type {
   IssueReference,
+  RunEvidence,
   TrackerIssueProjection,
 } from '@agent-lcars/dispatch-contracts';
 import { z } from 'zod';
@@ -259,10 +260,30 @@ export interface OrchestratorStore {
     input: LifecycleMetricRead,
   ): Promise<LifecycleMetricRecords>;
   readTask(id: TaskId): Promise<VersionedTask | undefined>;
+  /**
+   * The task document of each given task in one datastore pass, keyed by
+   * {@link taskKey}: a batched document read rather than one round trip per
+   * task. A task with no document is absent from the map, matching
+   * {@link readTask} returning undefined.
+   */
+  readTasks(ids: readonly TaskId[]): Promise<Map<string, VersionedTask>>;
   readRun(runId: string): Promise<Run | undefined>;
   /** The task's live run, if its `activeRunId` points at one. */
   readActiveRun(id: TaskId): Promise<Run | undefined>;
   listRuns(id: TaskId): Promise<Run[]>;
+  /**
+   * Every run of each of the given tasks in one datastore pass, keyed by
+   * {@link taskKey}. Equivalent to calling {@link listRuns} per id, but the
+   * Firestore implementation issues one equality-only query per bounded chunk
+   * of tasks instead of one per task, so a console
+   * surface listing hundreds of tasks stops paying hundreds of round trips.
+   *
+   * Contract: every requested id is present in the map, mapped to `[]` when
+   * the task has no runs; a task absent from the input is absent from the
+   * map. Ordering within a task is unspecified, exactly as for
+   * {@link listRuns}.
+   */
+  listRunsForTasks(ids: readonly TaskId[]): Promise<Map<string, Run[]>>;
   /** Store a run's whole final message out of line, as the chunks
    * `splitRunMessage` produced. Content-addressed by `overflow.sha256` and
    * idempotent; never changes the run document. */
@@ -277,6 +298,32 @@ export interface OrchestratorStore {
     runId: string;
     overflow: RunMessageOverflow;
   }): Promise<string | undefined>;
+  /** Store what a run's worker saw its agent do, beside the run and never
+   * in its document: a Console from before evidence existed reads the run
+   * as it always did.
+   *
+   * The record belongs to the claim that reported it: it is stored under
+   * that claim's fingerprint and read back only through the claim the run
+   * holds or settled under. So a claim the run was taken from can never
+   * replace the record of the claim that has it now, however late its write
+   * lands. The first record under a claim stands; resolves false, writing
+   * nothing, when one is already there.
+   *
+   * One unconditional write to a document nothing else reads in a
+   * transaction: it takes no lock on the run, so a slow or abandoned
+   * evidence write can never hold up the run's completion. */
+  writeRunEvidence(input: {
+    runId: string;
+    /** The authenticated queue token hash. */
+    claimFingerprint: string;
+    evidence: RunEvidence;
+  }): Promise<boolean>;
+  /** The evidence recorded under each run's own claim, by run id. A run
+   * that was never claimed, has none, or whose stored evidence no longer
+   * parses is absent. */
+  readRunEvidence(
+    runs: readonly Pick<Run, 'runId' | 'queue'>[],
+  ): Promise<Map<string, RunEvidence>>;
 
   /**
    * Atomically reads a task's current lock and the one matching durable

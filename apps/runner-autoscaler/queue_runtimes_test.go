@@ -16,8 +16,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apimachinery/pkg/version"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
 	clienttesting "k8s.io/client-go/testing"
+	podresource "k8s.io/component-helpers/resource"
 )
 
 const testClawImage = "registry.example.com/openclaw@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -632,5 +635,272 @@ func TestLaunchSettlesClaimWhenJobCreateIsInvalid(t *testing.T) {
 				t.Fatal("refused create left a Job")
 			}
 		})
+	}
+}
+
+// A runtime that sets harness_container runs the harness in a container of
+// its own: the launcher keeps the run token, the harness holds the zone's
+// Secret items under another UID, and the kubelet stops the harness when the
+// launcher exits.
+func TestQueueRuntimeHarnessContainerShape(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	rt := testClawRuntime()
+	rt.HarnessContainer = true
+	q.config.Runtimes["claw-investigator"] = rt
+	if err := q.config.validate(); err != nil {
+		t.Fatal(err)
+	}
+	job, err := q.job(clawLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.Containers) != 1 || pod.Containers[0].Name != "claw" {
+		t.Fatalf("the launcher must be the Pod's only regular container: %#v", pod.Containers)
+	}
+	if len(pod.InitContainers) != 2 || pod.InitContainers[0].Name != "claw-home" || pod.InitContainers[1].Name != "harness" {
+		t.Fatalf("init containers = %#v", pod.InitContainers)
+	}
+	launcher, prepare, harness := pod.Containers[0], pod.InitContainers[0], pod.InitContainers[1]
+
+	envNames := func(c core.Container) []string {
+		names := []string{}
+		for _, env := range c.Env {
+			names = append(names, env.Name)
+		}
+		sort.Strings(names)
+		return names
+	}
+	mounts := func(c core.Container) map[string]core.VolumeMount {
+		out := map[string]core.VolumeMount{}
+		for _, mount := range c.VolumeMounts {
+			out[mount.MountPath] = mount
+		}
+		return out
+	}
+
+	// The run token and the Console's address stay with the launcher.
+	if got, want := envNames(launcher), []string{"CLAW_AGENT", "CLAW_HARNESS_SOCKET", "CLAW_TURN_DEADLINE_SECONDS", "LCARS_CONSOLE_URL", "LCARS_RUN_ID", "LCARS_RUN_TOKEN", "RUNNER_MODE"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("launcher env = %v", got)
+	}
+	if got, want := envNames(harness), []string{"CLAW_AGENT", "CLAW_HARNESS_SOCKET"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("harness env = %v", got)
+	}
+	// The zone's Secret items and the scratch are the harness's alone.
+	if _, mounted := mounts(launcher)[queueRuntimeSecretMountPath]; mounted {
+		t.Fatal("the launcher must not mount the zone Secret")
+	}
+	if _, mounted := mounts(launcher)[queueRuntimeWorkMountPath]; mounted {
+		t.Fatal("the launcher must not mount the harness's scratch")
+	}
+	if mount := mounts(harness)[queueRuntimeSecretMountPath]; mount.Name != "claw-secrets" || !mount.ReadOnly {
+		t.Fatalf("harness secret mount = %#v", mount)
+	}
+	// The launcher writes the definition; the harness only reads it.
+	if mount := mounts(launcher)[queueRuntimeDefinitionMountPath]; mount.Name != "definition" || mount.SubPath != "definition" || mount.ReadOnly {
+		t.Fatalf("launcher definition mount = %#v", mount)
+	}
+	if mount := mounts(harness)[queueRuntimeDefinitionMountPath]; mount.Name != "definition" || mount.SubPath != "definition" || !mount.ReadOnly {
+		t.Fatalf("harness definition mount = %#v", mount)
+	}
+	// Both write HOME, through the directory the launcher's user created.
+	for name, c := range map[string]core.Container{"launcher": launcher, "harness": harness} {
+		if mount := mounts(c)[queueRuntimeHomeMountPath]; mount.Name != "home" || mount.SubPath != "home" || mount.ReadOnly {
+			t.Fatalf("%s home mount = %#v", name, mount)
+		}
+		if mount := mounts(c)["/run/claw"]; mount.Name != "harness-socket" {
+			t.Fatalf("%s socket mount = %#v", name, mount)
+		}
+	}
+	if got, want := prepare.Command, []string{"mkdir", "-m", "1775", "/claw/definition/definition", "/claw/home/home"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("claw-home command = %v", got)
+	}
+
+	// The harness is another user; the others are the Pod's.
+	if harness.SecurityContext.RunAsUser == nil || *harness.SecurityContext.RunAsUser != queueRuntimeHarnessUID || *pod.SecurityContext.RunAsUser == queueRuntimeHarnessUID {
+		t.Fatalf("harness user = %#v, pod user = %v", harness.SecurityContext.RunAsUser, *pod.SecurityContext.RunAsUser)
+	}
+	if launcher.SecurityContext.RunAsUser != nil || prepare.SecurityContext.RunAsUser != nil {
+		t.Fatal("the launcher and claw-home run as the Pod's user")
+	}
+	for _, c := range []core.Container{launcher, prepare, harness} {
+		sc := c.SecurityContext
+		if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem || len(sc.Capabilities.Drop) != 1 || sc.Capabilities.Drop[0] != "ALL" {
+			t.Fatalf("%s security context = %#v", c.Name, sc)
+		}
+	}
+	// A sidecar: the kubelet starts it before the launcher and stops it
+	// when the launcher exits, so the launcher alone decides the Pod's phase.
+	if harness.RestartPolicy == nil || *harness.RestartPolicy != core.ContainerRestartPolicyAlways || prepare.RestartPolicy != nil {
+		t.Fatalf("restart policies = %v, %v", harness.RestartPolicy, prepare.RestartPolicy)
+	}
+	if got, want := harness.Command, []string{"node", "/opt/claw/claw-harness.mjs"}; !reflect.DeepEqual(got, want) || launcher.Command != nil {
+		t.Fatalf("commands = %v, %v", got, launcher.Command)
+	}
+	if pod.ShareProcessNamespace != nil {
+		t.Fatal("the containers must not share a PID namespace")
+	}
+
+	// Requests equal limits everywhere, and the launcher's share plus the
+	// harness's remainder is exactly what the runtime declares.
+	for _, name := range []core.ResourceName{core.ResourceCPU, core.ResourceMemory, core.ResourceEphemeralStorage} {
+		total := launcher.Resources.Requests[name].DeepCopy()
+		total.Add(harness.Resources.Requests[name])
+		if declared := resource.MustParse(rt.Limits[string(name)]); total.Cmp(declared) != 0 {
+			t.Fatalf("%s: launcher + harness = %s, declared %s", name, total.String(), declared.String())
+		}
+		for _, c := range []core.Container{launcher, prepare, harness} {
+			request, limit := c.Resources.Requests[name], c.Resources.Limits[name]
+			if request.Cmp(limit) != 0 || request.Sign() <= 0 {
+				t.Fatalf("%s %s: request %s, limit %s", c.Name, name, request.String(), limit.String())
+			}
+		}
+		share := resource.MustParse(queueRuntimeLauncherShare[string(name)])
+		for _, c := range []core.Container{prepare, launcher} {
+			if request := c.Resources.Requests[name]; request.Cmp(share) != 0 {
+				t.Fatalf("%s %s = %s, the launcher's share is %s", c.Name, name, request.String(), share.String())
+			}
+		}
+	}
+	// What the scheduler and the executor's own node-fit check count for the
+	// Pod is exactly what the runtime declares.
+	for name, declared := range queueResources(rt.Requests) {
+		if counted := podresource.PodRequests(&core.Pod{Spec: pod}, podresource.PodResourcesOptions{})[name]; counted.Cmp(declared) != 0 {
+			t.Fatalf("pod %s request = %s, declared %s", name, counted.String(), declared.String())
+		}
+	}
+	// Neither side mounts the root of the definition or HOME volume: a
+	// volume's own root is writable by every user.
+	for _, c := range []core.Container{launcher, harness} {
+		for _, mount := range c.VolumeMounts {
+			if (mount.Name == "definition" || mount.Name == "home") && mount.SubPath == "" {
+				t.Fatalf("%s mounts the root of %s", c.Name, mount.Name)
+			}
+		}
+	}
+	// The harness's scratch is bounded by the harness's own storage limit.
+	for _, volume := range pod.Volumes {
+		if volume.Name == "work" {
+			if limit := harness.Resources.Limits[core.ResourceEphemeralStorage]; volume.EmptyDir.SizeLimit.Cmp(limit) != 0 {
+				t.Fatalf("scratch size limit = %s, harness limit %s", volume.EmptyDir.SizeLimit.String(), limit.String())
+			}
+		}
+	}
+
+	// The two containers share the definition at one fixed path, so a runtime
+	// with a harness container cannot move the work root.
+	moved := testClawRuntime()
+	moved.Env = append(moved.Env, queueRuntimeEnv{Name: "CLAW_WORK_DIR", Value: "/tmp/work"})
+	if err := moved.validate("claw-investigator", "runner-credentials"); err != nil {
+		t.Fatal(err)
+	}
+	moved.HarnessContainer = true
+	if err := moved.validate("claw-investigator", "runner-credentials"); err == nil || !strings.Contains(err.Error(), "CLAW_WORK_DIR") {
+		t.Fatalf("a moved work root with a harness container: %v", err)
+	}
+	// A runtime that would leave the harness less than the launcher's own
+	// share is refused at startup; twice the share is the least that fits.
+	for name, sizes := range map[string][2]string{"cpu": {"150m", "200m"}, "memory": {"767Mi", "768Mi"}, "ephemeral-storage": {"1Gi", "2Gi"}} {
+		small := testClawRuntime()
+		small.HarnessContainer = true
+		small.Requests = map[string]string{"cpu": "2", "memory": "3Gi", "ephemeral-storage": "8Gi"}
+		small.Requests[name], small.Limits[name] = sizes[0], sizes[0]
+		if err := small.validate("claw-investigator", "runner-credentials"); err == nil || !strings.Contains(err.Error(), "launcher's") {
+			t.Fatalf("%s = %s: %v", name, sizes[0], err)
+		}
+		// Without a harness container the same size is fine.
+		small.HarnessContainer = false
+		if err := small.validate("claw-investigator", "runner-credentials"); err != nil {
+			t.Fatal(err)
+		}
+		small.HarnessContainer = true
+		small.Requests[name], small.Limits[name] = sizes[1], sizes[1]
+		if err := small.validate("claw-investigator", "runner-credentials"); err != nil {
+			t.Fatalf("%s = %s: %v", name, sizes[1], err)
+		}
+	}
+	// The socket's variable is the executor's to set.
+	reserved := testClawRuntime()
+	reserved.Env = []queueRuntimeEnv{{Name: "CLAW_HARNESS_SOCKET", Value: "/tmp/x"}}
+	if err := reserved.validate("claw-investigator", "runner-credentials"); err == nil {
+		t.Fatal("CLAW_HARNESS_SOCKET must be reserved")
+	}
+}
+
+// A runtime that does not set harness_container keeps its single-container
+// Job exactly.
+func TestQueueRuntimeWithoutHarnessContainerIsOneContainer(t *testing.T) {
+	q, _ := zoneQueueFixture()
+	job, err := q.job(clawLaunch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := job.Spec.Template.Spec
+	if len(pod.InitContainers) != 0 || len(pod.Containers) != 1 {
+		t.Fatalf("containers = %d init, %d regular", len(pod.InitContainers), len(pod.Containers))
+	}
+	for _, env := range pod.Containers[0].Env {
+		if env.Name == "CLAW_HARNESS_SOCKET" {
+			t.Fatal("no harness socket without a harness container")
+		}
+	}
+}
+
+// A harness container is a sidecar, which a cluster from before 1.29 runs as
+// an init container that never exits. The executor refuses to start there.
+func TestQueueRuntimeHarnessContainerNeedsSidecars(t *testing.T) {
+	for version, runs := range map[string]bool{"1.28": false, "1.29": true, "1.29+": true, "1.36": true, "2.0": true, "1.": false, "": false, "1.x": false} {
+		major, minor, _ := strings.Cut(version, ".")
+		if got := queueClusterRunsSidecars(major, minor); got != runs {
+			t.Fatalf("version %q: sidecars = %v, want %v", version, got, runs)
+		}
+	}
+	secret := &core.Secret{ObjectMeta: meta.ObjectMeta{Name: "claw-investigator", Namespace: "lcars-work"}, Data: map[string][]byte{"investigator-ssh-key": []byte("k"), "known-hosts": []byte("h"), "litellm-api-key": []byte("m")}}
+	node := func(name, kubelet string, eligible bool) *core.Node {
+		n := queueReadyNode()
+		n.Name = name
+		n.Status.NodeInfo.KubeletVersion = kubelet
+		if !eligible {
+			n.Labels = nil
+		}
+		return n
+	}
+	for name, tc := range map[string]struct {
+		server  string
+		nodes   []*core.Node
+		wantErr string
+	}{
+		"an older API server":            {server: "28", wantErr: "needs Kubernetes 1.29"},
+		"a current cluster":              {server: "36+", nodes: []*core.Node{node("a", "v1.36.1+k3s1", true)}},
+		"an eligible node still on 1.28": {server: "29", nodes: []*core.Node{node("a", "v1.29.0", true), node("b", "v1.28.9+k3s1", true)}, wantErr: `b runs kubelet "v1.28.9+k3s1"`},
+		"an older node no Job lands on":  {server: "29", nodes: []*core.Node{node("a", "v1.29.0", true), node("b", "v1.28.9", false)}},
+		"a node that reports no version": {server: "29", nodes: []*core.Node{node("a", "", true)}, wantErr: "every eligible node"},
+	} {
+		objects := []runtime.Object{secret}
+		for _, n := range tc.nodes {
+			objects = append(objects, n)
+		}
+		q, c := zoneQueueFixture(objects...)
+		rt := testClawRuntime()
+		rt.HarnessContainer = true
+		q.config.Runtimes["claw-investigator"] = rt
+		c.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: tc.server}
+		err := q.preflight(context.Background())
+		if tc.wantErr == "" {
+			// Whatever else the fixture lacks, sidecars are not the complaint.
+			if err != nil && strings.Contains(err.Error(), "harness_container") {
+				t.Fatalf("%s: %v", name, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	// A runtime without a harness container never asks for either version.
+	q, c := zoneQueueFixture(secret, node("a", "v1.20.0", true))
+	c.Discovery().(*fakediscovery.FakeDiscovery).FakedServerVersion = &version.Info{Major: "1", Minor: "20"}
+	if err := q.preflight(context.Background()); err != nil && strings.Contains(err.Error(), "harness_container") {
+		t.Fatal(err)
 	}
 }

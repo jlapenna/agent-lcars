@@ -83,9 +83,9 @@ permissions: {}
 jobs:
   # Independent of inputs.runs-on and with no `needs`: when the caller routes
   # repository validation itself onto `[self-hosted, <scale-set>]`, that job
-  # never starts, and this one still reports why. repo-tools' dependency-free
-  # checker (repo-check-runner-labels) is pinned to an exact commit so a
-  # repo-tools push cannot change what runs here.
+  # never starts, and this one still reports why (docs/published-actions.md).
+  # repo-tools' dependency-free checker (repo-check-runner-labels) is pinned to
+  # an exact commit so a repo-tools push cannot change what runs here.
   runner-labels:
     name: runner label combinations
     if: inputs.check-runner-labels
@@ -104,18 +104,24 @@ jobs:
             "https://raw.githubusercontent.com/jlapenna/repo-tools/$REPO_TOOLS_SHA/bin/check-runner-labels.mjs"
           node "$RUNNER_TEMP/check-runner-labels.mjs"
 
-  # Same shape as runner-labels: GitHub-hosted with no `needs`, so it reports
-  # even when the caller misroutes repository validation, and pinned to an
-  # exact repo-tools commit.
+  # Follows inputs.runs-on (jlapenna/homelab#3284) and stays pinned to an exact
+  # repo-tools commit. Explicitly provisions Node 24 without package-manager
+  # caching so caller-selected Linux runners always have a compatible runtime
+  # regardless of preinstalled Node versions or repo lockfiles.
   schedules:
     name: schedule justifications
     if: inputs.check-schedules
-    runs-on: ubuntu-slim
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
 
       - name: Reject unjustified sub-hourly schedules
         env:

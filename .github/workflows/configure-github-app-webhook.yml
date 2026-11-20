@@ -26,6 +26,8 @@ concurrency:
 
 jobs:
   configure:
+    # GitHub-hosted ubuntu-slim provides preinstalled gcloud for accessing
+    # GCP Secret Manager in the production environment (jlapenna/homelab#3284).
     runs-on: ubuntu-slim
     timeout-minutes: 5
     environment: production
