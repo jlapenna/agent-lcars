@@ -9,6 +9,9 @@ permissions: {}
 jobs:
   notify:
     if: github.event.review.user.login == 'agent-lcars[bot]'
+    # Keep GitHub-hosted: pull_request_review loads from the PR merge ref even
+    # for forks, so routing this notifier to ARC would expose fleet runners to
+    # untrusted fork workflow code (jlapenna/homelab#3284).
     runs-on: ubuntu-slim
     timeout-minutes: 2
     steps:

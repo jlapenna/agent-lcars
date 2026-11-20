@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   expire:
-    runs-on: ubuntu-slim
+    runs-on: ['agent-lcars-ci']
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
