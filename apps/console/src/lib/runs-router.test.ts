@@ -28,6 +28,7 @@ import {
 } from './codex-auth-store';
 import { recoverCodexCredentialOperations } from './codex-credential-operations';
 import { codexCentralAuthObject } from './deployment';
+import { TRIAGE_DESCRIPTION } from './fleet-triage-work';
 import { drainOutbox } from './orchestrator-dispatch';
 import { UnqualifiedDeliveryError } from './ready-delivery';
 import { agentKey } from './repository-agent-definition';
@@ -1717,6 +1718,57 @@ describe.each([
 });
 
 describe('brief', () => {
+  it('delivers the current triage prompt for an existing triage Work item', async () => {
+    const { store, orchestrator, now } = fixture();
+    const result = await orchestrator.request({
+      taskId: { workId: wid('legacy-triage') },
+      requestId: 'revision',
+      pipeline: 'opencode',
+      params: { mode: 'implement' },
+      sourceRevision: {
+        key: 'revision',
+        observedAt: { github: NOW },
+        input: {
+          operation: 'fleet-triage:v1',
+          repo: 'octo/example',
+          issue: 42,
+          fingerprint: 'a'.repeat(64),
+        },
+      },
+      work: {
+        origin: { principal: 'svc:fleet-triage', channel: 'github' },
+        spec: {
+          title: 'Triage octo/example#42',
+          description: 'Previous triage instructions.',
+          pipeline: 'opencode',
+          target: { repo: 'octo/example' },
+          deliverable: 'report',
+        },
+      },
+    });
+    if (isRefusal(result) || !result.run)
+      throw new Error('expected a triage run');
+    const token = mintRunToken();
+    await store.enqueueRun({ runId: result.run.runId, now: NOW });
+    await store.claimQueuedRun({
+      pipelines: ['opencode'],
+      now: NOW,
+      claimedBy: 'runner-1',
+      claimedBySubject: 'google:autoscaler@example.iam.gserviceaccount.com',
+      tokenHash: hashRunToken(token),
+    });
+    const response = await call(
+      { store, orchestrator, now, ...context, bearerToken: token },
+      'GET',
+      runPath(result.run.runId, '/brief'),
+    );
+    expect(response.status).toBe(200);
+    expect(response.json).toMatchObject({
+      spec: { description: TRIAGE_DESCRIPTION },
+      anchor: { body: TRIAGE_DESCRIPTION },
+    });
+  });
+
   it('serves a GitHub issue or pull-request anchor with all direct-runner metadata', async () => {
     const { store, orchestrator, now } = fixture();
     const outcome = await orchestrator.request({

@@ -44,7 +44,11 @@ import {
   restoreCodexCredential,
 } from './codex-credential-operations';
 import { consoleUrl } from './deployment';
-import { parseTriageReport, triageBriefContext } from './fleet-triage-work';
+import {
+  parseTriageReport,
+  TRIAGE_DESCRIPTION,
+  triageBriefContext,
+} from './fleet-triage-work';
 import type { GithubAnchorLifecycle } from './github-anchor-lifecycle';
 import type {
   DispatchTokenProvider,
@@ -725,13 +729,14 @@ export const runsRouter = os.router({
             transcriptGcsUri: resumeTranscriptGcsUri,
           }
         : undefined;
+    const triageContext = triageBriefContext(run);
     const params = {
       mode,
       reply: run.params?.['reply'] ?? '',
       replyChannel: run.params?.['replyChannel'] ?? '',
       replyPrincipal: run.params?.['replyPrincipal'] ?? '',
       runbook: run.params?.['runbook'] ?? '',
-      context: triageBriefContext(run) ?? run.params?.['context'] ?? '',
+      context: triageContext ?? run.params?.['context'] ?? '',
       // #1993's `agent-option:cross-repo` -- true iff admission captured
       // that label on the anchor. `checkoutToken` (below) reads the same
       // `run.params['crossRepo']` string independently; this is only the
@@ -795,7 +800,10 @@ export const runsRouter = os.router({
         message: 'run has corrupted Work',
       });
     }
-    const { spec } = parsed.data;
+    const spec =
+      triageContext === undefined
+        ? parsed.data.spec
+        : { ...parsed.data.spec, description: TRIAGE_DESCRIPTION };
     if (claw !== undefined) {
       // A repository-owned agent: the round pins the definition and message;
       // the brief carries the pinned files read back from GitHub.
