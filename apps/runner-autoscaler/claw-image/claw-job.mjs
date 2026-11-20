@@ -134,7 +134,7 @@ function sessionFailure(meta) {
 // never its name, title or arguments, and a number the harness got wrong is
 // left out rather than passed on.
 const EVIDENCE_TOOL_CALLS_MAX = 200;
-const TOOL_KINDS = new Set([
+export const TOOL_KINDS = Object.freeze([
   'read',
   'edit',
   'delete',
@@ -145,13 +145,13 @@ const TOOL_KINDS = new Set([
   'fetch',
   'switch_mode',
 ]);
-const TOOL_STATUSES = new Set([
+export const TOOL_STATUSES = Object.freeze([
   'pending',
   'in_progress',
   'completed',
   'failed',
 ]);
-const STOP_REASONS = new Set([
+export const STOP_REASONS = Object.freeze([
   'end_turn',
   'max_tokens',
   'max_turn_requests',
@@ -159,7 +159,7 @@ const STOP_REASONS = new Set([
   'cancelled',
 ]);
 // A cost in any other currency is left out: its code is a word too.
-const CURRENCIES = new Set([
+export const CURRENCIES = Object.freeze([
   'USD',
   'EUR',
   'GBP',
@@ -169,7 +169,7 @@ const CURRENCIES = new Set([
   'AUD',
   'CHF',
 ]);
-const listed = (words, value) => (words.has(value) ? value : 'other');
+const listed = (words, value) => (words.includes(value) ? value : 'other');
 const counted = (value) =>
   Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 export function turnEvidence({
@@ -198,7 +198,7 @@ export function turnEvidence({
     typeof cost.amount === 'number' &&
     cost.amount >= 0 &&
     cost.amount <= 1_000_000 &&
-    CURRENCIES.has(cost.currency)
+    CURRENCIES.includes(cost.currency)
       ? { cost: { amount: cost.amount, currency: cost.currency } }
       : {}),
   };
