@@ -40,15 +40,40 @@ read_candidate() {
 read_verdict() {
   base_event=$(jq -c '.timelineItems.nodes[0] // {}' <<< "$comparison")
   reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews?per_page=100")
-  state=$(jq -r --argjson base_event "$base_event" --arg head "$head" '
+  # After a retarget, a review already in flight can still land on this
+  # head. A later run on the same LCARS task starts after its predecessor
+  # settles. Use the controller's completion of a post-retarget review as
+  # the boundary; ordinary /review then works without a new reviewer image.
+  local completions='[]'
+  if [[ "$base_event" != '{}' ]]; then
+    completions=$(gh api --paginate --slurp "repos/$REPO/issues/$pr/comments?per_page=100" |
+      jq -c --arg prefix "✅ Run $REPO#$pr/r" '[.[][] |
+        select(.user.login == "agent-lcars[bot]" and ((.body // "") | startswith($prefix))) |
+        {lines: (.body | split("\n")[:2]), created_at}]')
+  fi
+  state=$(jq -r --argjson base_event "$base_event" --arg head "$head" --arg task "$REPO#$pr" \
+    --slurpfile completions <(printf '%s\n' "$completions") '
     def marked($marker): (.body // "" | split("\n") | any(rtrimstr("\r") == $marker));
-    [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head)
-      | select($base_event.id == null or .submitted_at > $base_event.createdAt) ]
+    def attempt:
+      [.body // "" | split("\n")[] | rtrimstr("\r") |
+       capture("^<!-- attempt-claim:g[0-9]+:(?<task>[^[:space:]]+)/r(?<run>[1-9][0-9]*) -->$") |
+       select(.task == $task) | .run | tonumber] | if length == 1 then first else null end;
+    [.[][] | select(.user.login == "agent-lcars[bot]") | . + {run: attempt}] as $reviews
+    | [if $base_event.id != null then
+         $reviews[] | select(.run != null and .submitted_at > $base_event.createdAt) as $review |
+         $completions[0][] | select(.created_at >= $review.submitted_at and
+           (.lines == [
+             ("✅ Run " + $task + "/r" + ($review.run|tostring) + " finished."),
+             $review.html_url])) | {run:$review.run, at:.created_at}
+       else empty end] as $finished
+    | [$reviews[] | select(.commit_id == $head) |
+       . as $review | . + {fresh: (.run != null and
+         ($base_event.id == null or any($finished[]; .run < $review.run and .at < $review.submitted_at)))}]
     | reduce .[] as $r ("pending";
         if $r.state == "CHANGES_REQUESTED" then "blocked"
         elif $r.state == "COMMENTED" and . != "blocked" and
           ($r | marked("<!-- lcars-review:block -->")) then "comment_blocked"
-        elif ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
+        elif $r.fresh and
           ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
         then "success" else . end)
   ' <<< "$reviews")
