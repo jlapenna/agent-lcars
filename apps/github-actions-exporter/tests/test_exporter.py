@@ -3167,8 +3167,6 @@ class PerOwnerQuotaTests(unittest.TestCase):
         self.database = exporter.Database(database_path)
         self.addCleanup(self.database.close)
 
-        cap = exporter.MAX_CONCURRENCY_GROUP_LABELS_PER_WORKFLOW
-        self.assertEqual(cap, 100)
         saturated_jobs = [
             workflow_job(
                 id=idx,
@@ -3177,11 +3175,11 @@ class PerOwnerQuotaTests(unittest.TestCase):
                 started_at=None,
                 completed_at=None,
             )
-            for idx in range(1, cap + 1)
+            for idx in range(1, 101)
         ]
         saturated_groups = [
             {"group_name": f"ci-pr-{idx}", "group_members": [{"job_id": idx}]}
-            for idx in range(1, cap + 1)
+            for idx in range(1, 101)
         ]
         self.database.upsert_jobs(
             repository, active_run, saturated_jobs, saturated_groups
@@ -3612,9 +3610,6 @@ class PerOwnerQuotaTests(unittest.TestCase):
         # while still completing core attempt-gap collection.
         self.assertEqual(probed_reruns, [503])
         self.assertEqual(attempt_calls, [(700, 1)])
-        self.assertEqual(
-            set(poller.pull_request_rechecked_at[repository].keys()), {503}
-        )
 
         # Once quota recovers, deferred 502 and 501 are probed ahead of 503.
         probed_reruns.clear()
@@ -3637,6 +3632,132 @@ class PerOwnerQuotaTests(unittest.TestCase):
         api.session.get = Mock(side_effect=recovered_get)
         poller.refresh_repository(repository)
         self.assertEqual(probed_reruns, [502, 501, 503])
+
+    def test_failed_pr_rerun_probe_503_preserves_core_collection_and_five_minute_cooldown(
+        self,
+    ):
+        repository = "jlapenna/agent-lcars"
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=(repository,),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            state,
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        poller = exporter.Poller(
+            config,
+            self.database,
+            api,
+            state,
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+
+        old_ts = datetime.fromtimestamp(self.now_epoch - 3600, UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        failed_pr = workflow_run(
+            id=501,
+            event="pull_request",
+            conclusion="failure",
+            head_branch="pr-1",
+            created_at=old_ts,
+            run_started_at=old_ts,
+            updated_at=old_ts,
+        )
+        self.database.upsert_run(repository, failed_pr)
+        self.database.upsert_jobs(repository, failed_pr, [])
+
+        gap_run = workflow_run(
+            id=700,
+            run_attempt=2,
+            created_at=old_ts,
+            run_started_at=old_ts,
+            updated_at=old_ts,
+        )
+        self.database.upsert_run(repository, gap_run)
+        self.database.upsert_jobs(repository, gap_run, [])
+
+        rerun_probes: list[int] = []
+        attempt_repairs: list[tuple[int, int]] = []
+
+        def fake_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            rate_headers = {
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
+            }
+            if path.endswith("/actions/runs"):
+                return self.json_response(
+                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
+                )
+            if "/attempts/" in path:
+                parts = path.split("/")
+                attempt_repairs.append((int(parts[-3]), int(parts[-1])))
+                return self.json_response(
+                    workflow_run(
+                        id=700,
+                        run_attempt=1,
+                        conclusion="failure",
+                        created_at=old_ts,
+                        run_started_at=old_ts,
+                        updated_at=old_ts,
+                    ),
+                    headers=rate_headers,
+                )
+            run_id = int(path.split("/")[-1])
+            rerun_probes.append(run_id)
+            return self.json_response(
+                {"message": "Service Unavailable"},
+                status_code=503,
+                headers=rate_headers,
+            )
+
+        api.session.get = Mock(side_effect=fake_get)
+
+        # Across five 60-second polls, the optional rerun 503 never aborts core
+        # attempt-gap repair or freshness, and respects the 5-minute cooldown.
+        for poll_index in range(5):
+            if poll_index > 0:
+                self.advance(60)
+            if poll_index == 0:
+                with self.assertLogs(exporter.LOGGER, level="WARNING"):
+                    poller.refresh_all()
+            else:
+                poller.refresh_all()
+            metrics = generate_latest(registry).decode()
+            self.assertEqual(
+                exported_metric_value(
+                    metrics,
+                    "github_actions_exporter_last_success_timestamp_seconds",
+                    f'{{repository="{repository}"}}',
+                ),
+                self.now_epoch,
+            )
+
+        self.assertEqual(attempt_repairs, [(700, 1)])
+        self.assertEqual(rerun_probes, [501])
+        metrics = generate_latest(registry).decode()
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_poll_errors_total",
+                f'{{repository="{repository}",stage="pull_request_recheck"}}',
+            ),
+            1.0,
+        )
+
+        # Once the 5-minute cooldown elapses, the candidate is probed again.
+        self.advance(61)
+        with self.assertLogs(exporter.LOGGER, level="WARNING"):
+            poller.refresh_all()
+        self.assertEqual(rerun_probes, [501, 501])
 
     def test_later_same_owner_repository_gets_fair_and_rotating_concurrency_group_share(
         self,

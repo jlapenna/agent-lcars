@@ -2259,23 +2259,45 @@ class Poller:
                             break
                         try:
                             run = self.api.get_run(repository, run_id)
+                        except GitHubRateLimitBackoffError:
+                            halted_for_quota = True
+                            raise
                         except GitHubRequestError as exc:
-                            if exc.status_code != 404:
+                            if exc.rate_limited:
+                                halted_for_quota = True
                                 raise
                             attempted.add(run_id)
+                            if exc.status_code != 404:
+                                self._record_pull_request_recheck_failure(
+                                    repository, run_id, exc
+                                )
+                            continue
+                        except (GitHubPayloadError, requests.RequestException) as exc:
+                            attempted.add(run_id)
+                            self._record_pull_request_recheck_failure(
+                                repository, run_id, exc
+                            )
                             continue
                         attempted.add(run_id)
-                        self._store_run(repository, run)
+                        try:
+                            self._store_run(repository, run)
+                        except GitHubRateLimitBackoffError:
+                            halted_for_quota = True
+                            raise
+                        except GitHubRequestError as exc:
+                            if exc.rate_limited:
+                                halted_for_quota = True
+                            raise
                 finally:
                     self.pull_request_rechecked_at[repository] = {
                         run_id: recheck_at if run_id in attempted else previous[run_id]
                         for run_id in candidates
                         if run_id in attempted or run_id in previous
                     }
-                if not halted_for_quota:
-                    self.pull_request_recheck_after[repository] = (
-                        recheck_at + PULL_REQUEST_RECHECK_SECONDS
-                    )
+                    if not halted_for_quota:
+                        self.pull_request_recheck_after[repository] = (
+                            recheck_at + PULL_REQUEST_RECHECK_SECONDS
+                        )
 
             for run_id, attempts in self.database.run_attempt_gaps(repository):
                 for attempt in attempts:
@@ -2380,6 +2402,18 @@ class Poller:
         self.state.poll_errors.labels(repository, "jobs").inc()
         LOGGER.warning(
             "jobs refresh failed for %s run %s (%s); retrying next cycle",
+            repository,
+            run_id,
+            error,
+        )
+
+    def _record_pull_request_recheck_failure(
+        self, repository: str, run_id: int, error: Exception
+    ) -> None:
+        self.state.poll_errors.labels(repository, "pull_request_recheck").inc()
+        LOGGER.warning(
+            "optional pull-request rerun check failed for %s run %s (%s); "
+            "retaining stored run state",
             repository,
             run_id,
             error,

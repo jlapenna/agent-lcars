@@ -314,11 +314,17 @@ core-quota reserve:
   ones. Skipping or failing an optional lookup preserves any previously
   confirmed `concurrency_group` label in SQLite and marks newly seen active jobs
   `unknown` rather than `none`.
-- Failed-`pull_request` rerun probes run at most once every five minutes per
+- Failed-`pull_request` rerun probes normally run once every five minutes per
   repository and check up to `20` candidate runs per repository (least recently
-  probed first). Each probe rechecks the owner's `500`-request reserve before
-  calling GitHub and advances the per-run recheck timestamp only for attempted
-  runs so deferred candidates keep their place.
+  probed first); non-rate-limit probe errors are counted under
+  `github_actions_exporter_poll_errors_total{repository,stage="pull_request_recheck"}`
+  without aborting core collection or skipping that five-minute cooldown. Each
+  probe rechecks the owner's `500`-request reserve before calling GitHub and
+  advances the per-run recheck timestamp only for attempted runs. If quota drops
+  below `500` partway through a batch, the repository cooldown stays due so
+  deferred candidates are probed first on the next poll once quota recovers to
+  at least `500` (which can run inside five minutes after a window reset and
+  include already-probed candidates when fewer than `20` runs remain).
 
 ## Verification
 
