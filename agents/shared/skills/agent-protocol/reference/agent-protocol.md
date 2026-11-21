@@ -286,12 +286,12 @@ branch on the reference format:
 - **Report Work** (a native Work spec with `deliverable: report`): the
   findings are the deliverable. Make no PR, commit or GitHub write; record
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` with the attempt claim in
-  the same private outcome file, then end with the complete report as the
-  final response. It is stored whole however long it is (the only bound is
+  the same private outcome file. Write the complete report immediately below
+  those two marker lines, then give the report as your final response. It is stored whole however long it is (the only bound is
   4 MiB of UTF-8; a longer one is refused, never truncated). Only a report, park or no-op settles such an item; a PR fails it.
   In a reply round that resumes the earlier conversation, a follow-up on a
-  delivered report gets a direct, self-contained answer as that final
-  response, not a redone report; a reply that answers a parked question
+  delivered report gets a self-contained answer in the saved body, including
+  every changed finding; a reply that answers a parked question
   finishes the full report. A reply round without the earlier conversation
   produces the full report, addressing the reply within it. The item settles
   done, not
@@ -363,14 +363,14 @@ comment must say.
 The dispatch brief's `mode` and `requested_results` fields are authoritative;
 do not infer the job from labels:
 
-| `mode`      | anchor       | deliverable                                                       |
-| ----------- | ------------ | ----------------------------------------------------------------- |
-| `implement` | issue        | open a PR on a new branch                                         |
-| `implement` | pull request | take over and keep pushing to that PR's branch                    |
-| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact  |
-| `implement` | report work  | final response is the report, plus its marker-bound REPORT record |
-| `review`    | pull request | submit a real pull-request review with a body; push nothing       |
-| `reply`     | either       | a comment may be the complete deliverable                         |
+| `mode`      | anchor       | deliverable                                                        |
+| ----------- | ------------ | ------------------------------------------------------------------ |
+| `implement` | issue        | open a PR on a new branch                                          |
+| `implement` | pull request | take over and keep pushing to that PR's branch                     |
+| `implement` | work         | open a PR, or emit its explicit marker-bound PARK/NO-OP artifact   |
+| `implement` | report work  | the body below the two attempt markers is the authoritative report |
+| `review`    | pull request | submit a real pull-request review with a body; push nothing        |
+| `reply`     | either       | a comment may be the complete deliverable                          |
 
 The shared lane stamps the accepted PR, comment, or review artifact with the
 attempt marker required above. Do not remove it.

@@ -678,9 +678,8 @@ that file for a pull-request outcome."
       report_followup="
 This round follows a human reply. If you already delivered the report and
 the reply asks about it, answer that follow-up directly instead of redoing
-the whole report. Your final response replaces the report the requester
-reads, so make it self-contained: the answer, plus any earlier finding it
-changes. If the reply answers a question you parked on, finish the full
+the whole report. The saved body replaces the report the requester reads.
+Write the answer and every changed finding in that body to make it self-contained. If the reply answers a question you parked on, finish the full
 report."
     elif [ "$MODE" = reply ]; then
       report_followup="
@@ -697,13 +696,14 @@ write. When the report is finished, write these two lines to
 <!-- agent-result:v1:report:$ATTEMPT_ID -->
 <!-- attempt-claim:$ATTEMPT_ID -->
 
-Then end with $report_final as your final response: that response is the
+Immediately below the two marker lines write $report_final in full, in the same file.
+The saved body is authoritative even if the provider continues the conversation.
+End with $report_final as your final response. The report is the
 deliverable and is stored whole, never truncated, however long it is (the
 only bound is 4 MiB).
 A finished report is not a park. Park only for a real blocker.$report_followup"
-    # Only the last round's final message is kept, so a correction round must
-    # repeat the report rather than acknowledge the record.
-    WORKER_COMPLETION_PROMPT="$WORKER_COMPLETION_PROMPT For this report item, write the report record and end with $report_final repeated as your final response; only that final response is kept."
+    # A correction must publish the complete report for this round.
+    WORKER_COMPLETION_PROMPT="$WORKER_COMPLETION_PROMPT For this report item, write the complete answer below the two report marker lines and end with $report_final repeated as your final response."
   fi
 fi
 
@@ -1599,7 +1599,6 @@ elif [ "$ANCHOR_TYPE" = "work" ]; then
   # park/no-op, matching the shared agent protocol's marker grammar.
   native_park_marker="<!-- agent-result:v1:park:${ATTEMPT_ID} -->"
   native_no_op_marker="<!-- agent-result:v1:no-op:${ATTEMPT_ID} -->"
-  native_report_marker="<!-- agent-result:v1:report:${ATTEMPT_ID} -->"
   claim_marker="<!-- attempt-claim:${ATTEMPT_ID} -->"
   if [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
     printf '%s\n%s\n' "$native_park_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
@@ -1608,8 +1607,7 @@ elif [ "$ANCHOR_TYPE" = "work" ]; then
     printf '%s\n%s\n' "$native_no_op_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
     OUTCOME=no-op
   elif [ "$REPORT_DELIVERABLE" = 1 ] && [ "$AGENT_EXIT" -eq 0 ] && \
-    [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ] && \
-    printf '%s\n%s\n' "$native_report_marker" "$claim_marker" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
+    REPORT_MESSAGE_FILE="$(native_report_source "${LAST_MESSAGE_FILE:-}")"; then
     OUTCOME=report
   else
     cat "$VERIFY_OUTPUT"
@@ -1661,9 +1659,7 @@ PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/
 # A report's message is its deliverable: send it whole, or refuse it when it
 # is blank or past the completion bound (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
-  if report_message_usable "${LAST_MESSAGE_FILE:-}"; then
-    AGENT_MESSAGE="$(cat "$LAST_MESSAGE_FILE")"
-  else
+  if ! report_message_usable "$REPORT_MESSAGE_FILE"; then
     echo "::error::Report final message is blank or exceeds $RUN_MESSAGE_MAX_BYTES bytes; refusing it" >&2
     OUTCOME=no-deliverable
   fi
@@ -1745,7 +1741,15 @@ fi
 # A file, not --arg: a long message would overflow the kernel's per-argument
 # limit (MAX_ARG_STRLEN, 128 KiB).
 message_file="$RUNNER_TEMP/complete-message.txt"
-printf '%s' "$AGENT_MESSAGE" > "$message_file"
+if [ "$OUTCOME" = report ]; then
+  message_file="$REPORT_MESSAGE_FILE"
+  if [ "$message_file" != "${LAST_MESSAGE_FILE:-}" ]; then
+    digest="$(sha256sum < "$message_file")"
+    printf 'Submitted report attempt=%s sha256=%s\n' "$ATTEMPT_ID" "${digest%% *}"
+  fi
+else
+  printf '%s' "$AGENT_MESSAGE" > "$message_file"
+fi
 jq -cn --arg outcome "$OUTCOME" --argjson ref "$OUTCOME_REFERENCE" \
   --rawfile message "$message_file" \
   '{outcome: $outcome, outcomeReference: $ref}
