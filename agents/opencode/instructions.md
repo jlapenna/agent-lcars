@@ -20,10 +20,12 @@ the integration bug pass so it can trace changed configuration through its
 consumers and inherited defaults. Supply any recorded external inputs alongside
 the diff. Run all four distinct passes before validation.
 
-Each general agent has eight model steps. In the task prompt, identify the
+Aim to finish each general-agent task within eight model steps. In the task prompt, identify the
 specific role, source paths and deadline. Batch related reads and return
 concrete evidence or identify what could not be checked within the limit.
-Only the coordinator validates candidates through fresh agents and publishes.
+The coordinator validates candidates through fresh agents. When publishing,
+copy the packaged upstream revision from the adapter used to run this review.
+The gitlink in the reviewed source identifies a separate input and can differ.
 Review children never delegate, edit the checkout, commit or push. The worktree
 and delivery instructions below apply to implementation work.
 

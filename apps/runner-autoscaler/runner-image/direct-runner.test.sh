@@ -709,6 +709,7 @@ if [ "${1:-}" = --pure ] && [ "${2:-}" = export ]; then
   exit 0
 fi
 echo "$@" >> "$OPENCODE_ARGS_LOG"
+printf '%s' "${OPENCODE_CONFIG_CONTENT:-null}" > "$OPENCODE_ENV_LOG.config"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 printf '%s\n' "${OPENCODE_LLM_API_KEY:-}|${GITHUB_TOKEN:-}|${GH_TOKEN:-}|${GITHUB_EVENT_NAME:-}|${MODEL:-}" > "$OPENCODE_ENV_LOG"
@@ -2288,7 +2289,9 @@ grep -Fq 'the pull-request review body must contain this exact literal' "$OPENCO
   fail "github review: review prompt did not require the marker on the review body ($(cat "$OPENCODE_ARGS_LOG"))"
 grep -Fq 'the Anthropic review procedure at $AGENT_REVIEW_PATH' "$OPENCODE_ARGS_LOG" ||
   fail "github review: provider was not directed to the trusted review procedure"
-jq -e '.agent.general.steps == 8 and .permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
+jq -e '.agent.general.steps == 8' "$OPENCODE_ENV_LOG.config" >/dev/null ||
+  fail "github review: missing inline general-agent finish reminder"
+jq -e '.permission.task == "allow"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode independent reviewers remain disabled"
 jq -e '.provider.homelab.models.default.options.reasoningEffort == "medium"' "$scenario_runner_temp/opencode-proxy/config/opencode.json" >/dev/null ||
   fail "github review: OpenCode review reasoning budget was not configured"

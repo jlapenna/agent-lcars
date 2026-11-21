@@ -1394,12 +1394,16 @@ else
     '.provider.homelab.options.baseURL = $base_url |
      if $mode == "review" then
        .permission.task = "allow" |
-       .agent.general.steps = 8 |
        .provider.homelab.models.default.options.reasoningEffort = "medium"
      else . end' \
     "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
   mv "$opencode_proxy_config" "$OPENCODE_CONFIG_DIR/opencode.json"
   export OPENCODE_CONFIG="$OPENCODE_CONFIG_DIR/opencode.json"
+  if [ "$MODE" = review ]; then
+    # OpenCode loads inline configuration after the reviewed project's config.
+    opencode_review_config=$(jq -c '.agent.general.steps = 8' <<< "${OPENCODE_CONFIG_CONTENT:-null}")
+    export OPENCODE_CONFIG_CONTENT="$opencode_review_config"
+  fi
   worker_policy_bootstrap "$OPENCODE_CONFIG"
   activate_hook_telemetry
   # OpenCode has
