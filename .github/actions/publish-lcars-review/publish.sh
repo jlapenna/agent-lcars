@@ -22,8 +22,14 @@ read_candidate() {
     }' --jq '.data.repository.pullRequest')
   candidate=$(jq -r --arg base "$BASE" --arg head "$head" '
     select(.state == "OPEN" and .baseRefName == $base and .headRefOid == $head)
-    | select([.potentialMergeCommit.parents.nodes[]?.oid] == [.baseRef.target.oid, $head])
+    | select((.potentialMergeCommit.parents.nodes | length) == 2 and .potentialMergeCommit.parents.nodes[1].oid == $head)
     | .potentialMergeCommit.oid // empty' <<< "$comparison")
+  # Loose branch protection can retain a merge ref based on an earlier base tip.
+  if [[ -n "$candidate" ]] && ! jq -e '.potentialMergeCommit.parents.nodes[0].oid == .baseRef.target.oid' <<< "$comparison" >/dev/null; then
+    local merge_ref
+    merge_ref=$(gh api "repos/$REPO/git/ref/pull/$pr/merge" --jq '.object.sha')
+    [[ "$candidate" == "$merge_ref" ]] || candidate=
+  fi
 }
 
 read_verdict() {

@@ -54,7 +54,9 @@ that a deployed reviewer produced a merge-base receipt and a successful App chec
 Request a new review for each affected open head that lacks the receipt before
 switching enforcement or replacing its publisher. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
-inputs on every scaffold refresh.
+inputs on every scaffold refresh. Before adding the App-bound check, remove
+the `fleet-onboard: managed` marker from the repository’s Terraform ruleset
+so later scaffold refreshes preserve the check and its integration ID.
 
 The publisher reads the current reviews again before writing each check. GitHub
 processes review changes and check writes separately. A dismissal after that
