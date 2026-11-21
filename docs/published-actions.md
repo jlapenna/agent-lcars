@@ -39,7 +39,7 @@ owner without repositories intentionally selects that owner's installation.
 
 Call `publish-lcars-review` only from trusted default-branch workflow code.
 Run the permissionless `LCARS review event` PR/review notifier on GitHub’s
-`ubuntu-slim` runner. Reconcile on its completion,
+`ubuntu-slim` runner. Subscribe it to PR base edits as well as submitted, edited and dismissed reviews. Reconcile on its completion,
 default-branch pushes, manual dispatch, and an hourly backstop. The publisher
 needs `contents: read`, `pull-requests: read`, and `checks: read` on the
 workflow token. Pass the App client ID and private key through its declared
@@ -55,7 +55,8 @@ Before switching enforcement or replacing its publisher, verify each affected
 open PR has a passing review for its current head, merge base and latest retarget
 event. A maintainer can request a fresh review with `/review`. In member
 repositories, request review again after pushes and reopenings, and request it
-explicitly for Renovate and Dependabot PRs. For fleet-managed auto-merge callers,
+explicitly for Renovate and Dependabot PRs. After changing the target branch,
+request a fresh review in every repository. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
 inputs on every scaffold refresh. Before adding the App-bound check, remove
 the `fleet-onboard: managed` marker from the repository’s Terraform ruleset

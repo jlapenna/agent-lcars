@@ -50,7 +50,34 @@ const metadata = JSON.parse(
 const head = sourceRef ?? metadata.headRefOid;
 if (!/^[a-f0-9]{40}$/.test(head))
   throw new Error('Expected a full immutable source SHA');
-const base = metadata.baseRefOid;
+function readComparison() {
+  const pr = JSON.parse(
+    run('gh', [
+      'api',
+      'graphql',
+      '-F',
+      'pr=' + pull,
+      '-f',
+      'query=query($pr:Int!){repository(owner:"jlapenna",name:"agent-lcars"){pullRequest(number:$pr){state headRefOid baseRef{target{oid}} timelineItems(last:1,itemTypes:[BASE_REF_CHANGED_EVENT]){nodes{... on BaseRefChangedEvent{id}}}}}}',
+      '--jq',
+      '.data.repository.pullRequest',
+    ]),
+  );
+  if (pr.state !== 'OPEN' || pr.headRefOid !== head)
+    throw new Error('Qualification requires the current open PR head');
+  const base = pr.baseRef.target.oid;
+  const mergeBase = run('gh', [
+    'api',
+    'repos/jlapenna/agent-lcars/compare/' + base + '...' + head,
+    '--jq',
+    '.merge_base_commit.sha',
+  ]).trim();
+  if (!/^[a-f0-9]{40}$/.test(mergeBase))
+    throw new Error('Missing comparison merge base');
+  return { base, mergeBase, baseEvent: pr.timelineItems.nodes[0]?.id ?? null };
+}
+const comparison = sourceRef ? null : readComparison();
+const base = comparison?.base ?? metadata.baseRefOid;
 mkdirSync(output, { mode: 0o700 });
 const reviewRoot = materializeReviewSource(
   root,
@@ -59,6 +86,11 @@ const reviewRoot = materializeReviewSource(
   base,
 );
 const reviewGit = (...args) => run('git', ['-C', reviewRoot, ...args]);
+if (
+  comparison &&
+  reviewGit('merge-base', base, head).trim() !== comparison.mergeBase
+)
+  throw new Error('Local diff disagrees with GitHub comparison');
 const diff = reviewGit('diff', '--no-ext-diff', `${base}...${head}`);
 const filenames = reviewGit('diff', '--name-only', `${base}...${head}`)
   .trim()
@@ -168,7 +200,13 @@ const contextMetadata = sourceRef
       reviewedHead: head,
       historicalSnapshot: true,
     }
-  : { ...metadata, reviewedHead: head, historicalSnapshot: false };
+  : {
+      ...metadata,
+      baseRefOid: base,
+      comparison,
+      reviewedHead: head,
+      historicalSnapshot: false,
+    };
 writeFileSync(
   join(output, 'pr.json'),
   JSON.stringify(contextMetadata, null, 2),
@@ -339,6 +377,7 @@ const manifest = {
   reviewedHead: head,
   base,
   historicalSnapshot: !!sourceRef,
+  comparison,
   dependencySnapshot: dependency ?? null,
   marker,
   upstreamRevision: readFileSync(join(procedure, 'revision'), 'utf8').trim(),
@@ -405,7 +444,14 @@ const result = await new Promise((resolveResult) => {
 clearTimeout(timer);
 clearTimeout(forcedKill);
 let sourceUnchanged = false;
+let comparisonUnchanged = false;
 try {
+  if (comparison) {
+    const current = readComparison();
+    comparisonUnchanged =
+      current.mergeBase === comparison.mergeBase &&
+      current.baseEvent === comparison.baseEvent;
+  }
   sourceUnchanged =
     reviewGit('rev-parse', 'HEAD').trim() === head &&
     spawnSync('git', ['-C', reviewRoot, 'diff', '--quiet', head, '--'], {
@@ -423,6 +469,7 @@ writeFileSync(
     {
       ...result,
       sourceUnchanged,
+      comparisonUnchanged,
       timedOut,
       interrupted,
       finishedAt: new Date().toISOString(),
@@ -442,7 +489,13 @@ console.log(
   }),
 );
 process.exitCode =
-  result.exitCode === 0 && !timedOut && !interrupted && sourceUnchanged ? 0 : 1;
+  result.exitCode === 0 &&
+  !timedOut &&
+  !interrupted &&
+  sourceUnchanged &&
+  (sourceRef || comparisonUnchanged)
+    ? 0
+    : 1;
 if (imageId) {
   const collected = spawnSync(
     process.execPath,
