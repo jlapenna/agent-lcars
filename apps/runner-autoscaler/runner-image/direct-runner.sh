@@ -1394,6 +1394,7 @@ else
     '.provider.homelab.options.baseURL = $base_url |
      if $mode == "review" then
        .permission.task = "allow" |
+       .agent.general.steps = 8 |
        .provider.homelab.models.default.options.reasoningEffort = "medium"
      else . end' \
     "$OPENCODE_CONFIG_DIR/opencode.json" > "$opencode_proxy_config"
