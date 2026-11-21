@@ -39,33 +39,21 @@ read_candidate() {
 
 read_verdict() {
   base_event=$(jq -c '.timelineItems.nodes[0] // {}' <<< "$comparison")
-  base_tip=$(jq -r '.baseRef.target.oid' <<< "$comparison")
-  merge_base=$(gh api "repos/$REPO/compare/$base_tip...$head" --jq '.merge_base_commit.sha')
-  [[ "$merge_base" =~ ^[0-9a-f]{40}$ ]]
   reviews=$(gh api --paginate --slurp "repos/$REPO/pulls/$pr/reviews?per_page=100")
-  state=$(jq -r --arg merge_base "$merge_base" --argjson base_event "$base_event" --arg head "$head" '
+  state=$(jq -r --argjson base_event "$base_event" --arg head "$head" '
     def marked($marker): (.body // "" | split("\n") | any(rtrimstr("\r") == $marker));
-    def base_receipt: (.body // "" | split("\n")[0] | rtrimstr("\r") |
-      [capture("^<!-- lcars-review:base-event (?<id>[^[:space:]<>]+) -->$").id][0]);
     [ .[][] | select(.user.login == "agent-lcars[bot]" and .commit_id == $head)
-      | select($base_event.id == null or (base_receipt == $base_event.id) or
-          (.submitted_at >= $base_event.createdAt and
-           (base_receipt == null) and
-           (.state == "CHANGES_REQUESTED" or (.state == "COMMENTED" and marked("<!-- lcars-review:block -->"))))) ]
+      | select($base_event.id == null or .submitted_at > $base_event.createdAt) ]
     | reduce .[] as $r ("pending";
-        if $r.state == "CHANGES_REQUESTED" then
-          if . == "blocked" or $base_event.id == null or
-            ($r | (base_receipt == $base_event.id))
-          then "blocked" else "provisional_block" end
+        if $r.state == "CHANGES_REQUESTED" then "blocked"
         elif $r.state == "COMMENTED" and . != "blocked" and
           ($r | marked("<!-- lcars-review:block -->")) then "comment_blocked"
-        elif ($r | marked("<!-- lcars-review:merge-base \($merge_base) -->")) and
-          ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
+        elif ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
           ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
         then "success" else . end)
   ' <<< "$reviews")
   case "$state" in
-    blocked|provisional_block|comment_blocked) state=pending; description="LCARS requested changes" ;;
+    blocked|comment_blocked) state=pending; description="LCARS requested changes" ;;
     pending) description="Awaiting LCARS code review; ask a maintainer to comment /review" ;;
     success) description="LCARS reviewed this commit" ;;
   esac

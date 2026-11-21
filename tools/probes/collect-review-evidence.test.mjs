@@ -100,7 +100,6 @@ function collect(format, mutation) {
     json(join(root, 'manifest.json'), {
       provider: 'codex',
       reviewedHead: head,
-      historicalSnapshot: true,
       upstreamRevision: upstream,
       marker,
       publication: 'captured-not-posted',
@@ -280,7 +279,6 @@ process.exit(0);
     json(join(root, 'manifest.json'), {
       provider: 'opencode',
       reviewedHead: head,
-      historicalSnapshot: true,
       upstreamRevision: upstream,
       marker,
       publication: 'captured-not-posted',
@@ -481,7 +479,6 @@ function collectClaude(mutation) {
     json(join(root, 'manifest.json'), {
       provider: 'claude',
       reviewedHead: head,
-      historicalSnapshot: true,
       upstreamRevision: upstream,
       marker,
       publication: 'captured-not-posted',

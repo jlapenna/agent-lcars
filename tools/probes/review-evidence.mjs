@@ -77,21 +77,6 @@ export function evaluateReview({
   ), 'every-candidate-needs-one-independent-validation');
   require(payload?.commit_id ===
     manifest.reviewedHead, 'publication-head-mismatch');
-  if (manifest.historicalSnapshot !== true) {
-    const comparison = manifest.comparison;
-    const lines =
-      typeof payload?.body === 'string' ? payload.body.split(/\r?\n/) : [];
-    require(execution?.comparisonUnchanged ===
-      true, 'review-comparison-changed');
-    require(/^[a-f0-9]{40}$/.test(comparison?.mergeBase ?? '') &&
-      lines.includes(
-        `<!-- lcars-review:merge-base ${comparison.mergeBase} -->`,
-      ), 'merge-base-receipt-mismatch');
-    require(comparison?.baseEvent === null ||
-      (typeof comparison?.baseEvent === 'string' &&
-        lines[0] ===
-          `<!-- lcars-review:base-event ${comparison.baseEvent} -->`), 'base-event-receipt-mismatch');
-  }
   require(payload?.event === 'COMMENT', 'qualification-must-capture-comment');
   require(typeof payload?.body === 'string' &&
     payload.body.includes(manifest.marker), 'publication-marker-missing');

@@ -13,7 +13,6 @@ function completedReview() {
   return {
     manifest: {
       reviewedHead: head,
-      historicalSnapshot: true,
       upstreamRevision: revision,
       marker,
       publication: 'captured-not-posted',
@@ -260,24 +259,4 @@ test('Antigravity ignores uncommitted invocations, unrelated output and malforme
     antigravityChildIds([agySpawn('ACTIVE'), wrongTool, invalid, outputOnly]),
     [],
   );
-});
-
-test('current comparisons require fresh merge-base and retarget receipts', () => {
-  const input = completedReview();
-  input.manifest.historicalSnapshot = false;
-  input.manifest.comparison = {
-    mergeBase: '3'.repeat(40),
-    baseEvent: 'retarget',
-  };
-  input.execution.comparisonUnchanged = true;
-  assert.equal(evaluateReview(input).passed, false);
-  input.payload.body =
-    '<!-- lcars-review:base-event retarget -->\n' +
-    input.payload.body +
-    '\n<!-- lcars-review:merge-base ' +
-    '3'.repeat(40) +
-    ' -->';
-  assert.equal(evaluateReview(input).passed, true);
-  input.execution.comparisonUnchanged = false;
-  assert.equal(evaluateReview(input).passed, false);
 });

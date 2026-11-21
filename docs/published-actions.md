@@ -39,7 +39,7 @@ owner without repositories intentionally selects that owner's installation.
 
 Call `publish-lcars-review` only from trusted default-branch workflow code.
 Run the permissionless `LCARS review event` PR/review notifier on GitHub’s
-`ubuntu-slim` runner. Subscribe it to PR base edits as well as submitted, edited and dismissed reviews. Reconcile on its completion,
+`ubuntu-slim` runner. Subscribe it to PR opening, reopening, synchronization, editing and closure, and to review submission, editing and dismissal. Reconcile on its completion,
 default-branch pushes, manual dispatch, and an hourly backstop. The publisher
 needs `contents: read`, `pull-requests: read`, and `checks: read` on the
 workflow token. Pass the App client ID and private key through its declared
@@ -50,10 +50,10 @@ runner and credential environment for that trusted job. Require
 review-thread resolution in the target repository. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
 review dispatch path for that repository. Stage the workflow first and verify
-that a deployed reviewer produced a merge-base receipt and a successful App check.
+that a deployed reviewer produced a review and the App published a successful check.
 Before switching enforcement or replacing its publisher, verify each affected
-open PR has a passing review for its current head, merge base and latest retarget
-event. A maintainer can request a fresh review with `/review`. In member
+open PR has a passing review for its current head submitted after its latest base change. The publisher accepts
+the deployed reviewer’s existing attempt and verdict markers. A maintainer can request a fresh review with `/review`. In member
 repositories, request review again after pushes and reopenings, and request it
 explicitly for Renovate and Dependabot PRs. After changing the target branch,
 request a fresh review in every repository. For fleet-managed auto-merge callers,
