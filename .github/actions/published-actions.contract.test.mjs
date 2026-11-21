@@ -496,10 +496,12 @@ test('repo-validation requires xz without privilege in both tool modes', async (
   }
 });
 
-test('repo-validation pins REPO_TOOLS_SHA to the @jlapenna/repo-tools commit in pnpm-lock.yaml', async () => {
-  const [workflow, lockfile] = await Promise.all([
+test('repo-validation pins REPO_TOOLS_SHA to the @jlapenna/repo-tools commit in pnpm-lock.yaml and Renovate tracks both', async () => {
+  const [workflow, lockfile, packageJsonRaw, renovateRaw] = await Promise.all([
     fs.readFile('.github/workflows/repo-validation.yml', 'utf8'),
     fs.readFile('pnpm-lock.yaml', 'utf8'),
+    fs.readFile('package.json', 'utf8'),
+    fs.readFile('renovate.json', 'utf8'),
   ]);
   const lockMatch =
     /https:\/\/codeload\.github\.com\/jlapenna\/repo-tools\/tar\.gz\/([0-9a-f]{40})/u.exec(
@@ -519,6 +521,45 @@ test('repo-validation pins REPO_TOOLS_SHA to the @jlapenna/repo-tools commit in 
     'expected both runner-labels and schedules jobs to pin REPO_TOOLS_SHA',
   );
   assert.deepEqual(workflowShas, [expectedSha, expectedSha]);
+
+  const packageJson = JSON.parse(packageJsonRaw);
+  const specifier = packageJson.devDependencies?.['@jlapenna/repo-tools'];
+  const tagMatch = /^github:jlapenna\/repo-tools#(v\d+\.\d+\.\d+)$/u.exec(
+    specifier ?? '',
+  );
+  assert.ok(
+    tagMatch,
+    `expected @jlapenna/repo-tools tag specifier in package.json, got ${specifier}`,
+  );
+  const expectedTag = tagMatch[1];
+
+  const renovate = JSON.parse(renovateRaw);
+  const managers = (renovate.customManagers ?? []).filter(
+    (manager) =>
+      manager.depNameTemplate === '@jlapenna/repo-tools' &&
+      manager.packageNameTemplate === 'jlapenna/repo-tools' &&
+      manager.datasourceTemplate === 'github-tags' &&
+      (manager.managerFilePatterns ?? []).some((pattern) =>
+        new RegExp(pattern.slice(1, -1), 'u').test(
+          '.github/workflows/repo-validation.yml',
+        ),
+      ),
+  );
+  assert.equal(
+    managers.length,
+    1,
+    'expected renovate.json customManagers entry for REPO_TOOLS_SHA in repo-validation.yml',
+  );
+  const extracted = managers[0].matchStrings.flatMap((matchString) =>
+    [...workflow.matchAll(new RegExp(matchString, 'gu'))].map((match) => ({
+      digest: match.groups?.currentDigest,
+      value: match.groups?.currentValue,
+    })),
+  );
+  assert.deepEqual(extracted, [
+    { digest: expectedSha, value: expectedTag },
+    { digest: expectedSha, value: expectedTag },
+  ]);
 });
 
 let failures = 0;
