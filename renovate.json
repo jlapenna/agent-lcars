@@ -95,9 +95,29 @@
         "'(?<depName>gcr\\.io/distroless/nodejs\\d+-debian\\d+):(?<currentValue>nonroot)@(?<currentDigest>sha256:[a-f0-9]{64})'"
       ],
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Repo-tools commit pin in the published reusable validation workflow; must equal the @jlapenna/repo-tools commit in pnpm-lock.yaml (.github/actions/published-actions.contract.test.mjs). #3433 bumped @jlapenna/repo-tools in package.json/pnpm-lock.yaml without moving REPO_TOOLS_SHA here and failed Verify.",
+      "managerFilePatterns": [
+        "/^\\.github\\/workflows\\/repo-validation\\.yml$/"
+      ],
+      "matchStrings": [
+        "REPO_TOOLS_SHA:\\s*(?<currentDigest>[a-f0-9]{40})\\s*#\\s*(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "@jlapenna/repo-tools",
+      "packageNameTemplate": "jlapenna/repo-tools",
+      "datasourceTemplate": "github-tags"
     }
   ],
   "packageRules": [
+    {
+      "description": "Keep major @jlapenna/repo-tools bumps in package.json and .github/workflows/repo-validation.yml in one draft PR; minor and patch updates already share the preset's non-major group.",
+      "matchDepNames": ["@jlapenna/repo-tools"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "repo-tools",
+      "groupSlug": "repo-tools"
+    },
     {
       "description": "Native runtime updates require candidate-image qualification. Keep version selectors, platform digests and npm CLI locks in one draft PR, outside unattended non-major updates.",
       "matchDepNames": [
