@@ -75,6 +75,27 @@ describe('ArchivedSessionTranscript', () => {
     expect(screen.getByText('Transcript')).toBeInTheDocument();
     expect(screen.getByTestId('transcript-timeline')).toBeInTheDocument();
     expect(screen.queryByTestId('session-archive-note')).toBeNull();
+    expect(screen.queryByTestId('transcript-load-more')).toBeNull();
+  });
+
+  it('renders the incremental paginated view with N+ count when nextCursor is present', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={agentDoc({
+          agent: 'claude-code',
+          transcriptGcsUri: 'gs://bucket/runs/1/session.jsonl',
+          renderable: true,
+        })}
+        transcript={{
+          events: [{ kind: 'text', role: 'user', text: 'First page' }],
+          nextCursor: 'cursor-next',
+          hasMore: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('1+')).toBeInTheDocument();
+    expect(screen.getByTestId('transcript-load-more')).toBeInTheDocument();
   });
 
   it('renders a muted archive note for an unsupported agent', () => {
@@ -162,6 +183,16 @@ describe('CLI archive detail rendering', () => {
     renderWithProvider(<ArchivedSessionTranscript doc={cli()} />);
     expect(screen.getByTestId('cli-transcript-state')).toHaveTextContent(
       'not enabled',
+    );
+  });
+  it('preserves historical too-large state wording without claiming an active 5 MiB limit', () => {
+    renderWithProvider(
+      <ArchivedSessionTranscript
+        doc={cli({ cliTranscriptArchive: { status: 'too-large' } })}
+      />,
+    );
+    expect(screen.getByTestId('cli-transcript-state')).toHaveTextContent(
+      'historical archive size limit',
     );
   });
   it('renders consented CLI transcript events through the existing safe timeline', () => {

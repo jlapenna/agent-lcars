@@ -30,7 +30,9 @@ vi.mock('@agent-lcars/util-server', async () => ({
 import {
   _resetTranscriptStoreForTesting,
   fetchSessionTranscript,
+  fetchSessionTranscriptByteRange,
   getAgentSessionTranscriptsBucketName,
+  sliceTranscriptByteRangeFromBuffer,
 } from './transcript-store';
 
 describe('getAgentSessionTranscriptsBucketName', () => {
@@ -82,7 +84,7 @@ describe('fetchSessionTranscript', () => {
   });
 });
 
-describe('bounded CLI storage reads', () => {
+describe('bounded storage reads', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     _resetTranscriptStoreForTesting();
@@ -103,5 +105,105 @@ describe('bounded CLI storage reads', () => {
       fetchSessionTranscript('gs://bucket/cli/a.jsonl', 6),
     ).rejects.toThrow('size limit');
     expect(stream.destroyed).toBe(true);
+  });
+});
+
+describe('fetchSessionTranscriptByteRange', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetTranscriptStoreForTesting();
+  });
+
+  function mockGcsBackingBuffer(backing: Buffer) {
+    mockCreateReadStream.mockImplementation(
+      ({ start, end }: { start: number; end: number }) => {
+        if (start >= backing.length) {
+          return Readable.from(
+            (async function* () {
+              const err = Object.assign(new Error('Range Not Satisfiable'), {
+                code: 416,
+              });
+              throw err;
+              yield Buffer.alloc(0);
+            })(),
+          );
+        }
+        return Readable.from([
+          backing.subarray(start, Math.min(backing.length, end + 1)),
+        ]);
+      },
+    );
+  }
+
+  it('reads maxBytes + 1 to detect non-EOF vs EOF without a metadata RPC', async () => {
+    const backing = Buffer.from('line1\nline2\nline3\n', 'utf8');
+    mockGcsBackingBuffer(backing);
+
+    const first = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/a.jsonl',
+      { startOffset: 0, maxBytes: 10 },
+    );
+    expect(first.eof).toBe(false);
+    expect(first.chunk.toString('utf8')).toBe('line1\nline');
+    expect(mockCreateReadStream).toHaveBeenCalledWith({
+      start: 0,
+      end: 10,
+      decompress: false,
+    });
+
+    const second = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/a.jsonl',
+      { startOffset: 6, maxBytes: 20 },
+    );
+    expect(second.eof).toBe(true);
+    expect(second.chunk.toString('utf8')).toBe('line2\nline3\n');
+  });
+
+  it('treats HTTP 416 (empty object or offset at EOF) as an empty EOF slice', async () => {
+    mockGcsBackingBuffer(Buffer.alloc(0));
+
+    const empty = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/empty.jsonl',
+      { startOffset: 0, maxBytes: 1024 },
+    );
+    expect(empty).toEqual({ chunk: Buffer.alloc(0), eof: true });
+  });
+
+  it('extends reads across windows when a single JSONL line exceeds maxBytes', async () => {
+    const longLine = `{"big":"${'x'.repeat(250)}"}\n{"next":true}\n`;
+    const backing = Buffer.from(longLine, 'utf8');
+    mockGcsBackingBuffer(backing);
+
+    const range = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/long-line.jsonl',
+      { startOffset: 0, maxBytes: 64, maxSingleLineBytes: 1024 },
+    );
+    expect(range.chunk.includes(0x0a)).toBe(true);
+    expect(range.chunk.toString('utf8')).toContain(
+      `"big":"${'x'.repeat(250)}"`,
+    );
+    expect(mockCreateReadStream.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('scans past a single newline-free line exceeding maxSingleLineBytes without stalling', async () => {
+    const oversized = `${'a'.repeat(300)}\n{"after":1}\n`;
+    const backing = Buffer.from(oversized, 'utf8');
+    mockGcsBackingBuffer(backing);
+
+    const range = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/oversized.jsonl',
+      { startOffset: 0, maxBytes: 64, maxSingleLineBytes: 128 },
+    );
+    expect(range.chunk.length).toBe(0);
+    expect(range.eof).toBe(false);
+    expect(range.skippedOversizedLine).toEqual({ nextOffset: 301 });
+
+    // Confirm the in-memory E2E counterpart behaves identically.
+    const fromMem = await sliceTranscriptByteRangeFromBuffer(backing, {
+      startOffset: 0,
+      maxBytes: 64,
+      maxSingleLineBytes: 128,
+    });
+    expect(fromMem).toEqual(range);
   });
 });

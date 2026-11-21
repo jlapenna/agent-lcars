@@ -16,6 +16,7 @@ import { DetailWorkspace } from '../../detail-workspace';
 import { OpsPanel } from '../../ops-primitives';
 import { NavPageLoading } from '../../page-loading';
 import { withConsolePageShell } from '../../with-console-page-shell';
+import { PaginatedTranscriptView } from './paginated-transcript-view';
 import { SessionHeader } from './session-header';
 import { TranscriptTimelineView } from './transcript-timeline-view';
 
@@ -43,7 +44,8 @@ export function ArchivedSessionTranscript({
       pending: 'Transcript archival enabled; waiting for the session to end.',
       failed:
         'Transcript unavailable (archive upload failed; the watcher will retry).',
-      'too-large': 'Transcript unavailable (exceeds the 5 MiB archive limit).',
+      'too-large':
+        'Transcript unavailable (exceeded historical archive size limit).',
       expired: 'Transcript unavailable (archive retention expired).',
       unsupported:
         'Transcript unavailable (provider does not support console transcripts).',
@@ -90,6 +92,18 @@ export function ArchivedSessionTranscript({
 
   if (!transcript) {
     return null;
+  }
+
+  if (transcript.nextCursor) {
+    return (
+      <PaginatedTranscriptView
+        key={doc.sessionId}
+        sessionId={doc.sessionId}
+        initialEvents={transcript.events}
+        initialNextCursor={transcript.nextCursor}
+        initialWarning={transcript.warning}
+      />
+    );
   }
 
   return (

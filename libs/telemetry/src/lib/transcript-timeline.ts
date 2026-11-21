@@ -74,6 +74,10 @@ export interface TranscriptResultEvent {
 export interface TranscriptSidechainGroupEvent {
   kind: 'sidechain-group';
   events: TranscriptTimelineEvent[];
+  /** Set on a paginated page's leading sidechain group when the preceding page
+   * ended mid-sidechain under the carry-state fallback, signaling the incremental
+   * viewer to merge `events` into the previous page's trailing sidechain group. */
+  continuesPrevious?: boolean;
 }
 
 export type TranscriptTimelineEvent =
@@ -89,6 +93,52 @@ export interface ParsedTranscriptTimeline {
    * shape and was skipped - surfaced as a soft warning by the caller, never
    * thrown (matches reducer.ts's tolerance). */
   hadUnparseableLines: boolean;
+}
+
+/** Bounded `O(1)` parser state carried in pagination cursors across byte-range
+ * page boundaries when a turn or subagent sidechain spans a full page window. */
+export interface TranscriptPageParseState {
+  inSidechain?: boolean;
+  pendingCodexTurnHash?: string;
+}
+
+export interface ParseTranscriptTimelineChunkOptions {
+  startOffset: number;
+  eof: boolean;
+  agent?: SessionAgent;
+  initialState?: TranscriptPageParseState;
+}
+
+export interface ParsedTranscriptTimelineChunk extends ParsedTranscriptTimeline {
+  nextOffset: number;
+  nextState: TranscriptPageParseState;
+}
+
+/**
+ * Pure ECMAScript dual-lane fingerprint (`role + length + 2x53-bit cyrb53`)
+ * so `@agent-lcars/telemetry` stays browser-safe (`platform:shared`) while
+ * keeping Codex cross-page turn deduplication compact (`O(1)` cursor size).
+ */
+export function hashCodexTextTurn(
+  role: 'user' | 'assistant',
+  text: string,
+): string {
+  let h1 = role === 'user' ? 0xdeadbeef : 0xabcdef01;
+  let h2 = role === 'user' ? 0x41c6ce57 : 0x1b873593;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 =
+    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 =
+    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hi = (h2 >>> 0).toString(36);
+  const lo = (h1 >>> 0).toString(36);
+  return `${role[0]}:${text.length.toString(36)}:${hi}:${lo}`;
 }
 
 function contentToText(content: unknown): string | undefined {
@@ -397,37 +447,125 @@ function parseOpenCodeTimeline(rawContent: string): ParsedTranscriptTimeline {
   return { events, hadUnparseableLines };
 }
 
+function updatePendingToolResults(
+  current: number,
+  emitted: readonly TranscriptTimelineEvent[],
+): number {
+  if (emitted.length === 0) return current;
+  let toolUses = 0;
+  let toolResults = 0;
+  for (const event of emitted) {
+    if (event.kind === 'tool_use') toolUses += 1;
+    else if (event.kind === 'tool_result') toolResults += 1;
+  }
+  if (toolUses > 0) {
+    return toolUses;
+  }
+  if (toolResults > 0) {
+    return Math.max(0, current - toolResults);
+  }
+  // A plain user/assistant text turn or terminal result with no tool blocks
+  // closes any interrupted tool call that never produced a tool_result.
+  return 0;
+}
+
+const utf8Decoder = new TextDecoder('utf-8', { fatal: false });
+const utf8Encoder = new TextEncoder();
+
 /**
- * Parses an archived transcript from a supported agent into a
- * flat, renderable timeline for a single session's detail page - a
- * different shape than `reduceTranscripts`' aggregated `SessionSummary`, but
- * deliberately reusing the same tolerant line-by-line approach and
- * `unknown-value.ts` helpers rather than a second bespoke JSON-walking loop:
- * unparseable JSON and unrecognized line shapes are skipped, never thrown.
+ * Parses a raw UTF-8 JSONL byte chunk from `[startOffset, ...)` with smart
+ * page-boundary snapping and `O(1)` cross-page state fallback:
  *
- * Sidechain (subagent) lines are collapsed: a contiguous run of
- * `isSidechain: true` lines becomes one `sidechain-group` timeline entry
- * instead of being interleaved with the main chain event-by-event - see
- * `TranscriptSidechainGroupEvent`.
+ * 1. When `!eof`, slices at the last `\n` (`0x0a`) so partial UTF-8 sequences
+ *    and incomplete trailing JSONL lines are never parsed.
+ * 2. When `!eof` and the chunk ends mid-sidechain, right after a `tool_use`
+ *    awaiting its `tool_result`, or right after a Codex `event_msg` awaiting
+ *    its duplicate `response_item`, snaps `nextOffset` back to the latest
+ *    earlier safe cut point in the chunk that already produced `>= 1` event.
+ * 3. When a single giant sidechain or turn spans the entire chunk so snapping
+ *    back would produce zero events, advances `nextOffset` to `lastNewline + 1`
+ *    and carries `inSidechain` / `pendingCodexTurnHash` in `nextState`.
  */
-export function parseTranscriptTimeline(
-  rawContent: string,
-  agent: SessionAgent = 'claude-code',
-): ParsedTranscriptTimeline {
-  if (agent === 'opencode') return parseOpenCodeTimeline(rawContent);
+export function parseTranscriptTimelineChunk(
+  chunk: Uint8Array,
+  options: ParseTranscriptTimelineChunkOptions,
+): ParsedTranscriptTimelineChunk {
+  const { startOffset, eof, agent = 'claude-code', initialState } = options;
+
+  if (agent === 'opencode') {
+    const decoded = utf8Decoder.decode(chunk);
+    const parsed = parseOpenCodeTimeline(decoded);
+    return {
+      ...parsed,
+      nextOffset: startOffset + chunk.length,
+      nextState: {},
+    };
+  }
+
+  if (chunk.length === 0) {
+    return {
+      events: [],
+      hadUnparseableLines: false,
+      nextOffset: startOffset,
+      nextState: initialState ? { ...initialState } : {},
+    };
+  }
+
+  let usable = chunk;
+  if (!eof) {
+    const lastNewline = chunk.lastIndexOf(0x0a);
+    if (lastNewline === -1) {
+      return {
+        events: [],
+        hadUnparseableLines: false,
+        nextOffset: startOffset,
+        nextState: initialState ? { ...initialState } : {},
+      };
+    }
+    usable = chunk.subarray(0, lastNewline + 1);
+  }
 
   const events: TranscriptTimelineEvent[] = [];
-  let currentSidechain: TranscriptTimelineEvent[] | undefined;
+  let currentSidechain: TranscriptTimelineEvent[] | undefined =
+    agent === 'claude-code' && initialState?.inSidechain ? [] : undefined;
+  let sidechainContinuesPrevious = Boolean(
+    agent === 'claude-code' && initialState?.inSidechain,
+  );
   let hadUnparseableLines = false;
+  let lastCodexTurnHash =
+    agent === 'codex' ? initialState?.pendingCodexTurnHash : undefined;
+  let pendingToolResults = 0;
+  let awaitingCodexDuplicate = false;
+
+  interface SafeCutSnapshot {
+    nextOffset: number;
+    eventsCount: number;
+    hadUnparseableLines: boolean;
+    pendingCodexTurnHash?: string;
+  }
+  let lastSafeCut: SafeCutSnapshot | undefined;
 
   const closeSidechain = () => {
     if (currentSidechain && currentSidechain.length > 0) {
-      events.push({ kind: 'sidechain-group', events: currentSidechain });
+      events.push({
+        kind: 'sidechain-group',
+        events: currentSidechain,
+        ...(sidechainContinuesPrevious && { continuesPrevious: true }),
+      });
     }
     currentSidechain = undefined;
+    sidechainContinuesPrevious = false;
   };
 
-  for (const line of rawContent.split('\n')) {
+  let lineStart = 0;
+  while (lineStart < usable.length) {
+    const nl = usable.indexOf(0x0a, lineStart);
+    const lineEnd = nl === -1 ? usable.length : nl;
+    const nextByteOffset =
+      nl === -1 ? startOffset + usable.length : startOffset + nl + 1;
+    const line = utf8Decoder.decode(usable.subarray(lineStart, lineEnd));
+    lineStart = nl === -1 ? usable.length : nl + 1;
+
     const trimmed = line.trim();
     if (!trimmed) {
       continue;
@@ -449,55 +587,209 @@ export function parseTranscriptTimeline(
 
     const timestamp = asString(raw['timestamp']) ?? asString(raw['created_at']);
     if (agent === 'antigravity') {
-      events.push(...eventsFromAntigravityLine(raw, timestamp));
-      continue;
-    }
-    if (agent === 'codex') {
-      for (const event of eventsFromCodexLine(raw, timestamp)) {
-        const previous = events.at(-1);
-        // Codex currently persists a message as both an event_msg and a
-        // response_item. They are adjacent once metadata-only envelopes are
-        // ignored; render the turn once while still accepting either shape.
-        if (
-          event.kind === 'text' &&
-          previous?.kind === 'text' &&
-          event.role === previous.role &&
-          event.text === previous.text
-        ) {
-          continue;
+      const lineEvents = eventsFromAntigravityLine(raw, timestamp);
+      events.push(...lineEvents);
+      pendingToolResults = updatePendingToolResults(
+        pendingToolResults,
+        lineEvents,
+      );
+    } else if (agent === 'codex') {
+      const lineType = asString(raw['type']);
+      const payloadType = asString(asRecord(raw['payload'])?.['type']);
+      const lineEvents = eventsFromCodexLine(raw, timestamp);
+      const acceptedLineEvents: TranscriptTimelineEvent[] = [];
+      for (const event of lineEvents) {
+        if (event.kind === 'text') {
+          const turnHash = hashCodexTextTurn(event.role, event.text);
+          // Codex currently persists a message as both an event_msg and a
+          // response_item. They are adjacent once metadata-only envelopes are
+          // ignored; render the turn once while still accepting either shape.
+          if (turnHash === lastCodexTurnHash) {
+            continue;
+          }
+          lastCodexTurnHash = turnHash;
+          acceptedLineEvents.push(event);
+          events.push(event);
+        } else {
+          lastCodexTurnHash = undefined;
+          acceptedLineEvents.push(event);
+          events.push(event);
         }
-        events.push(event);
       }
-      continue;
-    }
-    const isSidechain = asBoolean(raw['isSidechain']) ?? false;
-    const target = isSidechain ? (currentSidechain ??= []) : events;
-
-    if (!isSidechain) {
-      closeSidechain();
-    }
-
-    if (asString(raw['type']) === 'result') {
-      const subtype = asString(raw['subtype']);
-      const isError = asBoolean(raw['is_error']);
-      if (subtype !== undefined && isError !== undefined) {
-        target.push({ kind: 'result', subtype, isError, timestamp });
+      pendingToolResults = updatePendingToolResults(
+        pendingToolResults,
+        acceptedLineEvents,
+      );
+      if (
+        lineType === 'event_msg' &&
+        (payloadType === 'user_message' || payloadType === 'agent_message') &&
+        lineEvents.length > 0
+      ) {
+        awaitingCodexDuplicate = true;
+      } else if (
+        (lineType === 'response_item' && payloadType === 'message') ||
+        acceptedLineEvents.length > 0
+      ) {
+        awaitingCodexDuplicate = false;
       }
-      continue;
+    } else {
+      const isSidechain = asBoolean(raw['isSidechain']) ?? false;
+      const target = isSidechain ? (currentSidechain ??= []) : events;
+
+      if (!isSidechain) {
+        closeSidechain();
+      }
+
+      const emittedTopLevel: TranscriptTimelineEvent[] = [];
+      if (asString(raw['type']) === 'result') {
+        const subtype = asString(raw['subtype']);
+        const isError = asBoolean(raw['is_error']);
+        if (subtype !== undefined && isError !== undefined) {
+          const resultEvent: TranscriptResultEvent = {
+            kind: 'result',
+            subtype,
+            isError,
+            timestamp,
+          };
+          target.push(resultEvent);
+          if (!isSidechain) emittedTopLevel.push(resultEvent);
+        }
+      } else {
+        const message = asRecord(raw['message']);
+        if (message) {
+          const messageEvents = eventsFromMessage(message, timestamp);
+          target.push(...messageEvents);
+          if (!isSidechain) emittedTopLevel.push(...messageEvents);
+        }
+      }
+
+      if (!isSidechain) {
+        pendingToolResults = updatePendingToolResults(
+          pendingToolResults,
+          emittedTopLevel,
+        );
+      }
     }
 
-    const message = asRecord(raw['message']);
-    if (message) {
-      target.push(...eventsFromMessage(message, timestamp));
-      continue;
+    if (
+      currentSidechain === undefined &&
+      pendingToolResults === 0 &&
+      !awaitingCodexDuplicate &&
+      events.length > 0
+    ) {
+      lastSafeCut = {
+        nextOffset: nextByteOffset,
+        eventsCount: events.length,
+        hadUnparseableLines,
+        ...(agent === 'codex' &&
+          lastCodexTurnHash && { pendingCodexTurnHash: lastCodexTurnHash }),
+      };
     }
-    // Lines with neither a `message` nor a terminal `result` (queue
-    // operations, ai-title, unknown future line types) carry no renderable
-    // turn content - not an error, just nothing to add to the timeline.
   }
 
-  closeSidechain();
+  if (eof) {
+    closeSidechain();
+    return {
+      events,
+      hadUnparseableLines,
+      nextOffset: startOffset + usable.length,
+      nextState: {},
+    };
+  }
 
+  const endIsSafe =
+    currentSidechain === undefined &&
+    pendingToolResults === 0 &&
+    !awaitingCodexDuplicate;
+
+  if (!endIsSafe && lastSafeCut && lastSafeCut.nextOffset > startOffset) {
+    events.length = lastSafeCut.eventsCount;
+    return {
+      events,
+      hadUnparseableLines: lastSafeCut.hadUnparseableLines,
+      nextOffset: lastSafeCut.nextOffset,
+      nextState: lastSafeCut.pendingCodexTurnHash
+        ? { pendingCodexTurnHash: lastSafeCut.pendingCodexTurnHash }
+        : {},
+    };
+  }
+
+  const stillInSidechain = currentSidechain !== undefined;
+  closeSidechain();
+  return {
+    events,
+    hadUnparseableLines,
+    nextOffset: startOffset + usable.length,
+    nextState: {
+      ...(stillInSidechain && { inSidechain: true }),
+      ...(agent === 'codex' &&
+        lastCodexTurnHash && { pendingCodexTurnHash: lastCodexTurnHash }),
+    },
+  };
+}
+
+/**
+ * Merges a newly fetched transcript page into the already-loaded timeline,
+ * folding a leading `{ kind: 'sidechain-group', continuesPrevious: true }`
+ * into the previous page's trailing `sidechain-group` so subagent runs that
+ * span multiple pages remain a single disclosure block.
+ */
+export function mergeTranscriptTimelinePages(
+  existing: readonly (TranscriptTimelineEvent | TranscriptElisionDivider)[],
+  incoming: readonly TranscriptTimelineEvent[],
+): (TranscriptTimelineEvent | TranscriptElisionDivider)[] {
+  if (incoming.length === 0) {
+    return [...existing];
+  }
+  const merged = [...existing];
+  let startIndex = 0;
+  const first = incoming[0];
+  const lastExisting = merged.at(-1);
+  if (
+    first?.kind === 'sidechain-group' &&
+    first.continuesPrevious &&
+    lastExisting?.kind === 'sidechain-group'
+  ) {
+    merged[merged.length - 1] = {
+      kind: 'sidechain-group',
+      events: [...lastExisting.events, ...first.events],
+      ...(lastExisting.continuesPrevious && { continuesPrevious: true }),
+    };
+    startIndex = 1;
+  } else if (first?.kind === 'sidechain-group' && first.continuesPrevious) {
+    // Strip the transport marker if no trailing sidechain-group preceded it
+    // (e.g. when the previous page's sidechain lines produced 0 events).
+    merged.push({ kind: 'sidechain-group', events: first.events });
+    startIndex = 1;
+  }
+  for (let i = startIndex; i < incoming.length; i += 1) {
+    merged.push(incoming[i]);
+  }
+  return merged;
+}
+
+/**
+ * Parses an archived transcript from a supported agent into a
+ * flat, renderable timeline for a single session's detail page - a
+ * different shape than `reduceTranscripts`' aggregated `SessionSummary`, but
+ * deliberately reusing the same tolerant line-by-line approach and
+ * `unknown-value.ts` helpers rather than a second bespoke JSON-walking loop:
+ * unparseable JSON and unrecognized line shapes are skipped, never thrown.
+ *
+ * Sidechain (subagent) lines are collapsed: a contiguous run of
+ * `isSidechain: true` lines becomes one `sidechain-group` timeline entry
+ * instead of being interleaved with the main chain event-by-event - see
+ * `TranscriptSidechainGroupEvent`.
+ */
+export function parseTranscriptTimeline(
+  rawContent: string,
+  agent: SessionAgent = 'claude-code',
+): ParsedTranscriptTimeline {
+  if (agent === 'opencode') return parseOpenCodeTimeline(rawContent);
+  const { events, hadUnparseableLines } = parseTranscriptTimelineChunk(
+    utf8Encoder.encode(rawContent),
+    { startOffset: 0, eof: true, agent },
+  );
   return { events, hadUnparseableLines };
 }
 
