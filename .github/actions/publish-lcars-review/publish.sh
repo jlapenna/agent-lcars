@@ -10,7 +10,7 @@ required=$(gh api --paginate --slurp "repos/$REPO/rules/branches/$encoded_base" 
 read_candidate() {
   # GraphQL variables must reach GitHub literally.
   # shellcheck disable=SC2016
-  comparison=$(gh api graphql -F owner="${REPO%/*}" -F repo="${REPO#*/}" -F pr="$pr" \
+  comparison=$(gh api graphql -f owner="${REPO%/*}" -f repo="${REPO#*/}" -F pr="$pr" \
     -f query='query($owner:String!, $repo:String!, $pr:Int!) {
       repository(owner:$owner, name:$repo) { pullRequest(number:$pr) {
         state baseRefName headRefOid baseRef { target { oid } }

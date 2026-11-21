@@ -56,7 +56,7 @@ open PR has a passing review for its current head submitted after its latest bas
 the deployed reviewer’s existing attempt and verdict markers. A maintainer can request a fresh review with `/review`. In member
 repositories, request review again after pushes and reopenings, and request it
 explicitly for Renovate and Dependabot PRs. After changing the target branch,
-request a fresh review in every repository. For fleet-managed auto-merge callers,
+let any review of the old target finish, then request a fresh review. GitHub binds a review to the head commit and records its submission time. An in-flight review submitted after a retarget carries no evidence of its original base. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
 inputs on every scaffold refresh. Before adding the App-bound check, remove
 the `fleet-onboard: managed` marker from the repository’s Terraform ruleset
