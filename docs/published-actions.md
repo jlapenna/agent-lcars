@@ -51,8 +51,11 @@ review-thread resolution in the target repository. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
 review dispatch path for that repository. Stage the workflow first and verify
 that a deployed reviewer produced a merge-base receipt and a successful App check.
-Request a new review for each affected open head that lacks the receipt before
-switching enforcement or replacing its publisher. For fleet-managed auto-merge callers,
+Before switching enforcement or replacing its publisher, verify each affected
+open PR has a passing review for its current head, merge base and latest retarget
+event. A maintainer can request a fresh review with `/review`. In member
+repositories, request review again after pushes and reopenings, and request it
+explicitly for Renovate and Dependabot PRs. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
 inputs on every scaffold refresh. Before adding the App-bound check, remove
 the `fleet-onboard: managed` marker from the repository’s Terraform ruleset

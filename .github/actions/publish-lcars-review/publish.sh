@@ -26,9 +26,14 @@ read_candidate() {
     | .potentialMergeCommit.oid // empty' <<< "$comparison")
   # Loose branch protection can retain a merge ref based on an earlier base tip.
   if [[ -n "$candidate" ]] && ! jq -e '.potentialMergeCommit.parents.nodes[0].oid == .baseRef.target.oid' <<< "$comparison" >/dev/null; then
-    local merge_ref
-    merge_ref=$(gh api "repos/$REPO/git/ref/pull/$pr/merge" --jq '.object.sha')
-    [[ "$candidate" == "$merge_ref" ]] || candidate=
+    local response
+    if response=$(gh api --include "repos/$REPO/git/ref/pull/$pr/merge" --jq '.object.sha'); then
+      [[ "$candidate" == "${response##*$'\n'}" ]] || candidate=
+    elif [[ "$response" =~ ^HTTP/[^[:space:]]+[[:space:]]404[[:space:]] ]]; then
+      candidate=
+    else
+      return 1
+    fi
   fi
 }
 
