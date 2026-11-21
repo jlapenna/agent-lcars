@@ -8,10 +8,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: lcars-review-event-${{ github.event.action == 'synchronize' && github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event.action == 'synchronize' }}
-
 jobs:
   notify:
     runs-on: ubuntu-slim
