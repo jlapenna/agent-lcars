@@ -668,6 +668,10 @@ if [ -n "${FAKE_CODEX_USAGE_LIMIT_ON_ROUND:-}" ] && [ "$run_count" -eq "$FAKE_CO
   echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
   exit 1
 fi
+if [ -n "${FAKE_CODEX_EVENTS_FILE:-}" ]; then
+  cat "$FAKE_CODEX_EVENTS_FILE"
+  exit 1
+fi
 if [ "${FAKE_CODEX_STDERR_LIMIT_PROSE:-}" = "1" ]; then
   echo 'warning: a tool said You’ve hit your usage limit' >&2
   exit 1
@@ -2733,6 +2737,51 @@ unset FAKE_CODEX_LAST_MESSAGE FAKE_CODEX_USAGE_LIMIT_EVENT
 [ "$rc" -ne 0 ] || fail "codex cli failure precedence: expected failure"
 jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | contains("Nov 25th")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
   fail "codex cli failure precedence: assistant message overrode real CLI failure event ($(tail -n1 "$COMPLETE_LOG"))"
+# A complete quota failure record landing right at the 16,000-byte display-trim
+# line boundary (and one followed by >16 KB of non-quota error lines) must both
+# classify as provider-limit and retain the stamped `(UTC)` reset.
+boundary_events="$tmp/codex-boundary-events.jsonl"
+python3 - "$boundary_events" <<'PYEVENTS'
+import json
+import sys
+
+quota_raw = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."
+quota_annotated_bytes = len((quota_raw[:-1] + " (UTC).").encode("utf-8"))
+# Extracted stream omits the trailing newline via bash $(...), so make
+# `quota_annotated + "\n" + filler` equal exactly 16,000 bytes, preceded by
+# a leading non-quota line + "\n".
+filler_len = 16000 - quota_annotated_bytes - 1
+lines = [
+    json.dumps({"type": "error", "message": "transient upstream retry 1"}),
+    json.dumps({"type": "error", "message": quota_raw}),
+    json.dumps({"type": "error", "message": "x" * filler_len}),
+]
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYEVENTS
+export FAKE_CODEX_EVENTS_FILE="$boundary_events"
+run_scenario codex-usage-limit-tail-boundary codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex usage limit tail boundary: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex usage limit tail boundary: boundary quota line or UTC reset was dropped ($(tail -n1 "$COMPLETE_LOG" | head -c 400))"
+
+trailing_noise_events="$tmp/codex-trailing-noise-events.jsonl"
+python3 - "$trailing_noise_events" <<'PYNOISE'
+import json
+import sys
+
+quota_raw = "You\u2019ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."
+lines = [json.dumps({"type": "error", "message": quota_raw})]
+for i in range(220):
+    lines.append(json.dumps({"type": "error", "message": f"follow-on teardown diagnostic {i:03d}: " + ("z" * 60)}))
+open(sys.argv[1], "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PYNOISE
+export FAKE_CODEX_EVENTS_FILE="$trailing_noise_events"
+run_scenario codex-usage-limit-trailing-noise codex
+unset FAKE_CODEX_EVENTS_FILE
+[ "$rc" -ne 0 ] || fail "codex usage limit trailing noise: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | startswith("Provider quota or usage limit reached.")) and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")) and ((.message | length) <= 16384)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null ||
+  fail "codex usage limit trailing noise: quota classification or UTC reset lost behind trailing errors ($(tail -n1 "$COMPLETE_LOG" | head -c 400))"
 export FAKE_CODEX_STDERR_LIMIT_PROSE=1
 run_scenario codex-stderr-limit-prose codex
 unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH

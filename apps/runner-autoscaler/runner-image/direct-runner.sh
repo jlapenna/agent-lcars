@@ -1196,7 +1196,7 @@ CURLCFG
   # re-reported as a capacity stop.
   if [ -z "$CODEX_AUTH_FAILURE" ] && [ -s "$CODEX_FAILURE_MESSAGES" ]; then
     PROVIDER_FAILURE_FILE="$RUNNER_TEMP/provider-failures.txt"
-    tail -c 16384 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
+    tail -c 65536 "$CODEX_FAILURE_MESSAGES" > "$PROVIDER_FAILURE_FILE"
   elif [ -z "$CODEX_AUTH_FAILURE" ] && [ "$AGENT_EXIT" -ne 0 ]; then
     # An exhausted account can stop Codex before it emits any JSON event: the
     # CLI prints its own banner on stderr ("You’ve hit your usage limit. Visit
@@ -1669,11 +1669,7 @@ if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_
     PROVIDER_FAILURE_FILE="$AGY_FAILURE_EVENTS"
   fi
 fi
-PROVIDER_FAILURE_SIZE="$(stat -c %s "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || echo 0)"
-PROVIDER_FAILURES="$(tail -c 16000 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
-if [ "$PROVIDER_FAILURE_SIZE" -gt 16000 ] && [[ "$PROVIDER_FAILURES" == *$'\n'* ]]; then
-  PROVIDER_FAILURES="${PROVIDER_FAILURES#*$'\n'}"
-fi
+RAW_PROVIDER_FAILURES="$(tail -c 65536 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
 # A report's message is its deliverable: send it whole, or refuse it when it
 # is blank or past the completion bound (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
@@ -1736,33 +1732,92 @@ annotate_codex_limit_utc() {
   done <<<"$text"
   printf '%s' "$out"
 }
+byte_length() {
+  local LC_ALL=C
+  printf '%s' "${#1}"
+}
+byte_prefix() {
+  local LC_ALL=C
+  printf '%s' "${1:0:$2}"
+}
+# Trim $1 to at most $2 bytes for completion-message display, dropping a
+# leading partial line only when the byte immediately preceding the cut was not
+# a newline (never deleting a complete line at the slice boundary).
+trim_tail_complete_lines() {
+  local LC_ALL=C
+  local text="$1" max_bytes="$2" total cut prev slice
+  total=${#text}
+  if [ "$total" -le "$max_bytes" ]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  cut=$((total - max_bytes))
+  prev="${text:cut-1:1}"
+  slice="${text:cut}"
+  if [ "$prev" != $'\n' ] && [[ "$slice" == *$'\n'* ]]; then
+    slice="${slice#*$'\n'}"
+  fi
+  printf '%s' "$slice"
+}
+format_provider_limit_failures() {
+  local raw="$1" annotated trimmed annotated_bytes trimmed_bytes dropped line kept_limits='' sep='' tail_budget tail_part
+  annotated="$raw"
+  if [ "$PIPELINE" = codex ]; then
+    annotated="$(annotate_codex_limit_utc "$annotated")"
+  fi
+  trimmed="$(trim_tail_complete_lines "$annotated" 16000)"
+  annotated_bytes="$(byte_length "$annotated")"
+  if [ "$annotated_bytes" -le 16000 ]; then
+    printf '%s' "$trimmed"
+    return 0
+  fi
+  trimmed_bytes="$(byte_length "$trimmed")"
+  dropped="$(byte_prefix "$annotated" "$((annotated_bytes - trimmed_bytes))")"
+  if ! is_provider_limit_failure "$dropped"; then
+    printf '%s' "$trimmed"
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    if is_provider_limit_failure "$line"; then
+      kept_limits="${kept_limits}${sep}${line}"
+      sep=$'\n'
+    fi
+  done <<<"$dropped"
+  kept_limits="$(trim_tail_complete_lines "$kept_limits" 8000)"
+  tail_budget=$((15999 - $(byte_length "$kept_limits")))
+  tail_part="$(trim_tail_complete_lines "$annotated" "$tail_budget")"
+  if [ -n "$tail_part" ]; then
+    printf '%s\n%s' "$kept_limits" "$tail_part"
+  else
+    printf '%s' "$kept_limits"
+  fi
+}
 if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
   if is_provider_limit_message "$AGENT_MESSAGE" ||
-    is_provider_limit_failure "$PROVIDER_FAILURES"; then
+    is_provider_limit_failure "$RAW_PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
     # Only structured CLI failure events or captured CLI stderr banners carry
-    # runner-verified provider evidence: they always win over LAST_MESSAGE_FILE,
-    # and an assistant final message alone is never stamped with `(UTC)` or
-    # wrapped in the retained-failure envelope.
-    if is_provider_limit_failure "$PROVIDER_FAILURES"; then
-      if [ "$PIPELINE" = codex ]; then
-        PROVIDER_FAILURES="$(annotate_codex_limit_utc "$PROVIDER_FAILURES")"
-        if [ "${#PROVIDER_FAILURES}" -gt 16000 ]; then
-          PROVIDER_FAILURES="${PROVIDER_FAILURES: -16000}"
-          if [[ "$PROVIDER_FAILURES" == *$'\n'* ]]; then
-            PROVIDER_FAILURES="${PROVIDER_FAILURES#*$'\n'}"
-          fi
-        fi
-      fi
+    # runner-verified provider evidence: classify on the untrimmed capture so
+    # trailing noise or a tail boundary never hides a quota record, and let CLI
+    # evidence always win over LAST_MESSAGE_FILE.
+    if is_provider_limit_failure "$RAW_PROVIDER_FAILURES"; then
+      PROVIDER_FAILURES="$(format_provider_limit_failures "$RAW_PROVIDER_FAILURES")"
       AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
     fi
     AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
-  elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
+  elif [[ "$RAW_PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
     # Distinct from the weekly quota window: the control plane holds this
     # provider for one bounded probe instead of a reported reset, and only an
     # already-authorized fallback policy may create a cross-provider successor.
     OUTCOME=provider-capacity
     if [[ "$AGENT_MESSAGE" != *'model is at capacity'* ]]; then
+      PROVIDER_FAILURES="$(trim_tail_complete_lines "$RAW_PROVIDER_FAILURES" 16000)"
+      if [[ "$PROVIDER_FAILURES" != *"model is at capacity"* ]]; then
+        capacity_line="$(grep -F -m 1 'model is at capacity' <<<"$RAW_PROVIDER_FAILURES" || true)"
+        capacity_line="$(trim_tail_complete_lines "$capacity_line" 4000)"
+        capacity_tail="$(trim_tail_complete_lines "$RAW_PROVIDER_FAILURES" 11999)"
+        PROVIDER_FAILURES="${capacity_line}${capacity_tail:+$'\n'$capacity_tail}"
+      fi
       AGENT_MESSAGE="Selected model is at capacity. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
     fi
     AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"

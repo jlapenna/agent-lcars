@@ -37,6 +37,7 @@ import {
   type ProviderCooldown,
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 import { retainsPhysicalClaim } from './provider-routing';
 import {
@@ -443,7 +444,13 @@ export class MemoryStore implements OrchestratorStore {
     for (const run of [decision.run, ...(decision.additionalRuns ?? [])]) {
       if (run === undefined) continue;
       const cooldown = providerCooldownForRun(run);
-      if (cooldown !== undefined)
+      if (
+        cooldown !== undefined &&
+        shouldWriteProviderCooldown(
+          this.#providerCooldowns.get(cooldown.pipeline),
+          cooldown,
+        )
+      )
         this.#providerCooldowns.set(cooldown.pipeline, cooldown);
     }
     for (const entry of decision.outbox) {

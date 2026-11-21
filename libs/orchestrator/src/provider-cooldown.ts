@@ -146,3 +146,19 @@ export function providerIsCoolingDown(value: unknown, now: string): boolean {
     Date.parse(value.expiresAt) > Date.parse(now)
   );
 }
+
+/** Keeps an already-active hold when a later completion would shorten it. */
+export function shouldWriteProviderCooldown(
+  current: unknown,
+  next: ProviderCooldown,
+): boolean {
+  if (!providerIsCoolingDown(current, next.observedAt)) return true;
+  if (
+    typeof current !== 'object' ||
+    current === null ||
+    !('expiresAt' in current) ||
+    typeof current.expiresAt !== 'string'
+  )
+    return true;
+  return Date.parse(next.expiresAt) >= Date.parse(current.expiresAt);
+}

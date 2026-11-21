@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   providerCooldownForRun,
   providerIsCoolingDown,
+  shouldWriteProviderCooldown,
 } from './provider-cooldown';
 
 const run = {
@@ -227,5 +228,37 @@ describe('provider quota holds', () => {
       false,
     );
     expect(providerIsCoolingDown(undefined, run.updatedAt)).toBe(false);
+  });
+
+  it('never shortens an active hold, while allowing extensions and expired replacements', () => {
+    const activeLong = {
+      pipeline: 'codex',
+      runId: 'work:quota/r1',
+      observedAt: '2026-11-09T01:00:00.000Z',
+      expiresAt: '2026-11-11T06:48:00.000Z',
+    };
+    const shorterProbe = {
+      pipeline: 'codex',
+      runId: 'work:quota/r2',
+      observedAt: '2026-11-09T01:01:00.000Z',
+      expiresAt: '2026-11-09T01:16:00.000Z',
+    };
+    const longerReset = {
+      pipeline: 'codex',
+      runId: 'work:quota/r3',
+      observedAt: '2026-11-09T01:02:00.000Z',
+      expiresAt: '2026-11-12T06:48:00.000Z',
+    };
+    const afterExpiry = {
+      pipeline: 'codex',
+      runId: 'work:quota/r4',
+      observedAt: '2026-11-11T06:48:00.000Z',
+      expiresAt: '2026-11-11T07:03:00.000Z',
+    };
+    expect(shouldWriteProviderCooldown(undefined, shorterProbe)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, shorterProbe)).toBe(false);
+    expect(shouldWriteProviderCooldown(shorterProbe, activeLong)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, longerReset)).toBe(true);
+    expect(shouldWriteProviderCooldown(activeLong, afterExpiry)).toBe(true);
   });
 });
