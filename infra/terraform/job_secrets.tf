@@ -14,7 +14,7 @@ variable "job_secret_names" {
   # skill-evals-*: the `skill-evals` credential set (Claude token for
   # `claude plugin eval`, and an rclone profile for the dedicated LCARS-jobs
   # Garage key that archives eval history).
-  default = ["github-jlapenna", "skill-evals-claude-token", "skill-evals-garage-rclone"]
+  default = ["github-jlapenna", "skill-evals-claude-token", "skill-evals-garage-rclone", "weekly-duty-ssh"]
   validation {
     condition     = alltrue([for name in var.job_secret_names : can(regex("^[a-z][a-z0-9-]{0,63}$", name))])
     error_message = "Job secret names must be lowercase LCARS logical identifiers."
