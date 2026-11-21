@@ -2,8 +2,9 @@
 set -euo pipefail
 # Re-read every open head. Fork events can lack PR numbers, and
 # GitHub may coalesce queued runs in the concurrency group.
-pulls=$(gh api --paginate "repos/$REPO/pulls?base=$BASE&state=open&per_page=100" --jq '.[] | [.number, .head.sha] | @tsv')
-required=$(gh api --paginate --slurp "repos/$REPO/rules/branches/$BASE" | jq -r '
+pulls=$(gh api --method GET --paginate "repos/$REPO/pulls" -f base="$BASE" -f state=open -F per_page=100 --jq '.[] | [.number, .head.sha] | @tsv')
+encoded_base=$(jq -nr --arg base "$BASE" '$base | @uri')
+required=$(gh api --paginate --slurp "repos/$REPO/rules/branches/$encoded_base" | jq -r '
   any(.[][] | .parameters.required_status_checks[]?;
       .context == "LCARS review (merge candidate)" and .integration_id == 4457090)')
 declare -A states descriptions prs
