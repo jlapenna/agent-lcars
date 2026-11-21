@@ -352,54 +352,89 @@ describe('read-only onboarding audit', () => {
     ).toBe(true);
   });
 
-  it.each(['present', 'unavailable', 'different-app'])(
-    'audits PR-head App reviews with %s evidence',
-    async (evidence) => {
-      const { api } = fixture({
-        [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
-          {
-            type: 'required_status_checks',
-            parameters: {
-              required_status_checks: [
-                { context: 'LCARS review', integration_id: 4457090 },
-              ],
-            },
-          },
-        ],
-        [`/repos/${repo}/commits/abc123/pulls?per_page=100&page=1`]:
-          evidence === 'unavailable'
-            ? []
-            : [
-                {
-                  merge_commit_sha: 'abc123',
-                  merged_at: '2026-11-01',
-                  head: { sha: 'reviewed' },
-                },
-              ],
-        [`/repos/${repo}/commits/reviewed/check-runs?filter=all&per_page=100&page=1`]:
-          {
-            check_runs: [
-              {
-                name: 'LCARS review',
-                head_sha: 'reviewed',
-                external_id: 'lcars-review',
-                app: { id: evidence === 'different-app' ? 42 : 4457090 },
-              },
+  it.each([
+    'present',
+    'unavailable',
+    'different-app',
+    'independent-failure',
+    'before-enforcement',
+  ])('audits PR-head App reviews with %s evidence', async (evidence) => {
+    const { api } = fixture({
+      [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
+        {
+          type: 'required_status_checks',
+          ruleset_id: 123,
+          ruleset_source_type: 'Repository',
+          parameters: {
+            required_status_checks: [
+              { context: 'LCARS review', integration_id: 4457090 },
+              ...(evidence === 'independent-failure'
+                ? [{ context: 'missing-check' }]
+                : []),
             ],
           },
-        [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
-          workflow_runs: [{ status: 'completed' }],
         },
-      });
-      expect((await audit(api))[3].status).toBe(
-        evidence === 'present'
-          ? 'pass'
-          : evidence === 'unavailable'
-            ? 'unverifiable'
-            : 'fail',
-      );
-    },
-  );
+      ],
+      [`/repos/${repo}/commits/abc123/pulls?per_page=100&page=1`]: [
+        'unavailable',
+        'independent-failure',
+      ].includes(evidence)
+        ? []
+        : [
+            {
+              merge_commit_sha: 'abc123',
+              merged_at: '2026-11-01',
+              head: { sha: 'reviewed' },
+            },
+          ],
+      [`/repos/${repo}/commits/reviewed/check-runs?filter=all&per_page=100&page=1`]:
+        {
+          check_runs:
+            evidence === 'before-enforcement'
+              ? []
+              : [
+                  {
+                    name: 'LCARS review',
+                    head_sha: 'reviewed',
+                    external_id: 'lcars-review',
+                    app: { id: evidence === 'different-app' ? 42 : 4457090 },
+                  },
+                ],
+        },
+      [`/repos/${repo}/rulesets/123/history?per_page=100&page=1`]: [
+        { version_id: 2, updated_at: '2026-11-05' },
+        { version_id: 1, updated_at: '2026-10-01' },
+      ],
+      [`/repos/${repo}/rulesets/123/history/1`]: {
+        state: {
+          enforcement: 'active',
+          rules:
+            evidence === 'before-enforcement'
+              ? []
+              : [
+                  {
+                    type: 'required_status_checks',
+                    parameters: {
+                      required_status_checks: [
+                        { context: 'LCARS review', integration_id: 4457090 },
+                      ],
+                    },
+                  },
+                ],
+        },
+      },
+      [`/repos/${repo}/actions/runs?head_sha=abc123&per_page=100`]: {
+        workflow_runs: [{ status: 'completed' }],
+      },
+    });
+    expect((await audit(api))[3].status).toBe(
+      evidence === 'present'
+        ? 'pass'
+        : ['unavailable', 'before-enforcement'].includes(evidence)
+          ? 'unverifiable'
+          : 'fail',
+    );
+  });
 
   it('does not call unfinished default-branch CI a configuration mismatch', async () => {
     const { api } = fixture({

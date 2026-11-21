@@ -322,6 +322,45 @@ export async function auditRepository({
         rule.context === 'LCARS review' &&
         [15368, 4457090].includes(rule.integration_id),
     );
+    const missing = required.filter(
+      (rule) =>
+        rule !== reviewRule &&
+        !checks.some(
+          (check) =>
+            check.name === rule.context &&
+            (!rule.integration_id || check.app?.id === rule.integration_id),
+        ) &&
+        !statuses.some(
+          (status) => status.context === rule.context && !rule.integration_id,
+        ),
+    );
+    if (missing.length) {
+      // A same-named check from the wrong App is a real mismatch. Otherwise
+      // let a newly merged head finish emitting its configured contexts.
+      if (
+        missing.some(
+          (rule) => !checks.some((check) => check.name === rule.context),
+        )
+      ) {
+        const runs = await optionalMetadataRead(capability, () =>
+          api(
+            `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
+            metadataToken,
+          ),
+        );
+        if (
+          !runs.workflow_runs?.length ||
+          runs.workflow_runs.some((run) => run.status !== 'completed')
+        ) {
+          throw new UnverifiableError(
+            `Required contexts not yet observed on ${commit.sha}; rerun after default-branch CI completes`,
+          );
+        }
+      }
+      throw new AuditError(
+        `Required checks absent on default-branch head: ${missing.map((check) => check.context).join(', ')}`,
+      );
+    }
     let reviewStatusObserved = false;
     if (reviewRule) {
       const pulls = await optionalMetadataRead(capability, () =>
@@ -365,45 +404,56 @@ export async function auditRepository({
             status.creator?.login === 'github-actions[bot]',
         );
       }
-    }
-    const missing = required.filter(
-      (rule) =>
-        !(rule === reviewRule && reviewStatusObserved) &&
-        !checks.some(
-          (check) =>
-            check.name === rule.context &&
-            (!rule.integration_id || check.app?.id === rule.integration_id),
-        ) &&
-        !statuses.some(
-          (status) => status.context === rule.context && !rule.integration_id,
-        ),
-    );
-    if (missing.length) {
-      // A same-named check from the wrong App is a real mismatch. Otherwise
-      // let a newly merged head finish emitting its configured contexts.
-      if (
-        missing.some(
-          (rule) => !checks.some((check) => check.name === rule.context),
-        )
-      ) {
-        const runs = await optionalMetadataRead(capability, () =>
-          api(
-            `/repos/${repo}/actions/runs?head_sha=${commit.sha}&per_page=100`,
-            metadataToken,
-          ),
-        );
-        if (
-          !runs.workflow_runs?.length ||
-          runs.workflow_runs.some((run) => run.status !== 'completed')
-        ) {
-          throw new UnverifiableError(
-            `Required contexts not yet observed on ${commit.sha}; rerun after default-branch CI completes`,
+      if (!reviewStatusObserved) {
+        // Current rules may have been introduced after this PR merged.
+        const requiresReview = (rule) =>
+          rule.parameters?.required_status_checks?.some(
+            (check) =>
+              check.context === reviewRule.context &&
+              check.integration_id === reviewRule.integration_id,
           );
+        const sources = rules.filter(requiresReview);
+        const mergedAt = Date.parse(merged.merged_at);
+        let predatesRule = true;
+        for (const source of sources) {
+          if (
+            source.ruleset_source_type !== 'Repository' ||
+            !source.ruleset_id
+          ) {
+            predatesRule = false;
+            break;
+          }
+          const historyPath = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
+          const history = await optionalMetadataRead(capability, () =>
+            pages(api, historyPath, metadataToken),
+          );
+          if (!history.length)
+            throw new UnverifiableError(
+              'Ruleset history unavailable for the merged PR',
+            );
+          const prior = history
+            .filter((item) => Date.parse(item.updated_at) <= mergedAt)
+            .sort(
+              (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+            )[0];
+          if (!prior) continue;
+          const { state } = await optionalMetadataRead(capability, () =>
+            api(`${historyPath}/${prior.version_id}`, metadataToken),
+          );
+          if (
+            state.enforcement === 'active' &&
+            state.rules.some(requiresReview)
+          ) {
+            predatesRule = false;
+            break;
+          }
         }
+        if (predatesRule)
+          throw new UnverifiableError(
+            'Merged PR predates the required LCARS review; verify after the next reviewed merge',
+          );
+        throw new AuditError('Required LCARS review absent on merged PR head');
       }
-      throw new AuditError(
-        `Required checks absent on default-branch head: ${missing.map((check) => check.context).join(', ')}`,
-      );
     }
     return `${required.length} required contexts observed on ${commit.sha}`;
   });
