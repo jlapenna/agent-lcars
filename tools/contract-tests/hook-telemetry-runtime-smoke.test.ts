@@ -665,7 +665,7 @@ response.resume();response.on('end',resolve);
           CLAUDE_BIN: join(bin, 'claude'),
           CODEX_BIN: join(bin, 'codex'),
           OPENCODE_BIN: join(bin, 'opencode'),
-          HOOK_DRAIN_DEADLINE_SECONDS: '0.3',
+          HOOK_DRAIN_DEADLINE_SECONDS: '0.8',
         },
         encoding: 'utf8',
         timeout: 60_000,

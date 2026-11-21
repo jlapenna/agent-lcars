@@ -15,13 +15,13 @@ def parse_deadline_seconds():
 def start_ticks(process):
     return (process / 'stat').read_text().rsplit(') ', 1)[1].split()[19]
 
-def comm_name(process):
+def comm_name(process, fallback='unknown'):
     try:
         raw = (process / 'comm').read_text(encoding='utf-8', errors='replace').strip()
     except OSError:
-        return 'unknown'
+        return fallback
     if not raw:
-        return 'unknown'
+        return fallback
     return ''.join(
         ch if ('A' <= ch <= 'Z' or 'a' <= ch <= 'z' or '0' <= ch <= '9' or ch in '._-') else '?'
         for ch in raw[:16]
@@ -82,7 +82,7 @@ try:
                 break
         else:
             empty_scans = 0
-        if time.monotonic() >= deadline:
+        if owned and time.monotonic() >= deadline:
             raise RuntimeError('owned hook processes did not drain')
         time.sleep(0.05)
 except Exception as error:
@@ -107,11 +107,12 @@ except Exception as error:
     if reason == 'deadline':
         resolved = set()
         for key in owned:
+            fallback = names.get(key, 'unknown')
             process = pathlib.Path('/proc') / str(key[0])
             try:
-                current = comm_name(process) if start_ticks(process) == key[1] else names.get(key, 'unknown')
+                current = comm_name(process, fallback) if start_ticks(process) == key[1] else fallback
             except OSError:
-                current = names.get(key, 'unknown')
+                current = fallback
             resolved.add(current)
         surviving = ','.join(sorted(resolved) or ['unknown'])
         suffix = f' processes={surviving}'

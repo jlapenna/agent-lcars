@@ -131,6 +131,21 @@ class DrainTests(unittest.TestCase):
             )
             self.assertNotIn("private-bad-deadline", invalid.stderr)
 
+    def test_empty_first_scan_past_deadline_still_completes_confirmation_scan(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            diagnostics = io.StringIO()
+            clean_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("HOOK_DRAIN_DEADLINE_SECONDS", "HOOK_SMOKE_DEGRADE_DEADLINE")
+            }
+            with mock.patch.dict(os.environ, clean_env, clear=True), \
+                    mock.patch.object(sys, "argv", [str(HELPER), scratch]), \
+                    mock.patch("time.monotonic", side_effect=[0, 31, 62]), \
+                    contextlib.redirect_stderr(diagnostics):
+                runpy.run_path(str(HELPER), run_name="__main__")
+            self.assertEqual(diagnostics.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
