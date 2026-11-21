@@ -773,7 +773,7 @@ FAKE
   cat > "$bindir/date" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = '+%b %-d, %Y' ] && [ -n "${FAKE_CODEX_UTC_DATES:-}" ]; then
-  [ "${TZ:-}" = "UTC0" ] || exit 2
+  [ "${TZ:-}" = "UTC" ] && [ "${LC_ALL:-}" = "C" ] || exit 2
   idx=0
   [ ! -f "$RUNNER_TEMP/fake-utc-date-idx" ] || idx=$(cat "$RUNNER_TEMP/fake-utc-date-idx")
   IFS='|' read -ra dates <<<"$FAKE_CODEX_UTC_DATES"
@@ -2679,22 +2679,25 @@ unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_AGY_STDERR FAKE_BRIEF_NO_RESUME
 
 # Codex out of credits: the stderr banner (no JSON event) and the same banner
 # as a structured event are both provider limits, despite the typographic
-# apostrophe, and pin Codex to TZ=UTC0 so its reset carries `(UTC)`. Same-day
-# date-less resets expand only when the round stays on one UTC calendar date.
-# A stderr line that only mentions the phrase is not a provider stop.
+# apostrophe, and pin Codex to IANA TZ=UTC so its reset carries `(UTC)` without
+# breaking Intl/ZoneInfo in child tools. Same-day date-less resets expand only
+# when the round stays on one UTC calendar date. A stderr line that only
+# mentions the phrase is not a provider stop.
 export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1 TZ=America/Los_Angeles
 run_scenario codex-stderr-usage-limit codex
 unset FAKE_CODEX_STDERR_USAGE_LIMIT TZ
 [ "$rc" -ne 0 ] || fail "codex stderr usage limit: expected failure"
-[ "$(cat "$CODEX_LOGIN_TZ_LOG")" = "UTC0" ] || fail "codex login status did not run under TZ=UTC0 ($(cat "$CODEX_LOGIN_TZ_LOG"))"
-[ "$(cat "$CODEX_TZ_LOG")" = "UTC0" ] || fail "codex exec did not run under TZ=UTC0 ($(cat "$CODEX_TZ_LOG"))"
+[ "$(cat "$CODEX_LOGIN_TZ_LOG")" = "UTC" ] || fail "codex login status did not run under TZ=UTC ($(cat "$CODEX_LOGIN_TZ_LOG"))"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC" ] || fail "codex exec did not run under TZ=UTC ($(cat "$CODEX_TZ_LOG"))"
+TZ="$(cat "$CODEX_TZ_LOG")" "$real_node" -e 'process.exit(new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC" ? 0 : 1)' ||
+  fail "codex TZ value broke Node Intl.DateTimeFormat timeZone resolution"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
 jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
 export FAKE_CODEX_USAGE_LIMIT_EVENT=1 TZ=America/Los_Angeles
 run_scenario codex-usage-limit-event codex
 unset FAKE_CODEX_USAGE_LIMIT_EVENT TZ
 [ "$rc" -ne 0 ] || fail "codex usage limit event: expected failure"
-[ "$(cat "$CODEX_TZ_LOG")" = "UTC0" ] || fail "codex usage limit event: codex exec did not run under TZ=UTC0"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC" ] || fail "codex usage limit event: codex exec did not run under TZ=UTC"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
 jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
 export FAKE_CODEX_SAME_DAY_USAGE_LIMIT=1 FAKE_CODEX_UTC_DATES='Nov 9, 2026' TZ=America/Los_Angeles

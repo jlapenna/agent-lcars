@@ -1049,7 +1049,7 @@ CURLCFG
     echo "FATAL: restored Codex authentication failed its SHA-256 check" >&2
     exit 1
   fi
-  TZ=UTC0 codex login status
+  TZ=UTC codex login status
 
   # Native work items sub-project 9 (resumable conversations, plan 3): a
   # requested resume must restore Codex's own thread, exactly as the
@@ -1113,17 +1113,18 @@ CURLCFG
   run_codex_round() {
     local prompt="$1" remaining round_exit round_start_utc_date round_end_utc_date
     shift
+    CODEX_ROUND_UTC_DATE=''
     remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
     # Codex formats usage-limit resets in chrono::Local without a zone label,
     # omitting the calendar date when the reset falls on the same local day.
-    # Pin TZ=UTC0 and retain the UTC date only when the round does not cross
-    # UTC midnight, so a date-less time never guesses which day it belonged to.
-    CODEX_ROUND_UTC_DATE=''
-    round_start_utc_date="$(TZ=UTC0 date '+%b %-d, %Y')"
+    # Pin IANA TZ=UTC (never POSIX UTC0, which breaks Node Intl/Python/Go zone
+    # lookups in worker tool subprocesses) and retain the UTC date only when
+    # the round does not cross UTC midnight.
+    round_start_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
-    TZ=UTC0 timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    TZ=UTC timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
@@ -1143,7 +1144,7 @@ CURLCFG
     round_exit=${PIPESTATUS[0]}
     wait "$CODEX_STDERR_TEE_PID" || true
     CODEX_STDERR_TEE_PID=''
-    round_end_utc_date="$(TZ=UTC0 date '+%b %-d, %Y')"
+    round_end_utc_date="$(LC_ALL=C TZ=UTC date '+%b %-d, %Y')"
     if [ "$round_start_utc_date" = "$round_end_utc_date" ]; then
       CODEX_ROUND_UTC_DATE="$round_start_utc_date"
     fi
@@ -1668,7 +1669,11 @@ if [ "$PIPELINE" = agy ] && [ "$AGENT_EXIT" -ne 0 ] && [ -z "${PROVIDER_FAILURE_
     PROVIDER_FAILURE_FILE="$AGY_FAILURE_EVENTS"
   fi
 fi
-PROVIDER_FAILURES="$(tail -c 16384 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
+PROVIDER_FAILURE_SIZE="$(stat -c %s "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || echo 0)"
+PROVIDER_FAILURES="$(tail -c 16000 "${PROVIDER_FAILURE_FILE:-/dev/null}" 2>/dev/null || true)"
+if [ "$PROVIDER_FAILURE_SIZE" -gt 16000 ] && [[ "$PROVIDER_FAILURES" == *$'\n'* ]]; then
+  PROVIDER_FAILURES="${PROVIDER_FAILURES#*$'\n'}"
+fi
 # A report's message is its deliverable: send it whole, or refuse it when it
 # is blank or past the completion bound (never a truncated tail).
 if [ "$OUTCOME" = report ]; then
@@ -1741,6 +1746,12 @@ if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = r
       fi
       if [ -n "$PROVIDER_FAILURES" ]; then
         PROVIDER_FAILURES="$(annotate_codex_limit_utc "$PROVIDER_FAILURES")"
+        if [ "${#PROVIDER_FAILURES}" -gt 16000 ]; then
+          PROVIDER_FAILURES="${PROVIDER_FAILURES: -16000}"
+          if [[ "$PROVIDER_FAILURES" == *$'\n'* ]]; then
+            PROVIDER_FAILURES="${PROVIDER_FAILURES#*$'\n'}"
+          fi
+        fi
       fi
     fi
     if ! is_provider_limit_message "$AGENT_MESSAGE" && [ -n "$PROVIDER_FAILURES" ]; then

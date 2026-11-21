@@ -602,9 +602,10 @@ executor is working an issue; a human assignee owns it regardless.
   container during preemption shutdown, so no attempt is provably unexecuted
   (#2520).
 - **FL-RT-3 [Shipped]** A `provider-limit` failure writes a cooldown that lasts
-  until Claude's reported reset time (if it is within 7 days), or re-probes
-  after 15 minutes. A `provider-capacity` failure always re-probes after 15
-  minutes. Without a fallback policy, nothing reroutes to another provider.
+  until Claude's or runner-pinned Codex's reported `(UTC)` reset time (if it is
+  within 7 days), or re-probes after 15 minutes; zone-less or unparseable reset
+  text never extends the hold. A `provider-capacity` failure always re-probes
+  after 15 minutes. Without a fallback policy, nothing reroutes to another provider.
   With an opt-in `fallbackPipelines` order, intersected with the principal's
   pipeline grant, a `provider-limit` or `provider-capacity` failure atomically
   settles the attempt and mints a successor on an authorized alternative, and
