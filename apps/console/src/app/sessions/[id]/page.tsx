@@ -97,7 +97,7 @@ export function ArchivedSessionTranscript({
   if (transcript.nextCursor) {
     return (
       <PaginatedTranscriptView
-        key={doc.sessionId}
+        key={`${doc.sessionId}:${transcript.snapshotId ?? transcript.nextCursor}`}
         sessionId={doc.sessionId}
         initialEvents={transcript.events}
         initialNextCursor={transcript.nextCursor}

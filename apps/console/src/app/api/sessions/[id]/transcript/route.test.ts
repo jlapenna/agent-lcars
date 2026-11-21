@@ -13,10 +13,16 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/auth', () => ({ auth: mocks.auth }));
-vi.mock('@agent-lcars/telemetry/server', () => ({
-  getAgentTelemetryReaderFirestore: mocks.getFirestore,
-  getSessionDoc: mocks.getSessionDoc,
-}));
+vi.mock('@agent-lcars/telemetry/server', async () => {
+  const actual = await vi.importActual<
+    typeof import('@agent-lcars/telemetry/server')
+  >('@agent-lcars/telemetry/server');
+  return {
+    ...actual,
+    getAgentTelemetryReaderFirestore: mocks.getFirestore,
+    getSessionDoc: mocks.getSessionDoc,
+  };
+});
 vi.mock('@/lib/session-transcript', async () => {
   const actual = await vi.importActual<
     typeof import('@/lib/session-transcript')
@@ -286,6 +292,7 @@ describe('GET /api/sessions/[id]/transcript', () => {
       'claude-code',
       {
         snapshotId: snapshot,
+        maxSingleLineBytes: 128 * 1024 * 1024,
         cursor: {
           v: 1,
           agent: 'claude-code',

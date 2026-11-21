@@ -1,7 +1,9 @@
 import {
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
   OPENCODE_EXPORT_MAX_BYTES,
+  sliceTranscriptByteRangeFromBuffer,
 } from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
@@ -248,6 +250,70 @@ describe('getSessionTranscript', () => {
 
     expect(result.events.some((e) => e.kind === 'elision')).toBe(true);
     expect(result.events).toHaveLength(251);
+  });
+
+  it('renders a >32 MiB Claude tool-result record in a runner archive instead of skipping it', async () => {
+    const prefix = Buffer.from(
+      '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","content":"',
+      'utf8',
+    );
+    const body = Buffer.alloc(33 * 1024 * 1024, 0x7a);
+    const suffix = Buffer.from(
+      '"}]}}\n{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[{"type":"text","text":"tail"}]}}\n',
+      'utf8',
+    );
+    const backing = Buffer.concat([prefix, body, suffix]);
+
+    (fetchSessionTranscriptByteRange as Mock).mockImplementation(
+      (
+        _uri: string,
+        opts: Parameters<typeof sliceTranscriptByteRangeFromBuffer>[1],
+      ) => sliceTranscriptByteRangeFromBuffer(backing, opts),
+    );
+
+    const page1 = await getSessionTranscript(
+      'gs://bucket/runs/1/huge-runner-record.jsonl',
+      'claude-code',
+      { maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES },
+    );
+    expect(page1.storageError).toBeUndefined();
+    expect(page1.warning).toBeUndefined();
+    expect(page1.hasMore).toBe(true);
+    expect(page1.events).toHaveLength(1);
+    expect(page1.events[0]).toMatchObject({ kind: 'tool_result' });
+    expect((page1.events[0] as { content: string }).content.length).toBe(
+      33 * 1024 * 1024,
+    );
+  });
+
+  it('appends 150,000 events from a single Codex record without overflowing V8 call stack', async () => {
+    const blocks = Array.from({ length: 150_000 }, (_, i) => ({
+      type: 'output_text',
+      text: `${i % 2 === 0 ? 'a' : 'b'}${i}`,
+    }));
+    const rawLine = `${JSON.stringify({
+      type: 'response_item',
+      payload: { type: 'message', role: 'assistant', content: blocks },
+    })}\n${JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'agent_message', message: 'page 2' },
+    })}\n`;
+    const backing = Buffer.from(rawLine, 'utf8');
+    const firstNewline = backing.indexOf(0x0a);
+
+    (fetchSessionTranscriptByteRange as Mock).mockResolvedValue({
+      chunk: backing.subarray(0, firstNewline + 1),
+      eof: false,
+    });
+
+    const page1 = await getSessionTranscript(
+      'gs://bucket/runs/1/many-blocks.jsonl',
+      'codex',
+    );
+    expect(page1.storageError).toBeUndefined();
+    expect(page1.warning).toBeUndefined();
+    expect(page1.hasMore).toBe(true);
+    expect(page1.events).toHaveLength(150_000);
   });
 
   it('validates cursor integrity against agent, mode, offset, and length', () => {

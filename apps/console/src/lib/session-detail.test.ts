@@ -2,16 +2,26 @@ import type {
   CliSessionDoc,
   IssueAgentSessionDoc,
 } from '@agent-lcars/telemetry';
-import { getSessionDoc } from '@agent-lcars/telemetry/server';
+import {
+  getSessionDoc,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+  MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
+} from '@agent-lcars/telemetry/server';
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 
 import { getSessionDetail } from './session-detail';
 import { getSessionTranscript } from './session-transcript';
 
-vi.mock('@agent-lcars/telemetry/server', () => ({
-  getAgentTelemetryReaderFirestore: vi.fn(),
-  getSessionDoc: vi.fn(),
-}));
+vi.mock('@agent-lcars/telemetry/server', async () => {
+  const actual = await vi.importActual<
+    typeof import('@agent-lcars/telemetry/server')
+  >('@agent-lcars/telemetry/server');
+  return {
+    ...actual,
+    getAgentTelemetryReaderFirestore: vi.fn(),
+    getSessionDoc: vi.fn(),
+  };
+});
 
 vi.mock('./session-transcript', async () => {
   const actual = await vi.importActual<typeof import('./session-transcript')>(
@@ -125,7 +135,10 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/a.jsonl',
       'claude-code',
-      { snapshotId: expect.any(String) },
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -146,7 +159,10 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/codex/a.jsonl',
       'codex',
-      { snapshotId: expect.any(String) },
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -172,7 +188,10 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/ses.export.json',
       'opencode',
-      { snapshotId: expect.any(String) },
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+      },
     );
     expect(doc.renderable).toBe(false);
   });
@@ -244,7 +263,10 @@ describe('CLI session transcript detail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://cli-archives/cli/host/codex/a.jsonl',
       'codex',
-      { snapshotId: expect.any(String) },
+      {
+        snapshotId: expect.any(String),
+        maxSingleLineBytes: MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
+      },
     );
   });
   it('never reads an expired CLI archive', async () => {

@@ -1,8 +1,8 @@
 import type { IssueAgentSessionDoc } from '@agent-lcars/telemetry';
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../work/actions', () => ({
   createItem: vi.fn(),
@@ -40,6 +40,10 @@ function renderWithProvider(ui: ReactElement) {
 }
 
 describe('ArchivedSessionTranscript', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('renders nothing when the doc has no transcriptGcsUri', () => {
     renderWithProvider(<ArchivedSessionTranscript doc={agentDoc()} />);
     expect(screen.queryByTestId('transcript-timeline')).toBeNull();
@@ -95,6 +99,72 @@ describe('ArchivedSessionTranscript', () => {
     );
 
     expect(screen.getByText('1+')).toBeInTheDocument();
+    expect(screen.getByTestId('transcript-load-more')).toBeInTheDocument();
+  });
+
+  it('remounts PaginatedTranscriptView when Console Refresh delivers a replacement snapshotId', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          events: [],
+          hasMore: false,
+          code: 'snapshot-changed',
+          warning:
+            'Transcript snapshot changed since this page loaded. Reload to view the updated archive.',
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const doc = agentDoc({
+      agent: 'claude-code',
+      transcriptGcsUri: 'gs://cli/claude/snap-1.jsonl',
+      renderable: true,
+    });
+
+    const { rerender } = render(
+      <MantineProvider>
+        <ArchivedSessionTranscript
+          doc={doc}
+          transcript={{
+            events: [{ kind: 'text', role: 'user', text: 'Snapshot 1 page 1' }],
+            snapshotId: 'snap-1',
+            nextCursor: 'cursor-snap-1',
+            hasMore: true,
+          }}
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('transcript-load-more'));
+    await waitFor(() => {
+      expect(screen.getByTestId('transcript-reload')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('transcript-load-more')).toBeNull();
+
+    // Simulate Next.js router Refresh re-rendering the same session with a
+    // newly captured multi-page snapshot (`snap-2`).
+    rerender(
+      <MantineProvider>
+        <ArchivedSessionTranscript
+          doc={{
+            ...doc,
+            transcriptGcsUri: 'gs://cli/claude/snap-2.jsonl',
+          }}
+          transcript={{
+            events: [{ kind: 'text', role: 'user', text: 'Snapshot 2 page 1' }],
+            snapshotId: 'snap-2',
+            nextCursor: 'cursor-snap-2',
+            hasMore: true,
+          }}
+        />
+      </MantineProvider>,
+    );
+
+    expect(screen.getByText('Snapshot 2 page 1')).toBeInTheDocument();
+    expect(screen.queryByText('Snapshot 1 page 1')).toBeNull();
+    expect(screen.queryByTestId('transcript-reload')).toBeNull();
+    expect(screen.queryByTestId('transcript-warning')).toBeNull();
     expect(screen.getByTestId('transcript-load-more')).toBeInTheDocument();
   });
 

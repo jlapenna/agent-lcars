@@ -31,9 +31,11 @@ vi.mock('@agent-lcars/util-server', async () => ({
 
 import {
   _resetTranscriptStoreForTesting,
+  DEFAULT_TRANSCRIPT_PAGE_BYTES,
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
   getAgentSessionTranscriptsBucketName,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
   MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
   sliceTranscriptByteRangeFromBuffer,
 } from './transcript-store';
@@ -138,9 +140,28 @@ describe('fetchSessionTranscriptByteRange', () => {
     );
   }
 
-  it('shares the exact 32 MiB single-line payload ceiling with CLI validation', () => {
+  it('shares the exact 32 MiB CLI ceiling and provides a 128 MiB runner ceiling', () => {
     expect(MAX_TRANSCRIPT_SINGLE_LINE_BYTES).toBe(MAX_TRANSCRIPT_LINE_BYTES);
     expect(MAX_TRANSCRIPT_SINGLE_LINE_BYTES).toBe(32 * 1024 * 1024);
+    expect(MAX_RUNNER_TRANSCRIPT_LINE_BYTES).toBe(128 * 1024 * 1024);
+  });
+
+  it('grows continuation range reads so multi-MiB lines complete in a few RPCs', async () => {
+    const fourMiBLine = Buffer.concat([
+      Buffer.from('{"payload":"', 'utf8'),
+      Buffer.alloc(4 * 1024 * 1024, 0x61),
+      Buffer.from('"}\n{"after":1}\n', 'utf8'),
+    ]);
+    mockGcsBackingBuffer(fourMiBLine);
+
+    const range = await fetchSessionTranscriptByteRange(
+      'gs://bucket/runs/1/4mib.jsonl',
+      { startOffset: 0, maxBytes: DEFAULT_TRANSCRIPT_PAGE_BYTES },
+    );
+    expect(range.skippedOversizedLine).toBeUndefined();
+    expect(range.chunk.includes(0x0a)).toBe(true);
+    // 512 KiB initial probe + 4 MiB continuation window = 2 serial reads (down from 9).
+    expect(mockCreateReadStream).toHaveBeenCalledTimes(2);
   });
 
   it('reads maxBytes + 1 to detect non-EOF vs EOF without a metadata RPC', async () => {

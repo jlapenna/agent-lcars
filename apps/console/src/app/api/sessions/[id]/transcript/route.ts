@@ -117,6 +117,7 @@ export async function GET(
     target.agent,
     {
       snapshotId: target.snapshotId,
+      maxSingleLineBytes: target.maxSingleLineBytes,
       ...(cursor && { cursor }),
     },
   );

@@ -19,6 +19,8 @@ import {
   DEFAULT_TRANSCRIPT_PAGE_BYTES,
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
+  MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
+  MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
   OPENCODE_EXPORT_MAX_BYTES,
   sliceTranscriptByteRangeFromBuffer,
 } from '@agent-lcars/telemetry/server';
@@ -48,6 +50,9 @@ export interface TranscriptPageCursor {
 
 export interface SessionTranscriptResult {
   events: (TranscriptTimelineEvent | TranscriptElisionDivider)[];
+  /** Opaque fingerprint of the archived snapshot rendered by this result, used
+   * to remount client pagination state when Console Refresh loads a new capture. */
+  snapshotId?: string;
   nextCursor?: string;
   hasMore?: boolean;
   /** True when the underlying storage read failed (as opposed to malformed
@@ -77,6 +82,7 @@ export type ResolvedSessionTranscriptTarget =
       transcriptGcsUri: string;
       agent: SessionAgent;
       snapshotId: string;
+      maxSingleLineBytes: number;
     }
   | { status: 'expired'; warning: string }
   | { status: 'revoked'; warning: string }
@@ -128,6 +134,7 @@ export function resolveSessionTranscriptTarget(
             doc.transcriptGcsUri,
             cliArchive.captureId,
           ),
+          maxSingleLineBytes: MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
         };
       }
       return { status: 'ineligible' };
@@ -152,6 +159,7 @@ export function resolveSessionTranscriptTarget(
       transcriptGcsUri: resolvedUri,
       agent: doc.agent,
       snapshotId: computeTranscriptSnapshotId(resolvedUri),
+      maxSingleLineBytes: MAX_RUNNER_TRANSCRIPT_LINE_BYTES,
     };
   }
   return { status: 'ineligible' };
@@ -282,6 +290,7 @@ async function getOpenCodeTranscriptPage(
     );
     return {
       events: [],
+      ...(options?.snapshotId && { snapshotId: options.snapshotId }),
       storageError: true,
       warning:
         'Transcript unavailable or expired (failed to fetch from storage).',
@@ -315,6 +324,7 @@ async function getOpenCodeTranscriptPage(
 
   return {
     events: renderedEvents,
+    ...(options?.snapshotId && { snapshotId: options.snapshotId }),
     ...(nextCursor && { nextCursor, hasMore: true }),
     ...(hadUnparseableLines &&
       (offset === 0 || events.length === 0) && {
@@ -344,6 +354,8 @@ export async function getSessionTranscript(
   }
 
   const pageBytes = options?.pageBytes ?? DEFAULT_TRANSCRIPT_PAGE_BYTES;
+  const maxSingleLineBytes =
+    options?.maxSingleLineBytes ?? MAX_RUNNER_TRANSCRIPT_LINE_BYTES;
   const snapshotId =
     options?.snapshotId ??
     options?.cursor?.snapshot ??
@@ -357,65 +369,13 @@ export async function getSessionTranscript(
   let hadUnparseableLines = false;
   let reachedEof = false;
 
+  let e2eBuffer: Buffer | undefined;
   try {
     const e2eFixture = isE2eTesting()
       ? getE2eTranscript(transcriptGcsUri)
       : undefined;
-    const e2eBuffer =
+    e2eBuffer =
       e2eFixture !== undefined ? Buffer.from(e2eFixture, 'utf8') : undefined;
-
-    for (let step = 0; step < MAX_EMPTY_CHUNKS_PER_PAGE; step += 1) {
-      const range =
-        e2eBuffer !== undefined
-          ? await sliceTranscriptByteRangeFromBuffer(e2eBuffer, {
-              startOffset: currentOffset,
-              maxBytes: pageBytes,
-              maxSingleLineBytes: options?.maxSingleLineBytes,
-            })
-          : await fetchSessionTranscriptByteRange(transcriptGcsUri, {
-              startOffset: currentOffset,
-              maxBytes: pageBytes,
-              maxSingleLineBytes: options?.maxSingleLineBytes,
-            });
-
-      if (range.skippedOversizedLine) {
-        hadUnparseableLines = true;
-        currentOffset = range.skippedOversizedLine.nextOffset;
-        if (range.eof) {
-          reachedEof = true;
-          break;
-        }
-        continue;
-      }
-
-      const parsed = parseTranscriptTimelineChunk(range.chunk, {
-        startOffset: currentOffset,
-        eof: range.eof,
-        agent,
-        initialState: currentState,
-      });
-
-      if (parsed.hadUnparseableLines) {
-        hadUnparseableLines = true;
-      }
-
-      const stalled = !range.eof && parsed.nextOffset <= currentOffset;
-      currentOffset = parsed.nextOffset;
-      currentState = parsed.nextState;
-      accumulatedEvents.push(...parsed.events);
-
-      if (range.eof) {
-        reachedEof = true;
-        break;
-      }
-      if (accumulatedEvents.length > 0 || stalled) {
-        if (stalled) {
-          reachedEof = true;
-          hadUnparseableLines = true;
-        }
-        break;
-      }
-    }
   } catch (error) {
     logger.error(
       'agent-lcars: failed to fetch session transcript from storage:',
@@ -423,10 +383,83 @@ export async function getSessionTranscript(
     );
     return {
       events: [],
+      ...(options?.snapshotId && { snapshotId: options.snapshotId }),
       storageError: true,
       warning:
         'Transcript unavailable or expired (failed to fetch from storage).',
     };
+  }
+
+  for (let step = 0; step < MAX_EMPTY_CHUNKS_PER_PAGE; step += 1) {
+    let range: Awaited<ReturnType<typeof fetchSessionTranscriptByteRange>>;
+    try {
+      range =
+        e2eBuffer !== undefined
+          ? await sliceTranscriptByteRangeFromBuffer(e2eBuffer, {
+              startOffset: currentOffset,
+              maxBytes: pageBytes,
+              maxSingleLineBytes,
+            })
+          : await fetchSessionTranscriptByteRange(transcriptGcsUri, {
+              startOffset: currentOffset,
+              maxBytes: pageBytes,
+              maxSingleLineBytes,
+            });
+    } catch (error) {
+      logger.error(
+        'agent-lcars: failed to fetch session transcript from storage:',
+        error,
+      );
+      return {
+        events: [],
+        ...(options?.snapshotId && { snapshotId: options.snapshotId }),
+        storageError: true,
+        warning:
+          'Transcript unavailable or expired (failed to fetch from storage).',
+      };
+    }
+
+    if (range.skippedOversizedLine) {
+      hadUnparseableLines = true;
+      currentOffset = range.skippedOversizedLine.nextOffset;
+      if (range.eof) {
+        reachedEof = true;
+        break;
+      }
+      continue;
+    }
+
+    const parsed = parseTranscriptTimelineChunk(range.chunk, {
+      startOffset: currentOffset,
+      eof: range.eof,
+      agent,
+      initialState: currentState,
+    });
+
+    if (parsed.hadUnparseableLines) {
+      hadUnparseableLines = true;
+    }
+
+    const stalled = !range.eof && parsed.nextOffset <= currentOffset;
+    currentOffset = parsed.nextOffset;
+    currentState = parsed.nextState;
+    // Loop rather than `push(...parsed.events)` so a single record emitting
+    // >100k events cannot overflow V8's function-argument stack limit.
+    for (let i = 0; i < parsed.events.length; i += 1) {
+      accumulatedEvents.push(parsed.events[i]);
+    }
+
+    if (range.eof) {
+      reachedEof = true;
+      break;
+    }
+    if (accumulatedEvents.length > 0 || stalled) {
+      if (stalled) {
+        reachedEof = true;
+        hadUnparseableLines = true;
+      }
+      break;
+    }
   }
 
   const isFirstPage = !options?.cursor;
@@ -455,6 +488,7 @@ export async function getSessionTranscript(
 
   return {
     events: renderedEvents,
+    ...(options?.snapshotId && { snapshotId: options.snapshotId }),
     ...(nextCursor && { nextCursor, hasMore: true }),
     ...(hadUnparseableLines && {
       warning: 'Some transcript lines could not be parsed and were skipped.',

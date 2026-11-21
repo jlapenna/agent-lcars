@@ -229,6 +229,12 @@ function eventsFromMessage(
   return events;
 }
 
+function appendItems<T>(target: T[], items: readonly T[]): void {
+  for (let i = 0; i < items.length; i += 1) {
+    target.push(items[i]);
+  }
+}
+
 function codexTextEvent(
   role: 'user' | 'assistant',
   text: unknown,
@@ -278,7 +284,7 @@ function eventsFromCodexLine(
       const record = asRecord(block);
       if (!record) continue;
       const text = asString(record['text']);
-      if (text) events.push(...codexTextEvent(role, text, timestamp));
+      if (text) appendItems(events, codexTextEvent(role, text, timestamp));
     }
     return events;
   }
@@ -596,7 +602,7 @@ export function parseTranscriptTimelineChunk(
     const timestamp = asString(raw['timestamp']) ?? asString(raw['created_at']);
     if (agent === 'antigravity') {
       const lineEvents = eventsFromAntigravityLine(raw, timestamp);
-      events.push(...lineEvents);
+      appendItems(events, lineEvents);
       pendingToolResults = updatePendingToolResults(
         pendingToolResults,
         lineEvents,
@@ -666,8 +672,8 @@ export function parseTranscriptTimelineChunk(
         const message = asRecord(raw['message']);
         if (message) {
           const messageEvents = eventsFromMessage(message, timestamp);
-          target.push(...messageEvents);
-          if (!isSidechain) emittedTopLevel.push(...messageEvents);
+          appendItems(target, messageEvents);
+          if (!isSidechain) appendItems(emittedTopLevel, messageEvents);
         }
       }
 
@@ -751,9 +757,9 @@ export function mergeTranscriptTimelinePages(
   incoming: readonly TranscriptTimelineEvent[],
 ): (TranscriptTimelineEvent | TranscriptElisionDivider)[] {
   if (incoming.length === 0) {
-    return [...existing];
+    return existing.slice();
   }
-  const merged = [...existing];
+  const merged = existing.slice();
   let startIndex = 0;
   const first = incoming[0];
   const lastExisting = merged.at(-1);
@@ -764,7 +770,7 @@ export function mergeTranscriptTimelinePages(
   ) {
     merged[merged.length - 1] = {
       kind: 'sidechain-group',
-      events: [...lastExisting.events, ...first.events],
+      events: lastExisting.events.concat(first.events),
       ...(lastExisting.continuesPrevious && { continuesPrevious: true }),
     };
     startIndex = 1;

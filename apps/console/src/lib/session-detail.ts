@@ -61,6 +61,7 @@ export async function getSessionDetail(
     target.status === 'eligible'
       ? await getSessionTranscript(target.transcriptGcsUri, target.agent, {
           snapshotId: target.snapshotId,
+          maxSingleLineBytes: target.maxSingleLineBytes,
         })
       : target.status === 'expired'
         ? { events: [], warning: target.warning }

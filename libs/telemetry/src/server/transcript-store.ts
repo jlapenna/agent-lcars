@@ -12,9 +12,18 @@ assertNotBrowser();
 /** Default byte window (512 KiB) read per paginated JSONL transcript request. */
 export const DEFAULT_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
 
-/** Maximum payload bytes buffered to complete a single JSONL line (32 MiB,
- * shared with the CLI archive validator so every accepted record can be read). */
+/** Maximum payload bytes buffered to complete a single CLI JSONL line (32 MiB,
+ * shared with the CLI archive validator so every accepted CLI record can be read). */
 export const MAX_TRANSCRIPT_SINGLE_LINE_BYTES = MAX_TRANSCRIPT_LINE_BYTES;
+
+/** Maximum payload bytes buffered to complete a single runner (`issue-agent`)
+ * JSONL line (128 MiB), preserving existing runner archives whose raw tool
+ * outputs exceed the CLI's 32 MiB per-line upload cap. */
+export const MAX_RUNNER_TRANSCRIPT_LINE_BYTES = 128 * 1024 * 1024;
+
+/** Maximum continuation range-read chunk size (8 MiB) when extending past a
+ * window that contained no newline delimiter. */
+const MAX_CONTINUATION_READ_BYTES = 8 * 1024 * 1024;
 
 /** Maximum bytes read for single-envelope OpenCode export JSON transcripts
  * (matches the runner capture side's 32 MiB RLIMIT_FSIZE bound). */
@@ -131,9 +140,13 @@ async function readBoundedRange(
   let currentOffset = startOffset;
   let bufferedBytes = 0;
   let eof = false;
+  let desiredWindowBytes = maxBytes;
 
   while (bufferedBytes < maxBufferBytes) {
-    const stepBytes = Math.min(maxBytes, maxBufferBytes - bufferedBytes);
+    const stepBytes = Math.min(
+      desiredWindowBytes,
+      maxBufferBytes - bufferedBytes,
+    );
     // Request stepBytes + 1 (`[currentOffset, currentOffset + stepBytes]`) so
     // receiving <= stepBytes proves EOF without a separate GCS metadata RPC.
     const raw = await readSlice(currentOffset, currentOffset + stepBytes);
@@ -153,6 +166,13 @@ async function readBoundedRange(
     if (window.includes(0x0a)) {
       break;
     }
+
+    // Grow continuation range reads (e.g. 512 KiB -> 4 MiB -> 8 MiB) so
+    // multi-MiB tool-result lines complete in a few RPCs instead of dozens.
+    desiredWindowBytes = Math.min(
+      MAX_CONTINUATION_READ_BYTES,
+      desiredWindowBytes * 8,
+    );
   }
 
   const combined =
@@ -170,6 +190,12 @@ async function readBoundedRange(
         ? firstNewline - 1
         : firstNewline;
     if (payloadLength <= maxSingleLineBytes) {
+      if (combined.length > maxBytes && firstNewline + 1 > maxBytes) {
+        return {
+          chunk: combined.subarray(0, firstNewline + 1),
+          eof: eof && firstNewline + 1 === combined.length,
+        };
+      }
       return { chunk: combined, eof };
     }
     const nextOffset = startOffset + firstNewline + 1;
@@ -199,8 +225,9 @@ async function readBoundedRange(
     maxSingleLineBytes * 2,
   );
   let scannedPastCap = 0;
+  let scanWindowBytes = Math.min(MAX_CONTINUATION_READ_BYTES, maxBytes * 8);
   while (scannedPastCap < scanCeiling) {
-    const stepBytes = Math.min(maxBytes, scanCeiling - scannedPastCap);
+    const stepBytes = Math.min(scanWindowBytes, scanCeiling - scannedPastCap);
     const raw = await readSlice(currentOffset, currentOffset + stepBytes);
     const hitEof = raw.length <= stepBytes;
     const window = hitEof ? raw : raw.subarray(0, stepBytes);
@@ -216,6 +243,10 @@ async function readBoundedRange(
     }
     currentOffset += window.length;
     scannedPastCap += window.length;
+    scanWindowBytes = Math.min(
+      MAX_CONTINUATION_READ_BYTES,
+      scanWindowBytes * 2,
+    );
     if (hitEof) {
       return {
         chunk: Buffer.alloc(0),
