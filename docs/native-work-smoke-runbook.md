@@ -156,7 +156,9 @@ path, not as one green light:
   `result.message` from the single-item API response, for example with
   `jq -je '.runs[] | select(.runId==$run) | .result.message' --arg run "$run" item.json | sha256sum`.
   The hashes must match, including trailing newlines. For the continuation check, recover the
-  same attempt’s final provider message. Recreate the legacy payload for a
+  same attempt’s session history and identify a provider reply after the report
+  was saved. Require a content change beyond trailing line feeds between the
+  saved report and that final reply. Recreate the legacy payload for a
   usable final message with `printf '%s' "$(cat final-message.txt)" | sha256sum`.
   Shell command substitution strips trailing line feeds. Record the legacy
   payload hash alongside the saved-body hash. Verify the regression only when

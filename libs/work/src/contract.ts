@@ -90,7 +90,7 @@ const runResultSchema = z.strictObject({
   ref: z.string().max(1_024).optional(),
   /** Additional exact deliverable, e.g. the blocker comment beside a partial PR. */
   relatedRefs: z.array(z.string().max(1_024)).max(1).optional(),
-  /** The agent's final message for this round, e.g. its report, its
+  /** The saved report body (final provider reply for legacy two-line reports), the agent's
    *  question when it parked, or the runner's redacted output tail for a
    *  provider that failed before one. Single-item reads (`GET /items/{id}`
    *  and every route answering one item) return it whole. A listing returns
@@ -99,7 +99,7 @@ const runResultSchema = z.strictObject({
   message: z
     .string()
     .describe(
-      'The whole final message on single-item reads; on a listing, its first 16,384 characters when messageOverflow is present.',
+      'The run message, including the saved report body for a report (final provider reply for legacy two-line reports). Single-item reads return it whole. Listings return its first 16,384 characters when messageOverflow is present.',
     )
     .optional(),
   /** Present only when `message` is a preview: names the whole message's
