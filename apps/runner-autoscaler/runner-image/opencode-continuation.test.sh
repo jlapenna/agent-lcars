@@ -40,16 +40,17 @@ cleanup() {
   python3 "$here/drain-hook-test-clients.py" "$tmp" || drain_status=$?
   if [ "$drain_status" -eq 75 ]; then
     if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
-      printf 'deadline\n' > "$lib_dir/.hook-smoke-deadline-degraded"
+      printf 'deadline\n' > "$lib_dir/.hook-smoke-deadline-degraded" || return 1
     fi
     return 0
   fi
   if [ "$drain_status" -ne 0 ]; then
     return 1
   fi
-  rm -rf "$tmp"
+  rm -rf "$tmp" || return 1
+  [ ! -e "$tmp" ] || return 1
   if [ -n "${HOOK_TEST_LIB_DIR:-}" ] && [ ! -e "$lib_dir/.hook-smoke-deadline-degraded" ]; then
-    printf 'drained\n' > "$lib_dir/.hook-smoke-drained"
+    printf 'drained\n' > "$lib_dir/.hook-smoke-drained" || return 1
   fi
 }
 on_exit() {

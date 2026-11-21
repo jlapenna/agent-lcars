@@ -23,7 +23,7 @@ lib_dir="$(mktemp -d)"
 cleanup() {
   local exit_status=$?
   if [ -f "$lib_dir/.hook-smoke-drained" ]; then
-    rm -rf "$lib_dir"
+    rm -rf "$lib_dir" || exit 1
   else
     echo "hook smoke cleanup: retaining private bundles after refused smoke" >&2
     if [ "$exit_status" -eq 0 ] && [ -f "$lib_dir/.hook-smoke-deadline-degraded" ]; then

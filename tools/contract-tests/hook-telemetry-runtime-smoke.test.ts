@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -590,26 +591,52 @@ const settings=JSON.parse(fs.readFileSync(path.join(process.env.HOME,'.claude/se
 for(const entry of settings.hooks.SessionEnd)for(const hook of entry.hooks)fs.writeFileSync(hook.command.slice(6),'');
 }
 if(command==='codex'){
-const codexConfig=fs.readFileSync(path.join(process.env.HOME,'.codex/config.toml'),'utf8');
+const childProc=require('node:child_process');
+const tomlProbe=childProc.spawnSync('python3',['-c','import json,pathlib,sys,tomllib; data=tomllib.loads(pathlib.Path(sys.argv[1]).read_text("utf-8")); print(json.dumps({"plugins":data.get("features",{}).get("plugins")}))',path.join(process.env.HOME,'.codex/config.toml')],{encoding:'utf8'});
+if(tomlProbe.status!==0)process.exit(1);
+const httpsProbe=childProc.spawnSync('git',['ls-remote','https://127.0.0.1:9/repo.git'],{env:process.env,encoding:'utf8',timeout:5000});
+const httpProbe=childProc.spawnSync('git',['ls-remote','http://127.0.0.1:9/repo.git'],{env:process.env,encoding:'utf8',timeout:5000});
 fs.writeFileSync(${JSON.stringify(codexEnvCapture)},JSON.stringify({
-pluginsDisabled:/\\[features\\][\\s\\S]*plugins\\s*=\\s*false/.test(codexConfig),
-gitTerminalPrompt:process.env.GIT_TERMINAL_PROMPT,
-gitConfigCount:process.env.GIT_CONFIG_COUNT,
-gitKey0:process.env.GIT_CONFIG_KEY_0,
-gitVal0:process.env.GIT_CONFIG_VALUE_0,
-gitKey1:process.env.GIT_CONFIG_KEY_1,
-gitVal1:process.env.GIT_CONFIG_VALUE_1
+featuresPlugins:JSON.parse(tomlProbe.stdout).plugins,
+httpsBlocked:httpsProbe.status!==0&&/transport 'https' not allowed/i.test(httpsProbe.stderr),
+httpBlocked:httpProbe.status!==0&&/transport 'http' not allowed/i.test(httpProbe.stderr)
 }));
+const injectionFile=${JSON.stringify(join(root, 'inject-cleanup-failure'))};
+const injectedMode=fs.existsSync(injectionFile)?fs.readFileSync(injectionFile,'utf8').trim():'';
 const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
 const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
-const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(() => {}, 1000)','private-arg-secret'],{
+if(!injectedMode){
+const child=childProc.spawn(process.execPath,['-e','setInterval(() => {}, 1000)','private-arg-secret'],{
 detached:true,stdio:'ignore',env:{...process.env,PRIVATE_ENV:'private-env-secret'}
 });
 const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
 fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib,tmp:process.env.TMPDIR}));
 child.unref();
 }
+}
 if(command==='opencode'){
+const injectionFile=${JSON.stringify(join(root, 'inject-cleanup-failure'))};
+const injectedMode=fs.existsSync(injectionFile)?fs.readFileSync(injectionFile,'utf8').trim():'';
+if(injectedMode==='removal'){
+const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
+const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
+const locked=path.join(process.env.TMPDIR,'locked-subdir');
+fs.mkdirSync(locked,{recursive:true});
+fs.writeFileSync(path.join(locked,'retained'),'locked');
+fs.chmodSync(locked,0o500);
+fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:0,start:'none',lib:runtimeLib,tmp:process.env.TMPDIR,locked}));
+}
+if(injectedMode==='degraded-marker'){
+const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
+const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
+fs.mkdirSync(path.join(runtimeLib,'.hook-smoke-deadline-degraded'));
+const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{
+detached:true,stdio:'ignore',env:process.env
+});
+const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
+fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib,tmp:process.env.TMPDIR}));
+child.unref();
+}
 const workspace=process.argv[process.argv.indexOf('--dir')+1];
 const config=JSON.parse(fs.readFileSync(path.join(workspace,'opencode.json')));
 const url=config.provider['continuation-contract'].options.baseURL+'/chat/completions?private-query';
@@ -694,14 +721,35 @@ response.resume();response.on('end',resolve);
     );
     const codexGitEnv = JSON.parse(readFileSync(codexEnvCapture, 'utf8'));
     expect(codexGitEnv).toEqual({
-      pluginsDisabled: true,
-      gitTerminalPrompt: '0',
-      gitConfigCount: '2',
-      gitKey0: 'protocol.https.allow',
-      gitVal0: 'never',
-      gitKey1: 'protocol.http.allow',
-      gitVal1: 'never',
+      featuresPlugins: false,
+      httpsBlocked: true,
+      httpBlocked: true,
     });
+    const killHeldWriter = () => {
+      if (!existsSync(writerIdentity)) return;
+      spawnSync(
+        'python3',
+        [
+          '-c',
+          `import json,os,pathlib,select,signal,sys
+x=json.loads(pathlib.Path(sys.argv[1]).read_text())
+if not x.get('pid'): sys.exit(0)
+p=pathlib.Path('/proc')/str(x['pid'])
+try:
+ before=p.joinpath('stat').read_text().rsplit(') ',1)[1].split()[19]
+ if before==x['start']:
+  fd=os.pidfd_open(x['pid'])
+  try:
+   if p.joinpath('stat').read_text().rsplit(') ',1)[1].split()[19]==before:
+    signal.pidfd_send_signal(fd,signal.SIGKILL)
+    select.select([fd],[],[],2)
+  finally:os.close(fd)
+except (ProcessLookupError,FileNotFoundError):pass`,
+          writerIdentity,
+        ],
+        { encoding: 'utf8' },
+      );
+    };
     const identity = JSON.parse(readFileSync(writerIdentity, 'utf8'));
     let writerLive = false;
     try {
@@ -714,6 +762,7 @@ response.resume();response.on('end',resolve);
     expect(existsSync(identity.tmp)).toBe(true);
     expect(existsSync(identity.lib)).toBe(true);
     expect(readdirSync(scratch).length).toBeGreaterThan(0);
+    killHeldWriter();
     for (const privateValue of [
       'private-arg-secret',
       'private-env-secret',
@@ -725,6 +774,64 @@ response.resume();response.on('end',resolve);
       expect((result.stdout + result.stderr).includes(privateValue)).toBe(
         false,
       );
+
+    // Propagate cleanup filesystem failures even when cleanup runs inside an
+    // `if` conditional (which suppresses bash errexit inside the function):
+    // 1. Failed scratch removal after a clean drain must exit nonzero without
+    //    writing .hook-smoke-drained (retaining bundles).
+    const injectionControl = join(root, 'inject-cleanup-failure');
+    writeFileSync(injectionControl, 'removal\n');
+    const removalFailure = spawnSync(
+      'bash',
+      [join(project, 'tools/hook-telemetry-runtime-smoke.sh')],
+      {
+        env: {
+          ...process.env,
+          HOME: fixtureHome,
+          XDG_DATA_HOME: join(fixtureHome, '.local/share'),
+          PATH: `${bin}:${process.env.PATH}`,
+          TMPDIR: scratch,
+          CLAUDE_BIN: join(bin, 'claude'),
+          CODEX_BIN: join(bin, 'codex'),
+          OPENCODE_BIN: join(bin, 'opencode'),
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    );
+    const removalIdentity = JSON.parse(readFileSync(writerIdentity, 'utf8'));
+    chmodSync(removalIdentity.locked, 0o700);
+    expect(removalFailure.status).toBe(1);
+    expect(existsSync(join(removalIdentity.lib, '.hook-smoke-drained'))).toBe(
+      false,
+    );
+    expect(existsSync(removalIdentity.lib)).toBe(true);
+
+    // 2. Failed .hook-smoke-deadline-degraded write on drain deadline must exit
+    //    nonzero instead of silently succeeding without emitting ::warning::.
+    writeFileSync(injectionControl, 'degraded-marker\n');
+    const markerFailure = spawnSync(
+      'bash',
+      [join(project, 'tools/hook-telemetry-runtime-smoke.sh')],
+      {
+        env: {
+          ...process.env,
+          HOME: fixtureHome,
+          XDG_DATA_HOME: join(fixtureHome, '.local/share'),
+          PATH: `${bin}:${process.env.PATH}`,
+          TMPDIR: scratch,
+          CLAUDE_BIN: join(bin, 'claude'),
+          CODEX_BIN: join(bin, 'codex'),
+          OPENCODE_BIN: join(bin, 'opencode'),
+          HOOK_DRAIN_DEADLINE_SECONDS: '0.8',
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    );
+    killHeldWriter();
+    expect(markerFailure.status).toBe(1);
+    expect(markerFailure.stdout).not.toContain('::warning::');
   } finally {
     let ownedCleanupStatus = 0;
     if (existsSync(writerIdentity)) {
@@ -733,7 +840,9 @@ response.resume();response.on('end',resolve);
         [
           '-c',
           `import json,os,pathlib,select,signal,sys
-x=json.loads(pathlib.Path(sys.argv[1]).read_text());p=pathlib.Path('/proc')/str(x['pid'])
+x=json.loads(pathlib.Path(sys.argv[1]).read_text())
+if not x.get('pid'): sys.exit(0)
+p=pathlib.Path('/proc')/str(x['pid'])
 try:
  before=p.joinpath('stat').read_text().rsplit(') ',1)[1].split()[19]
  if before==x['start']:
@@ -751,6 +860,7 @@ except FileNotFoundError:pass`,
       );
       ownedCleanupStatus = cleanup.status ?? 1;
     }
+    spawnSync('chmod', ['-R', 'u+rwx', root]);
     expect(ownedCleanupStatus).toBe(0);
     rmSync(root, { recursive: true, force: true });
   }
