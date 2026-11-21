@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * The GitHub account the agent fleet claims work as.
  *

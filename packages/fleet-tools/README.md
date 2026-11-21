@@ -21,7 +21,8 @@ without the package degrades quietly.
   (`apps/runner-autoscaler/runner-image/Dockerfile`).
 
 `tests/package-install.test.sh` checks that a global install materializes every
-bin and keeps `fleet-identity.cjs` beside the guardrail that requires it.
+declared bin, omits `fleet-identity` from `bin/`, and keeps `fleet-identity.cjs`
+beside the guardrail that requires it.
 
 ## Commands
 
@@ -29,7 +30,11 @@ bin and keeps `fleet-identity.cjs` beside the guardrail that requires it.
 | ----------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fleet-claude-agent-session`  | `bin/claude-agent-session.sh`   | `resume-archive <gs://...jsonl \| run-id>` downloads one archived QueueExecutor Claude transcript into the current checkout's `~/.claude/projects/<slug>/` and prints the `claude --resume` command. Needs `gcloud`; `CLAUDE_AGENT_TRANSCRIPTS_BUCKET` overrides the bucket. Refuses to overwrite a differing file.                                       |
 | `fleet-codex-issue-guardrail` | `bin/codex-issue-guardrail.cjs` | Claim guardrail that member repositories register as a `PostToolUse` hook in `.claude/settings.json` and `.codex/hooks.json`. Only in a fleet dispatch (`LCARS_RUN_ID` or `AGENT_DISPATCH_CONTEXT` set), it inspects `gh issue view`/`edit` commands and adds context when an issue is not assigned to the fleet login or, for `edit`, is already closed. |
-| `fleet-identity`              | `bin/fleet-identity.cjs`        | A library module, not a command: it exports `fleetLogin()` (`AGENT_FLEET_LOGIN`, default `agent-lcars-bot`) and `DEFAULT_FLEET_LOGIN` for the other tools. Running it does nothing.                                                                                                                                                                       |
+
+`bin/fleet-identity.cjs` is an internal helper module rather than an installed
+command: it exports `fleetLogin()` (`AGENT_FLEET_LOGIN`, default
+`agent-lcars-bot`) and `DEFAULT_FLEET_LOGIN` for `codex-issue-guardrail.cjs` and
+`worker-policy.cjs`.
 
 ## Worker policy modules
 

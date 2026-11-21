@@ -762,11 +762,10 @@ directory):
 
 - `opencode-litellm-proxy.mjs`: loopback proxy `direct-runner.sh` starts in
   front of LiteLLM for OpenCode runs; it records the physical model behind
-  `x-litellm-model-id` to a file. That model lookup is best effort: its
-  failure never replaces the upstream response. Known limitation: the proxy
-  streams the body as `fetch` decoded it but forwards the original
-  `content-encoding` header, so a gzip-encoded upstream body reaches the
-  client unreadable.
+  `x-litellm-model-id` to a file and strips upstream `content-encoding` and
+  `content-length` headers when re-streaming `fetch`-decoded response bodies.
+  That model lookup is best effort: its failure never replaces the upstream
+  response.
 - `toolchain-health.sh`: present, but run at image build: predicates (pnpm through the baked
   Corepack cache, offline fleet pnpm pins, and other job tools) sourced by
   `verify-image-invariants.sh`, so an image with a broken job tool is never

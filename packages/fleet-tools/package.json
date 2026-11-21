@@ -6,8 +6,7 @@
   "license": "SEE LICENSE IN ../../LICENSE",
   "bin": {
     "fleet-claude-agent-session": "bin/claude-agent-session.sh",
-    "fleet-codex-issue-guardrail": "bin/codex-issue-guardrail.cjs",
-    "fleet-identity": "bin/fleet-identity.cjs"
+    "fleet-codex-issue-guardrail": "bin/codex-issue-guardrail.cjs"
   },
   "files": [
     "bin"

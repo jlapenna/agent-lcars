@@ -16,6 +16,11 @@ const HOP_BY_HOP = new Set([
   'transfer-encoding',
   'upgrade',
 ]);
+const DECODED_UPSTREAM_HEADERS = new Set([
+  ...HOP_BY_HOP,
+  'content-encoding',
+  'content-length',
+]);
 
 async function readBounded(stream, limit) {
   const chunks = [];
@@ -126,7 +131,7 @@ export function createLiteLLMProxy({ upstream, outputFile }) {
         upstreamResponse.status,
         Object.fromEntries(
           [...upstreamResponse.headers].filter(
-            ([name]) => !HOP_BY_HOP.has(name.toLowerCase()),
+            ([name]) => !DECODED_UPSTREAM_HEADERS.has(name.toLowerCase()),
           ),
         ),
       );
