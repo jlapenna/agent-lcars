@@ -2,11 +2,7 @@
   "version": 1,
   "profiles": {
     "jobs-only": {
-      "repositories": [
-        "jlapenna/dev",
-        "jlapenna/repo-tools",
-        "jlapenna/fleet-runtime"
-      ],
+      "repositories": ["jlapenna/dev", "jlapenna/fleet-runtime"],
       "variables": {}
     },
     "agent-lcars": {
@@ -123,7 +119,8 @@
         "jlapenna/jclaw",
         "jlapenna/home-assistant-config",
         "jlapenna/sparkstack-registry",
-        "jlapenna/homegit"
+        "jlapenna/homegit",
+        "jlapenna/repo-tools"
       ],
       "variables": {
         "AGENT_FLEET_LOGIN": {

@@ -319,7 +319,8 @@ export async function auditRepository({
     // PR-only statuses belong to the reviewed head, even after squash merge.
     const reviewRule = required.find(
       (rule) =>
-        rule.context === 'LCARS review' && rule.integration_id === 15368,
+        rule.context === 'LCARS review' &&
+        [15368, 4457090].includes(rule.integration_id),
     );
     let reviewStatusObserved = false;
     if (reviewRule) {
@@ -329,7 +330,28 @@ export async function auditRepository({
       const merged = pulls.find(
         (pr) => pr.merge_commit_sha === commit.sha && pr.merged_at,
       );
-      if (merged) {
+      if (!merged?.head?.sha) {
+        throw new UnverifiableError(
+          'Merged PR head unavailable for the required LCARS review',
+        );
+      }
+      if (reviewRule.integration_id === 4457090) {
+        const headChecks = await optionalMetadataRead(capability, () =>
+          pages(
+            api,
+            `/repos/${repo}/commits/${merged.head.sha}/check-runs?filter=all`,
+            metadataToken,
+            'check_runs',
+          ),
+        );
+        reviewStatusObserved = headChecks.some(
+          (check) =>
+            check.name === reviewRule.context &&
+            check.app?.id === reviewRule.integration_id &&
+            check.head_sha === merged.head.sha &&
+            check.external_id === 'lcars-review',
+        );
+      } else {
         const headStatuses = await optionalMetadataRead(capability, () =>
           pages(
             api,

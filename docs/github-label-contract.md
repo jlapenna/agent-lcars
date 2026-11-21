@@ -78,7 +78,8 @@ respective artifact facts.
 Each manifest entry follows one of four profiles:
 
 - **Standard** (Homelab, Repo Tools and most member repositories): the shared families
-  below and no `automation:*`, `ci:*`, or `app:*` labels.
+  below and no `automation:*`, `ci:*`, or `app:*` labels. Repo Tools also retains
+  its existing GitHub issue labels.
 - **Agent LCARS**: Standard plus its own `app:*` labels.
 - **Sprinkles**: Standard plus its automation/CI controls and `app:*` labels.
 - **Empty**: an entry with no declared labels and empty
