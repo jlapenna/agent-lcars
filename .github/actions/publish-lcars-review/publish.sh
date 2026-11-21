@@ -28,7 +28,10 @@ while read -r pr head; do
     | .potentialMergeCommit.oid // empty' <<< "$comparison")
   [[ -n "$candidate" ]] || continue
   base_event=$(jq -c '.timelineItems.nodes[0] // {}' <<< "$comparison")
-  state=$(jq -r --argjson base_event "$base_event" --arg head "$head" '
+  base_tip=$(jq -r '.baseRef.target.oid' <<< "$comparison")
+  merge_base=$(gh api "repos/$REPO/compare/$base_tip...$head" --jq '.merge_base_commit.sha')
+  [[ "$merge_base" =~ ^[0-9a-f]{40}$ ]]
+  state=$(jq -r --arg merge_base "$merge_base" --argjson base_event "$base_event" --arg head "$head" '
     def marked($marker): (.body // "" | split("\n") | any(rtrimstr("\r") == $marker));
     def base_receipt: (.body // "" | split("\n")[0] | rtrimstr("\r") |
       [capture("^<!-- lcars-review:base-event (?<id>[^[:space:]<>]+) -->$").id][0]);
@@ -44,7 +47,8 @@ while read -r pr head; do
           then "blocked" else "provisional_block" end
         elif $r.state == "COMMENTED" and . != "blocked" and
           ($r | marked("<!-- lcars-review:block -->")) then "comment_blocked"
-        elif ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
+        elif ($r | marked("<!-- lcars-review:merge-base \($merge_base) -->")) and
+          ($r.body // "" | test("<!-- attempt-claim:g[0-9]+:[^[:space:]>]+ -->")) and
           ($r.state == "APPROVED" or ($r.state == "COMMENTED" and ($r.body | split("\n") | any(rtrimstr("\r") == "<!-- lcars-review:pass -->")) and . != "blocked"))
         then "success" else . end)
   ' <<< "$reviews")

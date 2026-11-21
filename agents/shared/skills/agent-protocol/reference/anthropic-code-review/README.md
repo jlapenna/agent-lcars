@@ -127,7 +127,12 @@ review and comment-quality guidance applies.
    reviews omit both verdict markers. Do not change credentials to evade that restriction.
    For a retargeted PR, start the review body with
    `<!-- lcars-review:base-event NODE_ID -->`, using the event recorded
-   before reviewing the diff. For a blocking self-review, attach a finding
+   before reviewing the diff. Before fetching the diff, also record
+   `merge_base_commit.sha` from the GitHub comparison of the base tip and
+   PR head. Recheck that merge base before publishing and include
+   `<!-- lcars-review:merge-base SHA -->` on its own line with the recorded
+   SHA. Review the updated diff if the merge base changed.
+   For a blocking self-review, attach a finding
    as an unresolved review thread in the same submission. If all findings
    lack a changed-line location, first create a file-level review thread
    (`subject_type: file`) on an affected changed file at the reviewed SHA.
