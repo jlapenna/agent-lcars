@@ -292,9 +292,11 @@ individual GitHub response is incomplete or otherwise malformed.
 
 When an owner's installation hits `X-RateLimit-Remaining: 0` (including on a
 `200` response carrying the final allowed request) or returns a rate-limited
-`403`/`429`, `GitHubAPI` arms a per-owner backoff until `X-RateLimit-Reset` or
-`Retry-After` (delta-seconds or RFC 7231 HTTP-date, with a bounded fallback
-under clock skew and a one-hour ceiling). Repositories under that owner skip
+`403`/`429` (including secondary-limit `403` responses without `Retry-After`,
+while excluding ordinary `5xx` `Retry-After` errors), `GitHubAPI` arms a
+per-owner backoff until `X-RateLimit-Reset` or `Retry-After` (delta-seconds or
+RFC 7231 HTTP-date, with a 60-second minimum fallback when neither yields a
+future delay and a one-hour ceiling). Repositories under that owner skip
 outbound requests while backed off, increment
 `github_actions_exporter_poll_errors_total{repository,stage="rate_limit"}`, and
 leave `github_actions_exporter_last_success_timestamp_seconds{repository}`
@@ -302,12 +304,21 @@ unchanged so staleness alerts observe the gap, while repositories under other
 owners continue refreshing normally and the affected owner backfills from its
 last successful poll once the window resets.
 
-Optional metadata calls (`concurrency_groups` for active runs and `pull_request`
-rerun checks) are throttled per run, capped per owner per poll cycle, and
-skipped altogether when an owner's remaining core quota drops below `500`
-requests. Skipping or failing an optional `concurrency_groups` lookup preserves
-any previously confirmed `concurrency_group` label in SQLite and marks newly
-seen active jobs `unknown` rather than `none`.
+Optional metadata calls have separate bounds and share a per-probe `500`-request
+core-quota reserve:
+
+- Active-run `concurrency_groups` lookups are throttled to once every five
+  minutes per run and capped at `20` requests per owner per poll cycle, shared
+  across that owner's configured repositories with rotating remainder priority
+  and unused-slot rollover so an earlier busy repository cannot starve later
+  ones. Skipping or failing an optional lookup preserves any previously
+  confirmed `concurrency_group` label in SQLite and marks newly seen active jobs
+  `unknown` rather than `none`.
+- Failed-`pull_request` rerun probes run at most once every five minutes per
+  repository and check up to `20` candidate runs per repository (least recently
+  probed first). Each probe rechecks the owner's `500`-request reserve before
+  calling GitHub and advances the per-run recheck timestamp only for attempted
+  runs so deferred candidates keep their place.
 
 ## Verification
 

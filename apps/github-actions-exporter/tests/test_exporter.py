@@ -3271,6 +3271,476 @@ class PerOwnerQuotaTests(unittest.TestCase):
             {1: "ci-pr-1", 200: "none", 202: "none"},
         )
 
+    def test_zero_remaining_200_with_skewed_or_missing_reset_applies_minimum_backoff(
+        self,
+    ):
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        api.session.get = Mock(
+            side_effect=[
+                self.json_response(
+                    {"ok": True},
+                    status_code=200,
+                    headers={
+                        "X-RateLimit-Remaining": "0",
+                        "X-RateLimit-Reset": str(int(self.now_epoch - 10)),
+                    },
+                ),
+                self.json_response({"ok": True}),
+            ]
+        )
+
+        self.assertEqual(
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
+            {"ok": True},
+        )
+        self.advance(exporter.MIN_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+        self.assertEqual(api.session.get.call_count, 1)
+
+        self.advance(2)
+        self.assertEqual(
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
+            {"ok": True},
+        )
+        self.assertEqual(api.session.get.call_count, 2)
+
+    def test_503_retry_after_does_not_arm_owner_quota_backoff_unless_zero_remaining(
+        self,
+    ):
+        repositories = ("jlapenna/agent-lcars", "jlapenna/homelab")
+        registry = CollectorRegistry()
+        state = exporter.ExporterState(registry)
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=repositories,
+        )
+        api = exporter.GitHubAPI(
+            config,
+            state,
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        poller = exporter.Poller(
+            config,
+            self.database,
+            api,
+            state,
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+
+        active_run = workflow_run(id=1, status="in_progress", conclusion=None)
+        calls: list[str] = []
+
+        def fake_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            calls.append(path)
+            rate_headers = {
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
+            }
+            if path == "/repos/jlapenna/agent-lcars/actions/runs":
+                return self.json_response(
+                    {"total_count": 1, "workflow_runs": [active_run]},
+                    headers=rate_headers,
+                )
+            if path == "/repos/jlapenna/agent-lcars/actions/runs/1/jobs":
+                return self.json_response(
+                    {
+                        "total_count": 1,
+                        "jobs": [
+                            workflow_job(
+                                id=101,
+                                status="queued",
+                                conclusion=None,
+                                started_at=None,
+                                completed_at=None,
+                            )
+                        ],
+                    },
+                    headers=rate_headers,
+                )
+            if path == "/repos/jlapenna/agent-lcars/actions/runs/1/concurrency_groups":
+                return self.json_response(
+                    {"message": "Service Unavailable"},
+                    status_code=503,
+                    headers={**rate_headers, "Retry-After": "300"},
+                )
+            return self.json_response(
+                {"total_count": 0, "workflow_runs": []},
+                headers=rate_headers,
+            )
+
+        api.session.get = Mock(side_effect=fake_get)
+        with self.assertLogs(exporter.LOGGER, level="WARNING"):
+            poller.refresh_all()
+
+        # Both jlapenna repositories completed their core refresh; the 503 on
+        # optional concurrency_groups did not block homelab or record rate_limit.
+        self.assertIn("/repos/jlapenna/homelab/actions/runs", calls)
+        metrics = generate_latest(registry).decode()
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_last_success_timestamp_seconds",
+                '{repository="jlapenna/agent-lcars"}',
+            ),
+            self.now_epoch,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_last_success_timestamp_seconds",
+                '{repository="jlapenna/homelab"}',
+            ),
+            self.now_epoch,
+        )
+        self.assertEqual(
+            exported_metric_value(
+                metrics,
+                "github_actions_exporter_poll_errors_total",
+                '{repository="jlapenna/agent-lcars",stage="concurrency_groups"}',
+            ),
+            1.0,
+        )
+        self.assertNotIn('stage="rate_limit"', metrics)
+
+        # Independent zero-quota handling still arms backoff even on a 503.
+        api.session.get = Mock(
+            return_value=self.json_response(
+                {},
+                status_code=503,
+                headers={
+                    "X-RateLimit-Remaining": "0",
+                    "X-RateLimit-Reset": str(int(self.now_epoch + 120)),
+                },
+            )
+        )
+        with self.assertRaises(exporter.GitHubRequestError) as raised:
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+        self.assertTrue(raised.exception.rate_limited)
+        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+
+    def test_secondary_rate_limit_403_without_retry_after_backs_off_while_permission_403_does_not(
+        self,
+    ):
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=("jlapenna/homelab",),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+
+        permission_403 = Mock(
+            status_code=403,
+            headers={
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 2400)),
+            },
+        )
+        permission_403.raise_for_status.side_effect = requests.HTTPError(
+            "403", response=permission_403
+        )
+        permission_403.json.return_value = {
+            "message": "Resource not accessible by integration",
+            "documentation_url": "https://docs.github.com/rest/actions/workflow-runs",
+        }
+
+        secondary_403 = Mock(
+            status_code=403,
+            headers={
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 2400)),
+            },
+        )
+        secondary_403.raise_for_status.side_effect = requests.HTTPError(
+            "403", response=secondary_403
+        )
+        secondary_403.json.return_value = {
+            "message": (
+                "You have exceeded a secondary rate limit. Please wait a few "
+                "minutes before you try again."
+            ),
+            "documentation_url": (
+                "https://docs.github.com/rest/overview/resources-in-the-rest-api"
+                "#secondary-rate-limits"
+            ),
+        }
+
+        api.session.get = Mock(
+            side_effect=[
+                permission_403,
+                secondary_403,
+                self.json_response({"ok": True}),
+            ]
+        )
+
+        # Ordinary permission 403 is not rate-limited and leaves the owner unblocked.
+        with self.assertRaises(exporter.GitHubRequestError) as perm_err:
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+        self.assertFalse(perm_err.exception.rate_limited)
+
+        # Secondary-limit 403 without Retry-After is recognized and arms the 60s fallback.
+        with self.assertRaises(exporter.GitHubRequestError) as sec_err:
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+        self.assertTrue(sec_err.exception.rate_limited)
+
+        self.advance(exporter.MIN_RATE_LIMIT_BACKOFF_SECONDS - 1)
+        with self.assertRaises(exporter.GitHubRateLimitBackoffError):
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs")
+        self.assertEqual(api.session.get.call_count, 2)
+
+        self.advance(2)
+        self.assertEqual(
+            api.get("/repos/jlapenna/homelab/actions/runs", endpoint="runs"),
+            {"ok": True},
+        )
+
+    def test_rerun_probes_recheck_quota_reserve_per_probe_and_keep_deferred_order(
+        self,
+    ):
+        repository = "jlapenna/agent-lcars"
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=(repository,),
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        poller = exporter.Poller(
+            config,
+            self.database,
+            api,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+
+        # Seed 3 failed PR runs older than overlap (newest first: 503, 502, 501)
+        # plus a core run-attempt gap (700 attempt 2 missing attempt 1).
+        for offset_hours, run_id, branch in (
+            (3, 501, "pr-1"),
+            (2, 502, "pr-2"),
+            (1, 503, "pr-3"),
+        ):
+            ts = datetime.fromtimestamp(
+                self.now_epoch - offset_hours * 3600, UTC
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            pr_run = workflow_run(
+                id=run_id,
+                event="pull_request",
+                conclusion="failure",
+                head_branch=branch,
+                created_at=ts,
+                run_started_at=ts,
+                updated_at=ts,
+            )
+            self.database.upsert_run(repository, pr_run)
+            self.database.upsert_jobs(repository, pr_run, [])
+
+        gap_ts = datetime.fromtimestamp(self.now_epoch - 3600, UTC).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        gap_run = workflow_run(
+            id=700,
+            run_attempt=2,
+            created_at=gap_ts,
+            run_started_at=gap_ts,
+            updated_at=gap_ts,
+        )
+        self.database.upsert_run(repository, gap_run)
+        self.database.upsert_jobs(repository, gap_run, [])
+
+        probed_reruns: list[int] = []
+        attempt_calls: list[tuple[int, int]] = []
+        remaining_values = iter(["500", "499", "498"])
+
+        def first_cycle_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            rate_headers = {
+                "X-RateLimit-Remaining": next(remaining_values),
+                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
+            }
+            if path.endswith("/actions/runs"):
+                return self.json_response(
+                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
+                )
+            if "/attempts/" in path:
+                parts = path.split("/")
+                attempt_calls.append((int(parts[-3]), int(parts[-1])))
+                return self.json_response(
+                    workflow_run(
+                        id=700,
+                        run_attempt=1,
+                        conclusion="failure",
+                        created_at=gap_ts,
+                        run_started_at=gap_ts,
+                        updated_at=gap_ts,
+                    ),
+                    headers=rate_headers,
+                )
+            run_id = int(path.split("/")[-1])
+            probed_reruns.append(run_id)
+            return self.json_response({}, status_code=404, headers=rate_headers)
+
+        api.session.get = Mock(side_effect=first_cycle_get)
+        poller.refresh_repository(repository)
+
+        # Probe 1 (503) dropped remaining to 499, halting 502 and 501 immediately
+        # while still completing core attempt-gap collection.
+        self.assertEqual(probed_reruns, [503])
+        self.assertEqual(attempt_calls, [(700, 1)])
+        self.assertEqual(
+            set(poller.pull_request_rechecked_at[repository].keys()), {503}
+        )
+
+        # Once quota recovers, deferred 502 and 501 are probed ahead of 503.
+        probed_reruns.clear()
+        self.advance(60)
+
+        def recovered_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            rate_headers = {
+                "X-RateLimit-Remaining": "5000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 3600)),
+            }
+            if path.endswith("/actions/runs"):
+                return self.json_response(
+                    {"total_count": 0, "workflow_runs": []}, headers=rate_headers
+                )
+            run_id = int(path.split("/")[-1])
+            probed_reruns.append(run_id)
+            return self.json_response({}, status_code=404, headers=rate_headers)
+
+        api.session.get = Mock(side_effect=recovered_get)
+        poller.refresh_repository(repository)
+        self.assertEqual(probed_reruns, [502, 501, 503])
+
+    def test_later_same_owner_repository_gets_fair_and_rotating_concurrency_group_share(
+        self,
+    ):
+        repositories = ("jlapenna/busy-repo", "jlapenna/later-repo")
+        config = exporter.Config(
+            credentials=exporter.StaticCredentials("test"),
+            repositories=repositories,
+        )
+        api = exporter.GitHubAPI(
+            config,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+        self.addCleanup(api.close)
+        poller = exporter.Poller(
+            config,
+            self.database,
+            api,
+            exporter.ExporterState(CollectorRegistry()),
+            clock=lambda: self.now_epoch,
+            monotonic=lambda: self.now_monotonic,
+        )
+
+        busy_runs = [
+            workflow_run(id=100 + idx, status="in_progress", conclusion=None)
+            for idx in range(20)
+        ]
+        later_runs = [
+            workflow_run(id=300 + idx, status="in_progress", conclusion=None)
+            for idx in range(2)
+        ]
+        group_calls_by_repo: dict[str, list[int]] = {
+            "jlapenna/busy-repo": [],
+            "jlapenna/later-repo": [],
+        }
+
+        def fair_get(url, *, params=None, timeout=None, headers=None):
+            path = url.removeprefix(config.api_url)
+            rate_headers = {
+                "X-RateLimit-Remaining": "4000",
+                "X-RateLimit-Reset": str(int(self.now_epoch + 1800)),
+            }
+            repo = "/".join(path.split("/")[2:4])
+            if path.endswith("/actions/runs"):
+                runs = busy_runs if repo == "jlapenna/busy-repo" else later_runs
+                return self.json_response(
+                    {"total_count": len(runs), "workflow_runs": runs},
+                    headers=rate_headers,
+                )
+            if path.endswith("/jobs"):
+                run_id = int(path.split("/")[-2])
+                return self.json_response(
+                    {
+                        "total_count": 1,
+                        "jobs": [
+                            workflow_job(
+                                id=run_id * 10,
+                                status="queued",
+                                conclusion=None,
+                                started_at=None,
+                                completed_at=None,
+                            )
+                        ],
+                    },
+                    headers=rate_headers,
+                )
+            if path.endswith("/concurrency_groups"):
+                run_id = int(path.split("/")[-2])
+                group_calls_by_repo[repo].append(run_id)
+                return self.json_response(
+                    {
+                        "concurrency_groups": [
+                            {
+                                "group_name": f"cg-{run_id}",
+                                "group_members": [{"job_id": run_id * 10}],
+                            }
+                        ]
+                    },
+                    headers=rate_headers,
+                )
+            return self.json_response({}, status_code=404, headers=rate_headers)
+
+        api.session.get = Mock(side_effect=fair_get)
+        poller.refresh_all()
+
+        # busy-repo gets its 10-slot share rather than all 20, so later-repo
+        # resolves both of its active runs on the very first cycle.
+        self.assertEqual(len(group_calls_by_repo["jlapenna/busy-repo"]), 10)
+        self.assertEqual(group_calls_by_repo["jlapenna/later-repo"], [300, 301])
+
+        # With limit=1 across 2 repositories, remainder priority rotates each
+        # cycle so later-repo gets the slot on the second cycle even while busy-repo
+        # still has unresolved active runs.
+        group_calls_by_repo["jlapenna/busy-repo"].clear()
+        group_calls_by_repo["jlapenna/later-repo"].clear()
+        later_runs.append(workflow_run(id=302, status="in_progress", conclusion=None))
+        self.advance(60)
+        with patch.object(exporter, "CONCURRENCY_GROUPS_PER_CYCLE_LIMIT", 1):
+            poller.refresh_all()
+            self.assertEqual(len(group_calls_by_repo["jlapenna/busy-repo"]), 0)
+            self.assertEqual(group_calls_by_repo["jlapenna/later-repo"], [302])
+
 
 class InstallationReinstallTests(unittest.TestCase):
     """A reinstall issues a new installation id; the process can outlive it."""

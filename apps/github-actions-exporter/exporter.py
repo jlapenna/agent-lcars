@@ -603,16 +603,55 @@ class ExporterState:
                     metric.labels(owner_label).set(count)
 
 
+SECONDARY_RATE_LIMIT_MARKERS = (
+    "secondary rate limit",
+    "secondary-rate-limits",
+    "abuse detection",
+    "abuse-rate-limits",
+)
+
+
+def _is_secondary_rate_limit_403(response: requests.Response) -> bool:
+    """Recognize GitHub's 403 secondary-limit body without matching permission errors."""
+    if response.status_code != 403:
+        return False
+    candidates: list[str] = []
+    json_method = getattr(response, "json", None)
+    if callable(json_method):
+        try:
+            payload = json_method()
+        except (ValueError, TypeError):
+            payload = None
+        if isinstance(payload, dict):
+            for field in ("message", "documentation_url"):
+                value = payload.get(field)
+                if isinstance(value, str):
+                    candidates.append(value)
+    if not candidates:
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text:
+            candidates.append(text)
+    if not candidates:
+        return False
+    combined = " ".join(candidates).casefold()
+    return any(marker in combined for marker in SECONDARY_RATE_LIMIT_MARKERS)
+
+
 class GitHubRequestError(RuntimeError):
     """An HTTP failure from GitHub that callers may handle by status."""
 
     def __init__(self, endpoint: str, response: requests.Response) -> None:
         self.status_code = response.status_code
         remaining = _non_negative_int_header(response.headers, "x-ratelimit-remaining")
+        has_rate_limit_retry_after = (
+            response.status_code in {403, 429}
+            and _header(response.headers, "retry-after") is not None
+        )
         self.rate_limited = (
             response.status_code == 429
             or remaining == 0
-            or _header(response.headers, "retry-after") is not None
+            or has_rate_limit_retry_after
+            or _is_secondary_rate_limit_403(response)
         )
         request_id = _header(response.headers, "x-github-request-id") or "unknown"
         super().__init__(
@@ -754,7 +793,7 @@ class GitHubAPI:
             delay = 0.0
             if exhausted:
                 delay = max(retry_after_delay or 0.0, reset_delay or 0.0)
-                if delay <= 0.0 and rate_limited_error:
+                if delay <= 0.0:
                     delay = MIN_RATE_LIMIT_BACKOFF_SECONDS
             elif rate_limited_error:
                 if remaining is not None and remaining > 0:
@@ -2083,7 +2122,10 @@ class Poller:
         self._monotonic = monotonic
         self.concurrency_groups_retry_after: dict[str, float] = {}
         self.concurrency_groups_refresh_after: dict[str, dict[int, float]] = {}
-        self._cycle_concurrency_group_fetches: dict[str, int] = {}
+        self._concurrency_group_owner_cursor: dict[str, int] = {}
+        self._repo_concurrency_group_budget: dict[str, int] = {}
+        self._owner_concurrency_group_rollover: dict[str, int] = {}
+        self._current_repo_group_remaining = CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
         self._in_refresh_all = False
         self.pull_request_recheck_after: dict[str, float] = {}
         self.pull_request_rechecked_at: dict[str, dict[int, float]] = {}
@@ -2106,11 +2148,37 @@ class Poller:
             return True
         return checker(owner_of_repository(repository)) is not False
 
+    def _allocate_cycle_concurrency_group_budgets(self) -> None:
+        self._repo_concurrency_group_budget.clear()
+        self._owner_concurrency_group_rollover.clear()
+        repos_by_owner: dict[str, list[str]] = {}
+        for repository in self.config.repositories:
+            owner_key = owner_of_repository(repository).casefold()
+            repos_by_owner.setdefault(owner_key, []).append(repository)
+
+        limit = max(0, CONCURRENCY_GROUPS_PER_CYCLE_LIMIT)
+        for owner_key, owner_repos in repos_by_owner.items():
+            count = len(owner_repos)
+            base, remainder = divmod(limit, count)
+            cursor = self._concurrency_group_owner_cursor.get(owner_key, 0) % count
+            self._concurrency_group_owner_cursor[owner_key] = (cursor + 1) % count
+            extra_indices = {(cursor + offset) % count for offset in range(remainder)}
+            for index, repository in enumerate(owner_repos):
+                self._repo_concurrency_group_budget[repository] = base + (
+                    1 if index in extra_indices else 0
+                )
+
     def refresh_repository(self, repository: str) -> None:
-        if not self._in_refresh_all:
-            self._cycle_concurrency_group_fetches[
-                owner_of_repository(repository).casefold()
-            ] = 0
+        owner_key = owner_of_repository(repository).casefold()
+        if self._in_refresh_all:
+            self._current_repo_group_remaining = (
+                self._repo_concurrency_group_budget.get(repository, 0)
+                + self._owner_concurrency_group_rollover.get(owner_key, 0)
+            )
+        else:
+            self._current_repo_group_remaining = max(
+                0, CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
+            )
         initial = not self.database.backfill_complete(repository)
         if initial:
             self.state.backfill_in_progress.labels(repository).set(1)
@@ -2169,9 +2237,6 @@ class Poller:
             if recheck_at >= self.pull_request_recheck_after.get(
                 repository, 0
             ) and self._optional_metadata_allowed(repository):
-                self.pull_request_recheck_after[repository] = (
-                    recheck_at + PULL_REQUEST_RECHECK_SECONDS
-                )
                 candidates = [
                     run_id
                     for run_id in self.database.failing_pull_request_run_ids(
@@ -2185,19 +2250,32 @@ class Poller:
                     candidates,
                     key=lambda run_id: previous.get(run_id, float("-inf")),
                 )[:PULL_REQUEST_RECHECK_LIMIT]
-                self.pull_request_rechecked_at[repository] = {
-                    run_id: recheck_at if run_id in due else previous[run_id]
-                    for run_id in candidates
-                    if run_id in due or run_id in previous
-                }
-                for run_id in due:
-                    try:
-                        run = self.api.get_run(repository, run_id)
-                    except GitHubRequestError as exc:
-                        if exc.status_code != 404:
-                            raise
-                        continue
-                    self._store_run(repository, run)
+                attempted: set[int] = set()
+                halted_for_quota = False
+                try:
+                    for run_id in due:
+                        if not self._optional_metadata_allowed(repository):
+                            halted_for_quota = True
+                            break
+                        try:
+                            run = self.api.get_run(repository, run_id)
+                        except GitHubRequestError as exc:
+                            if exc.status_code != 404:
+                                raise
+                            attempted.add(run_id)
+                            continue
+                        attempted.add(run_id)
+                        self._store_run(repository, run)
+                finally:
+                    self.pull_request_rechecked_at[repository] = {
+                        run_id: recheck_at if run_id in attempted else previous[run_id]
+                        for run_id in candidates
+                        if run_id in attempted or run_id in previous
+                    }
+                if not halted_for_quota:
+                    self.pull_request_recheck_after[repository] = (
+                        recheck_at + PULL_REQUEST_RECHECK_SECONDS
+                    )
 
             for run_id, attempts in self.database.run_attempt_gaps(repository):
                 for attempt in attempts:
@@ -2219,6 +2297,10 @@ class Poller:
                 repository, initial=initial, timestamp=self._now_epoch()
             )
         finally:
+            if self._in_refresh_all:
+                self._owner_concurrency_group_rollover[owner_key] = (
+                    self._current_repo_group_remaining
+                )
             if initial:
                 self.state.backfill_in_progress.labels(repository).set(0)
         self.state.last_success.labels(repository).set(success_at)
@@ -2255,20 +2337,16 @@ class Poller:
                 groups = []
                 now = self._now_monotonic()
                 run_id = int(run["id"])
-                owner_key = owner_of_repository(repository).casefold()
                 run_refresh_after = self.concurrency_groups_refresh_after.get(
                     repository, {}
                 ).get(run_id, 0.0)
                 if (
                     now >= self.concurrency_groups_retry_after.get(repository, 0)
                     and now >= run_refresh_after
-                    and self._cycle_concurrency_group_fetches.get(owner_key, 0)
-                    < CONCURRENCY_GROUPS_PER_CYCLE_LIMIT
+                    and self._current_repo_group_remaining > 0
                     and self._optional_metadata_allowed(repository)
                 ):
-                    self._cycle_concurrency_group_fetches[owner_key] = (
-                        self._cycle_concurrency_group_fetches.get(owner_key, 0) + 1
-                    )
+                    self._current_repo_group_remaining -= 1
                     try:
                         groups = self.api.list_concurrency_groups(repository, run_id)
                     except GitHubRateLimitBackoffError:
@@ -2323,7 +2401,7 @@ class Poller:
         )
 
     def refresh_all(self) -> None:
-        self._cycle_concurrency_group_fetches.clear()
+        self._allocate_cycle_concurrency_group_budgets()
         self._in_refresh_all = True
         try:
             for repository in self.config.repositories:
