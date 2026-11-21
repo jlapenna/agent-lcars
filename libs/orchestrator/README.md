@@ -169,10 +169,12 @@ belong to `apps/console/src/lib/dashboard-stream.ts` and the console route/actio
 
 Explicit quota failures also record a provider admission hold in
 `orchestrator-provider-cooldowns`, atomically with the failed run. Claims read
-that hold inside their selection transaction. A recognized Claude UTC reset
-within seven days supplies the deadline; otherwise the provider is eligible
-for another probe after 15 minutes. The exact weekly-limit response from older
-runner images is supported alongside the current `provider-limit` outcome.
+that hold inside their selection transaction. A recognized Claude or
+runner-pinned Codex `(UTC)` reset within seven days supplies the deadline;
+otherwise the provider is eligible for another probe after 15 minutes. Zone-less
+or unparseable reset text never extends the hold. The exact weekly-limit
+response from older runner images is supported alongside the current
+`provider-limit` outcome.
 Each record identifies its source run and observation/deadline timestamps.
 Queued tasks retain their requested provider and do not consume execution
 leases or lost-run retries while held. Other granted providers remain eligible.

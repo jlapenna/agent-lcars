@@ -1049,7 +1049,7 @@ CURLCFG
     echo "FATAL: restored Codex authentication failed its SHA-256 check" >&2
     exit 1
   fi
-  codex login status
+  TZ=UTC0 codex login status
 
   # Native work items sub-project 9 (resumable conversations, plan 3): a
   # requested resume must restore Codex's own thread, exactly as the
@@ -1109,14 +1109,21 @@ CURLCFG
   CODEX_LAST_MESSAGE_FILE="$RUNNER_TEMP/codex-last-message.txt"
   CODEX_DEADLINE=$(($(monotonic_seconds) + CODEX_TIMEOUT_SECONDS))
   CODEX_THREAD_FILE="$CODEX_RUNTIME_DIR/thread-id"
+  CODEX_ROUND_UTC_DATE=''
   run_codex_round() {
-    local prompt="$1" remaining round_exit
+    local prompt="$1" remaining round_exit round_start_utc_date round_end_utc_date
     shift
     remaining=$((CODEX_DEADLINE - $(monotonic_seconds)))
     [ "$remaining" -gt 0 ] || return 124
+    # Codex formats usage-limit resets in chrono::Local without a zone label,
+    # omitting the calendar date when the reset falls on the same local day.
+    # Pin TZ=UTC0 and retain the UTC date only when the round does not cross
+    # UTC midnight, so a date-less time never guesses which day it belonged to.
+    CODEX_ROUND_UTC_DATE=''
+    round_start_utc_date="$(TZ=UTC0 date '+%b %-d, %Y')"
     tee -a "$CODEX_STDERR" < "$CODEX_STDERR_PIPE" >&2 &
     CODEX_STDERR_TEE_PID=$!
-    timeout --signal=TERM --kill-after=30s "${remaining}s" \
+    TZ=UTC0 timeout --signal=TERM --kill-after=30s "${remaining}s" \
       "$PROVIDER_PROCESS_NODE" "$PROVIDER_PROCESS_HELPER" codex exec "$@" "${CODEX_HOOK_ARGS[@]}" --json --dangerously-bypass-approvals-and-sandbox \
       --output-last-message "$CODEX_LAST_MESSAGE_FILE" \
       "$prompt" 2> "$CODEX_STDERR_PIPE" |
@@ -1136,6 +1143,10 @@ CURLCFG
     round_exit=${PIPESTATUS[0]}
     wait "$CODEX_STDERR_TEE_PID" || true
     CODEX_STDERR_TEE_PID=''
+    round_end_utc_date="$(TZ=UTC0 date '+%b %-d, %Y')"
+    if [ "$round_start_utc_date" = "$round_end_utc_date" ]; then
+      CODEX_ROUND_UTC_DATE="$round_start_utc_date"
+    fi
     return "$round_exit"
   }
   set +e
@@ -1704,14 +1715,38 @@ is_provider_limit_failure() {
     [[ "$text" == *"ResourceExhausted"* ]] ||
     [[ "$text" == *"RESOURCE_EXHAUSTED"* ]]
 }
+annotate_codex_limit_utc() {
+  local text="$1" line out='' sep=''
+  while IFS= read -r line || [ -n "$line" ]; do
+    if is_provider_limit_failure "$line"; then
+      line="$(printf '%s\n' "$line" | sed -E \
+        's/([Tt]ry again at )((Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9]{1,2}(st|nd|rd|th)?, [0-9]{4} [0-9]{1,2}:[0-9]{2} (AM|PM))(\.([[:space:]]|$)|$)/\1\2 (UTC)\6/g')"
+      if [[ "${CODEX_ROUND_UTC_DATE:-}" =~ ^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\ [1-9][0-9]?,\ [0-9]{4}$ ]]; then
+        line="$(printf '%s\n' "$line" | sed -E \
+          "s/([Tt]ry again at )([0-9]{1,2}:[0-9]{2} (AM|PM))(\\.([[:space:]]|$)|$)/\\1${CODEX_ROUND_UTC_DATE} \\2 (UTC)\\4/g")"
+      fi
+    fi
+    out="${out}${sep}${line}"
+    sep=$'\n'
+  done <<<"$text"
+  printf '%s' "$out"
+}
 if [[ "$OUTCOME" = no-deliverable || "$OUTCOME" = agent-failed || "$OUTCOME" = report ]]; then
   if is_provider_limit_message "$AGENT_MESSAGE" ||
     is_provider_limit_failure "$PROVIDER_FAILURES"; then
     OUTCOME=provider-limit
-    if [ -z "$AGENT_MESSAGE" ] && [ -n "$PROVIDER_FAILURES" ]; then
-      AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
-      AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
+    if [ "$PIPELINE" = codex ]; then
+      if is_provider_limit_message "$AGENT_MESSAGE"; then
+        AGENT_MESSAGE="$(annotate_codex_limit_utc "$AGENT_MESSAGE")"
+      fi
+      if [ -n "$PROVIDER_FAILURES" ]; then
+        PROVIDER_FAILURES="$(annotate_codex_limit_utc "$PROVIDER_FAILURES")"
+      fi
     fi
+    if ! is_provider_limit_message "$AGENT_MESSAGE" && [ -n "$PROVIDER_FAILURES" ]; then
+      AGENT_MESSAGE="Provider quota or usage limit reached. The provider stopped this round before its final message; retained provider failure events: $PROVIDER_FAILURES"
+    fi
+    AGENT_MESSAGE="${AGENT_MESSAGE:0:16384}"
   elif [[ "$PROVIDER_FAILURES" == *"model is at capacity"* ]]; then
     # Distinct from the weekly quota window: the control plane holds this
     # provider for one bounded probe instead of a reported reset, and only an

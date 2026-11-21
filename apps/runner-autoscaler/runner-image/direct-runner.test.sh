@@ -578,9 +578,11 @@ FAKE
   cat > "$bindir/codex" <<'FAKE'
 #!/usr/bin/env bash
 if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then
+  printf '%s' "${TZ:-}" > "$CODEX_LOGIN_TZ_LOG"
   exit 0
 fi
 echo "$@" >> "$CODEX_ARGS_LOG"
+printf '%s' "${TZ:-}" > "$CODEX_TZ_LOG"
 worker-control-fixture
 printf '%s' "${LCARS_WORKER_CONTEXT:-}" > "$WORKER_CONTEXT_LOG"
 run_count=1
@@ -652,6 +654,16 @@ if [ "${FAKE_CODEX_STDERR_USAGE_LIMIT:-}" = "1" ]; then
   exit 1
 fi
 if [ "${FAKE_CODEX_USAGE_LIMIT_EVENT:-}" = "1" ]; then
+  echo '{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}'
+  echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
+  exit 1
+fi
+if [ "${FAKE_CODEX_SAME_DAY_USAGE_LIMIT:-}" = "1" ]; then
+  echo '{"type":"error","message":"You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 6:48 AM."}'
+  echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at 6:48 AM."}}'
+  exit 1
+fi
+if [ -n "${FAKE_CODEX_USAGE_LIMIT_ON_ROUND:-}" ] && [ "$run_count" -eq "$FAKE_CODEX_USAGE_LIMIT_ON_ROUND" ]; then
   echo '{"type":"error","message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}'
   echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Nov 11th, 2026 6:48 AM."}}'
   exit 1
@@ -757,6 +769,22 @@ fi
 exit "${FAKE_OPENCODE_EXIT_CODE:-0}"
 FAKE
   chmod +x "$bindir/opencode"
+
+  cat > "$bindir/date" <<'FAKE'
+#!/usr/bin/env bash
+if [ "${1:-}" = '+%b %-d, %Y' ] && [ -n "${FAKE_CODEX_UTC_DATES:-}" ]; then
+  [ "${TZ:-}" = "UTC0" ] || exit 2
+  idx=0
+  [ ! -f "$RUNNER_TEMP/fake-utc-date-idx" ] || idx=$(cat "$RUNNER_TEMP/fake-utc-date-idx")
+  IFS='|' read -ra dates <<<"$FAKE_CODEX_UTC_DATES"
+  selected="${dates[$idx]:-${dates[${#dates[@]}-1]}}"
+  echo $((idx + 1)) > "$RUNNER_TEMP/fake-utc-date-idx"
+  printf '%s\n' "$selected"
+  exit 0
+fi
+exec /bin/date "$@"
+FAKE
+  chmod +x "$bindir/date"
 
   cat > "$bindir/timeout" <<'FAKE'
 #!/usr/bin/env bash
@@ -935,6 +963,8 @@ run_scenario() {
   export WORKER_RUN_COUNT_FILE="$dir/worker-run-count"
   export WORKER_CONTEXT_LOG="$dir/worker-context.log"
   export CODEX_ENV_LOG="$dir/codex-env.log"
+  export CODEX_TZ_LOG="$dir/codex-tz.log"
+  export CODEX_LOGIN_TZ_LOG="$dir/codex-login-tz.log"
   export CODEX_SESSIONS_DIR_LOG="$dir/codex-sessions-dir.log"
   export CODEX_AUTH_PERSIST_LOG="$dir/codex-auth-persist.log"
   export CODEX_AUTH_REQUEST_LOG="$dir/codex-auth-requests.log"
@@ -2649,18 +2679,41 @@ unset FAKE_GH_NO_MATCH FAKE_WORKER_EXIT FAKE_AGY_STDERR FAKE_BRIEF_NO_RESUME
 
 # Codex out of credits: the stderr banner (no JSON event) and the same banner
 # as a structured event are both provider limits, despite the typographic
-# apostrophe. A stderr line that only mentions the phrase is not.
-export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1
+# apostrophe, and pin Codex to TZ=UTC0 so its reset carries `(UTC)`. Same-day
+# date-less resets expand only when the round stays on one UTC calendar date.
+# A stderr line that only mentions the phrase is not a provider stop.
+export FAKE_GH_NO_MATCH=1 FAKE_CODEX_STDERR_USAGE_LIMIT=1 TZ=America/Los_Angeles
 run_scenario codex-stderr-usage-limit codex
-unset FAKE_CODEX_STDERR_USAGE_LIMIT
+unset FAKE_CODEX_STDERR_USAGE_LIMIT TZ
 [ "$rc" -ne 0 ] || fail "codex stderr usage limit: expected failure"
+[ "$(cat "$CODEX_LOGIN_TZ_LOG")" = "UTC0" ] || fail "codex login status did not run under TZ=UTC0 ($(cat "$CODEX_LOGIN_TZ_LOG"))"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC0" ] || fail "codex exec did not run under TZ=UTC0 ($(cat "$CODEX_TZ_LOG"))"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
-jq -e '.message | contains("try again at Nov 11th")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: provider cause not retained"
-export FAKE_CODEX_USAGE_LIMIT_EVENT=1
+jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex stderr usage limit: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_USAGE_LIMIT_EVENT=1 TZ=America/Los_Angeles
 run_scenario codex-usage-limit-event codex
-unset FAKE_CODEX_USAGE_LIMIT_EVENT
+unset FAKE_CODEX_USAGE_LIMIT_EVENT TZ
 [ "$rc" -ne 0 ] || fail "codex usage limit event: expected failure"
+[ "$(cat "$CODEX_TZ_LOG")" = "UTC0" ] || fail "codex usage limit event: codex exec did not run under TZ=UTC0"
 jq -e '.outcome == "provider-limit"' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: wrong failure classification ($(tail -n1 "$COMPLETE_LOG" 2>&1 | head -c 600))"
+jq -e '.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC).")' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex usage limit event: UTC reset not retained ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_SAME_DAY_USAGE_LIMIT=1 FAKE_CODEX_UTC_DATES='Nov 9, 2026' TZ=America/Los_Angeles
+run_scenario codex-same-day-usage-limit codex
+unset FAKE_CODEX_SAME_DAY_USAGE_LIMIT FAKE_CODEX_UTC_DATES TZ
+[ "$rc" -ne 0 ] || fail "codex same-day usage limit: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at Nov 9, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex same-day usage limit: UTC date was not expanded ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_CODEX_SAME_DAY_USAGE_LIMIT=1 FAKE_CODEX_UTC_DATES='Nov 9, 2026|Nov 10, 2026'
+run_scenario codex-midnight-same-day-usage-limit codex
+unset FAKE_CODEX_SAME_DAY_USAGE_LIMIT FAKE_CODEX_UTC_DATES
+[ "$rc" -ne 0 ] || fail "codex midnight same-day usage limit: expected failure"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at 6:48 AM.")) and ((.message | contains("(UTC)")) | not)' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex midnight same-day usage limit: guessed a UTC day across midnight ($(tail -n1 "$COMPLETE_LOG"))"
+export FAKE_BRIEF_NO_RESUME=1 FAKE_CLOCK=1 FAKE_WORKER_ELAPSED=1 CODEX_TIMEOUT_SECONDS=5
+export FAKE_CODEX_LAST_MESSAGE='Inspected the repository; opening PR next.' FAKE_CODEX_USAGE_LIMIT_ON_ROUND=2
+run_scenario codex-correction-round-usage-limit codex
+unset FAKE_BRIEF_NO_RESUME FAKE_CLOCK FAKE_WORKER_ELAPSED CODEX_TIMEOUT_SECONDS FAKE_CODEX_LAST_MESSAGE FAKE_CODEX_USAGE_LIMIT_ON_ROUND
+[ "$rc" -ne 0 ] || fail "codex correction usage limit: expected failure"
+[ "$(cat "$WORKER_RUN_COUNT_FILE")" -eq 2 ] || fail "codex correction usage limit: expected two rounds"
+jq -e '.outcome == "provider-limit" and (.message | contains("try again at Nov 11th, 2026 6:48 AM (UTC)."))' < <(tail -n1 "$COMPLETE_LOG") >/dev/null || fail "codex correction usage limit: round-1 message hid round-2 limit reset ($(tail -n1 "$COMPLETE_LOG"))"
 export FAKE_CODEX_STDERR_LIMIT_PROSE=1
 run_scenario codex-stderr-limit-prose codex
 unset FAKE_CODEX_STDERR_LIMIT_PROSE FAKE_GH_NO_MATCH

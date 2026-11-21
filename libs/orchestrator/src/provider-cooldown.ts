@@ -16,6 +16,8 @@ const MONTHS = [
   'Nov',
   'Dec',
 ];
+const CODEX_RESET_PATTERN =
+  /\b[Tt]ry again at (?:([A-Z][a-z]{2}) (\d{1,2})(?:st|nd|rd|th)?, (\d{4}) )?(\d{1,2}):(\d{2}) (AM|PM)( \(UTC\))?(?=\.(?:\s|$)|\s|$)/gu;
 
 export interface ProviderCooldown {
   pipeline: string;
@@ -54,6 +56,47 @@ function claudeReset(message: string, now: number): number | undefined {
   return reset > now && reset - now <= MAX_RESET_MS ? reset : undefined;
 }
 
+/** Only a runner-pinned `(UTC)` Codex reset with a full calendar date supplies a longer hold. */
+function codexReset(message: string, now: number): number | undefined {
+  let reset: number | undefined;
+  for (const match of message.matchAll(CODEX_RESET_PATTERN)) {
+    if (
+      match[1] === undefined ||
+      match[2] === undefined ||
+      match[3] === undefined ||
+      match[7] === undefined
+    )
+      return undefined;
+    const month = MONTHS.indexOf(match[1]);
+    const day = Number(match[2]);
+    const year = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    if (
+      month === -1 ||
+      day < 1 ||
+      day > 31 ||
+      hour < 1 ||
+      hour > 12 ||
+      minute > 59
+    )
+      return undefined;
+    const utcHour = (hour % 12) + (match[6] === 'PM' ? 12 : 0);
+    const candidate = Date.UTC(year, month, day, utcHour, minute);
+    const parsed = new Date(candidate);
+    if (
+      parsed.getUTCFullYear() !== year ||
+      parsed.getUTCMonth() !== month ||
+      parsed.getUTCDate() !== day
+    )
+      return undefined;
+    if (reset !== undefined && reset !== candidate) return undefined;
+    reset = candidate;
+  }
+  if (reset === undefined) return undefined;
+  return reset > now && reset - now <= MAX_RESET_MS ? reset : undefined;
+}
+
 /** Derived from a failed execution report, never from queued task text. */
 export function providerCooldownForRun(
   run: Pick<Run, 'runId' | 'state' | 'pipeline' | 'updatedAt' | 'result'>,
@@ -73,9 +116,13 @@ export function providerCooldownForRun(
   // A capacity stop has no reported reset window, so it can only ever get the
   // bounded probe below.
   const reset =
-    run.pipeline === 'claude' && run.result.summary !== 'provider-capacity'
-      ? claudeReset(message, now)
-      : undefined;
+    run.result.summary === 'provider-capacity'
+      ? undefined
+      : run.pipeline === 'claude'
+        ? claudeReset(message, now)
+        : run.pipeline === 'codex'
+          ? codexReset(message, now)
+          : undefined;
   return {
     pipeline: run.pipeline,
     runId: run.runId,
