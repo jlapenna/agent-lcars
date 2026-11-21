@@ -49,7 +49,15 @@ runner and credential environment for that trusted job. Require
 `LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
 review-thread resolution in the target repository. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
-review dispatch path for that repository.
+review dispatch path for that repository. For fleet-managed auto-merge callers,
+include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
+inputs on every scaffold refresh.
+
+The publisher reads the current reviews again before writing each check. GitHub
+processes review changes and check writes separately. A dismissal after that
+read takes effect on the next reconciliation. GitHub also evaluates head checks
+when the test merge commit has no results. A commit-scoped check alone cannot
+guarantee a fresh approval for each PR in that case.
 
 ## Published reusable workflows
 
