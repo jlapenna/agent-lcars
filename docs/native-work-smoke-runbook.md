@@ -155,8 +155,12 @@ path, not as one green light:
   same attempt finished with outcome `report`. Hash the full UTF-8
   `result.message` from the single-item API response, for example with
   `jq -je '.runs[] | select(.runId==$run) | .result.message' --arg run "$run" item.json | sha256sum`.
-  The hashes must match, including trailing newlines. When a later provider
-  turn differs, this comparison verifies that the saved body survived.
+  The hashes must match, including trailing newlines. Inspect the same attempt’s
+  provider session history and compare its final response with the saved body.
+  Record whether they differed. A matching saved-body hash and a differing final
+  response verify the continuation regression. If the responses were identical
+  or the final response was unavailable, leave that regression unverified for
+  this occurrence.
   Legacy two-line records produce no saved-body digest. Record any missing
   evidence before treating a live check as verified.
 
