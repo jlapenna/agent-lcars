@@ -773,7 +773,17 @@
       ]
     },
     "jlapenna/repo-tools": {
-      "labels": [],
+      "labels": [
+        "agent:claude",
+        "agent:codex",
+        "agent:opencode",
+        "agent:agy",
+        "review",
+        "review:claude",
+        "review:codex",
+        "review:opencode",
+        "review:agy"
+      ],
       "migrations": {},
       "remove": []
     },
