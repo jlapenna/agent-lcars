@@ -59,7 +59,9 @@ export async function getSessionDetail(
   const target = resolveSessionTranscriptTarget(doc);
   const transcript: SessionTranscriptResult | undefined =
     target.status === 'eligible'
-      ? await getSessionTranscript(target.transcriptGcsUri, target.agent)
+      ? await getSessionTranscript(target.transcriptGcsUri, target.agent, {
+          snapshotId: target.snapshotId,
+        })
       : target.status === 'expired'
         ? { events: [], warning: target.warning }
         : undefined;

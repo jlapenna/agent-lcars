@@ -100,12 +100,16 @@ publish-then-pin scheme whose pin silently went stale for months (#29).
 ## Archived CLI transcripts
 
 `lcars session archive --consent /absolute/path/to/transcript.jsonl` creates
-one snapshot of the current Claude Code or Codex session. It uses the existing
-session-id environment resolution, host identity, repository allowlist and
-telemetry-writer credential. Consent is specific to this invocation: it does
-not enable background uploads, discover other sessions or change hook privacy.
-The session must already exist in telemetry on this host. Runner sessions,
-unsupported formats, mixed-session files, symlinks and files over 5 MiB are refused.
+one snapshot of the current Claude Code, Codex, or Antigravity session. It uses
+the existing session-id environment resolution, host identity, repository
+allowlist and telemetry-writer credential. Consent is specific to this
+invocation: it does not enable background uploads, discover other sessions or
+change hook privacy. The session must already exist in telemetry on this host.
+Validation streams line by line into a private immutable staging snapshot before
+uploading to GCS (resumable above 5 MiB). Runner sessions, unsupported formats,
+mixed-session files, symlinks, records exceeding 32 MiB (`MAX_TRANSCRIPT_LINE_BYTES`),
+and files exceeding the 512 MiB safety ceiling (`CLI_TRANSCRIPT_SAFETY_MAX_BYTES`)
+are refused.
 
 `lcars session archive --revoke` immediately invalidates the current session's
 archive pointer and attempts deletion of its current snapshot. A capture token

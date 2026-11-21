@@ -41,6 +41,7 @@ export function PaginatedTranscriptView({
   const [fetchWarning, setFetchWarning] = useState<string | undefined>(
     undefined,
   );
+  const [snapshotChanged, setSnapshotChanged] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function loadMore(): Promise<void> {
@@ -61,6 +62,17 @@ export function PaginatedTranscriptView({
           typeof payload?.warning === 'string'
             ? payload.warning
             : 'Transcript unavailable (archive retention expired).',
+        );
+        return;
+      }
+
+      if (response.status === 409) {
+        setNextCursor(undefined);
+        setSnapshotChanged(true);
+        setFetchWarning(
+          typeof payload?.warning === 'string'
+            ? payload.warning
+            : 'Transcript snapshot changed since this page loaded. Reload to view the updated archive.',
         );
         return;
       }
@@ -120,6 +132,19 @@ export function PaginatedTranscriptView({
               style={{ minHeight: 44 }}
             >
               Load more transcript
+            </Button>
+          </Group>
+        )}
+        {!nextCursor && snapshotChanged && (
+          <Group justify="flex-start">
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => window.location.reload()}
+              data-testid="transcript-reload"
+              style={{ minHeight: 44 }}
+            >
+              Reload transcript
             </Button>
           </Group>
         )}

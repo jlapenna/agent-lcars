@@ -99,6 +99,12 @@ export interface ParsedTranscriptTimeline {
  * page boundaries when a turn or subagent sidechain spans a full page window. */
 export interface TranscriptPageParseState {
   inSidechain?: boolean;
+  /** True only when the currently open sidechain has already emitted `>= 1`
+   * visible timeline event onto a prior page; prevents merging a brand-new
+   * sidechain group into an earlier completed group when a metadata-only
+   * separator closed the first group and the new group opened with progress-only
+   * lines. */
+  sidechainContributedEvents?: boolean;
   pendingCodexTurnHash?: string;
 }
 
@@ -529,7 +535,9 @@ export function parseTranscriptTimelineChunk(
   let currentSidechain: TranscriptTimelineEvent[] | undefined =
     agent === 'claude-code' && initialState?.inSidechain ? [] : undefined;
   let sidechainContinuesPrevious = Boolean(
-    agent === 'claude-code' && initialState?.inSidechain,
+    agent === 'claude-code' &&
+    initialState?.inSidechain &&
+    initialState?.sidechainContributedEvents,
   );
   let hadUnparseableLines = false;
   let lastCodexTurnHash =
@@ -715,6 +723,9 @@ export function parseTranscriptTimelineChunk(
   }
 
   const stillInSidechain = currentSidechain !== undefined;
+  const emittedInOpenSidechain =
+    stillInSidechain &&
+    (sidechainContinuesPrevious || (currentSidechain?.length ?? 0) > 0);
   closeSidechain();
   return {
     events,
@@ -722,6 +733,7 @@ export function parseTranscriptTimelineChunk(
     nextOffset: startOffset + usable.length,
     nextState: {
       ...(stillInSidechain && { inSidechain: true }),
+      ...(emittedInOpenSidechain && { sidechainContributedEvents: true }),
       ...(agent === 'codex' &&
         lastCodexTurnHash && { pendingCodexTurnHash: lastCodexTurnHash }),
     },

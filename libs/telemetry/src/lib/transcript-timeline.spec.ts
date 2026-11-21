@@ -507,7 +507,10 @@ describe('parseTranscriptTimelineChunk & mergeTranscriptTimelinePages', () => {
       eof: false,
     });
     expect(page1.nextOffset).toBe(page1Bytes.length);
-    expect(page1.nextState).toEqual({ inSidechain: true });
+    expect(page1.nextState).toEqual({
+      inSidechain: true,
+      sidechainContributedEvents: true,
+    });
     expect(page1.events).toHaveLength(1);
     expect(page1.events[0]).toMatchObject({ kind: 'sidechain-group' });
 
@@ -527,6 +530,106 @@ describe('parseTranscriptTimelineChunk & mergeTranscriptTimelinePages', () => {
 
     const merged = mergeTranscriptTimelinePages(page1.events, page2.events);
     expect(merged).toEqual(parseTranscriptTimeline(raw).events);
+  });
+
+  it('keeps separate Claude subagent groups separate when a metadata-only separator closes group A and group B opens with progress-only records', () => {
+    const groupAVisible = JSON.stringify({
+      type: 'assistant',
+      isSidechain: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', name: 'Grep', input: { q: 'group-a' } }],
+      },
+    });
+    const nonSidechainMetadataSeparator = JSON.stringify({
+      type: 'queue-operation',
+      isSidechain: false,
+      sessionId: 's1',
+    });
+    const groupBProgressOnly = JSON.stringify({
+      type: 'progress',
+      isSidechain: true,
+      sessionId: 's1',
+    });
+    const groupBVisible = JSON.stringify({
+      type: 'assistant',
+      isSidechain: true,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', name: 'Read', input: { p: 'group-b' } }],
+      },
+    });
+    const trailingMain = JSON.stringify({
+      type: 'assistant',
+      isSidechain: false,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+
+    const allLines = [
+      groupAVisible,
+      nonSidechainMetadataSeparator,
+      groupBProgressOnly,
+      groupBVisible,
+      trailingMain,
+    ];
+    const raw = `${allLines.join('\n')}\n`;
+
+    const chunk1Bytes = Buffer.from(`${groupAVisible}\n`, 'utf8');
+    const chunk1 = parseTranscriptTimelineChunk(chunk1Bytes, {
+      startOffset: 0,
+      eof: false,
+    });
+    expect(chunk1.nextState).toEqual({
+      inSidechain: true,
+      sidechainContributedEvents: true,
+    });
+
+    const chunk2Bytes = Buffer.from(
+      `${nonSidechainMetadataSeparator}\n${groupBProgressOnly}\n`,
+      'utf8',
+    );
+    const chunk2 = parseTranscriptTimelineChunk(chunk2Bytes, {
+      startOffset: chunk1.nextOffset,
+      eof: false,
+      initialState: chunk1.nextState,
+    });
+    expect(chunk2.events).toEqual([]);
+    expect(chunk2.nextState).toEqual({ inSidechain: true });
+
+    const full = Buffer.from(raw, 'utf8');
+    const chunk3 = parseTranscriptTimelineChunk(
+      full.subarray(chunk2.nextOffset),
+      {
+        startOffset: chunk2.nextOffset,
+        eof: true,
+        initialState: chunk2.nextState,
+      },
+    );
+    expect(chunk3.events[0]).toMatchObject({ kind: 'sidechain-group' });
+    expect(
+      (
+        chunk3.events[0] as Extract<
+          TranscriptTimelineEvent,
+          { kind: 'sidechain-group' }
+        >
+      ).continuesPrevious,
+    ).toBeUndefined();
+
+    const afterChunk2 = mergeTranscriptTimelinePages(
+      chunk1.events,
+      chunk2.events,
+    );
+    const finalMerged = mergeTranscriptTimelinePages(
+      afterChunk2,
+      chunk3.events,
+    );
+    expect(finalMerged).toEqual(parseTranscriptTimeline(raw).events);
+    expect(
+      finalMerged.filter((event) => event.kind === 'sidechain-group'),
+    ).toHaveLength(2);
   });
 
   it('deduplicates Codex event_msg and response_item turns across page boundaries even with intervening metadata', () => {

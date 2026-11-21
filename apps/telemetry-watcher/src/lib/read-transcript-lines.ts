@@ -5,15 +5,20 @@ const BUFFER_BYTES = 64 * 1024;
 
 export interface TranscriptLineSlice {
   line: string;
-  /** Exact file byte offset immediately after this line (including its `\n` if present). */
+  /** Exact file byte offset immediately after this line (including its delimiter if present). */
   endByteOffset: number;
 }
 
 export interface ReadTranscriptLinesOptions {
   /** Optional total-bytes safety ceiling; throws `'archive-size'` if exceeded. */
   maxBytes?: number;
-  /** Optional single-line byte ceiling; throws `'transcript-line-too-large'` before decoding unbounded strings. */
+  /** Optional single-line payload byte ceiling (excluding `\n` or `\r\n` delimiter);
+   * throws `'transcript-line-too-large'` before decoding unbounded strings. */
   maxLineBytes?: number;
+  /** Optional sink invoked synchronously with each raw chunk read from `fd`
+   * (after verifying `maxBytes`), allowing callers to populate a private
+   * immutable snapshot in the same single pass. */
+  onChunkRead?: (chunk: Buffer) => void;
 }
 
 /**
@@ -25,12 +30,13 @@ export function* readTranscriptLinesFromFd(
   fd: number,
   options: ReadTranscriptLinesOptions = {},
 ): Generator<TranscriptLineSlice> {
-  const { maxBytes, maxLineBytes } = options;
+  const { maxBytes, maxLineBytes, onChunkRead } = options;
   const buffer = Buffer.allocUnsafe(BUFFER_BYTES);
   const decoder = new StringDecoder('utf8');
   let remainder = '';
   let position = 0;
   let currentLineBytes = 0;
+  let lastTailByteWasCR = false;
 
   while (true) {
     const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, position);
@@ -38,6 +44,12 @@ export function* readTranscriptLinesFromFd(
 
     const chunkFileOffset = position;
     position += bytesRead;
+    if (maxBytes !== undefined && position > maxBytes) {
+      throw new Error('archive-size');
+    }
+    if (onChunkRead) {
+      onChunkRead(buffer.subarray(0, bytesRead));
+    }
 
     let segStart = 0;
     while (segStart < bytesRead) {
@@ -46,20 +58,25 @@ export function* readTranscriptLinesFromFd(
         break;
       }
       const segment = buffer.subarray(segStart, newline);
-      currentLineBytes += segment.length;
-      if (maxLineBytes !== undefined && currentLineBytes > maxLineBytes) {
+      const endedWithCR =
+        segment.length > 0
+          ? segment[segment.length - 1] === 0x0d
+          : lastTailByteWasCR;
+      const rawLineBytes = currentLineBytes + segment.length;
+      const payloadBytes = rawLineBytes - (endedWithCR ? 1 : 0);
+      if (maxLineBytes !== undefined && payloadBytes > maxLineBytes) {
         throw new Error('transcript-line-too-large');
       }
       const endByteOffset = chunkFileOffset + newline + 1;
-      if (maxBytes !== undefined && endByteOffset > maxBytes) {
-        throw new Error('archive-size');
-      }
       // 0x0a never appears inside a multi-byte UTF-8 sequence, so ending the
       // decoder on the pre-newline bytes flushes any malformed tail bytes on
       // this line cleanly and resets the decoder for the next line.
-      const line = remainder + decoder.end(segment);
+      const decoded = remainder + decoder.end(segment);
+      const line =
+        endedWithCR && decoded.endsWith('\r') ? decoded.slice(0, -1) : decoded;
       remainder = '';
       currentLineBytes = 0;
+      lastTailByteWasCR = false;
       yield { line, endByteOffset };
       segStart = newline + 1;
     }
@@ -67,20 +84,26 @@ export function* readTranscriptLinesFromFd(
     if (segStart < bytesRead) {
       const tail = buffer.subarray(segStart, bytesRead);
       currentLineBytes += tail.length;
-      if (maxBytes !== undefined && position > maxBytes) {
-        throw new Error('archive-size');
-      }
-      if (maxLineBytes !== undefined && currentLineBytes > maxLineBytes) {
+      lastTailByteWasCR = tail[tail.length - 1] === 0x0d;
+      // Allow +1 byte only when the trailing byte is `\r` of a potential `\r\n`
+      // split across buffer boundaries; otherwise reject immediately.
+      if (
+        maxLineBytes !== undefined &&
+        (currentLineBytes > maxLineBytes + 1 ||
+          (currentLineBytes === maxLineBytes + 1 && !lastTailByteWasCR))
+      ) {
         throw new Error('transcript-line-too-large');
       }
       remainder += decoder.write(tail);
-    } else if (maxBytes !== undefined && position > maxBytes) {
-      throw new Error('archive-size');
     }
   }
 
   remainder += decoder.end();
   if (currentLineBytes > 0 || remainder.length > 0) {
+    // At EOF without a terminating `\n`, a trailing `\r` is payload, not `\r\n`.
+    if (maxLineBytes !== undefined && currentLineBytes > maxLineBytes) {
+      throw new Error('transcript-line-too-large');
+    }
     yield { line: remainder, endByteOffset: position };
   }
 }

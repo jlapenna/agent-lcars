@@ -67,15 +67,42 @@ describe('readTranscriptLinesFromFd', () => {
     }
   });
 
-  it('rejects a newline-free stream exceeding maxLineBytes before buffering unbounded strings', () => {
-    const filePath = writeFixture('a'.repeat(200 * 1024));
-    const fd = fs.openSync(filePath, 'r');
-    try {
-      expect(() =>
-        Array.from(readTranscriptLinesFromFd(fd, { maxLineBytes: 128 * 1024 })),
-      ).toThrow('transcript-line-too-large');
-    } finally {
-      fs.closeSync(fd);
+  it('accepts lines at the exact maxLineBytes payload ceiling with \\n, \\r\\n, or EOF, and rejects limit + 1', () => {
+    // Test across the 64 KiB read buffer boundary so split `\r\n` is exercised too.
+    const limit = 64 * 1024;
+    const exactPayload = 'a'.repeat(limit);
+
+    for (const raw of [
+      `${exactPayload}\nnext\n`,
+      `${exactPayload}\r\nnext\r\n`,
+      exactPayload,
+    ]) {
+      const filePath = writeFixture(raw);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        const lines = Array.from(
+          readTranscriptLinesFromFd(fd, { maxLineBytes: limit }),
+        );
+        expect(lines[0]?.line).toBe(exactPayload);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+
+    for (const over of [
+      `${'a'.repeat(limit + 1)}\n`,
+      `${'a'.repeat(limit + 1)}\r\n`,
+      'a'.repeat(limit + 1),
+    ]) {
+      const filePath = writeFixture(over);
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        expect(() =>
+          Array.from(readTranscriptLinesFromFd(fd, { maxLineBytes: limit })),
+        ).toThrow('transcript-line-too-large');
+      } finally {
+        fs.closeSync(fd);
+      }
     }
   });
 

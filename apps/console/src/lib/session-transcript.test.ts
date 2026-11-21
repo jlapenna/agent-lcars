@@ -54,7 +54,7 @@ describe('getSessionTranscript', () => {
     });
   });
 
-  it('degrades to a warning and no events when the GCS byte-range fetch fails', async () => {
+  it('degrades to a warning and storageError flag when the GCS byte-range fetch fails', async () => {
     (fetchSessionTranscriptByteRange as Mock).mockRejectedValue(
       new Error('storage: not found'),
     );
@@ -62,6 +62,7 @@ describe('getSessionTranscript', () => {
     const result = await getSessionTranscript('gs://bucket/runs/1/a.jsonl');
 
     expect(result.events).toEqual([]);
+    expect(result.storageError).toBe(true);
     expect(result.warning).toContain('storage');
   });
 
@@ -208,11 +209,12 @@ describe('getSessionTranscript', () => {
     expect(page1.events).toHaveLength(3);
     expect(page1.hasMore).toBe(true);
     const cursor = parseTranscriptCursor(page1.nextCursor!, 'opencode');
-    expect(cursor).toEqual({
+    expect(cursor).toMatchObject({
       v: 1,
       agent: 'opencode',
       mode: 'events',
       offset: 3,
+      snapshot: expect.any(String),
     });
 
     const page2 = await getSessionTranscript(

@@ -71,8 +71,6 @@ describe('PaginatedTranscriptView', () => {
         cache: 'no-store',
       }),
     );
-    // Continued sidechain merged into the trailing sidechain-group rather than
-    // creating a second disclosure block.
     expect(screen.getAllByTestId('transcript-sidechain-group')).toHaveLength(1);
     expect(
       screen.getByText('subagent activity (2 events)'),
@@ -114,11 +112,57 @@ describe('PaginatedTranscriptView', () => {
     expect(screen.queryByTestId('transcript-load-more')).toBeNull();
   });
 
-  it('retains loaded events and allows retrying after a transient fetch error', async () => {
+  it('preserves loaded events and offers reload action on HTTP 409 snapshot replacement', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          events: [],
+          hasMore: false,
+          code: 'snapshot-changed',
+          warning:
+            'Transcript snapshot changed since this page loaded. Reload to view the updated archive.',
+        }),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    render(
+      <MantineProvider>
+        <PaginatedTranscriptView
+          sessionId="cli-1"
+          initialEvents={[
+            { kind: 'text', role: 'user', text: 'Snapshot 1 event' },
+          ]}
+          initialNextCursor="stale-cursor"
+        />
+      </MantineProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('transcript-load-more'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('transcript-warning')).toHaveTextContent(
+        'snapshot changed',
+      );
+    });
+    expect(screen.getByText('Snapshot 1 event')).toBeInTheDocument();
+    expect(screen.queryByTestId('transcript-load-more')).toBeNull();
+    const reloadButton = screen.getByTestId('transcript-reload');
+    expect(reloadButton).toHaveStyle({ minHeight: '44px' });
+  });
+
+  it('retains loaded events and allows retrying after a transient 503 storage error', async () => {
     const fetchMock = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 }),
+        new Response(
+          JSON.stringify({
+            error: 'Transcript storage unavailable',
+            warning:
+              'Failed to load more transcript events from storage. Try again.',
+          }),
+          { status: 503 },
+        ),
       )
       .mockResolvedValueOnce(
         new Response(
@@ -143,10 +187,11 @@ describe('PaginatedTranscriptView', () => {
     fireEvent.click(screen.getByTestId('transcript-load-more'));
     await waitFor(() => {
       expect(screen.getByTestId('transcript-warning')).toHaveTextContent(
-        'Failed to load more transcript events',
+        'Failed to load more transcript events from storage. Try again.',
       );
     });
     expect(screen.getByText('Page 1 turn')).toBeInTheDocument();
+    expect(screen.getByTestId('transcript-load-more')).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('transcript-load-more'));
     await waitFor(() => {

@@ -893,15 +893,20 @@ CLI sessions and dispatched runs.
   (`app/artifact-viewer.tsx`, #2631). The browser fetches the preview
   directly from the LAN-only share host, so previews work only on the
   operator's network; other file types stay link-only.
-- **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView`, from GCS)
-  for dispatched `issue-agent` sessions whose agent is in
-  `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex, OpenCode (archived
-  OpenCode exports, #2253), and Antigravity (#3226). An archive that is none of
-  these shows "Session archive
-  stored ({agent} format) — not yet renderable". CLI Claude Code/Codex
-  sessions use the same timeline only when their doc already carries an
-  unexpired CLI archive pointer within the 5 MiB bound; otherwise detail shows
-  not-enabled or unavailable. The explicit `lcars session archive --consent`
+- **FE-SE-4 [Shipped]** Transcripts render (`TranscriptTimelineView` and
+  `PaginatedTranscriptView`, from GCS) for dispatched `issue-agent` sessions
+  whose agent is in `RENDERABLE_TRANSCRIPT_AGENTS`: Claude Code, Codex,
+  OpenCode (archived OpenCode exports, #2253), and Antigravity (#3226). SSR
+  renders the first page (`512 KiB` JSONL byte range or `500` OpenCode events,
+  collapsing single-page transcripts above 400 events), and subsequent pages
+  load incrementally via `/api/sessions/[id]/transcript` with snapshot-bound
+  cursors and cross-page subagent/turn continuity (#3404). An archive that is
+  none of these shows "Session archive stored ({agent} format) — not yet
+  renderable". CLI Claude Code, Codex, and Antigravity sessions use the same
+  paginated timeline only when their doc already carries an unexpired CLI
+  archive pointer (streamed at capture within the 512 MiB file and 32 MiB
+  single-line safety ceilings); otherwise detail shows not-enabled or
+  unavailable. The explicit `lcars session archive --consent`
   writer creates one current-session snapshot, with a seven-day reader expiry,
   deployed lifecycle prerequisite and revocation. The installed writer and real
   upload, Console rendering, revocation and object deletion are qualified

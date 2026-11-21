@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type CliArchiveDependencies,
   cliArchiveRetentionReady,
+  createBoundedFdReadStream,
   executeCliArchiveCommand,
   openCliArchiveFd,
 } from './cli-archive-command';
@@ -130,12 +131,29 @@ describe('explicit CLI snapshot consent', () => {
     expect(uploaded.bytes?.length).toBe(expectedSize);
   });
 
-  it('clamps the uploaded stream to validatedBytes when concurrent appends grow the live transcript', async () => {
+  it('uploads the exact staged snapshot even when the source file is overwritten in place or appended during claim', async () => {
     const { file, deps, uploaded } = fixture();
     const originalBytes = fs.readFileSync(file);
     vi.mocked(deps.claim).mockImplementation(async () => {
-      // Simulate the live CLI appending an unvalidated or foreign line after
-      // pass-1 validation has completed.
+      // Same-length in-place overwrite on the exact same inode + trailing append:
+      // neither can alter the private staged snapshot that passed validation.
+      const mutatedSameLength = Buffer.from(
+        originalBytes.toString('utf8').replace('"session-1"', '"session-X"'),
+        'utf8',
+      );
+      expect(mutatedSameLength.length).toBe(originalBytes.length);
+      const writeFd = fs.openSync(file, 'r+');
+      try {
+        fs.writeSync(
+          writeFd,
+          mutatedSameLength,
+          0,
+          mutatedSameLength.length,
+          0,
+        );
+      } finally {
+        fs.closeSync(writeFd);
+      }
       fs.appendFileSync(
         file,
         JSON.stringify({ type: 'session_meta', payload: { id: 'intruder' } }) +
@@ -150,16 +168,19 @@ describe('explicit CLI snapshot consent', () => {
     expect(uploaded.bytes).toEqual(originalBytes);
   });
 
-  it('aborts and marks failed if the file is truncated below validatedBytes before upload finishes', async () => {
-    const { file, deps } = fixture();
-    vi.mocked(deps.claim).mockImplementation(async () => {
-      fs.truncateSync(file, 4);
-    });
-
-    const result = await executeCliArchiveCommand(['--consent', file], deps);
-    expect(result.ok).toBe(false);
-    expect(deps.publish).not.toHaveBeenCalled();
-    expect(deps.fail).toHaveBeenCalledWith(expect.anything(), 'capture-1');
+  it('aborts createBoundedFdReadStream if the underlying descriptor shrinks below byteLength', async () => {
+    const { file } = fixture();
+    const fd = fs.openSync(file, 'r+');
+    try {
+      const originalLength = fs.fstatSync(fd).size;
+      fs.ftruncateSync(fd, 4);
+      const stream = createBoundedFdReadStream(fd, originalLength);
+      await expect(readStreamToBuffer(stream)).rejects.toThrow(
+        'archive-truncated',
+      );
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 
   it('requires deployed deletion for both live and noncurrent snapshots', () => {

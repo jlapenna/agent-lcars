@@ -2,20 +2,25 @@ import { assertNotBrowser } from '@agent-lcars/util';
 import { getProjectId } from '@agent-lcars/util-server';
 import { Storage } from '@google-cloud/storage';
 
+import {
+  CLI_TRANSCRIPT_SAFETY_MAX_BYTES,
+  MAX_TRANSCRIPT_LINE_BYTES,
+} from '../lib/cli-transcript-archive';
+
 assertNotBrowser();
 
 /** Default byte window (512 KiB) read per paginated JSONL transcript request. */
 export const DEFAULT_TRANSCRIPT_PAGE_BYTES = 512 * 1024;
 
-/** Maximum bytes buffered to complete a single JSONL line (16 MiB) before
- * scanning past that oversized line without buffering. */
-export const MAX_TRANSCRIPT_SINGLE_LINE_BYTES = 16 * 1024 * 1024;
+/** Maximum payload bytes buffered to complete a single JSONL line (32 MiB,
+ * shared with the CLI archive validator so every accepted record can be read). */
+export const MAX_TRANSCRIPT_SINGLE_LINE_BYTES = MAX_TRANSCRIPT_LINE_BYTES;
 
 /** Maximum bytes read for single-envelope OpenCode export JSON transcripts
  * (matches the runner capture side's 32 MiB RLIMIT_FSIZE bound). */
 export const OPENCODE_EXPORT_MAX_BYTES = 32 * 1024 * 1024;
 
-const MAX_OVERSIZED_LINE_SCAN_BYTES = 64 * 1024 * 1024;
+const MAX_OVERSIZED_LINE_SCAN_BYTES = CLI_TRANSCRIPT_SAFETY_MAX_BYTES;
 
 /**
  * Naming convention documented (not just used) here: see
@@ -92,13 +97,14 @@ function isRangeNotSatisfiableError(error: unknown): boolean {
 export interface FetchTranscriptByteRangeOptions {
   startOffset: number;
   maxBytes?: number;
+  /** Maximum payload bytes per line (excluding `\n` or `\r\n` delimiter). */
   maxSingleLineBytes?: number;
 }
 
 export interface FetchedTranscriptByteRange {
   chunk: Buffer;
   eof: boolean;
-  /** Present when a single newline-free line exceeded `maxSingleLineBytes` and
+  /** Present when a single line's payload exceeded `maxSingleLineBytes` and
    * was scanned past without buffering so pagination never stalls or OOMs. */
   skippedOversizedLine?: {
     nextOffset: number;
@@ -118,49 +124,76 @@ async function readBoundedRange(
     throw new Error('Invalid transcript byte range');
   }
 
+  // Reserve +2 bytes beyond maxSingleLineBytes so a line at the exact payload
+  // ceiling followed by `\n` (+1) or `\r\n` (+2) includes its delimiter.
+  const maxBufferBytes = maxSingleLineBytes + 2;
   const chunks: Buffer[] = [];
   let currentOffset = startOffset;
   let bufferedBytes = 0;
   let eof = false;
-  let hasNewline = false;
 
-  while (bufferedBytes < maxSingleLineBytes) {
-    const stepBytes = Math.min(maxBytes, maxSingleLineBytes - bufferedBytes);
+  while (bufferedBytes < maxBufferBytes) {
+    const stepBytes = Math.min(maxBytes, maxBufferBytes - bufferedBytes);
     // Request stepBytes + 1 (`[currentOffset, currentOffset + stepBytes]`) so
     // receiving <= stepBytes proves EOF without a separate GCS metadata RPC.
     const raw = await readSlice(currentOffset, currentOffset + stepBytes);
     if (raw.length <= stepBytes) {
       eof = true;
       if (raw.length > 0) {
-        if (raw.includes(0x0a)) hasNewline = true;
         chunks.push(raw);
       }
       break;
     }
 
     const window = raw.subarray(0, stepBytes);
-    if (window.includes(0x0a)) {
-      hasNewline = true;
-    }
     chunks.push(window);
     bufferedBytes += window.length;
     currentOffset += window.length;
 
-    if (hasNewline) {
+    if (window.includes(0x0a)) {
       break;
     }
   }
 
-  if (eof || hasNewline) {
+  const combined =
+    chunks.length === 0
+      ? Buffer.alloc(0)
+      : chunks.length === 1
+        ? chunks[0]
+        : Buffer.concat(chunks);
+  chunks.length = 0;
+
+  const firstNewline = combined.indexOf(0x0a);
+  if (firstNewline !== -1) {
+    const payloadLength =
+      firstNewline > 0 && combined[firstNewline - 1] === 0x0d
+        ? firstNewline - 1
+        : firstNewline;
+    if (payloadLength <= maxSingleLineBytes) {
+      return { chunk: combined, eof };
+    }
+    const nextOffset = startOffset + firstNewline + 1;
+    const eofAtNewline = eof && firstNewline + 1 === combined.length;
     return {
-      chunk: chunks.length === 1 ? chunks[0] : Buffer.concat(chunks),
-      eof,
+      chunk: Buffer.alloc(0),
+      eof: eofAtNewline,
+      skippedOversizedLine: { nextOffset },
+    };
+  }
+
+  if (eof) {
+    if (combined.length <= maxSingleLineBytes) {
+      return { chunk: combined, eof: true };
+    }
+    return {
+      chunk: Buffer.alloc(0),
+      eof: true,
+      skippedOversizedLine: { nextOffset: startOffset + combined.length },
     };
   }
 
   // Single newline-free line exceeded maxSingleLineBytes: release buffered
   // bytes and scan forward in bounded windows to find the terminating newline.
-  chunks.length = 0;
   const scanCeiling = Math.max(
     MAX_OVERSIZED_LINE_SCAN_BYTES,
     maxSingleLineBytes * 2,
@@ -214,9 +247,9 @@ export async function sliceTranscriptByteRangeFromBuffer(
 
 /**
  * Reads a bounded byte range from a session's archived transcript in GCS.
- * Extends across `maxBytes` windows up to `maxSingleLineBytes` if a single
- * JSONL line exceeds `maxBytes`, and handles HTTP 416 (empty object or offset
- * at/past EOF) cleanly as `{ chunk: empty, eof: true }`.
+ * Extends across `maxBytes` windows up to `maxSingleLineBytes` payload bytes
+ * if a single JSONL line exceeds `maxBytes`, and handles HTTP 416 (empty object
+ * or offset at/past EOF) cleanly as `{ chunk: empty, eof: true }`.
  */
 export async function fetchSessionTranscriptByteRange(
   gcsUri: string,

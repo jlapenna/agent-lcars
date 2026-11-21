@@ -22,8 +22,9 @@ interface RouteContext {
 
 /**
  * Paginated transcript reader for `/sessions/[id]`. Enforces the exact same
- * admin authorization, session-level CLI consent + retention expiry, and
- * `doc.renderable` / OpenCode resume export checks as SSR page 1.
+ * admin authorization, session-level CLI consent + retention expiry,
+ * `doc.renderable` / OpenCode resume export checks, and snapshot identity as
+ * SSR page 1.
  */
 export async function GET(
   request: NextRequest,
@@ -91,18 +92,45 @@ export async function GET(
     rawCursor !== null
       ? parseTranscriptCursor(rawCursor, target.agent)
       : undefined;
-  if (rawCursor !== null && !cursor) {
+  if (rawCursor !== null && (!cursor || !cursor.snapshot)) {
     return NextResponse.json(
       { error: 'Invalid transcript cursor' },
       { status: 400, headers: NO_STORE_HEADERS },
     );
   }
+  if (cursor && cursor.snapshot !== target.snapshotId) {
+    const body: TranscriptPageApiResponse = {
+      events: [],
+      hasMore: false,
+      code: 'snapshot-changed',
+      warning:
+        'Transcript snapshot changed since this page loaded. Reload to view the updated archive.',
+    };
+    return NextResponse.json(body, {
+      status: 409,
+      headers: NO_STORE_HEADERS,
+    });
+  }
 
   const page = await getSessionTranscript(
     target.transcriptGcsUri,
     target.agent,
-    cursor ? { cursor } : undefined,
+    {
+      snapshotId: target.snapshotId,
+      ...(cursor && { cursor }),
+    },
   );
+  if (page.storageError) {
+    return NextResponse.json(
+      {
+        error: 'Transcript storage unavailable',
+        warning:
+          'Failed to load more transcript events from storage. Try again.',
+      },
+      { status: 503, headers: NO_STORE_HEADERS },
+    );
+  }
+
   const body: TranscriptPageApiResponse = {
     events: page.events,
     hasMore: Boolean(page.nextCursor),

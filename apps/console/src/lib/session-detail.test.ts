@@ -125,6 +125,7 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/a.jsonl',
       'claude-code',
+      { snapshotId: expect.any(String) },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -145,6 +146,7 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/runs/1/codex/a.jsonl',
       'codex',
+      { snapshotId: expect.any(String) },
     );
     expect(result.status).toBe('ok');
     expect(result).toMatchObject({ transcript: { events: [] } });
@@ -170,6 +172,7 @@ describe('getSessionDetail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://bucket/ses.export.json',
       'opencode',
+      { snapshotId: expect.any(String) },
     );
     expect(doc.renderable).toBe(false);
   });
@@ -241,6 +244,7 @@ describe('CLI session transcript detail', () => {
     expect(getSessionTranscript).toHaveBeenCalledWith(
       'gs://cli-archives/cli/host/codex/a.jsonl',
       'codex',
+      { snapshotId: expect.any(String) },
     );
   });
   it('never reads an expired CLI archive', async () => {

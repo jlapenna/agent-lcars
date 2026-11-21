@@ -2,6 +2,8 @@ import { Readable } from 'node:stream';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MAX_TRANSCRIPT_LINE_BYTES } from '../lib/cli-transcript-archive';
+
 const mockDownload = vi.fn();
 const mockCreateReadStream = vi.fn();
 const mockFile = vi.fn().mockImplementation(() => ({
@@ -32,6 +34,7 @@ import {
   fetchSessionTranscript,
   fetchSessionTranscriptByteRange,
   getAgentSessionTranscriptsBucketName,
+  MAX_TRANSCRIPT_SINGLE_LINE_BYTES,
   sliceTranscriptByteRangeFromBuffer,
 } from './transcript-store';
 
@@ -135,6 +138,11 @@ describe('fetchSessionTranscriptByteRange', () => {
     );
   }
 
+  it('shares the exact 32 MiB single-line payload ceiling with CLI validation', () => {
+    expect(MAX_TRANSCRIPT_SINGLE_LINE_BYTES).toBe(MAX_TRANSCRIPT_LINE_BYTES);
+    expect(MAX_TRANSCRIPT_SINGLE_LINE_BYTES).toBe(32 * 1024 * 1024);
+  });
+
   it('reads maxBytes + 1 to detect non-EOF vs EOF without a metadata RPC', async () => {
     const backing = Buffer.from('line1\nline2\nline3\n', 'utf8');
     mockGcsBackingBuffer(backing);
@@ -183,6 +191,62 @@ describe('fetchSessionTranscriptByteRange', () => {
       `"big":"${'x'.repeat(250)}"`,
     );
     expect(mockCreateReadStream.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('reads payloads at the exact maxSingleLineBytes ceiling with \\n, \\r\\n, or EOF, and skips limit + 1', async () => {
+    const limit = 128;
+    const exactPayload = 'x'.repeat(limit);
+
+    for (const [raw, expectedEof] of [
+      [`${exactPayload}\n{"next":1}\n`, false],
+      [`${exactPayload}\n`, true],
+      [`${exactPayload}\r\n{"next":1}\n`, false],
+      [`${exactPayload}\r\n`, true],
+      [exactPayload, true],
+    ] as const) {
+      const backing = Buffer.from(raw, 'utf8');
+      mockGcsBackingBuffer(backing);
+      const range = await fetchSessionTranscriptByteRange(
+        'gs://bucket/runs/1/exact-limit.jsonl',
+        { startOffset: 0, maxBytes: 64, maxSingleLineBytes: limit },
+      );
+      expect(range.skippedOversizedLine).toBeUndefined();
+      expect(range.eof).toBe(expectedEof);
+      expect(range.chunk.toString('utf8').startsWith(exactPayload)).toBe(true);
+
+      const fromMem = await sliceTranscriptByteRangeFromBuffer(backing, {
+        startOffset: 0,
+        maxBytes: 64,
+        maxSingleLineBytes: limit,
+      });
+      expect(fromMem).toEqual(range);
+    }
+
+    const overByOnePayload = 'y'.repeat(limit + 1);
+    for (const [raw, expectedNextOffset, expectedEof] of [
+      [`${overByOnePayload}\n{"after":1}\n`, limit + 2, false],
+      [`${overByOnePayload}\r\n{"after":1}\n`, limit + 3, false],
+      [overByOnePayload, limit + 1, true],
+    ] as const) {
+      const backing = Buffer.from(raw, 'utf8');
+      mockGcsBackingBuffer(backing);
+      const range = await fetchSessionTranscriptByteRange(
+        'gs://bucket/runs/1/over-by-one.jsonl',
+        { startOffset: 0, maxBytes: 64, maxSingleLineBytes: limit },
+      );
+      expect(range.chunk.length).toBe(0);
+      expect(range.eof).toBe(expectedEof);
+      expect(range.skippedOversizedLine).toEqual({
+        nextOffset: expectedNextOffset,
+      });
+
+      const fromMem = await sliceTranscriptByteRangeFromBuffer(backing, {
+        startOffset: 0,
+        maxBytes: 64,
+        maxSingleLineBytes: limit,
+      });
+      expect(fromMem).toEqual(range);
+    }
   });
 
   it('scans past a single newline-free line exceeding maxSingleLineBytes without stalling', async () => {

@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import { logger } from '@agent-lcars/logging';
 import type {
   SessionAgent,
@@ -38,6 +40,9 @@ export interface TranscriptPageCursor {
   agent: SessionAgent;
   mode: 'bytes' | 'events';
   offset: number;
+  /** Compact SHA-256 fingerprint of `(transcriptGcsUri, captureId)` binding the
+   * cursor to the exact archived snapshot rendered on page 1. */
+  snapshot?: string;
   state?: TranscriptPageParseState;
 }
 
@@ -45,6 +50,10 @@ export interface SessionTranscriptResult {
   events: (TranscriptTimelineEvent | TranscriptElisionDivider)[];
   nextCursor?: string;
   hasMore?: boolean;
+  /** True when the underlying storage read failed (as opposed to malformed
+   * transcript content), allowing paginated API routes to return HTTP 503 while
+   * SSR page 1 still degrades gracefully with `warning`. */
+  storageError?: boolean;
   /** Set when the fetch/parse degraded rather than crashed - GCS errors
    * (missing object, network/auth failure) and partially-unparseable
    * transcripts both surface here rather than as a thrown error, so the
@@ -59,13 +68,36 @@ export interface TranscriptPageApiResponse {
   hasMore: boolean;
   nextCursor?: string;
   warning?: string;
+  code?: 'snapshot-changed';
 }
 
 export type ResolvedSessionTranscriptTarget =
-  | { status: 'eligible'; transcriptGcsUri: string; agent: SessionAgent }
+  | {
+      status: 'eligible';
+      transcriptGcsUri: string;
+      agent: SessionAgent;
+      snapshotId: string;
+    }
   | { status: 'expired'; warning: string }
   | { status: 'revoked'; warning: string }
   | { status: 'ineligible' };
+
+/**
+ * Computes an opaque 132-bit SHA-256 base64url digest identifying a specific
+ * archived transcript object and CLI capture token without exposing raw GCS
+ * bucket/object paths in client cursors.
+ */
+export function computeTranscriptSnapshotId(
+  transcriptGcsUri: string,
+  captureId?: string,
+): string {
+  return createHash('sha256')
+    .update(transcriptGcsUri)
+    .update('\0')
+    .update(captureId ?? '')
+    .digest('base64url')
+    .slice(0, 22);
+}
 
 /**
  * Shared eligibility and consent gate enforced identically by SSR page 1
@@ -92,6 +124,10 @@ export function resolveSessionTranscriptTarget(
           status: 'eligible',
           transcriptGcsUri: doc.transcriptGcsUri,
           agent: doc.agent,
+          snapshotId: computeTranscriptSnapshotId(
+            doc.transcriptGcsUri,
+            cliArchive.captureId,
+          ),
         };
       }
       return { status: 'ineligible' };
@@ -110,10 +146,12 @@ export function resolveSessionTranscriptTarget(
       ? doc.resumeGcsUri
       : undefined;
   if (doc.transcriptGcsUri && (doc.renderable || openCodeExport)) {
+    const resolvedUri = openCodeExport ?? doc.transcriptGcsUri;
     return {
       status: 'eligible',
-      transcriptGcsUri: openCodeExport ?? doc.transcriptGcsUri,
+      transcriptGcsUri: resolvedUri,
       agent: doc.agent,
+      snapshotId: computeTranscriptSnapshotId(resolvedUri),
     };
   }
   return { status: 'ineligible' };
@@ -129,13 +167,23 @@ function isValidParseState(value: unknown): value is TranscriptPageParseState {
   }
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (key !== 'inSidechain' && key !== 'pendingCodexTurnHash') {
+    if (
+      key !== 'inSidechain' &&
+      key !== 'sidechainContributedEvents' &&
+      key !== 'pendingCodexTurnHash'
+    ) {
       return false;
     }
   }
   if (
     record['inSidechain'] !== undefined &&
     typeof record['inSidechain'] !== 'boolean'
+  ) {
+    return false;
+  }
+  if (
+    record['sidechainContributedEvents'] !== undefined &&
+    typeof record['sidechainContributedEvents'] !== 'boolean'
   ) {
     return false;
   }
@@ -182,6 +230,14 @@ export function parseTranscriptCursor(
   ) {
     return undefined;
   }
+  if (
+    record['snapshot'] !== undefined &&
+    (typeof record['snapshot'] !== 'string' ||
+      record['snapshot'].length === 0 ||
+      record['snapshot'].length > 64)
+  ) {
+    return undefined;
+  }
   if (record['state'] !== undefined && !isValidParseState(record['state'])) {
     return undefined;
   }
@@ -190,6 +246,9 @@ export function parseTranscriptCursor(
     agent: expectedAgent,
     mode: expectedMode,
     offset: record['offset'],
+    ...(record['snapshot'] !== undefined && {
+      snapshot: record['snapshot'],
+    }),
     ...(record['state'] !== undefined && {
       state: record['state'] as TranscriptPageParseState,
     }),
@@ -198,6 +257,7 @@ export function parseTranscriptCursor(
 
 export interface GetSessionTranscriptOptions {
   cursor?: TranscriptPageCursor;
+  snapshotId?: string;
   pageBytes?: number;
   pageEvents?: number;
   maxSingleLineBytes?: number;
@@ -222,6 +282,7 @@ async function getOpenCodeTranscriptPage(
     );
     return {
       events: [],
+      storageError: true,
       warning:
         'Transcript unavailable or expired (failed to fetch from storage).',
     };
@@ -233,6 +294,10 @@ async function getOpenCodeTranscriptPage(
   );
   const pageEvents = options?.pageEvents ?? DEFAULT_OPENCODE_PAGE_EVENTS;
   const offset = options?.cursor?.mode === 'events' ? options.cursor.offset : 0;
+  const snapshotId =
+    options?.snapshotId ??
+    options?.cursor?.snapshot ??
+    computeTranscriptSnapshotId(transcriptGcsUri);
   const slice = events.slice(offset, offset + pageEvents);
   const hasMore = offset + slice.length < events.length;
   const nextCursor = hasMore
@@ -241,6 +306,7 @@ async function getOpenCodeTranscriptPage(
         agent: 'opencode',
         mode: 'events',
         offset: offset + slice.length,
+        snapshot: snapshotId,
       })
     : undefined;
 
@@ -278,6 +344,10 @@ export async function getSessionTranscript(
   }
 
   const pageBytes = options?.pageBytes ?? DEFAULT_TRANSCRIPT_PAGE_BYTES;
+  const snapshotId =
+    options?.snapshotId ??
+    options?.cursor?.snapshot ??
+    computeTranscriptSnapshotId(transcriptGcsUri);
   let currentOffset =
     options?.cursor?.mode === 'bytes' ? options.cursor.offset : 0;
   let currentState =
@@ -353,6 +423,7 @@ export async function getSessionTranscript(
     );
     return {
       events: [],
+      storageError: true,
       warning:
         'Transcript unavailable or expired (failed to fetch from storage).',
     };
@@ -362,7 +433,9 @@ export async function getSessionTranscript(
   const hasMore = !reachedEof;
   const hasCarryState = Boolean(
     currentState &&
-    (currentState.inSidechain || currentState.pendingCodexTurnHash),
+    (currentState.inSidechain ||
+      currentState.sidechainContributedEvents ||
+      currentState.pendingCodexTurnHash),
   );
   const nextCursor = hasMore
     ? encodeTranscriptCursor({
@@ -370,6 +443,7 @@ export async function getSessionTranscript(
         agent,
         mode: 'bytes',
         offset: currentOffset,
+        snapshot: snapshotId,
         ...(hasCarryState && { state: currentState }),
       })
     : undefined;

@@ -27,7 +27,10 @@ vi.mock('@/lib/session-transcript', async () => {
   };
 });
 
-import { encodeTranscriptCursor } from '@/lib/session-transcript';
+import {
+  computeTranscriptSnapshotId,
+  encodeTranscriptCursor,
+} from '@/lib/session-transcript';
 
 import { GET } from './route';
 
@@ -146,18 +149,30 @@ describe('GET /api/sessions/[id]/transcript', () => {
     expect(mocks.getSessionTranscript).not.toHaveBeenCalled();
   });
 
-  it('rejects malformed or mismatched-agent cursors with 400', async () => {
+  it('rejects malformed, missing-snapshot, or mismatched-agent cursors with 400', async () => {
     mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
     mocks.getSessionDoc.mockResolvedValue(agentDoc({ agent: 'claude-code' }));
 
     const malformed = await GET(...makeRequest('agent-1', '?cursor=!!!'));
     expect(malformed.status).toBe(400);
 
+    const missingSnapshot = encodeTranscriptCursor({
+      v: 1,
+      agent: 'claude-code',
+      mode: 'bytes',
+      offset: 512,
+    });
+    expect(
+      (await GET(...makeRequest('agent-1', `?cursor=${missingSnapshot}`)))
+        .status,
+    ).toBe(400);
+
     const wrongAgent = encodeTranscriptCursor({
       v: 1,
       agent: 'codex',
       mode: 'bytes',
       offset: 512,
+      snapshot: computeTranscriptSnapshotId('gs://bucket/runs/1/session.jsonl'),
     });
     const mismatch = await GET(
       ...makeRequest('agent-1', `?cursor=${wrongAgent}`),
@@ -166,15 +181,89 @@ describe('GET /api/sessions/[id]/transcript', () => {
     expect(mocks.getSessionTranscript).not.toHaveBeenCalled();
   });
 
+  it('returns 409 snapshot-changed when a newer CLI capture replaced the archive mid-session', async () => {
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    const oldSnapshot = computeTranscriptSnapshotId(
+      'gs://cli/codex/cli-1/capture-old.jsonl',
+      'capture-old',
+    );
+    const staleCursor = encodeTranscriptCursor({
+      v: 1,
+      agent: 'codex',
+      mode: 'bytes',
+      offset: 4096,
+      snapshot: oldSnapshot,
+    });
+    mocks.getSessionDoc.mockResolvedValue(
+      cliDoc({
+        transcriptGcsUri: 'gs://cli/codex/cli-1/capture-new.jsonl',
+        renderable: true,
+        cliTranscriptArchive: {
+          status: 'available',
+          captureId: 'capture-new',
+          expiresAt: '2099-01-01T00:00:00Z',
+        },
+      }),
+    );
+
+    const response = await GET(
+      ...makeRequest('cli-1', `?cursor=${encodeURIComponent(staleCursor)}`),
+    );
+    expect(response.status).toBe(409);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toMatchObject({
+      events: [],
+      hasMore: false,
+      code: 'snapshot-changed',
+      warning: expect.stringContaining('Reload'),
+    });
+    expect(mocks.getSessionTranscript).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 instead of 200 hasMore:false when storage read fails transiently', async () => {
+    mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
+    mocks.getSessionDoc.mockResolvedValue(agentDoc({ agent: 'claude-code' }));
+    const snapshot = computeTranscriptSnapshotId(
+      'gs://bucket/runs/1/session.jsonl',
+    );
+    const cursor = encodeTranscriptCursor({
+      v: 1,
+      agent: 'claude-code',
+      mode: 'bytes',
+      offset: 1024,
+      snapshot,
+    });
+    mocks.getSessionTranscript.mockResolvedValue({
+      events: [],
+      storageError: true,
+      warning:
+        'Transcript unavailable or expired (failed to fetch from storage).',
+    });
+
+    const response = await GET(
+      ...makeRequest('agent-1', `?cursor=${encodeURIComponent(cursor)}`),
+    );
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toMatchObject({
+      error: 'Transcript storage unavailable',
+      warning: expect.stringContaining('Try again'),
+    });
+  });
+
   it('fetches the requested cursor page and returns private, no-store JSON', async () => {
     mocks.auth.mockResolvedValue({ user: { isAdmin: true } });
     mocks.getSessionDoc.mockResolvedValue(agentDoc({ agent: 'claude-code' }));
+    const snapshot = computeTranscriptSnapshotId(
+      'gs://bucket/runs/1/session.jsonl',
+    );
     const cursor = encodeTranscriptCursor({
       v: 1,
       agent: 'claude-code',
       mode: 'bytes',
       offset: 2048,
-      state: { inSidechain: true },
+      snapshot,
+      state: { inSidechain: true, sidechainContributedEvents: true },
     });
     mocks.getSessionTranscript.mockResolvedValue({
       events: [{ kind: 'text', role: 'assistant', text: 'page 2' }],
@@ -196,12 +285,14 @@ describe('GET /api/sessions/[id]/transcript', () => {
       'gs://bucket/runs/1/session.jsonl',
       'claude-code',
       {
+        snapshotId: snapshot,
         cursor: {
           v: 1,
           agent: 'claude-code',
           mode: 'bytes',
           offset: 2048,
-          state: { inSidechain: true },
+          snapshot,
+          state: { inSidechain: true, sidechainContributedEvents: true },
         },
       },
     );

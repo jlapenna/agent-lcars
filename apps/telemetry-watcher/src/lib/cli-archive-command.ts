@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -104,11 +105,79 @@ export function openCliArchiveFd(
   }
 }
 
+interface PrivateStagingSnapshot {
+  fd: number;
+  closeAndCleanup: () => void;
+}
+
+/**
+ * Create an unlinked `0o600` file inside a private `0o700` temporary directory
+ * so validated bytes are isolated from concurrent in-place edits, appends, or
+ * truncations of the live CLI transcript while never materializing the whole
+ * file in memory.
+ */
+function createPrivateStagingSnapshot(): PrivateStagingSnapshot {
+  const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lcars-cli-stage-'));
+  const stagePath = path.join(stageDir, 'snapshot.jsonl');
+  let fd: number | undefined;
+  let closed = false;
+  try {
+    fd = fs.openSync(
+      stagePath,
+      fs.constants.O_RDWR |
+        fs.constants.O_CREAT |
+        fs.constants.O_EXCL |
+        fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.unlinkSync(stagePath);
+    const openedFd = fd;
+    return {
+      fd: openedFd,
+      closeAndCleanup: () => {
+        if (closed) return;
+        closed = true;
+        try {
+          fs.closeSync(openedFd);
+        } finally {
+          fs.rmSync(stageDir, { recursive: true, force: true });
+        }
+      },
+    };
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore secondary close error during cleanup.
+      }
+    }
+    fs.rmSync(stageDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function writeAllSync(fd: number, chunk: Buffer, position: number): number {
+  let written = 0;
+  while (written < chunk.length) {
+    const n = fs.writeSync(
+      fd,
+      chunk,
+      written,
+      chunk.length - written,
+      position + written,
+    );
+    if (n <= 0) {
+      throw new Error('stage-write-failed');
+    }
+    written += n;
+  }
+  return position + written;
+}
+
 /**
  * Create a pull-driven readable byte stream clamped to `[0, byteLength)` on an
- * already-open file descriptor. Concurrent appends past `byteLength` are never
- * read, and concurrent truncation below `byteLength` aborts the stream before
- * completion.
+ * already-open file descriptor.
  */
 export function createBoundedFdReadStream(
   fd: number,
@@ -187,7 +256,8 @@ export async function executeCliArchiveCommand(
       message: 'CLI archive requires one local CLI session.',
     };
   let capture: { session: ArchiveSession; id: string } | undefined;
-  let fd: number | undefined;
+  let sourceFd: number | undefined;
+  let stagedSnapshot: PrivateStagingSnapshot | undefined;
   try {
     const session = await deps.getSession(target.sessionId);
     if (
@@ -221,7 +291,9 @@ export async function executeCliArchiveCommand(
     const expectedSessionId = target.sessionId;
     const maxBytes = deps.maxBytes ?? CLI_TRANSCRIPT_SAFETY_MAX_BYTES;
     const maxLineBytes = deps.maxLineBytes ?? MAX_TRANSCRIPT_LINE_BYTES;
-    fd = openCliArchiveFd(args[1], maxBytes);
+    sourceFd = openCliArchiveFd(args[1], maxBytes);
+    stagedSnapshot = createPrivateStagingSnapshot();
+    const stageFd = stagedSnapshot.fd;
     const adapter =
       sessionAgent === 'codex'
         ? codexAdapter
@@ -229,11 +301,15 @@ export async function executeCliArchiveCommand(
           ? antigravityAdapter
           : claudeCodeAdapter;
 
+    let stagedBytes = 0;
     let validatedBytes = 0;
     let validatedLineCount = 0;
-    const rawIterator = readTranscriptLinesFromFd(fd, {
+    const rawIterator = readTranscriptLinesFromFd(sourceFd, {
       maxBytes,
       maxLineBytes,
+      onChunkRead: (chunk) => {
+        stagedBytes = writeAllSync(stageFd, chunk, stagedBytes);
+      },
     });
     let iteratorDone = false;
 
@@ -263,9 +339,15 @@ export async function executeCliArchiveCommand(
       }
     }
 
+    // Close the source descriptor immediately after single-pass staging +
+    // validation so subsequent async claim/upload steps never touch the live file.
+    fs.closeSync(sourceFd);
+    sourceFd = undefined;
+
     if (
       validatedLineCount === 0 ||
       validatedBytes <= 0 ||
+      stagedBytes !== validatedBytes ||
       summaries.length !== 1 ||
       summaries[0].sessionId !== target.sessionId
     )
@@ -282,7 +364,7 @@ export async function executeCliArchiveCommand(
     await deps.claim(session, captureId);
     capture = { session, id: captureId };
 
-    const uploadStream = createBoundedFdReadStream(fd, validatedBytes);
+    const uploadStream = createBoundedFdReadStream(stageFd, validatedBytes);
     try {
       await deps.upload(object, uploadStream, validatedBytes);
     } finally {
@@ -317,9 +399,10 @@ export async function executeCliArchiveCommand(
         'CLI archive operation failed; check session archive status before retrying.',
     };
   } finally {
-    if (fd !== undefined) {
-      fs.closeSync(fd);
+    if (sourceFd !== undefined) {
+      fs.closeSync(sourceFd);
     }
+    stagedSnapshot?.closeAndCleanup();
   }
 }
 
