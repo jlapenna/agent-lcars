@@ -286,8 +286,8 @@ branch on the reference format:
 - **Report Work** (a native Work spec with `deliverable: report`): the
   findings are the deliverable. Make no PR, commit or GitHub write; record
   `<!-- agent-result:v1:report:$ATTEMPT_ID -->` with the attempt claim in
-  the same private outcome file, then end with the complete report as the
-  final response. It is stored whole however long it is (the only bound is
+  the same private outcome file. Write the complete report immediately below
+  those two marker lines, then give the report as your final response. It is stored whole however long it is (the only bound is
   4 MiB of UTF-8; a longer one is refused, never truncated). Only a report, park or no-op settles such an item; a PR fails it.
   In a reply round that resumes the earlier conversation, a follow-up on a
   delivered report gets a direct, self-contained answer as that final

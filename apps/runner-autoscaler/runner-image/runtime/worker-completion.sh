@@ -26,6 +26,37 @@ report_message_usable() {
   node -e 'process.exit(require("fs").readFileSync(process.argv[1], "utf8").trim() !== "" ? 0 : 1)' "$1"
 }
 
+# The two marker lines bind a report to this attempt. Older workers wrote
+# only the markers and delivered the body through the provider's final turn.
+native_report_source() {
+  python3 - "$NATIVE_WORK_OUTCOME_FILE" "$ATTEMPT_ID" "$RUN_MESSAGE_MAX_BYTES" "$RUNNER_TEMP" "$1" <<'PYTHON'
+import os
+import stat
+import sys
+import tempfile
+
+record, attempt, limit, directory, fallback = sys.argv[1:]
+header = f"<!-- agent-result:v1:report:{attempt} -->\n<!-- attempt-claim:{attempt} -->\n".encode()
+try:
+    fd = os.open(record, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(fd).st_mode) or stream.read(len(header)) != header:
+            sys.exit(1)
+        body = stream.read(int(limit) + 1)
+    if len(body) > int(limit):
+        sys.exit(1)
+    if body:
+        body.decode("utf-8", errors="strict")
+        with tempfile.NamedTemporaryFile(dir=directory, prefix="report-body.", delete=False) as snapshot:
+            snapshot.write(body)
+        print(snapshot.name)
+    else:
+        print(fallback)
+except (OSError, UnicodeError):
+    sys.exit(1)
+PYTHON
+}
+
 # The optional third argument names the round's final-message file. Given
 # one, a report record settles the round only with a usable message, so an
 # unusable report still earns the same-session correction.
@@ -37,14 +68,15 @@ worker_completion_needed() {
   [ "$remaining" -gt 0 ] || return 1
   if [ "$ANCHOR_TYPE" = work ] && [ -f "${NATIVE_WORK_OUTCOME_FILE:-}" ]; then
     local result results=(park no-op)
-    [ "${REPORT_DELIVERABLE:-}" != 1 ] || results+=(report)
+    if [ "${REPORT_DELIVERABLE:-}" = 1 ] && message_file="$(native_report_source "$message_file")"; then
+      if [ -z "$message_file" ] || report_message_usable "$message_file"; then
+        return 1
+      fi
+    fi
     for result in "${results[@]}"; do
       if printf '<!-- agent-result:v1:%s:%s -->\n<!-- attempt-claim:%s -->\n' \
         "$result" "$ATTEMPT_ID" "$ATTEMPT_ID" | cmp -s - "$NATIVE_WORK_OUTCOME_FILE"; then
-        if [ "$result" != report ] || [ -z "$message_file" ] ||
-          report_message_usable "$message_file"; then
-          return 1
-        fi
+        return 1
       fi
     done
   fi
