@@ -412,47 +412,77 @@ export async function auditRepository({
               check.context === reviewRule.context &&
               check.integration_id === reviewRule.integration_id,
           );
-        const sources = rules.filter(requiresReview);
-        const mergedAt = Date.parse(merged.merged_at);
-        let predatesRule = true;
-        for (const source of sources) {
+        const ref = `refs/heads/${metadata.default_branch}`;
+        const suitesPath = `/repos/${repo}/rulesets/rule-suites`;
+        const suites = await optionalMetadataRead(capability, () =>
+          pages(
+            api,
+            `${suitesPath}?ref=${encodeURIComponent(ref)}&time_period=month&rule_suite_result=all`,
+            metadataToken,
+          ),
+        );
+        const suite = suites.find(
+          (item) =>
+            item.after_sha === commit.sha &&
+            item.ref === ref &&
+            ['pass', 'bypass'].includes(item.result),
+        );
+        if (!suite)
+          throw new UnverifiableError(
+            'No retained rule evaluation for the default-branch update',
+          );
+        const detail = await optionalMetadataRead(capability, () =>
+          api(`${suitesPath}/${suite.id}`, metadataToken),
+        );
+        // The recorded update establishes which rulesets actually targeted
+        // this branch, including when historical ref conditions differed.
+        const appliedSources = new Set(
+          detail.rule_evaluations
+            .filter(
+              (evaluation) =>
+                evaluation.enforcement === 'active' &&
+                evaluation.rule_type === 'required_status_checks' &&
+                evaluation.rule_source.type === 'ruleset',
+            )
+            .map((evaluation) => evaluation.rule_source.id),
+        );
+        for (const source of rules.filter(requiresReview)) {
           if (
-            source.ruleset_source_type !== 'Repository' ||
-            !source.ruleset_id
-          ) {
-            predatesRule = false;
-            break;
-          }
+            !appliedSources.has(source.ruleset_id) ||
+            source.ruleset_source_type !== 'Repository'
+          )
+            continue;
           const historyPath = `/repos/${repo}/rulesets/${source.ruleset_id}/history`;
-          const history = await optionalMetadataRead(capability, () =>
-            pages(api, historyPath, metadataToken),
-          );
-          if (!history.length)
-            throw new UnverifiableError(
-              'Ruleset history unavailable for the merged PR',
+          try {
+            const history = await pages(api, historyPath, metadataToken);
+            const prior = history
+              .filter(
+                (item) =>
+                  Date.parse(item.updated_at) <= Date.parse(suite.pushed_at),
+              )
+              .sort(
+                (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+              )[0];
+            if (!prior) continue;
+            const { state } = await api(
+              `${historyPath}/${prior.version_id}`,
+              metadataToken,
             );
-          const prior = history
-            .filter((item) => Date.parse(item.updated_at) <= mergedAt)
-            .sort(
-              (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
-            )[0];
-          if (!prior) continue;
-          const { state } = await optionalMetadataRead(capability, () =>
-            api(`${historyPath}/${prior.version_id}`, metadataToken),
-          );
-          if (
-            state.enforcement === 'active' &&
-            state.rules.some(requiresReview)
-          ) {
-            predatesRule = false;
-            break;
+            if (
+              state.enforcement === 'active' &&
+              state.rules.some(requiresReview)
+            ) {
+              throw new AuditError(
+                'Required LCARS review absent on merged PR head',
+              );
+            }
+          } catch (error) {
+            if (!isAccessGap(error)) throw error;
           }
         }
-        if (predatesRule)
-          throw new UnverifiableError(
-            'Merged PR predates the required LCARS review; verify after the next reviewed merge',
-          );
-        throw new AuditError('Required LCARS review absent on merged PR head');
+        throw new UnverifiableError(
+          'LCARS review requirement at the merged update could not be established; verify after the next reviewed merge',
+        );
       }
     }
     return `${required.length} required contexts observed on ${commit.sha}`;

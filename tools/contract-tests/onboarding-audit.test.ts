@@ -358,13 +358,16 @@ describe('read-only onboarding audit', () => {
     'different-app',
     'independent-failure',
     'before-enforcement',
+    'different-branch',
+    'inherited',
   ])('audits PR-head App reviews with %s evidence', async (evidence) => {
     const { api } = fixture({
       [`/repos/${repo}/rules/branches/main?per_page=100&page=1`]: [
         {
           type: 'required_status_checks',
           ruleset_id: 123,
-          ruleset_source_type: 'Repository',
+          ruleset_source_type:
+            evidence === 'inherited' ? 'Organization' : 'Repository',
           parameters: {
             required_status_checks: [
               { context: 'LCARS review', integration_id: 4457090 },
@@ -389,18 +392,43 @@ describe('read-only onboarding audit', () => {
           ],
       [`/repos/${repo}/commits/reviewed/check-runs?filter=all&per_page=100&page=1`]:
         {
-          check_runs:
-            evidence === 'before-enforcement'
-              ? []
-              : [
-                  {
-                    name: 'LCARS review',
-                    head_sha: 'reviewed',
-                    external_id: 'lcars-review',
-                    app: { id: evidence === 'different-app' ? 42 : 4457090 },
-                  },
-                ],
+          check_runs: [
+            'before-enforcement',
+            'different-branch',
+            'inherited',
+          ].includes(evidence)
+            ? []
+            : [
+                {
+                  name: 'LCARS review',
+                  head_sha: 'reviewed',
+                  external_id: 'lcars-review',
+                  app: { id: evidence === 'different-app' ? 42 : 4457090 },
+                },
+              ],
         },
+      [`/repos/${repo}/rulesets/rule-suites?ref=refs%2Fheads%2Fmain&time_period=month&rule_suite_result=all&per_page=100&page=1`]:
+        [
+          {
+            id: 42,
+            after_sha: 'abc123',
+            ref: 'refs/heads/main',
+            result: 'pass',
+            pushed_at: '2026-11-01',
+          },
+        ],
+      [`/repos/${repo}/rulesets/rule-suites/42`]: {
+        rule_evaluations:
+          evidence === 'different-branch'
+            ? []
+            : [
+                {
+                  enforcement: 'active',
+                  rule_type: 'required_status_checks',
+                  rule_source: { type: 'ruleset', id: 123 },
+                },
+              ],
+      },
       [`/repos/${repo}/rulesets/123/history?per_page=100&page=1`]: [
         { version_id: 2, updated_at: '2026-11-05' },
         { version_id: 1, updated_at: '2026-10-01' },
@@ -430,7 +458,12 @@ describe('read-only onboarding audit', () => {
     expect((await audit(api))[3].status).toBe(
       evidence === 'present'
         ? 'pass'
-        : ['unavailable', 'before-enforcement'].includes(evidence)
+        : [
+              'unavailable',
+              'before-enforcement',
+              'different-branch',
+              'inherited',
+            ].includes(evidence)
           ? 'unverifiable'
           : 'fail',
     );
