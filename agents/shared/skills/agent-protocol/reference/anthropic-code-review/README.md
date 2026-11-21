@@ -132,8 +132,9 @@ review and comment-quality guidance applies.
    PR head. Recheck that merge base before publishing and include
    `<!-- lcars-review:merge-base SHA -->` on its own line with the recorded
    SHA. Review the updated diff if the merge base changed.
-   For a blocking self-review, attach a finding
-   as an unresolved review thread in the same submission. If all findings
+   For a blocking self-review, verify and link an existing unresolved thread on
+   this PR if it already covers the finding. Otherwise attach a new finding
+   as an unresolved review thread in the same submission. If new findings
    lack a changed-line location, first create a file-level review thread
    (`subject_type: file`) on an affected changed file at the reviewed SHA.
    Verify its comment ID belongs to an unresolved thread on the current PR

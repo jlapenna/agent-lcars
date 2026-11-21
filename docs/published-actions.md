@@ -38,8 +38,8 @@ inputs empty still scopes to the workflow repository; explicitly setting an
 owner without repositories intentionally selects that owner's installation.
 
 Call `publish-lcars-review` only from trusted default-branch workflow code.
-Run the permissionless `LCARS review event` PR/review notifier on a GitHub-hosted
-runner. Reconcile on its completion,
+Run the permissionless `LCARS review event` PR/review notifier on GitHub’s
+`ubuntu-slim` runner. Reconcile on its completion,
 default-branch pushes, manual dispatch, and an hourly backstop. The publisher
 needs `contents: read`, `pull-requests: read`, and `checks: read` on the
 workflow token. Pass the App client ID and private key through its declared
@@ -49,7 +49,10 @@ runner and credential environment for that trusted job. Require
 `LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
 review-thread resolution in the target repository. The shared agent protocol
 owns reviewer behavior. Enabling this check also needs a working LCARS
-review dispatch path for that repository. For fleet-managed auto-merge callers,
+review dispatch path for that repository. Stage the workflow first and verify
+that a deployed reviewer produced a merge-base receipt and a successful App check.
+Request a new review for each affected open head that lacks the receipt before
+switching enforcement or replacing its publisher. For fleet-managed auto-merge callers,
 include `--ci-workflow lcars-review-event.yml` alongside the existing CI workflow
 inputs on every scaffold refresh.
 
@@ -78,11 +81,12 @@ bots such as Renovate and Dependabot, which retain branch ownership):
 GitHub's own auto-merge arms a PR but never updates its branch, so under a strict "up to date" ruleset a PR whose head falls behind
 `main` after another merge stalls indefinitely until a human rebases it
 (#1748; jlapenna/homelab#1121 sat 16 hours this way with green checks and
-auto-merge armed). The sweep only acts once a PR's checks are all green with
+auto-merge armed). The sweep only acts once the checks on the PR head are all green with
 none still running and it has no unresolved review thread, re-checks a
 stale `UNKNOWN` mergeability up to three times, prefers `gh pr update-branch --rebase`
 and falls back to the default merge-commit update if the rebase form is
-refused, and is capped at 5 updates per run.
+refused, and is capped at 5 updates per run. GitHub separately enforces the
+required check on the test merge commit when it has check results.
 
 The sweep never updates Renovate or Dependabot PRs (#2049). Updating a
 Renovate branch with `GITHUB_TOKEN` can suppress follow-up CI and cause

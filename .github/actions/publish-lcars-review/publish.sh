@@ -76,7 +76,8 @@ for target in "${!candidate_heads[@]}"; do
   current=$(jq -c '[.[].check_runs[] | select(.app.id == 4457090 and .external_id == "lcars-review-merge-candidate")] | max_by(.id)' <<< "$checks")
   # Refresh membership and all applicable reviews after the repository scan.
   # PRs sharing a test merge commit necessarily share its second parent.
-  matching=$(gh api --method GET --paginate "repos/$REPO/pulls" -f base="$BASE" -f state=open -F per_page=100 --jq ".[] | select(.head.sha == \"$head\") | .number")
+  matching=$(gh api --paginate --slurp "repos/$REPO/commits/$head/pulls?per_page=100" |
+    jq -r --arg head "$head" --arg base "$BASE" '.[][] | select(.state == "open" and .head.sha == $head and .base.ref == $base) | .number')
   [[ -n "$matching" ]] || continue
   selected_pr=
   while read -r pr; do
