@@ -2,15 +2,34 @@
 """Wait for this fixture's detached clients before deleting their scratch."""
 import errno, os, pathlib, select, sys, time
 
-scratch = os.fsencode(sys.argv[1])
-deadline = time.monotonic() + 30
 owned = {}
+names = {}
 empty_scans = 0
+
+def parse_deadline_seconds():
+    seconds = float(os.environ.get('HOOK_DRAIN_DEADLINE_SECONDS', '30'))
+    if not (0 < seconds < float('inf')):
+        raise ValueError('invalid drain deadline')
+    return seconds
 
 def start_ticks(process):
     return (process / 'stat').read_text().rsplit(') ', 1)[1].split()[19]
 
+def comm_name(process):
+    try:
+        raw = (process / 'comm').read_text(encoding='utf-8', errors='replace').strip()
+    except OSError:
+        return 'unknown'
+    if not raw:
+        return 'unknown'
+    return ''.join(
+        ch if ('A' <= ch <= 'Z' or 'a' <= ch <= 'z' or '0' <= ch <= '9' or ch in '._-') else '?'
+        for ch in raw[:16]
+    )
+
 try:
+    scratch = os.fsencode(sys.argv[1])
+    deadline = time.monotonic() + parse_deadline_seconds()
     while True:
         for process in pathlib.Path('/proc').iterdir():
             if not process.name.isdigit():
@@ -39,6 +58,7 @@ try:
                         os.close(descriptor)
                         raise RuntimeError('owned process identity changed')
                     owned[key] = descriptor
+                    names[key] = comm_name(process)
             except OSError as error:
                 if error.errno in (errno.EACCES, errno.EPERM):
                     # An unrelated protected process is not this test's owner.
@@ -55,6 +75,7 @@ try:
         for key, descriptor in list(owned.items()):
             if select.select([descriptor], [], [], 0)[0]:
                 os.close(owned.pop(key))
+                names.pop(key, None)
         if not owned:
             empty_scans += 1
             if empty_scans >= 2:
@@ -82,7 +103,21 @@ except Exception as error:
         'owned hook processes did not drain': 'deadline',
     }
     reason = reasons.get(str(error), 'other') if type(error) is RuntimeError else 'other'
-    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code} reason={reason}', file=sys.stderr)
+    suffix = ''
+    if reason == 'deadline':
+        resolved = set()
+        for key in owned:
+            process = pathlib.Path('/proc') / str(key[0])
+            try:
+                current = comm_name(process) if start_ticks(process) == key[1] else names.get(key, 'unknown')
+            except OSError:
+                current = names.get(key, 'unknown')
+            resolved.add(current)
+        surviving = ','.join(sorted(resolved) or ['unknown'])
+        suffix = f' processes={surviving}'
+    print(f'hook smoke cleanup: process drainage refused; retaining private scratch; exception={category} errno={code} reason={reason}{suffix}', file=sys.stderr)
+    if reason == 'deadline' and os.environ.get('HOOK_SMOKE_DEGRADE_DEADLINE') == '1':
+        sys.exit(75)
     sys.exit(1)
 finally:
     for descriptor in owned.values():

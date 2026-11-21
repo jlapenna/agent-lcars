@@ -16,10 +16,15 @@ HELPER = Path(__file__).with_name("drain-hook-test-clients.py")
 
 
 class DrainTests(unittest.TestCase):
-    def child(self, scratch, duration):
+    def child(self, scratch, duration, extra_args=(), extra_env=None):
         child = subprocess.Popen(
-            [sys.executable, "-c", f"import time; print('ready', flush=True); time.sleep({duration})"],
-            env={**os.environ, "TMPDIR": str(scratch)},
+            [
+                sys.executable,
+                "-c",
+                f"import time; print('ready', flush=True); time.sleep({duration})",
+                *extra_args,
+            ],
+            env={**os.environ, **(extra_env or {}), "TMPDIR": str(scratch)},
             stdout=subprocess.PIPE,
             text=True,
             start_new_session=True,
@@ -45,19 +50,86 @@ class DrainTests(unittest.TestCase):
 
     def test_deadline_refuses_cleanup_and_preserves_live_client(self):
         with tempfile.TemporaryDirectory() as scratch:
-            owned = self.child(scratch, 60)
+            owned = self.child(
+                scratch,
+                60,
+                extra_args=("private-arg-secret",),
+                extra_env={"PRIVATE_ENV": "private-env-secret"},
+            )
+            expected_comm = Path(f"/proc/{owned.pid}/comm").read_text().strip()[:16]
             sentinel = Path(scratch) / "client-state"
             sentinel.write_text("retained")
             diagnostics = io.StringIO()
-            with mock.patch.object(sys, "argv", [str(HELPER), scratch]), \
+            clean_env = {
+                key: value
+                for key, value in os.environ.items()
+                if key not in ("HOOK_DRAIN_DEADLINE_SECONDS", "HOOK_SMOKE_DEGRADE_DEADLINE")
+            }
+            with mock.patch.dict(os.environ, clean_env, clear=True), \
+                    mock.patch.object(sys, "argv", [str(HELPER), scratch]), \
                     mock.patch("time.monotonic", side_effect=[0, 31]), \
                     contextlib.redirect_stderr(diagnostics), \
                     self.assertRaises(SystemExit) as result:
                 runpy.run_path(str(HELPER), run_name="__main__")
+            stderr = diagnostics.getvalue()
             self.assertEqual(result.exception.code, 1)
-            self.assertIn("reason=deadline", diagnostics.getvalue())
+            self.assertIn(f"reason=deadline processes={expected_comm}", stderr)
+            self.assertNotIn("private-arg-secret", stderr)
+            self.assertNotIn("private-env-secret", stderr)
             self.assertIsNone(owned.poll())
             self.assertEqual(sentinel.read_text(), "retained")
+
+    def test_degrade_deadline_exits_75_and_honors_configured_deadline(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            owned = self.child(
+                scratch,
+                60,
+                extra_args=("private-arg-secret",),
+                extra_env={"PRIVATE_ENV": "private-env-secret"},
+            )
+            expected_comm = Path(f"/proc/{owned.pid}/comm").read_text().strip()[:16]
+            sentinel = Path(scratch) / "client-state"
+            sentinel.write_text("retained")
+            result = subprocess.run(
+                [sys.executable, str(HELPER), scratch],
+                env={
+                    **os.environ,
+                    "HOOK_DRAIN_DEADLINE_SECONDS": "0.15",
+                    "HOOK_SMOKE_DEGRADE_DEADLINE": "1",
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(result.returncode, 75)
+            self.assertEqual(
+                result.stderr.strip(),
+                "hook smoke cleanup: process drainage refused; retaining private scratch; "
+                f"exception=RuntimeError errno=none reason=deadline processes={expected_comm}",
+            )
+            self.assertNotIn("private-arg-secret", result.stderr)
+            self.assertNotIn("private-env-secret", result.stderr)
+            self.assertIsNone(owned.poll())
+            self.assertEqual(sentinel.read_text(), "retained")
+
+            invalid = subprocess.run(
+                [sys.executable, str(HELPER), scratch],
+                env={
+                    **os.environ,
+                    "HOOK_DRAIN_DEADLINE_SECONDS": "private-bad-deadline",
+                    "HOOK_SMOKE_DEGRADE_DEADLINE": "1",
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(invalid.returncode, 1)
+            self.assertEqual(
+                invalid.stderr.strip(),
+                "hook smoke cleanup: process drainage refused; retaining private scratch; "
+                "exception=ValueError errno=none reason=other",
+            )
+            self.assertNotIn("private-bad-deadline", invalid.stderr)
 
 
 if __name__ == "__main__":

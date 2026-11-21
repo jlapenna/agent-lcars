@@ -27,24 +27,37 @@ fail() {
 tmp="$(mktemp -d)"
 server_pid=""
 cleanup() {
-  drained=true
+  local drain_status=0
   # CLI exit and spooled events do not mean its detached hook clients exited.
   # Drain only this test's unique TMPDIR before deleting files they still use.
-  if ! python3 "$(dirname "${BASH_SOURCE[0]}")/drain-hook-test-clients.py" "$tmp"; then
-    drained=false
-  fi
+  python3 "$(dirname "${BASH_SOURCE[0]}")/drain-hook-test-clients.py" "$tmp" || drain_status=$?
   if [ -n "$server_pid" ]; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
-  if [ "$drained" != true ]; then
+  if [ "$drain_status" -eq 75 ]; then
+    if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
+      printf 'deadline\n' > "$lib_dir/.hook-smoke-deadline-degraded"
+    fi
+    return 0
+  fi
+  if [ "$drain_status" -ne 0 ]; then
     return 1
   fi
   rm -rf "$tmp"
 }
-trap 'cleanup && { if [ -n "${HOOK_TEST_LIB_DIR:-}" ]; then
-  printf "drained\n" > "$lib_dir/.hook-smoke-drained"
-fi; }' EXIT
+on_exit() {
+  local exit_status=$?
+  if cleanup; then
+    if [ -n "${HOOK_TEST_LIB_DIR:-}" ] && [ ! -e "$lib_dir/.hook-smoke-deadline-degraded" ]; then
+      printf "drained\n" > "$lib_dir/.hook-smoke-drained"
+    fi
+  elif [ "$exit_status" -eq 0 ]; then
+    exit 1
+  fi
+  exit "$exit_status"
+}
+trap on_exit EXIT
 
 # The hook stubs run `lcars` from PATH; point it at this image's bundle.
 mkdir -p "$tmp/bin" "$tmp/work"
@@ -111,10 +124,18 @@ done
 base_url="http://127.0.0.1:$(cat "$tmp/port")/v1"
 
 # Every runtime gets its own clean home, so each spool holds one session.
+# Disallow outbound HTTP(S) git remotes so no CLI background git task hangs the
+# offline smoke when running on a networked CI host (#3421).
 run_env() {
   local home="$1"
   shift
   env -i PATH="$tmp/bin:$PATH" HOME="$home" TMPDIR="$tmp" \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_CONFIG_COUNT=2 \
+    GIT_CONFIG_KEY_0=protocol.https.allow \
+    GIT_CONFIG_VALUE_0=never \
+    GIT_CONFIG_KEY_1=protocol.http.allow \
+    GIT_CONFIG_VALUE_1=never \
     LCARS_RUN_ID=hook-test-run LCARS_REPO=hook-test/repo LCARS_ISSUE_NUMBER=7 \
     "$@"
 }
@@ -153,9 +174,14 @@ check_events "$claude_home" claude-code
 # --- Codex ------------------------------------------------------------------
 codex_home="$tmp/codex-home"
 mkdir -p "$codex_home/.codex"
+# Disable Codex plugin sync so `codex exec` never spawns a detached background
+# `git fetch https://github.com/openai/plugins.git` into $CODEX_HOME/.codex/.tmp
+# holding TMPDIR past the 30 s drain deadline on networked CI runners (#3421).
 cat > "$codex_home/.codex/config.toml" <<TOML
 model = "test"
 model_provider = "hook-test"
+[features]
+plugins = false
 [model_providers.hook-test]
 name = "hook-test"
 base_url = "$base_url"
@@ -189,8 +215,10 @@ while compgen -G "$inflight/*" > /dev/null; do
 done
 
 # The continuation fixture owns OpenCode's real framework run and telemetry
-# assertions together. Retire these clients before transferring cleanup ownership;
-# a refused OpenCode drain must not acknowledge safe removal of shared bundles.
-cleanup
+# assertions together. Clear the EXIT trap first so a refused cleanup does not
+# run a second 30 s drain on exit, then retire these clients before transferring
+# cleanup ownership; a refused OpenCode drain must not acknowledge safe removal
+# of shared bundles.
 trap - EXIT
+cleanup
 exec bash "$(dirname "${BASH_SOURCE[0]}")/opencode-continuation.test.sh"

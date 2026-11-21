@@ -351,7 +351,7 @@ process.exit(result.status??1);
         }
       }
       const drainDiagnostic = result.stderr.match(
-        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=(OSError|PermissionError|FileNotFoundError|ProcessLookupError|TimeoutError|RuntimeError|IndexError|ValueError|NotImplementedError|unknown) errno=(none|[0-9]{1,3}) reason=(identity-changed|owner-unverifiable|deadline|other)$/m,
+        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=(OSError|PermissionError|FileNotFoundError|ProcessLookupError|TimeoutError|RuntimeError|IndexError|ValueError|NotImplementedError|unknown) errno=(none|[0-9]{1,3}) reason=(identity-changed|owner-unverifiable|deadline|other)(?: processes=([A-Za-z0-9._,?-]+))?$/m,
       );
       const classification = result.stderr.includes(
         'hook smoke cleanup: process drainage refused; retaining private scratch',
@@ -484,3 +484,274 @@ except FileNotFoundError:pass`,
   },
   110_000,
 );
+
+it('degrades a process drain deadline to a warning after running all three CLI legs while naming the culprit command and retaining scratch', () => {
+  const root = mkdtempSync(join(tmpdir(), 'hook-smoke-deadline-degrade-'));
+  const scratch = join(root, 'scratch');
+  const bin = join(root, 'bin');
+  const project = join(root, 'project');
+  const fixtureHome = join(root, 'home');
+  const sourceSdk = join(fixtureHome, '.config/opencode');
+  const writerIdentity = join(root, 'codex-lingering-identity.json');
+  const codexEnvCapture = join(root, 'codex-git-env.json');
+  for (const directory of [scratch, bin])
+    mkdirSync(directory, { recursive: true });
+  for (const target of [
+    'tools',
+    'apps/runner-autoscaler/runner-image',
+    'agents/opencode',
+    'dist/apps/telemetry-watcher-session-title-cli',
+    'dist/apps/telemetry-watcher-hook-flush',
+    'dist/apps/telemetry-watcher-hook',
+  ])
+    mkdirSync(join(project, target), { recursive: true });
+  const installedPlugin = join(sourceSdk, 'node_modules/@opencode-ai/plugin');
+  mkdirSync(installedPlugin, { recursive: true });
+  const opencodeVersion = readFileSync(
+    resolve('apps/runner-autoscaler/runner-image/opencode-version'),
+    'utf8',
+  )
+    .trim()
+    .replace(/^v/, '');
+  writeFileSync(
+    join(installedPlugin, 'package.json'),
+    JSON.stringify({ version: opencodeVersion }),
+  );
+  for (const file of ['package.json', 'package-lock.json'])
+    writeFileSync(join(sourceSdk, file), '{}');
+  for (const file of [
+    'opencode.json',
+    'instructions.md',
+    'context-lifecycle.js',
+    'lcars-session.js',
+    'lcars-telemetry.js',
+    'hindsight.js',
+  ])
+    writeFileSync(join(project, 'agents/opencode', file), '{}');
+  const lcarsBundle = `const fs=require('node:fs'),path=require('node:path');
+if(process.argv.slice(2).join(' ')==='integration install claude') {
+const dir=path.join(process.env.HOME,'.claude');fs.mkdirSync(dir,{recursive:true});
+fs.writeFileSync(path.join(dir,'settings.json'),JSON.stringify({hooks:{SessionEnd:[]}}));
+}
+if(process.argv.slice(2).join(' ')==='integration install codex') {
+const dir=path.join(process.env.HOME,'.codex');fs.mkdirSync(dir,{recursive:true});
+fs.writeFileSync(path.join(dir,'hooks.json'),JSON.stringify({hooks:{
+Stop:[{hooks:[{type:'command',command:'lcars hook codex Stop',timeout:5}]}],
+SessionEnd:[{hooks:[{type:'command',command:'lcars hook codex',timeout:3}]}]
+}}));
+}`;
+  writeFileSync(
+    join(
+      project,
+      'dist/apps/telemetry-watcher-session-title-cli/lcars-session-title.cjs',
+    ),
+    lcarsBundle,
+  );
+  writeFileSync(
+    join(
+      project,
+      'dist/apps/telemetry-watcher-hook-flush/lcars-hook-flush.cjs',
+    ),
+    '',
+  );
+  writeFileSync(
+    join(project, 'dist/apps/telemetry-watcher-hook/lcars-hook.cjs'),
+    lcarsBundle,
+  );
+  writeFileSync(join(project, 'tools/nx'), '#!/bin/sh\nexit 0\n', {
+    mode: 0o755,
+  });
+  for (const file of [
+    'tools/hook-telemetry-runtime-smoke.sh',
+    'apps/runner-autoscaler/runner-image/hook-telemetry.test.sh',
+    'apps/runner-autoscaler/runner-image/hook-telemetry-assertions.sh',
+    'apps/runner-autoscaler/runner-image/opencode-continuation.test.sh',
+    'apps/runner-autoscaler/runner-image/opencode-continuation.test.py',
+    'apps/runner-autoscaler/runner-image/opencode-version',
+    'apps/runner-autoscaler/runner-image/drain-hook-test-clients.py',
+  ])
+    writeFileSync(join(project, file), readFileSync(resolve(file)));
+  const fixture = join(bin, 'fixture.cjs');
+  writeFileSync(
+    fixture,
+    `#!/usr/bin/env node
+const fs=require('node:fs'),path=require('node:path'),http=require('node:http');
+const command=path.basename(process.argv[1]);
+if(process.argv[2]==='--version'){console.log(${JSON.stringify(opencodeVersion)});process.exit(0);}
+const agent=command==='claude'?'claude-code':command;
+const dir=path.join(process.env.HOME,'.local/state/agent-lcars/spool');
+fs.mkdirSync(dir,{recursive:true});
+const kinds=command==='opencode'?['start','prompt','stop']:['start','stop','end'];
+for(const kind of kinds)fs.appendFileSync(path.join(dir,'events.ndjson'),JSON.stringify({
+version:1,agent,kind,sessionId:'owned-session',summary:{sessionId:'owned-session'},
+runner:{runId:'hook-test-run',issueNumber:7,repo:{owner:'hook-test',name:'repo'}}})+'\\n');
+if(command==='claude'){
+const settings=JSON.parse(fs.readFileSync(path.join(process.env.HOME,'.claude/settings.json')));
+for(const entry of settings.hooks.SessionEnd)for(const hook of entry.hooks)fs.writeFileSync(hook.command.slice(6),'');
+}
+if(command==='codex'){
+const codexConfig=fs.readFileSync(path.join(process.env.HOME,'.codex/config.toml'),'utf8');
+fs.writeFileSync(${JSON.stringify(codexEnvCapture)},JSON.stringify({
+pluginsDisabled:/\\[features\\][\\s\\S]*plugins\\s*=\\s*false/.test(codexConfig),
+gitTerminalPrompt:process.env.GIT_TERMINAL_PROMPT,
+gitConfigCount:process.env.GIT_CONFIG_COUNT,
+gitKey0:process.env.GIT_CONFIG_KEY_0,
+gitVal0:process.env.GIT_CONFIG_VALUE_0,
+gitKey1:process.env.GIT_CONFIG_KEY_1,
+gitVal1:process.env.GIT_CONFIG_VALUE_1
+}));
+const launcher=fs.readFileSync(path.join(process.env.PATH.split(':')[0],'lcars'),'utf8');
+const runtimeLib=launcher.match(/exec node (.+)\\/lcars-session-title\\.cjs/)[1];
+const child=require('node:child_process').spawn(process.execPath,['-e','setInterval(() => {}, 1000)','private-arg-secret'],{
+detached:true,stdio:'ignore',env:{...process.env,PRIVATE_ENV:'private-env-secret'}
+});
+const start=fs.readFileSync('/proc/'+child.pid+'/stat','utf8').split(') ')[1].split(' ')[19];
+fs.writeFileSync(${JSON.stringify(writerIdentity)},JSON.stringify({pid:child.pid,start,lib:runtimeLib,tmp:process.env.TMPDIR}));
+child.unref();
+}
+if(command==='opencode'){
+const workspace=process.argv[process.argv.indexOf('--dir')+1];
+const config=JSON.parse(fs.readFileSync(path.join(workspace,'opencode.json')));
+const url=config.provider['continuation-contract'].options.baseURL+'/chat/completions?private-query';
+const system='Commit and push at the first working slice ROOT_INSTRUCTION_SENTINEL';
+const tool={role:'tool',content:'CHILD_INSTRUCTION_SENTINEL LINE-120 LINE-121 LINE-200'};
+const requests=[
+{tools:[{}],messages:[{role:'system',content:system}]},
+{max_tokens:4096,messages:[{role:'system',content:'You are a context summarization agent'}]},
+{tools:[{}],messages:[{role:'system',content:system},{role:'user',content:'COMPACTED_STATE_SENTINEL Continue if you have next steps'}]},
+{tools:[{}],messages:[{role:'system',content:system},{role:'user',content:'COMPACTED_STATE_SENTINEL'},tool]}
+];
+const db=require('node:child_process').spawnSync('python3',['-c',
+'import sqlite3,json,sys; c=sqlite3.connect(sys.argv[1]); c.execute("insert into part(data) values (?)",(json.dumps({"type":"tool","tool":"read","state":{"status":"completed","input":{"limit":200},"output":"ROOT_INSTRUCTION_SENTINEL"}}),)); c.commit()',
+path.join(process.env.XDG_DATA_HOME,'opencode/opencode.db')],{encoding:'utf8'});
+if(db.status!==0)process.exit(1);
+(async()=>{
+for(const body of requests)await new Promise((resolve,reject)=>{
+const bytes=JSON.stringify(body);
+const request=http.request(url,{method:'POST',headers:{authorization:'private-credential','content-length':Buffer.byteLength(bytes)}},response=>{
+response.resume();response.on('end',resolve);
+});request.on('error',reject);request.end(bytes);
+});console.log('private-model-body Error: private-error-detail');
+})().catch(()=>{process.exitCode=1;});
+}
+`,
+    { mode: 0o755 },
+  );
+  for (const command of ['claude', 'codex', 'opencode'])
+    symlinkSync(fixture, join(bin, command));
+  const bakedStore = join(fixtureHome, '.local/share/opencode');
+  mkdirSync(bakedStore, { recursive: true });
+  const store = spawnSync(
+    'python3',
+    [
+      '-c',
+      'import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute("CREATE TABLE part (data TEXT)"); c.commit()',
+      join(bakedStore, 'opencode.db'),
+    ],
+    { encoding: 'utf8' },
+  );
+  expect(store.status).toBe(0);
+  try {
+    const result = spawnSync(
+      'bash',
+      [join(project, 'tools/hook-telemetry-runtime-smoke.sh')],
+      {
+        env: {
+          ...process.env,
+          HOME: fixtureHome,
+          XDG_DATA_HOME: join(fixtureHome, '.local/share'),
+          PATH: `${bin}:${process.env.PATH}`,
+          TMPDIR: scratch,
+          CLAUDE_BIN: join(bin, 'claude'),
+          CODEX_BIN: join(bin, 'codex'),
+          OPENCODE_BIN: join(bin, 'opencode'),
+          HOOK_DRAIN_DEADLINE_SECONDS: '0.3',
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      },
+    );
+    expect({
+      status: result.status,
+      signal: result.signal,
+      spawnError: Boolean(result.error),
+    }).toEqual({ status: 0, signal: null, spawnError: false });
+    expect(result.stdout).toContain('ok: claude-code start,stop,end');
+    expect(result.stdout).toContain('ok: codex start,stop,end');
+    expect(result.stdout).toContain('ok: opencode start,prompt,stop');
+    expect(result.stdout).toContain(
+      '::warning::hook smoke cleanup retained private scratch after process drain deadline (see stderr for culprit process names)',
+    );
+    const drainMatches = [
+      ...result.stderr.matchAll(
+        /^hook smoke cleanup: process drainage refused; retaining private scratch; exception=RuntimeError errno=none reason=deadline processes=([A-Za-z0-9._,?-]+)$/gm,
+      ),
+    ];
+    expect(drainMatches).toHaveLength(1);
+    expect(drainMatches[0]?.[1]).toMatch(/^node(?:-MainThread)?$/);
+    expect(result.stderr).toContain(
+      'hook smoke cleanup: retaining private bundles after refused smoke',
+    );
+    const codexGitEnv = JSON.parse(readFileSync(codexEnvCapture, 'utf8'));
+    expect(codexGitEnv).toEqual({
+      pluginsDisabled: true,
+      gitTerminalPrompt: '0',
+      gitConfigCount: '2',
+      gitKey0: 'protocol.https.allow',
+      gitVal0: 'never',
+      gitKey1: 'protocol.http.allow',
+      gitVal1: 'never',
+    });
+    const identity = JSON.parse(readFileSync(writerIdentity, 'utf8'));
+    let writerLive = false;
+    try {
+      process.kill(identity.pid, 0);
+      writerLive = true;
+    } catch {
+      /* Exited unexpectedly. */
+    }
+    expect(writerLive).toBe(true);
+    expect(existsSync(identity.tmp)).toBe(true);
+    expect(existsSync(identity.lib)).toBe(true);
+    expect(readdirSync(scratch).length).toBeGreaterThan(0);
+    for (const privateValue of [
+      'private-arg-secret',
+      'private-env-secret',
+      'private-query',
+      'private-credential',
+      'private-model-body',
+      'private-error-detail',
+    ])
+      expect((result.stdout + result.stderr).includes(privateValue)).toBe(
+        false,
+      );
+  } finally {
+    let ownedCleanupStatus = 0;
+    if (existsSync(writerIdentity)) {
+      const cleanup = spawnSync(
+        'python3',
+        [
+          '-c',
+          `import json,os,pathlib,select,signal,sys
+x=json.loads(pathlib.Path(sys.argv[1]).read_text());p=pathlib.Path('/proc')/str(x['pid'])
+try:
+ before=p.joinpath('stat').read_text().rsplit(') ',1)[1].split()[19]
+ if before==x['start']:
+  fd=os.pidfd_open(x['pid'])
+  try:
+   if p.joinpath('stat').read_text().rsplit(') ',1)[1].split()[19]==before:
+    signal.pidfd_send_signal(fd,signal.SIGKILL)
+    select.select([fd],[],[],2)
+  finally:os.close(fd)
+except ProcessLookupError:pass
+except FileNotFoundError:pass`,
+          writerIdentity,
+        ],
+        { encoding: 'utf8' },
+      );
+      ownedCleanupStatus = cleanup.status ?? 1;
+    }
+    expect(ownedCleanupStatus).toBe(0);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
