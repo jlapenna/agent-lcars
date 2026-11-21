@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   notify:
-    runs-on: agent-lcars-ci-control
+    runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - run: echo "LCARS review updated"
