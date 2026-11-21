@@ -38,12 +38,14 @@ review and comment-quality guidance applies.
 
 1. **Eligibility and source.** LCARS has already selected this PR for review.
    Replace upstream step 1: fetch the live PR metadata, complete changed-file
-   list and diff through `gh`, recording the full head SHA. Do not skip because
+   list and diff through `gh`. Before fetching the diff, record the full head
+   SHA, base branch and latest GraphQL `BASE_REF_CHANGED_EVENT` node ID
+   (`pullRequest.timelineItems(last: 1, itemTypes: [BASE_REF_CHANGED_EVENT])`). Do not skip because
    the change is small, automated, draft, closed, or previously commented on:
    LCARS supports explicitly requested reviews of closed anchors too. Review
    the requested change at that head; distinguish historical review from merge
    approval. Read existing review threads to avoid duplicate findings. Before
-   publication, re-read the head; if it changed, review the new revision within
+   publication, re-read all three values. If any changed, review the new comparison within
    the remaining budget or report the incomplete review with the unreviewed SHA.
    Never approve a head
    that the independent passes did not review.
@@ -123,6 +125,16 @@ review and comment-quality guidance applies.
    on its own line in the body: `<!-- lcars-review:pass -->` for no blocking
    defects or `<!-- lcars-review:block -->` for blocking defects. Historical
    reviews omit both verdict markers. Do not change credentials to evade that restriction.
+   For a retargeted PR, start the review body with
+   `<!-- lcars-review:base-event NODE_ID -->`, using the event recorded
+   before reviewing the diff. For a blocking self-review, attach a finding
+   as an unresolved review thread in the same submission. If all findings
+   lack a changed-line location, first create a file-level review thread
+   (`subject_type: file`) on an affected changed file at the reviewed SHA.
+   Verify its comment ID belongs to an unresolved thread on the current PR
+   and link it in the body. Reuse the thread on retry. If the hold cannot
+   be established, report the publication failure. Repositories enforcing
+   thread resolution can then hold auto-merge as soon as the verdict appears.
    An incomplete procedure never produces an approval or
    a completed-review receipt; preserve its cause using the failure/parking
    distinction above.

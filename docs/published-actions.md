@@ -17,6 +17,7 @@ their operating constraints.
 
 | Action                  | Purpose                                                                 |
 | ----------------------- | ----------------------------------------------------------------------- |
+| `publish-lcars-review`  | Publish the LCARS App check for the current GitHub test merge commit.   |
 | `setup-repo-checks`     | Install pinned native gitleaks or actionlint without Docker.            |
 | `mint-agent-token`      | Mint a scoped Agent LCARS App installation token.                       |
 | `assert-repo-vars`      | Report all missing required repository variables.                       |
@@ -35,6 +36,17 @@ the actual token after the job. `permission-workflows: write` stays explicit;
 unsupported installation grants fail at the native mint. Leaving both target
 inputs empty still scopes to the workflow repository; explicitly setting an
 owner without repositories intentionally selects that owner's installation.
+
+Call `publish-lcars-review` only from trusted default-branch workflow code.
+Use a permissionless PR/review notifier and reconcile on its completion,
+default-branch pushes, manual dispatch, and an hourly backstop. The publisher
+needs `contents: read`, `pull-requests: read`, and `checks: read` on the
+workflow token. Pass the App client ID and private key through its declared
+inputs. Use the repository’s runner and credential environment. Require
+`LCARS review (merge candidate)` from Agent LCARS App 4457090 and require
+review-thread resolution in the target repository. The shared agent protocol
+owns reviewer behavior. Enabling this check also needs a working LCARS
+review dispatch path for that repository.
 
 ## Published reusable workflows
 
